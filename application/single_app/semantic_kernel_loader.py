@@ -677,15 +677,37 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
                 or connection.get("api_version")
                 or foundry_settings.get("api_version")
             )
-        foundry_settings["authentication_type"] = auth.get("type") or foundry_settings.get("authentication_type")
-        foundry_settings["managed_identity_type"] = auth.get("managed_identity_type") or foundry_settings.get("managed_identity_type")
-        foundry_settings["managed_identity_client_id"] = auth.get("managed_identity_client_id") or foundry_settings.get("managed_identity_client_id")
-        foundry_settings["tenant_id"] = auth.get("tenant_id") or foundry_settings.get("tenant_id")
-        foundry_settings["client_id"] = auth.get("client_id") or foundry_settings.get("client_id")
-        if auth.get("client_secret"):
-            foundry_settings["client_secret"] = auth.get("client_secret")
-        foundry_settings["cloud"] = auth.get("management_cloud") or foundry_settings.get("cloud")
-        foundry_settings["authority"] = auth.get("custom_authority") or foundry_settings.get("authority")
+        saved_agent_auth_type = str(
+            foundry_settings.get("authentication_type")
+            or foundry_settings.get("auth_type")
+            or "delegated_user"
+        ).strip().lower()
+        endpoint_auth_type = str(auth.get("type") or "").strip().lower()
+        if saved_agent_auth_type in {"managed_identity", "service_principal"}:
+            foundry_settings["authentication_type"] = saved_agent_auth_type
+        elif endpoint_auth_type in {"delegated_user", "user", "user_delegated", "signed_in_user"}:
+            foundry_settings["authentication_type"] = "delegated_user"
+        elif not foundry_settings.get("authentication_type"):
+            foundry_settings["authentication_type"] = "delegated_user"
+
+        if foundry_settings.get("authentication_type") in {"managed_identity", "service_principal"}:
+            foundry_settings["managed_identity_type"] = auth.get("managed_identity_type") or foundry_settings.get("managed_identity_type")
+            foundry_settings["managed_identity_client_id"] = auth.get("managed_identity_client_id") or foundry_settings.get("managed_identity_client_id")
+            foundry_settings["tenant_id"] = auth.get("tenant_id") or foundry_settings.get("tenant_id")
+            foundry_settings["client_id"] = auth.get("client_id") or foundry_settings.get("client_id")
+            if auth.get("client_secret"):
+                foundry_settings["client_secret"] = auth.get("client_secret")
+            foundry_settings["cloud"] = auth.get("management_cloud") or foundry_settings.get("cloud")
+            foundry_settings["authority"] = auth.get("custom_authority") or foundry_settings.get("authority")
+        else:
+            foundry_settings.pop("managed_identity_type", None)
+            foundry_settings.pop("managed_identity_client_id", None)
+            foundry_settings.pop("tenant_id", None)
+            foundry_settings.pop("client_id", None)
+            foundry_settings.pop("client_secret", None)
+            foundry_settings["cloud"] = foundry_settings.get("cloud") or auth.get("management_cloud") or ""
+            foundry_settings["authority"] = foundry_settings.get("authority") or auth.get("custom_authority") or ""
+            foundry_settings["foundry_scope"] = foundry_settings.get("foundry_scope") or auth.get("foundry_scope") or ""
         return foundry_settings
 
     # If per-user mode is not enabled, ignore all user/agent-specific config fields

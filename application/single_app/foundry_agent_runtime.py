@@ -3,16 +3,19 @@
 
 import asyncio
 import base64
+from binascii import Error as BinasciiError
 import json
 import logging
 import mimetypes
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import quote
 
 import requests
+from azure.core.credentials import AccessToken
 from azure.identity import (
     AzureAuthorityHosts,
     ClientSecretCredential as SyncClientSecretCredential,
@@ -26,6 +29,7 @@ from semantic_kernel.agents import AzureAIAgent
 from semantic_kernel.contents.chat_message_content import ChatMessageContent
 
 from functions_appinsights import log_event
+from functions_authentication import get_valid_access_token_for_plugins
 from functions_debug import debug_print
 from functions_keyvault import (
     retrieve_secret_from_key_vault_by_full_name,
@@ -42,6 +46,10 @@ FOUNDRY_INTERNAL_METADATA_KEYS = {
 }
 FOUNDRY_FILE_SEARCHABLE_CONTEXT_MAX_CHARS = 6000
 FOUNDRY_FILE_SEARCHABLE_CONTEXT_HEADER = "Attached file searchable summary"
+FOUNDRY_DELEGATED_AUTH_REQUIRED_MESSAGE = (
+    "Foundry agents and workflows require delegated access to Azure AI Foundry. "
+    "Sign in or grant Foundry access, then try again."
+)
 
 
 @dataclass
@@ -74,6 +82,43 @@ class NewFoundryStreamState:
 
 class FoundryAgentInvocationError(RuntimeError):
     """Raised when the Foundry agent invocation cannot be completed."""
+
+
+class FoundryAgentUserAuthenticationRequired(FoundryAgentInvocationError):
+    """Raised when delegated Foundry access needs user consent or sign-in."""
+
+    def __init__(self, message: str, auth_response: Optional[Dict[str, Any]] = None):
+        super().__init__(message)
+        self.auth_response = auth_response or {}
+
+
+class DelegatedUserAccessTokenCredential:
+    """Async credential adapter for a delegated user bearer token."""
+
+    def __init__(self, token: str):
+        self._token = token
+        self._expires_on = _resolve_jwt_expires_on(token)
+
+    async def get_token(self, *scopes, **kwargs):
+        return AccessToken(self._token, self._expires_on)
+
+    async def close(self):
+        return None
+
+
+def _resolve_jwt_expires_on(token: str) -> int:
+    token_parts = str(token or "").split(".")
+    if len(token_parts) >= 2:
+        try:
+            payload = token_parts[1]
+            payload += "=" * (-len(payload) % 4)
+            decoded_payload = json.loads(base64.urlsafe_b64decode(payload.encode("utf-8")))
+            expires_on = int(decoded_payload.get("exp", 0))
+            if expires_on > int(time.time()):
+                return expires_on
+        except (BinasciiError, TypeError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
+            pass
+    return int(time.time()) + 300
 
 
 def _normalize_max_completion_tokens(value: Any) -> Optional[int]:
@@ -1742,11 +1787,12 @@ def _build_async_credential(
     foundry_settings: Dict[str, Any],
     global_settings: Dict[str, Any],
 ):
-    auth_type = (
-        foundry_settings.get("authentication_type")
-        or foundry_settings.get("auth_type")
-        or global_settings.get("azure_ai_foundry_authentication_type")
-    )
+    auth_type = _resolve_foundry_authentication_type(foundry_settings, global_settings)
+    if auth_type == "delegated_user":
+        scope = _resolve_foundry_scope(foundry_settings, global_settings)
+        token = _get_delegated_foundry_user_token(scope)
+        return DelegatedUserAccessTokenCredential(token)
+
     managed_identity_type = (
         foundry_settings.get("managed_identity_type")
         or global_settings.get("azure_ai_foundry_managed_identity_type")
@@ -1789,19 +1835,6 @@ def _build_async_credential(
             authority=authority,
         )
 
-    if client_secret and auth_type != "managed_identity":
-        resolved_secret = _resolve_secret_value(client_secret)
-        if not tenant_id or not client_id:
-            raise FoundryAgentInvocationError(
-                "Foundry service principals require tenant_id and client_id values."
-            )
-        return AsyncClientSecretCredential(
-            tenant_id=tenant_id,
-            client_id=client_id,
-            client_secret=resolved_secret,
-            authority=authority,
-        )
-
     if auth_type == "managed_identity":
         if managed_identity_type == "user_assigned" and managed_identity_client_id:
             return AsyncDefaultAzureCredential(
@@ -1810,8 +1843,40 @@ def _build_async_credential(
             )
         return AsyncDefaultAzureCredential(authority=authority)
 
-    # Fall back to default chained credentials (managed identity, CLI, etc.)
-    return AsyncDefaultAzureCredential(authority=authority)
+    raise FoundryAgentInvocationError(
+        f"Unsupported Foundry authentication type '{auth_type}'."
+    )
+
+
+def _resolve_foundry_authentication_type(
+    foundry_settings: Dict[str, Any],
+    global_settings: Dict[str, Any],
+) -> str:
+    auth_type = (
+        foundry_settings.get("authentication_type")
+        or foundry_settings.get("auth_type")
+        or global_settings.get("azure_ai_foundry_authentication_type")
+    )
+    auth_type = str(auth_type or "delegated_user").strip().lower()
+    if auth_type in {"user", "delegated", "user_delegated", "signed_in_user"}:
+        return "delegated_user"
+    if auth_type in {"managed_identity", "service_principal"}:
+        return auth_type
+    return "delegated_user"
+
+
+def _get_delegated_foundry_user_token(scope: str) -> str:
+    token_result = get_valid_access_token_for_plugins(scopes=[scope])
+    if isinstance(token_result, dict) and token_result.get("access_token"):
+        return token_result["access_token"]
+    if isinstance(token_result, str) and token_result:
+        return token_result
+
+    auth_response = token_result if isinstance(token_result, dict) else {}
+    error_message = FOUNDRY_DELEGATED_AUTH_REQUIRED_MESSAGE
+    if isinstance(auth_response, dict):
+        auth_response["message"] = error_message
+    raise FoundryAgentUserAuthenticationRequired(error_message, auth_response=auth_response)
 
 
 def _resolve_foundry_scope(

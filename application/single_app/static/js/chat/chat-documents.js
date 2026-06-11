@@ -68,6 +68,13 @@ const groupIdToName = {};
 const publicWorkspaceIdToName = {};
 (window.userVisiblePublicWorkspaces || []).forEach(ws => { publicWorkspaceIdToName[ws.id] = ws.name; });
 
+function syncWorkspaceNameMaps() {
+  Object.keys(groupIdToName).forEach(key => { delete groupIdToName[key]; });
+  Object.keys(publicWorkspaceIdToName).forEach(key => { delete publicWorkspaceIdToName[key]; });
+  (window.userGroups || []).forEach(g => { groupIdToName[g.id] = g.name; });
+  (window.userVisiblePublicWorkspaces || []).forEach(ws => { publicWorkspaceIdToName[ws.id] = ws.name; });
+}
+
 // Multi-scope selection state
 let selectedPersonal = true;
 let selectedGroupIds = (window.userGroups || []).map(g => g.id);
@@ -871,6 +878,8 @@ export function setScopeFromUrlParam(scopeString, options = {}) {
 function buildScopeDropdown() {
   if (!scopeDropdownItems) return;
 
+  syncWorkspaceNameMaps();
+
   scopeDropdownItems.innerHTML = "";
 
   const groups = window.userGroups || [];
@@ -1143,6 +1152,8 @@ function syncScopeButtonText() {
   if (!scopeDropdownButton) return;
   const textEl = scopeDropdownButton.querySelector(".selected-scope-text");
   if (!textEl) return;
+
+  syncWorkspaceNameMaps();
 
   const groups = window.userGroups || [];
   const publicWorkspaces = window.userVisiblePublicWorkspaces || [];
@@ -2725,8 +2736,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
 
-  // If search documents button exists, it needs to be clicked to show controls
-  if (searchDocumentsBtn && docDropdownButton) {
+  if (docDropdownButton) {
     try {
       if (docDropdown) {
         initializeSearchFilterDropdown({

@@ -7,7 +7,7 @@ from functions_authentication import *
 from functions_group import assert_group_role, get_group_model_endpoints, require_active_group, update_group_model_endpoints
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_get_helper, keyvault_model_endpoint_save_helper
 from functions_settings import *
-from foundry_agent_runtime import list_foundry_agents_from_endpoint, list_foundry_workflows_from_endpoint, list_new_foundry_agents_from_endpoint, resolve_foundry_project_base, resolve_foundry_project_api_version, build_project_credential, resolve_authority
+from foundry_agent_runtime import FoundryAgentUserAuthenticationRequired, list_foundry_agents_from_endpoint, list_foundry_workflows_from_endpoint, list_new_foundry_agents_from_endpoint, resolve_foundry_project_base, resolve_foundry_project_api_version, build_project_credential, resolve_authority
 from functions_appinsights import log_event
 from model_endpoint_clients import (
     MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
@@ -154,7 +154,7 @@ def register_route_backend_models(app):
             "responses_api_version": connection.get("openai_api_version") or connection.get("api_version") or "",
             "activity_api_version": connection.get("project_api_version") or connection.get("api_version") or "",
             "project_name": connection.get("project_name") or "",
-            "authentication_type": auth.get("type") or "managed_identity",
+            "authentication_type": "delegated_user",
             "managed_identity_type": auth.get("managed_identity_type") or "system_assigned",
             "managed_identity_client_id": auth.get("managed_identity_client_id") or "",
             "tenant_id": auth.get("tenant_id") or "",
@@ -162,6 +162,7 @@ def register_route_backend_models(app):
             "client_secret": auth.get("client_secret") or "",
             "cloud": auth.get("management_cloud") or "",
             "authority": auth.get("custom_authority") or "",
+            "foundry_scope": auth.get("foundry_scope") or "",
         }
 
     def resolve_foundry_scope(auth_settings):
@@ -986,6 +987,23 @@ def register_route_backend_models(app):
                 agents = list_new_foundry_agents_from_endpoint(foundry_settings, get_settings())
             else:
                 agents = list_foundry_agents_from_endpoint(foundry_settings, get_settings())
+        except FoundryAgentUserAuthenticationRequired as exc:
+            log_models_exception(
+                "Foundry delegated user authentication required",
+                exc,
+                extra={"scope": scope, "provider": provider, "endpoint_id": endpoint_id},
+                level=logging.WARNING,
+            )
+            auth_response = getattr(exc, "auth_response", {}) or {}
+            payload = {
+                "error": str(exc),
+                "auth_required": True,
+                "scopes": auth_response.get("scopes") or [],
+            }
+            if auth_response.get("consent_url") or auth_response.get("auth_url"):
+                payload["consent_url"] = auth_response.get("consent_url") or auth_response.get("auth_url")
+                payload["auth_url"] = auth_response.get("auth_url") or auth_response.get("consent_url")
+            return jsonify(payload), 401
         except Exception as exc:
             log_models_exception(
                 "Foundry agent list failed",

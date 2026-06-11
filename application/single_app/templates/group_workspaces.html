@@ -2029,8 +2029,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
           <div class="row g-3 mb-2">
             <div class="col-md-6">
               <label for="workflow-document-action-type" class="form-label">Action Type</label>
-              <select class="form-select" id="workflow-document-action-type" title="Find relevant information with the normal prompt flow instead of binding the workflow to fixed document targets.">
-                <option value="none" data-action-description="Find relevant information with the normal prompt flow instead of binding the workflow to fixed document targets." title="Find relevant information with the normal prompt flow instead of binding the workflow to fixed document targets.">Search</option>
+              <select class="form-select" id="workflow-document-action-type" title="Search selected or recent documents and use matching excerpts as workflow context.">
+                <option value="search" data-action-description="Search selected or recent documents and use matching excerpts as workflow context." title="Search selected or recent documents and use matching excerpts as workflow context.">Search</option>
                 {% if settings.document_action_capabilities.analyze.enabled %}
                 <option value="analyze" data-action-description="Perform an in-depth analysis across all selected documents based on your request." title="Perform an in-depth analysis across all selected documents based on your request.">Analyze</option>
                 {% endif %}
@@ -2044,51 +2044,127 @@ app_settings.app_title }} {% endblock %} {% block head %}
               <input type="number" class="form-control" id="workflow-analysis-retries" min="0" max="5" value="1" />
             </div>
           </div>
-          <div class="form-text mt-2" id="workflow-document-action-help">Find relevant information with the normal prompt flow instead of binding the workflow to fixed document targets.</div>
+          <div class="form-text mt-2" id="workflow-document-action-help">Search selected or recent documents and use matching excerpts as workflow context.</div>
 
           <div id="workflow-document-targets-fields" class="mt-3 d-none">
-            <div class="row g-3 mb-3">
-              <div class="col-md-6">
-                <label for="workflow-analysis-doc-scope" class="form-label">Document Scope</label>
-                <select class="form-select" id="workflow-analysis-doc-scope">
-                  <option value="group">Active Group Workspace</option>
-                </select>
-              </div>
-              <div class="col-md-6 d-flex align-items-end">
-                <div class="form-text mb-0">Document actions use fixed ordered targets from the active group workspace.</div>
-              </div>
-            </div>
-
-            <div class="d-flex flex-wrap gap-2 justify-content-between align-items-center mb-3">
-              <div class="form-text mb-0" id="workflow-selected-documents-summary">No group documents selected right now.</div>
-              <button type="button" class="btn btn-sm btn-outline-primary" id="workflow-use-selected-documents-btn">Use selected group documents</button>
-            </div>
+            <input type="hidden" id="workflow-analysis-doc-scope" value="group" />
+            <input type="hidden" id="workflow-analysis-group-ids" />
+            <input type="hidden" id="workflow-analysis-public-workspace-ids" />
 
             <div id="workflow-analysis-target-fields" class="mb-3 d-none">
-              <label for="workflow-analysis-document-ids" class="form-label mb-2">Document IDs</label>
-              <textarea class="form-control" id="workflow-analysis-document-ids" rows="3" placeholder="Enter one or more document ids separated by commas."></textarea>
+              <div class="row g-3 mb-3">
+                <div class="col-md-7">
+                  <label for="workflow-analysis-target-mode" class="form-label">Document Target</label>
+                  <select class="form-select" id="workflow-analysis-target-mode">
+                    <option value="selected">Selected documents</option>
+                    <option value="recent">Recent documents</option>
+                  </select>
+                </div>
+                <div class="col-md-5 d-none" id="workflow-analysis-recent-window-group">
+                  <label for="workflow-analysis-recent-minutes" class="form-label">Recent Window</label>
+                  <div class="input-group">
+                    <input type="number" class="form-control" id="workflow-analysis-recent-minutes" min="1" max="1440" value="10" />
+                    <span class="input-group-text">minutes</span>
+                  </div>
+                </div>
+              </div>
+              <input type="hidden" id="workflow-analysis-document-ids" />
               <div class="form-check form-switch mt-3">
                 <input class="form-check-input" type="checkbox" id="workflow-analysis-per-document" />
                 <label class="form-check-label ms-2" for="workflow-analysis-per-document">Run each document separately</label>
               </div>
             </div>
 
-            <div id="workflow-comparison-target-fields" class="d-none">
-              <div class="mb-3">
-                <label for="workflow-comparison-target-document-ids" class="form-label">Target Versions</label>
-                <select class="form-select" id="workflow-comparison-target-document-ids" multiple size="8"></select>
-                <div class="form-text">Use selected group documents to load available versions. Pick the versions you want available for this comparison run.</div>
+            <div id="workflow-document-picker-card" class="border rounded-3 p-3 mb-3">
+              <div class="d-flex flex-wrap gap-2 justify-content-between align-items-center mb-3">
+                <div class="form-text mb-0" id="workflow-selected-documents-summary">No group documents selected in the picker.</div>
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="workflow-use-selected-documents-btn">Refresh selected documents</button>
               </div>
-
-              <div class="mb-3">
-                <label for="workflow-comparison-left-document-id" class="form-label mb-2">Source Version</label>
-                <select class="form-select" id="workflow-comparison-left-document-id"></select>
-                <div class="form-text">Every other selected version becomes a Target document for the comparison.</div>
+              <div id="workflow-document-picker-loading" class="text-muted small mb-2 d-none">
+                <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Loading documents...
+              </div>
+              <div id="workflow-document-picker-error" class="alert alert-warning py-2 d-none" role="alert"></div>
+              <select class="d-none" id="document-action-select" aria-label="Workflow document action">
+                <option value="search">Search</option>
+                {% if settings.document_action_capabilities.analyze.enabled %}
+                <option value="analyze">Analyze</option>
+                {% endif %}
+                {% if settings.document_action_capabilities.comparison.enabled %}
+                <option value="comparison">Compare</option>
+                {% endif %}
+              </select>
+              <div id="search-documents-container" class="workflow-document-picker">
+                <div class="chat-search-panel-grid">
+                  <div class="flex-shrink-0 chat-search-panel-field chat-search-panel-field-narrow" data-chat-document-picker-field="scope">
+                    <label class="form-label mb-1 small text-muted">Scope</label>
+                    <div class="dropdown" id="scope-dropdown">
+                      <button class="form-select form-select-sm d-flex justify-content-between align-items-center" type="button" id="scope-dropdown-button" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" disabled>
+                        <span class="selected-scope-text text-truncate">Active Group Workspace</span>
+                      </button>
+                      <div class="dropdown-menu p-2" id="scope-dropdown-menu">
+                        <div class="chat-dropdown-search mb-2">
+                          <input type="text" class="form-control form-control-sm" placeholder="Search workspaces..." id="scope-search-input" />
+                        </div>
+                        <div class="dropdown-items-container" id="scope-dropdown-items"></div>
+                      </div>
+                    </div>
+                    <select class="d-none" id="doc-scope-select" multiple></select>
+                  </div>
+                  <div class="flex-shrink-0 chat-search-panel-field chat-search-panel-field-narrow" data-chat-document-picker-field="tags">
+                    <label class="form-label mb-1 small text-muted">Tags</label>
+                    <div class="dropdown" id="tags-dropdown">
+                      <button class="form-select form-select-sm d-flex justify-content-between align-items-center" type="button" id="tags-dropdown-button" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-disabled="true" disabled aria-expanded="false">
+                        <span class="chat-search-dropdown-button-content">
+                          <span class="spinner-border spinner-border-sm text-secondary chat-search-dropdown-loading-spinner" id="tags-dropdown-loading-spinner" role="status" aria-hidden="true"></span>
+                          <span class="selected-tags-text text-truncate">Loading tags...</span>
+                        </span>
+                      </button>
+                      <div class="dropdown-menu p-2" id="tags-dropdown-menu">
+                        <div class="chat-dropdown-search mb-2">
+                          <input type="text" class="form-control form-control-sm" placeholder="Search tags..." id="tags-search-input" />
+                        </div>
+                        <div class="dropdown-items-container" id="tags-dropdown-items"></div>
+                      </div>
+                    </div>
+                    <select class="d-none" id="chat-tags-filter" multiple></select>
+                  </div>
+                  <div class="flex-grow-1 chat-search-panel-field chat-search-panel-field-wide" data-chat-document-picker-field="document">
+                    <label for="document-select" class="form-label mb-1 small text-muted">Document</label>
+                    <div class="dropdown" id="document-dropdown">
+                      <button class="form-select form-select-sm d-flex justify-content-between align-items-center" type="button" id="document-dropdown-button" data-bs-toggle="dropdown" data-bs-offset="0,5" aria-expanded="false">
+                        <span class="selected-document-text">All Documents</span>
+                      </button>
+                      <div class="dropdown-menu p-2" id="document-dropdown-menu">
+                        <div class="document-search-container mb-2">
+                          <input type="text" class="form-control form-control-sm" placeholder="Search documents..." id="document-search-input" />
+                        </div>
+                        <div class="dropdown-items-container" id="document-dropdown-items"></div>
+                      </div>
+                      <select class="d-none" id="document-select" multiple></select>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
 
-            <input type="hidden" id="workflow-analysis-group-ids" />
-            <input type="hidden" id="workflow-analysis-public-workspace-ids" />
+            <div id="workflow-comparison-target-fields" class="d-none">
+              <div class="border rounded-3 px-2 py-2 bg-body-tertiary d-flex flex-wrap align-items-center gap-2">
+                <div class="small text-uppercase text-muted fw-semibold me-1">Compare</div>
+                <div class="d-flex align-items-center gap-1 flex-wrap">
+                  <span class="small text-muted">Source</span>
+                  <div id="workflow-comparison-inline-source-tags" class="d-flex flex-wrap gap-1"></div>
+                </div>
+                <div class="d-flex align-items-center gap-1 flex-wrap flex-grow-1">
+                  <span class="small text-muted">Targets</span>
+                  <div id="workflow-comparison-inline-target-tags" class="d-flex flex-wrap gap-1"></div>
+                </div>
+                <button type="button" class="btn btn-outline-secondary btn-sm ms-auto" id="workflow-comparison-edit-btn">
+                  <i class="bi bi-pencil-square me-1"></i><span id="workflow-comparison-edit-btn-label">Set Up Compare</span>
+                </button>
+              </div>
+              <select class="d-none" id="workflow-comparison-target-document-ids" multiple aria-hidden="true"></select>
+              <select class="d-none" id="workflow-comparison-left-document-id" aria-hidden="true"></select>
+            </div>
 
             <div class="row g-3">
               <div class="col-md-4">
@@ -2231,6 +2307,60 @@ app_settings.app_title }} {% endblock %} {% block head %}
         <button type="submit" class="btn btn-primary" id="workflow-save-btn">Save Workflow</button>
       </div>
     </form>
+  </div>
+</div>
+
+<div class="modal fade" id="workflow-comparison-modal" tabindex="-1" aria-labelledby="workflowComparisonModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div>
+          <h5 class="modal-title" id="workflowComparisonModalLabel">Edit Compare</h5>
+          <div class="small text-muted">Choose one Source and at least one Target from the selected workflow documents.</div>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div id="workflow-comparison-board" class="d-flex flex-column gap-3">
+          <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+            <div id="workflow-comparison-selection-summary" class="small text-muted">Select documents in the workflow picker, then choose one Source and at least one Target.</div>
+            <button type="button" class="btn btn-outline-secondary btn-sm" id="workflow-comparison-refresh-btn">
+              <i class="bi bi-arrow-clockwise me-1"></i>Refresh from picker
+            </button>
+          </div>
+          <div class="row g-3">
+            <div class="col-xl-4">
+              <div class="border rounded-3 p-3 h-100 bg-body-tertiary">
+                <div class="small fw-semibold text-body mb-1">Available Items</div>
+                <div class="small text-muted mb-2">Use the action buttons to place each item into Source or Targets.</div>
+                <div id="workflow-comparison-available-list" class="d-flex flex-column gap-2" role="list" aria-label="Available workflow comparison items" style="max-height: min(56vh, 34rem); overflow-y: auto;"></div>
+              </div>
+            </div>
+            <div class="col-xl-4">
+              <div class="border rounded-3 p-3 h-100">
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                  <div class="small fw-semibold text-body">Source</div>
+                  <span class="badge text-bg-primary">Baseline</span>
+                </div>
+                <div id="workflow-comparison-source-dropzone" class="d-flex flex-column gap-2 rounded-3 border p-2 bg-body-tertiary" aria-label="Workflow comparison source" style="min-height: 18rem; max-height: min(56vh, 34rem); overflow-y: auto; border-style: dashed !important;"></div>
+              </div>
+            </div>
+            <div class="col-xl-4">
+              <div class="border rounded-3 p-3 h-100">
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                  <div class="small fw-semibold text-body">Targets</div>
+                  <span class="badge text-bg-secondary">1 to many</span>
+                </div>
+                <div id="workflow-comparison-selection-list" class="d-flex flex-column gap-2 rounded-3 border p-2 bg-body-tertiary" role="list" aria-label="Workflow comparison targets" style="min-height: 18rem; max-height: min(56vh, 34rem); overflow-y: auto; border-style: dashed !important;"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Done</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -2545,6 +2675,10 @@ app_settings.app_title }} {% endblock %} {% block head %}
       canManageIdentities: canManageGroupWorkspaceIdentities(),
       requireOwnerForAgentManagement: {{ settings.require_owner_for_group_agent_management | tojson }}
     };
+    window.userGroups = activeGroupId
+      ? [{ id: activeGroupId, name: activeGroupName || activeGroupId }]
+      : [];
+    window.userVisiblePublicWorkspaces = [];
     window.dispatchEvent(new CustomEvent('groupWorkspace:context-changed', {
       detail: window.groupWorkspaceContext
     }));

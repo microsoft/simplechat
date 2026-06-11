@@ -21,6 +21,23 @@ const EMPTY_ASSIGNED_KNOWLEDGE = Object.freeze({
   allow_user_workspace_context: false,
   allowed_user_workspace_actions: ASSIGNED_KNOWLEDGE_USER_ACTIONS
 });
+
+function normalizeHttpUrl(value) {
+  const rawUrl = String(value || '').trim();
+  if (!rawUrl) {
+    return '';
+  }
+  try {
+    const parsedUrl = new URL(rawUrl);
+    if (!['http:', 'https:'].includes(parsedUrl.protocol) || !parsedUrl.hostname) {
+      return '';
+    }
+    return parsedUrl.toString();
+  } catch (error) {
+    return '';
+  }
+}
+
 const SIMPLECHAT_CAPABILITY_DEFINITIONS = [
   {
     key: 'create_group',
@@ -1733,11 +1750,11 @@ export class AgentModalStepper {
     const helper = document.getElementById('agent-type-helper');
     if (helper) {
       if (isNewFoundry) {
-        helper.textContent = 'New Foundry applications use the Responses protocol endpoint. Actions are disabled.';
+        helper.textContent = 'New Foundry applications use the signed-in user\'s Foundry access. Actions are disabled.';
       } else if (isFoundryWorkflow) {
-        helper.textContent = 'Foundry workflows can use a saved connection for discovery, or manual project details below. Actions are disabled.';
+        helper.textContent = 'Foundry workflows use the signed-in user\'s Foundry access. Actions are disabled.';
       } else if (isClassicFoundry) {
-        helper.textContent = 'Classic Foundry agents use Azure-managed tools. Actions are disabled.';
+        helper.textContent = 'Classic Foundry agents use the signed-in user\'s Foundry access. Actions are disabled.';
       } else {
         helper.textContent = 'Local agents can attach actions and use SK plugins.';
       }
@@ -1753,21 +1770,21 @@ export class AgentModalStepper {
 
     if (foundrySelectHelp) {
       if (isFoundryWorkflow) {
-        foundrySelectHelp.textContent = 'Fetch requires a saved connection. If you know the workflow name, type it below instead.';
+        foundrySelectHelp.textContent = 'Fetch uses your signed-in user identity against the selected Foundry project. If you know the workflow name, type it below instead.';
       } else if (isNewFoundry) {
-        foundrySelectHelp.textContent = 'Fetch a new Foundry application to populate the application name, version, and identifier fields.';
+        foundrySelectHelp.textContent = 'Fetch uses your signed-in user identity to populate the application name, version, and identifier fields.';
       } else {
-        foundrySelectHelp.textContent = 'Select a classic Foundry agent to import its identity.';
+        foundrySelectHelp.textContent = 'Fetch uses your signed-in user identity. Select a classic Foundry agent to import its identity.';
       }
     }
 
     if (foundryModeNote) {
       if (isFoundryWorkflow) {
-        foundryModeNote.textContent = 'Saved connection is optional. Select one to fetch workflows and reuse credentials, or fill in the project details manually.';
+        foundryModeNote.textContent = 'Foundry workflows run as the signed-in user. Select a saved connection for project details, or fill them in manually.';
       } else if (isNewFoundry) {
-        foundryModeNote.textContent = 'New Foundry applications are invoked through the application Responses endpoint and use Foundry-managed tools.';
+        foundryModeNote.textContent = 'New Foundry applications run as the signed-in user through the Responses endpoint.';
       } else if (isClassicFoundry) {
-        foundryModeNote.textContent = 'Classic Foundry agents use Azure-managed tools and the existing SDK-backed invocation path.';
+        foundryModeNote.textContent = 'Classic Foundry agents run as the signed-in user through the SDK-backed invocation path.';
       }
     }
   }
@@ -2223,7 +2240,10 @@ export class AgentModalStepper {
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(payload.error || 'Failed to fetch Foundry agents');
+        const fetchError = new Error(payload.error || 'Failed to fetch Foundry agents');
+        fetchError.authRequired = payload.auth_required === true;
+        fetchError.authUrl = payload.auth_url || payload.consent_url || '';
+        throw fetchError;
       }
       this.foundryAgents = Array.isArray(payload.agents) ? payload.agents : [];
       const responsesApiVersionInput = document.getElementById('agent-new-foundry-responses-api-version');
@@ -2260,6 +2280,16 @@ export class AgentModalStepper {
       console.error('Failed to fetch Foundry agents:', error);
       if (statusEl) {
         statusEl.textContent = '';
+        const authUrl = normalizeHttpUrl(error.authUrl);
+        if (error.authRequired && authUrl) {
+          const authLink = document.createElement('a');
+          authLink.href = authUrl;
+          authLink.target = '_blank';
+          authLink.rel = 'noopener noreferrer';
+          authLink.textContent = 'Sign in or grant Foundry access';
+          statusEl.appendChild(document.createTextNode('Foundry access requires sign-in or consent. '));
+          statusEl.appendChild(authLink);
+        }
       }
       showToast(error.message || 'Failed to fetch Foundry agents.', 'danger');
     }
@@ -4150,6 +4180,7 @@ export class AgentModalStepper {
         ...(otherSettingsObj.azure_ai_foundry || {}),
         agent_id: document.getElementById('agent-foundry-agent-id')?.value?.trim() || '',
         endpoint_id: modelEndpointId || '',
+        authentication_type: 'delegated_user',
         ...(notesVal ? { notes: notesVal } : {})
       };
       formData.other_settings = JSON.stringify(otherSettingsObj);
@@ -4189,6 +4220,7 @@ export class AgentModalStepper {
         application_name: applicationName,
         application_version: applicationVersion,
         endpoint_id: modelEndpointId || '',
+        authentication_type: 'delegated_user',
         responses_api_version: formData.azure_openai_gpt_api_version,
         ...(activityApiVersion ? { activity_api_version: activityApiVersion } : {}),
         ...(notesVal ? { notes: notesVal } : {}),
@@ -4226,6 +4258,7 @@ export class AgentModalStepper {
         ...(otherSettingsObj.foundry_workflow || {}),
         workflow_name: workflowName,
         endpoint_id: modelEndpointId || '',
+        authentication_type: 'delegated_user',
         responses_api_version: formData.azure_openai_gpt_api_version,
         include_document_context: includeDocumentContext,
         ...(maxContextChars ? { max_context_chars: Number.parseInt(maxContextChars, 10) } : {}),

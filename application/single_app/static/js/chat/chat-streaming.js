@@ -186,6 +186,98 @@ function normalizeStreamErrorMessage(errorLike) {
     return `${normalized.slice(0, MAX_STREAM_CLIENT_ERROR_LENGTH)}...`;
 }
 
+function normalizeStreamHttpUrl(value) {
+    const rawUrl = String(value || '').trim();
+    if (!rawUrl) {
+        return '';
+    }
+
+    try {
+        const parsedUrl = new URL(rawUrl);
+        if (!['http:', 'https:'].includes(parsedUrl.protocol) || !parsedUrl.hostname) {
+            return '';
+        }
+        return parsedUrl.toString();
+    } catch (error) {
+        return '';
+    }
+}
+
+function getStreamErrorPayload(errorDetails) {
+    if (!errorDetails || typeof errorDetails !== 'object') {
+        return {};
+    }
+
+    if (errorDetails.streamErrorData && typeof errorDetails.streamErrorData === 'object') {
+        return errorDetails.streamErrorData;
+    }
+
+    return errorDetails;
+}
+
+function getStreamAuthUrl(errorDetails) {
+    const errorPayload = getStreamErrorPayload(errorDetails);
+    return normalizeStreamHttpUrl(errorPayload.auth_url || errorPayload.consent_url || '');
+}
+
+function buildStreamingRequestError(errorData, status) {
+    const streamErrorData = errorData && typeof errorData === 'object' ? errorData : {};
+    const errorMessage = String(streamErrorData.error || `HTTP error! status: ${status}`).trim();
+    const streamError = new Error(errorMessage || `HTTP error! status: ${status}`);
+    streamError.streamErrorData = streamErrorData;
+    streamError.status = status;
+    return streamError;
+}
+
+function appendStreamErrorBanner(contentElement, errorMessage, errorDetails = {}) {
+    const errorPayload = getStreamErrorPayload(errorDetails);
+    const authRequired = errorPayload.auth_required === true;
+    const authUrl = getStreamAuthUrl(errorPayload);
+    const displayMessage = String(
+        errorMessage || errorPayload.error || errorPayload.message || 'An unknown streaming error occurred.'
+    ).trim();
+
+    const errorBanner = document.createElement('div');
+    errorBanner.className = 'alert alert-warning mt-2 mb-0';
+
+    const icon = document.createElement('i');
+    icon.className = 'bi bi-exclamation-triangle me-2';
+    icon.setAttribute('aria-hidden', 'true');
+
+    const title = document.createElement('strong');
+    title.textContent = authRequired ? 'Foundry access required:' : 'Stream interrupted:';
+
+    errorBanner.appendChild(icon);
+    errorBanner.appendChild(title);
+    errorBanner.appendChild(document.createTextNode(` ${displayMessage}`));
+
+    if (authRequired && authUrl) {
+        const actionRow = document.createElement('div');
+        actionRow.className = 'mt-2';
+
+        const authLink = document.createElement('a');
+        authLink.href = authUrl;
+        authLink.target = '_blank';
+        authLink.rel = 'noopener noreferrer';
+        authLink.textContent = 'Sign in or grant Foundry access';
+
+        actionRow.appendChild(authLink);
+        errorBanner.appendChild(actionRow);
+    }
+
+    const detailRow = document.createElement('div');
+    detailRow.className = 'mt-1';
+
+    const detailText = document.createElement('small');
+    detailText.textContent = authRequired
+        ? 'After access is granted, send the message again.'
+        : 'Response may be incomplete. The partial content above has been saved.';
+
+    detailRow.appendChild(detailText);
+    errorBanner.appendChild(detailRow);
+    contentElement.appendChild(errorBanner);
+}
+
 function reportClientStreamEvent(eventType, payload = {}) {
     const normalizedEventType = String(eventType || '').trim();
     if (!normalizedEventType) {
@@ -457,7 +549,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                 throw new Error('No active stream is available for this conversation.');
             }
             return response.json().then(errData => {
-                throw new Error(errData.error || `HTTP error! status: ${response.status}`);
+                throw buildStreamingRequestError(errData, response.status);
             });
         }
 
@@ -494,7 +586,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                     event_count: eventCount,
                     error_message: data.error,
                 });
-                handleStreamError(tempAiMessageId, data.partial_content || accumulatedContent, data.error);
+                handleStreamError(tempAiMessageId, data.partial_content || accumulatedContent, data.error, data);
                 clearCurrentStreamController(abortController);
                 if (typeof onError === 'function') {
                     onError(data.error, data);
@@ -728,7 +820,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                 }
 
                 clearStreamingThoughtSession(tempAiMessageId);
-                handleStreamError(tempAiMessageId, accumulatedContent, err.message);
+                handleStreamError(tempAiMessageId, accumulatedContent, err.message, err);
                 if (typeof onError === 'function') {
                     onError(err.message, err);
                 }
@@ -787,11 +879,8 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
             }
         }
 
-        showToast(`Error: ${error.message}`, 'error');
         clearStreamingThoughtSession(tempAiMessageId);
-        
-        // Remove placeholder message
-        removeStreamingPlaceholder(tempAiMessageId);
+        handleStreamError(tempAiMessageId, accumulatedContent, error.message, error);
 
         if (typeof onError === 'function') {
             onError(error.message, error);
@@ -1064,9 +1153,14 @@ function finalizeCancelledStreamingMessage(messageId, userMessageId, finalData, 
     }
 }
 
-function handleStreamError(messageId, partialContent, errorMessage) {
+function handleStreamError(messageId, partialContent, errorMessage, errorDetails = {}) {
     const messageElement = document.querySelector(`[data-message-id="${messageId}"]`);
     if (!messageElement) return;
+
+    const errorPayload = getStreamErrorPayload(errorDetails);
+    const displayMessage = String(
+        errorMessage || errorPayload.error || errorPayload.message || 'An unknown streaming error occurred.'
+    ).trim();
 
     removeStreamingStopButton(messageId);
     
@@ -1086,20 +1180,11 @@ function handleStreamError(messageId, partialContent, errorMessage) {
         
         contentElement.innerHTML = finalContent;
         hydrateInlineCharts(messageElement);
-        
-        // Add error banner
-        const errorBanner = document.createElement('div');
-        errorBanner.className = 'alert alert-warning mt-2 mb-0';
-        errorBanner.innerHTML = `
-            <i class="bi bi-exclamation-triangle me-2"></i>
-            <strong>Stream interrupted:</strong> ${errorMessage}
-            <br>
-            <small>Response may be incomplete. The partial content above has been saved.</small>
-        `;
-        contentElement.appendChild(errorBanner);
+
+        appendStreamErrorBanner(contentElement, displayMessage, errorPayload);
     }
-    
-    showToast(`Stream error: ${errorMessage}`, 'error');
+
+    showToast(`Stream error: ${displayMessage}`, 'error');
 }
 
 function finalizeStreamingMessage(messageId, userMessageId, finalData) {

@@ -35,7 +35,10 @@ from config import (
     SECRET_KEY,
     cognitive_services_scope,
     cosmos_conversations_container,
+    cosmos_group_documents_container,
     cosmos_messages_container,
+    cosmos_public_documents_container,
+    cosmos_user_documents_container,
 )
 from functions_activity_logging import log_conversation_creation, log_token_usage, log_workflow_run
 from functions_appinsights import log_event
@@ -48,9 +51,12 @@ from functions_collaboration import (
 from functions_document_actions import (
     DOCUMENT_ACTION_ANALYSIS_MODE_PER_DOCUMENT,
     DOCUMENT_ACTION_CONTEXT_WORKFLOW,
+    DOCUMENT_ACTION_TARGET_MODE_RECENT,
     DOCUMENT_ACTION_TYPE_COMPARISON,
     DOCUMENT_ACTION_TYPE_ANALYZE,
     DOCUMENT_ACTION_TYPE_NONE,
+    DOCUMENT_ACTION_TYPE_SEARCH,
+    DEFAULT_RECENT_DOCUMENT_WINDOW_MINUTES,
     build_analyze_config,
     get_document_action_config,
     get_document_action_max_documents,
@@ -58,11 +64,12 @@ from functions_document_actions import (
     get_enabled_document_action_types,
     normalize_document_action_analysis_mode,
 )
+from functions_documents import select_current_documents, sort_documents
 from functions_document_comparison import run_document_comparison
 from functions_debug import debug_print
 from functions_document_analysis import run_document_analysis
 from functions_file_sync import get_authorized_sync_source, queue_file_sync_source_run
-from functions_group import get_group_model_endpoints
+from functions_group import assert_group_role, get_group_model_endpoints, get_user_groups
 from functions_group_workflows import save_group_workflow_run, save_group_workflow_run_item
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
 from functions_message_artifacts import (
@@ -72,7 +79,9 @@ from functions_message_artifacts import (
 )
 from functions_notifications import create_workflow_priority_notification
 from functions_personal_workflows import save_personal_workflow_run, save_personal_workflow_run_item
-from functions_search_service import resolve_document_context
+from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
+from functions_search_service import resolve_document_context, search_documents
+from functions_search import normalize_search_id_list, normalize_search_scope, normalize_search_top_n
 from functions_simplechat_operations import upload_generated_analysis_artifact_for_current_user
 from functions_settings import get_settings, get_user_settings, is_tabular_processing_enabled, normalize_model_endpoints
 from functions_source_review import (
@@ -3342,6 +3351,8 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
         'content': result.get('reply', ''),
         'timestamp': timestamp,
         'model_deployment_name': result.get('model_deployment_name'),
+        'augmented': bool(result.get('augmented') or result.get('hybrid_citations')),
+        'hybrid_citations': list(result.get('hybrid_citations') or []),
         'agent_citations': prepared_agent_citations,
         'web_search_citations': web_search_citations,
         'agent_display_name': result.get('agent_display_name'),
@@ -3364,6 +3375,7 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
                 'selected_agent': workflow.get('selected_agent') or {},
                 'model_binding_summary': workflow.get('model_binding_summary') or {},
                 'document_action': document_action,
+                'document_search': result.get('document_search') or {},
                 'analyze': workflow.get('analyze') or {},
                 'analysis_coverage': result.get('analysis_coverage') or {},
             },
@@ -3596,6 +3608,353 @@ def _get_document_action_config(workflow):
         ),
         allowed_action_types=get_enabled_document_action_types(settings=settings),
     )
+
+
+def _coerce_workflow_recent_window_minutes(value):
+    try:
+        normalized_value = int(value)
+    except (TypeError, ValueError):
+        normalized_value = DEFAULT_RECENT_DOCUMENT_WINDOW_MINUTES
+    return max(1, min(1440, normalized_value))
+
+
+def _query_recent_documents(container, query, parameters, max_documents):
+    documents = list(container.query_items(
+        query=query,
+        parameters=parameters,
+        enable_cross_partition_query=True,
+    ))
+    current_documents = sort_documents(select_current_documents(documents), sort_by='_ts', sort_order='DESC')
+    return current_documents[:max_documents]
+
+
+def _collect_recent_personal_documents(user_id, cutoff_ts, max_documents):
+    if not user_id:
+        return []
+    return _query_recent_documents(
+        cosmos_user_documents_container,
+        """
+            SELECT *
+            FROM c
+            WHERE c.user_id = @user_id
+                AND c._ts >= @cutoff_ts
+        """,
+        [
+            {'name': '@user_id', 'value': user_id},
+            {'name': '@cutoff_ts', 'value': cutoff_ts},
+        ],
+        max_documents,
+    )
+
+
+def _collect_recent_group_documents(group_ids, cutoff_ts, max_documents):
+    recent_documents = []
+    for group_id in normalize_search_id_list(group_ids):
+        recent_documents.extend(_query_recent_documents(
+            cosmos_group_documents_container,
+            """
+                SELECT *
+                FROM c
+                WHERE c.group_id = @group_id
+                    AND c._ts >= @cutoff_ts
+            """,
+            [
+                {'name': '@group_id', 'value': group_id},
+                {'name': '@cutoff_ts', 'value': cutoff_ts},
+            ],
+            max_documents,
+        ))
+    return recent_documents
+
+
+def _collect_recent_public_documents(workspace_ids, cutoff_ts, max_documents):
+    recent_documents = []
+    for workspace_id in normalize_search_id_list(workspace_ids):
+        recent_documents.extend(_query_recent_documents(
+            cosmos_public_documents_container,
+            """
+                SELECT *
+                FROM c
+                WHERE c.public_workspace_id = @workspace_id
+                    AND c._ts >= @cutoff_ts
+            """,
+            [
+                {'name': '@workspace_id', 'value': workspace_id},
+                {'name': '@cutoff_ts', 'value': cutoff_ts},
+            ],
+            max_documents,
+        ))
+    return recent_documents
+
+
+def _resolve_recent_authorized_group_ids(user_id, group_ids):
+    requested_group_ids = normalize_search_id_list(group_ids)
+    if not user_id or not requested_group_ids:
+        return []
+
+    try:
+        user_group_ids = normalize_search_id_list([group.get('id') for group in get_user_groups(user_id) if group.get('id')])
+    except Exception as exc:
+        log_event(
+            f'[WorkflowRunner] Failed to resolve authorized group ids for recent workflow documents: {exc}',
+            extra={'user_id': user_id},
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+        return []
+
+    authorized_group_ids = set(user_group_ids)
+    return [group_id for group_id in requested_group_ids if group_id in authorized_group_ids]
+
+
+def _resolve_recent_authorized_public_workspace_ids(user_id, workspace_ids):
+    requested_workspace_ids = normalize_search_id_list(workspace_ids)
+    if not user_id or not requested_workspace_ids:
+        return []
+
+    try:
+        visible_workspace_ids = normalize_search_id_list(get_user_visible_public_workspace_ids_from_settings(user_id))
+    except Exception as exc:
+        log_event(
+            f'[WorkflowRunner] Failed to resolve visible public workspace ids for recent workflow documents: {exc}',
+            extra={'user_id': user_id},
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+        return []
+
+    authorized_workspace_ids = set(visible_workspace_ids)
+    return [workspace_id for workspace_id in requested_workspace_ids if workspace_id in authorized_workspace_ids]
+
+
+def _get_workflow_search_max_documents(settings):
+    return get_document_action_max_documents(
+        DOCUMENT_ACTION_TYPE_ANALYZE,
+        DOCUMENT_ACTION_CONTEXT_WORKFLOW,
+        settings=settings,
+    )
+
+
+def _get_recent_workflow_document_limit(action_type, settings):
+    if action_type in {DOCUMENT_ACTION_TYPE_ANALYZE, DOCUMENT_ACTION_TYPE_COMPARISON}:
+        return get_document_action_max_documents(
+            action_type,
+            DOCUMENT_ACTION_CONTEXT_WORKFLOW,
+            settings=settings,
+        )
+    return _get_workflow_search_max_documents(settings)
+
+
+def _collect_recent_workflow_documents(workflow, action_config, settings, max_documents):
+    user_id = str(workflow.get('user_id') or '').strip()
+    workflow_group_id = _get_workflow_group_id(workflow)
+    recent_window_minutes = _coerce_workflow_recent_window_minutes(action_config.get('recent_window_minutes'))
+    cutoff_ts = int(datetime.now(timezone.utc).timestamp()) - (recent_window_minutes * 60)
+    doc_scope = normalize_search_scope(action_config.get('doc_scope'))
+
+    active_group_ids = normalize_search_id_list(action_config.get('active_group_ids'))
+    if workflow_group_id:
+        assert_group_role(
+            user_id,
+            workflow_group_id,
+            allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+        )
+        active_group_ids = [workflow_group_id]
+        doc_scope = 'group'
+    else:
+        active_group_ids = _resolve_recent_authorized_group_ids(user_id, active_group_ids)
+    active_public_workspace_ids = normalize_search_id_list(action_config.get('active_public_workspace_id'))
+    if not workflow_group_id:
+        active_public_workspace_ids = _resolve_recent_authorized_public_workspace_ids(user_id, active_public_workspace_ids)
+
+    recent_documents = []
+    if doc_scope in {'personal', 'all'} and not workflow_group_id:
+        recent_documents.extend(_collect_recent_personal_documents(user_id, cutoff_ts, max_documents))
+    if doc_scope in {'group', 'all'} and active_group_ids:
+        recent_documents.extend(_collect_recent_group_documents(active_group_ids, cutoff_ts, max_documents))
+    if doc_scope in {'public', 'all'} and active_public_workspace_ids and not workflow_group_id:
+        recent_documents.extend(_collect_recent_public_documents(active_public_workspace_ids, cutoff_ts, max_documents))
+
+    current_documents = sort_documents(select_current_documents(recent_documents), sort_by='_ts', sort_order='DESC')
+    document_items = []
+    document_ids = []
+    for document_item in current_documents:
+        document_id = str(document_item.get('id') or document_item.get('document_id') or '').strip()
+        if document_id and document_id not in document_ids:
+            document_ids.append(document_id)
+            document_items.append(document_item)
+        if len(document_ids) >= max_documents:
+            break
+
+    return {
+        'document_ids': document_ids,
+        'documents': document_items,
+        'doc_scope': doc_scope,
+        'active_group_ids': active_group_ids,
+        'active_public_workspace_id': active_public_workspace_ids,
+        'recent_window_minutes': recent_window_minutes,
+    }
+
+
+def _resolve_recent_document_action_targets(workflow, action_config, settings):
+    action_type = action_config.get('type')
+    if action_type not in {DOCUMENT_ACTION_TYPE_ANALYZE, DOCUMENT_ACTION_TYPE_COMPARISON, DOCUMENT_ACTION_TYPE_SEARCH}:
+        return action_config
+    if action_config.get('target_mode') != DOCUMENT_ACTION_TARGET_MODE_RECENT:
+        return action_config
+    if action_config.get('recent_targets_resolved') and normalize_search_id_list(action_config.get('document_ids')):
+        return action_config
+
+    max_documents = _get_recent_workflow_document_limit(action_type, settings)
+    recent_targets = _collect_recent_workflow_documents(workflow, action_config, settings, max_documents)
+    document_ids = recent_targets.get('document_ids') or []
+    recent_window_minutes = recent_targets.get('recent_window_minutes') or DEFAULT_RECENT_DOCUMENT_WINDOW_MINUTES
+
+    minimum_documents = 2 if action_type == DOCUMENT_ACTION_TYPE_COMPARISON else 1
+    if len(document_ids) < minimum_documents:
+        if action_type == DOCUMENT_ACTION_TYPE_COMPARISON:
+            raise ValueError(
+                f'At least two recent documents are required for comparison. '
+                f'Only {len(document_ids)} were found in the last {recent_window_minutes} minutes.'
+            )
+        raise ValueError(f'No recent documents were found in the last {recent_window_minutes} minutes.')
+
+    resolved_action = dict(action_config)
+    resolved_action.update({
+        'document_ids': document_ids,
+        'doc_scope': recent_targets.get('doc_scope'),
+        'active_group_ids': recent_targets.get('active_group_ids') or [],
+        'active_public_workspace_id': recent_targets.get('active_public_workspace_id') or [],
+        'recent_targets_resolved': True,
+    })
+    if action_type == DOCUMENT_ACTION_TYPE_COMPARISON:
+        resolved_action['left_document_id'] = document_ids[0]
+        resolved_action['right_document_ids'] = document_ids[1:]
+    return resolved_action
+
+
+def _is_document_search_workflow(action_config):
+    return (action_config or {}).get('type') == DOCUMENT_ACTION_TYPE_SEARCH
+
+
+def _build_workflow_search_citation(result):
+    result = result if isinstance(result, dict) else {}
+    citation_id = result.get('id') or result.get('chunk_id') or str(uuid.uuid4())
+    document_id = str(result.get('document_id') or '').strip()
+    if not document_id:
+        document_id = '_'.join(str(citation_id).split('_')[:-1]) if '_' in str(citation_id) else str(citation_id)
+
+    return {
+        'file_name': result.get('file_name') or result.get('title') or 'Unknown document',
+        'document_id': document_id,
+        'citation_id': citation_id,
+        'page_number': result.get('page_number'),
+        'chunk_id': result.get('chunk_id'),
+        'chunk_sequence': result.get('chunk_sequence'),
+        'score': result.get('score'),
+        'group_id': result.get('group_id'),
+        'public_workspace_id': result.get('public_workspace_id'),
+        'version': result.get('version'),
+        'classification': result.get('document_classification'),
+    }
+
+
+def _format_workflow_search_results(results):
+    result_lines = []
+    citations = []
+    for index, result in enumerate(results or [], start=1):
+        result = result if isinstance(result, dict) else {}
+        chunk_text = str(result.get('chunk_text') or '').strip()
+        if not chunk_text:
+            continue
+
+        file_name = str(result.get('file_name') or result.get('title') or 'Unknown document').strip() or 'Unknown document'
+        page_number = result.get('page_number') or result.get('chunk_sequence') or 1
+        citation_id = result.get('id') or result.get('chunk_id') or f'workflow-search-{index}'
+        result_lines.append(
+            f'[{index}] {file_name}, page {page_number}, citation #{citation_id}\n{chunk_text}'
+        )
+        citations.append(_build_workflow_search_citation(result))
+
+    return '\n\n'.join(result_lines).strip(), citations
+
+
+def _build_workflow_search_prompt(task_prompt, search_context):
+    task_prompt = str(task_prompt or '').strip()
+    retrieved_content = str((search_context or {}).get('retrieved_content') or '').strip()
+    if not retrieved_content:
+        return task_prompt
+
+    return (
+        '[Workflow document search context]\n'
+        'Use the retrieved document excerpts below as grounding for the workflow task. '
+        'When the excerpts are insufficient, say what is missing instead of guessing.\n\n'
+        f'{retrieved_content}\n\n'
+        '[Workflow task]\n'
+        f'{task_prompt}'
+    ).strip()
+
+
+def _prepare_workflow_search_context(workflow, action_config, settings, thought_tracker=None, run_id=None):
+    if not _is_document_search_workflow(action_config):
+        return {'workflow': workflow, 'citations': [], 'result_count': 0, 'document_count': 0, 'query': None}
+
+    resolved_action = _resolve_recent_document_action_targets(workflow, action_config, settings)
+    document_ids = normalize_search_id_list(resolved_action.get('document_ids'))
+    if resolved_action.get('target_mode') != DOCUMENT_ACTION_TARGET_MODE_RECENT and not document_ids:
+        return {'workflow': workflow, 'citations': [], 'result_count': 0, 'document_count': 0, 'query': None}
+
+    query = str(workflow.get('task_prompt') or '').strip()
+    if not query:
+        return {'workflow': workflow, 'citations': [], 'result_count': 0, 'document_count': 0, 'query': None}
+
+    search_top_n = normalize_search_top_n(max(12, len(document_ids) * 3 if document_ids else 12))
+    search_result = search_documents(
+        query=query,
+        user_id=str(workflow.get('user_id') or '').strip(),
+        top_n=search_top_n,
+        doc_scope=resolved_action.get('doc_scope') or 'all',
+        document_ids=document_ids,
+        active_group_ids=resolved_action.get('active_group_ids'),
+        active_public_workspace_id=resolved_action.get('active_public_workspace_id'),
+    )
+    retrieved_content, citations = _format_workflow_search_results(search_result.get('results') or [])
+    prepared_workflow = _apply_runtime_document_action_config(workflow, resolved_action)
+    prepared_workflow['task_prompt'] = _build_workflow_search_prompt(workflow.get('task_prompt', ''), {
+        'retrieved_content': retrieved_content,
+    })
+
+    if thought_tracker and run_id:
+        _add_workflow_activity_thought(
+            thought_tracker,
+            prepared_workflow,
+            run_id,
+            step_type='document',
+            content='Searched selected workflow documents',
+            detail=(
+                f"results={search_result.get('result_count', 0)} | "
+                f"documents={search_result.get('document_count', 0)}"
+            ),
+            activity_key=f'search:{run_id}:documents',
+            kind='document_search',
+            title='Document search',
+            status='completed',
+        )
+
+    return {
+        'workflow': prepared_workflow,
+        'citations': citations,
+        'result_count': search_result.get('result_count', 0),
+        'document_count': search_result.get('document_count', 0),
+        'query': search_result.get('query'),
+    }
+
+
+def _apply_runtime_document_action_config(workflow, action_config):
+    prepared_workflow = dict(workflow or {})
+    prepared_workflow['document_action'] = dict(action_config or {})
+    prepared_workflow['analyze'] = build_analyze_config(prepared_workflow['document_action'])
+    return prepared_workflow
 
 
 def _get_workflow_file_sync_config(workflow):
@@ -4876,6 +5235,8 @@ def _execute_document_action_workflow(
     url_access_context=None,
 ):
     action_config = _get_document_action_config(workflow)
+    action_config = _resolve_recent_document_action_targets(workflow, action_config, settings)
+    workflow = _apply_runtime_document_action_config(workflow, action_config)
     action_type = action_config.get('type')
     debug_print(
         '[WorkflowDocumentAction] Dispatching action | '
@@ -5205,7 +5566,21 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
             user_roles=user_roles,
         )
         document_action = _get_document_action_config(execution_workflow)
-        if document_action.get('type') != DOCUMENT_ACTION_TYPE_NONE:
+        workflow_search_context = None
+        if document_action.get('type') == DOCUMENT_ACTION_TYPE_SEARCH:
+            workflow_search_context = _prepare_workflow_search_context(
+                execution_workflow,
+                document_action,
+                settings,
+                thought_tracker=thought_tracker,
+                run_id=run_id,
+            )
+            execution_workflow = workflow_search_context.get('workflow') or execution_workflow
+            document_action = _get_document_action_config(execution_workflow)
+
+        if document_action.get('type') in {DOCUMENT_ACTION_TYPE_ANALYZE, DOCUMENT_ACTION_TYPE_COMPARISON}:
+            document_action = _resolve_recent_document_action_targets(execution_workflow, document_action, settings)
+            execution_workflow = _apply_runtime_document_action_config(execution_workflow, document_action)
             run_item_callback = _build_run_item_activity_callback(
                 execution_workflow,
                 run_id,
@@ -5235,6 +5610,16 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
                 thought_tracker=thought_tracker,
                 url_access_context=url_access_context,
             )
+            if workflow_search_context:
+                execution_result.update({
+                    'hybrid_citations': workflow_search_context.get('citations') or [],
+                    'augmented': bool(workflow_search_context.get('citations')),
+                    'document_search': {
+                        'query': workflow_search_context.get('query'),
+                        'result_count': workflow_search_context.get('result_count', 0),
+                        'document_count': workflow_search_context.get('document_count', 0),
+                    },
+                })
         else:
             execution_result = _execute_model_workflow(
                 execution_workflow,
@@ -5243,6 +5628,16 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
                 thought_tracker=thought_tracker,
                 url_access_context=url_access_context,
             )
+            if workflow_search_context:
+                execution_result.update({
+                    'hybrid_citations': workflow_search_context.get('citations') or [],
+                    'augmented': bool(workflow_search_context.get('citations')),
+                    'document_search': {
+                        'query': workflow_search_context.get('query'),
+                        'result_count': workflow_search_context.get('result_count', 0),
+                        'document_count': workflow_search_context.get('document_count', 0),
+                    },
+                })
         execution_result = _attach_workflow_url_access_result(execution_result, url_access_context)
 
         assistant_doc = _create_assistant_message(

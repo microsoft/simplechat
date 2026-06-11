@@ -12,6 +12,22 @@ The application utilizes **Azure Cosmos DB** for storing conversations, metadata
 
 [Simple Chat Documentation | Simple Chat Documentation](https://microsoft.github.io/simplechat/)
 
+## Community Call
+
+We have a Community Call every 6 weeks, please register here to receive the meeting. Our next call is July 23rd. 
+
+[Simple Chat Community Call registration](https://msit.events.teams.microsoft.com/event/msit.6c4f76be-8207-4730-8db0-7c6bde3fe2c9@72f988bf-86f1-41af-91ab-2d7cd011db47)
+
+### Previous Recordings
+
+
+Previous Recordings
+- Feb 5th, 2026 - [Recording URL](https://www.youtube.com/watch?v=X12waLe1TKM)
+- Mar 19th, 2026 - [Recording URL](https://www.youtube.com/watch?v=EpIVCwGXh1E)
+- April 30th, 2026 - [Recording URL](https://www.youtube.com/watch?v=A2QiGNa6pwM)
+- June 11th, 2026 - [Recording URL]()
+
+
 ## Contributing
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for the fork-based workflow, target branch guidance, and local development references for SimpleChat contributors.

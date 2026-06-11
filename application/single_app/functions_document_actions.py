@@ -12,18 +12,27 @@ from functions_search import normalize_search_id_list
 
 
 DOCUMENT_ACTION_TYPE_NONE = 'none'
+DOCUMENT_ACTION_TYPE_SEARCH = 'search'
 DOCUMENT_ACTION_TYPE_ANALYZE = 'analyze'
 DOCUMENT_ACTION_TYPE_COMPARISON = 'comparison'
 DOCUMENT_ACTION_ANALYSIS_MODE_COMBINED = 'combined'
 DOCUMENT_ACTION_ANALYSIS_MODE_PER_DOCUMENT = 'per_document'
+DOCUMENT_ACTION_TARGET_MODE_SELECTED = 'selected'
+DOCUMENT_ACTION_TARGET_MODE_RECENT = 'recent'
+DEFAULT_RECENT_DOCUMENT_WINDOW_MINUTES = 10
 VALID_DOCUMENT_ACTION_ANALYSIS_MODES = {
     DOCUMENT_ACTION_ANALYSIS_MODE_COMBINED,
     DOCUMENT_ACTION_ANALYSIS_MODE_PER_DOCUMENT,
+}
+VALID_DOCUMENT_ACTION_TARGET_MODES = {
+    DOCUMENT_ACTION_TARGET_MODE_SELECTED,
+    DOCUMENT_ACTION_TARGET_MODE_RECENT,
 }
 DOCUMENT_ACTION_CONTEXT_CHAT = 'chat'
 DOCUMENT_ACTION_CONTEXT_WORKFLOW = 'workflow'
 VALID_DOCUMENT_ACTION_TYPES = {
     DOCUMENT_ACTION_TYPE_NONE,
+    DOCUMENT_ACTION_TYPE_SEARCH,
     DOCUMENT_ACTION_TYPE_ANALYZE,
     DOCUMENT_ACTION_TYPE_COMPARISON,
 }
@@ -66,6 +75,24 @@ def normalize_document_action_analysis_mode(analysis_mode):
     if normalized_mode not in VALID_DOCUMENT_ACTION_ANALYSIS_MODES:
         return DOCUMENT_ACTION_ANALYSIS_MODE_COMBINED
     return normalized_mode
+
+
+def normalize_document_action_target_mode(target_mode):
+    normalized_mode = str(target_mode or DOCUMENT_ACTION_TARGET_MODE_SELECTED).strip().lower()
+    normalized_mode = normalized_mode.replace('-', '_').replace(' ', '_')
+    if normalized_mode in {'latest', 'new', 'new_documents', 'recent_documents'}:
+        return DOCUMENT_ACTION_TARGET_MODE_RECENT
+    if normalized_mode not in VALID_DOCUMENT_ACTION_TARGET_MODES:
+        return DOCUMENT_ACTION_TARGET_MODE_SELECTED
+    return normalized_mode
+
+
+def normalize_recent_document_window_minutes(value):
+    try:
+        normalized_value = int(value)
+    except (TypeError, ValueError):
+        normalized_value = DEFAULT_RECENT_DOCUMENT_WINDOW_MINUTES
+    return max(1, min(1440, normalized_value))
 
 
 def _coerce_document_action_limit(value, default_value, execution_context):
@@ -121,7 +148,7 @@ def get_document_action_capability(action_type, settings=None):
 
 def is_document_action_enabled(action_type, settings=None):
     normalized_action_type = normalize_document_action_type(action_type)
-    if normalized_action_type == DOCUMENT_ACTION_TYPE_NONE:
+    if normalized_action_type in {DOCUMENT_ACTION_TYPE_NONE, DOCUMENT_ACTION_TYPE_SEARCH}:
         return True
 
     capability = get_document_action_capability(normalized_action_type, settings=settings)
@@ -129,7 +156,7 @@ def is_document_action_enabled(action_type, settings=None):
 
 
 def get_enabled_document_action_types(settings=None):
-    enabled_action_types = {DOCUMENT_ACTION_TYPE_NONE}
+    enabled_action_types = {DOCUMENT_ACTION_TYPE_NONE, DOCUMENT_ACTION_TYPE_SEARCH}
     for action_type in (DOCUMENT_ACTION_TYPE_ANALYZE, DOCUMENT_ACTION_TYPE_COMPARISON):
         if is_document_action_enabled(action_type, settings=settings):
             enabled_action_types.add(action_type)
@@ -138,15 +165,21 @@ def get_enabled_document_action_types(settings=None):
 
 def get_document_action_max_documents(action_type, execution_context, settings=None):
     normalized_action_type = normalize_document_action_type(action_type)
-    capability = get_document_action_capability(normalized_action_type, settings=settings)
+    capability_action_type = DOCUMENT_ACTION_TYPE_ANALYZE if normalized_action_type == DOCUMENT_ACTION_TYPE_SEARCH else normalized_action_type
+    capability = get_document_action_capability(capability_action_type, settings=settings)
     field_name = 'workflow_max_documents' if execution_context == DOCUMENT_ACTION_CONTEXT_WORKFLOW else 'chat_max_documents'
-    default_capability = get_default_document_action_capabilities().get(normalized_action_type, {})
+    default_capability = get_default_document_action_capabilities().get(capability_action_type, {})
     default_value = default_capability.get(field_name, CHAT_DOCUMENT_ANALYSIS_MAX_DOCUMENTS)
     return _coerce_document_action_limit(capability.get(field_name, default_value), default_value, execution_context)
 
 
 def get_document_action_max_documents_by_type(execution_context, settings=None):
     return {
+        DOCUMENT_ACTION_TYPE_SEARCH: get_document_action_max_documents(
+            DOCUMENT_ACTION_TYPE_SEARCH,
+            execution_context,
+            settings=settings,
+        ),
         DOCUMENT_ACTION_TYPE_ANALYZE: get_document_action_max_documents(
             DOCUMENT_ACTION_TYPE_ANALYZE,
             execution_context,
@@ -191,6 +224,9 @@ def _build_analyze_action(legacy_analyze=None):
         'window_percent': legacy_analyze.get('window_percent'),
         'max_retries_per_window': legacy_analyze.get('max_retries_per_window'),
         'document_ids': legacy_analyze.get('document_ids'),
+        'analysis_mode': legacy_analyze.get('analysis_mode'),
+        'target_mode': legacy_analyze.get('target_mode'),
+        'recent_window_minutes': legacy_analyze.get('recent_window_minutes'),
     }
 
 
@@ -220,8 +256,34 @@ def normalize_document_action_config(
         'left_document_id': '',
         'right_document_ids': [],
         'analysis_mode': DOCUMENT_ACTION_ANALYSIS_MODE_COMBINED,
+        'target_mode': DOCUMENT_ACTION_TARGET_MODE_SELECTED,
+        'recent_window_minutes': DEFAULT_RECENT_DOCUMENT_WINDOW_MINUTES,
     }
     if action_type == DOCUMENT_ACTION_TYPE_NONE:
+        return normalized_action
+
+    resolved_max_documents = _resolve_max_documents(
+        action_type,
+        max_documents=max_documents,
+        max_documents_by_type=max_documents_by_type,
+    )
+
+    if action_type == DOCUMENT_ACTION_TYPE_SEARCH:
+        target_mode = normalize_document_action_target_mode(source_action.get('target_mode'))
+        document_ids = normalize_search_id_list(source_action.get('document_ids'))
+        if resolved_max_documents is not None and len(document_ids) > resolved_max_documents:
+            raise ValueError(f'Document search supports up to {resolved_max_documents} documents at a time.')
+
+        normalized_action.update({
+            'doc_scope': source_action.get('doc_scope', 'all'),
+            'active_group_ids': normalize_search_id_list(source_action.get('active_group_ids')),
+            'active_public_workspace_id': normalize_search_id_list(source_action.get('active_public_workspace_id')),
+            'document_ids': document_ids,
+            'target_mode': target_mode,
+            'recent_window_minutes': normalize_recent_document_window_minutes(source_action.get('recent_window_minutes')),
+        })
+        if bool(source_action.get('recent_targets_resolved')):
+            normalized_action['recent_targets_resolved'] = True
         return normalized_action
 
     if allowed_action_types is not None:
@@ -233,13 +295,12 @@ def normalize_document_action_config(
         if action_type not in normalized_allowed_action_types:
             raise ValueError(_build_document_action_disabled_message(action_type))
 
-    resolved_max_documents = _resolve_max_documents(
-        action_type,
-        max_documents=max_documents,
-        max_documents_by_type=max_documents_by_type,
-    )
-
     if action_type == DOCUMENT_ACTION_TYPE_ANALYZE:
+        target_mode = normalize_document_action_target_mode(source_action.get('target_mode'))
+        recent_targets_resolved = bool(source_action.get('recent_targets_resolved'))
+        if target_mode == DOCUMENT_ACTION_TARGET_MODE_RECENT and not normalize_search_id_list(source_action.get('document_ids')):
+            source_action = dict(source_action)
+            source_action['document_ids'] = ['__recent_document_window__']
         normalized_targets = normalize_document_analysis_targets(
             document_ids=source_action.get('document_ids'),
             doc_scope=source_action.get('doc_scope', 'all'),
@@ -252,7 +313,25 @@ def normalize_document_action_config(
             max_documents=resolved_max_documents,
         )
         normalized_action.update(normalized_targets)
+        if target_mode == DOCUMENT_ACTION_TARGET_MODE_RECENT and normalized_action.get('document_ids') == ['__recent_document_window__']:
+            normalized_action['document_ids'] = []
         normalized_action['analysis_mode'] = normalize_document_action_analysis_mode(source_action.get('analysis_mode'))
+        normalized_action['target_mode'] = target_mode
+        normalized_action['recent_window_minutes'] = normalize_recent_document_window_minutes(source_action.get('recent_window_minutes'))
+        if recent_targets_resolved:
+            normalized_action['recent_targets_resolved'] = True
+        return normalized_action
+
+    target_mode = normalize_document_action_target_mode(source_action.get('target_mode'))
+    recent_targets_resolved = bool(source_action.get('recent_targets_resolved'))
+    if target_mode == DOCUMENT_ACTION_TARGET_MODE_RECENT and not recent_targets_resolved:
+        normalized_action.update({
+            'doc_scope': source_action.get('doc_scope', 'all'),
+            'active_group_ids': normalize_search_id_list(source_action.get('active_group_ids')),
+            'active_public_workspace_id': normalize_search_id_list(source_action.get('active_public_workspace_id')),
+            'target_mode': target_mode,
+            'recent_window_minutes': normalize_recent_document_window_minutes(source_action.get('recent_window_minutes')),
+        })
         return normalized_action
 
     left_candidates = normalize_search_id_list([source_action.get('left_document_id')])
@@ -285,6 +364,10 @@ def normalize_document_action_config(
         document_id for document_id in normalized_action.get('document_ids', [])
         if document_id != left_document_id
     ]
+    normalized_action['target_mode'] = target_mode
+    normalized_action['recent_window_minutes'] = normalize_recent_document_window_minutes(source_action.get('recent_window_minutes'))
+    if recent_targets_resolved:
+        normalized_action['recent_targets_resolved'] = True
     return normalized_action
 
 
@@ -314,6 +397,8 @@ def build_analyze_config(action_config=None):
             'window_percent': None,
             'max_retries_per_window': 1,
             'analysis_mode': DOCUMENT_ACTION_ANALYSIS_MODE_COMBINED,
+            'target_mode': DOCUMENT_ACTION_TARGET_MODE_SELECTED,
+            'recent_window_minutes': DEFAULT_RECENT_DOCUMENT_WINDOW_MINUTES,
         }
 
     return {
@@ -327,4 +412,6 @@ def build_analyze_config(action_config=None):
         'window_percent': action_config.get('window_percent'),
         'max_retries_per_window': action_config.get('max_retries_per_window', 1),
         'analysis_mode': normalize_document_action_analysis_mode(action_config.get('analysis_mode')),
+        'target_mode': normalize_document_action_target_mode(action_config.get('target_mode')),
+        'recent_window_minutes': normalize_recent_document_window_minutes(action_config.get('recent_window_minutes')),
     }

@@ -1,6 +1,10 @@
 // workspace_workflows.js
 
 import { showToast } from "../chat/chat-toast.js";
+import {
+    ensureDocumentPickerReady,
+    setEffectiveScopes,
+} from "../chat/chat-documents.js";
 import { escapeHtml, truncateDescription, setupViewToggle, switchViewContainers } from "./view-utils.js";
 
 const workflowWorkspaceConfig = {
@@ -101,12 +105,17 @@ const workflowFileSyncUseChangedDocumentsToggle = document.getElementById("workf
 const workflowFileSyncHelp = document.getElementById("workflow-file-sync-help");
 const workflowAlertPrioritySelect = document.getElementById("workflow-alert-priority");
 const DOCUMENT_ACTION_NONE = "none";
+const DOCUMENT_ACTION_SEARCH = "search";
 const DOCUMENT_ACTION_ANALYZE = "analyze";
 const DOCUMENT_ACTION_COMPARISON = "comparison";
 const DOCUMENT_ANALYSIS_MODE_COMBINED = "combined";
 const DOCUMENT_ANALYSIS_MODE_PER_DOCUMENT = "per_document";
+const DOCUMENT_ANALYSIS_TARGET_SELECTED = "selected";
+const DOCUMENT_ANALYSIS_TARGET_RECENT = "recent";
+const DEFAULT_RECENT_DOCUMENT_WINDOW_MINUTES = 10;
 const DOCUMENT_ACTION_DESCRIPTIONS = {
-    [DOCUMENT_ACTION_NONE]: "Find relevant information with the normal prompt flow instead of binding the workflow to fixed document targets.",
+    [DOCUMENT_ACTION_NONE]: "Find relevant information with the normal prompt flow.",
+    [DOCUMENT_ACTION_SEARCH]: "Search selected or recent documents and use matching excerpts as workflow context.",
     [DOCUMENT_ACTION_ANALYZE]: "Perform an in-depth analysis across all selected documents based on your request.",
     [DOCUMENT_ACTION_COMPARISON]: "Compare one source document against the selected target documents to explain differences, relationships, or downstream impact.",
 };
@@ -128,10 +137,25 @@ const workflowDocumentTargetsFields = document.getElementById("workflow-document
 const workflowAnalysisTargetFields = document.getElementById("workflow-analysis-target-fields");
 const workflowComparisonTargetFields = document.getElementById("workflow-comparison-target-fields");
 const workflowAnalysisDocScopeSelect = document.getElementById("workflow-analysis-doc-scope");
+const workflowAnalysisTargetModeSelect = document.getElementById("workflow-analysis-target-mode");
+const workflowAnalysisRecentMinutesInput = document.getElementById("workflow-analysis-recent-minutes");
+const workflowAnalysisRecentWindowGroup = document.getElementById("workflow-analysis-recent-window-group");
 const workflowAnalysisDocumentIdsInput = document.getElementById("workflow-analysis-document-ids");
 const workflowAnalysisPerDocumentToggle = document.getElementById("workflow-analysis-per-document");
 const workflowComparisonLeftDocumentIdInput = document.getElementById("workflow-comparison-left-document-id");
 const workflowComparisonRightDocumentIdsInput = document.getElementById("workflow-comparison-target-document-ids");
+const workflowComparisonModalEl = document.getElementById("workflow-comparison-modal");
+const workflowComparisonModal = workflowComparisonModalEl && window.bootstrap ? bootstrap.Modal.getOrCreateInstance(workflowComparisonModalEl) : null;
+const workflowComparisonBoard = document.getElementById("workflow-comparison-board");
+const workflowComparisonSelectionSummary = document.getElementById("workflow-comparison-selection-summary");
+const workflowComparisonAvailableList = document.getElementById("workflow-comparison-available-list");
+const workflowComparisonSourceDropzone = document.getElementById("workflow-comparison-source-dropzone");
+const workflowComparisonSelectionList = document.getElementById("workflow-comparison-selection-list");
+const workflowComparisonInlineSourceTags = document.getElementById("workflow-comparison-inline-source-tags");
+const workflowComparisonInlineTargetTags = document.getElementById("workflow-comparison-inline-target-tags");
+const workflowComparisonEditBtn = document.getElementById("workflow-comparison-edit-btn");
+const workflowComparisonEditButtonLabel = document.getElementById("workflow-comparison-edit-btn-label");
+const workflowComparisonRefreshBtn = document.getElementById("workflow-comparison-refresh-btn");
 const workflowAnalysisGroupIdsInput = document.getElementById("workflow-analysis-group-ids");
 const workflowAnalysisPublicWorkspaceIdsInput = document.getElementById("workflow-analysis-public-workspace-ids");
 const workflowAnalysisWindowUnitSelect = document.getElementById("workflow-analysis-window-unit");
@@ -140,6 +164,11 @@ const workflowAnalysisWindowPercentInput = document.getElementById("workflow-ana
 const workflowAnalysisRetriesInput = document.getElementById("workflow-analysis-retries");
 const workflowUseSelectedDocumentsBtn = document.getElementById("workflow-use-selected-documents-btn");
 const workflowSelectedDocumentsSummary = document.getElementById("workflow-selected-documents-summary");
+const workflowDocumentPickerCard = document.getElementById("workflow-document-picker-card");
+const workflowDocumentPickerLoading = document.getElementById("workflow-document-picker-loading");
+const workflowDocumentPickerError = document.getElementById("workflow-document-picker-error");
+const chatDocumentActionSelect = document.getElementById("document-action-select");
+const chatDocumentSelect = document.getElementById("document-select");
 const WORKFLOW_URL_PATTERN = /https?:\/\/[^\s<>'"]+/gi;
 
 const workflowHistoryModalEl = document.getElementById("workflowHistoryModal");
@@ -163,7 +192,7 @@ function getDocumentActionCapability(actionType) {
 }
 
 function isDocumentActionEnabled(actionType) {
-    if (actionType === DOCUMENT_ACTION_NONE) {
+    if ([DOCUMENT_ACTION_NONE, DOCUMENT_ACTION_SEARCH].includes(actionType)) {
         return true;
     }
 
@@ -175,6 +204,9 @@ function getWorkflowDocumentActionMaxDocuments(actionType) {
 }
 
 function getDocumentActionDisplayLabel(actionType) {
+    if (actionType === DOCUMENT_ACTION_SEARCH || actionType === DOCUMENT_ACTION_NONE) {
+        return "Search";
+    }
     if (actionType === DOCUMENT_ACTION_COMPARISON) {
         return "Compare";
     }
@@ -225,7 +257,7 @@ function syncWorkflowDocumentActionTooltip() {
     const description = normalizeText(
         selectedOption?.dataset.actionDescription
         || selectedOption?.getAttribute("title")
-        || getDocumentActionDescription(normalizeText(workflowDocumentActionTypeSelect.value) || DOCUMENT_ACTION_NONE)
+        || getDocumentActionDescription(normalizeText(workflowDocumentActionTypeSelect.value) || DOCUMENT_ACTION_SEARCH)
     );
 
     workflowDocumentActionTypeSelect.title = description;
@@ -247,6 +279,9 @@ let workflowPendingDelete = null;
 let currentHistoryWorkflowId = "";
 let currentEditingWorkflow = null;
 let workflowComparisonVersionLoadToken = 0;
+let workflowPickerDocumentIds = [];
+let workflowSavedComparisonTargetIds = [];
+let workflowSavedComparisonPreferredLeftId = "";
 
 function normalizeText(value) {
     return String(value || "").trim();
@@ -257,6 +292,16 @@ function setElementVisibility(element, isVisible) {
         return;
     }
     element.classList.toggle("d-none", !isVisible);
+}
+
+function clearElementChildren(element) {
+    if (!element) {
+        return;
+    }
+
+    while (element.firstChild) {
+        element.firstChild.remove();
+    }
 }
 
 function formatDateTime(value) {
@@ -413,6 +458,14 @@ function joinCsvList(values) {
     return values.map((value) => normalizeText(value)).filter(Boolean).join(", ");
 }
 
+function normalizeIdList(values) {
+    if (!Array.isArray(values)) {
+        return [];
+    }
+
+    return Array.from(new Set(values.map((value) => normalizeText(value)).filter(Boolean)));
+}
+
 function getSelectedValues(selectElement) {
     if (!selectElement) {
         return [];
@@ -506,6 +559,219 @@ function getSelectedWorkflowComparisonTargetIds() {
     return getSelectedValues(workflowComparisonRightDocumentIdsInput);
 }
 
+function getWorkflowPickerSelectedDocumentIds() {
+    return normalizeIdList(workflowPickerDocumentIds);
+}
+
+function setWorkflowPickerSelectedDocumentIds(documentIds = []) {
+    workflowPickerDocumentIds = normalizeIdList(documentIds);
+    if (workflowAnalysisDocumentIdsInput) {
+        workflowAnalysisDocumentIdsInput.value = joinCsvList(workflowPickerDocumentIds);
+    }
+    updateSelectedDocumentsSummary();
+}
+
+function clearWorkflowChatDocumentSelection() {
+    if (chatDocumentSelect) {
+        Array.from(chatDocumentSelect.options || []).forEach((option) => {
+            option.selected = false;
+        });
+    }
+
+    document.querySelectorAll("#document-dropdown-items .doc-checkbox").forEach((checkbox) => {
+        checkbox.checked = false;
+    });
+
+    setWorkflowPickerSelectedDocumentIds([]);
+}
+
+function applyWorkflowPickerSelection(documentIds = []) {
+    const normalizedDocumentIds = normalizeIdList(documentIds);
+    if (chatDocumentSelect) {
+        const selectedIds = new Set(normalizedDocumentIds);
+        Array.from(chatDocumentSelect.options || []).forEach((option) => {
+            option.selected = selectedIds.has(option.value);
+        });
+    }
+
+    document.querySelectorAll("#document-dropdown-items .dropdown-item[data-document-id]").forEach((item) => {
+        const documentId = normalizeText(item.getAttribute("data-document-id"));
+        const checkbox = item.querySelector(".doc-checkbox");
+        if (checkbox && documentId) {
+            checkbox.checked = normalizedDocumentIds.includes(documentId);
+        }
+    });
+
+    setWorkflowPickerSelectedDocumentIds(normalizedDocumentIds);
+}
+
+function getDefaultWorkflowPickerScopes() {
+    if (workflowWorkspaceConfig.scope === "group") {
+        const activeGroupId = getWorkflowActiveGroupId();
+        return {
+            personal: false,
+            groupIds: activeGroupId ? [activeGroupId] : [],
+            publicWorkspaceIds: [],
+        };
+    }
+
+    return {
+        personal: true,
+        groupIds: (window.userGroups || []).map((group) => normalizeText(group.id)).filter(Boolean),
+        publicWorkspaceIds: (window.userVisiblePublicWorkspaces || []).map((workspace) => normalizeText(workspace.id)).filter(Boolean),
+    };
+}
+
+function getWorkflowPickerScopesFromAction(documentAction = {}) {
+    if (workflowWorkspaceConfig.scope === "group") {
+        return getDefaultWorkflowPickerScopes();
+    }
+
+    const docScope = normalizeText(documentAction.doc_scope) || getWorkflowDocumentScope();
+    const groupIds = normalizeIdList(documentAction.active_group_ids);
+    const publicWorkspaceIds = normalizeIdList(documentAction.active_public_workspace_id);
+    const defaultScopes = getDefaultWorkflowPickerScopes();
+
+    if (docScope === "personal") {
+        return {
+            personal: true,
+            groupIds: [],
+            publicWorkspaceIds: [],
+        };
+    }
+
+    if (docScope === "group") {
+        return {
+            personal: false,
+            groupIds: groupIds.length ? groupIds : defaultScopes.groupIds,
+            publicWorkspaceIds: [],
+        };
+    }
+
+    if (docScope === "public") {
+        return {
+            personal: false,
+            groupIds: [],
+            publicWorkspaceIds: publicWorkspaceIds.length ? publicWorkspaceIds : defaultScopes.publicWorkspaceIds,
+        };
+    }
+
+    return {
+        personal: true,
+        groupIds: groupIds.length ? groupIds : defaultScopes.groupIds,
+        publicWorkspaceIds: publicWorkspaceIds.length ? publicWorkspaceIds : defaultScopes.publicWorkspaceIds,
+    };
+}
+
+function getWorkflowDocScopeFromPickerScopes(scopes = {}) {
+    if (workflowWorkspaceConfig.scope === "group") {
+        return "group";
+    }
+
+    const hasPersonal = Boolean(scopes.personal);
+    const hasGroups = Array.isArray(scopes.groupIds) && scopes.groupIds.length > 0;
+    const hasPublic = Array.isArray(scopes.publicWorkspaceIds) && scopes.publicWorkspaceIds.length > 0;
+    const selectedScopeCount = [hasPersonal, hasGroups, hasPublic].filter(Boolean).length;
+
+    if (selectedScopeCount > 1) {
+        return "all";
+    }
+    if (hasGroups) {
+        return "group";
+    }
+    if (hasPublic) {
+        return "public";
+    }
+    return "personal";
+}
+
+function syncWorkflowScopeFieldsFromPicker(scopes = getDefaultWorkflowPickerScopes()) {
+    if (workflowAnalysisDocScopeSelect) {
+        workflowAnalysisDocScopeSelect.value = getWorkflowDocScopeFromPickerScopes(scopes);
+    }
+    if (workflowAnalysisGroupIdsInput) {
+        workflowAnalysisGroupIdsInput.value = joinCsvList(scopes.groupIds || []);
+    }
+    if (workflowAnalysisPublicWorkspaceIdsInput) {
+        workflowAnalysisPublicWorkspaceIdsInput.value = joinCsvList(scopes.publicWorkspaceIds || []);
+    }
+}
+
+function syncWorkflowPickerActionType() {
+    if (!chatDocumentActionSelect || !workflowDocumentActionTypeSelect) {
+        return;
+    }
+
+    const actionType = normalizeText(workflowDocumentActionTypeSelect.value) || DOCUMENT_ACTION_SEARCH;
+    chatDocumentActionSelect.value = actionType;
+    chatDocumentActionSelect.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function setWorkflowPickerLoadingState(isLoading) {
+    if (workflowDocumentPickerLoading) {
+        workflowDocumentPickerLoading.classList.toggle("d-none", !isLoading);
+    }
+}
+
+function setWorkflowPickerError(message = "") {
+    if (!workflowDocumentPickerError) {
+        return;
+    }
+
+    workflowDocumentPickerError.textContent = message;
+    workflowDocumentPickerError.classList.toggle("d-none", !message);
+}
+
+async function initializeWorkflowDocumentPicker(documentAction = {}) {
+    if (!workflowDocumentPickerCard) {
+        return;
+    }
+
+    setWorkflowPickerError("");
+    setWorkflowPickerLoadingState(true);
+    syncWorkflowPickerActionType();
+
+    const pickerScopes = getWorkflowPickerScopesFromAction(documentAction);
+    try {
+        await setEffectiveScopes(pickerScopes, {
+            force: workflowWorkspaceConfig.scope === "group",
+            source: "workflow",
+            reload: true,
+        });
+        await ensureDocumentPickerReady({ reload: false, showLoading: false });
+        syncWorkflowScopeFieldsFromPicker(pickerScopes);
+        applyWorkflowPickerSelection(
+            documentAction.type === DOCUMENT_ACTION_COMPARISON
+                ? []
+                : documentAction.document_ids || []
+        );
+    } catch (error) {
+        setWorkflowPickerError(error.message || "Unable to load documents for this workflow.");
+    } finally {
+        setWorkflowPickerLoadingState(false);
+    }
+}
+
+async function refreshWorkflowComparisonTargetsFromPicker() {
+    if (normalizeText(workflowDocumentActionTypeSelect?.value) !== DOCUMENT_ACTION_COMPARISON) {
+        return;
+    }
+
+    const selectedDocumentIds = getWorkflowPickerSelectedDocumentIds();
+    if (!selectedDocumentIds.length) {
+        setWorkflowComparisonSavedTargets(workflowSavedComparisonTargetIds, workflowSavedComparisonPreferredLeftId);
+        return;
+    }
+
+    await loadWorkflowComparisonVersionTargets({
+        selectedWorkspaceDocumentIds: selectedDocumentIds,
+        selectedTargetIds: getSelectedWorkflowComparisonTargetIds().length
+            ? getSelectedWorkflowComparisonTargetIds()
+            : workflowSavedComparisonTargetIds,
+        preferredLeftId: normalizeText(workflowComparisonLeftDocumentIdInput?.value) || workflowSavedComparisonPreferredLeftId,
+    });
+}
+
 function formatWorkflowVersionDate(uploadDate) {
     const parsedTime = Date.parse(normalizeText(uploadDate));
     if (Number.isNaN(parsedTime)) {
@@ -550,6 +816,445 @@ function buildWorkflowComparisonFallbackVersion(documentId) {
     }];
 }
 
+function getWorkflowComparisonOption(versionId) {
+    const normalizedVersionId = normalizeText(versionId);
+    if (!normalizedVersionId || !workflowComparisonRightDocumentIdsInput) {
+        return null;
+    }
+
+    return Array.from(workflowComparisonRightDocumentIdsInput.options || [])
+        .find((option) => normalizeText(option.value) === normalizedVersionId) || null;
+}
+
+function getWorkflowComparisonCandidateCatalog() {
+    if (!workflowComparisonRightDocumentIdsInput) {
+        return [];
+    }
+
+    return Array.from(workflowComparisonRightDocumentIdsInput.options || [])
+        .map((option) => {
+            const id = normalizeText(option.value);
+            if (!id) {
+                return null;
+            }
+
+            const groupLabel = normalizeText(option.dataset.groupLabel)
+                || normalizeText(option.parentElement?.label)
+                || "Document";
+            return {
+                id,
+                label: normalizeText(option.textContent) || id,
+                groupLabel,
+                selected: option.selected,
+            };
+        })
+        .filter(Boolean);
+}
+
+function getWorkflowComparisonEntry(versionId) {
+    const normalizedVersionId = normalizeText(versionId);
+    if (!normalizedVersionId) {
+        return null;
+    }
+
+    return getWorkflowComparisonCandidateCatalog()
+        .find((candidate) => candidate.id === normalizedVersionId)
+        || {
+            id: normalizedVersionId,
+            label: normalizedVersionId,
+            groupLabel: "Document",
+            selected: true,
+        };
+}
+
+function getWorkflowComparisonSourceId() {
+    return normalizeText(workflowComparisonLeftDocumentIdInput?.value);
+}
+
+function getWorkflowComparisonTargetIds() {
+    const sourceId = getWorkflowComparisonSourceId();
+    return getSelectedWorkflowComparisonTargetIds().filter((targetId) => targetId !== sourceId);
+}
+
+function truncateWorkflowComparisonLabel(label, maxLength = 28) {
+    const normalizedLabel = normalizeText(label);
+    if (normalizedLabel.length <= maxLength) {
+        return normalizedLabel;
+    }
+
+    return `${normalizedLabel.slice(0, Math.max(1, maxLength - 3)).trimEnd()}...`;
+}
+
+function appendWorkflowComparisonSummaryBadge(container, entry, badgeClass, placeholderText = "Not set") {
+    if (!container) {
+        return;
+    }
+
+    const badge = document.createElement("span");
+    badge.className = `badge rounded-pill ${badgeClass} text-truncate`;
+    badge.style.maxWidth = "14rem";
+    const label = entry ? normalizeText(entry.label || entry.id) : placeholderText;
+    badge.title = label;
+    badge.textContent = truncateWorkflowComparisonLabel(label);
+    container.appendChild(badge);
+}
+
+function renderWorkflowComparisonInlineSummary() {
+    const sourceEntry = getWorkflowComparisonEntry(getWorkflowComparisonSourceId());
+    const targetEntries = getWorkflowComparisonTargetIds()
+        .map((targetId) => getWorkflowComparisonEntry(targetId))
+        .filter(Boolean);
+
+    clearElementChildren(workflowComparisonInlineSourceTags);
+    clearElementChildren(workflowComparisonInlineTargetTags);
+
+    appendWorkflowComparisonSummaryBadge(
+        workflowComparisonInlineSourceTags,
+        sourceEntry,
+        sourceEntry ? "text-bg-primary" : "text-bg-light border text-body-secondary",
+        "Not set"
+    );
+
+    if (targetEntries.length) {
+        targetEntries.forEach((targetEntry) => {
+            appendWorkflowComparisonSummaryBadge(workflowComparisonInlineTargetTags, targetEntry, "text-bg-secondary", "");
+        });
+    } else {
+        appendWorkflowComparisonSummaryBadge(workflowComparisonInlineTargetTags, null, "text-bg-light border text-body-secondary", "None selected");
+    }
+
+    if (workflowComparisonEditButtonLabel) {
+        workflowComparisonEditButtonLabel.textContent = getSelectedWorkflowComparisonTargetIds().length ? "Edit Compare" : "Set Up Compare";
+    }
+}
+
+function createWorkflowComparisonEmptyState(messageText) {
+    const emptyState = document.createElement("div");
+    emptyState.className = "text-muted small border rounded-3 p-3 bg-body";
+    emptyState.textContent = messageText;
+    return emptyState;
+}
+
+function renderWorkflowComparisonEmptyState(container, messageText) {
+    clearElementChildren(container);
+    container?.appendChild(createWorkflowComparisonEmptyState(messageText));
+}
+
+function buildWorkflowComparisonSelectionSummary() {
+    const sourceEntry = getWorkflowComparisonEntry(getWorkflowComparisonSourceId());
+    const targetCount = getWorkflowComparisonTargetIds().length;
+
+    if (!sourceEntry && !targetCount) {
+        return "Choose one Source and at least one Target.";
+    }
+    if (!sourceEntry) {
+        return "Choose one Source for this comparison.";
+    }
+    if (!targetCount) {
+        return `Choose at least one Target for ${sourceEntry.label || sourceEntry.id}.`;
+    }
+
+    return `Comparing ${sourceEntry.label || sourceEntry.id} to ${targetCount} ${targetCount === 1 ? "target" : "targets"}.`;
+}
+
+function createWorkflowComparisonButton(label, className, dataName, dataValue, disabled = false) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = className;
+    button.textContent = label;
+    button.disabled = disabled;
+    button.dataset[dataName] = dataValue;
+    return button;
+}
+
+function createWorkflowComparisonCard(entry, badgeLabel, badgeClass, actions = []) {
+    const card = document.createElement("div");
+    card.className = "border rounded-3 p-2 bg-body d-flex flex-column gap-2";
+    card.draggable = true;
+    card.dataset.workflowComparisonDragId = entry.id;
+
+    const header = document.createElement("div");
+    header.className = "d-flex align-items-start justify-content-between gap-2";
+
+    const textWrap = document.createElement("div");
+    textWrap.className = "flex-grow-1";
+    textWrap.style.minWidth = "0";
+
+    const title = document.createElement("div");
+    title.className = "small fw-semibold text-body";
+    title.textContent = entry.label || entry.id;
+
+    const details = document.createElement("div");
+    details.className = "small text-muted";
+    details.textContent = entry.groupLabel || "Ready to compare";
+
+    const badge = document.createElement("span");
+    badge.className = `badge ${badgeClass}`;
+    badge.textContent = badgeLabel;
+
+    textWrap.append(title, details);
+    header.append(textWrap, badge);
+    card.appendChild(header);
+
+    if (actions.length) {
+        const actionWrap = document.createElement("div");
+        actionWrap.className = "d-flex flex-wrap gap-2";
+        actions.forEach((action) => actionWrap.appendChild(action));
+        card.appendChild(actionWrap);
+    }
+
+    return card;
+}
+
+function renderWorkflowComparisonAvailableList() {
+    if (!workflowComparisonAvailableList) {
+        return;
+    }
+
+    clearElementChildren(workflowComparisonAvailableList);
+
+    const candidates = getWorkflowComparisonCandidateCatalog();
+    if (!candidates.length) {
+        workflowComparisonAvailableList.appendChild(createWorkflowComparisonEmptyState("No document versions available yet. Select documents in the workflow picker and refresh from the picker."));
+        return;
+    }
+
+    const sourceId = getWorkflowComparisonSourceId();
+    const selectedIds = getSelectedWorkflowComparisonTargetIds();
+    const selectedIdSet = new Set(selectedIds);
+    const groups = new Map();
+    candidates.forEach((candidate) => {
+        const groupLabel = candidate.groupLabel || "Document";
+        if (!groups.has(groupLabel)) {
+            groups.set(groupLabel, []);
+        }
+        groups.get(groupLabel).push(candidate);
+    });
+
+    groups.forEach((items, groupLabel) => {
+        const groupWrap = document.createElement("div");
+        groupWrap.className = "d-flex flex-column gap-2";
+
+        const heading = document.createElement("div");
+        heading.className = "small text-uppercase text-muted fw-semibold";
+        heading.textContent = groupLabel;
+        groupWrap.appendChild(heading);
+
+        items.forEach((candidate) => {
+            const isSource = candidate.id === sourceId;
+            const isSelected = selectedIdSet.has(candidate.id);
+            const canMoveSourceToTarget = isSource && selectedIds.length > 1;
+            const badgeClass = isSource
+                ? "text-bg-primary"
+                : isSelected
+                    ? "text-bg-info"
+                    : "text-bg-light border text-body-secondary";
+            const badgeLabel = isSource ? "Source" : isSelected ? "Target" : "Version";
+            const sourceButton = createWorkflowComparisonButton(
+                isSource ? "Source selected" : "Use as Source",
+                "btn btn-outline-primary btn-sm",
+                "workflowComparisonSetSourceId",
+                candidate.id,
+                isSource
+            );
+            const targetButton = createWorkflowComparisonButton(
+                isSource ? (canMoveSourceToTarget ? "Move to Target" : "Source selected") : (isSelected ? "Added to Target" : "Add to Target"),
+                "btn btn-outline-secondary btn-sm",
+                "workflowComparisonSetTargetId",
+                candidate.id,
+                (isSelected && !isSource) || (isSource && !canMoveSourceToTarget)
+            );
+            groupWrap.appendChild(createWorkflowComparisonCard(candidate, badgeLabel, badgeClass, [sourceButton, targetButton]));
+        });
+
+        workflowComparisonAvailableList.appendChild(groupWrap);
+    });
+}
+
+function renderWorkflowComparisonSelectionList() {
+    const sourceEntry = getWorkflowComparisonEntry(getWorkflowComparisonSourceId());
+    const targetEntries = getWorkflowComparisonTargetIds()
+        .map((targetId) => getWorkflowComparisonEntry(targetId))
+        .filter(Boolean);
+
+    if (workflowComparisonSelectionSummary) {
+        workflowComparisonSelectionSummary.textContent = buildWorkflowComparisonSelectionSummary();
+    }
+
+    if (sourceEntry) {
+        const actions = [];
+        if (targetEntries.length > 0) {
+            actions.push(createWorkflowComparisonButton("Move to Target", "btn btn-outline-secondary btn-sm", "workflowComparisonSetTargetId", sourceEntry.id));
+        }
+        actions.push(createWorkflowComparisonButton("Remove", "btn btn-outline-danger btn-sm", "workflowComparisonRemoveId", sourceEntry.id));
+        clearElementChildren(workflowComparisonSourceDropzone);
+        workflowComparisonSourceDropzone?.appendChild(createWorkflowComparisonCard(sourceEntry, "Source", "text-bg-primary", actions));
+    } else {
+        renderWorkflowComparisonEmptyState(workflowComparisonSourceDropzone, "Drop a version here, or use Use as Source.");
+    }
+
+    clearElementChildren(workflowComparisonSelectionList);
+    if (!targetEntries.length) {
+        workflowComparisonSelectionList?.appendChild(createWorkflowComparisonEmptyState("Drop one or more versions here, or use Add to Target."));
+        return;
+    }
+
+    targetEntries.forEach((targetEntry, index) => {
+        workflowComparisonSelectionList?.appendChild(createWorkflowComparisonCard(targetEntry, `Target ${index + 1}`, "text-bg-secondary", [
+            createWorkflowComparisonButton("Use as Source", "btn btn-outline-primary btn-sm", "workflowComparisonPromoteId", targetEntry.id),
+            createWorkflowComparisonButton("Remove", "btn btn-outline-danger btn-sm", "workflowComparisonRemoveId", targetEntry.id),
+        ]));
+    });
+}
+
+function renderWorkflowComparisonUi() {
+    renderWorkflowComparisonInlineSummary();
+    renderWorkflowComparisonAvailableList();
+    renderWorkflowComparisonSelectionList();
+}
+
+function setWorkflowComparisonLoadingState(messageText = "Loading document versions...") {
+    if (workflowComparisonSelectionSummary) {
+        workflowComparisonSelectionSummary.textContent = messageText;
+    }
+    renderWorkflowComparisonEmptyState(workflowComparisonAvailableList, messageText);
+    renderWorkflowComparisonEmptyState(workflowComparisonSourceDropzone, "Source will appear here after versions load.");
+    renderWorkflowComparisonEmptyState(workflowComparisonSelectionList, "Targets will appear here after versions load.");
+}
+
+function assignWorkflowComparisonSource(versionId) {
+    const normalizedVersionId = normalizeText(versionId);
+    const option = getWorkflowComparisonOption(normalizedVersionId);
+    if (!normalizedVersionId || !option) {
+        return;
+    }
+
+    option.selected = true;
+    syncWorkflowComparisonLeftOptions(normalizedVersionId);
+}
+
+function assignWorkflowComparisonTarget(versionId) {
+    const normalizedVersionId = normalizeText(versionId);
+    const option = getWorkflowComparisonOption(normalizedVersionId);
+    if (!normalizedVersionId || !option) {
+        return;
+    }
+
+    const currentSourceId = getWorkflowComparisonSourceId();
+    const selectedIds = getSelectedWorkflowComparisonTargetIds();
+    if (currentSourceId === normalizedVersionId && selectedIds.length > 1) {
+        const nextSourceId = selectedIds.find((targetId) => targetId !== normalizedVersionId) || "";
+        syncWorkflowComparisonLeftOptions(nextSourceId);
+        return;
+    }
+
+    if (option.selected) {
+        renderWorkflowComparisonUi();
+        return;
+    }
+
+    option.selected = true;
+    syncWorkflowComparisonLeftOptions(currentSourceId);
+}
+
+function removeWorkflowComparisonTarget(versionId) {
+    const normalizedVersionId = normalizeText(versionId);
+    const option = getWorkflowComparisonOption(normalizedVersionId);
+    if (!normalizedVersionId || !option) {
+        return;
+    }
+
+    const currentSourceId = getWorkflowComparisonSourceId();
+    option.selected = false;
+    syncWorkflowComparisonLeftOptions(currentSourceId === normalizedVersionId ? "" : currentSourceId);
+}
+
+function toggleWorkflowComparisonDropzoneHighlight(dropzone, isHighlighted) {
+    if (!dropzone) {
+        return;
+    }
+
+    dropzone.classList.toggle("border-primary", isHighlighted);
+    dropzone.classList.toggle("bg-primary-subtle", isHighlighted);
+}
+
+function handleWorkflowComparisonBoardClick(event) {
+    const sourceButton = event.target.closest("[data-workflow-comparison-set-source-id]");
+    if (sourceButton) {
+        event.preventDefault();
+        assignWorkflowComparisonSource(sourceButton.dataset.workflowComparisonSetSourceId);
+        return;
+    }
+
+    const targetButton = event.target.closest("[data-workflow-comparison-set-target-id]");
+    if (targetButton) {
+        event.preventDefault();
+        assignWorkflowComparisonTarget(targetButton.dataset.workflowComparisonSetTargetId);
+        return;
+    }
+
+    const removeButton = event.target.closest("[data-workflow-comparison-remove-id]");
+    if (removeButton) {
+        event.preventDefault();
+        removeWorkflowComparisonTarget(removeButton.dataset.workflowComparisonRemoveId);
+        return;
+    }
+
+    const promoteButton = event.target.closest("[data-workflow-comparison-promote-id]");
+    if (promoteButton) {
+        event.preventDefault();
+        assignWorkflowComparisonSource(promoteButton.dataset.workflowComparisonPromoteId);
+    }
+}
+
+function handleWorkflowComparisonDragStart(event) {
+    const dragCard = event.target.closest("[data-workflow-comparison-drag-id]");
+    if (!dragCard || !event.dataTransfer) {
+        return;
+    }
+
+    const dragId = normalizeText(dragCard.dataset.workflowComparisonDragId);
+    if (!dragId) {
+        return;
+    }
+
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", dragId);
+    dragCard.setAttribute("aria-grabbed", "true");
+}
+
+function handleWorkflowComparisonDragEnd(event) {
+    event.target.closest("[data-workflow-comparison-drag-id]")?.setAttribute("aria-grabbed", "false");
+    toggleWorkflowComparisonDropzoneHighlight(workflowComparisonSourceDropzone, false);
+    toggleWorkflowComparisonDropzoneHighlight(workflowComparisonSelectionList, false);
+}
+
+function attachWorkflowComparisonDropzoneEvents(dropzone, dropHandler) {
+    if (!dropzone) {
+        return;
+    }
+
+    dropzone.addEventListener("dragover", (event) => {
+        event.preventDefault();
+        toggleWorkflowComparisonDropzoneHighlight(dropzone, true);
+    });
+
+    dropzone.addEventListener("dragleave", (event) => {
+        if (!dropzone.contains(event.relatedTarget)) {
+            toggleWorkflowComparisonDropzoneHighlight(dropzone, false);
+        }
+    });
+
+    dropzone.addEventListener("drop", (event) => {
+        event.preventDefault();
+        toggleWorkflowComparisonDropzoneHighlight(dropzone, false);
+        const droppedId = normalizeText(event.dataTransfer?.getData("text/plain"));
+        if (droppedId) {
+            dropHandler(droppedId);
+        }
+    });
+}
+
 function syncWorkflowComparisonLeftOptions(preferredLeftId = "") {
     if (!workflowComparisonLeftDocumentIdInput || !workflowComparisonRightDocumentIdsInput) {
         return;
@@ -570,6 +1275,7 @@ function syncWorkflowComparisonLeftOptions(preferredLeftId = "") {
     });
 
     workflowComparisonLeftDocumentIdInput.disabled = selectedTargetOptions.length === 0;
+    renderWorkflowComparisonUi();
 }
 
 function setWorkflowComparisonTargetOptions(comparisonGroups = [], selectedTargetIds = [], preferredLeftId = "") {
@@ -578,7 +1284,7 @@ function setWorkflowComparisonTargetOptions(comparisonGroups = [], selectedTarge
     }
 
     const normalizedSelectedTargetIds = new Set((selectedTargetIds || []).map((value) => normalizeText(value)).filter(Boolean));
-    workflowComparisonRightDocumentIdsInput.innerHTML = "";
+    clearElementChildren(workflowComparisonRightDocumentIdsInput);
 
     comparisonGroups.forEach(({ groupLabel, versions }) => {
         const selectedIdsForGroup = versions
@@ -597,6 +1303,7 @@ function setWorkflowComparisonTargetOptions(comparisonGroups = [], selectedTarge
             const option = document.createElement("option");
             option.value = normalizeText(version.id);
             option.textContent = buildWorkflowVersionLabel(version, groupLabel);
+            option.dataset.groupLabel = normalizeText(groupLabel) || "Document";
             option.selected = defaultSelectedIds.has(normalizeText(version.id));
             optionGroup.appendChild(option);
         });
@@ -614,12 +1321,13 @@ function setWorkflowComparisonSavedTargets(targetIds = [], preferredLeftId = "")
     }
 
     const normalizedTargetIds = Array.from(new Set((targetIds || []).map((value) => normalizeText(value)).filter(Boolean)));
-    workflowComparisonRightDocumentIdsInput.innerHTML = "";
+    clearElementChildren(workflowComparisonRightDocumentIdsInput);
 
     normalizedTargetIds.forEach((targetId) => {
         const option = document.createElement("option");
         option.value = targetId;
         option.textContent = targetId;
+        option.dataset.groupLabel = "Saved Versions";
         option.selected = true;
         workflowComparisonRightDocumentIdsInput.appendChild(option);
     });
@@ -660,11 +1368,17 @@ async function loadWorkflowComparisonVersionTargets({
 
     const requestToken = ++workflowComparisonVersionLoadToken;
     workflowComparisonRightDocumentIdsInput.disabled = true;
-    workflowComparisonRightDocumentIdsInput.innerHTML = '<option value="" disabled>Loading versions...</option>';
+    clearElementChildren(workflowComparisonRightDocumentIdsInput);
+    const loadingOption = document.createElement("option");
+    loadingOption.value = "";
+    loadingOption.disabled = true;
+    loadingOption.textContent = "Loading versions...";
+    workflowComparisonRightDocumentIdsInput.appendChild(loadingOption);
     if (workflowComparisonLeftDocumentIdInput) {
         workflowComparisonLeftDocumentIdInput.disabled = true;
-        workflowComparisonLeftDocumentIdInput.innerHTML = "";
+        clearElementChildren(workflowComparisonLeftDocumentIdInput);
     }
+    setWorkflowComparisonLoadingState();
 
     const comparisonGroups = await Promise.all(normalizedDocumentIds.map(async (documentId) => {
         let versions = [];
@@ -734,15 +1448,33 @@ function getDocumentActionConfig(workflow) {
         window_size: actionConfig.window_size ?? legacyAnalyzeConfig.window_size ?? "",
         window_percent: actionConfig.window_percent ?? legacyAnalyzeConfig.window_percent ?? "",
         max_retries_per_window: actionConfig.max_retries_per_window ?? legacyAnalyzeConfig.max_retries_per_window ?? 1,
+        target_mode: normalizeText(actionConfig.target_mode || legacyAnalyzeConfig.target_mode) || DOCUMENT_ANALYSIS_TARGET_SELECTED,
+        recent_window_minutes: actionConfig.recent_window_minutes ?? legacyAnalyzeConfig.recent_window_minutes ?? DEFAULT_RECENT_DOCUMENT_WINDOW_MINUTES,
     };
 }
 
 function getWorkflowDocumentActionSummary(workflow) {
     const config = getDocumentActionConfig(workflow);
+    if (config.type === DOCUMENT_ACTION_SEARCH) {
+        const documentCount = config.document_ids.length;
+        if (config.target_mode === DOCUMENT_ANALYSIS_TARGET_RECENT) {
+            const recentMinutes = Number.parseInt(config.recent_window_minutes || DEFAULT_RECENT_DOCUMENT_WINDOW_MINUTES, 10);
+            return `Search recent documents from the last ${recentMinutes || DEFAULT_RECENT_DOCUMENT_WINDOW_MINUTES} minutes`;
+        }
+        if (documentCount) {
+            return `Search ${documentCount} ${documentCount === 1 ? "document" : "documents"}`;
+        }
+        return "Search";
+    }
+
     if (config.type === DOCUMENT_ACTION_ANALYZE) {
         const documentCount = config.document_ids.length;
         const unit = normalizeText(config.window_unit) || "pages";
         const modeSuffix = config.analysis_mode === DOCUMENT_ANALYSIS_MODE_PER_DOCUMENT ? " separately" : "";
+        if (config.target_mode === DOCUMENT_ANALYSIS_TARGET_RECENT) {
+            const recentMinutes = Number.parseInt(config.recent_window_minutes || DEFAULT_RECENT_DOCUMENT_WINDOW_MINUTES, 10);
+            return `Analyze${modeSuffix} recent documents from the last ${recentMinutes || DEFAULT_RECENT_DOCUMENT_WINDOW_MINUTES} minutes by ${unit}`;
+        }
         if (!documentCount) {
             return `Analyze${modeSuffix} by ${unit}`;
         }
@@ -751,6 +1483,10 @@ function getWorkflowDocumentActionSummary(workflow) {
 
     if (config.type === DOCUMENT_ACTION_COMPARISON) {
         const rightCount = config.right_document_ids.length;
+        if (config.target_mode === DOCUMENT_ANALYSIS_TARGET_RECENT) {
+            const recentMinutes = Number.parseInt(config.recent_window_minutes || DEFAULT_RECENT_DOCUMENT_WINDOW_MINUTES, 10);
+            return `Compare recent documents from the last ${recentMinutes || DEFAULT_RECENT_DOCUMENT_WINDOW_MINUTES} minutes`;
+        }
         if (!config.left_document_id) {
             return "Compare";
         }
@@ -765,44 +1501,58 @@ function updateSelectedDocumentsSummary() {
         return;
     }
 
-    const selectedIds = getSelectedWorkspaceDocumentIds();
+    const selectedIds = getWorkflowPickerSelectedDocumentIds();
     const selectedLabel = normalizeText(workflowWorkspaceConfig.selectedDocumentsLabel) || "workspace";
     if (!selectedIds.length) {
-        workflowSelectedDocumentsSummary.textContent = `No ${selectedLabel} documents selected right now.`;
+        workflowSelectedDocumentsSummary.textContent = `No ${selectedLabel} documents selected in the picker.`;
         return;
     }
 
-    workflowSelectedDocumentsSummary.textContent = `${selectedIds.length} ${selectedLabel} ${selectedIds.length === 1 ? "document is" : "documents are"} currently selected.`;
+    workflowSelectedDocumentsSummary.textContent = `${selectedIds.length} ${selectedLabel} ${selectedIds.length === 1 ? "document is" : "documents are"} selected in the picker.`;
+}
+
+function updateWorkflowAnalysisTargetModeFields() {
+    const targetMode = normalizeText(workflowAnalysisTargetModeSelect?.value) || DOCUMENT_ANALYSIS_TARGET_SELECTED;
+    const isRecentMode = targetMode === DOCUMENT_ANALYSIS_TARGET_RECENT;
+    setElementVisibility(workflowDocumentPickerCard, !isRecentMode);
+    setElementVisibility(workflowAnalysisRecentWindowGroup, isRecentMode);
 }
 
 function updateDocumentActionFields() {
-    const actionType = normalizeText(workflowDocumentActionTypeSelect?.value) || DOCUMENT_ACTION_NONE;
+    const actionType = normalizeText(workflowDocumentActionTypeSelect?.value) || DOCUMENT_ACTION_SEARCH;
     const hasDocumentAction = actionType !== DOCUMENT_ACTION_NONE;
+    const targetMode = normalizeText(workflowAnalysisTargetModeSelect?.value) || DOCUMENT_ANALYSIS_TARGET_SELECTED;
+    const isRecentMode = targetMode === DOCUMENT_ANALYSIS_TARGET_RECENT;
     setElementVisibility(workflowDocumentTargetsFields, hasDocumentAction);
-    setElementVisibility(workflowAnalysisTargetFields, actionType === DOCUMENT_ACTION_ANALYZE);
-    setElementVisibility(workflowComparisonTargetFields, actionType === DOCUMENT_ACTION_COMPARISON);
+    setElementVisibility(workflowAnalysisTargetFields, hasDocumentAction);
+    setElementVisibility(workflowComparisonTargetFields, actionType === DOCUMENT_ACTION_COMPARISON && !isRecentMode);
+    syncWorkflowPickerActionType();
     syncWorkflowDocumentActionTooltip();
+    updateWorkflowAnalysisTargetModeFields();
 
     if (workflowDocumentActionHelp) {
         workflowDocumentActionHelp.textContent = getDocumentActionDescription(actionType);
     }
 
-    if (actionType === DOCUMENT_ACTION_COMPARISON) {
+    if (actionType === DOCUMENT_ACTION_COMPARISON && !isRecentMode) {
         syncWorkflowComparisonLeftOptions();
+    } else {
+        workflowComparisonModal?.hide();
+        renderWorkflowComparisonUi();
     }
 
     updateSelectedDocumentsSummary();
 }
 
 async function applySelectedWorkspaceDocumentsToWorkflow() {
-    const selectedIds = getSelectedWorkspaceDocumentIds();
+    const selectedIds = getWorkflowPickerSelectedDocumentIds();
     if (!selectedIds.length) {
         const selectedLabel = normalizeText(workflowWorkspaceConfig.selectedDocumentsLabel) || "workspace";
-        showToast(`Select one or more documents in the ${selectedLabel} first.`, "warning");
+        showToast(`Select one or more ${selectedLabel} documents in the picker first.`, "warning");
         return;
     }
 
-    const actionType = normalizeText(workflowDocumentActionTypeSelect?.value) || DOCUMENT_ACTION_NONE;
+    const actionType = normalizeText(workflowDocumentActionTypeSelect?.value) || DOCUMENT_ACTION_SEARCH;
     const workflowMaxDocuments = getWorkflowDocumentActionMaxDocuments(actionType);
 
     const limitedSelectedIds = selectedIds.slice(0, workflowMaxDocuments);
@@ -822,10 +1572,7 @@ async function applySelectedWorkspaceDocumentsToWorkflow() {
             preferredLeftId: normalizeText(workflowComparisonLeftDocumentIdInput.value),
         });
     } else if (workflowAnalysisDocumentIdsInput) {
-        workflowAnalysisDocumentIdsInput.value = limitedSelectedIds.join(", ");
-    }
-    if (workflowAnalysisDocScopeSelect) {
-        workflowAnalysisDocScopeSelect.value = getWorkflowDocumentScope();
+        setWorkflowPickerSelectedDocumentIds(limitedSelectedIds);
     }
 }
 
@@ -1525,7 +2272,13 @@ function resetWorkflowForm() {
         workflowAlertPrioritySelect.value = "none";
     }
     if (workflowDocumentActionTypeSelect) {
-        workflowDocumentActionTypeSelect.value = DOCUMENT_ACTION_NONE;
+        workflowDocumentActionTypeSelect.value = DOCUMENT_ACTION_SEARCH;
+    }
+    if (workflowAnalysisTargetModeSelect) {
+        workflowAnalysisTargetModeSelect.value = DOCUMENT_ANALYSIS_TARGET_SELECTED;
+    }
+    if (workflowAnalysisRecentMinutesInput) {
+        workflowAnalysisRecentMinutesInput.value = String(DEFAULT_RECENT_DOCUMENT_WINDOW_MINUTES);
     }
     if (workflowAnalysisDocScopeSelect) {
         workflowAnalysisDocScopeSelect.value = getWorkflowDocumentScope();
@@ -1562,6 +2315,9 @@ function resetWorkflowForm() {
     if (workflowAnalysisRetriesInput) {
         workflowAnalysisRetriesInput.value = "1";
     }
+    workflowSavedComparisonTargetIds = [];
+    workflowSavedComparisonPreferredLeftId = "";
+    clearWorkflowChatDocumentSelection();
     if (workflowSaveBtn) {
         workflowSaveBtn.disabled = false;
         workflowSaveBtn.textContent = `Save ${getWorkflowLabel()}`;
@@ -1643,6 +2399,14 @@ async function openWorkflowModal(workflow = null) {
         if (workflowAnalysisDocScopeSelect) {
             workflowAnalysisDocScopeSelect.value = documentAction.doc_scope;
         }
+        if (workflowAnalysisTargetModeSelect) {
+            workflowAnalysisTargetModeSelect.value = documentAction.target_mode === DOCUMENT_ANALYSIS_TARGET_RECENT
+                ? DOCUMENT_ANALYSIS_TARGET_RECENT
+                : DOCUMENT_ANALYSIS_TARGET_SELECTED;
+        }
+        if (workflowAnalysisRecentMinutesInput) {
+            workflowAnalysisRecentMinutesInput.value = String(documentAction.recent_window_minutes || DEFAULT_RECENT_DOCUMENT_WINDOW_MINUTES);
+        }
         if (workflowAnalysisDocumentIdsInput) {
             workflowAnalysisDocumentIdsInput.value = joinCsvList(documentAction.document_ids);
         }
@@ -1693,8 +2457,12 @@ async function openWorkflowModal(workflow = null) {
     const documentAction = workflow ? getDocumentActionConfig(workflow) : null;
     if (documentAction?.type === DOCUMENT_ACTION_COMPARISON) {
         const savedTargetIds = [documentAction.left_document_id, ...documentAction.right_document_ids].filter(Boolean);
+        workflowSavedComparisonTargetIds = savedTargetIds;
+        workflowSavedComparisonPreferredLeftId = documentAction.left_document_id;
         setWorkflowComparisonSavedTargets(savedTargetIds, documentAction.left_document_id);
     } else {
+        workflowSavedComparisonTargetIds = [];
+        workflowSavedComparisonPreferredLeftId = "";
         setWorkflowComparisonSavedTargets([], "");
     }
 
@@ -1703,21 +2471,35 @@ async function openWorkflowModal(workflow = null) {
     updateFileSyncFields();
     updateDocumentActionFields();
     workflowModal.show();
+    await initializeWorkflowDocumentPicker(documentAction || {});
 }
 
 function buildWorkflowPayload() {
     const runnerType = normalizeText(workflowRunnerTypeSelect?.value) || "model";
     const triggerType = normalizeText(workflowTriggerTypeSelect?.value) || "manual";
-    const documentActionType = normalizeText(workflowDocumentActionTypeSelect?.value) || DOCUMENT_ACTION_NONE;
-    const analysisDocumentIds = parseCsvList(workflowAnalysisDocumentIdsInput?.value);
+    const documentActionType = normalizeText(workflowDocumentActionTypeSelect?.value) || DOCUMENT_ACTION_SEARCH;
+    const analysisTargetMode = normalizeText(workflowAnalysisTargetModeSelect?.value) === DOCUMENT_ANALYSIS_TARGET_RECENT
+        ? DOCUMENT_ANALYSIS_TARGET_RECENT
+        : DOCUMENT_ANALYSIS_TARGET_SELECTED;
+    const targetDocumentIds = analysisTargetMode === DOCUMENT_ANALYSIS_TARGET_RECENT
+        ? []
+        : getWorkflowPickerSelectedDocumentIds();
     const comparisonLeftDocumentId = normalizeText(workflowComparisonLeftDocumentIdInput?.value);
-    const comparisonTargetDocumentIds = getSelectedWorkflowComparisonTargetIds();
-    const comparisonRightDocumentIds = comparisonTargetDocumentIds.filter((documentId) => documentId !== comparisonLeftDocumentId);
+    const comparisonTargetDocumentIds = analysisTargetMode === DOCUMENT_ANALYSIS_TARGET_RECENT
+        ? []
+        : getSelectedWorkflowComparisonTargetIds();
+    const selectedDocumentActionIds = documentActionType === DOCUMENT_ACTION_COMPARISON
+        ? comparisonTargetDocumentIds
+        : targetDocumentIds;
+    const comparisonRightDocumentIds = analysisTargetMode === DOCUMENT_ANALYSIS_TARGET_RECENT
+        ? []
+        : comparisonTargetDocumentIds.filter((documentId) => documentId !== comparisonLeftDocumentId);
     const analysisGroupIds = parseCsvList(workflowAnalysisGroupIdsInput?.value);
     const analysisPublicWorkspaceIds = parseCsvList(workflowAnalysisPublicWorkspaceIdsInput?.value);
     const rawWindowSize = normalizeText(workflowAnalysisWindowSizeInput?.value);
     const rawWindowPercent = normalizeText(workflowAnalysisWindowPercentInput?.value);
     const rawRetries = normalizeText(workflowAnalysisRetriesInput?.value) || "1";
+    const rawRecentMinutes = normalizeText(workflowAnalysisRecentMinutesInput?.value) || String(DEFAULT_RECENT_DOCUMENT_WINDOW_MINUTES);
     const analysisMode = workflowAnalysisPerDocumentToggle?.checked
         ? DOCUMENT_ANALYSIS_MODE_PER_DOCUMENT
         : DOCUMENT_ANALYSIS_MODE_COMBINED;
@@ -1745,10 +2527,8 @@ function buildWorkflowPayload() {
         model_id: "",
         document_action: {
             type: documentActionType,
-            document_ids: documentActionType === DOCUMENT_ACTION_ANALYZE
-                ? analysisDocumentIds
-                : comparisonTargetDocumentIds,
-            left_document_id: documentActionType === DOCUMENT_ACTION_COMPARISON ? comparisonLeftDocumentId : "",
+            document_ids: documentActionType !== DOCUMENT_ACTION_NONE ? selectedDocumentActionIds : [],
+            left_document_id: documentActionType === DOCUMENT_ACTION_COMPARISON && analysisTargetMode !== DOCUMENT_ANALYSIS_TARGET_RECENT ? comparisonLeftDocumentId : "",
             right_document_ids: documentActionType === DOCUMENT_ACTION_COMPARISON ? comparisonRightDocumentIds : [],
             analysis_mode: documentActionType === DOCUMENT_ACTION_ANALYZE ? analysisMode : DOCUMENT_ANALYSIS_MODE_COMBINED,
             doc_scope: normalizeText(workflowAnalysisDocScopeSelect?.value) || getWorkflowDocumentScope(),
@@ -1762,10 +2542,12 @@ function buildWorkflowPayload() {
             window_size: rawWindowSize ? Number(rawWindowSize) : null,
             window_percent: rawWindowPercent ? Number(rawWindowPercent) : null,
             max_retries_per_window: Number(rawRetries),
+            target_mode: documentActionType !== DOCUMENT_ACTION_NONE ? analysisTargetMode : DOCUMENT_ANALYSIS_TARGET_SELECTED,
+            recent_window_minutes: Number(rawRecentMinutes),
         },
         analyze: {
             enabled: documentActionType === DOCUMENT_ACTION_ANALYZE,
-            document_ids: documentActionType === DOCUMENT_ACTION_ANALYZE ? analysisDocumentIds : [],
+            document_ids: documentActionType === DOCUMENT_ACTION_ANALYZE ? targetDocumentIds : [],
             doc_scope: normalizeText(workflowAnalysisDocScopeSelect?.value) || getWorkflowDocumentScope(),
             active_group_ids: documentActionType === DOCUMENT_ACTION_ANALYZE
                 ? workflowWorkspaceConfig.scope === "group" && getWorkflowActiveGroupId()
@@ -1778,6 +2560,8 @@ function buildWorkflowPayload() {
             window_size: rawWindowSize ? Number(rawWindowSize) : null,
             window_percent: rawWindowPercent ? Number(rawWindowPercent) : null,
             max_retries_per_window: Number(rawRetries),
+            target_mode: documentActionType === DOCUMENT_ACTION_ANALYZE ? analysisTargetMode : DOCUMENT_ANALYSIS_TARGET_SELECTED,
+            recent_window_minutes: Number(rawRecentMinutes),
         },
     };
 
@@ -1795,16 +2579,22 @@ function buildWorkflowPayload() {
         }
     }
     const usesDynamicFileSyncTargets = payload.file_sync.enabled && payload.file_sync.use_changed_documents;
-    if (documentActionType === DOCUMENT_ACTION_ANALYZE && !payload.document_action.document_ids.length && !usesDynamicFileSyncTargets) {
-        throw new Error("Add one or more document ids for analysis.");
+    if (documentActionType === DOCUMENT_ACTION_SEARCH && analysisTargetMode === DOCUMENT_ANALYSIS_TARGET_SELECTED && !payload.document_action.document_ids.length) {
+        throw new Error("Select one or more documents for search.");
     }
-    if (documentActionType === DOCUMENT_ACTION_COMPARISON && payload.document_action.document_ids.length < 2) {
+    if (documentActionType === DOCUMENT_ACTION_ANALYZE && analysisTargetMode === DOCUMENT_ANALYSIS_TARGET_SELECTED && !payload.document_action.document_ids.length && !usesDynamicFileSyncTargets) {
+        throw new Error("Select one or more documents for analysis.");
+    }
+    if (documentActionType !== DOCUMENT_ACTION_NONE && analysisTargetMode === DOCUMENT_ANALYSIS_TARGET_RECENT && (!Number.isInteger(payload.document_action.recent_window_minutes) || payload.document_action.recent_window_minutes < 1 || payload.document_action.recent_window_minutes > 1440)) {
+        throw new Error("Recent document window must be between 1 and 1440 minutes.");
+    }
+    if (documentActionType === DOCUMENT_ACTION_COMPARISON && analysisTargetMode === DOCUMENT_ANALYSIS_TARGET_SELECTED && payload.document_action.document_ids.length < 2) {
         throw new Error("Select at least two document versions for compare.");
     }
-    if (documentActionType === DOCUMENT_ACTION_COMPARISON && !payload.document_action.left_document_id) {
+    if (documentActionType === DOCUMENT_ACTION_COMPARISON && analysisTargetMode === DOCUMENT_ANALYSIS_TARGET_SELECTED && !payload.document_action.left_document_id) {
         throw new Error("Add one Source document id for compare.");
     }
-    if (documentActionType === DOCUMENT_ACTION_COMPARISON && !payload.document_action.right_document_ids.length) {
+    if (documentActionType === DOCUMENT_ACTION_COMPARISON && analysisTargetMode === DOCUMENT_ANALYSIS_TARGET_SELECTED && !payload.document_action.right_document_ids.length) {
         throw new Error("Add one or more Target document ids for compare.");
     }
     if (documentActionType !== DOCUMENT_ACTION_NONE && !isDocumentActionEnabled(documentActionType)) {
@@ -2312,15 +3102,52 @@ function initializeWorkflowEvents() {
     workflowFileSyncWaitModeSelect?.addEventListener("change", updateFileSyncFields);
     workflowFileSyncContinueModeSelect?.addEventListener("change", updateFileSyncFields);
     workflowDocumentActionTypeSelect?.addEventListener("change", updateDocumentActionFields);
+    workflowAnalysisTargetModeSelect?.addEventListener("change", updateDocumentActionFields);
     workflowComparisonRightDocumentIdsInput?.addEventListener("change", () => {
         syncWorkflowComparisonLeftOptions();
+    });
+    workflowComparisonBoard?.addEventListener("click", handleWorkflowComparisonBoardClick);
+    workflowComparisonBoard?.addEventListener("dragstart", handleWorkflowComparisonDragStart);
+    workflowComparisonBoard?.addEventListener("dragend", handleWorkflowComparisonDragEnd);
+    attachWorkflowComparisonDropzoneEvents(workflowComparisonSourceDropzone, assignWorkflowComparisonSource);
+    attachWorkflowComparisonDropzoneEvents(workflowComparisonSelectionList, assignWorkflowComparisonTarget);
+    workflowComparisonRefreshBtn?.addEventListener("click", () => {
+        refreshWorkflowComparisonTargetsFromPicker().catch((error) => {
+            showToast(escapeHtml(error.message || "Unable to load selected document versions."), "danger");
+        });
+    });
+    workflowComparisonEditBtn?.addEventListener("click", () => {
+        workflowComparisonModal?.show();
+    });
+    workflowComparisonModalEl?.addEventListener("show.bs.modal", () => {
+        refreshWorkflowComparisonTargetsFromPicker().catch((error) => {
+            showToast(escapeHtml(error.message || "Unable to load selected document versions."), "danger");
+        });
     });
     workflowUseSelectedDocumentsBtn?.addEventListener("click", () => {
         applySelectedWorkspaceDocumentsToWorkflow().catch((error) => {
             showToast(escapeHtml(error.message || "Unable to apply selected documents."), "danger");
         });
     });
-    workflowModalEl?.addEventListener("hidden.bs.modal", resetWorkflowForm);
+    workflowModalEl?.addEventListener("hidden.bs.modal", () => {
+        workflowComparisonModal?.hide();
+        resetWorkflowForm();
+    });
+    window.addEventListener("chat:document-selection-changed", (event) => {
+        if (!workflowModalEl?.classList.contains("show")) {
+            return;
+        }
+        setWorkflowPickerSelectedDocumentIds(event.detail?.documentIds || []);
+        refreshWorkflowComparisonTargetsFromPicker().catch((error) => {
+            showToast(escapeHtml(error.message || "Unable to load selected document versions."), "danger");
+        });
+    });
+    window.addEventListener("chat:scope-changed", (event) => {
+        if (!workflowModalEl?.classList.contains("show")) {
+            return;
+        }
+        syncWorkflowScopeFieldsFromPicker(event.detail?.scopes || getDefaultWorkflowPickerScopes());
+    });
     workflowDeleteModalEl?.addEventListener("hidden.bs.modal", () => {
         workflowPendingDelete = null;
         if (workflowDeleteConfirmBtn) {
@@ -2339,6 +3166,7 @@ function initializeWorkflowEvents() {
             fileSyncSourcesLoaded = false;
             currentHistoryWorkflowId = "";
             workflowPendingDelete = null;
+            clearWorkflowChatDocumentSelection();
             void fetchUserWorkflows();
         });
     }

@@ -100,14 +100,14 @@
           <!-- Foundry-specific fields (shown only when agent_type is a Foundry runtime) -->
           <div id="agent-foundry-fields" class="d-none">
             <div class="alert alert-warning py-2 small" role="note" id="agent-foundry-mode-note">
-              Foundry-managed tools are used for this agent type and local actions are disabled.
+              Foundry agents and workflows run as the signed-in user and require that user to have access to the Foundry project. Local actions are disabled.
             </div>
             <div class="mb-3">
               <label for="agent-foundry-endpoint-select" class="form-label">Saved Foundry Connection (optional)</label>
               <select class="form-select" id="agent-foundry-endpoint-select">
                 <option value="">Optional: select a saved connection...</option>
               </select>
-              <div class="form-text">Select a saved connection to fetch resources and reuse endpoint credentials, or enter project details manually below.</div>
+              <div class="form-text">Select a saved connection to reuse project details, or enter them manually. Fetch and runtime access use the signed-in user's Foundry permissions.</div>
             </div>
             <div class="mb-3 d-flex flex-wrap gap-2 align-items-center">
               <button type="button" class="btn btn-outline-primary btn-sm" id="agent-foundry-fetch-btn">

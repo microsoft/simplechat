@@ -1,7 +1,11 @@
 # route_frontend_workspace.py
 
+import logging
+
 from config import *
 from functions_authentication import *
+from functions_group import get_user_groups
+from functions_public_workspaces import get_user_visible_public_workspace_docs
 from functions_settings import *
 from functions_file_sync import is_file_sync_enabled_for_user
 from functions_source_review import is_url_access_enabled_for_user
@@ -69,6 +73,41 @@ def register_route_frontend_workspace(app):
         global_model_endpoints = sanitize_model_endpoints_for_frontend(
             settings.get("model_endpoints", [])
         )
+        user_groups_simple = []
+        try:
+            user_groups_simple = [
+                {
+                    'id': str(group.get('id') or ''),
+                    'name': str(group.get('name') or group.get('id') or ''),
+                }
+                for group in get_user_groups(user_id)
+                if group.get('id')
+            ]
+        except Exception as exc:
+            log_event(
+                f'[WorkspaceRoute] Failed to load workflow group picker options: {exc}',
+                extra={'user_id': user_id},
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
+
+        user_visible_public_workspaces = []
+        try:
+            user_visible_public_workspaces = [
+                {
+                    'id': str(workspace.get('id') or ''),
+                    'name': str(workspace.get('name') or workspace.get('id') or ''),
+                }
+                for workspace in get_user_visible_public_workspace_docs(user_id)
+                if workspace.get('id')
+            ]
+        except Exception as exc:
+            log_event(
+                f'[WorkspaceRoute] Failed to load workflow public picker options: {exc}',
+                extra={'user_id': user_id},
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
 
         return render_template(
             'workspace.html', 
@@ -82,7 +121,9 @@ def register_route_frontend_workspace(app):
             allowed_extensions=allowed_extensions_str,
             personal_model_endpoints=personal_model_endpoints,
             global_model_endpoints=global_model_endpoints,
-            file_sync_enabled=file_sync_enabled
+            file_sync_enabled=file_sync_enabled,
+            user_groups=user_groups_simple,
+            user_visible_public_workspaces=user_visible_public_workspaces
         )
 
     

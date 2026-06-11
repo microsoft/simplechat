@@ -14,7 +14,7 @@ from semantic_kernel_plugins.plugin_invocation_thoughts import (
 )
 from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
 from semantic_kernel_plugins.chart_plugin import ChartPlugin
-from foundry_agent_runtime import FoundryAgentInvocationError, execute_foundry_agent, resolve_authority, resolve_authority
+from foundry_agent_runtime import FoundryAgentInvocationError, FoundryAgentUserAuthenticationRequired, execute_foundry_agent, resolve_authority
 from model_endpoint_clients import (
     MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
     MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
@@ -17555,7 +17555,18 @@ def register_route_backend_chats(app):
                             )
                             debug_print(f"❌ Agent streaming error: {stream_error}")
                             traceback.print_exc()
-                            yield f"data: {json.dumps({'error': f'Agent streaming failed: {str(stream_error)}'})}\n\n"
+                            error_payload = {'error': f'Agent streaming failed: {str(stream_error)}'}
+                            if isinstance(stream_error, FoundryAgentUserAuthenticationRequired):
+                                auth_response = getattr(stream_error, 'auth_response', {}) or {}
+                                error_payload = {
+                                    'error': str(stream_error),
+                                    'auth_required': True,
+                                    'scopes': auth_response.get('scopes') or [],
+                                }
+                                if auth_response.get('consent_url') or auth_response.get('auth_url'):
+                                    error_payload['consent_url'] = auth_response.get('consent_url') or auth_response.get('auth_url')
+                                    error_payload['auth_url'] = auth_response.get('auth_url') or auth_response.get('consent_url')
+                            yield f"data: {json.dumps(error_payload)}\n\n"
                             return
                         finally:
                             restore_agent_stream_retry_state(selected_agent, retry_state)
