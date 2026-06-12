@@ -2,6 +2,10 @@
 
 Fixed/Implemented in version: **0.241.191**
 
+Superseded in version: **0.241.196**
+
+> Current behavior: Foundry agent and workflow invocation now requires Microsoft Entra ID/RBAC. API-key authentication remains supported for model endpoint inference, but is no longer used for chat-selectable New Foundry applications or Foundry Workflow agents. See `FOUNDRY_AGENT_WORKFLOW_ENTRA_AUTH_BOUNDARY_FIX.md`.
+
 ## Issue Description
 
 Saved Azure AI Foundry model endpoints already supported API-key authentication for OpenAI-compatible GPT model calls, but Foundry agents and workflows always used delegated user access. Users with a Foundry project key could expose GPT models from that project, but could not use the same saved project connection or a manual project key to run Foundry applications and workflows.

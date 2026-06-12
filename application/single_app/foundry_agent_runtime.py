@@ -106,21 +106,6 @@ class DelegatedUserAccessTokenCredential:
         return None
 
 
-class FoundryApiKeyCredential:
-    """Small auth adapter for Foundry OpenAI-compatible REST calls."""
-
-    def __init__(self, api_key: str):
-        self.api_key = api_key
-
-    async def get_token(self, *scopes, **kwargs):
-        raise FoundryAgentInvocationError(
-            "API key auth is only supported for OpenAI-compatible Foundry applications and workflows."
-        )
-
-    async def close(self):
-        return None
-
-
 def _resolve_jwt_expires_on(token: str) -> int:
     token_parts = str(token or "").split(".")
     if len(token_parts) >= 2:
@@ -766,44 +751,6 @@ async def execute_foundry_workflow_agent_stream(
         workflow_settings,
         workflow_name,
     )
-    if _should_invoke_foundry_workflow_via_application_protocol(
-        workflow_settings,
-        global_settings,
-    ):
-        application_settings = _build_foundry_workflow_application_settings(
-            workflow_settings,
-        )
-        application_messages = _build_foundry_workflow_application_messages(
-            workflow_settings,
-            message_history,
-        )
-        application_metadata = {
-            **(metadata or {}),
-            "workflow_name": resolved_workflow_name,
-        }
-        debug_print(
-            f"[FoundryWorkflowAgent] Invoking API-key workflow '{resolved_workflow_name}' through application protocol."
-        )
-        async for stream_message in execute_new_foundry_agent_stream(
-            foundry_settings=application_settings,
-            global_settings=global_settings,
-            message_history=application_messages,
-            metadata=application_metadata,
-            max_completion_tokens=max_completion_tokens,
-        ):
-            if stream_message.metadata:
-                workflow_metadata = dict(stream_message.metadata)
-                workflow_metadata["workflow_name"] = resolved_workflow_name
-                workflow_metadata["runtime_type"] = "foundry_workflow"
-                workflow_metadata["foundry_workflow_protocol"] = "application"
-                yield FoundryAgentStreamMessage(
-                    content=stream_message.content,
-                    metadata=workflow_metadata,
-                )
-            else:
-                yield stream_message
-        return
-
     endpoint = _resolve_endpoint(workflow_settings, global_settings)
     responses_api_version = (
         workflow_settings.get("responses_api_version")
@@ -1029,53 +976,6 @@ def _resolve_foundry_workflow_name(
             "Foundry workflow agents require workflow_name in other_settings.foundry_workflow."
         )
     return workflow_name
-
-
-def _has_foundry_workflow_application_reference(
-    workflow_settings: Dict[str, Any],
-) -> bool:
-    return bool(
-        str(
-            workflow_settings.get("application_name")
-            or workflow_settings.get("application_id")
-            or ""
-        ).strip()
-    )
-
-
-def _should_invoke_foundry_workflow_via_application_protocol(
-    workflow_settings: Dict[str, Any],
-    global_settings: Dict[str, Any],
-) -> bool:
-    return (
-        _resolve_foundry_authentication_type(workflow_settings, global_settings) == "api_key"
-        and _has_foundry_workflow_application_reference(workflow_settings)
-    )
-
-
-def _build_foundry_workflow_application_settings(
-    workflow_settings: Dict[str, Any],
-) -> Dict[str, Any]:
-    application_settings = dict(workflow_settings or {})
-    if not application_settings.get("application_name") and application_settings.get("application_id"):
-        application_settings["application_name"] = str(
-            application_settings.get("application_id") or ""
-        ).split(":", 1)[0].strip()
-    return application_settings
-
-
-def _build_foundry_workflow_application_messages(
-    workflow_settings: Dict[str, Any],
-    message_history: List[ChatMessageContent],
-) -> List[ChatMessageContent]:
-    packed_text = _build_foundry_workflow_input_text(
-        message_history,
-        max_context_chars=_normalize_max_context_chars(
-            workflow_settings.get("max_context_chars")
-        ),
-        include_document_context=workflow_settings.get("include_document_context", True),
-    )
-    return [ChatMessageContent(role="user", content=packed_text)]
 
 
 def _build_foundry_workflow_agent_reference(
@@ -1940,7 +1840,9 @@ def _build_async_credential(
 ):
     auth_type = _resolve_foundry_authentication_type(foundry_settings, global_settings)
     if auth_type == "api_key":
-        return FoundryApiKeyCredential(_resolve_foundry_api_key(foundry_settings, global_settings))
+        raise FoundryAgentInvocationError(
+            "Foundry agent and workflow invocation requires Microsoft Entra ID/RBAC. API keys are only supported for model endpoint inference."
+        )
     if auth_type == "delegated_user":
         scope = _resolve_foundry_scope(foundry_settings, global_settings)
         token = _get_delegated_foundry_user_token(scope)
@@ -2020,33 +1922,12 @@ def _resolve_foundry_authentication_type(
     return "delegated_user"
 
 
-def _resolve_foundry_api_key(
-    foundry_settings: Dict[str, Any],
-    global_settings: Dict[str, Any],
-) -> str:
-    api_key = str(
-        foundry_settings.get("api_key")
-        or foundry_settings.get("key")
-        or global_settings.get("azure_ai_foundry_api_key")
-        or ""
-    ).strip()
-    if not api_key:
-        raise FoundryAgentInvocationError(
-            "Foundry API key authentication requires an api_key value."
-        )
-    return _resolve_secret_value(api_key)
-
-
 async def _build_foundry_rest_headers(
     foundry_settings: Dict[str, Any],
     global_settings: Dict[str, Any],
     credential,
 ) -> Dict[str, str]:
     headers = {"Content-Type": "application/json"}
-    if isinstance(credential, FoundryApiKeyCredential):
-        headers["api-key"] = credential.api_key
-        return headers
-
     scope = _resolve_foundry_scope(foundry_settings, global_settings)
     token = await credential.get_token(scope)
     headers["Authorization"] = f"Bearer {token.token}"

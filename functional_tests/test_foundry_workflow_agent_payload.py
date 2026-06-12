@@ -1,15 +1,14 @@
 # test_foundry_workflow_agent_payload.py
 """
 Functional test for Foundry workflow agent payload support.
-Version: 0.241.193
+Version: 0.241.196
 Implemented in: 0.241.127
 
 This test ensures that generic Foundry workflow agents can be validated,
 normalized, and stored without hardcoded workflow names. It also verifies
 that Foundry agents discovered from the project agents API can be invoked
-through the workflow agent_reference path.
-API-key discovered workflow agents are routed through the application protocol
-to avoid identity-gated agent_reference conversation item creation.
+through the workflow agent_reference path. API-key workflow invocation is
+rejected because Foundry agents and workflows require Entra/RBAC access.
 """
 
 import os
@@ -66,6 +65,7 @@ from foundry_agent_runtime import (  # noqa: E402
     _extract_new_foundry_stream_text,
     _update_new_foundry_stream_state,
     list_foundry_workflows_from_endpoint,
+    FoundryAgentInvocationError,
     NewFoundryStreamState,
 )
 from semantic_kernel.contents.chat_message_content import ChatMessageContent  # noqa: E402
@@ -333,25 +333,13 @@ def test_foundry_workflow_listing_normalizes_agents_as_workflows(monkeypatch):
     ]
 
 
-def test_foundry_workflow_api_key_agent_uses_application_protocol(monkeypatch):
-    """Validate API-key discovered workflow agents avoid identity-gated agent_reference calls."""
+def test_foundry_workflow_api_key_agent_is_rejected(monkeypatch):
+    """Validate API-key workflow agents do not use application-protocol fallback."""
     import foundry_agent_runtime
 
-    calls = {}
-
-    async def fake_execute_new_foundry_agent_stream(**kwargs):
-        calls["kwargs"] = kwargs
-        yield FoundryAgentStreamMessage(content="workflow response")
-        yield FoundryAgentStreamMessage(metadata={"model": "ExampleWorkflow"})
-
     def fail_create_conversation(*_args, **_kwargs):
-        raise AssertionError("API-key discovered workflows must not create Foundry conversations.")
+        raise AssertionError("API-key workflow auth should be rejected before creating Foundry conversations.")
 
-    monkeypatch.setattr(
-        foundry_agent_runtime,
-        "execute_new_foundry_agent_stream",
-        fake_execute_new_foundry_agent_stream,
-    )
     monkeypatch.setattr(
         foundry_agent_runtime,
         "_create_foundry_workflow_conversation",
@@ -366,7 +354,6 @@ def test_foundry_workflow_api_key_agent_uses_application_protocol(monkeypatch):
         "authentication_type": "api_key",
         "api_key": "test-key",
     }
-    messages = []
 
     async def collect_messages():
         async for stream_message in execute_foundry_workflow_agent_stream(
@@ -376,17 +363,14 @@ def test_foundry_workflow_api_key_agent_uses_application_protocol(monkeypatch):
             metadata={"conversation_id": "simplechat-conversation-id"},
             workflow_name="ExampleWorkflow",
         ):
-            messages.append(stream_message)
+            raise AssertionError(f"Unexpected stream message for rejected API-key auth: {stream_message}")
 
-    asyncio.run(collect_messages())
-
-    assert calls["kwargs"]["foundry_settings"]["application_name"] == "ExampleWorkflow"
-    assert calls["kwargs"]["foundry_settings"]["authentication_type"] == "api_key"
-    assert calls["kwargs"]["metadata"]["workflow_name"] == "ExampleWorkflow"
-    assert calls["kwargs"]["message_history"][0].content == "USER:\nHello workflow"
-    assert messages[0].content == "workflow response"
-    assert messages[-1].metadata["runtime_type"] == "foundry_workflow"
-    assert messages[-1].metadata["foundry_workflow_protocol"] == "application"
+    try:
+        asyncio.run(collect_messages())
+    except FoundryAgentInvocationError as exc:
+        assert "requires Microsoft Entra ID/RBAC" in str(exc)
+    else:
+        raise AssertionError("Expected FoundryAgentInvocationError for API-key workflow auth")
 
 
 def test_foundry_payload_metadata_omits_internal_scope_lists_and_caps_values():
@@ -626,7 +610,7 @@ if __name__ == "__main__":
         from _pytest.monkeypatch import MonkeyPatch
         monkeypatch = MonkeyPatch()
         test_foundry_workflow_listing_normalizes_agents_as_workflows(monkeypatch)
-        test_foundry_workflow_api_key_agent_uses_application_protocol(monkeypatch)
+        test_foundry_workflow_api_key_agent_is_rejected(monkeypatch)
         monkeypatch.undo()
     except ImportError:
         print("Skipping monkeypatch-based workflow listing test because pytest is unavailable.")

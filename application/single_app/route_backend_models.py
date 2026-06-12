@@ -148,23 +148,18 @@ def register_route_backend_models(app):
     def build_foundry_settings_from_endpoint(endpoint_cfg):
         connection = endpoint_cfg.get("connection", {}) or {}
         auth = endpoint_cfg.get("auth", {}) or {}
-        provider = (endpoint_cfg.get("provider") or "aoai").lower()
-        endpoint_auth_type = (auth.get("type") or "").strip().lower()
-        supports_api_key = provider in {"new_foundry", "foundry_workflow"}
-        authentication_type = "api_key" if supports_api_key and endpoint_auth_type in {"api_key", "key"} else "delegated_user"
         return {
             "endpoint": connection.get("endpoint"),
             "api_version": connection.get("project_api_version") or connection.get("api_version") or "v1",
             "responses_api_version": connection.get("openai_api_version") or connection.get("api_version") or "",
             "activity_api_version": connection.get("project_api_version") or connection.get("api_version") or "",
             "project_name": connection.get("project_name") or "",
-            "authentication_type": authentication_type,
+            "authentication_type": "delegated_user",
             "managed_identity_type": auth.get("managed_identity_type") or "system_assigned",
             "managed_identity_client_id": auth.get("managed_identity_client_id") or "",
             "tenant_id": auth.get("tenant_id") or "",
             "client_id": auth.get("client_id") or "",
             "client_secret": auth.get("client_secret") or "",
-            "api_key": auth.get("api_key") or "",
             "cloud": auth.get("management_cloud") or "",
             "authority": auth.get("custom_authority") or "",
             "foundry_scope": auth.get("foundry_scope") or "",

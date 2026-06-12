@@ -2,6 +2,10 @@
 
 Fixed in version: **0.241.193**
 
+Superseded in version: **0.241.196**
+
+> Current behavior: Foundry Workflow agents no longer route API-key configurations through the application protocol. Workflow invocation now uses Microsoft Entra ID/RBAC only, while API keys remain limited to model endpoint inference. See `FOUNDRY_AGENT_WORKFLOW_ENTRA_AUTH_BOUNDARY_FIX.md`.
+
 ## Issue Description
 
 Foundry Workflow agents configured with an API key could still fail during streaming with a downstream `403` from Foundry:

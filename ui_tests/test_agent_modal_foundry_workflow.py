@@ -2,12 +2,12 @@
 """
 UI test for Foundry workflow agent modal controls.
 
-Version: 0.241.193
+Version: 0.241.196
 Implemented in: 0.241.127
 
 This test ensures that the agent modal exposes the generic Foundry Workflow
-configuration controls without relying on hardcoded workflow names, including
-manual project API-key entry for key-backed workflow projects.
+configuration controls without relying on hardcoded workflow names. Workflow
+agents use Entra/RBAC auth and do not expose manual project API-key entry.
 """
 
 from pathlib import Path
@@ -40,11 +40,7 @@ def test_agent_modal_foundry_workflow_controls_render():
             assert version_select.locator("option").count() == 1
             expect(page.locator("#agent-foundry-workflow-include-document-context")).to_be_attached()
             expect(page.locator("#agent-foundry-workflow-max-context-chars")).to_be_attached()
-            api_key_input = page.locator("#agent-foundry-api-key")
-            expect(api_key_input).to_be_attached()
-            assert api_key_input.get_attribute("type") == "password"
-            assert api_key_input.get_attribute("autocomplete") == "new-password"
-            assert api_key_input.get_attribute("data-bwignore") == "true"
+            expect(page.locator("#agent-foundry-api-key")).to_have_count(0)
             expect(page.locator("#agent-foundry-mode-note")).to_contain_text("run as the signed-in user")
             expect(page.locator("#agent-foundry-mode-note")).to_contain_text("access to the Foundry project")
         finally:

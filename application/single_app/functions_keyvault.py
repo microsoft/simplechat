@@ -66,16 +66,6 @@ AGENT_SENSITIVE_SECRET_FIELDS = [
         "secret_name": lambda agent_name: agent_name,
         "enabled": lambda agent: agent.get("enable_agent_gpt_apim", False),
     },
-    {
-        "path": ("other_settings", "new_foundry", "api_key"),
-        "secret_name": lambda agent_name: "new-foundry-key",
-        "enabled": lambda agent: str(agent.get("agent_type") or "").strip().lower() == "new_foundry",
-    },
-    {
-        "path": ("other_settings", "foundry_workflow", "api_key"),
-        "secret_name": lambda agent_name: "workflow-key",
-        "enabled": lambda agent: str(agent.get("agent_type") or "").strip().lower() == "foundry_workflow",
-    },
 ]
 REDACTED_SECRET_VALUE = "***REDACTED***"
 

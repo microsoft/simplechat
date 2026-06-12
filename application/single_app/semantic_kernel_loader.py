@@ -720,18 +720,15 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
             or "delegated_user"
         ).strip().lower()
         endpoint_auth_type = str(auth.get("type") or "").strip().lower()
-        supports_foundry_api_key = agent_type in {"new_foundry", "foundry_workflow"}
         if saved_agent_auth_type in {"managed_identity", "service_principal"}:
             foundry_settings["authentication_type"] = saved_agent_auth_type
-        elif saved_agent_auth_type in {"api_key", "key"} and supports_foundry_api_key:
-            foundry_settings["authentication_type"] = "api_key"
-        elif endpoint_auth_type in {"api_key", "key"} and supports_foundry_api_key:
-            foundry_settings["authentication_type"] = "api_key"
         elif endpoint_auth_type in {"delegated_user", "user", "user_delegated", "signed_in_user"}:
             foundry_settings["authentication_type"] = "delegated_user"
-        elif not foundry_settings.get("authentication_type"):
+        else:
             foundry_settings["authentication_type"] = "delegated_user"
 
+        foundry_settings.pop("api_key", None)
+        foundry_settings.pop("key", None)
         if foundry_settings.get("authentication_type") in {"managed_identity", "service_principal"}:
             foundry_settings["managed_identity_type"] = auth.get("managed_identity_type") or foundry_settings.get("managed_identity_type")
             foundry_settings["managed_identity_client_id"] = auth.get("managed_identity_client_id") or foundry_settings.get("managed_identity_client_id")
@@ -741,24 +738,12 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
                 foundry_settings["client_secret"] = auth.get("client_secret")
             foundry_settings["cloud"] = auth.get("management_cloud") or foundry_settings.get("cloud")
             foundry_settings["authority"] = auth.get("custom_authority") or foundry_settings.get("authority")
-        elif foundry_settings.get("authentication_type") == "api_key":
-            foundry_settings.pop("managed_identity_type", None)
-            foundry_settings.pop("managed_identity_client_id", None)
-            foundry_settings.pop("tenant_id", None)
-            foundry_settings.pop("client_id", None)
-            foundry_settings.pop("client_secret", None)
-            foundry_settings.pop("foundry_scope", None)
-            if auth.get("api_key"):
-                foundry_settings["api_key"] = auth.get("api_key")
-            foundry_settings["cloud"] = foundry_settings.get("cloud") or auth.get("management_cloud") or ""
-            foundry_settings["authority"] = foundry_settings.get("authority") or auth.get("custom_authority") or ""
         else:
             foundry_settings.pop("managed_identity_type", None)
             foundry_settings.pop("managed_identity_client_id", None)
             foundry_settings.pop("tenant_id", None)
             foundry_settings.pop("client_id", None)
             foundry_settings.pop("client_secret", None)
-            foundry_settings.pop("api_key", None)
             foundry_settings["cloud"] = foundry_settings.get("cloud") or auth.get("management_cloud") or ""
             foundry_settings["authority"] = foundry_settings.get("authority") or auth.get("custom_authority") or ""
             foundry_settings["foundry_scope"] = foundry_settings.get("foundry_scope") or auth.get("foundry_scope") or ""
@@ -778,14 +763,15 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
             foundry_settings = hydrate_agent_foundry_secret_values(foundry_settings)
             foundry_settings["endpoint"] = foundry_settings.get("endpoint") or agent.get("azure_openai_gpt_endpoint", "")
             foundry_settings["project_name"] = foundry_settings.get("project_name") or agent.get("azure_openai_gpt_deployment", "")
-            if foundry_settings.get("api_key"):
-                foundry_settings["authentication_type"] = "api_key"
+            if str(foundry_settings.get("authentication_type") or "").strip().lower() not in {"managed_identity", "service_principal"}:
+                foundry_settings["authentication_type"] = "delegated_user"
                 foundry_settings.pop("managed_identity_type", None)
                 foundry_settings.pop("managed_identity_client_id", None)
                 foundry_settings.pop("tenant_id", None)
                 foundry_settings.pop("client_id", None)
                 foundry_settings.pop("client_secret", None)
-                foundry_settings.pop("foundry_scope", None)
+            foundry_settings.pop("api_key", None)
+            foundry_settings.pop("key", None)
             if foundry_settings.get("responses_api_version") or agent.get("azure_openai_gpt_api_version"):
                 foundry_settings["responses_api_version"] = foundry_settings.get("responses_api_version") or agent.get("azure_openai_gpt_api_version")
             other_settings[foundry_settings_key] = foundry_settings

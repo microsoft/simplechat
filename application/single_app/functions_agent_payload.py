@@ -92,7 +92,6 @@ _FOUNDRY_FIELD_LENGTHS = {
     "tenant_id": 64,
     "client_id": 64,
     "client_secret": 1024,
-    "api_key": 2048,
     "managed_identity_client_id": 64,
 }
 _NEW_FOUNDRY_FIELD_LENGTHS = {
@@ -107,7 +106,6 @@ _NEW_FOUNDRY_FIELD_LENGTHS = {
     "tenant_id": 64,
     "client_id": 64,
     "client_secret": 1024,
-    "api_key": 2048,
     "managed_identity_client_id": 64,
     "notes": 2000,
 }
@@ -277,6 +275,21 @@ def _validate_foundry_workflow_field_lengths(workflow_settings: Dict[str, Any]) 
             raise AgentPayloadError(f"foundry_workflow.{field} exceeds maximum length of {max_len}.")
 
 
+def _normalize_foundry_entra_auth_settings(foundry_settings: Dict[str, Any]) -> None:
+    auth_type = str(
+        foundry_settings.get("authentication_type")
+        or foundry_settings.get("auth_type")
+        or "delegated_user"
+    ).strip().lower()
+    if auth_type in {"managed_identity", "service_principal"}:
+        foundry_settings["authentication_type"] = auth_type
+    else:
+        foundry_settings["authentication_type"] = "delegated_user"
+    foundry_settings.pop("auth_type", None)
+    foundry_settings.pop("api_key", None)
+    foundry_settings.pop("key", None)
+
+
 def _strip_empty_values(payload: Dict[str, Any]) -> Dict[str, Any]:
     return {
         key: value
@@ -337,6 +350,7 @@ def sanitize_agent_payload(agent: Dict[str, Any]) -> Dict[str, Any]:
                 "Azure AI Foundry agents require other_settings.azure_ai_foundry.agent_id."
             )
         foundry_settings["agent_id"] = agent_id
+        _normalize_foundry_entra_auth_settings(foundry_settings)
         _validate_foundry_field_lengths(foundry_settings)
         sanitized["other_settings"]["azure_ai_foundry"] = foundry_settings
         sanitized["other_settings"].pop("new_foundry", None)
@@ -413,6 +427,7 @@ def sanitize_agent_payload(agent: Dict[str, Any]) -> Dict[str, Any]:
             sanitized["azure_openai_gpt_deployment"] = project_name
 
         sanitized["azure_openai_gpt_api_version"] = response_version
+        _normalize_foundry_entra_auth_settings(new_foundry_settings)
 
         _validate_new_foundry_field_lengths(new_foundry_settings)
         sanitized["other_settings"]["new_foundry"] = _strip_empty_values(new_foundry_settings)
@@ -510,6 +525,7 @@ def sanitize_agent_payload(agent: Dict[str, Any]) -> Dict[str, Any]:
                     "foundry_workflow.max_context_chars must be a positive integer."
                 ) from exc
 
+        _normalize_foundry_entra_auth_settings(workflow_settings)
         _validate_foundry_workflow_field_lengths(workflow_settings)
         sanitized["other_settings"]["foundry_workflow"] = _strip_empty_values(workflow_settings)
         sanitized["other_settings"].pop("azure_ai_foundry", None)
