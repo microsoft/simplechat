@@ -1,7 +1,7 @@
 # test_chat_upload_personal_workspace_handoff.py
 """
 Functional test for chat upload personal workspace handoff.
-Version: 0.241.198
+Version: 0.241.200
 Implemented in: 0.241.174
 
 This test ensures chat uploads are wired to queue personal workspace documents,
@@ -107,7 +107,18 @@ def test_chat_search_includes_ready_linked_workspace_documents_contract():
     assert_contains(route_backend_chats, "def _is_search_ready_chat_upload_workspace_document", "search-ready linked document guard")
     assert_contains(route_backend_chats, "get_chat_upload_workspace_documents_for_conversation(user_id, conversation_id)", "linked workspace document lookup")
     assert_contains(route_backend_chats, "assigned_knowledge_user_context_active", "assigned knowledge user context merge switch")
-    assert_contains(route_backend_chats, "and not assigned_knowledge_user_context_active", "assigned knowledge does not block approved user context")
+    assert_contains(route_backend_chats, "assigned_knowledge_blocks_user_context", "assigned knowledge linked-upload backend activation guard")
+    assert_contains(route_backend_chats, "_assigned_knowledge_allows_document_action(", "assigned knowledge policy check for linked chat uploads")
+    assert_contains(route_backend_chats, "assigned_knowledge_user_context_active = True", "auto-linked uploads activate assigned knowledge user context")
+    assert_contains(route_backend_chats, "g.assigned_knowledge_user_context_active = True", "request context reflects auto-linked assigned knowledge user context")
+    assert_contains(route_backend_chats, "Enabled Assigned Knowledge user context", "debug log for linked chat upload user context activation")
+    assert_contains(route_backend_chats, "if assigned_knowledge_blocks_user_context:", "assigned public plus linked personal uploads search all scopes")
+    assert_contains(route_backend_chats, "def _merge_assigned_knowledge_user_context_search_results", "assigned knowledge user-context preserving search merge helper")
+    assert_contains(route_backend_chats, "_is_personal_or_group_search_result(result)", "assigned knowledge merge appends only personal/group user-context hits")
+    assert_contains(route_backend_chats, "user_context_appended_count += 1", "assigned knowledge merge keeps appended user-context result count")
+    assert_contains(route_backend_chats, "user_context_appended=", "assigned knowledge merge logs appended user-context hits")
+    assert_not_contains(route_backend_chats, ")[:top_n]\n                        else:\n                            search_results = assigned_search_results", "assigned knowledge merge must not slice off user-context hits after merge")
+    assert_not_contains(route_backend_chats, ")[:12]\n                            else:\n                                search_results = assigned_search_results", "streaming assigned knowledge merge must not slice off user-context hits after merge")
     assert_contains(route_backend_chats, "indexed_chunk_count <= 0", "unindexed linked document exclusion")
     assert_occurs_at_least(route_backend_chats, "auto_linked_chat_upload_document_ids", 6, "auto-linked document metadata and merge usage")
     assert_occurs_at_least(route_backend_chats, "original_hybrid_search_enabled = True", 2, "history fallback suppression for auto-linked documents")

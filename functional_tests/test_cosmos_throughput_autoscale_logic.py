@@ -2,11 +2,12 @@
 # test_cosmos_throughput_autoscale_logic.py
 """
 Functional test for Cosmos throughput autoscale decision logic.
-Version: 0.241.194
+Version: 0.241.199
 Implemented in: 0.241.147; container policy enforcement added in 0.241.153; container metric guardrail added in 0.241.155; manual-to-autoscale conversion added in 0.241.159; migrateToAutoscale ARM action fix added in 0.241.160; save validation added in 0.241.161; access validation added in 0.241.162
 Enhanced in: 0.241.183 with detailed access validation diagnostics for partial Azure permission failures.
 Enhanced in: 0.241.184 with neutral container-targeted throughput status language.
 Enhanced in: 0.241.194 with dedicated container scale-up-to-max coverage when mixed database and container throughput exist.
+Enhanced in: 0.241.199 with SimpleChat's 10,000 RU/s scaling support ceiling and portal-managed monitoring coverage.
 
 This test ensures that Cosmos DB throughput automation scales the shared
 SimpleChat database up and down using separate thresholds, cooldowns, and
@@ -133,6 +134,45 @@ def test_scale_up_reaches_max_guardrail_from_previous_step():
     assert decision['direction'] == 'up'
     assert decision['from_ru'] == 9000
     assert decision['to_ru'] == 10000
+
+
+def test_scale_up_at_simplechat_limit_becomes_portal_managed():
+    """At 10,000 RU/s, scale-up pressure should inform admins to use the portal."""
+    decision = calculate_scale_decision(
+        _base_settings(
+            cosmos_throughput_scale_up_threshold_percent=70,
+            cosmos_throughput_scale_down_threshold_percent=50,
+            cosmos_throughput_ignore_max_limit=True,
+        ),
+        _status(10000, 95),
+        current_time=datetime(2026, 6, 12, tzinfo=timezone.utc),
+    )
+
+    assert decision['should_scale'] is False
+    assert decision['reason'] == 'portal_managed_throughput'
+    assert decision['from_ru'] == 10000
+    assert decision['simplechat_max_ru'] == cosmos_throughput.COSMOS_THROUGHPUT_SIMPLECHAT_MAX_RU
+    assert 'Azure portal' in decision['message']
+
+
+def test_database_above_simplechat_limit_is_monitor_only():
+    """Database throughput above 10,000 RU/s should not be changed by SimpleChat."""
+    decision = calculate_scale_decision(
+        _base_settings(
+            cosmos_throughput_scale_up_threshold_percent=70,
+            cosmos_throughput_scale_down_threshold_percent=50,
+            cosmos_throughput_ignore_min_limit=True,
+            cosmos_throughput_ignore_max_limit=True,
+        ),
+        _status(11000, 25),
+        current_time=datetime(2026, 6, 12, tzinfo=timezone.utc),
+    )
+
+    assert decision['should_scale'] is False
+    assert decision['reason'] == 'portal_managed_throughput'
+    assert decision['scope'] == 'database'
+    assert decision['from_ru'] == 11000
+    assert '4 to 6 hours' in decision['message']
 
 
 def test_scale_down_respects_min_guardrail():
@@ -304,6 +344,42 @@ def test_container_targeted_scaling_waits_for_per_container_metrics():
     assert decision['scalable_container_count'] == 1
 
 
+def test_container_above_simplechat_limit_is_monitor_only():
+    """Dedicated containers above 10,000 RU/s should remain visible but not scaled."""
+    settings = _base_settings(cosmos_throughput_container_policies={
+        'messages': {
+            'scale_up_threshold_percent': 70,
+            'scale_down_threshold_percent': 50,
+            'scale_up_step_ru': 1000,
+            'scale_down_step_ru': 1000,
+            'max_ru': 200000,
+            'ignore_max_limit': True,
+            'ignore_min_limit': True,
+        },
+    })
+    decision = calculate_scale_decision(
+        settings,
+        _container_status([
+            {
+                'container_name': 'messages',
+                'mode': 'autoscale',
+                'current_ru': 20000,
+                'is_scalable': True,
+                'normalized_ru_percent': 95,
+                'policy': settings['cosmos_throughput_container_policies']['messages'],
+            },
+        ]),
+        current_time=datetime(2026, 6, 12, tzinfo=timezone.utc),
+    )
+
+    assert decision['should_scale'] is False
+    assert decision['reason'] == 'portal_managed_throughput'
+    assert decision['scope'] == 'container'
+    assert decision['container_name'] == 'messages'
+    assert decision['from_ru'] == 20000
+    assert 'Azure portal' in decision['message']
+
+
 def test_container_manual_scale_uses_container_policy():
     """Manual container scale should use the selected container's policy values."""
     settings = _base_settings(cosmos_throughput_container_policies={
@@ -329,6 +405,39 @@ def test_container_manual_scale_uses_container_policy():
     )
 
     assert target_ru == 3000
+
+
+def test_manual_scale_rejects_portal_managed_throughput():
+    """Manual admin scale buttons should not change throughput above 10,000 RU/s."""
+    try:
+        calculate_manual_scale_target(
+            _base_settings(cosmos_throughput_ignore_min_limit=True),
+            _status(11000, 20),
+            'down',
+        )
+    except CosmosThroughputError as exc:
+        assert 'Azure portal' in str(exc)
+    else:
+        raise AssertionError('Expected portal-managed throughput to reject manual scale down.')
+
+
+def test_normalization_clamps_simplechat_guardrails_to_10000():
+    """Saved policies over 10,000 RU/s should normalize to SimpleChat's support ceiling."""
+    settings = normalize_cosmos_throughput_settings({
+        'cosmos_throughput_max_ru': 200000,
+        'cosmos_throughput_min_ru': 12000,
+        'cosmos_throughput_container_policies': {
+            'messages': {
+                'min_ru': 11000,
+                'max_ru': 200000,
+            },
+        },
+    })
+
+    assert settings['cosmos_throughput_min_ru'] == 10000
+    assert settings['cosmos_throughput_max_ru'] == 10000
+    assert settings['cosmos_throughput_container_policies']['messages']['min_ru'] == 10000
+    assert settings['cosmos_throughput_container_policies']['messages']['max_ru'] == 10000
 
 
 def test_enforced_global_container_policy_overrides_saved_container_policy():
@@ -360,7 +469,7 @@ def test_enforced_global_container_policy_overrides_saved_container_policy():
     assert existing_policy['scale_up_step_ru'] == 3000
     assert existing_policy['scale_down_step_ru'] == 2000
     assert existing_policy['min_ru'] == 3000
-    assert existing_policy['max_ru'] == 12000
+    assert existing_policy['max_ru'] == 10000
     assert existing_policy['last_scale_up_at'] == '2026-06-05T10:00:00+00:00'
     assert future_policy['scale_up_threshold_percent'] == 85
     assert future_policy['container_name'] == 'new_container'
@@ -565,6 +674,33 @@ def test_access_validation_reports_successful_cosmos_checks():
     assert all(check['passed'] for check in validation['checks'])
 
 
+def test_access_validation_reports_portal_managed_monitoring_as_successful_read():
+    """Portal-managed high throughput should validate as readable monitoring, not an access failure."""
+    validation = build_cosmos_throughput_access_validation({
+        'configured': True,
+        'throughput': {
+            'is_scalable': True,
+            'mode': 'autoscale',
+            'current_ru': 20000,
+            'portal_managed_scaling_required': True,
+        },
+        'containers': [],
+        'metrics': {
+            'normalized_ru_percent': 82,
+        },
+        'metric_error': '',
+        'container_error': '',
+    })
+
+    throughput_check = next(
+        check for check in validation['checks']
+        if check['name'] == 'throughput_read'
+    )
+    assert validation['success'] is True
+    assert throughput_check['passed'] is True
+    assert 'Azure portal' in throughput_check['message']
+
+
 def test_access_validation_reports_configuration_and_permission_failures():
     """Access validation should explain missing config, throughput targets, and metrics failures."""
     missing_config_validation = build_cosmos_throughput_access_validation({
@@ -738,13 +874,18 @@ if __name__ == "__main__":
         test_scales_up_when_utilization_is_high,
         test_scale_up_respects_max_guardrail,
         test_scale_up_reaches_max_guardrail_from_previous_step,
+        test_scale_up_at_simplechat_limit_becomes_portal_managed,
+        test_database_above_simplechat_limit_is_monitor_only,
         test_scale_down_respects_min_guardrail,
         test_scale_down_uses_separate_cooldown,
         test_ignored_limits_allow_scale_beyond_guardrails,
         test_container_targeted_scale_up_when_database_throughput_missing,
         test_dedicated_container_scale_up_to_max_when_database_throughput_exists,
         test_container_targeted_scaling_waits_for_per_container_metrics,
+        test_container_above_simplechat_limit_is_monitor_only,
         test_container_manual_scale_uses_container_policy,
+        test_manual_scale_rejects_portal_managed_throughput,
+        test_normalization_clamps_simplechat_guardrails_to_10000,
         test_enforced_global_container_policy_overrides_saved_container_policy,
         test_manual_database_conversion_requires_explicit_policy,
         test_global_container_policy_converts_manual_containers_before_scaling,
@@ -753,6 +894,7 @@ if __name__ == "__main__":
         test_policy_validation_rejects_invalid_global_thresholds_and_intervals,
         test_policy_validation_rejects_invalid_container_policy_values,
         test_access_validation_reports_successful_cosmos_checks,
+        test_access_validation_reports_portal_managed_monitoring_as_successful_read,
         test_access_validation_reports_configuration_and_permission_failures,
         test_access_validation_uses_neutral_container_targeted_language,
         test_access_validation_reports_partial_azure_failures,

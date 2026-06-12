@@ -17,7 +17,8 @@ from functions_appinsights import log_event
 COSMOS_THROUGHPUT_ARM_API_VERSION = '2023-04-15'
 COSMOS_THROUGHPUT_METRICS_API_VERSION = '2018-01-01'
 COSMOS_THROUGHPUT_METRIC_NAMESPACE = 'Microsoft.DocumentDB/databaseAccounts'
-COSMOS_THROUGHPUT_DEFAULT_MAX_RU = 20000
+COSMOS_THROUGHPUT_SIMPLECHAT_MAX_RU = 10000
+COSMOS_THROUGHPUT_DEFAULT_MAX_RU = COSMOS_THROUGHPUT_SIMPLECHAT_MAX_RU
 COSMOS_THROUGHPUT_DEFAULT_MIN_RU = 1000
 COSMOS_THROUGHPUT_AUTOSCALE_MIN_RU = 1000
 COSMOS_THROUGHPUT_MANUAL_MIN_RU = 400
@@ -27,6 +28,10 @@ COSMOS_THROUGHPUT_AUTOSCALE_DEFAULT_INTERVAL_SECONDS = 300
 COSMOS_THROUGHPUT_AUTOSCALE_MIN_INTERVAL_SECONDS = 60
 COSMOS_THROUGHPUT_AUTOSCALE_MAX_INTERVAL_SECONDS = 3600
 DEFAULT_COSMOS_DATABASE_NAME = 'SimpleChat'
+COSMOS_THROUGHPUT_PORTAL_MANAGED_MESSAGE = (
+    'Throughput above 10,000 RU/s is monitored only in SimpleChat. Use the Azure portal to change capacity; '
+    'capacity changes above this level can take 4 to 6 hours.'
+)
 
 COSMOS_THROUGHPUT_SETTING_KEYS = (
     'cosmos_throughput_autoscale_enabled',
@@ -145,6 +150,51 @@ def normalize_ru(value, mode='autoscale', direction='up'):
     return max(service_minimum, adjusted_value)
 
 
+def _get_current_ru_int(throughput):
+    try:
+        return int((throughput or {}).get('current_ru'))
+    except (TypeError, ValueError):
+        return None
+
+
+def _get_simplechat_scaling_limit(mode='autoscale'):
+    return normalize_ru(COSMOS_THROUGHPUT_SIMPLECHAT_MAX_RU, mode=mode, direction='down')
+
+
+def _is_simplechat_scaling_supported(throughput):
+    current_ru = _get_current_ru_int(throughput)
+    if current_ru is None or not (throughput or {}).get('is_scalable'):
+        return False
+    return current_ru <= _get_simplechat_scaling_limit((throughput or {}).get('mode') or 'autoscale')
+
+
+def _is_portal_managed_throughput(throughput):
+    current_ru = _get_current_ru_int(throughput)
+    if current_ru is None or not (throughput or {}).get('is_scalable'):
+        return False
+    return current_ru > _get_simplechat_scaling_limit((throughput or {}).get('mode') or 'autoscale')
+
+
+def _cap_simplechat_scale_target(target_ru, mode='autoscale'):
+    return min(target_ru, _get_simplechat_scaling_limit(mode))
+
+
+def _build_portal_managed_decision(scope='database', container_name='', current_ru=None, observed_percent=None):
+    decision = {
+        'should_scale': False,
+        'reason': 'portal_managed_throughput',
+        'scope': scope,
+        'from_ru': current_ru,
+        'simplechat_max_ru': COSMOS_THROUGHPUT_SIMPLECHAT_MAX_RU,
+        'message': COSMOS_THROUGHPUT_PORTAL_MANAGED_MESSAGE,
+    }
+    if container_name:
+        decision['container_name'] = container_name
+    if observed_percent is not None:
+        decision['observed_percent'] = observed_percent
+    return decision
+
+
 def normalize_cosmos_throughput_settings(settings, repair_policy_relationships=True):
     """Return validated Cosmos throughput settings merged with defaults."""
     source_settings = settings or {}
@@ -247,6 +297,15 @@ def normalize_cosmos_throughput_settings(settings, repair_policy_relationships=T
         normalized.get('cosmos_throughput_max_ru'),
         mode='autoscale',
         direction='up',
+    )
+
+    normalized['cosmos_throughput_min_ru'] = min(
+        normalized['cosmos_throughput_min_ru'],
+        COSMOS_THROUGHPUT_SIMPLECHAT_MAX_RU,
+    )
+    normalized['cosmos_throughput_max_ru'] = min(
+        normalized['cosmos_throughput_max_ru'],
+        COSMOS_THROUGHPUT_SIMPLECHAT_MAX_RU,
     )
 
     if repair_policy_relationships and normalized['cosmos_throughput_max_ru'] < normalized['cosmos_throughput_min_ru']:
@@ -352,10 +411,42 @@ def build_cosmos_throughput_access_validation(status):
     containers = status.get('containers') or []
     has_database_throughput = bool(throughput.get('is_scalable'))
     scalable_container_count = sum(1 for container in containers if container.get('is_scalable'))
+    portal_managed_database = bool(throughput.get('portal_managed_scaling_required'))
+    portal_managed_container_count = sum(
+        1 for container in containers if container.get('portal_managed_scaling_required')
+    )
+    simplechat_container_count = sum(
+        1 for container in containers
+        if container.get('is_scalable') and not container.get('portal_managed_scaling_required')
+    )
     has_scalable_target = has_database_throughput or scalable_container_count > 0
     throughput_error = status.get('throughput_error') or throughput.get('error') or ''
     container_error = status.get('container_error') or ''
     metric_error = status.get('metric_error') or ''
+
+    if has_database_throughput:
+        throughput_message = (
+            'Database throughput is readable for monitoring; scaling above 10,000 RU/s must be managed in the Azure portal. '
+            'Capacity changes above this level can take 4 to 6 hours.'
+            if portal_managed_database else 'Database throughput is readable and manageable by SimpleChat.'
+        )
+    elif scalable_container_count:
+        if portal_managed_container_count and simplechat_container_count:
+            throughput_message = (
+                f'{simplechat_container_count} dedicated container throughput target(s) are manageable by SimpleChat; '
+                f'{portal_managed_container_count} target(s) are above 10,000 RU/s and are monitored only. '
+                'Capacity changes above this level can take 4 to 6 hours.'
+            )
+        elif portal_managed_container_count:
+            throughput_message = (
+                f'{portal_managed_container_count} dedicated container throughput target(s) are readable for monitoring; '
+                'scaling above 10,000 RU/s must be managed in the Azure portal. '
+                'Capacity changes above this level can take 4 to 6 hours.'
+            )
+        else:
+            throughput_message = f'{scalable_container_count} dedicated container throughput target(s) are readable and manageable.'
+    else:
+        throughput_message = 'No scalable database or dedicated container throughput target was found.'
 
     add_check(
         'database_throughput_read',
@@ -372,11 +463,7 @@ def build_cosmos_throughput_access_validation(status):
         'throughput_read',
         'Scalable throughput target',
         has_scalable_target,
-        'Database throughput is readable and manageable.'
-        if has_database_throughput else (
-            f'{scalable_container_count} dedicated container throughput target(s) are readable and manageable.'
-            if scalable_container_count else 'No scalable database or dedicated container throughput target was found.'
-        ),
+        throughput_message,
     )
     add_check(
         'container_discovery',
@@ -489,6 +576,8 @@ def normalize_container_policy(container_name, policy=None, settings=None, repai
 
     if repair_policy_relationships and normalized['scale_down_threshold_percent'] >= normalized['scale_up_threshold_percent']:
         normalized['scale_down_threshold_percent'] = max(0, normalized['scale_up_threshold_percent'] - 1)
+    normalized['min_ru'] = min(normalized['min_ru'], COSMOS_THROUGHPUT_SIMPLECHAT_MAX_RU)
+    normalized['max_ru'] = min(normalized['max_ru'], COSMOS_THROUGHPUT_SIMPLECHAT_MAX_RU)
     if repair_policy_relationships and normalized['max_ru'] < normalized['min_ru']:
         normalized['max_ru'] = normalized['min_ru']
 
@@ -544,7 +633,18 @@ def build_cached_cosmos_throughput_status(status=None, scale_result=None):
     scale_result = scale_result or {}
     throughput = _copy_keys(
         status.get('throughput'),
-        ('scope', 'mode', 'current_ru', 'is_scalable', 'throughput_not_found', 'message'),
+        (
+            'scope',
+            'mode',
+            'current_ru',
+            'is_scalable',
+            'throughput_not_found',
+            'message',
+            'simplechat_scaling_supported',
+            'simplechat_max_ru',
+            'portal_managed_scaling_required',
+            'portal_managed_message',
+        ),
     )
     if scale_result and scale_result.get('scope') != 'container' and scale_result.get('to_ru') is not None:
         throughput['current_ru'] = scale_result.get('to_ru')
@@ -568,6 +668,10 @@ def build_cached_cosmos_throughput_status(status=None, scale_result=None):
                 'has_normalized_ru_metric',
                 'has_request_units_metric',
                 'policy',
+                'simplechat_scaling_supported',
+                'simplechat_max_ru',
+                'portal_managed_scaling_required',
+                'portal_managed_message',
             ),
         )
         if (
@@ -855,6 +959,11 @@ def _parse_throughput_body(body, resource_ids, scope='database', container_name=
         mode = 'serverless_or_shared'
         current_ru = None
 
+    is_scalable = mode in {'autoscale', 'manual'} and current_ru is not None
+    simplechat_scaling_limit = _get_simplechat_scaling_limit(mode)
+    simplechat_scaling_supported = bool(is_scalable and current_ru <= simplechat_scaling_limit)
+    portal_managed_scaling_required = bool(is_scalable and current_ru > simplechat_scaling_limit)
+
     return {
         'scope': scope,
         'container_name': container_name,
@@ -862,7 +971,11 @@ def _parse_throughput_body(body, resource_ids, scope='database', container_name=
         'current_ru': current_ru,
         'resource': resource,
         'resource_ids': resource_ids,
-        'is_scalable': mode in {'autoscale', 'manual'} and current_ru is not None,
+        'is_scalable': is_scalable,
+        'simplechat_scaling_supported': simplechat_scaling_supported,
+        'simplechat_max_ru': COSMOS_THROUGHPUT_SIMPLECHAT_MAX_RU,
+        'portal_managed_scaling_required': portal_managed_scaling_required,
+        'portal_managed_message': COSMOS_THROUGHPUT_PORTAL_MANAGED_MESSAGE if portal_managed_scaling_required else '',
     }
 
 
@@ -946,6 +1059,10 @@ def get_container_throughput(settings, container_name, resource_ids=None, refres
             'resource_ids': container_resource_ids,
             'is_scalable': False,
             'throughput_not_found': True,
+            'simplechat_scaling_supported': False,
+            'simplechat_max_ru': COSMOS_THROUGHPUT_SIMPLECHAT_MAX_RU,
+            'portal_managed_scaling_required': False,
+            'portal_managed_message': '',
         }
 
     return _parse_throughput_body(
@@ -1006,6 +1123,10 @@ def get_container_throughputs(settings=None, resource_ids=None, refresh_id=''):
                 'resource_ids': build_cosmos_container_resource_ids(database_resource_ids, container_name),
                 'is_scalable': False,
                 'error': str(exc),
+                'simplechat_scaling_supported': False,
+                'simplechat_max_ru': COSMOS_THROUGHPUT_SIMPLECHAT_MAX_RU,
+                'portal_managed_scaling_required': False,
+                'portal_managed_message': '',
             }
 
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
@@ -1104,6 +1225,8 @@ def _apply_throughput_update(current, target_ru, initiated_by, reason, target_mo
     mode = current.get('mode')
     update_mode = _normalize_throughput_mode(target_mode or mode, default_mode=mode)
     normalized_target = normalize_ru(target_ru, mode=update_mode, direction='up')
+    if _is_portal_managed_throughput(current) or normalized_target > _get_simplechat_scaling_limit(update_mode):
+        raise CosmosThroughputError(COSMOS_THROUGHPUT_PORTAL_MANAGED_MESSAGE)
     resource_ids = current['resource_ids']
     if mode == 'manual' and update_mode == 'autoscale':
         migrated = _migrate_throughput_to_autoscale(current)
@@ -1511,6 +1634,19 @@ def merge_container_statuses(settings, container_throughputs=None, metrics=None)
             'has_normalized_ru_metric': bool(metric_row and metric_row.get('has_normalized_ru_metric')),
             'has_request_units_metric': bool(metric_row and metric_row.get('has_request_units_metric')),
             'policy': policy,
+            'simplechat_scaling_supported': throughput.get(
+                'simplechat_scaling_supported',
+                _is_simplechat_scaling_supported(throughput),
+            ),
+            'simplechat_max_ru': COSMOS_THROUGHPUT_SIMPLECHAT_MAX_RU,
+            'portal_managed_scaling_required': throughput.get(
+                'portal_managed_scaling_required',
+                _is_portal_managed_throughput(throughput),
+            ),
+            'portal_managed_message': throughput.get('portal_managed_message') or (
+                COSMOS_THROUGHPUT_PORTAL_MANAGED_MESSAGE
+                if _is_portal_managed_throughput(throughput) else ''
+            ),
         })
 
     return sorted(
@@ -1620,6 +1756,19 @@ def get_cosmos_throughput_status(settings=None, include_metrics=True, refresh_id
             'is_scalable': throughput.get('is_scalable'),
             'throughput_not_found': throughput.get('throughput_not_found', False),
             'message': throughput.get('message', ''),
+            'simplechat_scaling_supported': throughput.get(
+                'simplechat_scaling_supported',
+                _is_simplechat_scaling_supported(throughput),
+            ),
+            'simplechat_max_ru': COSMOS_THROUGHPUT_SIMPLECHAT_MAX_RU,
+            'portal_managed_scaling_required': throughput.get(
+                'portal_managed_scaling_required',
+                _is_portal_managed_throughput(throughput),
+            ),
+            'portal_managed_message': throughput.get('portal_managed_message') or (
+                COSMOS_THROUGHPUT_PORTAL_MANAGED_MESSAGE
+                if _is_portal_managed_throughput(throughput) else ''
+            ),
         },
         'capacity_scope': capacity_scope,
         'metrics': metrics,
@@ -1653,6 +1802,7 @@ def calculate_container_scale_decision(settings, status, current_time=None):
     up_candidates = []
     down_candidates = []
     conversion_candidates = []
+    portal_managed_candidates = []
     conversion_blocked_count = 0
     scalable_container_count = 0
     metric_container_count = 0
@@ -1674,7 +1824,38 @@ def calculate_container_scale_decision(settings, status, current_time=None):
         if not policy.get('enabled'):
             continue
 
-        if policy.get('convert_manual_to_autoscale_enabled') and container.get('mode') == 'manual':
+        observed_percent = container.get('normalized_ru_percent')
+        if observed_percent is not None:
+            metric_container_count += 1
+
+        current_ru = int(container.get('current_ru'))
+        mode = container.get('mode') or 'autoscale'
+        if _is_portal_managed_throughput(container):
+            threshold_reached = False
+            if policy.get('convert_manual_to_autoscale_enabled') and mode == 'manual':
+                threshold_reached = True
+            if observed_percent is not None:
+                threshold_reached = (
+                    threshold_reached
+                    or (
+                        policy.get('auto_scale_up_enabled')
+                        and observed_percent >= policy['scale_up_threshold_percent']
+                    )
+                    or (
+                        policy.get('auto_scale_down_enabled')
+                        and observed_percent <= policy['scale_down_threshold_percent']
+                    )
+                )
+            if threshold_reached:
+                portal_managed_candidates.append(_build_portal_managed_decision(
+                    scope='container',
+                    container_name=container_name,
+                    current_ru=current_ru,
+                    observed_percent=observed_percent,
+                ))
+            continue
+
+        if policy.get('convert_manual_to_autoscale_enabled') and mode == 'manual':
             try:
                 conversion_candidates.append(_build_autoscale_conversion_decision(
                     container,
@@ -1689,13 +1870,9 @@ def calculate_container_scale_decision(settings, status, current_time=None):
                 conversion_blocked_count += 1
             continue
 
-        observed_percent = container.get('normalized_ru_percent')
         if observed_percent is None:
             continue
-        metric_container_count += 1
 
-        current_ru = int(container.get('current_ru'))
-        mode = container.get('mode') or 'autoscale'
         service_minimum = COSMOS_THROUGHPUT_AUTOSCALE_MIN_RU if mode == 'autoscale' else COSMOS_THROUGHPUT_MANUAL_MIN_RU
 
         if policy.get('auto_scale_up_enabled') and observed_percent >= policy['scale_up_threshold_percent']:
@@ -1704,6 +1881,7 @@ def calculate_container_scale_decision(settings, status, current_time=None):
             target_ru = normalize_ru(current_ru + policy['scale_up_step_ru'], mode=mode, direction='up')
             if not policy.get('ignore_max_limit'):
                 target_ru = min(target_ru, normalize_ru(policy['max_ru'], mode=mode, direction='up'))
+            target_ru = _cap_simplechat_scale_target(target_ru, mode=mode)
             if target_ru > current_ru:
                 up_candidates.append({
                     'should_scale': True,
@@ -1715,6 +1893,13 @@ def calculate_container_scale_decision(settings, status, current_time=None):
                     'observed_percent': observed_percent,
                     'reason': 'container_utilization_above_threshold',
                 })
+            else:
+                portal_managed_candidates.append(_build_portal_managed_decision(
+                    scope='container',
+                    container_name=container_name,
+                    current_ru=current_ru,
+                    observed_percent=observed_percent,
+                ))
 
         if policy.get('auto_scale_down_enabled') and observed_percent <= policy['scale_down_threshold_percent']:
             if not _cooldown_elapsed(policy.get('last_scale_down_at'), policy['scale_down_cooldown_minutes'], now):
@@ -1745,6 +1930,12 @@ def calculate_container_scale_decision(settings, status, current_time=None):
         return sorted(up_candidates, key=lambda item: item['observed_percent'], reverse=True)[0]
     if down_candidates:
         return sorted(down_candidates, key=lambda item: (item['observed_percent'], -item['from_ru']))[0]
+    if portal_managed_candidates:
+        return sorted(
+            portal_managed_candidates,
+            key=lambda item: (item.get('observed_percent') or 0, item.get('from_ru') or 0),
+            reverse=True,
+        )[0]
     if conversion_blocked_count:
         return {
             'should_scale': False,
@@ -1799,10 +1990,14 @@ def _calculate_autoscale_conversion_target(throughput, min_ru, max_ru, ignore_mi
         raise CosmosThroughputError('Current Cosmos throughput could not be determined.')
     if throughput.get('mode') != 'manual':
         raise CosmosThroughputError('Cosmos throughput is not in manual mode.')
+    if _is_portal_managed_throughput(throughput):
+        raise CosmosThroughputError(COSMOS_THROUGHPUT_PORTAL_MANAGED_MESSAGE)
 
     target_ru = normalize_ru(int(current_ru), mode='autoscale', direction='up')
     if not ignore_min_limit:
         target_ru = max(target_ru, normalize_ru(min_ru, mode='autoscale', direction='up'))
+    if target_ru > _get_simplechat_scaling_limit('autoscale'):
+        raise CosmosThroughputError(COSMOS_THROUGHPUT_PORTAL_MANAGED_MESSAGE)
     if not ignore_max_limit:
         max_ru = normalize_ru(max_ru, mode='autoscale', direction='up')
         if target_ru > max_ru:
@@ -1888,6 +2083,30 @@ def calculate_scale_decision(settings, status, current_time=None):
     container_decision = calculate_container_scale_decision(settings, status, current_time=current_time)
     if not throughput.get('is_scalable') or not current_ru:
         return container_decision
+    if _is_portal_managed_throughput(throughput):
+        if _has_scale_action(container_decision):
+            return container_decision
+        threshold_reached = False
+        if mode == 'manual' and normalized.get('cosmos_throughput_convert_manual_to_autoscale_enabled'):
+            threshold_reached = True
+        if observed_percent is not None:
+            threshold_reached = (
+                threshold_reached
+                or (
+                    normalized.get('cosmos_throughput_auto_scale_up_enabled')
+                    and observed_percent >= normalized['cosmos_throughput_scale_up_threshold_percent']
+                )
+                or (
+                    normalized.get('cosmos_throughput_auto_scale_down_enabled')
+                    and observed_percent <= normalized['cosmos_throughput_scale_down_threshold_percent']
+                )
+            )
+        if threshold_reached:
+            return _build_portal_managed_decision(
+                scope='database',
+                current_ru=int(current_ru),
+                observed_percent=observed_percent,
+            )
     if mode == 'manual' and normalized.get('cosmos_throughput_convert_manual_to_autoscale_enabled'):
         try:
             return _build_autoscale_conversion_decision(
@@ -1929,7 +2148,14 @@ def calculate_scale_decision(settings, status, current_time=None):
         )
         if not normalized.get('cosmos_throughput_ignore_max_limit'):
             target_ru = min(target_ru, normalize_ru(normalized['cosmos_throughput_max_ru'], mode=mode, direction='up'))
+        target_ru = _cap_simplechat_scale_target(target_ru, mode=mode)
         if target_ru <= int(current_ru):
+            if int(current_ru) >= _get_simplechat_scaling_limit(mode):
+                return _build_portal_managed_decision(
+                    scope='database',
+                    current_ru=int(current_ru),
+                    observed_percent=observed_percent,
+                )
             return {'should_scale': False, 'reason': 'max_limit_reached'}
         database_decision = {
             'should_scale': True,
@@ -2112,6 +2338,8 @@ def calculate_manual_scale_target(settings, status, direction, container_name=''
 
     if not current_ru:
         raise CosmosThroughputError('Current Cosmos throughput could not be determined.')
+    if _is_portal_managed_throughput(throughput):
+        raise CosmosThroughputError(COSMOS_THROUGHPUT_PORTAL_MANAGED_MESSAGE)
 
     if direction == 'up':
         target_ru = normalize_ru(
@@ -2121,7 +2349,10 @@ def calculate_manual_scale_target(settings, status, direction, container_name=''
         )
         if not ignore_max_limit:
             target_ru = min(target_ru, normalize_ru(max_ru, mode=mode, direction='up'))
+        target_ru = _cap_simplechat_scale_target(target_ru, mode=mode)
         if target_ru <= int(current_ru):
+            if int(current_ru) >= _get_simplechat_scaling_limit(mode):
+                raise CosmosThroughputError(COSMOS_THROUGHPUT_PORTAL_MANAGED_MESSAGE)
             raise CosmosThroughputError('Maximum RU/s limit is already reached.')
         return target_ru
 

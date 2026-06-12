@@ -42,6 +42,8 @@ const COSMOS_CONTAINER_SORT_FIELDS = new Set([
     'policy'
 ]);
 const COSMOS_CONTAINER_TEXT_SORT_FIELDS = new Set(['container_name', 'policy']);
+const COSMOS_THROUGHPUT_SIMPLECHAT_MAX_RU = 10000;
+const COSMOS_THROUGHPUT_PORTAL_MANAGED_MESSAGE = 'Throughput above 10,000 RU/s is monitored only in SimpleChat. Use the Azure portal to change capacity; capacity changes above this level can take 4 to 6 hours.';
 
 const enableClassificationToggle = document.getElementById('enable_document_classification');
 const classificationSettingsDiv = document.getElementById('document_classification_settings');
@@ -219,6 +221,40 @@ function formatRu(value) {
 
 function formatRequestUnits(value) {
     return formatNumber(value);
+}
+
+function isCosmosThroughputPortalManaged(target) {
+    const currentRu = getNullableNumber(target?.current_ru);
+    return Boolean(target?.portal_managed_scaling_required) || (
+        Boolean(target?.is_scalable)
+        && currentRu !== null
+        && currentRu > COSMOS_THROUGHPUT_SIMPLECHAT_MAX_RU
+    );
+}
+
+function isCosmosScaleUpBlockedBySimpleChatLimit(target) {
+    const currentRu = getNullableNumber(target?.current_ru);
+    return Boolean(target?.is_scalable)
+        && currentRu !== null
+        && currentRu >= COSMOS_THROUGHPUT_SIMPLECHAT_MAX_RU;
+}
+
+function getCosmosPortalManagedMessage(target) {
+    return target?.portal_managed_message || COSMOS_THROUGHPUT_PORTAL_MANAGED_MESSAGE;
+}
+
+function createCosmosPortalManagedBadge(target) {
+    const badge = document.createElement('span');
+    badge.className = 'badge text-bg-info ms-2 align-middle';
+    badge.title = getCosmosPortalManagedMessage(target);
+    badge.setAttribute('aria-label', 'Monitor only in SimpleChat');
+
+    const icon = document.createElement('i');
+    icon.className = 'bi bi-info-circle me-1';
+    icon.setAttribute('aria-hidden', 'true');
+    badge.appendChild(icon);
+    badge.appendChild(document.createTextNode('Monitor only'));
+    return badge;
 }
 
 function getNumericFieldValue(fieldId, fallbackValue) {
@@ -486,7 +522,7 @@ function buildGlobalCosmosContainerPolicy(containerName = '') {
         scale_up_cooldown_minutes: getNumericFieldValue('cosmos_throughput_scale_up_cooldown_minutes', 5),
         scale_down_cooldown_minutes: getNumericFieldValue('cosmos_throughput_scale_down_cooldown_minutes', 20),
         min_ru: getNumericFieldValue('cosmos_throughput_min_ru', 1000),
-        max_ru: getNumericFieldValue('cosmos_throughput_max_ru', 20000),
+        max_ru: getNumericFieldValue('cosmos_throughput_max_ru', COSMOS_THROUGHPUT_SIMPLECHAT_MAX_RU),
         ignore_min_limit: isFieldChecked('cosmos_throughput_ignore_min_limit'),
         ignore_max_limit: isFieldChecked('cosmos_throughput_ignore_max_limit'),
         convert_manual_to_autoscale_enabled: isFieldChecked('cosmos_throughput_convert_manual_to_autoscale_enabled')
@@ -568,22 +604,27 @@ function createPolicyNumberInput(containerName, fieldName, value, min, max, step
     return wrapper;
 }
 
-function createManualContainerScaleButton(containerName, direction, disabled) {
+function createManualContainerScaleButton(containerName, direction, disabled, disabledReason = '') {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = direction === 'up' ? 'btn btn-outline-primary btn-sm' : 'btn btn-outline-secondary btn-sm';
     button.disabled = disabled;
     button.textContent = direction === 'up' ? 'Up' : 'Down';
-    button.title = direction === 'up' ? 'Scale this container up' : 'Scale this container down';
-    button.setAttribute('aria-label', direction === 'up' ? 'Scale this container up' : 'Scale this container down');
+    const actionLabel = direction === 'up' ? 'Scale this container up' : 'Scale this container down';
+    button.title = disabledReason || actionLabel;
+    button.setAttribute('aria-label', disabledReason ? `${actionLabel}: ${disabledReason}` : actionLabel);
     button.addEventListener('click', () => manuallyScaleCosmosThroughput(direction, containerName, button));
     return button;
 }
 
-function createCosmosAutoscaleConversionButton(containerName, mode, isScalable, buttonClass = 'btn-outline-secondary') {
-    const disabled = mode !== 'manual' || !isScalable;
+function createCosmosAutoscaleConversionButton(containerName, mode, isScalable, buttonClass = 'btn-outline-secondary', disabledReason = '') {
+    const disabled = mode !== 'manual' || !isScalable || Boolean(disabledReason);
     const button = createIconButton('bi bi-lightning-charge', `Convert ${containerName || 'database'} manual throughput to Cosmos autoscale`, buttonClass);
     button.disabled = disabled;
+    if (disabledReason) {
+        button.title = disabledReason;
+        button.setAttribute('aria-label', `Convert ${containerName || 'database'} manual throughput to Cosmos autoscale: ${disabledReason}`);
+    }
     button.addEventListener('click', () => convertCosmosThroughputToAutoscale(containerName, button));
     return button;
 }
@@ -644,6 +685,9 @@ function getContainerRuUtilizationValue(container) {
 }
 
 function getCosmosContainerPolicyLabel(container) {
+    if (isCosmosThroughputPortalManaged(container)) {
+        return 'Monitor only';
+    }
     const policy = getCosmosContainerPolicy(container);
     if (isCosmosContainerPolicyEnforced()) {
         return 'Global policy';
@@ -697,6 +741,31 @@ function getFilteredCosmosContainers(containers) {
     return (Array.isArray(containers) ? containers : []).filter(container => (
         String(container?.container_name || 'database').toLowerCase().includes(filterValue)
     ));
+}
+
+function getFilteredCosmosPolicyContainers(containers) {
+    const filterValue = String(document.getElementById('cosmos-throughput-container-policy-filter')?.value || '').trim().toLowerCase();
+    if (!filterValue) {
+        return Array.isArray(containers) ? [...containers] : [];
+    }
+
+    return (Array.isArray(containers) ? containers : []).filter(container => (
+        String(container?.container_name || 'database').toLowerCase().includes(filterValue)
+    ));
+}
+
+function updateCosmosContainerPolicyFilterControls(totalCount, visibleCount) {
+    const countElement = document.getElementById('cosmos-throughput-container-policy-filter-count');
+    if (countElement) {
+        countElement.textContent = totalCount > 0 ? `Showing ${visibleCount} of ${totalCount} containers` : '';
+    }
+}
+
+function setCosmosContainerPolicyFilter(containerName = '') {
+    const filterInput = document.getElementById('cosmos-throughput-container-policy-filter');
+    if (filterInput) {
+        filterInput.value = containerName;
+    }
 }
 
 function getSortedCosmosContainers(containers) {
@@ -782,17 +851,30 @@ function renderCosmosContainerMetrics(containers) {
 
     visibleContainers.forEach(container => {
         const row = document.createElement('tr');
+        const containerName = container.container_name || 'database';
+        const portalManaged = isCosmosThroughputPortalManaged(container);
         const policyLabel = getCosmosContainerPolicyLabel(container);
-        const values = [
-            container.container_name || 'database',
+
+        const containerCell = document.createElement('td');
+        const containerNameText = document.createElement('span');
+        containerNameText.textContent = containerName;
+        containerCell.appendChild(containerNameText);
+        if (portalManaged) {
+            containerCell.appendChild(createCosmosPortalManagedBadge(container));
+            const helper = document.createElement('div');
+            helper.className = 'small text-muted mt-1';
+            helper.textContent = 'Capacity changes must be made in the Azure portal.';
+            containerCell.appendChild(helper);
+        }
+        row.appendChild(containerCell);
+
+        [
             container.mode || 'unknown',
             formatRu(container.current_ru),
             getContainerRuUtilization(container),
             formatRequestUnits(container.request_units),
             policyLabel
-        ];
-
-        values.forEach(value => {
+        ].forEach(value => {
             const cell = document.createElement('td');
             cell.textContent = value;
             row.appendChild(cell);
@@ -803,14 +885,20 @@ function renderCosmosContainerMetrics(containers) {
         const actionGroup = document.createElement('div');
         actionGroup.className = 'btn-group btn-group-sm';
         actionGroup.setAttribute('role', 'group');
-        actionGroup.setAttribute('aria-label', `Actions for ${container.container_name || 'container'}`);
-        const configureButton = createIconButton('bi bi-gear', `Configure ${container.container_name || 'container'} throughput policy`);
+        actionGroup.setAttribute('aria-label', `Actions for ${containerName}`);
+        const configureButton = createIconButton('bi bi-gear', `Configure ${containerName} throughput policy`);
         configureButton.setAttribute('data-bs-toggle', 'modal');
         configureButton.setAttribute('data-bs-target', '#cosmosThroughputContainerModal');
+        configureButton.addEventListener('click', () => {
+            setCosmosContainerPolicyFilter(containerName);
+            renderCosmosContainerPolicyModal(currentCosmosContainers);
+        });
         actionGroup.appendChild(configureButton);
-        actionGroup.appendChild(createCosmosAutoscaleConversionButton(container.container_name || '', container.mode, container.is_scalable));
-        actionGroup.appendChild(createManualContainerScaleButton(container.container_name || '', 'up', !container.is_scalable));
-        actionGroup.appendChild(createManualContainerScaleButton(container.container_name || '', 'down', !container.is_scalable));
+        const portalManagedMessage = portalManaged ? getCosmosPortalManagedMessage(container) : '';
+        const scaleUpDisabledReason = portalManagedMessage || (isCosmosScaleUpBlockedBySimpleChatLimit(container) ? COSMOS_THROUGHPUT_PORTAL_MANAGED_MESSAGE : '');
+        actionGroup.appendChild(createCosmosAutoscaleConversionButton(containerName, container.mode, container.is_scalable, 'btn-outline-secondary', portalManagedMessage));
+        actionGroup.appendChild(createManualContainerScaleButton(containerName, 'up', !container.is_scalable || Boolean(scaleUpDisabledReason), scaleUpDisabledReason));
+        actionGroup.appendChild(createManualContainerScaleButton(containerName, 'down', !container.is_scalable || portalManaged, portalManagedMessage));
         actionCell.appendChild(actionGroup);
         row.appendChild(actionCell);
 
@@ -826,7 +914,10 @@ function renderCosmosContainerPolicyModal(containers) {
 
     const globalPolicyEnforced = isCosmosContainerPolicyEnforced();
     tableBody.replaceChildren();
-    if (!Array.isArray(containers) || containers.length === 0) {
+    const sourceContainers = Array.isArray(containers) ? containers : [];
+    const visibleContainers = getFilteredCosmosPolicyContainers(sourceContainers);
+    updateCosmosContainerPolicyFilterControls(sourceContainers.length, visibleContainers.length);
+    if (sourceContainers.length === 0) {
         const row = document.createElement('tr');
         const cell = document.createElement('td');
         cell.colSpan = 8;
@@ -837,18 +928,35 @@ function renderCosmosContainerPolicyModal(containers) {
         return;
     }
 
-    containers.forEach(container => {
+    if (visibleContainers.length === 0) {
+        const row = document.createElement('tr');
+        const cell = document.createElement('td');
+        cell.colSpan = 8;
+        cell.className = 'text-muted';
+        cell.textContent = 'No container policies match the current filter.';
+        row.appendChild(cell);
+        tableBody.appendChild(row);
+        return;
+    }
+
+    visibleContainers.forEach(container => {
         const containerName = container.container_name || '';
         const policy = getCosmosContainerPolicy(container);
+        const portalManaged = isCosmosThroughputPortalManaged(container);
         const row = document.createElement('tr');
 
         const nameCell = document.createElement('td');
         const nameText = document.createElement('div');
         nameText.className = 'fw-semibold';
         nameText.textContent = containerName;
+        if (portalManaged) {
+            nameText.appendChild(createCosmosPortalManagedBadge(container));
+        }
         const metaText = document.createElement('div');
         metaText.className = 'small text-muted';
-        metaText.textContent = globalPolicyEnforced
+        metaText.textContent = portalManaged
+            ? `${container.mode || 'unknown'} | ${formatRu(container.current_ru)} | monitor only in SimpleChat`
+            : globalPolicyEnforced
             ? `${container.mode || 'unknown'} | ${formatRu(container.current_ru)} | global policy enforced`
             : `${container.mode || 'unknown'} | ${formatRu(container.current_ru)}`;
         nameCell.appendChild(nameText);
@@ -889,23 +997,25 @@ function renderCosmosContainerPolicyModal(containers) {
         row.appendChild(minCell);
 
         const maxCell = document.createElement('td');
-        maxCell.appendChild(createPolicyNumberInput(containerName, 'max_ru', policy.max_ru || 20000, 100, null, 100, 'Max'));
+        maxCell.appendChild(createPolicyNumberInput(containerName, 'max_ru', policy.max_ru || COSMOS_THROUGHPUT_SIMPLECHAT_MAX_RU, 100, COSMOS_THROUGHPUT_SIMPLECHAT_MAX_RU, 100, 'Max'));
         maxCell.appendChild(createPolicyCheckbox(containerName, 'ignore_max_limit', policy.ignore_max_limit, 'Ignore'));
         row.appendChild(maxCell);
 
         const manualCell = document.createElement('td');
-        manualCell.appendChild(createCosmosAutoscaleConversionButton(containerName, container.mode, container.is_scalable, 'btn-outline-primary'));
-        manualCell.appendChild(createManualContainerScaleButton(containerName, 'up', !container.is_scalable));
-        manualCell.appendChild(createManualContainerScaleButton(containerName, 'down', !container.is_scalable));
-        if (!container.is_scalable) {
+        const portalManagedMessage = portalManaged ? getCosmosPortalManagedMessage(container) : '';
+        const scaleUpDisabledReason = portalManagedMessage || (isCosmosScaleUpBlockedBySimpleChatLimit(container) ? COSMOS_THROUGHPUT_PORTAL_MANAGED_MESSAGE : '');
+        manualCell.appendChild(createCosmosAutoscaleConversionButton(containerName, container.mode, container.is_scalable, 'btn-outline-primary', portalManagedMessage));
+        manualCell.appendChild(createManualContainerScaleButton(containerName, 'up', !container.is_scalable || Boolean(scaleUpDisabledReason), scaleUpDisabledReason));
+        manualCell.appendChild(createManualContainerScaleButton(containerName, 'down', !container.is_scalable || portalManaged, portalManagedMessage));
+        if (portalManaged || !container.is_scalable) {
             const helper = document.createElement('div');
             helper.className = 'small text-muted mt-1';
-            helper.textContent = 'Shared throughput';
+            helper.textContent = portalManaged ? 'Use Azure portal for capacity changes.' : 'Shared throughput';
             manualCell.appendChild(helper);
         }
         row.appendChild(manualCell);
 
-        if (globalPolicyEnforced) {
+        if (globalPolicyEnforced || portalManaged) {
             row.querySelectorAll('.cosmos-container-policy-input').forEach(input => {
                 input.disabled = true;
             });
@@ -950,10 +1060,12 @@ function updateCosmosThroughputStatusPanel(status) {
     renderCosmosContainerMetrics(currentCosmosContainers);
     renderCosmosContainerPolicyModal(currentCosmosContainers);
 
-    const globalScaleButtonsDisabled = status?.capacity_scope === 'container' || !throughput.is_scalable;
-    const globalConvertButtonDisabled = status?.capacity_scope === 'container' || throughput.mode !== 'manual' || !throughput.is_scalable;
+    const databasePortalManaged = isCosmosThroughputPortalManaged(throughput);
+    const globalScaleButtonsDisabled = status?.capacity_scope === 'container' || !throughput.is_scalable || databasePortalManaged;
+    const globalScaleUpButtonDisabled = globalScaleButtonsDisabled || isCosmosScaleUpBlockedBySimpleChatLimit(throughput);
+    const globalConvertButtonDisabled = status?.capacity_scope === 'container' || throughput.mode !== 'manual' || !throughput.is_scalable || databasePortalManaged;
     document.getElementById('cosmos-throughput-convert-autoscale-btn')?.toggleAttribute('disabled', globalConvertButtonDisabled);
-    document.getElementById('cosmos-throughput-scale-up-btn')?.toggleAttribute('disabled', globalScaleButtonsDisabled);
+    document.getElementById('cosmos-throughput-scale-up-btn')?.toggleAttribute('disabled', globalScaleUpButtonDisabled);
     document.getElementById('cosmos-throughput-scale-down-btn')?.toggleAttribute('disabled', globalScaleButtonsDisabled);
 }
 
@@ -964,6 +1076,12 @@ function hasContainerLevelCosmosMetrics(status) {
     ) || (
         container?.request_units !== null
         && container?.request_units !== undefined
+    ));
+}
+
+function hasPortalManagedCosmosThroughput(status) {
+    return Boolean(status?.throughput?.portal_managed_scaling_required) || (status?.containers || []).some(container => (
+        isCosmosThroughputPortalManaged(container)
     ));
 }
 
@@ -1025,6 +1143,8 @@ async function loadCosmosThroughputStatus(event = null) {
             setCosmosThroughputMessage(`Cosmos database throughput could not be read. ${data.throughput_error}`, 'danger');
         } else if (data.capacity_scope === 'container' && data.metrics?.normalized_ru_percent !== null && data.metrics?.normalized_ru_percent !== undefined && !hasContainerLevelCosmosMetrics(data)) {
             setCosmosThroughputMessage('Azure Monitor returned aggregate RU utilization, but not per-container metric dimensions for this window. Container autoscale waits for per-container utilization before scaling individual containers; Refresh again after a few minutes.', 'warning');
+        } else if (hasPortalManagedCosmosThroughput(data)) {
+            setCosmosThroughputMessage('One or more Cosmos throughput targets are above 10,000 RU/s. SimpleChat will monitor utilization and request units only; use the Azure portal for capacity changes, which can take 4 to 6 hours.', 'warning');
         } else if (data.capacity_scope === 'container') {
             setCosmosThroughputMessage('Container-targeted throughput is active. Dedicated-throughput containers can be monitored and scaled individually; containers sharing database throughput remain view-only.', 'info');
         } else if (data.metric_error) {
@@ -1058,7 +1178,7 @@ function buildCosmosThroughputAccessPayload() {
         cosmos_throughput_scale_up_cooldown_minutes: getNumericFieldValue('cosmos_throughput_scale_up_cooldown_minutes', 5),
         cosmos_throughput_scale_down_cooldown_minutes: getNumericFieldValue('cosmos_throughput_scale_down_cooldown_minutes', 20),
         cosmos_throughput_min_ru: getNumericFieldValue('cosmos_throughput_min_ru', 1000),
-        cosmos_throughput_max_ru: getNumericFieldValue('cosmos_throughput_max_ru', 20000),
+        cosmos_throughput_max_ru: getNumericFieldValue('cosmos_throughput_max_ru', COSMOS_THROUGHPUT_SIMPLECHAT_MAX_RU),
         cosmos_throughput_ignore_min_limit: isFieldChecked('cosmos_throughput_ignore_min_limit'),
         cosmos_throughput_ignore_max_limit: isFieldChecked('cosmos_throughput_ignore_max_limit'),
         cosmos_throughput_convert_manual_to_autoscale_enabled: isFieldChecked('cosmos_throughput_convert_manual_to_autoscale_enabled'),
@@ -1193,6 +1313,9 @@ function setupCosmosThroughputControls() {
     document.getElementById('cosmos-throughput-container-filter')?.addEventListener('input', () => {
         renderCosmosContainerMetrics(currentCosmosContainers);
     });
+    document.getElementById('cosmos-throughput-container-policy-filter')?.addEventListener('input', () => {
+        renderCosmosContainerPolicyModal(currentCosmosContainers);
+    });
 
     document.querySelectorAll('.cosmos-throughput-container-sort').forEach(button => {
         button.addEventListener('click', () => {
@@ -1220,6 +1343,10 @@ function setupCosmosThroughputControls() {
     document.getElementById('cosmos-throughput-convert-autoscale-btn')?.addEventListener('click', event => convertCosmosThroughputToAutoscale('', event.currentTarget));
     document.getElementById('cosmos-throughput-scale-up-btn')?.addEventListener('click', () => manuallyScaleCosmosThroughput('up'));
     document.getElementById('cosmos-throughput-scale-down-btn')?.addEventListener('click', () => manuallyScaleCosmosThroughput('down'));
+    document.getElementById('cosmos-throughput-container-policies-btn')?.addEventListener('click', () => {
+        setCosmosContainerPolicyFilter('');
+        renderCosmosContainerPolicyModal(currentCosmosContainers);
+    });
     document.getElementById('cosmos_throughput_enforce_container_defaults')?.addEventListener('change', () => {
         renderCosmosContainerMetrics(currentCosmosContainers);
         renderCosmosContainerPolicyModal(currentCosmosContainers);

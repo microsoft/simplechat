@@ -2,7 +2,7 @@
 """
 UI test for Admin Settings Cosmos throughput controls.
 
-Version: 0.241.184
+Version: 0.241.199
 Implemented in: 0.241.147
 
 This test ensures the Scale tab exposes Cosmos throughput monitoring and
@@ -20,6 +20,7 @@ Version 0.241.180 adds container table sorting and filtering coverage.
 Version 0.241.181 adds container table refresh button coverage.
 Version 0.241.183 adds explicit setup guidance and detailed Validate Access diagnostics coverage.
 Version 0.241.184 adds neutral informational copy for normal container-targeted throughput mode.
+Version 0.241.199 adds SimpleChat's 10,000 RU/s scale support ceiling, monitor-only indicators, and container policy modal filtering coverage.
 """
 
 import re
@@ -75,6 +76,8 @@ def test_admin_cosmos_throughput_controls_render_from_template():
         "cosmos-throughput-scale-down-btn",
         "cosmos-throughput-container-filter",
         "cosmos-throughput-container-filter-count",
+        "cosmos-throughput-container-policy-filter",
+        "cosmos-throughput-container-policy-filter-count",
         "cosmos-throughput-refresh-table-btn",
         "cosmos_throughput_container_policies_json",
         "cosmos-throughput-container-policies-body",
@@ -89,7 +92,13 @@ def test_admin_cosmos_throughput_controls_render_from_template():
     assert 'Total request units consumed during the selected metrics window' in template
     assert 'Highest normalized RU percentage Azure Monitor reported' in template
     assert 'Automation checks Cosmos throughput on the Metrics Window cadence' in template
+    assert 'SimpleChat can scale throughput up or down at 10,000 RU/s or lower' in template
+    assert 'Above 10,000 RU/s, SimpleChat monitors utilization only' in template
+    assert 'capacity changes, which can take 4 to 6 hours' in template
     assert 'Native Cosmos autoscale conversion is separate from SimpleChat scale-up and scale-down automation' in template
+    assert 'SimpleChat-managed scaling stops at 10,000 RU/s' in template
+    assert 'Containers above 10,000 RU/s are monitor-only in SimpleChat' in template
+    assert 'Filter Container Policies' in template
     assert 'window.cosmosThroughputCachedStatus' in template
     assert "admin_settings.js') }}?v={{ config['VERSION'] }}" in template
     assert 'Enforce global policy for all containers' in template
@@ -165,6 +174,7 @@ def test_admin_cosmos_throughput_controls_render_from_template():
         expect(page.get_by_role("button", name="Scale Down")).to_be_visible()
         expect(page.get_by_label("Filter Containers")).to_be_visible()
         expect(page.get_by_role("button", name="Refresh Table")).to_be_visible()
+        expect(page.get_by_label("Filter Container Policies")).to_be_attached()
         expect(page.get_by_role("button", name="Sort containers by container name")).to_be_visible()
         expect(page.get_by_role("button", name="Sort containers by current RU/s")).to_be_visible()
         expect(page.get_by_role("button", name="Sort containers by RU utilization")).to_be_visible()
@@ -185,6 +195,8 @@ def test_container_metrics_table_uses_clarity_renderer():
 
     assert "createIconButton('bi bi-gear'" in source
     assert "configureButton.textContent = 'Configure'" not in source
+    assert "setCosmosContainerPolicyFilter(containerName);" in source
+    assert "renderCosmosContainerPolicyModal(currentCosmosContainers);" in source
     assert "container.database_name || ''" not in source
     assert "cell.colSpan = 7;" in source
     assert "cell.colSpan = 8;" in source
@@ -205,6 +217,11 @@ def test_container_metrics_table_supports_sorting_and_filtering():
     assert "function updateCosmosContainerTableControls" in source
     assert "cosmos-throughput-container-filter" in source
     assert "cosmos-throughput-container-filter-count" in source
+    assert "function getFilteredCosmosPolicyContainers" in source
+    assert "function updateCosmosContainerPolicyFilterControls" in source
+    assert "cosmos-throughput-container-policy-filter" in source
+    assert "cosmos-throughput-container-policy-filter-count" in source
+    assert "No container policies match the current filter." in source
     assert "cosmos-throughput-refresh-table-btn" in source
     assert "No containers match the current filter." in source
     assert "data-sort-field" in ADMIN_TEMPLATE.read_text(encoding="utf-8")
@@ -249,6 +266,26 @@ def test_global_container_policy_enforcement_ui_logic():
     assert "cosmos_throughput_enforce_container_defaults" in source
     assert "convert_manual_to_autoscale_enabled" in source
     assert "cosmos_throughput_convert_manual_to_autoscale_enabled" in source
+
+
+def test_cosmos_throughput_portal_managed_limit_ui_logic():
+    """The frontend should mark high-throughput targets as monitor-only in SimpleChat."""
+    source = ADMIN_JS.read_text(encoding="utf-8")
+    template = ADMIN_TEMPLATE.read_text(encoding="utf-8")
+
+    assert "COSMOS_THROUGHPUT_SIMPLECHAT_MAX_RU = 10000" in source
+    assert "Throughput above 10,000 RU/s is monitored only in SimpleChat" in source
+    assert "capacity changes above this level can take 4 to 6 hours" in source
+    assert "function isCosmosThroughputPortalManaged" in source
+    assert "function isCosmosScaleUpBlockedBySimpleChatLimit" in source
+    assert "function createCosmosPortalManagedBadge" in source
+    assert "portal_managed_scaling_required" in source
+    assert "Monitor only" in source
+    assert "Use Azure portal for capacity changes." in source
+    assert "One or more Cosmos throughput targets are above 10,000 RU/s" in source
+    assert "max=\"10000\"" in template
+    assert "SimpleChat-managed scaling stops at 10,000 RU/s" in template
+    assert "plan for a 4 to 6 hour provisioning window" in template
 
 
 def test_cosmos_throughput_policy_validation_blocks_invalid_saves():

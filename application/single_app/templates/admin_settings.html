@@ -4123,7 +4123,7 @@
 
                     <div class="alert alert-info small mb-3">
                         <i class="bi bi-info-circle me-2"></i>
-                        Automation checks Cosmos throughput on the Metrics Window cadence while enabled and saves the last observed database or container view. Native Cosmos autoscale conversion is separate from SimpleChat scale-up and scale-down automation.
+                        Automation checks Cosmos throughput on the Metrics Window cadence while enabled and saves the last observed database or container view. SimpleChat can scale throughput up or down at 10,000 RU/s or lower. Above 10,000 RU/s, SimpleChat monitors utilization only; use the Azure portal for capacity changes, which can take 4 to 6 hours. Native Cosmos autoscale conversion is separate from SimpleChat scale-up and scale-down automation.
                     </div>
 
                     <textarea class="d-none" id="cosmos_throughput_container_policies_json" name="cosmos_throughput_container_policies_json">{{ settings.cosmos_throughput_container_policies | tojson }}</textarea>
@@ -4235,7 +4235,8 @@
                                 </div>
                                 <div class="col-md-6 col-xl-3">
                                     <label for="cosmos_throughput_max_ru" class="form-label">Maximum RU/s</label>
-                                    <input type="number" class="form-control" id="cosmos_throughput_max_ru" name="cosmos_throughput_max_ru" min="1000" step="1000" value="{{ settings.cosmos_throughput_max_ru }}">
+                                    <input type="number" class="form-control" id="cosmos_throughput_max_ru" name="cosmos_throughput_max_ru" min="1000" max="10000" step="1000" value="{{ settings.cosmos_throughput_max_ru }}">
+                                    <div class="form-text">SimpleChat-managed scaling stops at 10,000 RU/s. Use the Azure portal above this limit.</div>
                                 </div>
                                 <div class="col-md-6 col-xl-3">
                                     <div class="form-check mt-4 pt-2">
@@ -4484,7 +4485,27 @@
                             </div>
                             <div class="modal-body">
                                 <div class="alert alert-info small mb-3">
-                                    Dedicated container throughput is controlled per row unless global policy enforcement is enabled. Containers using shared database throughput are shown for visibility, but cannot be scaled or converted individually until they have dedicated throughput.
+                                    Dedicated container throughput is controlled per row unless global policy enforcement is enabled. Containers using shared database throughput are shown for visibility, but cannot be scaled or converted individually until they have dedicated throughput. Containers above 10,000 RU/s are monitor-only in SimpleChat; change their capacity in the Azure portal and plan for a 4 to 6 hour provisioning window.
+                                </div>
+                                <div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+                                    <div class="flex-grow-1">
+                                        <label for="cosmos-throughput-container-policy-filter" class="form-label mb-1">Filter Container Policies</label>
+                                        <div class="input-group input-group-sm">
+                                            <span class="input-group-text">
+                                                <i class="bi bi-search" aria-hidden="true"></i>
+                                            </span>
+                                            <input
+                                                type="search"
+                                                class="form-control"
+                                                id="cosmos-throughput-container-policy-filter"
+                                                placeholder="Filter by container name"
+                                                aria-describedby="cosmos-throughput-container-policy-filter-count"
+                                                autocomplete="off"
+                                                data-ignore-settings-change="true"
+                                            >
+                                        </div>
+                                    </div>
+                                    <div id="cosmos-throughput-container-policy-filter-count" class="small text-muted mb-1" aria-live="polite"></div>
                                 </div>
                                 <div class="table-responsive">
                                     <table class="table table-sm align-middle">

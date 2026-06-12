@@ -377,10 +377,17 @@ def _merge_chat_upload_workspace_context(
     assigned_knowledge_filters=None,
     assigned_knowledge_user_context_active=False,
 ):
-    if (
+    assigned_knowledge_blocks_user_context = (
         assigned_knowledge_filters
         and assigned_knowledge_filters.get('has_workspace_knowledge')
         and not assigned_knowledge_user_context_active
+    )
+    if (
+        assigned_knowledge_blocks_user_context
+        and not _assigned_knowledge_allows_document_action(
+            assigned_knowledge_filters,
+            DOCUMENT_ACTION_TYPE_NONE,
+        )
     ):
         return effective_document_scope, list(effective_selected_document_ids or []), []
 
@@ -426,7 +433,9 @@ def _merge_chat_upload_workspace_context(
         return effective_document_scope, merged_document_ids, []
 
     normalized_scope = str(effective_document_scope or '').strip().lower()
-    if normalized_scope == 'group' or linked_document_scopes == {'group'}:
+    if assigned_knowledge_blocks_user_context:
+        merged_scope = 'all'
+    elif normalized_scope == 'group' or linked_document_scopes == {'group'}:
         merged_scope = 'group'
     elif normalized_scope in ('', 'none', 'null', 'personal'):
         merged_scope = 'personal'
@@ -561,6 +570,60 @@ def _merge_search_results_by_identity(*result_sets):
                 continue
             seen_keys.add(identity)
             merged_results.append(result)
+    return merged_results
+
+
+def _get_search_result_identity(result):
+    if not isinstance(result, dict):
+        return ''
+    return (
+        result.get('id')
+        or f"{result.get('document_id') or ''}:{result.get('chunk_id') or result.get('chunk_sequence') or ''}"
+    )
+
+
+def _is_personal_or_group_search_result(result):
+    if not isinstance(result, dict):
+        return False
+
+    result_scope = str(result.get('scope') or '').strip().lower()
+    if result_scope in {'personal', 'group'}:
+        return True
+    if result_scope == 'public' or result.get('public_workspace_id'):
+        return False
+    return bool(result.get('group_id') or result.get('document_id'))
+
+
+def _merge_assigned_knowledge_user_context_search_results(assigned_results, user_context_results, *, top_n):
+    assigned_limit = max(0, int(top_n or 0))
+    merged_results = []
+    seen_keys = set()
+
+    for result in (assigned_results or [])[:assigned_limit]:
+        if not isinstance(result, dict):
+            continue
+        identity = _get_search_result_identity(result)
+        if identity in seen_keys:
+            continue
+        seen_keys.add(identity)
+        merged_results.append(result)
+
+    user_context_appended_count = 0
+    for result in user_context_results or []:
+        if not _is_personal_or_group_search_result(result):
+            continue
+        identity = _get_search_result_identity(result)
+        if identity in seen_keys:
+            continue
+        seen_keys.add(identity)
+        merged_results.append(result)
+        user_context_appended_count += 1
+
+    debug_print(
+        "[AssignedKnowledge] Merged assigned and user workspace search results | "
+        f"assigned_count={min(len(assigned_results or []), assigned_limit)} | "
+        f"user_context_appended={user_context_appended_count} | total={len(merged_results)}"
+    )
     return merged_results
 
 
@@ -12214,6 +12277,19 @@ def register_route_backend_chats(app):
                 assigned_knowledge_user_context_active=assigned_knowledge_user_context_active,
             )
             if auto_linked_chat_upload_document_ids:
+                auto_linked_assigned_knowledge_user_context = (
+                    assigned_knowledge_filters
+                    and assigned_knowledge_filters.get('has_workspace_knowledge')
+                    and not assigned_knowledge_user_context_active
+                )
+                if auto_linked_assigned_knowledge_user_context:
+                    assigned_knowledge_user_context_active = True
+                    g.assigned_knowledge_user_context_active = True
+                    tags_filter = []
+                    debug_print(
+                        "[ChatUploadWorkspaceContext] Enabled Assigned Knowledge user context "
+                        f"from {len(auto_linked_chat_upload_document_ids)} linked chat upload workspace document(s)."
+                    )
                 hybrid_search_enabled = True
                 original_hybrid_search_enabled = True
                 effective_selected_document_id = (
@@ -12932,10 +13008,11 @@ def register_route_backend_chats(app):
                         assigned_search_results = hybrid_search(**assigned_search_args)
                         if assigned_knowledge_user_context_active:
                             user_context_search_results = hybrid_search(**search_args)
-                            search_results = _merge_search_results_by_identity(
+                            search_results = _merge_assigned_knowledge_user_context_search_results(
                                 assigned_search_results,
                                 user_context_search_results,
-                            )[:top_n]
+                                top_n=top_n,
+                            )
                         else:
                             search_results = assigned_search_results
                     else:
@@ -15762,6 +15839,19 @@ def register_route_backend_chats(app):
                     assigned_knowledge_user_context_active=assigned_knowledge_user_context_active,
                 )
                 if auto_linked_chat_upload_document_ids:
+                    auto_linked_assigned_knowledge_user_context = (
+                        assigned_knowledge_filters
+                        and assigned_knowledge_filters.get('has_workspace_knowledge')
+                        and not assigned_knowledge_user_context_active
+                    )
+                    if auto_linked_assigned_knowledge_user_context:
+                        assigned_knowledge_user_context_active = True
+                        g.assigned_knowledge_user_context_active = True
+                        tags_filter = []
+                        debug_print(
+                            "[ChatUploadWorkspaceContext] Enabled Assigned Knowledge user context "
+                            f"from {len(auto_linked_chat_upload_document_ids)} linked chat upload workspace document(s)."
+                        )
                     hybrid_search_enabled = True
                     original_hybrid_search_enabled = True
                     effective_selected_document_id = (
@@ -16366,10 +16456,11 @@ def register_route_backend_chats(app):
                             assigned_search_results = hybrid_search(**assigned_search_args)
                             if assigned_knowledge_user_context_active:
                                 user_context_search_results = hybrid_search(**search_args)
-                                search_results = _merge_search_results_by_identity(
+                                search_results = _merge_assigned_knowledge_user_context_search_results(
                                     assigned_search_results,
                                     user_context_search_results,
-                                )[:12]
+                                    top_n=12,
+                                )
                             else:
                                 search_results = assigned_search_results
                         else:
