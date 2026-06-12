@@ -6,6 +6,8 @@ Updated in version: **0.241.128**
 
 Updated in version: **0.241.192**
 
+Updated in version: **0.241.193**
+
 ## Overview
 
 SimpleChat supports generic Microsoft Foundry workflow agents as selectable chat agents through the `foundry_workflow` agent type. The feature is workflow-name driven and does not hardcode any specific workflow names.
@@ -22,7 +24,8 @@ SimpleChat supports generic Microsoft Foundry workflow agents as selectable chat
 
 - Agent records store workflow configuration in `other_settings.foundry_workflow`.
 - Workflow discovery uses the Foundry project agents API and normalizes returned agents into workflow-capable entries, preserving `workflow_agent_id`, `application_id`, `application_version`, and `agent_reference` when available.
-- Runtime invocation mirrors the Foundry SDK flow: create a Foundry OpenAI conversation, call Responses with `agent_reference`, stream events, and delete the Foundry conversation after the run.
+- Runtime invocation mirrors the Foundry SDK flow for delegated workflow calls: create a Foundry OpenAI conversation, call Responses with `agent_reference`, stream events, and delete the Foundry conversation after the run.
+- API-key workflow calls for discovered Foundry project agents use the application Responses protocol endpoint, avoiding identity-gated `agent_reference` conversation item creation.
 - The verified OpenAI-compatible workflow REST protocol for the test project uses `v1` paths such as `/openai/v1/responses` and `/openai/v1/conversations`, without an `api-version` query parameter.
 - The UI defaults workflow agents to `v1` and no longer exposes `v2` as a normal REST protocol option. Existing saved `v2` workflow values are normalized to `v1` at runtime.
 - Dated preview versions are sent as `api-version` query parameters on both conversation and response endpoints.
@@ -96,4 +99,4 @@ Optional settings include `workflow_agent_id`, `agent_reference`, `application_i
 
 ## Config Version Reference
 
-This feature originally corresponds to the `VERSION = "0.241.128"` update in `application/single_app/config.py` for file input handoff support. Workflow-capable Foundry agent reference preservation was updated in `VERSION = "0.241.192"`.
+This feature originally corresponds to the `VERSION = "0.241.128"` update in `application/single_app/config.py` for file input handoff support. Workflow-capable Foundry agent reference preservation was updated in `VERSION = "0.241.192"`. API-key workflow routing for discovered project agents was updated in `VERSION = "0.241.193"`.

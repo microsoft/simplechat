@@ -77,6 +77,14 @@ from functions_message_artifacts import (
     build_agent_citation_artifact_documents,
     make_json_serializable,
 )
+from model_endpoint_clients import (
+    MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
+    MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
+    MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
+    build_anthropic_chat_client,
+    build_openai_style_chat_client,
+    infer_model_endpoint_protocol,
+)
 from functions_notifications import create_workflow_priority_notification
 from functions_personal_workflows import save_personal_workflow_run, save_personal_workflow_run_item
 from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
@@ -103,6 +111,15 @@ DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_ROW_COUNT = 5
 DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_LINE_COUNT = 5
 DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_LINE_LENGTH = 220
 TABULAR_DOCUMENT_EXTENSIONS = {'.csv', '.xls', '.xlsx', '.xlsm'}
+
+
+def get_workflow_kernel_settings(settings):
+    workflow_settings = dict(settings or {})
+    workflow_settings['max_auto_invoke_attempts'] = workflow_settings.get(
+        'workflow_max_auto_invoke_attempts',
+        60,
+    )
+    return workflow_settings
 
 
 def _get_workflow_scope(workflow):
@@ -3087,28 +3104,55 @@ def _resolve_foundry_scope(auth_settings, endpoint=None):
     return 'https://ai.azure.com/.default'
 
 
-def _build_token_provider(auth_settings, provider='aoai', endpoint=None):
+def _build_workflow_credential(auth_settings):
     auth_type = (auth_settings.get('type') or 'managed_identity').lower()
     authority = _resolve_authority(auth_settings)
 
     if auth_type == 'service_principal':
-        credential = ClientSecretCredential(
+        return ClientSecretCredential(
             tenant_id=auth_settings.get('tenant_id'),
             client_id=auth_settings.get('client_id'),
             client_secret=auth_settings.get('client_secret'),
             authority=authority,
         )
-    else:
-        credential = DefaultAzureCredential(
-            managed_identity_client_id=auth_settings.get('managed_identity_client_id') or None,
-            authority=authority,
-        )
+
+    return DefaultAzureCredential(
+        managed_identity_client_id=auth_settings.get('managed_identity_client_id') or None,
+        authority=authority,
+    )
+
+
+def _resolve_workflow_token_scope(auth_settings, provider='aoai', endpoint=None, runtime_protocol=None):
+    normalized_provider = str(provider or 'aoai').strip().lower()
+    protocol = runtime_protocol or MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI
 
     scope = cognitive_services_scope
-    if provider in ('aifoundry', 'new_foundry'):
+    if normalized_provider in ('aifoundry', 'new_foundry', 'anthropic', 'claude') or protocol != MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI:
         scope = _resolve_foundry_scope(auth_settings, endpoint=endpoint)
+    return scope
+
+
+def _build_token_provider(auth_settings, provider='aoai', endpoint=None, runtime_protocol=None):
+    credential = _build_workflow_credential(auth_settings)
+    scope = _resolve_workflow_token_scope(
+        auth_settings,
+        provider=provider,
+        endpoint=endpoint,
+        runtime_protocol=runtime_protocol,
+    )
 
     return get_bearer_token_provider(credential, scope)
+
+
+def _build_bearer_token(auth_settings, provider='aoai', endpoint=None, runtime_protocol=None):
+    credential = _build_workflow_credential(auth_settings)
+    scope = _resolve_workflow_token_scope(
+        auth_settings,
+        provider=provider,
+        endpoint=endpoint,
+        runtime_protocol=runtime_protocol,
+    )
+    return credential.get_token(scope).token
 
 
 def _get_workflow_runner_app():
@@ -3480,13 +3524,22 @@ def _build_multi_endpoint_client(user_id, endpoint_id, model_id, settings, group
     api_version = connection.get('api_version') or connection.get('openai_api_version') or settings.get('azure_openai_gpt_api_version')
     endpoint = connection.get('endpoint')
     auth_type = str(auth.get('type') or 'api_key').strip().lower()
+    runtime_protocol = infer_model_endpoint_protocol(provider, endpoint, deployment_name)
 
     if auth_type in ('key', 'api_key'):
-        client = AzureOpenAI(
-            azure_endpoint=endpoint,
-            api_key=auth.get('api_key'),
-            api_version=api_version,
-        )
+        api_key = auth.get('api_key')
+        if not api_key:
+            raise ValueError('Selected model endpoint is missing an API key.')
+        if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC:
+            client = build_anthropic_chat_client(endpoint=endpoint, api_key=api_key)
+        elif runtime_protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
+            client = build_openai_style_chat_client(api_key, endpoint, api_version)
+        else:
+            client = AzureOpenAI(
+                azure_endpoint=endpoint,
+                api_key=api_key,
+                api_version=api_version,
+            )
     else:
         auth_settings = {
             'type': auth_type,
@@ -3498,12 +3551,34 @@ def _build_multi_endpoint_client(user_id, endpoint_id, model_id, settings, group
             'custom_authority': auth.get('custom_authority') or settings.get('custom_authority') or '',
             'foundry_scope': auth.get('foundry_scope') or '',
         }
-        token_provider = _build_token_provider(auth_settings, provider=provider, endpoint=endpoint)
-        client = AzureOpenAI(
-            azure_endpoint=endpoint,
-            azure_ad_token_provider=token_provider,
-            api_version=api_version,
-        )
+        if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC:
+            bearer_token = _build_bearer_token(
+                auth_settings,
+                provider=provider,
+                endpoint=endpoint,
+                runtime_protocol=runtime_protocol,
+            )
+            client = build_anthropic_chat_client(endpoint=endpoint, bearer_token=bearer_token)
+        elif runtime_protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
+            bearer_token = _build_bearer_token(
+                auth_settings,
+                provider=provider,
+                endpoint=endpoint,
+                runtime_protocol=runtime_protocol,
+            )
+            client = build_openai_style_chat_client(bearer_token, endpoint, api_version)
+        else:
+            token_provider = _build_token_provider(
+                auth_settings,
+                provider=provider,
+                endpoint=endpoint,
+                runtime_protocol=runtime_protocol,
+            )
+            client = AzureOpenAI(
+                azure_endpoint=endpoint,
+                azure_ad_token_provider=token_provider,
+                api_version=api_version,
+            )
 
     return client, deployment_name, provider
 
@@ -4765,7 +4840,7 @@ def _execute_document_analysis_workflow(
 
             try:
                 kernel = Kernel()
-                kernel, agent_objs = load_user_semantic_kernel(kernel, settings, user_id, None)
+                kernel, agent_objs = load_user_semantic_kernel(kernel, get_workflow_kernel_settings(settings), user_id, None)
                 if not agent_objs:
                     raise ValueError('The selected agent could not be loaded for analysis.')
 
@@ -5037,7 +5112,7 @@ def _execute_document_comparison_workflow(
 
             try:
                 kernel = Kernel()
-                kernel, agent_objs = load_user_semantic_kernel(kernel, settings, user_id, None)
+                kernel, agent_objs = load_user_semantic_kernel(kernel, get_workflow_kernel_settings(settings), user_id, None)
                 if not agent_objs:
                     raise ValueError('The selected agent could not be loaded for document comparison.')
 
@@ -5362,7 +5437,7 @@ def _execute_agent_workflow(workflow, settings, conversation_id='', run_id=None,
 
         try:
             kernel = Kernel()
-            kernel, agent_objs = load_user_semantic_kernel(kernel, settings, user_id, None)
+            kernel, agent_objs = load_user_semantic_kernel(kernel, get_workflow_kernel_settings(settings), user_id, None)
             if not agent_objs:
                 raise ValueError('The selected agent could not be loaded for workflow execution.')
 

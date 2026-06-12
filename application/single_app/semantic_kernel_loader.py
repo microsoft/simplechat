@@ -123,6 +123,32 @@ except ImportError:
 log_event("[SK Loader] Completed imports")
 
 
+DEFAULT_MAX_AUTO_INVOKE_ATTEMPTS = 60
+MAX_AUTO_INVOKE_ATTEMPTS_UPPER_BOUND = 500
+
+
+def get_max_auto_invoke_attempts(settings=None):
+    try:
+        raw_value = (settings or {}).get("max_auto_invoke_attempts", DEFAULT_MAX_AUTO_INVOKE_ATTEMPTS)
+        return max(1, min(MAX_AUTO_INVOKE_ATTEMPTS_UPPER_BOUND, int(raw_value)))
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_AUTO_INVOKE_ATTEMPTS
+
+
+def should_apply_prompt_settings(agent_config, settings=None):
+    return (
+        (agent_config or {}).get("max_completion_tokens", -1) > 0
+        or (settings or {}).get("max_auto_invoke_attempts") is not None
+    )
+
+
+def get_agent_prompt_settings_config(agent_config, settings=None):
+    prompt_settings_config = dict(agent_config or {})
+    if (settings or {}).get("max_auto_invoke_attempts") is not None:
+        prompt_settings_config["max_auto_invoke_attempts"] = (settings or {}).get("max_auto_invoke_attempts")
+    return prompt_settings_config
+
+
 def resolve_agent_endpoint_protocol(agent_config):
     """Infer the protocol needed for an endpoint-bound Semantic Kernel agent."""
     return infer_model_endpoint_protocol(
@@ -1836,9 +1862,10 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                 exceptionTraceback=True,
             )
             return None, None
-        if agent_config.get('max_completion_tokens', -1) > 0:
-            print(f"[SK Loader] Using {agent_config['max_completion_tokens']} max_completion_tokens for {agent_config['name']}")
-            chat_service = set_prompt_settings_for_agent(chat_service, agent_config)
+        if should_apply_prompt_settings(agent_config, settings):
+            if agent_config.get('max_completion_tokens', -1) > 0:
+                print(f"[SK Loader] Using {agent_config['max_completion_tokens']} max_completion_tokens for {agent_config['name']}")
+            chat_service = set_prompt_settings_for_agent(chat_service, get_agent_prompt_settings_config(agent_config, settings))
         kernel.add_service(chat_service)
         log_event(
             f"[SK Loader] Chat completion service registered for agent: {agent_config['name']} ({mode_label})",
@@ -1956,7 +1983,9 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                 "deployment_name": agent_config["deployment"],
                 "azure_endpoint": agent_config["endpoint"],
                 "api_version": agent_config["api_version"],
-                "function_choice_behavior": FunctionChoiceBehavior.Auto(maximum_auto_invoke_attempts=60)
+                "function_choice_behavior": FunctionChoiceBehavior.Auto(
+                    maximum_auto_invoke_attempts=get_max_auto_invoke_attempts(settings)
+                )
             }
             # Don't pass plugins to agent since they're already loaded in kernel
             agent_obj = LoggingChatCompletionAgent(**kwargs)
@@ -2863,18 +2892,20 @@ def load_semantic_kernel(kernel: Kernel, settings):
                             level=logging.INFO
                         )
                         chat_service = create_model_endpoint_chat_completion_service(agent_config, service_id)
-                        if orchestrator_config.get('max_completion_tokens', -1) > 0:
-                            print(f"[SK Loader] Using {orchestrator_config['max_completion_tokens']} max_completion_tokens for {orchestrator_config['name']}")
-                            chat_service = set_prompt_settings_for_agent(chat_service, orchestrator_config)
+                        if should_apply_prompt_settings(orchestrator_config, settings):
+                            if orchestrator_config.get('max_completion_tokens', -1) > 0:
+                                print(f"[SK Loader] Using {orchestrator_config['max_completion_tokens']} max_completion_tokens for {orchestrator_config['name']}")
+                            chat_service = set_prompt_settings_for_agent(chat_service, get_agent_prompt_settings_config(orchestrator_config, settings))
                         if chat_service:
                             kernel.add_service(chat_service)
                 except Exception as e:
                     log_event(f"[SK Loader] Failed to create or get AzureChatCompletion for agent: {agent_config['name']}: {e}", {"error": str(e)}, level=logging.ERROR, exceptionTraceback=True)
             if LoggingChatCompletionAgent and chat_service:
                 try:
-                    if agent_config.get('max_completion_tokens', -1) > 0:
-                        print(f"[SK Loader] Using {agent_config['max_completion_tokens']} max_completion_tokens for {agent_config['name']}")
-                        chat_service = set_prompt_settings_for_agent(chat_service, agent_config)
+                    if should_apply_prompt_settings(agent_config, settings):
+                        if agent_config.get('max_completion_tokens', -1) > 0:
+                            print(f"[SK Loader] Using {agent_config['max_completion_tokens']} max_completion_tokens for {agent_config['name']}")
+                        chat_service = set_prompt_settings_for_agent(chat_service, get_agent_prompt_settings_config(agent_config, settings))
                     kwargs = {
                         "name": agent_config["name"],
                         "instructions": agent_config["instructions"],
@@ -2887,7 +2918,9 @@ def load_semantic_kernel(kernel: Kernel, settings):
                         "deployment_name": agent_config["deployment"],
                         "azure_endpoint": agent_config["endpoint"],
                         "api_version": agent_config["api_version"],
-                        "function_choice_behavior": FunctionChoiceBehavior.Auto(maximum_auto_invoke_attempts=60)
+                        "function_choice_behavior": FunctionChoiceBehavior.Auto(
+                            maximum_auto_invoke_attempts=get_max_auto_invoke_attempts(settings)
+                        )
                     }
                     if agent_config.get("actions_to_load"):
                         kwargs["plugins"] = agent_config["actions_to_load"]
@@ -2957,9 +2990,10 @@ def load_semantic_kernel(kernel: Kernel, settings):
                             level=logging.INFO
                         )
                         chat_service = create_model_endpoint_chat_completion_service(orchestrator_config, service_id)
-                        if agent_config.get('max_completion_tokens', -1) > 0:
-                            print(f"[SK Loader] Using {agent_config['max_completion_tokens']} max_completion_tokens for {agent_config['name']}")
-                            chat_service = set_prompt_settings_for_agent(chat_service, agent_config)
+                        if should_apply_prompt_settings(agent_config, settings):
+                            if agent_config.get('max_completion_tokens', -1) > 0:
+                                print(f"[SK Loader] Using {agent_config['max_completion_tokens']} max_completion_tokens for {agent_config['name']}")
+                            chat_service = set_prompt_settings_for_agent(chat_service, get_agent_prompt_settings_config(agent_config, settings))
                         if chat_service:
                             kernel.add_service(chat_service)
                 if not chat_service:
@@ -3213,7 +3247,9 @@ def set_prompt_settings_for_agent(chat_service, agent_config: dict):
     if hasattr(prompt_exec_settings, 'function_choice_behavior'):
         if getattr(prompt_exec_settings, 'function_choice_behavior', None) is None:
             try:
-                prompt_exec_settings.function_choice_behavior = FunctionChoiceBehavior.Auto(maximum_auto_invoke_attempts=60)
+                prompt_exec_settings.function_choice_behavior = FunctionChoiceBehavior.Auto(
+                    maximum_auto_invoke_attempts=get_max_auto_invoke_attempts(agent_config)
+                )
             except Exception:
                 # pass this to prevent additional future agent types from potentially failing
                 pass

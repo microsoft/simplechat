@@ -2,7 +2,7 @@
 """
 UI test for Foundry workflow agent modal controls.
 
-Version: 0.241.192
+Version: 0.241.193
 Implemented in: 0.241.127
 
 This test ensures that the agent modal exposes the generic Foundry Workflow

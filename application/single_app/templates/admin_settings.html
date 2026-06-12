@@ -5042,6 +5042,26 @@
                         Required app role value: <code>WorkflowUser</code>. Assign this role to users or groups in the Enterprise App before enabling the requirement.
                     </p>
 
+                    <div class="form-group mt-3 mb-3">
+                        <label for="workflow_max_auto_invoke_attempts" class="form-label">
+                            Workflow Agent Action Limit
+                        </label>
+                        <input type="number"
+                            class="form-control"
+                            id="workflow_max_auto_invoke_attempts"
+                            name="workflow_max_auto_invoke_attempts"
+                            min="1"
+                            max="500"
+                            step="1"
+                            value="{{ settings.workflow_max_auto_invoke_attempts|default(60, true) }}">
+                        <div class="form-text">
+                            Maximum automatic tool or action calls an agent can make during one workflow run. Default is 60; increase for large document sets.
+                        </div>
+                        <div class="alert alert-warning small mb-0 mt-2" role="alert">
+                            Values above 100 are capacity-sensitive. Enable Cosmos DB Throughput automation in SimpleChat so the app can monitor RU pressure and scale up Cosmos when needed, and also monitor Azure OpenAI throttling, App Service CPU and memory, and downstream service latency.
+                        </div>
+                    </div>
+
                     <hr>
 
                     <div class="form-group form-check form-switch mb-3">

@@ -586,6 +586,18 @@ def register_route_frontend_admin_settings(app):
             group_workflow_allowed_group_ids = normalize_group_workflow_allowed_group_ids(
                 form_data.get('group_workflow_allowed_group_ids', '')
             )
+            workflow_max_auto_invoke_attempts = min(
+                500,
+                max(
+                    1,
+                    parse_admin_int(
+                        form_data.get('workflow_max_auto_invoke_attempts'),
+                        settings.get('workflow_max_auto_invoke_attempts', 60),
+                        'workflow_max_auto_invoke_attempts',
+                        60
+                    )
+                )
+            )
             file_sync_allowed_group_ids = normalize_file_sync_allowed_group_ids(
                 form_data.get('file_sync_allowed_group_ids', '')
             )
@@ -1602,6 +1614,7 @@ def register_route_frontend_admin_settings(app):
                 'allow_group_workflows': form_data.get('allow_group_workflows') == 'on',
                 'require_group_assignment_for_group_workflows': form_data.get('require_group_assignment_for_group_workflows') == 'on',
                 'group_workflow_allowed_group_ids': group_workflow_allowed_group_ids,
+                'workflow_max_auto_invoke_attempts': workflow_max_auto_invoke_attempts,
                 'allow_personal_workspace_file_downloads': form_data.get('allow_personal_workspace_file_downloads') == 'on',
                 'allow_group_workspace_file_downloads': form_data.get('allow_group_workspace_file_downloads') == 'on',
                 'require_group_assignment_for_file_downloads': form_data.get('require_group_assignment_for_file_downloads') == 'on',

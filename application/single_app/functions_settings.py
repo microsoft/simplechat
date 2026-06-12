@@ -354,6 +354,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_tabular_processing_plugin': False,
         'enable_multi_agent_orchestration': False,
         'max_rounds_per_agent': 1,
+        'workflow_max_auto_invoke_attempts': 60,
         'enable_semantic_kernel': False,
         'per_user_semantic_kernel': False,
         'orchestration_type': 'default_agent',

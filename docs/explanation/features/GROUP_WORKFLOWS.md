@@ -1,9 +1,15 @@
 # Group Workflows
 
 Implemented in version: **0.241.179**
+Enhanced in version: **0.241.193** for configurable workflow agent action limits.
+Enhanced in version: **0.241.194** with admin capacity guidance for high action limits.
 
-Related version update:
-- `application/single_app/config.py` reports version `0.241.179`.
+Fixed/Implemented in version: **0.241.193**
+
+Related version updates:
+- `application/single_app/config.py` reported version `0.241.179` when group workflows were implemented.
+- `application/single_app/config.py` reported version `0.241.193` for workflow action limit configuration.
+- `application/single_app/config.py` now reports version `0.241.194` for workflow action limit capacity guidance.
 
 ## Overview
 
@@ -47,6 +53,8 @@ Configuration options:
 - `group_workflow_allowed_group_ids` stores the assigned group IDs.
 - `require_owner_for_group_agent_management` is now labeled as `Require Owner to Manage Group Agents, Actions and Workflows` and also governs group workflow authoring roles.
 - `enable_file_sync_group` gates group File Sync sources for workflow pre-run sync and File Sync monitor triggers.
+- `workflow_max_auto_invoke_attempts` controls the maximum automatic tool or action calls an agent can make during one workflow run and defaults to `60`.
+- Values above `100` should be treated as capacity-sensitive. Admins should enable Cosmos DB Throughput automation in SimpleChat so the app can monitor RU pressure and scale up Cosmos when needed, while also watching Azure OpenAI throttling, App Service CPU and memory, and downstream service latency.
 
 Permission model:
 - Runtime access is allowed for group Owners, Admins, Document Managers, and Users when the group workflow feature is enabled for that group.
@@ -67,7 +75,8 @@ How to enable/configure:
 3. Open the Workflow section.
 4. Enable `Enable Group Workflows`.
 5. Optionally enable `Require Group Assignment to Use Workflow` and choose groups with `Manage Groups`.
-6. Optionally enable `Require Owner to Manage Group Agents, Actions and Workflows` to limit workflow authoring to group Owners.
+6. Set `Workflow Agent Action Limit` when large group workflows need more than the default 60 automatic tool or action calls. For values above 100, enable Cosmos DB Throughput automation in SimpleChat and monitor service capacity.
+7. Optionally enable `Require Owner to Manage Group Agents, Actions and Workflows` to limit workflow authoring to group Owners.
 
 Group workflow:
 1. Open Group Workspaces.
@@ -86,9 +95,10 @@ Integration points:
 
 Functional coverage:
 - `functional_tests/test_group_workflows_feature.py` verifies static contracts for storage, settings, routes, scheduler, runner scope, activity deep links, admin UI settings, and group workspace UI wiring.
+- `functional_tests/test_workflow_auto_invoke_attempt_settings.py` verifies workflow action limit defaults, admin save wiring, Semantic Kernel loader wiring, and workflow runner scoping.
 
 UI coverage:
-- `ui_tests/test_admin_workflow_settings_access.py` verifies the Admin Settings workflow section exposes the group workflow enablement, assignment, and owner-only management controls.
+- `ui_tests/test_admin_workflow_settings_access.py` verifies the Admin Settings workflow section exposes the group workflow enablement, assignment, owner-only management controls, and workflow action limit control.
 
 Performance and limitations:
 - Group workflow runtime uses the same scheduler polling cadence and runner path as personal workflows.

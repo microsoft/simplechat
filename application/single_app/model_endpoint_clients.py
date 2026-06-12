@@ -202,7 +202,7 @@ class AnthropicChatCompletionClient:
         stream = bool(kwargs.get("stream"))
         response = requests.post(
             self.endpoint,
-            headers=self._build_headers(),
+            headers=self._build_headers(stream=stream),
             json=payload,
             timeout=(30, self.timeout),
             stream=stream,
@@ -215,10 +215,10 @@ class AnthropicChatCompletionClient:
 
         return self._build_completion_response(response.json())
 
-    def _build_headers(self) -> Dict[str, str]:
+    def _build_headers(self, *, stream: bool = False) -> Dict[str, str]:
         headers = {
             "Content-Type": "application/json",
-            "Accept": "application/json",
+            "Accept": "text/event-stream" if stream else "application/json",
             "anthropic-version": "2023-06-01",
         }
         if self.bearer_token:
@@ -337,7 +337,10 @@ class AnthropicChatCompletionClient:
             for raw_line in response.iter_lines(decode_unicode=True):
                 if not raw_line:
                     continue
-                line = str(raw_line).strip()
+                if isinstance(raw_line, bytes):
+                    line = raw_line.decode("utf-8", errors="replace").strip()
+                else:
+                    line = str(raw_line).strip()
                 if not line.startswith("data:"):
                     continue
                 event_data = line[5:].strip()
@@ -350,6 +353,13 @@ class AnthropicChatCompletionClient:
                     continue
 
                 event_type = event_payload.get("type")
+                if event_type == "error":
+                    error_payload = event_payload.get("error")
+                    if isinstance(error_payload, dict):
+                        error_message = error_payload.get("message") or error_payload.get("type") or str(error_payload)
+                    else:
+                        error_message = str(error_payload or event_payload)
+                    raise RuntimeError(f"Anthropic model stream failed: {error_message}")
                 if event_type == "message_start":
                     usage = event_payload.get("message", {}).get("usage", {})
                     prompt_tokens = int(usage.get("input_tokens") or prompt_tokens or 0)
@@ -365,6 +375,7 @@ class AnthropicChatCompletionClient:
                     continue
                 if event_type == "message_delta":
                     usage = event_payload.get("usage") if isinstance(event_payload.get("usage"), dict) else {}
+                    prompt_tokens = int(usage.get("input_tokens") or prompt_tokens or 0)
                     completion_tokens = int(usage.get("output_tokens") or completion_tokens or 0)
                     continue
         finally:

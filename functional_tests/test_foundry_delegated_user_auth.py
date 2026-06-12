@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Foundry delegated user authentication.
-Version: 0.241.192
+Version: 0.241.193
 Implemented in: 0.241.185
 
 This test ensures that Foundry agents and workflows default to signed-in user
@@ -15,6 +15,7 @@ Foundry application/workflow API-key endpoint support was added in 0.241.188.
 Manual Foundry application/workflow API-key configuration was added in 0.241.190.
 Foundry API-key runtime headers were corrected in 0.241.191.
 Foundry workflow agent-reference support was added in 0.241.192.
+Foundry API-key workflow application-protocol routing was added in 0.241.193.
 """
 
 from pathlib import Path
@@ -326,7 +327,7 @@ def test_modal_uses_delegated_user_auth_and_safe_consent_link() -> None:
 
 def test_version_bumped_for_delegated_foundry_auth() -> None:
     """Validate version traceability for this auth model change."""
-    assert_contains(CONFIG_FILE, 'VERSION = "0.241.192"')
+    assert_contains(CONFIG_FILE, 'VERSION = "0.241.193"')
     assert_contains(FIX_DOC_FILE, "Fixed/Implemented in version: **0.241.186**")
     assert_contains(API_KEY_FIX_DOC_FILE, "Fixed/Implemented in version: **0.241.191**")
 

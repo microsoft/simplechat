@@ -2,10 +2,11 @@
 # test_cosmos_throughput_autoscale_logic.py
 """
 Functional test for Cosmos throughput autoscale decision logic.
-Version: 0.241.184
+Version: 0.241.194
 Implemented in: 0.241.147; container policy enforcement added in 0.241.153; container metric guardrail added in 0.241.155; manual-to-autoscale conversion added in 0.241.159; migrateToAutoscale ARM action fix added in 0.241.160; save validation added in 0.241.161; access validation added in 0.241.162
 Enhanced in: 0.241.183 with detailed access validation diagnostics for partial Azure permission failures.
 Enhanced in: 0.241.184 with neutral container-targeted throughput status language.
+Enhanced in: 0.241.194 with dedicated container scale-up-to-max coverage when mixed database and container throughput exist.
 
 This test ensures that Cosmos DB throughput automation scales the shared
 SimpleChat database up and down using separate thresholds, cooldowns, and
@@ -115,6 +116,25 @@ def test_scale_up_respects_max_guardrail():
     assert decision['reason'] == 'max_limit_reached'
 
 
+def test_scale_up_reaches_max_guardrail_from_previous_step():
+    """Scale up should move from one step below the configured maximum to the maximum."""
+    decision = calculate_scale_decision(
+        _base_settings(
+            cosmos_throughput_scale_up_threshold_percent=70,
+            cosmos_throughput_scale_down_threshold_percent=50,
+            cosmos_throughput_min_ru=1000,
+            cosmos_throughput_max_ru=10000,
+        ),
+        _status(9000, 75),
+        current_time=datetime(2026, 6, 11, tzinfo=timezone.utc),
+    )
+
+    assert decision['should_scale'] is True
+    assert decision['direction'] == 'up'
+    assert decision['from_ru'] == 9000
+    assert decision['to_ru'] == 10000
+
+
 def test_scale_down_respects_min_guardrail():
     """Scale down should stop at the configured minimum RU/s unless ignored."""
     decision = calculate_scale_decision(
@@ -200,6 +220,56 @@ def test_container_targeted_scale_up_when_database_throughput_missing():
     assert decision['direction'] == 'up'
     assert decision['from_ru'] == 4000
     assert decision['to_ru'] == 6000
+
+
+def test_dedicated_container_scale_up_to_max_when_database_throughput_exists():
+    """A hot dedicated container should scale to its max even when database throughput is also present."""
+    settings = _base_settings(
+        cosmos_throughput_scale_up_threshold_percent=70,
+        cosmos_throughput_scale_down_threshold_percent=50,
+        cosmos_throughput_min_ru=1000,
+        cosmos_throughput_max_ru=10000,
+        cosmos_throughput_container_policies={
+            'messages': {
+                'scale_up_threshold_percent': 70,
+                'scale_down_threshold_percent': 50,
+                'scale_up_step_ru': 1000,
+                'min_ru': 1000,
+                'max_ru': 10000,
+            },
+        },
+    )
+    decision = calculate_scale_decision(
+        settings,
+        {
+            'throughput': {
+                'mode': 'autoscale',
+                'current_ru': 4000,
+                'is_scalable': True,
+            },
+            'metrics': {
+                'normalized_ru_percent': 75,
+            },
+            'containers': [
+                {
+                    'container_name': 'messages',
+                    'mode': 'autoscale',
+                    'current_ru': 9000,
+                    'is_scalable': True,
+                    'normalized_ru_percent': 75,
+                    'policy': settings['cosmos_throughput_container_policies']['messages'],
+                },
+            ],
+        },
+        current_time=datetime(2026, 6, 11, tzinfo=timezone.utc),
+    )
+
+    assert decision['should_scale'] is True
+    assert decision['scope'] == 'container'
+    assert decision['container_name'] == 'messages'
+    assert decision['direction'] == 'up'
+    assert decision['from_ru'] == 9000
+    assert decision['to_ru'] == 10000
 
 
 def test_container_targeted_scaling_waits_for_per_container_metrics():
@@ -667,10 +737,12 @@ if __name__ == "__main__":
     tests = [
         test_scales_up_when_utilization_is_high,
         test_scale_up_respects_max_guardrail,
+        test_scale_up_reaches_max_guardrail_from_previous_step,
         test_scale_down_respects_min_guardrail,
         test_scale_down_uses_separate_cooldown,
         test_ignored_limits_allow_scale_beyond_guardrails,
         test_container_targeted_scale_up_when_database_throughput_missing,
+        test_dedicated_container_scale_up_to_max_when_database_throughput_exists,
         test_container_targeted_scaling_waits_for_per_container_metrics,
         test_container_manual_scale_uses_container_policy,
         test_enforced_global_container_policy_overrides_saved_container_policy,

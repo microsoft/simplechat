@@ -1785,6 +1785,14 @@ def _cooldown_elapsed(last_action_at, cooldown_minutes, current_time):
     return current_time - last_action_time >= timedelta(minutes=cooldown_minutes)
 
 
+def _has_scale_action(decision):
+    return bool((decision or {}).get('should_scale'))
+
+
+def _is_container_priority_action(decision):
+    return _has_scale_action(decision) and decision.get('direction') in {'convert_to_autoscale', 'up'}
+
+
 def _calculate_autoscale_conversion_target(throughput, min_ru, max_ru, ignore_min_limit=False, ignore_max_limit=False):
     current_ru = throughput.get('current_ru')
     if not current_ru:
@@ -1876,8 +1884,10 @@ def calculate_scale_decision(settings, status, current_time=None):
 
     if not normalized.get('cosmos_throughput_autoscale_enabled'):
         return {'should_scale': False, 'reason': 'disabled'}
+
+    container_decision = calculate_container_scale_decision(settings, status, current_time=current_time)
     if not throughput.get('is_scalable') or not current_ru:
-        return calculate_container_scale_decision(settings, status, current_time=current_time)
+        return container_decision
     if mode == 'manual' and normalized.get('cosmos_throughput_convert_manual_to_autoscale_enabled'):
         try:
             return _build_autoscale_conversion_decision(
@@ -1890,8 +1900,13 @@ def calculate_scale_decision(settings, status, current_time=None):
                 observed_percent=observed_percent,
             )
         except CosmosThroughputError as exc:
+            if _has_scale_action(container_decision):
+                return container_decision
             return {'should_scale': False, 'reason': 'manual_to_autoscale_guardrail_blocked', 'error': str(exc)}
+
     if observed_percent is None:
+        if _is_container_priority_action(container_decision):
+            return container_decision
         return {'should_scale': False, 'reason': 'missing_utilization_metric'}
 
     service_minimum = COSMOS_THROUGHPUT_AUTOSCALE_MIN_RU if mode == 'autoscale' else COSMOS_THROUGHPUT_MANUAL_MIN_RU
@@ -1916,7 +1931,7 @@ def calculate_scale_decision(settings, status, current_time=None):
             target_ru = min(target_ru, normalize_ru(normalized['cosmos_throughput_max_ru'], mode=mode, direction='up'))
         if target_ru <= int(current_ru):
             return {'should_scale': False, 'reason': 'max_limit_reached'}
-        return {
+        database_decision = {
             'should_scale': True,
             'scope': 'database',
             'direction': 'up',
@@ -1925,6 +1940,15 @@ def calculate_scale_decision(settings, status, current_time=None):
             'observed_percent': observed_percent,
             'reason': 'utilization_above_threshold',
         }
+        if _is_container_priority_action(container_decision):
+            if container_decision.get('direction') == 'convert_to_autoscale':
+                return container_decision
+            if (container_decision.get('observed_percent') or 0) >= observed_percent:
+                return container_decision
+        return database_decision
+
+    if _is_container_priority_action(container_decision):
+        return container_decision
 
     if (
         normalized.get('cosmos_throughput_auto_scale_down_enabled')
@@ -1956,6 +1980,9 @@ def calculate_scale_decision(settings, status, current_time=None):
             'observed_percent': observed_percent,
             'reason': 'utilization_below_threshold',
         }
+
+    if _has_scale_action(container_decision):
+        return container_decision
 
     return {'should_scale': False, 'reason': 'within_thresholds'}
 
