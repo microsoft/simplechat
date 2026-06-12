@@ -192,6 +192,53 @@ def _prompt_explicitly_requests_artifact(analysis_prompt):
     return any(marker in prompt_text for marker in artifact_markers)
 
 
+def _prompt_explicitly_requests_json_artifact(analysis_prompt):
+    prompt_text = str(analysis_prompt or '').strip().lower()
+    if not prompt_text:
+        return False
+
+    json_markers = (
+        'json artifact',
+        'json export',
+        'json output',
+        'json array',
+        'json object',
+        'json format',
+        'valid json',
+        'return json',
+        'return only json',
+        'return only valid json',
+        'respond with json',
+        'format as json',
+        'output as json',
+        'save as json',
+        'save it as json',
+        'export as json',
+        'download as json',
+        'create json',
+        'create a json',
+        'make json',
+        'make a json',
+        'generate json',
+        'generate a json',
+        'produce json',
+        'produce a json',
+        'save to .json',
+        'export to .json',
+        'download .json',
+        'create .json',
+        'make .json',
+        'generate .json',
+    )
+    if any(marker in prompt_text for marker in json_markers):
+        return True
+
+    return bool(re.search(
+        r'\b(create|make|build|generate|produce|return|respond|format|output|save|export|download)\b[\w\s.,:;\-/]{0,60}\bjson\b',
+        prompt_text,
+    ))
+
+
 def _normalize_generated_artifact_file_stem(value, fallback_value='analysis-artifact'):
     normalized_value = re.sub(r'[^a-z0-9._-]+', '-', str(value or '').strip().lower()).strip('-._')
     return normalized_value or fallback_value
@@ -912,6 +959,22 @@ def _build_document_analysis_markdown_artifact(analysis_result):
     return '\n'.join(lines).strip()
 
 
+def _build_generated_reply_markdown_artifact(title, section_title, reply_text):
+    normalized_reply = str(reply_text or '').strip()
+    if not normalized_reply:
+        return ''
+
+    normalized_title = str(title or 'Generated Analysis').strip() or 'Generated Analysis'
+    normalized_section_title = str(section_title or 'Output').strip() or 'Output'
+    return '\n'.join([
+        f'# {normalized_title}',
+        '',
+        f'## {normalized_section_title}',
+        '',
+        normalized_reply,
+    ]).strip()
+
+
 def _upload_document_analysis_generated_artifact(
     normalized_conversation_id,
     file_name,
@@ -1024,6 +1087,8 @@ def _maybe_create_document_analysis_generated_artifacts(
     artifact_intent = _get_document_analysis_artifact_intent(analysis_result, analysis_prompt)
     primary_tabular_outputs = _get_primary_tabular_generated_outputs(primary_generated_outputs)
     raw_analysis_items = analysis_result.get('raw_analysis_items') if isinstance(analysis_result.get('raw_analysis_items'), list) else []
+    json_payload = _parse_json_artifact_payload(analysis_reply)
+    json_artifact_requested = _prompt_explicitly_requests_json_artifact(analysis_prompt)
     create_lossless_artifacts = bool(
         artifact_intent.get('exhaustive')
         or artifact_intent.get('table_output_requested')
@@ -1054,7 +1119,10 @@ def _maybe_create_document_analysis_generated_artifacts(
 
         markdown_output = _build_document_analysis_markdown_artifact(analysis_result)
         should_create_markdown_artifact = bool(
-            artifact_intent.get('markdown_analysis_artifact_recommended')
+            (
+                artifact_intent.get('markdown_analysis_artifact_recommended')
+                or (json_payload is not None and not json_artifact_requested)
+            )
             and markdown_output
             and (
                 not primary_tabular_outputs
@@ -1078,8 +1146,7 @@ def _maybe_create_document_analysis_generated_artifacts(
             if markdown_artifact:
                 artifacts.append(markdown_artifact)
 
-        json_payload = _parse_json_artifact_payload(analysis_reply)
-        if json_payload is not None and not primary_tabular_outputs:
+        if json_payload is not None and json_artifact_requested and not primary_tabular_outputs:
             json_file_name = _build_document_analysis_artifact_file_name(analysis_result, 'json')
             json_summary = _build_document_analysis_artifact_summary(document_count, 'json')
             json_preview_items = []
@@ -1132,7 +1199,6 @@ def _maybe_create_document_analysis_generated_artifacts(
             ),
         }
 
-    json_payload = _parse_json_artifact_payload(analysis_reply)
     explicit_artifact_request = _prompt_explicitly_requests_artifact(analysis_prompt)
     should_generate_artifact = (
         explicit_artifact_request
@@ -1142,7 +1208,7 @@ def _maybe_create_document_analysis_generated_artifacts(
     if not should_generate_artifact:
         return {'artifacts': [], 'assistant_reply': None}
 
-    output_format = 'json' if json_payload is not None else 'md'
+    output_format = 'json' if json_payload is not None and json_artifact_requested else 'md'
     preview_items = []
     preview_lines = []
 
@@ -1153,7 +1219,10 @@ def _maybe_create_document_analysis_generated_artifacts(
         elif isinstance(json_payload, dict):
             preview_items = [json_payload]
     else:
-        serialized_output = analysis_reply
+        serialized_output = (
+            _build_document_analysis_markdown_artifact(analysis_result)
+            or _build_generated_reply_markdown_artifact('Document Analysis', 'Analysis Output', analysis_reply)
+        )
         preview_lines = _build_document_analysis_preview_lines(analysis_reply)
 
     file_name = _build_document_analysis_artifact_file_name(analysis_result, output_format)
@@ -1221,6 +1290,7 @@ def _maybe_create_comparison_generated_artifacts(comparison_result, comparison_p
 
     json_payload = _parse_json_artifact_payload(analysis_reply)
     explicit_artifact_request = _prompt_explicitly_requests_artifact(comparison_prompt)
+    json_artifact_requested = _prompt_explicitly_requests_json_artifact(comparison_prompt)
     should_generate_artifact = (
         explicit_artifact_request
         or json_payload is not None
@@ -1232,7 +1302,7 @@ def _maybe_create_comparison_generated_artifacts(comparison_result, comparison_p
     left_document = comparison_result.get('left_document') if isinstance(comparison_result.get('left_document'), dict) else {}
     left_document_name = str(left_document.get('document_name') or 'the selected source').strip() or 'the selected source'
     right_documents = comparison_result.get('right_documents') if isinstance(comparison_result.get('right_documents'), list) else []
-    output_format = 'json' if json_payload is not None else 'md'
+    output_format = 'json' if json_payload is not None and json_artifact_requested else 'md'
     preview_items = []
     preview_lines = []
 
@@ -1243,7 +1313,11 @@ def _maybe_create_comparison_generated_artifacts(comparison_result, comparison_p
         elif isinstance(json_payload, dict):
             preview_items = [json_payload]
     else:
-        serialized_output = analysis_reply
+        serialized_output = _build_generated_reply_markdown_artifact(
+            'Document Comparison',
+            'Comparison Output',
+            analysis_reply,
+        )
         preview_lines = _build_document_analysis_preview_lines(analysis_reply)
 
     file_name = _build_comparison_artifact_file_name(comparison_result, output_format)

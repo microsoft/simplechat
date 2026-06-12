@@ -1,11 +1,12 @@
 # test_chat_workspace_upload_progress_polling.py
 """
 UI test for chat workspace upload progress polling.
-Version: 0.241.174
+Version: 0.241.198
 Implemented in: 0.241.174
 
 This test ensures workspace-backed chat upload cards keep the progress bar
-visible while status details stay collapsed behind a toggle.
+visible while status details stay collapsed behind a toggle, and that the
+workspace-backed upload watcher immediately enables user workspace context.
 """
 
 from pathlib import Path
@@ -58,7 +59,16 @@ def run_chat_workspace_upload_progress_polling_scenario(page, expect):
         content=f"""
         const chatWorkspaceUploadPolls = new Map();
         const chatWorkspaceUploadCompletionWatchers = new Map();
-        const selectPersonalWorkspaceDocumentForChatUpload = () => Promise.resolve(true);
+        window.__activationCount = 0;
+        window.__selectedWorkspaceDocument = null;
+        const activateUserWorkspaceContextForChatUpload = () => {{
+            window.__activationCount += 1;
+            return true;
+        }};
+        const selectWorkspaceDocumentForChatUpload = (workspaceDocumentId, options = {{}}) => {{
+            window.__selectedWorkspaceDocument = {{ workspaceDocumentId, ...options }};
+            return Promise.resolve(true);
+        }};
         const escapeHtml = (value) => String(value ?? '')
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
@@ -77,6 +87,7 @@ def run_chat_workspace_upload_progress_polling_scenario(page, expect):
         {progress_source}
         window.__chatWorkspaceProgressTest = {{
             buildChatWorkspaceAttachmentHtml,
+            watchChatWorkspaceUploadDocument,
             startChatWorkspaceAttachmentPolling,
         }};
         """
@@ -84,10 +95,29 @@ def run_chat_workspace_upload_progress_polling_scenario(page, expect):
     page.evaluate(
         """
         () => {
-            window.__fetchCount = 0;
-            window.fetch = async () => {
-                window.__fetchCount += 1;
-                if (window.__fetchCount === 1) {
+            window.__progressFetchCount = 0;
+            window.__watchFetchCount = 0;
+            window.__watchFetchUrls = [];
+            window.fetch = async (url) => {
+                const requestUrl = String(url || '');
+                if (requestUrl.includes('group-upload-doc')) {
+                    window.__watchFetchCount += 1;
+                    window.__watchFetchUrls.push(requestUrl);
+                    return {
+                        ok: true,
+                        status: 200,
+                        json: async () => ({
+                            document: {
+                                id: 'group-upload-doc',
+                                status: 'Processing Complete',
+                                percentage_complete: 100,
+                            },
+                        }),
+                    };
+                }
+
+                window.__progressFetchCount += 1;
+                if (window.__progressFetchCount === 1) {
                     return {
                         ok: false,
                         status: 500,
@@ -128,6 +158,26 @@ def run_chat_workspace_upload_progress_polling_scenario(page, expect):
     assert "text-warning" in (status.get_attribute("class") or "")
     assert "bg-warning" in (progress_bar.get_attribute("class") or "")
 
+    page.evaluate(
+        """
+        () => {
+            window.__chatWorkspaceProgressTest.watchChatWorkspaceUploadDocument('group-upload-doc', {
+                autoSelect: true,
+                workspaceScope: 'group',
+                groupId: 'group-1',
+            });
+        }
+        """
+    )
+
+    assert page.evaluate("window.__activationCount") == 1
+    page.wait_for_function("window.__selectedWorkspaceDocument !== null")
+    assert page.evaluate("window.__selectedWorkspaceDocument.workspaceDocumentId") == "group-upload-doc"
+    assert page.evaluate("window.__selectedWorkspaceDocument.workspaceScope") == "group"
+    assert page.evaluate("window.__selectedWorkspaceDocument.groupId") == "group-1"
+    assert page.evaluate("window.__watchFetchCount") == 1
+    assert page.evaluate("window.__watchFetchUrls[0]").endswith("/api/group_documents/group-upload-doc")
+
     page.locator(".chat-workspace-progress-toggle").click()
 
     expect(details).to_be_visible()
@@ -144,4 +194,4 @@ def run_chat_workspace_upload_progress_polling_scenario(page, expect):
 
     expect(details).to_be_visible()
     assert "d-none" not in (details.get_attribute("class") or "")
-    assert page.evaluate("window.__fetchCount") == 2
+    assert page.evaluate("window.__progressFetchCount") == 2

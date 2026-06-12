@@ -12,7 +12,7 @@ import {
   hideLoadingIndicator,
 } from "./chat-loading-indicator.js";
 import { loadMessages, watchChatWorkspaceUploadDocument } from "./chat-messages.js";
-import { getEffectiveScopes } from "./chat-documents.js";
+import { activateUserWorkspaceContextForChatUpload, getEffectiveScopes } from "./chat-documents.js";
 import { loadUserSettings, saveUserSetting } from "./chat-layout.js";
 
 const imageGenBtn = document.getElementById("image-generate-btn");
@@ -742,8 +742,13 @@ export async function uploadFileToConversation(file) {
         ? window.chatCollaboration.activateConversation(uploadedConversationId)
         : loadMessages(uploadedConversationId);
       if (data.workspace_document_id) {
+        activateUserWorkspaceContextForChatUpload();
         Promise.resolve(loadMessagesPromise).finally(() => {
-          watchChatWorkspaceUploadDocument(data.workspace_document_id, { autoSelect: true });
+          watchChatWorkspaceUploadDocument(data.workspace_document_id, {
+            autoSelect: true,
+            workspaceScope: data.workspace_scope,
+            groupId: data.workspace_document?.group_id || data.group_upload_target?.id || null,
+          });
         });
       }
       loadConversations();

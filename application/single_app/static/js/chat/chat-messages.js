@@ -5,7 +5,7 @@ import {
   showLoadingIndicatorInChatbox,
   hideLoadingIndicatorInChatbox,
 } from "./chat-loading-indicator.js";
-import { getDocumentMetadata, fetchDocumentVersions, personalDocs, groupDocs, publicDocs, getSelectedTags, getEffectiveScopes, applyScopeLock, ensureDocumentPickerReady, isAssignedKnowledgeActive, isUserWorkspaceContextEnabled, selectPersonalWorkspaceDocumentForChatUpload } from "./chat-documents.js";
+import { getDocumentMetadata, fetchDocumentVersions, personalDocs, groupDocs, publicDocs, getSelectedTags, getEffectiveScopes, applyScopeLock, ensureDocumentPickerReady, isAssignedKnowledgeActive, isUserWorkspaceContextEnabled, activateUserWorkspaceContextForChatUpload, selectWorkspaceDocumentForChatUpload } from "./chat-documents.js";
 import { promptSelect } from "./chat-prompts.js";
 import {
   createNewConversation,
@@ -339,8 +339,13 @@ function hydrateChatWorkspaceProgressDetailsToggle(rootElement) {
   });
 }
 
-function fetchChatWorkspaceDocumentStatus(workspaceDocumentId) {
-  return fetch(`/api/documents/${encodeURIComponent(workspaceDocumentId)}`, {
+function fetchChatWorkspaceDocumentStatus(workspaceDocumentId, options = {}) {
+  const workspaceScope = String(options.workspaceScope || options.scope || '').trim().toLowerCase();
+  const statusEndpoint = workspaceScope === 'group'
+    ? `/api/group_documents/${encodeURIComponent(workspaceDocumentId)}`
+    : `/api/documents/${encodeURIComponent(workspaceDocumentId)}`;
+
+  return fetch(statusEndpoint, {
     cache: 'no-store',
     credentials: 'same-origin',
   })
@@ -371,9 +376,11 @@ function stopChatWorkspaceUploadCompletionWatcher(workspaceDocumentId) {
   chatWorkspaceUploadCompletionWatchers.delete(workspaceDocumentId);
 }
 
-function autoSelectCompletedChatWorkspaceDocument(workspaceDocumentId) {
-  selectPersonalWorkspaceDocumentForChatUpload(workspaceDocumentId, {
+function autoSelectCompletedChatWorkspaceDocument(workspaceDocumentId, options = {}) {
+  selectWorkspaceDocumentForChatUpload(workspaceDocumentId, {
     replaceSelection: true,
+    workspaceScope: options.workspaceScope,
+    groupId: options.groupId,
   }).catch(error => {
     console.warn('Unable to select completed chat upload workspace document:', error);
   });
@@ -389,11 +396,17 @@ export function watchChatWorkspaceUploadDocument(workspaceDocumentId, options = 
   const watcher = {
     autoSelect: options.autoSelect !== false,
     errorCount: 0,
+    workspaceScope: String(options.workspaceScope || options.scope || '').trim().toLowerCase(),
+    groupId: String(options.groupId || options.group_id || '').trim(),
     intervalId: null,
   };
 
+  if (watcher.autoSelect) {
+    activateUserWorkspaceContextForChatUpload();
+  }
+
   const pollOnce = () => {
-    fetchChatWorkspaceDocumentStatus(normalizedDocumentId)
+    fetchChatWorkspaceDocumentStatus(normalizedDocumentId, watcher)
       .then(doc => {
         watcher.errorCount = 0;
         updateChatWorkspaceDocumentProgressEverywhere(normalizedDocumentId, doc);
@@ -404,7 +417,7 @@ export function watchChatWorkspaceUploadDocument(workspaceDocumentId, options = 
 
         stopChatWorkspaceUploadCompletionWatcher(normalizedDocumentId);
         if (watcher.autoSelect && isChatWorkspaceDocumentSuccessComplete(doc)) {
-          autoSelectCompletedChatWorkspaceDocument(normalizedDocumentId);
+          autoSelectCompletedChatWorkspaceDocument(normalizedDocumentId, watcher);
         }
       })
       .catch(error => {

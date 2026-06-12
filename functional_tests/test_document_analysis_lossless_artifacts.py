@@ -2,14 +2,16 @@
 # test_document_analysis_lossless_artifacts.py
 """
 Functional test for document analysis lossless artifacts.
-Version: 0.241.065
+Version: 0.241.197
 Implemented in: 0.241.040
 Updated in: 0.241.065
+Updated in: 0.241.197
 
 This test ensures exhaustive/table-style document analysis preserves raw window
 outputs and can build both structured CSV rows and Markdown raw-note artifacts
 instead of relying only on the reduced final answer. It also ensures primary
-tabular generated exports suppress redundant analysis JSON/Markdown cards.
+tabular generated exports suppress redundant analysis JSON/Markdown cards, and
+that JSON artifacts are only created when the prompt explicitly requests JSON.
 """
 
 import ast
@@ -367,9 +369,87 @@ def test_primary_tabular_output_demotes_secondary_artifacts():
     print('Primary generated tabular output artifact presentation verified.')
 
 
+def test_json_artifact_requires_explicit_json_request():
+    print('Testing JSON artifact opt-in behavior for document analysis...')
+    uploaded_artifacts = []
+
+    def fake_upload_generated_artifact(**kwargs):
+        uploaded_artifacts.append(kwargs)
+        return {
+            'message': {
+                'id': f'artifact-{len(uploaded_artifacts)}',
+                'file_name': kwargs.get('file_name'),
+            }
+        }
+
+    namespace = load_module_functions(
+        WORKFLOW_RUNNER_PATH,
+        extra_globals={
+            'DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_ITEM_COUNT': 3,
+            'DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_ROW_COUNT': 5,
+            'DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_LINE_COUNT': 5,
+            'DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_LINE_LENGTH': 220,
+            'debug_print': lambda *args, **kwargs: None,
+            'has_request_context': lambda: True,
+            'upload_generated_analysis_artifact_for_current_user': fake_upload_generated_artifact,
+        },
+    )
+
+    analysis_result = {
+        'analysis_reply': json.dumps([
+            {
+                'situation': 'SWA881 and JZA610 are converging with 973 ft vertical separation.',
+                'recommended_action': 'Issue immediate traffic and safety instructions based on the controlling rules.',
+            }
+        ]),
+        'documents': [
+            {
+                'file_name': '14-cfr-part-91-general-operating-and-flight-rules.pdf',
+                'title': '14 CFR Part 91 General Operating and Flight Rules',
+            }
+        ],
+    }
+
+    artifact_payload = namespace['_maybe_create_document_analysis_generated_artifacts'](
+        analysis_result,
+        'How do we handle a situation like this?',
+        conversation_id='conversation-1',
+    )
+
+    assert_equal(len(uploaded_artifacts), 1, 'implicit JSON-shaped upload count')
+    assert_equal(uploaded_artifacts[0]['output_format'], 'md', 'implicit JSON-shaped artifact format')
+    assert_equal(
+        uploaded_artifacts[0]['file_name'],
+        '14-cfr-part-91-general-operating-and-flight-rules-analysis.md',
+        'implicit JSON-shaped artifact filename',
+    )
+    assistant_reply = artifact_payload.get('assistant_reply') or ''
+    assert_contains(assistant_reply, 'downloadable MD artifact', 'implicit JSON-shaped assistant reply')
+    if 'downloadable JSON artifact' in assistant_reply:
+        raise AssertionError('Implicit JSON-shaped analysis should not promote a JSON artifact')
+
+    uploaded_artifacts.clear()
+    explicit_artifact_payload = namespace['_maybe_create_document_analysis_generated_artifacts'](
+        analysis_result,
+        'Please create a JSON file for this answer.',
+        conversation_id='conversation-1',
+    )
+
+    assert_equal(len(uploaded_artifacts), 1, 'explicit JSON upload count')
+    assert_equal(uploaded_artifacts[0]['output_format'], 'json', 'explicit JSON artifact format')
+    assert_equal(
+        uploaded_artifacts[0]['file_name'],
+        '14-cfr-part-91-general-operating-and-flight-rules-analysis.json',
+        'explicit JSON artifact filename',
+    )
+    explicit_assistant_reply = explicit_artifact_payload.get('assistant_reply') or ''
+    assert_contains(explicit_assistant_reply, 'downloadable JSON artifact', 'explicit JSON assistant reply')
+    print('JSON artifact opt-in behavior verified.')
+
+
 def test_version_alignment():
     print('Testing version alignment...')
-    assert_equal(read_config_version(), '0.241.065', 'config version')
+    assert_equal(read_config_version(), '0.241.197', 'config version')
     print('Version alignment verified.')
 
 
@@ -378,6 +458,7 @@ def run_tests():
         test_analysis_preserves_raw_outputs,
         test_lossless_artifact_helpers_build_csv_and_markdown,
         test_primary_tabular_output_demotes_secondary_artifacts,
+        test_json_artifact_requires_explicit_json_request,
         test_version_alignment,
     ]
     results = []

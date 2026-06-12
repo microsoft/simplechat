@@ -2224,18 +2224,42 @@ export async function ensureSearchDocumentsVisible() {
 }
 
 
-export async function selectPersonalWorkspaceDocumentForChatUpload(documentId, options = {}) {
+export function activateUserWorkspaceContextForChatUpload() {
+  if (assignedKnowledgeActive && !assignedKnowledgeAllowsUserContext) {
+    return false;
+  }
+
+  userWorkspaceContextActive = true;
+  syncAssignedKnowledgeButtonState();
+  return true;
+}
+
+
+export async function selectWorkspaceDocumentForChatUpload(documentId, options = {}) {
   const normalizedDocumentId = String(documentId || '').trim();
   if (!normalizedDocumentId) {
     return false;
   }
 
-  if (assignedKnowledgeActive && !assignedKnowledgeAllowsUserContext) {
+  if (!activateUserWorkspaceContextForChatUpload()) {
     return false;
   }
 
+  const workspaceScope = String(options.workspaceScope || options.scope || '').trim().toLowerCase();
+  const groupId = String(options.groupId || options.group_id || '').trim();
   const currentScopes = getEffectiveScopes();
-  if (!currentScopes.personal && scopeLocked !== true) {
+  if (workspaceScope === 'group' && groupId && !currentScopes.groupIds.includes(groupId) && scopeLocked !== true) {
+    await setEffectiveScopes(
+      {
+        ...currentScopes,
+        groupIds: [...currentScopes.groupIds, groupId],
+      },
+      {
+        source: 'chat-upload-workspace-document',
+        reload: true,
+      }
+    );
+  } else if (workspaceScope !== 'group' && !currentScopes.personal && scopeLocked !== true) {
     await setEffectiveScopes(
       {
         ...currentScopes,
@@ -2267,6 +2291,14 @@ export async function selectPersonalWorkspaceDocumentForChatUpload(documentId, o
   handleDocumentSelectChange();
   syncAssignedKnowledgeButtonState();
   return true;
+}
+
+
+export async function selectPersonalWorkspaceDocumentForChatUpload(documentId, options = {}) {
+  return selectWorkspaceDocumentForChatUpload(documentId, {
+    ...options,
+    workspaceScope: 'personal',
+  });
 }
 
 

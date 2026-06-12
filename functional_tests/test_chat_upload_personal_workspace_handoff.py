@@ -1,13 +1,14 @@
 # test_chat_upload_personal_workspace_handoff.py
 """
 Functional test for chat upload personal workspace handoff.
-Version: 0.241.192
+Version: 0.241.198
 Implemented in: 0.241.174
 
 This test ensures chat uploads are wired to queue personal workspace documents,
 replace eligible chat-local file processing with workspace-backed messages,
 automatically search ready linked workspace documents, display processing
-progress, auto-select the completed workspace document, and warn on
+progress, enable the user workspace context as soon as workspace processing
+starts, auto-select the completed workspace document, and warn on
 conversation-linked workspace document deletion. It also
 validates selectable linked-document deletion from the conversation delete modal,
 including when conversation archiving is enabled,
@@ -105,6 +106,8 @@ def test_chat_search_includes_ready_linked_workspace_documents_contract():
     assert_contains(route_backend_chats, "def _merge_chat_upload_workspace_context(", "chat-upload workspace context helper")
     assert_contains(route_backend_chats, "def _is_search_ready_chat_upload_workspace_document", "search-ready linked document guard")
     assert_contains(route_backend_chats, "get_chat_upload_workspace_documents_for_conversation(user_id, conversation_id)", "linked workspace document lookup")
+    assert_contains(route_backend_chats, "assigned_knowledge_user_context_active", "assigned knowledge user context merge switch")
+    assert_contains(route_backend_chats, "and not assigned_knowledge_user_context_active", "assigned knowledge does not block approved user context")
     assert_contains(route_backend_chats, "indexed_chunk_count <= 0", "unindexed linked document exclusion")
     assert_occurs_at_least(route_backend_chats, "auto_linked_chat_upload_document_ids", 6, "auto-linked document metadata and merge usage")
     assert_occurs_at_least(route_backend_chats, "original_hybrid_search_enabled = True", 2, "history fallback suppression for auto-linked documents")
@@ -121,19 +124,28 @@ def test_frontend_progress_and_workspace_notices_contract():
 
     assert_contains(chat_input_actions, "watchChatWorkspaceUploadDocument", "upload response starts workspace completion watcher")
     assert_contains(chat_input_actions, "data.workspace_document_id", "upload response workspace document id consumed by client")
+    assert_contains(chat_input_actions, "activateUserWorkspaceContextForChatUpload();", "upload success immediately enables user workspace context")
+    assert_contains(chat_input_actions, "workspaceScope: data.workspace_scope", "upload response passes workspace scope to completion watcher")
+    assert_contains(chat_input_actions, "groupId: data.workspace_document?.group_id", "upload response passes group id to completion watcher")
 
-    assert_contains(chat_documents, "export async function selectPersonalWorkspaceDocumentForChatUpload", "chat upload completed document selection helper")
-    assert_contains(chat_documents, "userWorkspaceContextActive = true", "workspace context activated for completed upload selection")
+    assert_contains(chat_documents, "export function activateUserWorkspaceContextForChatUpload", "chat upload user workspace context activation helper")
+    assert_contains(chat_documents, "export async function selectWorkspaceDocumentForChatUpload", "chat upload completed document selection helper")
+    assert_contains(chat_documents, "userWorkspaceContextActive = true", "workspace context activated for workspace-backed upload")
+    assert_contains(chat_documents, "workspaceScope === 'group'", "completed group upload scope handling")
+    assert_contains(chat_documents, "groupIds: [...currentScopes.groupIds, groupId]", "completed group upload adds group scope")
     assert_contains(chat_documents, "applyDocumentSelectionForIds([normalizedDocumentId]", "completed upload document selection by id")
     assert_contains(chat_documents, "replaceSelection: options.replaceSelection !== false", "completed upload replaces document picker selection by default")
 
     assert_contains(chat_messages, "chat-workspace-upload-progress", "chat workspace progress container")
-    assert_contains(chat_messages, "fetch(`/api/documents/${encodeURIComponent(workspaceDocumentId)}`", "chat progress polling endpoint")
+    assert_contains(chat_messages, "const statusEndpoint = workspaceScope === 'group'", "chat progress polling chooses endpoint by workspace scope")
+    assert_contains(chat_messages, "`/api/group_documents/${encodeURIComponent(workspaceDocumentId)}`", "group chat upload progress polling endpoint")
+    assert_contains(chat_messages, "`/api/documents/${encodeURIComponent(workspaceDocumentId)}`", "personal chat upload progress polling endpoint")
     assert_contains(chat_messages, "function normalizeChatWorkspaceDocumentResponse", "chat progress document response normalizer")
     assert_contains(chat_messages, "then(payload => normalizeChatWorkspaceDocumentResponse(payload))", "chat progress polling uses normalized document payload")
     assert_contains(chat_messages, "export function watchChatWorkspaceUploadDocument", "upload completion watcher exported for upload response flow")
     assert_contains(chat_messages, "chatWorkspaceUploadCompletionWatchers", "dedicated upload completion watcher state")
-    assert_contains(chat_messages, "selectPersonalWorkspaceDocumentForChatUpload(workspaceDocumentId", "completed upload auto-selects personal workspace document")
+    assert_contains(chat_messages, "activateUserWorkspaceContextForChatUpload();", "workspace-backed upload immediately activates context")
+    assert_contains(chat_messages, "selectWorkspaceDocumentForChatUpload(workspaceDocumentId", "completed upload auto-selects workspace document")
     assert_contains(chat_messages, "buildCompletedChatWorkspaceAttachmentHtml", "completed progress details collapsed renderer")
     assert_contains(chat_messages, "chat-workspace-progress-toggle", "completed progress details expand control")
     assert_contains(chat_messages, "progress flex-grow-1", "in-progress card keeps progress bar visible next to details toggle")
