@@ -26,6 +26,7 @@ PENDING_GENERATED_ARTIFACT_NOTIFICATION_TYPES = [
     'approval_request_pending_submitter',
 ]
 GROUP_DOCUMENT_SHARE_MANAGER_ROLES = ("Owner", "Admin", "DocumentManager")
+GROUP_DOCUMENT_DOWNLOAD_MANAGER_ROLES = ("Owner", "Admin", "DocumentManager")
 GROUP_DOCUMENT_SHARE_PENDING_NOTIFICATION_TYPES = ['group_document_share_pending']
 
 
@@ -401,6 +402,7 @@ def register_route_backend_group_documents(app):
             return jsonify({'error': 'User not authenticated'}), 401
 
         group_ids_param = request.args.get('group_ids', '')
+        validated_group_roles = {}
 
         if group_ids_param:
             # Multi-group mode: validate each group
@@ -408,7 +410,7 @@ def register_route_backend_group_documents(app):
             validated_group_ids = []
             for gid in requested_ids:
                 try:
-                    assert_group_role(
+                    role = assert_group_role(
                         user_id,
                         gid,
                         allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
@@ -416,6 +418,7 @@ def register_route_backend_group_documents(app):
                 except (LookupError, PermissionError):
                     continue
                 validated_group_ids.append(gid)
+                validated_group_roles[gid] = role
 
             if not validated_group_ids:
                 return jsonify({
@@ -435,7 +438,7 @@ def register_route_backend_group_documents(app):
                 return jsonify({'error': 'No active group selected'}), 400
 
             try:
-                assert_group_role(
+                role = assert_group_role(
                     user_id,
                     active_group_id,
                     allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
@@ -446,6 +449,7 @@ def register_route_backend_group_documents(app):
                 return jsonify({'error': 'You are not a member of the active group'}), 403
 
             validated_group_ids = [active_group_id]
+            validated_group_roles[active_group_id] = role
 
         # --- 1) Read pagination and filter parameters ---
         page = request.args.get('page', default=1, type=int)
@@ -641,7 +645,9 @@ def register_route_backend_group_documents(app):
         }
         file_download_enabled_group_ids = [
             group_id for group_id, group_doc in group_docs_for_policy.items()
-            if group_doc and is_group_workspace_file_download_enabled(app_settings, group_doc)
+            if group_doc
+            and validated_group_roles.get(group_id) in GROUP_DOCUMENT_DOWNLOAD_MANAGER_ROLES
+            and is_group_workspace_file_download_enabled(app_settings, group_doc)
         ]
         return jsonify({
             "documents": docs,
@@ -725,14 +731,14 @@ def register_route_backend_group_documents(app):
         try:
             active_group_id = require_active_group(
                 user_id,
-                allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+                allowed_roles=GROUP_DOCUMENT_DOWNLOAD_MANAGER_ROLES,
             )
         except ValueError:
             return None, None, (jsonify({'error': 'No active group selected'}), 400)
         except LookupError:
             return None, None, (jsonify({'error': 'Active group not found'}), 404)
         except PermissionError:
-            return None, None, (jsonify({'error': 'You are not a member of the active group'}), 403)
+            return None, None, (jsonify({'error': 'You do not have permission to download files from this group workspace'}), 403)
 
         group_doc = find_group_by_id(active_group_id)
         if not group_doc:

@@ -2599,9 +2599,14 @@ app_settings.app_title }} {% endblock %} {% block head %}
   let activeGroupId = null; // Crucial for group context
   let activeGroupName = ""; // Store name for display
   const GROUP_WORKSPACE_IDENTITY_MANAGER_ROLES = ["Owner", "Admin", "DocumentManager"];
+  const GROUP_DOCUMENT_DOWNLOAD_MANAGER_ROLES = ["Owner", "Admin", "DocumentManager"];
 
   function canManageGroupWorkspaceIdentities() {
     return GROUP_WORKSPACE_IDENTITY_MANAGER_ROLES.includes(userRoleInActiveGroup);
+  }
+
+  function canManageGroupDocumentDownloads() {
+    return GROUP_DOCUMENT_DOWNLOAD_MANAGER_ROLES.includes(userRoleInActiveGroup);
   }
 
   function switchToGroupDocumentsTab() {
@@ -2890,7 +2895,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
   }
 
   function canDownloadGroupDocuments() {
-    if (!groupFileDownloadsEnabled || !activeGroupId) {
+    if (!groupFileDownloadsEnabled || !activeGroupId || !canManageGroupDocumentDownloads()) {
       return false;
     }
     if (!Array.isArray(groupFileDownloadEnabledGroupIds) || groupFileDownloadEnabledGroupIds.length === 0) {
@@ -2899,13 +2904,20 @@ app_settings.app_title }} {% endblock %} {% block head %}
     return groupFileDownloadEnabledGroupIds.includes(activeGroupId);
   }
 
+  function getGroupDownloadUnavailableMessage() {
+    if (!canManageGroupDocumentDownloads()) {
+      return "You do not have permission to download files from this group workspace.";
+    }
+    return "File downloads are disabled for this group workspace.";
+  }
+
   async function downloadGroupDocumentFile(documentId, event) {
     if (event) {
       event.preventDefault();
       event.stopPropagation();
     }
     if (!canDownloadGroupDocuments()) {
-      showGroupDocumentDeleteFeedback("File downloads are disabled for this group workspace.", "warning");
+      showGroupDocumentDeleteFeedback(getGroupDownloadUnavailableMessage(), "warning");
       return;
     }
 
@@ -2923,7 +2935,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
       return;
     }
     if (!canDownloadGroupDocuments()) {
-      showGroupDocumentDeleteFeedback("File downloads are disabled for this group workspace.", "warning");
+      showGroupDocumentDeleteFeedback(getGroupDownloadUnavailableMessage(), "warning");
       return;
     }
 
