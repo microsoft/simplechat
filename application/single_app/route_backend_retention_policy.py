@@ -280,6 +280,7 @@ def register_route_backend_retention_policy(app):
                         user['settings'] = user_settings
                         
                         cosmos_user_settings_container.upsert_item(user)
+                        invalidate_user_settings_caches(user_id)
                         personal_count += 1
                     except Exception as e:
                         debug_print(f"Error updating user {user_id}: {e}")

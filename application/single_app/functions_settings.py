@@ -1,6 +1,6 @@
 # functions_settings.py
 
-from flask import has_request_context
+from flask import g, has_request_context
 
 from config import *
 from functions_appinsights import log_event
@@ -12,6 +12,101 @@ from support_menu_config import (
     has_visible_support_latest_features,
     normalize_support_latest_features_visibility,
 )
+
+
+USER_SETTINGS_REQUEST_CACHE_ATTR = "simplechat_user_settings_request_cache"
+USER_UI_SETTINGS_KEYS = (
+    "profileImage",
+    "navLayout",
+    "darkModeEnabled",
+    "showTutorialButtons",
+    "chatLayout",
+    "streamingEnabled",
+    "notifications_per_page",
+)
+
+
+def _clone_user_settings_doc(doc):
+    return copy.deepcopy(doc or {})
+
+
+def _get_user_settings_request_cache():
+    if not has_request_context():
+        return None
+
+    cache = getattr(g, USER_SETTINGS_REQUEST_CACHE_ATTR, None)
+    if cache is None:
+        cache = {}
+        setattr(g, USER_SETTINGS_REQUEST_CACHE_ATTR, cache)
+    return cache
+
+
+def _get_request_cached_user_settings(user_id):
+    cache = _get_user_settings_request_cache()
+    if cache is None or user_id not in cache:
+        return None
+    return _clone_user_settings_doc(cache[user_id])
+
+
+def _set_request_cached_user_settings(user_id, doc):
+    cache = _get_user_settings_request_cache()
+    if cache is not None:
+        cache[user_id] = _clone_user_settings_doc(doc)
+
+
+def _delete_request_cached_user_settings(user_id):
+    cache = _get_user_settings_request_cache()
+    if cache is not None:
+        cache.pop(user_id, None)
+
+
+def _extract_user_ui_settings(doc):
+    settings = (doc or {}).get('settings', {})
+    if not isinstance(settings, dict):
+        settings = {}
+    return {
+        key: copy.deepcopy(settings[key])
+        for key in USER_UI_SETTINGS_KEYS
+        if key in settings
+    }
+
+
+def _delete_user_ui_settings_cache(user_id):
+    cache_deleter = getattr(app_settings_cache, "delete_user_ui_settings_cache", None)
+    if callable(cache_deleter):
+        try:
+            cache_deleter(user_id)
+        except Exception as cache_error:
+            log_event(
+                "[UserSettingsCache] Failed to delete user UI settings cache.",
+                extra={
+                    "user_id": user_id,
+                    "error": str(cache_error)
+                },
+                level=logging.WARNING
+            )
+
+
+def _set_user_ui_settings_cache(user_id, doc):
+    cache_setter = getattr(app_settings_cache, "set_user_ui_settings_cache", None)
+    if callable(cache_setter):
+        try:
+            cache_setter(user_id, _extract_user_ui_settings(doc))
+        except Exception as cache_error:
+            log_event(
+                "[UserSettingsCache] Failed to set user UI settings cache.",
+                extra={
+                    "user_id": user_id,
+                    "error": str(cache_error)
+                },
+                level=logging.WARNING
+            )
+
+
+def invalidate_user_settings_caches(user_id):
+    """Clear request and lightweight UI caches for a user settings document."""
+    _delete_request_cached_user_settings(user_id)
+    _delete_user_ui_settings_cache(user_id)
 
 
 def is_tabular_processing_enabled(settings):
@@ -54,17 +149,6 @@ def _should_sync_session_profile(target_user_id, actor_user_id, allow_cross_user
     normalized_target_user_id = str(target_user_id or '').strip()
     normalized_actor_user_id = str(actor_user_id or '').strip()
     return bool(normalized_target_user_id and normalized_actor_user_id and normalized_target_user_id == normalized_actor_user_id)
-import copy
-from support_menu_config import (
-    get_default_support_latest_features_visibility,
-    has_visible_support_latest_features,
-    normalize_support_latest_features_visibility,
-)
-
-
-def is_tabular_processing_enabled(settings):
-    """Tabular processing is available whenever enhanced citations is enabled."""
-    return bool((settings or {}).get('enable_enhanced_citations', False))
 
 
 def _refresh_app_settings_cache_after_write(settings_payload, context="app_settings_write"):
@@ -1129,6 +1213,11 @@ def get_user_settings(user_id, allow_cross_user=False):
         actor_user_id,
         allow_cross_user=allow_cross_user,
     )
+
+    cached_doc = _get_request_cached_user_settings(user_id)
+    if cached_doc is not None:
+        return cached_doc
+
     try:
         doc = cosmos_user_settings_container.read_item(item=user_id, partition_key=user_id)
         updated = False
@@ -1182,7 +1271,10 @@ def get_user_settings(user_id, allow_cross_user=False):
         
         if updated:
             cosmos_user_settings_container.upsert_item(body=doc)
-        return doc
+            _set_user_ui_settings_cache(user_id, doc)
+
+        _set_request_cached_user_settings(user_id, doc)
+        return _clone_user_settings_doc(doc)
     except exceptions.CosmosResourceNotFoundError:
         # Return a default structure if the user has no settings saved yet
         doc = {"id": user_id, "settings": {}}
@@ -1214,7 +1306,9 @@ def get_user_settings(user_id, allow_cross_user=False):
                 doc['settings']['profileImage'] = None
             
         cosmos_user_settings_container.upsert_item(body=doc)
-        return doc
+        _set_user_ui_settings_cache(user_id, doc)
+        _set_request_cached_user_settings(user_id, doc)
+        return _clone_user_settings_doc(doc)
     except Exception as e:
         log_event(
             "Error retrieving user settings.",
@@ -1226,6 +1320,44 @@ def get_user_settings(user_id, allow_cross_user=False):
             exceptionTraceback=True
         )
         raise # Re-raise the exception to be handled by the route
+
+
+def get_user_ui_settings(user_id, allow_cross_user=False):
+    """Return a lightweight, cacheable subset of user settings used by shared page chrome."""
+    _authorize_user_settings_access(user_id, "read UI settings", allow_cross_user=allow_cross_user)
+
+    cached_doc = _get_request_cached_user_settings(user_id)
+    if cached_doc is not None:
+        return {
+            'id': user_id,
+            'settings': _extract_user_ui_settings(cached_doc),
+        }
+
+    cache_getter = getattr(app_settings_cache, "get_user_ui_settings_cache", None)
+    if callable(cache_getter):
+        try:
+            cached_ui_settings = cache_getter(user_id)
+            if cached_ui_settings is not None:
+                return {
+                    'id': user_id,
+                    'settings': copy.deepcopy(cached_ui_settings or {}),
+                }
+        except Exception as cache_error:
+            log_event(
+                "[UserSettingsCache] Failed to read user UI settings cache.",
+                extra={
+                    "user_id": user_id,
+                    "error": str(cache_error)
+                },
+                level=logging.WARNING
+            )
+
+    doc = get_user_settings(user_id, allow_cross_user=allow_cross_user)
+    _set_user_ui_settings_cache(user_id, doc)
+    return {
+        'id': user_id,
+        'settings': _extract_user_ui_settings(doc),
+    }
     
 def update_user_settings(user_id, settings_to_update, allow_cross_user=False):
     """
@@ -1382,6 +1514,8 @@ def update_user_settings(user_id, settings_to_update, allow_cross_user=False):
 
         # Upsert the modified document
         cosmos_user_settings_container.upsert_item(body=doc) # Use body=doc for clarity
+        _set_request_cached_user_settings(user_id, doc)
+        _delete_user_ui_settings_cache(user_id)
 
         return True
 
@@ -1550,6 +1684,7 @@ def add_search_to_history(user_id, search_term):
         
         doc['search_history'] = search_history
         cosmos_user_settings_container.upsert_item(body=doc)
+        invalidate_user_settings_caches(user_id)
         
         return search_history
     except Exception as e:
@@ -1574,6 +1709,7 @@ def clear_user_search_history(user_id):
         
         doc['search_history'] = []
         cosmos_user_settings_container.upsert_item(body=doc)
+        invalidate_user_settings_caches(user_id)
         
         return True
     except Exception as e:

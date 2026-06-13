@@ -354,6 +354,7 @@
     }
     const appSettings = {{ app_settings|tojson|safe }};
     window.appSettings = appSettings;
+    window.simplechatUserSettings = {{ user_settings.get('settings', {}) | tojson | safe }};
   </script>
 
   <!-- Prism.js syntax highlighting script -->

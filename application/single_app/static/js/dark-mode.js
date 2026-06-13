@@ -30,11 +30,21 @@ async function saveDarkModeSetting(settingsToUpdate) {
         if (!response.ok) {
             console.error('Failed to save dark mode setting:', response.statusText);
         } else {
+            if (window.simplechatUserSettings && typeof window.simplechatUserSettings === 'object') {
+                Object.assign(window.simplechatUserSettings, settingsToUpdate);
+            }
             console.log('Dark mode setting saved successfully');
         }
     } catch (error) {
         console.error('Error saving dark mode setting:', error);
     }
+}
+
+function getInjectedUserSettings() {
+    if (window.simplechatUserSettings && typeof window.simplechatUserSettings === 'object') {
+        return window.simplechatUserSettings;
+    }
+    return {};
 }
 
 // Function to toggle dark mode
@@ -90,21 +100,24 @@ async function loadDarkModePreference() {
             localTheme = 'dark';
         }
         
-        // Sync with server - which may override localStorage if user has multiple devices
-        const response = await fetch('/api/user/settings');
-        if (response.ok) {
-            const data = await response.json();
-            const settings = data.settings || {};
+        // Sync with server-provided settings first; fetch only when the page did not inject them.
+        let settings = getInjectedUserSettings();
+        if (!(USER_SETTINGS_KEY_DARK_MODE in settings)) {
+            const response = await fetch('/api/user/settings');
+            if (response.ok) {
+                const data = await response.json();
+                settings = data.settings || {};
+            }
+        }
+
+        // If user has a saved preference in their account, use it and update localStorage
+        if (USER_SETTINGS_KEY_DARK_MODE in settings) {
+            const serverTheme = settings[USER_SETTINGS_KEY_DARK_MODE] === true ? 'dark' : 'light';
             
-            // If user has a saved preference in their account, use it and update localStorage
-            if (USER_SETTINGS_KEY_DARK_MODE in settings) {
-                const serverTheme = settings[USER_SETTINGS_KEY_DARK_MODE] === true ? 'dark' : 'light';
-                
-                // Update localStorage if server setting differs
-                if (!localTheme || serverTheme !== localTheme) {
-                    localStorage.setItem(LOCAL_STORAGE_THEME_KEY, serverTheme);
-                    localTheme = serverTheme;
-                }
+            // Update localStorage if server setting differs
+            if (!localTheme || serverTheme !== localTheme) {
+                localStorage.setItem(LOCAL_STORAGE_THEME_KEY, serverTheme);
+                localTheme = serverTheme;
             }
         }
         
@@ -141,6 +154,7 @@ if (typeof module !== 'undefined' && module.exports) {
         loadDarkModePreference,
         getAllDarkModeToggles,
         getToggleParts,
-        saveDarkModeSetting
+        saveDarkModeSetting,
+        getInjectedUserSettings
     };
 }

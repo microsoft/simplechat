@@ -557,8 +557,8 @@ def inject_settings():
     try:
         user_id = get_current_user_id()
         if user_id:
-            from functions_settings import get_user_settings
-            user_settings = get_user_settings(user_id) or {}
+            from functions_settings import get_user_ui_settings
+            user_settings = get_user_ui_settings(user_id) or {}
     except Exception as e:
         print(f"Error injecting user settings: {e}")
         log_event(f"Error injecting user settings: {e}", level=logging.ERROR)
