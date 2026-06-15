@@ -46,7 +46,8 @@ def test_deployer_capacity_defaults() -> bool:
     bicep_search = read_workspace_file("deployers/bicep/modules/search.bicep")
     azurecli_deployer = read_workspace_file("deployers/azurecli/deploy-simplechat.ps1")
     terraform_main = read_workspace_file("deployers/terraform/main.tf")
-    one_click_template = json.loads(read_workspace_file("deployers/bicep/main.json"))
+    one_click_template_content = read_workspace_file("deployers/bicep/main.json")
+    one_click_template = json.loads(one_click_template_content)
     feature_doc = read_workspace_file(
         "docs/explanation/features/v0.241.085/DEPLOYER_CAPACITY_DEFAULTS.md"
     )
@@ -92,6 +93,10 @@ def test_deployer_capacity_defaults() -> bool:
     assert one_click_template["parameters"]["searchSkuName"]["defaultValue"] == "standard"
     assert one_click_template["parameters"]["searchSemanticSearchSku"]["defaultValue"] == "standard"
     assert one_click_template["parameters"]["cosmosDatabaseAutoscaleMaxThroughput"]["defaultValue"] == 1000
+    assert_contains(one_click_template_content, '"containerAutoscaleMaxThroughput"', "one-click ARM Cosmos container throughput parameter")
+    assert_contains(one_click_template_content, '"Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers"', "one-click ARM Cosmos container resources")
+    assert_contains(one_click_template_content, "parameters('containerAutoscaleMaxThroughput')", "one-click ARM Cosmos container autoscale expression")
+    assert_not_contains(one_click_template_content, '"databaseAutoscaleMaxThroughput"', "one-click ARM shared database throughput parameter")
 
     assert_contains(feature_doc, "Azure AI Search: Standard S1", "feature doc Search default")
     assert_contains(feature_doc, "Azure Cosmos DB: provisioned throughput", "feature doc Cosmos default")
