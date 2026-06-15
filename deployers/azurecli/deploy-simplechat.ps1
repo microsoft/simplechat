@@ -421,7 +421,7 @@ $paramStorageAccessTier = "Hot"
 $paramCosmosDbKind = "GlobalDocumentDB" # For SQL API. Other: MongoDB, Cassandra, Gremlin, Table
 $paramCosmosDbCapacityMode = "Provisioned" # Default. Set to "Serverless" only for short-lived MVP/evaluation environments.
 $paramCosmosDbDatabaseName = "SimpleChat"
-$paramCosmosDbAutoscaleMaxThroughput = 4000
+$paramCosmosDbAutoscaleMaxThroughput = 1000
 
 # Azure OpenAI & Document Intelligence (Cognitive Services)
 $paramCognitiveServicesSku = "S0" # Standard tier. Check availability for OpenAI and Doc Intel in Azure Gov.
@@ -771,10 +771,10 @@ function Invoke-AcrContainerBuild {
     }
 }
 
-function CosmosDb_CreateContainer($databaseName, $containerName)
+function CosmosDb_CreateContainer($databaseName, $containerDefinition)
 {
-    $partitionKeyPath = "/partitionKey"
-    $throughput = 4000
+    $containerName = $containerDefinition.Name
+    $partitionKeyPath = $containerDefinition.PartitionKeyPath
 
     Write-Host "`n=====> Creating Azure Cosmos DB database container: $containerName ..."
     $container = az cosmosdb sql container show `
@@ -787,13 +787,24 @@ function CosmosDb_CreateContainer($databaseName, $containerName)
 
     if (-not $container) {
         Write-Host "Container '$containerName' does not exist. Creating..."
-        az cosmosdb sql container create `
-            --account-name $script:cosmosDbName `
-            --resource-group $script:resourceGroupName `
-            --database-name $databaseName `
-            --name $containerName `
-            --partition-key-path $partitionKeyPath `
-            --throughput $throughput
+        $containerCreateArguments = @(
+            'cosmosdb', 'sql', 'container', 'create',
+            '--account-name', $script:cosmosDbName,
+            '--resource-group', $script:resourceGroupName,
+            '--database-name', $databaseName,
+            '--name', $containerName,
+            '--partition-key-path', $partitionKeyPath
+        )
+
+        if ($paramCosmosDbCapacityMode -ne "Serverless") {
+            $containerCreateArguments += @('--max-throughput', $paramCosmosDbAutoscaleMaxThroughput)
+        }
+
+        if ($null -ne $containerDefinition.DefaultTtl) {
+            $containerCreateArguments += @('--ttl', $containerDefinition.DefaultTtl)
+        }
+
+        & az @containerCreateArguments
     } else {
         Write-Host "Container '$containerName' already exists."
     }
@@ -1717,18 +1728,10 @@ $database = az cosmosdb sql database show `
     --query "name" `
     --output tsv 2>$null
 if (-not $database) {
-    if ($paramCosmosDbCapacityMode -eq "Serverless") {
-        az cosmosdb sql database create `
-            --account-name $cosmosDbName `
-            --resource-group $resourceGroupName `
-            --name $paramCosmosDbDatabaseName
-    } else {
-        az cosmosdb sql database create `
-            --account-name $cosmosDbName `
-            --resource-group $resourceGroupName `
-            --name $paramCosmosDbDatabaseName `
-            --max-throughput $paramCosmosDbAutoscaleMaxThroughput
-    }
+    az cosmosdb sql database create `
+        --account-name $cosmosDbName `
+        --resource-group $resourceGroupName `
+        --name $paramCosmosDbDatabaseName
 
     if ($LASTEXITCODE -ne 0) { Write-Error "Failed to create Azure Cosmos DB database '$($paramCosmosDbDatabaseName)'." }
     else { Write-Host "Azure Cosmos DB database '$($paramCosmosDbDatabaseName)' created successfully." }
@@ -1736,30 +1739,69 @@ if (-not $database) {
     Write-Host "Cosmos DB database '$paramCosmosDbDatabaseName' already exists."
 }
 
-# Create cosmos db database and collection
-# TODO: SHOULD I DO THIS OR NOT? Web UI creates this.
-# Write-Host "`n=====> Creating Azure Cosmos DB database ..."
-# $databaseName = "SimpleChatDb"
-# $resourceObject = az cosmosdb sql database show --account-name $cosmosDbName --resource-group $resourceGroupName --name $databaseName --query "name" --output tsv 2>$null
-# if (-not $resourceObject) {
-#     Write-Host "Database '$databaseName' does not exist. Creating..."
-#     az cosmosdb sql database create --account-name $cosmosDbName --resource-group $resourceGroupName --name $databaseName --throughput 1000
-# } else {
-#     Write-Host "Database '$databaseName' already exists."
-# }
+$cosmosContainerDefinitions = @(
+    @{ Name = "conversations"; PartitionKeyPath = "/id"; DefaultTtl = $null },
+    @{ Name = "messages"; PartitionKeyPath = "/conversation_id"; DefaultTtl = $null },
+    @{ Name = "tabular_export_runs"; PartitionKeyPath = "/user_id"; DefaultTtl = $null },
+    @{ Name = "personal_workflows"; PartitionKeyPath = "/user_id"; DefaultTtl = $null },
+    @{ Name = "personal_workflow_runs"; PartitionKeyPath = "/user_id"; DefaultTtl = $null },
+    @{ Name = "personal_workflow_run_items"; PartitionKeyPath = "/run_id"; DefaultTtl = $null },
+    @{ Name = "group_workflows"; PartitionKeyPath = "/group_id"; DefaultTtl = $null },
+    @{ Name = "group_workflow_runs"; PartitionKeyPath = "/group_id"; DefaultTtl = $null },
+    @{ Name = "group_workflow_run_items"; PartitionKeyPath = "/run_id"; DefaultTtl = $null },
+    @{ Name = "group_conversations"; PartitionKeyPath = "/id"; DefaultTtl = $null },
+    @{ Name = "group_messages"; PartitionKeyPath = "/conversation_id"; DefaultTtl = $null },
+    @{ Name = "collaboration_conversations"; PartitionKeyPath = "/id"; DefaultTtl = $null },
+    @{ Name = "collaboration_messages"; PartitionKeyPath = "/conversation_id"; DefaultTtl = $null },
+    @{ Name = "collaboration_user_state"; PartitionKeyPath = "/user_id"; DefaultTtl = $null },
+    @{ Name = "settings"; PartitionKeyPath = "/id"; DefaultTtl = $null },
+    @{ Name = "groups"; PartitionKeyPath = "/id"; DefaultTtl = $null },
+    @{ Name = "public_workspaces"; PartitionKeyPath = "/id"; DefaultTtl = $null },
+    @{ Name = "documents"; PartitionKeyPath = "/id"; DefaultTtl = $null },
+    @{ Name = "group_documents"; PartitionKeyPath = "/id"; DefaultTtl = $null },
+    @{ Name = "public_documents"; PartitionKeyPath = "/id"; DefaultTtl = $null },
+    @{ Name = "personal_file_sync_sources"; PartitionKeyPath = "/user_id"; DefaultTtl = $null },
+    @{ Name = "group_file_sync_sources"; PartitionKeyPath = "/group_id"; DefaultTtl = $null },
+    @{ Name = "public_file_sync_sources"; PartitionKeyPath = "/public_workspace_id"; DefaultTtl = $null },
+    @{ Name = "personal_workspace_identities"; PartitionKeyPath = "/user_id"; DefaultTtl = $null },
+    @{ Name = "group_workspace_identities"; PartitionKeyPath = "/group_id"; DefaultTtl = $null },
+    @{ Name = "public_workspace_identities"; PartitionKeyPath = "/public_workspace_id"; DefaultTtl = $null },
+    @{ Name = "global_workspace_identities"; PartitionKeyPath = "/global_id"; DefaultTtl = $null },
+    @{ Name = "personal_file_sync_items"; PartitionKeyPath = "/source_id"; DefaultTtl = $null },
+    @{ Name = "group_file_sync_items"; PartitionKeyPath = "/source_id"; DefaultTtl = $null },
+    @{ Name = "public_file_sync_items"; PartitionKeyPath = "/source_id"; DefaultTtl = $null },
+    @{ Name = "personal_file_sync_runs"; PartitionKeyPath = "/source_id"; DefaultTtl = $null },
+    @{ Name = "group_file_sync_runs"; PartitionKeyPath = "/source_id"; DefaultTtl = $null },
+    @{ Name = "public_file_sync_runs"; PartitionKeyPath = "/source_id"; DefaultTtl = $null },
+    @{ Name = "user_settings"; PartitionKeyPath = "/id"; DefaultTtl = $null },
+    @{ Name = "safety"; PartitionKeyPath = "/id"; DefaultTtl = $null },
+    @{ Name = "feedback"; PartitionKeyPath = "/id"; DefaultTtl = $null },
+    @{ Name = "archived_conversations"; PartitionKeyPath = "/id"; DefaultTtl = $null },
+    @{ Name = "archived_messages"; PartitionKeyPath = "/conversation_id"; DefaultTtl = $null },
+    @{ Name = "prompts"; PartitionKeyPath = "/id"; DefaultTtl = $null },
+    @{ Name = "group_prompts"; PartitionKeyPath = "/id"; DefaultTtl = $null },
+    @{ Name = "public_prompts"; PartitionKeyPath = "/id"; DefaultTtl = $null },
+    @{ Name = "file_processing"; PartitionKeyPath = "/document_id"; DefaultTtl = $null },
+    @{ Name = "personal_agents"; PartitionKeyPath = "/user_id"; DefaultTtl = $null },
+    @{ Name = "personal_actions"; PartitionKeyPath = "/user_id"; DefaultTtl = $null },
+    @{ Name = "group_agents"; PartitionKeyPath = "/group_id"; DefaultTtl = $null },
+    @{ Name = "group_actions"; PartitionKeyPath = "/group_id"; DefaultTtl = $null },
+    @{ Name = "global_agents"; PartitionKeyPath = "/id"; DefaultTtl = $null },
+    @{ Name = "global_actions"; PartitionKeyPath = "/id"; DefaultTtl = $null },
+    @{ Name = "agent_templates"; PartitionKeyPath = "/id"; DefaultTtl = $null },
+    @{ Name = "agent_facts"; PartitionKeyPath = "/scope_id"; DefaultTtl = $null },
+    @{ Name = "search_cache"; PartitionKeyPath = "/user_id"; DefaultTtl = $null },
+    @{ Name = "activity_logs"; PartitionKeyPath = "/user_id"; DefaultTtl = $null },
+    @{ Name = "notifications"; PartitionKeyPath = "/user_id"; DefaultTtl = -1 },
+    @{ Name = "approvals"; PartitionKeyPath = "/group_id"; DefaultTtl = -1 },
+    @{ Name = "msgraph_pending_actions"; PartitionKeyPath = "/user_id"; DefaultTtl = -1 },
+    @{ Name = "thoughts"; PartitionKeyPath = "/user_id"; DefaultTtl = $null },
+    @{ Name = "archive_thoughts"; PartitionKeyPath = "/user_id"; DefaultTtl = $null }
+)
 
-# $containerName = "messages"
-# CosmosDb_CreateContainer $databaseName $containerName
-# $containerName = "documents"
-# CosmosDb_CreateContainer $databaseName $containerName
-# $containerName = "group_documents"
-# CosmosDb_CreateContainer $databaseName $containerName
-# $containerName = "settings"
-# CosmosDb_CreateContainer $databaseName $containerName
-# $containerName = "feedback"
-# CosmosDb_CreateContainer $databaseName $containerName
-# $containerName = "archived_conversations"
-# CosmosDb_CreateContainer $databaseName $containerName
+foreach ($containerDefinition in $cosmosContainerDefinitions) {
+    CosmosDb_CreateContainer $paramCosmosDbDatabaseName $containerDefinition
+}
 
 # --- Create Azure OpenAI Service and model deployments ---
 # Note: Azure OpenAI requires registration and sometimes specific SKU availability.

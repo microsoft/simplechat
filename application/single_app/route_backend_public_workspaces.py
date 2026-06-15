@@ -274,6 +274,7 @@ def register_route_backend_public_workspaces(app):
             return jsonify({"error": str(ex)}), 400
 
         return jsonify({
+            "success": True,
             "message": "Download settings updated",
             "disable_file_downloads": ws["disable_file_downloads"],
         }), 200

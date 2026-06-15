@@ -74,7 +74,7 @@ param authenticationType string
 param configureApplicationPermissions bool
 
 @description('''Azure Cosmos DB capacity mode.
-- provisioned: Default. Uses shared database autoscale throughput for application containers.
+- provisioned: Default. Uses dedicated container autoscale throughput for application containers.
 - serverless: Optional for short-lived MVP or evaluation environments with very low traffic.''')
 @allowed([
   'provisioned'
@@ -82,11 +82,12 @@ param configureApplicationPermissions bool
 ])
 param cosmosCapacityMode string = 'provisioned'
 
-@description('''Maximum RU/s for the SimpleChat Cosmos DB shared autoscale database when cosmosCapacityMode is provisioned.
-- Default is 4000 RU/s autoscale max.
+@description('''Maximum RU/s for each SimpleChat Cosmos DB container when cosmosCapacityMode is provisioned.
+- Default is 1000 RU/s autoscale max per container.
+- Parameter name is retained for deployment compatibility with earlier templates.
 - Ignored when cosmosCapacityMode is serverless.''')
 @minValue(1000)
-param cosmosDatabaseAutoscaleMaxThroughput int = 4000
+param cosmosDatabaseAutoscaleMaxThroughput int = 1000
 
 @description('''Azure AI Search service SKU.
 - standard is Azure AI Search S1 and is the default for document search.
@@ -417,7 +418,7 @@ module cosmosDB 'modules/cosmosDb.bicep' = {
     enablePrivateNetworking: enablePrivateNetworking
     allowedIpAddresses: cosmosDbIpRules
     capacityMode: cosmosCapacityMode
-    databaseAutoscaleMaxThroughput: cosmosDatabaseAutoscaleMaxThroughput
+    containerAutoscaleMaxThroughput: cosmosDatabaseAutoscaleMaxThroughput
   }
 }
 

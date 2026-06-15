@@ -526,12 +526,16 @@ function loadGroupInfo(doneCallback) {
       $("#activityTimelineSection").show();
       $("#stats-tab-item").show();
       $("#settings-tab-item").removeClass("d-none");
+      $("#settings").removeClass("d-none");
 
       loadPendingRequests();
       loadGroupStats();
       loadActivityTimeline(50);
       loadGroupDownloadSettings(group);
       loadGroupRetentionSettings();
+    } else {
+      $("#settings-tab-item").addClass("d-none");
+      $("#settings").addClass("d-none");
     }
 
     if (typeof doneCallback === "function") {

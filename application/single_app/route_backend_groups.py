@@ -225,13 +225,16 @@ def register_route_backend_groups(app):
         user_info = get_current_user_info()
         user_id = user_info["userId"]
 
+        try:
+            assert_group_role(user_id, group_id, allowed_roles=("Owner", "Admin"))
+        except LookupError:
+            return jsonify({"error": "Group not found"}), 404
+        except PermissionError:
+            return jsonify({"error": "Only group owners and admins can update download settings"}), 403
+
         group_doc = find_group_by_id(group_id)
         if not group_doc:
             return jsonify({"error": "Group not found"}), 404
-
-        role = get_user_role_in_group(group_doc, user_id)
-        if role not in ["Owner", "Admin"]:
-            return jsonify({"error": "Only group owners and admins can update download settings"}), 403
 
         data = request.get_json(silent=True) or {}
         group_doc["disable_file_downloads"] = bool(data.get("disable_file_downloads", False))
@@ -242,6 +245,7 @@ def register_route_backend_groups(app):
             return jsonify({"error": str(ex)}), 400
 
         return jsonify({
+            "success": True,
             "message": "Download settings updated",
             "disable_file_downloads": group_doc["disable_file_downloads"],
         }), 200

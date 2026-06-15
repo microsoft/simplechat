@@ -18,7 +18,295 @@ param allowedIpAddresses array = []
 param capacityMode string = 'provisioned'
 
 @minValue(1000)
-param databaseAutoscaleMaxThroughput int = 4000
+param containerAutoscaleMaxThroughput int = 1000
+
+var cosmosContainers = [
+  {
+    name: 'conversations'
+    partitionKeyPath: '/id'
+    defaultTtl: null
+  }
+  {
+    name: 'messages'
+    partitionKeyPath: '/conversation_id'
+    defaultTtl: null
+  }
+  {
+    name: 'tabular_export_runs'
+    partitionKeyPath: '/user_id'
+    defaultTtl: null
+  }
+  {
+    name: 'personal_workflows'
+    partitionKeyPath: '/user_id'
+    defaultTtl: null
+  }
+  {
+    name: 'personal_workflow_runs'
+    partitionKeyPath: '/user_id'
+    defaultTtl: null
+  }
+  {
+    name: 'personal_workflow_run_items'
+    partitionKeyPath: '/run_id'
+    defaultTtl: null
+  }
+  {
+    name: 'group_workflows'
+    partitionKeyPath: '/group_id'
+    defaultTtl: null
+  }
+  {
+    name: 'group_workflow_runs'
+    partitionKeyPath: '/group_id'
+    defaultTtl: null
+  }
+  {
+    name: 'group_workflow_run_items'
+    partitionKeyPath: '/run_id'
+    defaultTtl: null
+  }
+  {
+    name: 'group_conversations'
+    partitionKeyPath: '/id'
+    defaultTtl: null
+  }
+  {
+    name: 'group_messages'
+    partitionKeyPath: '/conversation_id'
+    defaultTtl: null
+  }
+  {
+    name: 'collaboration_conversations'
+    partitionKeyPath: '/id'
+    defaultTtl: null
+  }
+  {
+    name: 'collaboration_messages'
+    partitionKeyPath: '/conversation_id'
+    defaultTtl: null
+  }
+  {
+    name: 'collaboration_user_state'
+    partitionKeyPath: '/user_id'
+    defaultTtl: null
+  }
+  {
+    name: 'settings'
+    partitionKeyPath: '/id'
+    defaultTtl: null
+  }
+  {
+    name: 'groups'
+    partitionKeyPath: '/id'
+    defaultTtl: null
+  }
+  {
+    name: 'public_workspaces'
+    partitionKeyPath: '/id'
+    defaultTtl: null
+  }
+  {
+    name: 'documents'
+    partitionKeyPath: '/id'
+    defaultTtl: null
+  }
+  {
+    name: 'group_documents'
+    partitionKeyPath: '/id'
+    defaultTtl: null
+  }
+  {
+    name: 'public_documents'
+    partitionKeyPath: '/id'
+    defaultTtl: null
+  }
+  {
+    name: 'personal_file_sync_sources'
+    partitionKeyPath: '/user_id'
+    defaultTtl: null
+  }
+  {
+    name: 'group_file_sync_sources'
+    partitionKeyPath: '/group_id'
+    defaultTtl: null
+  }
+  {
+    name: 'public_file_sync_sources'
+    partitionKeyPath: '/public_workspace_id'
+    defaultTtl: null
+  }
+  {
+    name: 'personal_workspace_identities'
+    partitionKeyPath: '/user_id'
+    defaultTtl: null
+  }
+  {
+    name: 'group_workspace_identities'
+    partitionKeyPath: '/group_id'
+    defaultTtl: null
+  }
+  {
+    name: 'public_workspace_identities'
+    partitionKeyPath: '/public_workspace_id'
+    defaultTtl: null
+  }
+  {
+    name: 'global_workspace_identities'
+    partitionKeyPath: '/global_id'
+    defaultTtl: null
+  }
+  {
+    name: 'personal_file_sync_items'
+    partitionKeyPath: '/source_id'
+    defaultTtl: null
+  }
+  {
+    name: 'group_file_sync_items'
+    partitionKeyPath: '/source_id'
+    defaultTtl: null
+  }
+  {
+    name: 'public_file_sync_items'
+    partitionKeyPath: '/source_id'
+    defaultTtl: null
+  }
+  {
+    name: 'personal_file_sync_runs'
+    partitionKeyPath: '/source_id'
+    defaultTtl: null
+  }
+  {
+    name: 'group_file_sync_runs'
+    partitionKeyPath: '/source_id'
+    defaultTtl: null
+  }
+  {
+    name: 'public_file_sync_runs'
+    partitionKeyPath: '/source_id'
+    defaultTtl: null
+  }
+  {
+    name: 'user_settings'
+    partitionKeyPath: '/id'
+    defaultTtl: null
+  }
+  {
+    name: 'safety'
+    partitionKeyPath: '/id'
+    defaultTtl: null
+  }
+  {
+    name: 'feedback'
+    partitionKeyPath: '/id'
+    defaultTtl: null
+  }
+  {
+    name: 'archived_conversations'
+    partitionKeyPath: '/id'
+    defaultTtl: null
+  }
+  {
+    name: 'archived_messages'
+    partitionKeyPath: '/conversation_id'
+    defaultTtl: null
+  }
+  {
+    name: 'prompts'
+    partitionKeyPath: '/id'
+    defaultTtl: null
+  }
+  {
+    name: 'group_prompts'
+    partitionKeyPath: '/id'
+    defaultTtl: null
+  }
+  {
+    name: 'public_prompts'
+    partitionKeyPath: '/id'
+    defaultTtl: null
+  }
+  {
+    name: 'file_processing'
+    partitionKeyPath: '/document_id'
+    defaultTtl: null
+  }
+  {
+    name: 'personal_agents'
+    partitionKeyPath: '/user_id'
+    defaultTtl: null
+  }
+  {
+    name: 'personal_actions'
+    partitionKeyPath: '/user_id'
+    defaultTtl: null
+  }
+  {
+    name: 'group_agents'
+    partitionKeyPath: '/group_id'
+    defaultTtl: null
+  }
+  {
+    name: 'group_actions'
+    partitionKeyPath: '/group_id'
+    defaultTtl: null
+  }
+  {
+    name: 'global_agents'
+    partitionKeyPath: '/id'
+    defaultTtl: null
+  }
+  {
+    name: 'global_actions'
+    partitionKeyPath: '/id'
+    defaultTtl: null
+  }
+  {
+    name: 'agent_templates'
+    partitionKeyPath: '/id'
+    defaultTtl: null
+  }
+  {
+    name: 'agent_facts'
+    partitionKeyPath: '/scope_id'
+    defaultTtl: null
+  }
+  {
+    name: 'search_cache'
+    partitionKeyPath: '/user_id'
+    defaultTtl: null
+  }
+  {
+    name: 'activity_logs'
+    partitionKeyPath: '/user_id'
+    defaultTtl: null
+  }
+  {
+    name: 'notifications'
+    partitionKeyPath: '/user_id'
+    defaultTtl: -1
+  }
+  {
+    name: 'approvals'
+    partitionKeyPath: '/group_id'
+    defaultTtl: -1
+  }
+  {
+    name: 'msgraph_pending_actions'
+    partitionKeyPath: '/user_id'
+    defaultTtl: -1
+  }
+  {
+    name: 'thoughts'
+    partitionKeyPath: '/user_id'
+    defaultTtl: null
+  }
+  {
+    name: 'archive_thoughts'
+    partitionKeyPath: '/user_id'
+    defaultTtl: null
+  }
+]
 
 // Import diagnostic settings configurations
 module diagnosticConfigs 'diagnosticSettings.bicep' = if (enableDiagLogging) {
@@ -62,29 +350,31 @@ resource cosmosDatabase 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2023
     resource: {
       id: 'SimpleChat'
     }
-    options: capacityMode == 'serverless' ? {} : {
-      autoscaleSettings: {
-        maxThroughput: databaseAutoscaleMaxThroughput
-      }
-    }
-  }
-}
-
-resource cosmosContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2023-04-15' = {
-  parent: cosmosDatabase
-  name: 'settings'
-  properties: {
-    resource: {
-      id: 'settings'
-      partitionKey: {
-        paths: [
-          '/id'
-        ]
-      }
-    }
     options: {}
   }
 }
+
+resource cosmosContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2023-04-15' = [for container in cosmosContainers: {
+  parent: cosmosDatabase
+  name: container.name
+  properties: {
+    resource: union({
+      id: container.name
+      partitionKey: {
+        paths: [
+          container.partitionKeyPath
+        ]
+      }
+    }, container.defaultTtl == null ? {} : {
+      defaultTtl: container.defaultTtl
+    })
+    options: capacityMode == 'serverless' ? {} : {
+      autoscaleSettings: {
+        maxThroughput: containerAutoscaleMaxThroughput
+      }
+    }
+  }
+}]
 
 // configure diagnostic settings for cosmos db
 resource cosmosDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (enableDiagLogging) {

@@ -12,6 +12,7 @@ on:
       - '.github/workflows/broken-access-control-full-scan.yml'
       - '.github/instructions/broken-access-control-prevention.instructions.md'
       - '.github/prompts/broken-access-control-audit.prompt.md'
+      - '.github/prompts/route-authentication-audit.prompt.md'
 
 jobs:
   broken-access-control-check:
@@ -42,6 +43,7 @@ jobs:
               - '.github/workflows/broken-access-control-full-scan.yml'
               - '.github/instructions/broken-access-control-prevention.instructions.md'
               - '.github/prompts/broken-access-control-audit.prompt.md'
+              - '.github/prompts/route-authentication-audit.prompt.md'
               - 'docs/explanation/features/v0.241.022/BROKEN_ACCESS_CONTROL_PR_GUARDRAILS.md'
 
       - name: Run Broken Access Control validation

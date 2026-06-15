@@ -8,7 +8,7 @@ import logging
 from flask import Blueprint, current_app, jsonify, request
 
 from functions_appinsights import log_event
-from functions_authentication import admin_required, login_required
+from functions_authentication import admin_required, login_required, user_required
 from json_schema_validation import apply_plugin_validation_defaults
 from semantic_kernel_plugins.plugin_health_checker import PluginErrorRecovery, PluginHealthChecker
 from semantic_kernel_plugins.plugin_loader import discover_plugins
@@ -57,6 +57,7 @@ def _validate_plugin_manifest_request():
     security=get_auth_security()
 )
 @login_required
+@user_required
 def validate_plugin_manifest():
     """
     Validate a plugin manifest without saving it.
@@ -90,6 +91,8 @@ def validate_plugin_manifest_admin():
 @swagger_route(
     security=get_auth_security()
 )
+@login_required
+@admin_required
 def test_plugin_instantiation():
     """
     Test if a plugin can be instantiated successfully.
@@ -161,6 +164,8 @@ def test_plugin_instantiation():
 @swagger_route(
     security=get_auth_security()
 )
+@login_required
+@admin_required
 def check_plugin_health(plugin_name):
     """
     Perform a health check on an existing plugin.
@@ -237,6 +242,8 @@ def check_plugin_health(plugin_name):
 @swagger_route(
     security=get_auth_security()
 )
+@login_required
+@admin_required
 def repair_plugin(plugin_name):
     """
     Attempt to repair a plugin that has issues.

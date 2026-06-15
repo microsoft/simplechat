@@ -436,7 +436,7 @@ az resource update --name <appName>-<environment>-app --resource-group <appName>
 | Service | Azure Commercial | Azure Government | Notes |
 |---------|------------------|------------------|-------|
 | App Service | ✅ | ✅ | Premium V3 tier |
-| Cosmos DB | ✅ | ✅ | Provisioned shared autoscale throughput by default |
+| Cosmos DB | ✅ | ✅ | Provisioned dedicated container autoscale throughput by default |
 | Azure OpenAI | ✅ | ✅ | Standard SKU only in USGov |
 | Azure AI Search | ✅ | ✅ | Standard S1 tier with standard Semantic Ranker by default |
 | Document Intelligence | ✅ | ✅ | Limited regions |
@@ -477,7 +477,7 @@ A: No, the deployment creates a new resource group named `<appName>-<environment
 A: You can choose between `key` (API keys stored in Key Vault) or `managed_identity` (recommended for production).
 
 **Q: What capacity defaults does the deployer use?**
-A: The Bicep and AZD path defaults to Azure AI Search Standard S1 with standard Semantic Ranker and Cosmos DB provisioned shared autoscale throughput for the `SimpleChat` database. These defaults avoid the limited free semantic query quota and make document search and ingestion more reliable after first deployment.
+A: The Bicep and AZD path defaults to Azure AI Search Standard S1 with standard Semantic Ranker and Cosmos DB provisioned autoscale throughput on each SimpleChat container. These defaults avoid the limited free semantic query quota, avoid the 25-container limit for shared-throughput databases, and make document search and ingestion more reliable after first deployment.
 
 **Q: Can I use Free Search or serverless Cosmos DB for an MVP?**
 A: Yes, but treat those as short-lived MVP or evaluation settings. Set `searchSkuName` and `searchSemanticSearchSku` to `free`, or set `cosmosCapacityMode` to `serverless`, only when you understand the service limits and do not need production-grade document search throughput. The repository defaults remain Standard S1 Search and provisioned Cosmos DB.
@@ -525,7 +525,7 @@ A: Only when the DNS zone is already linked to the target VNet or when a central
 **Q: What's the estimated monthly cost?**
 A: Base infrastructure (without optional services) costs approximately:
 - App Service Plan (P1v3): ~$150/month
-- Cosmos DB (Provisioned autoscale): Varies by configured max RU/s; default shared database autoscale max is 4000 RU/s
+- Cosmos DB (Provisioned autoscale): Varies by configured max RU/s; default dedicated container autoscale max is 1000 RU/s per container
 - Azure OpenAI: Pay-per-token
 - Azure AI Search (Standard S1): Varies by region and replica/partition count
 - Other services: Variable based on usage

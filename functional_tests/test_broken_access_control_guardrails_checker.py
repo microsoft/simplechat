@@ -2,7 +2,7 @@
 # test_broken_access_control_guardrails_checker.py
 """
 Functional test for Broken Access Control PR guardrail checker.
-Version: 0.241.203
+Version: 0.241.206
 Implemented in: 0.241.022
 
 This test ensures the changed-file BAC checker flags the repo's target
@@ -21,6 +21,7 @@ WORKFLOW_FILE = ROOT_DIR / '.github' / 'workflows' / 'broken-access-control-chec
 FULL_SCAN_WORKFLOW_FILE = ROOT_DIR / '.github' / 'workflows' / 'broken-access-control-full-scan.yml'
 INSTRUCTION_FILE = ROOT_DIR / '.github' / 'instructions' / 'broken-access-control-prevention.instructions.md'
 PROMPT_FILE = ROOT_DIR / '.github' / 'prompts' / 'broken-access-control-audit.prompt.md'
+ROUTE_AUTH_PROMPT_FILE = ROOT_DIR / '.github' / 'prompts' / 'route-authentication-audit.prompt.md'
 FEATURE_DOC = ROOT_DIR / 'docs' / 'explanation' / 'features' / 'v0.241.022' / 'BROKEN_ACCESS_CONTROL_PR_GUARDRAILS.md'
 FULL_SCAN_FEATURE_DOC = ROOT_DIR / 'docs' / 'explanation' / 'features' / 'BROKEN_ACCESS_CONTROL_FULL_REPO_AUDIT.md'
 CONFIG_FILE = ROOT_DIR / 'application' / 'single_app' / 'config.py'
@@ -217,14 +218,16 @@ def test_checker_assets_and_version_are_wired_into_repo() -> None:
     assert FULL_SCAN_WORKFLOW_FILE.exists(), f'Expected full-scan workflow file at {FULL_SCAN_WORKFLOW_FILE}'
     assert INSTRUCTION_FILE.exists(), f'Expected instruction file at {INSTRUCTION_FILE}'
     assert PROMPT_FILE.exists(), f'Expected audit prompt at {PROMPT_FILE}'
+    assert ROUTE_AUTH_PROMPT_FILE.exists(), f'Expected route auth audit prompt at {ROUTE_AUTH_PROMPT_FILE}'
     assert FEATURE_DOC.exists(), f'Expected feature document at {FEATURE_DOC}'
     assert FULL_SCAN_FEATURE_DOC.exists(), f'Expected full-scan feature document at {FULL_SCAN_FEATURE_DOC}'
-    assert read_config_version() == '0.241.203'
+    assert read_config_version() == '0.241.206'
 
     workflow_source = read_text(WORKFLOW_FILE)
     assert 'scripts/check_broken_access_control.py' in workflow_source
     assert 'functional_tests/test_broken_access_control_guardrails_checker.py' in workflow_source
     assert 'broken-access-control-full-scan.yml' in workflow_source
+    assert 'route-authentication-audit.prompt.md' in workflow_source
 
     full_scan_workflow_source = read_text(FULL_SCAN_WORKFLOW_FILE)
     assert 'workflow_dispatch' in full_scan_workflow_source
@@ -245,6 +248,12 @@ def test_checker_assets_and_version_are_wired_into_repo() -> None:
     assert 'BOLA' in prompt_source
     assert 'Source' in prompt_source
     assert 'Sink' in prompt_source
+
+    route_auth_prompt_source = read_text(ROUTE_AUTH_PROMPT_FILE)
+    assert 'Route Authentication Audit' in route_auth_prompt_source
+    assert '@login_required' in route_auth_prompt_source
+    assert '@user_required' in route_auth_prompt_source
+    assert '@admin_required' in route_auth_prompt_source
 
     feature_doc_source = read_text(FEATURE_DOC)
     assert 'Fixed/Implemented in version: **0.241.022**' in feature_doc_source
