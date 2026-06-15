@@ -2,7 +2,7 @@
 # test_broken_access_control_guardrails_checker.py
 """
 Functional test for Broken Access Control PR guardrail checker.
-Version: 0.241.022
+Version: 0.241.203
 Implemented in: 0.241.022
 
 This test ensures the changed-file BAC checker flags the repo's target
@@ -18,8 +18,11 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parents[1]
 CHECKER_FILE = ROOT_DIR / 'scripts' / 'check_broken_access_control.py'
 WORKFLOW_FILE = ROOT_DIR / '.github' / 'workflows' / 'broken-access-control-check.yml'
+FULL_SCAN_WORKFLOW_FILE = ROOT_DIR / '.github' / 'workflows' / 'broken-access-control-full-scan.yml'
 INSTRUCTION_FILE = ROOT_DIR / '.github' / 'instructions' / 'broken-access-control-prevention.instructions.md'
+PROMPT_FILE = ROOT_DIR / '.github' / 'prompts' / 'broken-access-control-audit.prompt.md'
 FEATURE_DOC = ROOT_DIR / 'docs' / 'explanation' / 'features' / 'v0.241.022' / 'BROKEN_ACCESS_CONTROL_PR_GUARDRAILS.md'
+FULL_SCAN_FEATURE_DOC = ROOT_DIR / 'docs' / 'explanation' / 'features' / 'BROKEN_ACCESS_CONTROL_FULL_REPO_AUDIT.md'
 CONFIG_FILE = ROOT_DIR / 'application' / 'single_app' / 'config.py'
 
 
@@ -112,6 +115,24 @@ def get_file_content(user_id, conversation_id):
     )
     assert any('Avoid direct personal conversation reads' in message for message in conversation_messages), conversation_messages
 
+    unsafe_user_profile_source = """
+def register_route_backend_users(app):
+    @app.route('/api/user/info/<user_id>', methods=['GET'])
+    @login_required
+    @user_required
+    def api_get_user_info(user_id):
+        return cosmos_user_settings_container.read_item(item=user_id, partition_key=user_id)
+""".strip()
+    user_profile_messages = issue_messages(
+        module,
+        'application/single_app/route_backend_users.py',
+        unsafe_user_profile_source,
+    )
+    assert any(
+        'Avoid direct user settings reads from request-derived user_id' in message
+        for message in user_profile_messages
+    ), user_profile_messages
+
 
 def test_checker_allows_approved_helpers_and_reviewed_suppressions() -> None:
     """Verify approved helper patterns and reviewed suppressions stay allowed."""
@@ -166,6 +187,17 @@ def api_get_messages(user_id, conversation_id):
         safe_conversation_source,
     ) == []
 
+    safe_user_profile_source = """
+def api_get_user_info(user_id):
+    _, normalized_user_id, user_doc = _read_authorized_user_profile_document(user_id)
+    return normalized_user_id, user_doc
+""".strip()
+    assert issue_messages(
+        module,
+        'application/single_app/route_backend_users.py',
+        safe_user_profile_source,
+    ) == []
+
     suppressed_source = """
 def load_scope(settings):
     # bac-check: ignore reviewed legacy compatibility shim
@@ -182,23 +214,47 @@ def test_checker_assets_and_version_are_wired_into_repo() -> None:
     """Verify the new workflow, instruction, feature doc, and version bump landed together."""
     assert CHECKER_FILE.exists(), f'Expected checker script at {CHECKER_FILE}'
     assert WORKFLOW_FILE.exists(), f'Expected workflow file at {WORKFLOW_FILE}'
+    assert FULL_SCAN_WORKFLOW_FILE.exists(), f'Expected full-scan workflow file at {FULL_SCAN_WORKFLOW_FILE}'
     assert INSTRUCTION_FILE.exists(), f'Expected instruction file at {INSTRUCTION_FILE}'
+    assert PROMPT_FILE.exists(), f'Expected audit prompt at {PROMPT_FILE}'
     assert FEATURE_DOC.exists(), f'Expected feature document at {FEATURE_DOC}'
-    assert read_config_version() == '0.241.022'
+    assert FULL_SCAN_FEATURE_DOC.exists(), f'Expected full-scan feature document at {FULL_SCAN_FEATURE_DOC}'
+    assert read_config_version() == '0.241.203'
 
     workflow_source = read_text(WORKFLOW_FILE)
     assert 'scripts/check_broken_access_control.py' in workflow_source
     assert 'functional_tests/test_broken_access_control_guardrails_checker.py' in workflow_source
+    assert 'broken-access-control-full-scan.yml' in workflow_source
+
+    full_scan_workflow_source = read_text(FULL_SCAN_WORKFLOW_FILE)
+    assert 'workflow_dispatch' in full_scan_workflow_source
+    assert 'fail_on_findings' in full_scan_workflow_source
+    assert '--full-file' in full_scan_workflow_source
+    assert 'actions/upload-artifact@v4' in full_scan_workflow_source
 
     instruction_source = read_text(INSTRUCTION_FILE)
     assert 'bac-check: ignore' in instruction_source
     assert 'update_active_group_for_user(...)' in instruction_source
     assert '_resolve_authorized_scope_arguments(...)' in instruction_source
+    assert '_read_authorized_user_profile_document(...)' in instruction_source
+    assert 'broken-access-control-full-scan.yml' in instruction_source
+
+    prompt_source = read_text(PROMPT_FILE)
+    assert 'Broken Access Control Audit' in prompt_source
+    assert 'IDOR' in prompt_source
+    assert 'BOLA' in prompt_source
+    assert 'Source' in prompt_source
+    assert 'Sink' in prompt_source
 
     feature_doc_source = read_text(FEATURE_DOC)
     assert 'Fixed/Implemented in version: **0.241.022**' in feature_doc_source
     assert 'scripts/check_broken_access_control.py' in feature_doc_source
     assert '.github/workflows/broken-access-control-check.yml' in feature_doc_source
+
+    full_scan_feature_doc_source = read_text(FULL_SCAN_FEATURE_DOC)
+    assert 'Fixed/Implemented in version: **0.241.203**' in full_scan_feature_doc_source
+    assert '.github/workflows/broken-access-control-full-scan.yml' in full_scan_feature_doc_source
+    assert '.github/prompts/broken-access-control-audit.prompt.md' in full_scan_feature_doc_source
 
 
 if __name__ == '__main__':

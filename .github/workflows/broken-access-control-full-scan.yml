@@ -1,0 +1,94 @@
+name: Broken Access Control Full Scan
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_paths:
+        description: Space-delimited tracked paths to scan for Python BAC patterns.
+        required: false
+        default: application scripts
+      fail_on_findings:
+        description: Fail the workflow when findings are detected. Keep false for baseline/advisory runs.
+        required: true
+        type: boolean
+        default: false
+      run_self_tests:
+        description: Run the BAC checker regression tests before the audit.
+        required: true
+        type: boolean
+        default: true
+
+jobs:
+  broken-access-control-full-scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run Broken Access Control guardrail self-test
+        if: inputs.run_self_tests
+        run: |
+          python functional_tests/test_broken_access_control_guardrails_checker.py
+
+      - name: Collect tracked Python files
+        id: python-files
+        env:
+          TARGET_PATHS: ${{ inputs.target_paths }}
+        run: |
+          set -euo pipefail
+
+          : > bac-python-files.txt
+          for target_path in $TARGET_PATHS; do
+            git ls-files "$target_path" | grep -E '\.py$' >> bac-python-files.txt || true
+          done
+
+          sort -u bac-python-files.txt -o bac-python-files.txt
+          file_count=$(wc -l < bac-python-files.txt | tr -d ' ')
+          echo "file_count=$file_count" >> "$GITHUB_OUTPUT"
+
+          if [[ "$file_count" == "0" ]]; then
+            echo "No tracked Python files found for target paths: $TARGET_PATHS"
+            exit 0
+          fi
+
+          echo "Collected $file_count Python file(s) for BAC full scan."
+
+      - name: Run Broken Access Control full scan
+        id: bac-scan
+        if: steps.python-files.outputs.file_count != '0'
+        env:
+          FAIL_ON_FINDINGS: ${{ inputs.fail_on_findings }}
+        run: |
+          set +e
+
+          mapfile -t python_files < bac-python-files.txt
+          python scripts/check_broken_access_control.py --full-file "${python_files[@]}" 2>&1 | tee broken-access-control-full-scan-report.txt
+          checker_status=${PIPESTATUS[0]}
+
+          echo "checker_status=$checker_status" >> "$GITHUB_OUTPUT"
+          if [[ "$checker_status" -ne 0 ]]; then
+            echo "Broken Access Control full scan found findings. Review broken-access-control-full-scan-report.txt."
+            if [[ "$FAIL_ON_FINDINGS" == "true" ]]; then
+              exit "$checker_status"
+            fi
+          fi
+
+          exit 0
+
+      - name: Upload Broken Access Control full scan report
+        if: always() && steps.python-files.outputs.file_count != '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: broken-access-control-full-scan-report
+          path: |
+            bac-python-files.txt
+            broken-access-control-full-scan-report.txt
+          if-no-files-found: ignore

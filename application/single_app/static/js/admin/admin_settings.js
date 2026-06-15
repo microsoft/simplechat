@@ -44,6 +44,7 @@ const COSMOS_CONTAINER_SORT_FIELDS = new Set([
 const COSMOS_CONTAINER_TEXT_SORT_FIELDS = new Set(['container_name', 'policy']);
 const COSMOS_THROUGHPUT_SIMPLECHAT_MAX_RU = 10000;
 const COSMOS_THROUGHPUT_PORTAL_MANAGED_MESSAGE = 'Throughput above 10,000 RU/s is monitored only in SimpleChat. Use the Azure portal to change capacity; capacity changes above this level can take 4 to 6 hours.';
+const GROUP_WORKFLOW_ASSIGNMENT_PARSE_DEPTH_LIMIT = 5;
 
 const enableClassificationToggle = document.getElementById('enable_document_classification');
 const classificationSettingsDiv = document.getElementById('document_classification_settings');
@@ -2120,28 +2121,46 @@ function isGuidLike(value) {
 }
 
 function normalizeGroupWorkflowGroupId(value) {
-    return String(value || '').trim();
+    const groupId = String(value || '').trim();
+    return isGuidLike(groupId) ? groupId.toLowerCase() : '';
 }
 
-function parseGroupWorkflowAssignmentIds(value) {
+function collectGroupWorkflowAssignmentIds(value, depth = 0) {
+    if (depth > GROUP_WORKFLOW_ASSIGNMENT_PARSE_DEPTH_LIMIT) {
+        return [];
+    }
+
     const rawValue = String(value || '').trim();
     if (!rawValue) {
         return [];
     }
 
-    try {
-        const parsedValue = JSON.parse(rawValue);
-        if (Array.isArray(parsedValue)) {
-            return parsedValue.map(normalizeGroupWorkflowGroupId).filter(Boolean);
+    if (rawValue.startsWith('[') || rawValue.startsWith('"')) {
+        try {
+            const parsedValue = JSON.parse(rawValue);
+            if (Array.isArray(parsedValue)) {
+                const nestedIds = [];
+                parsedValue.forEach(item => {
+                    nestedIds.push(...collectGroupWorkflowAssignmentIds(item, depth + 1));
+                });
+                return nestedIds;
+            }
+            if (typeof parsedValue === 'string' && parsedValue !== rawValue) {
+                return collectGroupWorkflowAssignmentIds(parsedValue, depth + 1);
+            }
+        } catch (error) {
+            // Fall back to delimiter parsing for older saved form values.
         }
-    } catch (error) {
-        // Fall back to comma/newline parsing for older saved form values.
     }
 
     return rawValue
         .split(/[\n,;]+/)
         .map(normalizeGroupWorkflowGroupId)
         .filter(Boolean);
+}
+
+function parseGroupWorkflowAssignmentIds(value) {
+    return Array.from(new Set(collectGroupWorkflowAssignmentIds(value)));
 }
 
 function syncGroupWorkflowAssignmentField() {

@@ -60,6 +60,7 @@ let assignedKnowledgeActive = false;
 let assignedKnowledgeAllowsUserContext = false;
 let assignedKnowledgeAllowedUserActions = new Set(ASSIGNED_KNOWLEDGE_DEFAULT_USER_ACTIONS);
 let userWorkspaceContextActive = false;
+const conversationTaskDocumentsByConversationId = new Map();
 
 // Build name maps from server-provided data (fixes activeGroupName bug)
 const groupIdToName = {};
@@ -138,6 +139,175 @@ function normalizeAssignedKnowledgeUserActions(values) {
     return normalizedAction === 'comparison' ? 'compare' : normalizedAction;
   });
   return normalizedActions.filter(action => ASSIGNED_KNOWLEDGE_DEFAULT_USER_ACTIONS.includes(action));
+}
+
+function normalizeTaskDocumentId(documentId) {
+  return String(documentId || '').trim();
+}
+
+function normalizeTaskDocumentIds(documentIds = []) {
+  const normalizedIds = [];
+  const seenIds = new Set();
+  (Array.isArray(documentIds) ? documentIds : [documentIds]).forEach(documentId => {
+    const normalizedId = normalizeTaskDocumentId(documentId);
+    if (!normalizedId || seenIds.has(normalizedId)) {
+      return;
+    }
+    seenIds.add(normalizedId);
+    normalizedIds.push(normalizedId);
+  });
+  return normalizedIds;
+}
+
+function getConversationTaskDocumentConversationId(conversationId = null) {
+  return String(conversationId || window.currentConversationId || '').trim();
+}
+
+function getConversationTaskDocumentMap(conversationId, createIfMissing = false) {
+  const normalizedConversationId = getConversationTaskDocumentConversationId(conversationId);
+  if (!normalizedConversationId) {
+    return null;
+  }
+  if (!conversationTaskDocumentsByConversationId.has(normalizedConversationId) && createIfMissing) {
+    conversationTaskDocumentsByConversationId.set(normalizedConversationId, new Map());
+  }
+  return conversationTaskDocumentsByConversationId.get(normalizedConversationId) || null;
+}
+
+function isConversationTaskDocumentReady(taskDocument = {}) {
+  const statusText = String(taskDocument.status || '').trim().toLowerCase();
+  const percentageComplete = Number(taskDocument.percentage_complete || taskDocument.percentageComplete || 0);
+  if (statusText.includes('error') || statusText.includes('failed')) {
+    return false;
+  }
+  return percentageComplete >= 100 || statusText.includes('processing complete') || statusText.includes('complete');
+}
+
+function normalizeConversationTaskDocument(documentInfo = {}, fallbackConversationId = null) {
+  const attachment = documentInfo.workspace_attachment || documentInfo.attachment || documentInfo;
+  const documentId = normalizeTaskDocumentId(
+    attachment.document_id || attachment.id || documentInfo.workspace_document_id || documentInfo.document_id || documentInfo.id
+  );
+  const conversationId = getConversationTaskDocumentConversationId(
+    documentInfo.conversation_id || attachment.conversation_id || fallbackConversationId
+  );
+  if (!documentId || !conversationId) {
+    return null;
+  }
+
+  const taskDocument = {
+    id: documentId,
+    conversation_id: conversationId,
+    file_name: attachment.file_name || documentInfo.file_name || documentInfo.filename || '',
+    scope: String(attachment.scope || documentInfo.scope || documentInfo.workspace_scope || '').trim().toLowerCase(),
+    group_id: attachment.group_id || documentInfo.group_id || null,
+    status: attachment.status || documentInfo.status || '',
+    percentage_complete: attachment.percentage_complete ?? documentInfo.percentage_complete ?? 0,
+    link_state: attachment.link_state || documentInfo.link_state || 'linked',
+  };
+  taskDocument.ready = documentInfo.ready === true || isConversationTaskDocumentReady(taskDocument);
+  return taskDocument;
+}
+
+function getAssignedKnowledgeActionForDocumentAction(actionType) {
+  const normalizedActionType = String(actionType || DOCUMENT_ACTION_NONE).trim().toLowerCase() || DOCUMENT_ACTION_NONE;
+  if (normalizedActionType === 'analyze') {
+    return 'analyze';
+  }
+  if (normalizedActionType === 'comparison') {
+    return 'compare';
+  }
+  return 'search';
+}
+
+export function canUseConversationTaskDocumentsForAction(actionType = DOCUMENT_ACTION_NONE) {
+  if (!assignedKnowledgeActive) {
+    return true;
+  }
+  if (!assignedKnowledgeAllowsUserContext) {
+    return false;
+  }
+  return assignedKnowledgeAllowedUserActions.has(getAssignedKnowledgeActionForDocumentAction(actionType));
+}
+
+export function registerConversationTaskDocument(documentInfo = {}, options = {}) {
+  const taskDocument = normalizeConversationTaskDocument(documentInfo, options.conversationId);
+  if (!taskDocument) {
+    return false;
+  }
+
+  const taskDocumentMap = getConversationTaskDocumentMap(taskDocument.conversation_id, true);
+  if (!taskDocumentMap) {
+    return false;
+  }
+
+  const previousTaskDocument = taskDocumentMap.get(taskDocument.id) || {};
+  taskDocumentMap.set(taskDocument.id, {
+    ...previousTaskDocument,
+    ...taskDocument,
+    ready: Boolean(taskDocument.ready || previousTaskDocument.ready),
+  });
+  return true;
+}
+
+export function updateConversationTaskDocumentsFromMessages(messages = [], conversationId = null) {
+  const normalizedConversationId = getConversationTaskDocumentConversationId(conversationId);
+  if (!normalizedConversationId) {
+    return [];
+  }
+
+  const taskDocumentMap = new Map();
+  (Array.isArray(messages) ? messages : []).forEach(message => {
+    const workspaceAttachment = message?.metadata?.workspace_attachment;
+    if (!workspaceAttachment) {
+      return;
+    }
+    const taskDocument = normalizeConversationTaskDocument(
+      {
+        ...message,
+        workspace_attachment: workspaceAttachment,
+      },
+      normalizedConversationId,
+    );
+    if (taskDocument) {
+      taskDocumentMap.set(taskDocument.id, taskDocument);
+    }
+  });
+  conversationTaskDocumentsByConversationId.set(normalizedConversationId, taskDocumentMap);
+  return Array.from(taskDocumentMap.values());
+}
+
+export function getConversationTaskDocuments(conversationId = null) {
+  const taskDocumentMap = getConversationTaskDocumentMap(conversationId, false);
+  return taskDocumentMap ? Array.from(taskDocumentMap.values()) : [];
+}
+
+export function getConversationTaskDocumentIds(options = {}) {
+  const actionType = options.actionType || DOCUMENT_ACTION_NONE;
+  if (!canUseConversationTaskDocumentsForAction(actionType)) {
+    return [];
+  }
+  const readyOnly = options.readyOnly !== false;
+  return normalizeTaskDocumentIds(
+    getConversationTaskDocuments(options.conversationId)
+      .filter(taskDocument => !readyOnly || taskDocument.ready)
+      .map(taskDocument => taskDocument.id)
+  );
+}
+
+export function getConversationTaskDocumentSummary(options = {}) {
+  const actionType = options.actionType || DOCUMENT_ACTION_NONE;
+  const taskDocuments = getConversationTaskDocuments(options.conversationId);
+  const readyIds = canUseConversationTaskDocumentsForAction(actionType)
+    ? normalizeTaskDocumentIds(taskDocuments.filter(taskDocument => taskDocument.ready).map(taskDocument => taskDocument.id))
+    : [];
+  return {
+    allowed: canUseConversationTaskDocumentsForAction(actionType),
+    totalCount: taskDocuments.length,
+    readyCount: readyIds.length,
+    pendingCount: taskDocuments.filter(taskDocument => !taskDocument.ready).length,
+    readyIds,
+  };
 }
 
 function getAssignedKnowledgeScopes(assignedKnowledge = {}) {

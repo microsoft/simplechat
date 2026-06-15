@@ -13,6 +13,7 @@ import app_settings_cache
 import inspect
 import copy
 import json
+import uuid
 from support_menu_config import (
     get_default_support_latest_features_visibility,
     has_visible_support_latest_features,
@@ -96,36 +97,83 @@ def has_workflow_user_app_role(user_roles):
     return WORKFLOW_USER_APP_ROLE.lower() in normalized_roles
 
 
-def normalize_group_workflow_allowed_group_ids(value):
-    """Normalize group workflow assignment settings into unique group ids."""
-    if value is None:
-        return []
+GROUP_WORKFLOW_ALLOWED_GROUP_ID_PARSE_DEPTH_LIMIT = 5
+
+
+def _iter_group_workflow_allowed_group_id_candidates(value, depth=0):
+    """Yield raw assignment candidates from legacy text, JSON, and nested JSON strings."""
+    if value is None or depth > GROUP_WORKFLOW_ALLOWED_GROUP_ID_PARSE_DEPTH_LIMIT:
+        return
+
     if isinstance(value, str):
         stripped_value = value.strip()
-        candidates = None
-        if stripped_value.startswith('['):
+        if not stripped_value:
+            return
+
+        if stripped_value.startswith('[') or stripped_value.startswith('"'):
             try:
                 parsed_value = json.loads(stripped_value)
-                if isinstance(parsed_value, list):
-                    candidates = parsed_value
             except (TypeError, ValueError):
-                candidates = None
-        if candidates is None:
-            candidates = value.replace('\r', '\n').replace(',', '\n').split('\n')
-    elif isinstance(value, (list, tuple, set)):
-        candidates = value
-    else:
-        candidates = [value]
+                parsed_value = None
 
+            if isinstance(parsed_value, list):
+                for candidate in parsed_value:
+                    yield from _iter_group_workflow_allowed_group_id_candidates(candidate, depth + 1)
+                return
+
+            if isinstance(parsed_value, str) and parsed_value != stripped_value:
+                yield from _iter_group_workflow_allowed_group_id_candidates(parsed_value, depth + 1)
+                return
+
+        for candidate in stripped_value.replace('\r', '\n').replace(',', '\n').replace(';', '\n').split('\n'):
+            yield candidate
+        return
+
+    if isinstance(value, (list, tuple, set)):
+        for candidate in value:
+            yield from _iter_group_workflow_allowed_group_id_candidates(candidate, depth + 1)
+        return
+
+    yield value
+
+
+def normalize_group_workflow_allowed_group_id(value):
+    """Return a canonical SimpleChat group id or an empty string for invalid values."""
+    group_id = str(value or '').strip()
+    if not group_id:
+        return ''
+
+    try:
+        return str(uuid.UUID(group_id))
+    except (AttributeError, TypeError, ValueError):
+        return ''
+
+
+def normalize_group_workflow_allowed_group_ids(value):
+    """Normalize group workflow assignment settings into unique group ids."""
     normalized_ids = []
     seen_ids = set()
-    for candidate in candidates:
-        group_id = str(candidate or '').strip()
+    for candidate in _iter_group_workflow_allowed_group_id_candidates(value):
+        group_id = normalize_group_workflow_allowed_group_id(candidate)
         if not group_id or group_id in seen_ids:
             continue
         normalized_ids.append(group_id)
         seen_ids.add(group_id)
     return normalized_ids
+
+
+def normalize_group_workflow_assignment_settings(settings):
+    """Normalize persisted group workflow assignment settings in-place."""
+    if not isinstance(settings, dict):
+        return False
+
+    current_group_ids = settings.get('group_workflow_allowed_group_ids')
+    normalized_group_ids = normalize_group_workflow_allowed_group_ids(current_group_ids)
+    if current_group_ids == normalized_group_ids:
+        return False
+
+    settings['group_workflow_allowed_group_ids'] = normalized_group_ids
+    return True
 
 
 def normalize_file_sync_allowed_group_ids(value):
@@ -884,11 +932,12 @@ def get_settings(use_cosmos=False, include_source=False):
         merge_changed = deep_merge_dicts(default_settings, settings_item)
         merged = settings_item
         migration_updated = apply_custom_endpoint_setting_migration(merged)
+        assignment_settings_updated = normalize_group_workflow_assignment_settings(merged)
 
         merged['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(merged)
 
         # If merging added anything new, upsert back to Cosmos so future reads remain up to date
-        if merge_changed or migration_updated:
+        if merge_changed or migration_updated or assignment_settings_updated:
             cosmos_settings_container.upsert_item(merged)
             cache_updater = getattr(app_settings_cache, "update_settings_cache", None)
             if callable(cache_updater):
@@ -905,7 +954,7 @@ def get_settings(use_cosmos=False, include_source=False):
                     )
 
             log_event(
-                "App settings missing keys were merged and persisted to Cosmos DB.",
+                "App settings defaults or migrations were persisted to Cosmos DB.",
                 extra={
                     "settings_source": settings_source
                 },
@@ -946,6 +995,7 @@ def update_settings(new_settings):
         settings_item = get_settings()
         existing_multi_endpoint_enabled = settings_item.get('enable_multi_model_endpoints', False)
         settings_item.update(new_settings)
+        normalize_group_workflow_assignment_settings(settings_item)
         settings_item['enable_multi_model_endpoints'] = coerce_multi_model_endpoint_enablement(
             existing_multi_endpoint_enabled,
             settings_item.get('enable_multi_model_endpoints', False),

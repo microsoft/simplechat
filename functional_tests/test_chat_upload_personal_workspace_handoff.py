@@ -1,8 +1,8 @@
 # test_chat_upload_personal_workspace_handoff.py
 """
 Functional test for chat upload personal workspace handoff.
-Version: 0.241.200
-Implemented in: 0.241.174
+Version: 0.241.203
+Implemented in: 0.241.203
 
 This test ensures chat uploads are wired to queue personal workspace documents,
 replace eligible chat-local file processing with workspace-backed messages,
@@ -14,7 +14,9 @@ validates selectable linked-document deletion from the conversation delete modal
 including when conversation archiving is enabled,
 duplicate workspace filename isolation for repeated chat uploads, and clean
 workspace tagging that keeps conversation IDs in metadata instead of tags. It
-also validates that chat upload progress can refresh from the workspace document.
+also validates that chat upload progress can refresh from the workspace document
+and that assigned-knowledge chats treat ready linked uploads as explicit
+conversation task documents for allowed Search and Analyze actions.
 """
 
 import sys
@@ -105,14 +107,17 @@ def test_chat_search_includes_ready_linked_workspace_documents_contract():
 
     assert_contains(route_backend_chats, "def _merge_chat_upload_workspace_context(", "chat-upload workspace context helper")
     assert_contains(route_backend_chats, "def _is_search_ready_chat_upload_workspace_document", "search-ready linked document guard")
-    assert_contains(route_backend_chats, "get_chat_upload_workspace_documents_for_conversation(user_id, conversation_id)", "linked workspace document lookup")
+    assert_contains(route_backend_chats, "def _resolve_conversation_task_documents(", "action-aware linked task document resolver")
+    assert_contains(route_backend_chats, "def _merge_document_scope_with_conversation_task_documents", "task document scope merge helper")
+    assert_contains(route_backend_chats, "get_chat_upload_workspace_documents_for_conversation(user_id, normalized_conversation_id)", "linked workspace document lookup")
     assert_contains(route_backend_chats, "assigned_knowledge_user_context_active", "assigned knowledge user context merge switch")
-    assert_contains(route_backend_chats, "assigned_knowledge_blocks_user_context", "assigned knowledge linked-upload backend activation guard")
+    assert_contains(route_backend_chats, "assigned_knowledge_action_not_allowed", "assigned knowledge linked-upload backend activation guard")
+    assert_contains(route_backend_chats, "document_action_type=DOCUMENT_ACTION_TYPE_NONE", "search action policy used for normal chat linked uploads")
     assert_contains(route_backend_chats, "_assigned_knowledge_allows_document_action(", "assigned knowledge policy check for linked chat uploads")
     assert_contains(route_backend_chats, "assigned_knowledge_user_context_active = True", "auto-linked uploads activate assigned knowledge user context")
     assert_contains(route_backend_chats, "g.assigned_knowledge_user_context_active = True", "request context reflects auto-linked assigned knowledge user context")
     assert_contains(route_backend_chats, "Enabled Assigned Knowledge user context", "debug log for linked chat upload user context activation")
-    assert_contains(route_backend_chats, "if assigned_knowledge_blocks_user_context:", "assigned public plus linked personal uploads search all scopes")
+    assert_contains(route_backend_chats, "return 'all'", "assigned public plus linked personal uploads search all scopes")
     assert_contains(route_backend_chats, "def _merge_assigned_knowledge_user_context_search_results", "assigned knowledge user-context preserving search merge helper")
     assert_contains(route_backend_chats, "_is_personal_or_group_search_result(result)", "assigned knowledge merge appends only personal/group user-context hits")
     assert_contains(route_backend_chats, "user_context_appended_count += 1", "assigned knowledge merge keeps appended user-context result count")
@@ -125,6 +130,36 @@ def test_chat_search_includes_ready_linked_workspace_documents_contract():
     assert_contains(route_backend_chats, "'auto_linked_chat_upload_document_ids'", "auto-linked document metadata recording")
 
 
+def test_analyze_uses_conversation_task_documents_contract():
+    """Validate Analyze can target ready linked uploads without unlocked broad scopes."""
+    route_backend_chats = read_repo_file("application/single_app/route_backend_chats.py")
+    chat_messages = read_repo_file("application/single_app/static/js/chat/chat-messages.js")
+    chat_documents = read_repo_file("application/single_app/static/js/chat/chat-documents.js")
+
+    assert_contains(route_backend_chats, "conversation_task_document_ids", "backend accepts task document hint ids")
+    assert_contains(route_backend_chats, "document_action_type=DOCUMENT_ACTION_TYPE_ANALYZE", "Analyze action policy used for linked uploads")
+    assert_contains(route_backend_chats, "Auto-filled Analyze targets from linked chat uploads", "Analyze autofill debug log")
+    assert_contains(route_backend_chats, "Uploaded task documents are still processing", "Analyze pending-upload response")
+    assert_contains(route_backend_chats, "This agent does not allow document analysis with uploaded task documents", "Analyze assigned-knowledge denial")
+    assert_order(
+        route_backend_chats,
+        "Auto-filled Analyze targets from linked chat uploads",
+        "normalized_action = normalize_document_action_config(",
+        "linked task document autofill before document-action validation",
+    )
+
+    assert_contains(chat_documents, "conversationTaskDocumentsByConversationId", "frontend task document state map")
+    assert_contains(chat_documents, "export function registerConversationTaskDocument", "frontend task document registration")
+    assert_contains(chat_documents, "export function updateConversationTaskDocumentsFromMessages", "frontend task document reload hydration")
+    assert_contains(chat_documents, "export function getConversationTaskDocumentSummary", "frontend task document preflight summary")
+    assert_contains(chat_documents, "canUseConversationTaskDocumentsForAction", "assigned-knowledge task action policy mirror")
+    assert_contains(chat_messages, "conversation_task_document_ids: conversationTaskDocumentIds", "request payload includes task document hints")
+    assert_contains(chat_messages, "updateConversationTaskDocumentsFromMessages", "loaded messages hydrate task docs")
+    assert_contains(chat_messages, "conversationTaskDocumentSummary.readyCount", "Analyze preflight accepts ready task docs")
+    assert_contains(chat_messages, "Uploaded task documents are still processing", "Analyze pending task document warning")
+    assert_contains(chat_messages, "This agent does not allow uploaded task documents for analysis", "Analyze disallowed task document warning")
+
+
 def test_frontend_progress_and_workspace_notices_contract():
     """Validate chat progress UI and workspace linked-conversation notices."""
     chat_input_actions = read_repo_file("application/single_app/static/js/chat/chat-input-actions.js")
@@ -135,6 +170,7 @@ def test_frontend_progress_and_workspace_notices_contract():
 
     assert_contains(chat_input_actions, "watchChatWorkspaceUploadDocument", "upload response starts workspace completion watcher")
     assert_contains(chat_input_actions, "data.workspace_document_id", "upload response workspace document id consumed by client")
+    assert_contains(chat_input_actions, "registerConversationTaskDocument({", "upload response registers pending task document")
     assert_contains(chat_input_actions, "activateUserWorkspaceContextForChatUpload();", "upload success immediately enables user workspace context")
     assert_contains(chat_input_actions, "workspaceScope: data.workspace_scope", "upload response passes workspace scope to completion watcher")
     assert_contains(chat_input_actions, "groupId: data.workspace_document?.group_id", "upload response passes group id to completion watcher")
@@ -155,6 +191,7 @@ def test_frontend_progress_and_workspace_notices_contract():
     assert_contains(chat_messages, "then(payload => normalizeChatWorkspaceDocumentResponse(payload))", "chat progress polling uses normalized document payload")
     assert_contains(chat_messages, "export function watchChatWorkspaceUploadDocument", "upload completion watcher exported for upload response flow")
     assert_contains(chat_messages, "chatWorkspaceUploadCompletionWatchers", "dedicated upload completion watcher state")
+    assert_contains(chat_messages, "registerConversationTaskDocument({", "upload completion watcher records task document state")
     assert_contains(chat_messages, "activateUserWorkspaceContextForChatUpload();", "workspace-backed upload immediately activates context")
     assert_contains(chat_messages, "selectWorkspaceDocumentForChatUpload(workspaceDocumentId", "completed upload auto-selects workspace document")
     assert_contains(chat_messages, "buildCompletedChatWorkspaceAttachmentHtml", "completed progress details collapsed renderer")
@@ -212,6 +249,7 @@ def main():
     tests = [
         test_backend_handoff_contract,
         test_chat_search_includes_ready_linked_workspace_documents_contract,
+        test_analyze_uses_conversation_task_documents_contract,
         test_frontend_progress_and_workspace_notices_contract,
         test_conversation_delete_selectable_workspace_document_contract,
     ]

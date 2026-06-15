@@ -9,7 +9,9 @@ on:
       - 'scripts/check_broken_access_control.py'
       - 'functional_tests/test_broken_access_control_guardrails_checker.py'
       - '.github/workflows/broken-access-control-check.yml'
+      - '.github/workflows/broken-access-control-full-scan.yml'
       - '.github/instructions/broken-access-control-prevention.instructions.md'
+      - '.github/prompts/broken-access-control-audit.prompt.md'
 
 jobs:
   broken-access-control-check:
@@ -37,7 +39,9 @@ jobs:
               - 'scripts/check_broken_access_control.py'
               - 'functional_tests/test_broken_access_control_guardrails_checker.py'
               - '.github/workflows/broken-access-control-check.yml'
+              - '.github/workflows/broken-access-control-full-scan.yml'
               - '.github/instructions/broken-access-control-prevention.instructions.md'
+              - '.github/prompts/broken-access-control-audit.prompt.md'
               - 'docs/explanation/features/v0.241.022/BROKEN_ACCESS_CONTROL_PR_GUARDRAILS.md'
 
       - name: Run Broken Access Control validation

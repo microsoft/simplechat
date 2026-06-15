@@ -68,6 +68,13 @@ PERSONAL_CONVERSATION_ROUTE_FILES = {
     'application/single_app/route_backend_feedback.py',
     'application/single_app/route_frontend_conversations.py',
 }
+USER_PROFILE_ROUTE_FILES = {
+    'application/single_app/route_backend_users.py',
+}
+USER_PROFILE_ACCESS_HELPERS = {
+    '_authorize_user_profile_access',
+    '_read_authorized_user_profile_document',
+}
 ADMIN_DECORATORS = {'admin_required', 'control_center_required'}
 EXPLICIT_OWNERSHIP_SNIPPETS = (
     "conversation_item.get('user_id') != user_id",
@@ -284,6 +291,28 @@ def function_has_conversation_auth(
     return any(snippet in function_source for snippet in EXPLICIT_OWNERSHIP_SNIPPETS)
 
 
+def is_user_profile_authorization_helper_name(name: str) -> bool:
+    """Return True when a helper name represents user-profile object authorization."""
+    lowered_name = str(name or '').lower()
+    return name in USER_PROFILE_ACCESS_HELPERS or (
+        lowered_name.startswith('_authorize_')
+        and 'user_profile' in lowered_name
+    )
+
+
+def function_has_user_profile_auth(function_node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Return True when a function uses an approved user-profile auth boundary."""
+    if function_node.name in USER_PROFILE_ACCESS_HELPERS:
+        return True
+    if is_user_profile_authorization_helper_name(function_node.name):
+        return True
+    if has_decorator(function_node, ADMIN_DECORATORS):
+        return True
+
+    function_calls = collect_function_call_names(function_node)
+    return any(is_user_profile_authorization_helper_name(name) for name in function_calls)
+
+
 def call_references_name_fragment(call_node: ast.Call, fragment: str, source_text: str) -> bool:
     """Return True when the call source references the provided name fragment."""
     call_source = ast.get_source_segment(source_text, call_node) or ''
@@ -491,6 +520,57 @@ def collect_direct_personal_conversation_read_issues(
     return issues
 
 
+def collect_direct_user_profile_read_issues(
+    *,
+    file_path: Path,
+    relative_path: str,
+    tree: ast.AST,
+    source_text: str,
+    source_lines: list[str],
+    changed_lines: set[int] | None,
+) -> list[Issue]:
+    """Collect issues for direct user-settings profile reads without object authorization."""
+    if relative_path not in USER_PROFILE_ROUTE_FILES:
+        return []
+
+    issues: list[Issue] = []
+    for function_node in ast.walk(tree):
+        if not isinstance(function_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if function_has_user_profile_auth(function_node):
+            continue
+
+        for node in ast.walk(function_node):
+            if not isinstance(node, ast.Call) or call_name(node) != 'read_item':
+                continue
+
+            call_source = ast.get_source_segment(source_text, node) or ''
+            if 'cosmos_user_settings_container.read_item' not in call_source:
+                continue
+            if not call_references_name_fragment(node, 'user_id', source_text):
+                continue
+
+            start_line = node.lineno
+            end_line = getattr(node, 'end_lineno', start_line)
+            if not matches_changed_lines(changed_lines, start_line, end_line):
+                continue
+            if is_suppressed(source_lines, start_line, end_line):
+                continue
+
+            issues.append(
+                Issue(
+                    file_path=file_path,
+                    line=start_line,
+                    message=(
+                        'Avoid direct user settings reads from request-derived user_id values without '
+                        '_authorize_user_profile_access(...) or _read_authorized_user_profile_document(...), '
+                        f"or add '{SUPPRESSION_TOKEN}' with a justification."
+                    ),
+                )
+            )
+    return issues
+
+
 def inspect_source(file_path: Path, source_text: str, changed_lines: set[int] | None = None) -> list[Issue]:
     """Inspect one Python source string and return any BAC-related issues."""
     source_lines = source_text.splitlines()
@@ -539,6 +619,16 @@ def inspect_source(file_path: Path, source_text: str, changed_lines: set[int] | 
     )
     issues.extend(
         collect_direct_personal_conversation_read_issues(
+            file_path=file_path,
+            relative_path=relative_path,
+            tree=tree,
+            source_text=source_text,
+            source_lines=source_lines,
+            changed_lines=changed_lines,
+        )
+    )
+    issues.extend(
+        collect_direct_user_profile_read_issues(
             file_path=file_path,
             relative_path=relative_path,
             tree=tree,

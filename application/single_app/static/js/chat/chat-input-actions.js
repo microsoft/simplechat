@@ -12,7 +12,7 @@ import {
   hideLoadingIndicator,
 } from "./chat-loading-indicator.js";
 import { loadMessages, watchChatWorkspaceUploadDocument } from "./chat-messages.js";
-import { activateUserWorkspaceContextForChatUpload, getEffectiveScopes } from "./chat-documents.js";
+import { activateUserWorkspaceContextForChatUpload, getEffectiveScopes, registerConversationTaskDocument } from "./chat-documents.js";
 import { loadUserSettings, saveUserSetting } from "./chat-layout.js";
 
 const imageGenBtn = document.getElementById("image-generate-btn");
@@ -742,6 +742,15 @@ export async function uploadFileToConversation(file) {
         ? window.chatCollaboration.activateConversation(uploadedConversationId)
         : loadMessages(uploadedConversationId);
       if (data.workspace_document_id) {
+        registerConversationTaskDocument({
+          ...(data.workspace_document || {}),
+          id: data.workspace_document_id,
+          conversation_id: uploadedConversationId,
+          scope: data.workspace_scope,
+          status: data.workspace_document?.status || 'Queued for processing',
+          percentage_complete: data.workspace_document?.percentage_complete || 0,
+          ready: false,
+        });
         activateUserWorkspaceContextForChatUpload();
         Promise.resolve(loadMessagesPromise).finally(() => {
           watchChatWorkspaceUploadDocument(data.workspace_document_id, {

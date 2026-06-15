@@ -1,16 +1,205 @@
 # route_backend_users.py
 
 from config import *
-from collaboration_models import normalize_collaboration_user
+from collaboration_models import (
+    COLLABORATION_KIND,
+    MEMBERSHIP_STATUS_ACCEPTED,
+    MEMBERSHIP_STATUS_PENDING,
+    get_collaboration_user_state_doc_id,
+    normalize_collaboration_user,
+)
+from functions_appinsights import log_event
 from functions_authentication import *
-from functions_group import update_active_group_for_user
+from functions_group import (
+    check_group_status_allows_operation,
+    get_user_groups,
+    get_user_role_in_group,
+    update_active_group_for_user,
+)
 from functions_public_workspaces import update_active_public_workspace_for_user
 from functions_settings import *
 from swagger_wrapper import swagger_route, get_auth_security
 
 
+PROFILE_LOOKUP_MEMBERSHIP_STATUSES = {
+    MEMBERSHIP_STATUS_ACCEPTED,
+    MEMBERSHIP_STATUS_PENDING,
+}
+
+
 def _escape_graph_odata_literal(value):
     return str(value or "").replace("'", "''")
+
+
+def _normalize_user_lookup_id(value):
+    return str(value or '').strip()
+
+
+def _is_current_actor_admin():
+    current_user = session.get('user') or {}
+    roles = current_user.get('roles') or []
+    return 'Admin' in roles
+
+
+def _log_profile_relationship_check_error(check_name, actor_user_id, target_user_id, error):
+    log_event(
+        f'[UserProfile] {check_name} relationship check failed closed',
+        extra={
+            'actor_user_id': actor_user_id,
+            'target_user_id': target_user_id,
+            'error_type': type(error).__name__,
+        },
+        level=logging.WARNING,
+        debug_only=True,
+    )
+
+
+def _has_shared_group_profile_relationship(actor_user_id, target_user_id):
+    try:
+        for group_doc in get_user_groups(actor_user_id):
+            allowed, _ = check_group_status_allows_operation(group_doc, 'view')
+            if not allowed:
+                continue
+            if get_user_role_in_group(group_doc, target_user_id):
+                return True
+    except Exception as ex:
+        _log_profile_relationship_check_error('Group', actor_user_id, target_user_id, ex)
+
+    return False
+
+
+def _has_shared_document_profile_relationship(actor_user_id, target_user_id):
+    actor_user_prefix = f'{actor_user_id},'
+    target_user_prefix = f'{target_user_id},'
+    query = """
+        SELECT TOP 1 VALUE c.id
+        FROM c
+        WHERE IS_DEFINED(c.shared_user_ids)
+        AND (
+            (
+                c.user_id = @actor_user_id
+                AND (
+                    ARRAY_CONTAINS(c.shared_user_ids, @target_user_id)
+                    OR EXISTS(SELECT VALUE shared_user FROM shared_user IN c.shared_user_ids WHERE STARTSWITH(shared_user, @target_user_prefix))
+                )
+            )
+            OR (
+                c.user_id = @target_user_id
+                AND (
+                    ARRAY_CONTAINS(c.shared_user_ids, @actor_user_id)
+                    OR EXISTS(SELECT VALUE shared_user FROM shared_user IN c.shared_user_ids WHERE STARTSWITH(shared_user, @actor_user_prefix))
+                )
+            )
+        )
+    """
+    parameters = [
+        {'name': '@actor_user_id', 'value': actor_user_id},
+        {'name': '@target_user_id', 'value': target_user_id},
+        {'name': '@actor_user_prefix', 'value': actor_user_prefix},
+        {'name': '@target_user_prefix', 'value': target_user_prefix},
+    ]
+
+    try:
+        matching_document_ids = list(cosmos_user_documents_container.query_items(
+            query=query,
+            parameters=parameters,
+            enable_cross_partition_query=True,
+        ))
+        return bool(matching_document_ids)
+    except Exception as ex:
+        _log_profile_relationship_check_error('Document', actor_user_id, target_user_id, ex)
+
+    return False
+
+
+def _has_collaboration_profile_relationship(actor_user_id, target_user_id):
+    query = """
+        SELECT TOP 50 c.conversation_id
+        FROM c
+        WHERE c.user_id = @actor_user_id
+        AND c.conversation_kind = @conversation_kind
+        AND (
+            c.membership_status = @accepted_status
+            OR c.membership_status = @pending_status
+        )
+    """
+    parameters = [
+        {'name': '@actor_user_id', 'value': actor_user_id},
+        {'name': '@conversation_kind', 'value': COLLABORATION_KIND},
+        {'name': '@accepted_status', 'value': MEMBERSHIP_STATUS_ACCEPTED},
+        {'name': '@pending_status', 'value': MEMBERSHIP_STATUS_PENDING},
+    ]
+
+    try:
+        actor_states = list(cosmos_collaboration_user_state_container.query_items(
+            query=query,
+            parameters=parameters,
+            partition_key=actor_user_id,
+        ))
+        for actor_state in actor_states:
+            conversation_id = _normalize_user_lookup_id(actor_state.get('conversation_id'))
+            if not conversation_id:
+                continue
+
+            try:
+                target_state = cosmos_collaboration_user_state_container.read_item(
+                    item=get_collaboration_user_state_doc_id(target_user_id, conversation_id),
+                    partition_key=target_user_id,
+                )
+            except exceptions.CosmosResourceNotFoundError:
+                continue
+
+            target_status = _normalize_user_lookup_id(target_state.get('membership_status'))
+            if target_status in PROFILE_LOOKUP_MEMBERSHIP_STATUSES:
+                return True
+    except Exception as ex:
+        _log_profile_relationship_check_error('Collaboration', actor_user_id, target_user_id, ex)
+
+    return False
+
+
+def _authorize_user_profile_access(target_user_id):
+    actor_user_id = _normalize_user_lookup_id(get_current_user_id())
+    normalized_target_user_id = _normalize_user_lookup_id(target_user_id)
+
+    if not actor_user_id:
+        raise PermissionError('Authenticated user is required')
+    if not normalized_target_user_id:
+        raise LookupError('Target user is required')
+
+    if actor_user_id == normalized_target_user_id:
+        return actor_user_id, normalized_target_user_id
+    if _is_current_actor_admin():
+        return actor_user_id, normalized_target_user_id
+    if _has_shared_group_profile_relationship(actor_user_id, normalized_target_user_id):
+        return actor_user_id, normalized_target_user_id
+    if _has_shared_document_profile_relationship(actor_user_id, normalized_target_user_id):
+        return actor_user_id, normalized_target_user_id
+    if _has_collaboration_profile_relationship(actor_user_id, normalized_target_user_id):
+        return actor_user_id, normalized_target_user_id
+
+    log_event(
+        '[UserProfile] Denied cross-user profile lookup',
+        extra={
+            'actor_user_id': actor_user_id,
+            'target_user_id': normalized_target_user_id,
+        },
+        level=logging.WARNING,
+    )
+    raise PermissionError('User profile access denied')
+
+
+def _read_authorized_user_profile_document(target_user_id):
+    actor_user_id, normalized_target_user_id = _authorize_user_profile_access(target_user_id)
+    user_doc = cosmos_user_settings_container.read_item(
+        item=normalized_target_user_id,
+        partition_key=normalized_target_user_id,
+    )
+    return actor_user_id, normalized_target_user_id, user_doc
+
+
+def _user_profile_not_found_response():
+    return jsonify({'error': 'User not found or access denied'}), 404
 
 
 def register_route_backend_users(app):
@@ -89,24 +278,26 @@ def register_route_backend_users(app):
         """
         Get user info (email, display_name) by user_id (oid).
         """
-        # Directly query Cosmos for the user document by id (oid)
-        from config import cosmos_user_settings_container
         try:
-            user_doc = cosmos_user_settings_container.read_item(
-                item=user_id,
-                partition_key=user_id
-            )
-            print(f"/api/user/info/{user_id} → doc: {user_doc}", flush=True)
+            _, normalized_user_id, user_doc = _read_authorized_user_profile_document(user_id)
             return jsonify({
-                "user_id": user_id,
+                "user_id": normalized_user_id,
                 "email": user_doc.get("email", ""),
                 "display_name": user_doc.get("display_name", "")
             }), 200
-        except Exception as e:
-            print(f"[ERROR] /api/user/info/{user_id} failed: {e}", flush=True)
-            return jsonify({
-                "error": f"User not found for oid {user_id}"
-            }), 404
+        except (LookupError, PermissionError, exceptions.CosmosResourceNotFoundError):
+            return _user_profile_not_found_response()
+        except Exception as ex:
+            log_event(
+                '[UserProfile] Failed to load user info',
+                extra={
+                    'target_user_id': _normalize_user_lookup_id(user_id),
+                    'error_type': type(ex).__name__,
+                },
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to retrieve user profile'}), 500
 
     @app.route('/api/user/collaboration-suggestions', methods=['GET'])
     @swagger_route(security=get_auth_security())
@@ -366,24 +557,29 @@ def register_route_backend_users(app):
         Get profile image for a specific user by user_id (oid).
         Returns only the profile image data to protect user privacy.
         """
-        from config import cosmos_user_settings_container
         try:
-            user_doc = cosmos_user_settings_container.read_item(
-                item=user_id,
-                partition_key=user_id
-            )
+            _, normalized_user_id, user_doc = _read_authorized_user_profile_document(user_id)
             
             # Extract profile image from settings
             profile_image = user_doc.get("settings", {}).get("profileImage", None)
             
             return jsonify({
-                "user_id": user_id,
+                "user_id": normalized_user_id,
                 "profile_image": profile_image
             }), 200
-            
-        except Exception as e:
-            print(f"[ERROR] /api/user/profile-image/{user_id} failed: {e}", flush=True)
+        except (LookupError, PermissionError, exceptions.CosmosResourceNotFoundError):
             return jsonify({
-                "error": f"User profile image not found for oid {user_id}",
-                "profile_image": None
+                'error': 'User not found or access denied',
+                'profile_image': None,
             }), 404
+        except Exception as ex:
+            log_event(
+                '[UserProfile] Failed to load profile image',
+                extra={
+                    'target_user_id': _normalize_user_lookup_id(user_id),
+                    'error_type': type(ex).__name__,
+                },
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to retrieve profile image', 'profile_image': None}), 500

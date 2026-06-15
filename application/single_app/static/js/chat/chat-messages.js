@@ -5,7 +5,7 @@ import {
   showLoadingIndicatorInChatbox,
   hideLoadingIndicatorInChatbox,
 } from "./chat-loading-indicator.js";
-import { getDocumentMetadata, fetchDocumentVersions, personalDocs, groupDocs, publicDocs, getSelectedTags, getEffectiveScopes, applyScopeLock, ensureDocumentPickerReady, isAssignedKnowledgeActive, isUserWorkspaceContextEnabled, activateUserWorkspaceContextForChatUpload, selectWorkspaceDocumentForChatUpload } from "./chat-documents.js";
+import { getDocumentMetadata, fetchDocumentVersions, personalDocs, groupDocs, publicDocs, getSelectedTags, getEffectiveScopes, applyScopeLock, ensureDocumentPickerReady, isAssignedKnowledgeActive, isUserWorkspaceContextEnabled, activateUserWorkspaceContextForChatUpload, selectWorkspaceDocumentForChatUpload, registerConversationTaskDocument, updateConversationTaskDocumentsFromMessages, getConversationTaskDocumentIds, getConversationTaskDocumentSummary } from "./chat-documents.js";
 import { promptSelect } from "./chat-prompts.js";
 import {
   createNewConversation,
@@ -412,11 +412,27 @@ export function watchChatWorkspaceUploadDocument(workspaceDocumentId, options = 
         updateChatWorkspaceDocumentProgressEverywhere(normalizedDocumentId, doc);
 
         if (!isChatWorkspaceDocumentComplete(doc)) {
+          registerConversationTaskDocument({
+            ...doc,
+            id: getChatWorkspaceDocumentId(doc, normalizedDocumentId),
+            conversation_id: currentConversationId,
+            scope: watcher.workspaceScope,
+            group_id: watcher.groupId,
+            ready: false,
+          });
           return;
         }
 
         stopChatWorkspaceUploadCompletionWatcher(normalizedDocumentId);
         if (watcher.autoSelect && isChatWorkspaceDocumentSuccessComplete(doc)) {
+          registerConversationTaskDocument({
+            ...doc,
+            id: getChatWorkspaceDocumentId(doc, normalizedDocumentId),
+            conversation_id: currentConversationId,
+            scope: watcher.workspaceScope,
+            group_id: watcher.groupId,
+            ready: true,
+          });
           autoSelectCompletedChatWorkspaceDocument(normalizedDocumentId, watcher);
         }
       })
@@ -2095,6 +2111,7 @@ export function loadMessages(conversationId) {
 
       chatbox.innerHTML = "";
       console.log(`--- Loading messages for ${conversationId} ---`);
+      updateConversationTaskDocumentsFromMessages(Array.isArray(data.messages) ? data.messages : [], conversationId);
       updateComparisonChatUploadCatalog(Array.isArray(data.messages) ? data.messages : []);
       const generatedImageProposalMessages = groupGeneratedImageProposalMessages(data.messages);
       const assistantMessageIds = new Set(
@@ -5823,7 +5840,14 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
   const finalPublicWorkspaceId = scopes.publicWorkspaceIds[0] || window.activePublicWorkspaceId || null;
   const selectedTags = getSelectedTags();
   const userWorkspaceContextEnabled = isUserWorkspaceContextEnabled();
-  const documentActionType = userWorkspaceContextEnabled ? getDocumentActionType() : DOCUMENT_ACTION_NONE;
+  const selectedDocumentActionType = getDocumentActionType();
+  const taskDocumentSummaryForSelectedAction = getConversationTaskDocumentSummary({
+    actionType: selectedDocumentActionType,
+    conversationId,
+  });
+  const documentActionType = (userWorkspaceContextEnabled || taskDocumentSummaryForSelectedAction.totalCount > 0)
+    ? selectedDocumentActionType
+    : DOCUMENT_ACTION_NONE;
   const comparisonTargetIds = documentActionType === DOCUMENT_ACTION_COMPARISON
     ? getSelectedComparisonTargetIds()
     : [];
@@ -5846,6 +5870,10 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
     window_unit: 'pages',
     max_retries_per_window: 1,
   };
+  const conversationTaskDocumentIds = getConversationTaskDocumentIds({
+    actionType: documentActionType,
+    conversationId,
+  });
 
   const requestPayload = {
     message: finalMessageToSend,
@@ -5858,6 +5886,7 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
     deep_research_enabled: deepResearchEnabled,
     selected_document_id: selectedDocumentId,
     selected_document_ids: selectedDocumentIds,
+    conversation_task_document_ids: conversationTaskDocumentIds,
     classifications: null,
     tags: selectedTags,
     image_generation: imageGenEnabled,
@@ -6019,9 +6048,19 @@ export function actuallySendMessage(finalMessageToSend) {
   const totalSelectedDocuments = actionType === DOCUMENT_ACTION_COMPARISON
     ? (Array.isArray(messageData.document_action?.document_ids) ? messageData.document_action.document_ids.length : 0)
     : (Array.isArray(messageData.selected_document_ids) ? messageData.selected_document_ids.length : 0);
+  const conversationTaskDocumentSummary = getConversationTaskDocumentSummary({
+    actionType,
+    conversationId: currentConversationId,
+  });
 
-  if (actionType === DOCUMENT_ACTION_ANALYZE && totalSelectedDocuments === 0) {
-    showToast('Select one or more documents before starting analysis.', 'warning');
+  if (actionType === DOCUMENT_ACTION_ANALYZE && totalSelectedDocuments === 0 && conversationTaskDocumentSummary.readyCount === 0) {
+    if (!conversationTaskDocumentSummary.allowed && conversationTaskDocumentSummary.totalCount > 0) {
+      showToast('This agent does not allow uploaded task documents for analysis.', 'warning');
+    } else if (conversationTaskDocumentSummary.pendingCount > 0) {
+      showToast('Uploaded task documents are still processing. Try again when the upload is ready.', 'warning');
+    } else {
+      showToast('Select one or more documents before starting analysis.', 'warning');
+    }
     return;
   }
   if (actionType === DOCUMENT_ACTION_COMPARISON && totalSelectedDocuments < 2) {

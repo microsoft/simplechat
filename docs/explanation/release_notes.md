@@ -1,8 +1,17 @@
 <!-- BEGIN release_notes.md BLOCK -->
 
-This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.241.179, and the per-version entries continue immediately after it.
+This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.241.201, and the per-version entries continue immediately after it.
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
+
+### **(v0.241.201)**
+
+#### Bug Fixes
+
+*   **Group Workflow Assignment Cleanup**
+    *   Fixed Admin Settings form bloat caused by malformed nested JSON strings being saved as group workflow assignment IDs.
+    *   Group workflow assignment settings now preserve valid group UUIDs, drop invalid payload fragments, and compact the hidden admin form field before save.
+    *   (Ref: `functions_settings.py`, `admin_settings.js`, `GROUP_WORKFLOW_ASSIGNMENT_CLEANUP_FIX.md`)
 
 ### **(v0.241.189)**
 

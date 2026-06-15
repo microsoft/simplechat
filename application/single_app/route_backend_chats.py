@@ -368,6 +368,134 @@ def _is_search_ready_chat_upload_workspace_document(document_item):
     return percentage_complete >= 100 or 'processing complete' in status
 
 
+def _get_chat_upload_workspace_document_scope(document_item):
+    if not isinstance(document_item, dict):
+        return 'personal'
+    if document_item.get('group_id'):
+        return 'group'
+    if document_item.get('public_workspace_id'):
+        return 'public'
+    return 'personal'
+
+
+def _normalize_conversation_task_document_ids(document_ids):
+    if document_ids in (None, '', 'all'):
+        return []
+    if not isinstance(document_ids, (list, tuple, set)):
+        document_ids = [document_ids]
+
+    normalized_document_ids = []
+    seen_document_ids = set()
+    for document_id in document_ids:
+        normalized_document_id = str(document_id or '').strip()
+        if not normalized_document_id or normalized_document_id in seen_document_ids:
+            continue
+        seen_document_ids.add(normalized_document_id)
+        normalized_document_ids.append(normalized_document_id)
+    return normalized_document_ids
+
+
+def _resolve_conversation_task_documents(
+    *,
+    user_id,
+    conversation_id,
+    document_action_type=DOCUMENT_ACTION_TYPE_NONE,
+    assigned_knowledge_filters=None,
+    candidate_document_ids=None,
+):
+    result = {
+        'document_ids': [],
+        'documents': [],
+        'scope_set': set(),
+        'linked_count': 0,
+        'pending_count': 0,
+        'blocked': False,
+        'block_reason': None,
+    }
+    normalized_conversation_id = str(conversation_id or '').strip()
+    if not normalized_conversation_id:
+        return result
+
+    if assigned_knowledge_filters and not _assigned_knowledge_allows_document_action(
+        assigned_knowledge_filters,
+        document_action_type,
+    ):
+        result['blocked'] = True
+        result['block_reason'] = 'assigned_knowledge_action_not_allowed'
+        debug_print(
+            '[ConversationTaskDocuments] Assigned Knowledge blocked linked chat upload documents | '
+            f'conversation_id={normalized_conversation_id} | '
+            f'action_type={document_action_type or DOCUMENT_ACTION_TYPE_NONE}'
+        )
+        return result
+
+    candidate_id_list = _normalize_conversation_task_document_ids(candidate_document_ids)
+    candidate_id_set = set(candidate_id_list)
+
+    try:
+        from functions_documents import get_chat_upload_workspace_documents_for_conversation
+
+        linked_documents = get_chat_upload_workspace_documents_for_conversation(user_id, normalized_conversation_id)
+    except Exception as exc:
+        debug_print(f"[ConversationTaskDocuments] Failed to resolve linked workspace documents: {exc}")
+        return result
+
+    seen_document_ids = set()
+    for document_item in linked_documents or []:
+        document_id = str(document_item.get('id') or '').strip() if isinstance(document_item, dict) else ''
+        if not document_id or document_id in seen_document_ids:
+            continue
+        if candidate_id_set and document_id not in candidate_id_set:
+            continue
+
+        result['linked_count'] += 1
+        if not _is_search_ready_chat_upload_workspace_document(document_item):
+            result['pending_count'] += 1
+            continue
+
+        document_scope = _get_chat_upload_workspace_document_scope(document_item)
+        seen_document_ids.add(document_id)
+        result['document_ids'].append(document_id)
+        result['documents'].append(document_item)
+        result['scope_set'].add(document_scope)
+
+    return result
+
+
+def _merge_document_scope_with_conversation_task_documents(
+    effective_document_scope,
+    task_documents,
+    *,
+    assigned_knowledge_filters=None,
+    assigned_knowledge_user_context_active=False,
+):
+    normalized_scope = str(effective_document_scope or '').strip().lower()
+    linked_scopes = {
+        _get_chat_upload_workspace_document_scope(document_item)
+        for document_item in task_documents or []
+        if isinstance(document_item, dict)
+    }
+    if not linked_scopes:
+        return effective_document_scope
+
+    if (
+        assigned_knowledge_filters
+        and assigned_knowledge_filters.get('has_workspace_knowledge')
+        and not assigned_knowledge_user_context_active
+    ):
+        return 'all'
+
+    if normalized_scope in ('', 'none', 'null'):
+        normalized_scope = 'personal'
+    if normalized_scope == 'all' or len(linked_scopes) > 1:
+        return 'all'
+    if len(linked_scopes) == 1:
+        linked_scope = next(iter(linked_scopes))
+        return normalized_scope if normalized_scope == linked_scope else 'all'
+
+    return 'all'
+
+
 def _merge_chat_upload_workspace_context(
     *,
     user_id,
@@ -377,36 +505,16 @@ def _merge_chat_upload_workspace_context(
     assigned_knowledge_filters=None,
     assigned_knowledge_user_context_active=False,
 ):
-    assigned_knowledge_blocks_user_context = (
-        assigned_knowledge_filters
-        and assigned_knowledge_filters.get('has_workspace_knowledge')
-        and not assigned_knowledge_user_context_active
+    task_resolution = _resolve_conversation_task_documents(
+        user_id=user_id,
+        conversation_id=conversation_id,
+        document_action_type=DOCUMENT_ACTION_TYPE_NONE,
+        assigned_knowledge_filters=assigned_knowledge_filters,
     )
-    if (
-        assigned_knowledge_blocks_user_context
-        and not _assigned_knowledge_allows_document_action(
-            assigned_knowledge_filters,
-            DOCUMENT_ACTION_TYPE_NONE,
-        )
-    ):
+    if task_resolution.get('blocked'):
         return effective_document_scope, list(effective_selected_document_ids or []), []
 
-    try:
-        from functions_documents import get_chat_upload_workspace_documents_for_conversation
-
-        linked_documents = get_chat_upload_workspace_documents_for_conversation(user_id, conversation_id)
-    except Exception as exc:
-        debug_print(f"[ChatUploadWorkspaceContext] Failed to resolve linked workspace documents: {exc}")
-        return effective_document_scope, list(effective_selected_document_ids or []), []
-
-    linked_document_ids = []
-    linked_document_scopes = set()
-    for document_item in linked_documents:
-        document_id = str(document_item.get('id') or '').strip() if isinstance(document_item, dict) else ''
-        if document_id and _is_search_ready_chat_upload_workspace_document(document_item):
-            linked_document_ids.append(document_id)
-            linked_document_scopes.add('group' if document_item.get('group_id') else 'personal')
-
+    linked_document_ids = list(task_resolution.get('document_ids') or [])
     if not linked_document_ids:
         return effective_document_scope, list(effective_selected_document_ids or []), []
 
@@ -432,17 +540,12 @@ def _merge_chat_upload_workspace_context(
     if not auto_linked_document_ids:
         return effective_document_scope, merged_document_ids, []
 
-    normalized_scope = str(effective_document_scope or '').strip().lower()
-    if assigned_knowledge_blocks_user_context:
-        merged_scope = 'all'
-    elif normalized_scope == 'group' or linked_document_scopes == {'group'}:
-        merged_scope = 'group'
-    elif normalized_scope in ('', 'none', 'null', 'personal'):
-        merged_scope = 'personal'
-    elif normalized_scope == 'all':
-        merged_scope = 'all'
-    else:
-        merged_scope = 'all'
+    merged_scope = _merge_document_scope_with_conversation_task_documents(
+        effective_document_scope,
+        task_resolution.get('documents') or [],
+        assigned_knowledge_filters=assigned_knowledge_filters,
+        assigned_knowledge_user_context_active=assigned_knowledge_user_context_active,
+    )
 
     return merged_scope, merged_document_ids, auto_linked_document_ids
 
@@ -11189,6 +11292,80 @@ def register_route_backend_chats(app):
                 'window_unit': 'pages',
                 'max_retries_per_window': 1,
             }
+        request_agent_info = data.get('agent_info') if isinstance(data.get('agent_info'), dict) else {}
+        canonical_request_agent = _resolve_canonical_chat_agent(user_id, settings, request_agent_info)
+        assigned_knowledge_filters = (
+            build_assigned_knowledge_runtime_filters(canonical_request_agent)
+            if canonical_request_agent
+            else None
+        )
+        if canonical_request_agent:
+            request_agent_info = canonical_request_agent
+
+        conversation_item = None
+        auto_linked_chat_upload_document_ids = []
+        requested_action_type = str(
+            requested_action.get('type') or forced_action_type or DOCUMENT_ACTION_TYPE_NONE
+        ).strip().lower() or DOCUMENT_ACTION_TYPE_NONE
+        if (
+            requested_action_type == DOCUMENT_ACTION_TYPE_ANALYZE
+            and not _normalize_conversation_task_document_ids(requested_action.get('document_ids'))
+            and conversation_id
+        ):
+            try:
+                conversation_item = _load_or_create_analyze_conversation(user_id, conversation_id=conversation_id)
+            except PermissionError as exc:
+                return {'error': str(exc)}, 403
+
+            conversation_id = conversation_item.get('id')
+            g.conversation_id = conversation_id
+            task_resolution = _resolve_conversation_task_documents(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                document_action_type=DOCUMENT_ACTION_TYPE_ANALYZE,
+                assigned_knowledge_filters=assigned_knowledge_filters,
+                candidate_document_ids=data.get('conversation_task_document_ids'),
+            )
+            if task_resolution.get('blocked'):
+                return {
+                    'error': 'This agent does not allow document analysis with uploaded task documents.'
+                }, 403
+            if task_resolution.get('document_ids'):
+                requested_action = dict(requested_action)
+                auto_linked_chat_upload_document_ids = list(task_resolution.get('document_ids') or [])
+                requested_action['document_ids'] = auto_linked_chat_upload_document_ids
+                requested_action['doc_scope'] = _merge_document_scope_with_conversation_task_documents(
+                    requested_action.get('doc_scope') or data.get('doc_scope') or 'personal',
+                    task_resolution.get('documents') or [],
+                    assigned_knowledge_filters=assigned_knowledge_filters,
+                    assigned_knowledge_user_context_active=False,
+                )
+
+                resolved_group_ids = _normalize_conversation_task_document_ids(
+                    requested_action.get('active_group_ids') or requested_action.get('active_group_id')
+                )
+                resolved_public_workspace_ids = _normalize_conversation_task_document_ids(
+                    requested_action.get('active_public_workspace_id')
+                    or requested_action.get('active_public_workspace_ids')
+                )
+                for task_document in task_resolution.get('documents') or []:
+                    task_group_id = str(task_document.get('group_id') or '').strip() if isinstance(task_document, dict) else ''
+                    task_public_workspace_id = str(task_document.get('public_workspace_id') or '').strip() if isinstance(task_document, dict) else ''
+                    if task_group_id and task_group_id not in resolved_group_ids:
+                        resolved_group_ids.append(task_group_id)
+                    if task_public_workspace_id and task_public_workspace_id not in resolved_public_workspace_ids:
+                        resolved_public_workspace_ids.append(task_public_workspace_id)
+                requested_action['active_group_ids'] = resolved_group_ids
+                requested_action['active_public_workspace_id'] = resolved_public_workspace_ids
+                debug_print(
+                    '[ChatDocumentAction] Auto-filled Analyze targets from linked chat uploads | '
+                    f'user_id={user_id} | conversation_id={conversation_id} | '
+                    f'documents={len(auto_linked_chat_upload_document_ids)}'
+                )
+            elif task_resolution.get('pending_count'):
+                return {
+                    'error': 'Uploaded task documents are still processing. Try again when the upload is ready.'
+                }, 400
         try:
             normalized_action = normalize_document_action_config(
                 action_payload=requested_action,
@@ -11213,13 +11390,6 @@ def register_route_backend_chats(app):
         document_scope = normalized_action.get('doc_scope', 'all')
         active_group_ids = normalized_action.get('active_group_ids', [])
         active_public_workspace_ids = normalized_action.get('active_public_workspace_id', [])
-        request_agent_info = data.get('agent_info') if isinstance(data.get('agent_info'), dict) else {}
-        canonical_request_agent = _resolve_canonical_chat_agent(user_id, settings, request_agent_info)
-        assigned_knowledge_filters = (
-            build_assigned_knowledge_runtime_filters(canonical_request_agent)
-            if canonical_request_agent
-            else None
-        )
         if assigned_knowledge_filters and not _assigned_knowledge_allows_document_action(
             assigned_knowledge_filters,
             normalized_action.get('type'),
@@ -11227,8 +11397,6 @@ def register_route_backend_chats(app):
             return {
                 'error': 'This agent does not allow that workspace document action with user context.'
             }, 403
-        if canonical_request_agent:
-            request_agent_info = canonical_request_agent
         runner_type = 'agent' if request_agent_info else 'model'
         debug_print(
             '[ChatDocumentAction] Normalized action | '
@@ -11242,10 +11410,11 @@ def register_route_backend_chats(app):
             f'runner_type={runner_type}'
         )
 
-        try:
-            conversation_item = _load_or_create_analyze_conversation(user_id, conversation_id=conversation_id)
-        except PermissionError as exc:
-            return {'error': str(exc)}, 403
+        if conversation_item is None:
+            try:
+                conversation_item = _load_or_create_analyze_conversation(user_id, conversation_id=conversation_id)
+            except PermissionError as exc:
+                return {'error': str(exc)}, 403
 
         conversation_id = conversation_item.get('id')
         g.conversation_id = conversation_id
@@ -11264,6 +11433,10 @@ def register_route_backend_chats(app):
             assigned_knowledge_filters=assigned_knowledge_filters,
             streaming_enabled=callable(publish_background_event),
         )
+        if auto_linked_chat_upload_document_ids:
+            user_metadata['workspace_search']['auto_linked_chat_upload_document_ids'] = auto_linked_chat_upload_document_ids
+            user_metadata['workspace_search']['auto_linked_chat_upload_document_count'] = len(auto_linked_chat_upload_document_ids)
+            user_metadata['document_action']['auto_linked_chat_upload_document_ids'] = auto_linked_chat_upload_document_ids
         user_message_doc = make_json_serializable({
             'id': user_message_id,
             'conversation_id': conversation_id,
