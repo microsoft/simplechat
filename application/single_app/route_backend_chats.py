@@ -161,6 +161,8 @@ ASSIGNED_KNOWLEDGE_DOCUMENT_ACTION_MAP = {
     DOCUMENT_ACTION_TYPE_ANALYZE: ASSIGNED_KNOWLEDGE_USER_ACTION_ANALYZE,
     DOCUMENT_ACTION_TYPE_COMPARISON: ASSIGNED_KNOWLEDGE_USER_ACTION_COMPARE,
 }
+ASSIGNED_KNOWLEDGE_CONTEXT_TOP_N = 12
+ASSIGNED_KNOWLEDGE_CONTEXT_EXCERPT_MAX_CHARS = 1800
 FOUNDRY_SELECTED_AGENT_TYPES = {'aifoundry', 'new_foundry', 'foundry_workflow'}
 FOUNDRY_AGENT_PLUGIN_NAMES = {
     'aifoundry': 'azure_ai_foundry',
@@ -409,24 +411,12 @@ def _resolve_conversation_task_documents(
         'scope_set': set(),
         'linked_count': 0,
         'pending_count': 0,
+        'pending_document_ids': [],
         'blocked': False,
         'block_reason': None,
     }
     normalized_conversation_id = str(conversation_id or '').strip()
     if not normalized_conversation_id:
-        return result
-
-    if assigned_knowledge_filters and not _assigned_knowledge_allows_document_action(
-        assigned_knowledge_filters,
-        document_action_type,
-    ):
-        result['blocked'] = True
-        result['block_reason'] = 'assigned_knowledge_action_not_allowed'
-        debug_print(
-            '[ConversationTaskDocuments] Assigned Knowledge blocked linked chat upload documents | '
-            f'conversation_id={normalized_conversation_id} | '
-            f'action_type={document_action_type or DOCUMENT_ACTION_TYPE_NONE}'
-        )
         return result
 
     candidate_id_list = _normalize_conversation_task_document_ids(candidate_document_ids)
@@ -440,6 +430,11 @@ def _resolve_conversation_task_documents(
         debug_print(f"[ConversationTaskDocuments] Failed to resolve linked workspace documents: {exc}")
         return result
 
+    action_allowed = not assigned_knowledge_filters or _assigned_knowledge_allows_document_action(
+        assigned_knowledge_filters,
+        document_action_type,
+    )
+
     seen_document_ids = set()
     for document_item in linked_documents or []:
         document_id = str(document_item.get('id') or '').strip() if isinstance(document_item, dict) else ''
@@ -449,8 +444,14 @@ def _resolve_conversation_task_documents(
             continue
 
         result['linked_count'] += 1
+        if not action_allowed:
+            seen_document_ids.add(document_id)
+            continue
+
         if not _is_search_ready_chat_upload_workspace_document(document_item):
             result['pending_count'] += 1
+            result['pending_document_ids'].append(document_id)
+            seen_document_ids.add(document_id)
             continue
 
         document_scope = _get_chat_upload_workspace_document_scope(document_item)
@@ -458,6 +459,16 @@ def _resolve_conversation_task_documents(
         result['document_ids'].append(document_id)
         result['documents'].append(document_item)
         result['scope_set'].add(document_scope)
+
+    if not action_allowed and result['linked_count']:
+        result['blocked'] = True
+        result['block_reason'] = 'assigned_knowledge_action_not_allowed'
+        debug_print(
+            '[ConversationTaskDocuments] Assigned Knowledge blocked linked chat upload documents | '
+            f'conversation_id={normalized_conversation_id} | '
+            f'action_type={document_action_type or DOCUMENT_ACTION_TYPE_NONE} | '
+            f'linked_count={result["linked_count"]}'
+        )
 
     return result
 
@@ -496,7 +507,7 @@ def _merge_document_scope_with_conversation_task_documents(
     return 'all'
 
 
-def _merge_chat_upload_workspace_context(
+def _resolve_chat_upload_workspace_context(
     *,
     user_id,
     conversation_id,
@@ -504,19 +515,27 @@ def _merge_chat_upload_workspace_context(
     effective_selected_document_ids,
     assigned_knowledge_filters=None,
     assigned_knowledge_user_context_active=False,
+    candidate_document_ids=None,
 ):
     task_resolution = _resolve_conversation_task_documents(
         user_id=user_id,
         conversation_id=conversation_id,
         document_action_type=DOCUMENT_ACTION_TYPE_NONE,
         assigned_knowledge_filters=assigned_knowledge_filters,
+        candidate_document_ids=candidate_document_ids,
     )
+    context_result = {
+        'effective_document_scope': effective_document_scope,
+        'effective_selected_document_ids': list(effective_selected_document_ids or []),
+        'auto_linked_chat_upload_document_ids': [],
+        'task_resolution': task_resolution,
+    }
     if task_resolution.get('blocked'):
-        return effective_document_scope, list(effective_selected_document_ids or []), []
+        return context_result
 
     linked_document_ids = list(task_resolution.get('document_ids') or [])
     if not linked_document_ids:
-        return effective_document_scope, list(effective_selected_document_ids or []), []
+        return context_result
 
     merged_document_ids = []
     seen_document_ids = set()
@@ -538,7 +557,8 @@ def _merge_chat_upload_workspace_context(
         if document_id in seen_document_ids and document_id not in explicit_document_id_set
     ]
     if not auto_linked_document_ids:
-        return effective_document_scope, merged_document_ids, []
+        context_result['effective_selected_document_ids'] = merged_document_ids
+        return context_result
 
     merged_scope = _merge_document_scope_with_conversation_task_documents(
         effective_document_scope,
@@ -546,8 +566,59 @@ def _merge_chat_upload_workspace_context(
         assigned_knowledge_filters=assigned_knowledge_filters,
         assigned_knowledge_user_context_active=assigned_knowledge_user_context_active,
     )
+    context_result['effective_document_scope'] = merged_scope
+    context_result['effective_selected_document_ids'] = merged_document_ids
+    context_result['auto_linked_chat_upload_document_ids'] = auto_linked_document_ids
+    return context_result
 
-    return merged_scope, merged_document_ids, auto_linked_document_ids
+
+def _merge_chat_upload_workspace_context(
+    *,
+    user_id,
+    conversation_id,
+    effective_document_scope,
+    effective_selected_document_ids,
+    assigned_knowledge_filters=None,
+    assigned_knowledge_user_context_active=False,
+    candidate_document_ids=None,
+):
+    context_result = _resolve_chat_upload_workspace_context(
+        user_id=user_id,
+        conversation_id=conversation_id,
+        effective_document_scope=effective_document_scope,
+        effective_selected_document_ids=effective_selected_document_ids,
+        assigned_knowledge_filters=assigned_knowledge_filters,
+        assigned_knowledge_user_context_active=assigned_knowledge_user_context_active,
+        candidate_document_ids=candidate_document_ids,
+    )
+    return (
+        context_result.get('effective_document_scope'),
+        list(context_result.get('effective_selected_document_ids') or []),
+        list(context_result.get('auto_linked_chat_upload_document_ids') or []),
+    )
+
+
+def _build_chat_upload_pending_response_payload(task_resolution):
+    return {
+        'error': 'Uploaded task documents are still processing. Try again when the upload is ready.',
+        'pending': True,
+        'pending_count': _safe_metadata_int((task_resolution or {}).get('pending_count')),
+        'linked_count': _safe_metadata_int((task_resolution or {}).get('linked_count')),
+    }
+
+
+def _has_nonpending_requested_task_document_selection(data, task_resolution):
+    data = data if isinstance(data, dict) else {}
+    requested_document_ids = _normalize_conversation_task_document_ids(data.get('selected_document_ids'))
+    requested_document_ids.extend(_normalize_conversation_task_document_ids(data.get('selected_document_id')))
+    pending_document_ids = {
+        str(document_id or '').strip()
+        for document_id in (task_resolution or {}).get('pending_document_ids') or []
+        if str(document_id or '').strip()
+    }
+    if not requested_document_ids:
+        return False
+    return any(document_id not in pending_document_ids for document_id in requested_document_ids)
 
 
 def _get_assigned_knowledge_web_source_urls(assigned_knowledge_filters, mode=None):
@@ -728,6 +799,185 @@ def _merge_assigned_knowledge_user_context_search_results(assigned_results, user
         f"user_context_appended={user_context_appended_count} | total={len(merged_results)}"
     )
     return merged_results
+
+
+def _truncate_assigned_knowledge_context_text(value, max_chars=ASSIGNED_KNOWLEDGE_CONTEXT_EXCERPT_MAX_CHARS):
+    normalized_text = str(value or '').strip()
+    if not normalized_text:
+        return ''
+    normalized_text = re.sub(r'\n{3,}', '\n\n', normalized_text)
+    if len(normalized_text) <= max_chars:
+        return normalized_text
+    return f'{normalized_text[:max_chars].rstrip()}...'
+
+
+def _build_workspace_search_citation_from_result(result, *, metadata_type=None, context_label=None):
+    result = result if isinstance(result, dict) else {}
+    chunk_text = result.get('chunk_text', '')
+    file_name = result.get('file_name') or result.get('title') or 'Unknown'
+    version = result.get('version', 'N/A')
+    chunk_sequence = result.get('chunk_sequence', 0)
+    page_number = result.get('page_number') or chunk_sequence or 1
+    citation_id = result.get('id', str(uuid.uuid4()))
+    document_id = str(result.get('document_id') or '').strip()
+    if not document_id:
+        document_id = (
+            '_'.join(str(citation_id).split('_')[:-1])
+            if '_' in str(citation_id)
+            else str(citation_id)
+        )
+    chunk_id = result.get('chunk_id', str(uuid.uuid4()))
+    sheet_name = result.get('sheet_name')
+    location_label, location_value = get_citation_location(
+        file_name,
+        page_number=page_number,
+        chunk_text=chunk_text,
+        sheet_name=sheet_name,
+    )
+
+    citation = {
+        'file_name': file_name,
+        'document_id': document_id,
+        'citation_id': citation_id,
+        'page_number': page_number,
+        'sheet_name': sheet_name,
+        'location_label': location_label,
+        'location_value': location_value,
+        'chunk_id': chunk_id,
+        'chunk_sequence': chunk_sequence,
+        'score': result.get('score', 0.0),
+        'group_id': result.get('group_id'),
+        'public_workspace_id': result.get('public_workspace_id'),
+        'version': version,
+        'classification': result.get('document_classification'),
+    }
+    if metadata_type:
+        citation['metadata_type'] = metadata_type
+    if context_label:
+        citation['context_label'] = context_label
+    return citation
+
+
+def _build_assigned_knowledge_reference_context(
+    assigned_knowledge_filters,
+    *,
+    query,
+    user_id,
+    top_n=ASSIGNED_KNOWLEDGE_CONTEXT_TOP_N,
+):
+    top_n = max(1, min(ASSIGNED_KNOWLEDGE_CONTEXT_TOP_N, _safe_metadata_int(top_n) or ASSIGNED_KNOWLEDGE_CONTEXT_TOP_N))
+    enabled = bool(
+        isinstance(assigned_knowledge_filters, dict)
+        and assigned_knowledge_filters.get('has_workspace_knowledge')
+    )
+    context_payload = {
+        'enabled': enabled,
+        'searched': False,
+        'top_n': top_n,
+        'result_count': 0,
+        'results': [],
+        'citations': [],
+        'context_block': '',
+        'metadata': {
+            'enabled': enabled,
+            'searched': False,
+            'top_n': top_n,
+            'result_count': 0,
+            'document_ids': [],
+        },
+    }
+    if not enabled:
+        return context_payload
+
+    assigned_search_args = _build_assigned_knowledge_search_args(
+        assigned_knowledge_filters,
+        query=query,
+        user_id=user_id,
+        top_n=top_n,
+    )
+    search_results = list(hybrid_search(**assigned_search_args) or [])[:top_n]
+    citations = []
+    context_entries = []
+    document_ids = []
+    seen_document_ids = set()
+
+    for index, result in enumerate(search_results, start=1):
+        if not isinstance(result, dict):
+            continue
+        citation = _build_workspace_search_citation_from_result(
+            result,
+            metadata_type='assigned_knowledge_context',
+            context_label='Assigned Knowledge',
+        )
+        citation['assigned_knowledge_context'] = True
+        citations.append(citation)
+
+        document_id = str(citation.get('document_id') or '').strip()
+        if document_id and document_id not in seen_document_ids:
+            seen_document_ids.add(document_id)
+            document_ids.append(document_id)
+
+        excerpt = _truncate_assigned_knowledge_context_text(result.get('chunk_text'))
+        if not excerpt:
+            continue
+        context_entries.append(
+            '\n'.join([
+                f'[{index}] Source: {citation.get("file_name")}, {citation.get("location_label")}: {citation.get("location_value")} [#{citation.get("citation_id")}]',
+                excerpt,
+            ])
+        )
+
+    context_block = ''
+    if context_entries:
+        context_block = '\n\n'.join([
+            'Assigned Knowledge Reference Context',
+            'These are the top assigned-knowledge excerpts for the selected agent. Use them as reference context for the agent purpose and the user request.',
+            *context_entries,
+        ])
+
+    context_payload.update({
+        'searched': True,
+        'result_count': len(search_results),
+        'results': search_results,
+        'citations': citations,
+        'context_block': context_block,
+        'metadata': {
+            'enabled': True,
+            'searched': True,
+            'top_n': top_n,
+            'result_count': len(search_results),
+            'citation_count': len(citations),
+            'document_ids': document_ids,
+        },
+    })
+    return context_payload
+
+
+def _build_document_action_prompt_with_assigned_knowledge_context(
+    user_message,
+    assigned_knowledge_context_block,
+    document_action_type,
+):
+    context_block = str(assigned_knowledge_context_block or '').strip()
+    if not context_block:
+        return user_message
+
+    normalized_action_type = str(document_action_type or DOCUMENT_ACTION_TYPE_NONE).strip().lower()
+    if normalized_action_type == DOCUMENT_ACTION_TYPE_COMPARISON:
+        action_instruction = 'Use the assigned knowledge as reference context while comparing the selected task documents.'
+    elif normalized_action_type == DOCUMENT_ACTION_TYPE_ANALYZE:
+        action_instruction = 'Use the assigned knowledge as reference context while analyzing the selected task documents.'
+    else:
+        action_instruction = 'Use the assigned knowledge as reference context while answering the user request.'
+
+    return (
+        f'{user_message}\n\n'
+        '<AssignedKnowledgeReferenceContext>\n'
+        f'{action_instruction}\n'
+        'Do not treat these assigned-knowledge excerpts as task documents being analyzed or compared unless the user explicitly selected them as task documents.\n\n'
+        f'{context_block}\n'
+        '</AssignedKnowledgeReferenceContext>'
+    )
 
 
 def _conversation_title_is_default(title):
@@ -11506,13 +11756,60 @@ def register_route_backend_chats(app):
                     f"Queued {normalized_action.get('type').replace('_', ' ')} for {len(selected_document_ids)} selected document{'s' if len(selected_document_ids) != 1 else ''}"
                 )
 
+        assigned_knowledge_action_context = {}
+        assigned_context_metadata = {}
+        assigned_knowledge_context_citations = []
+        if assigned_knowledge_filters and assigned_knowledge_filters.get('has_workspace_knowledge'):
+            try:
+                assigned_knowledge_action_context = _build_assigned_knowledge_reference_context(
+                    assigned_knowledge_filters,
+                    query=user_message,
+                    user_id=user_id,
+                    top_n=ASSIGNED_KNOWLEDGE_CONTEXT_TOP_N,
+                )
+            except SemanticSearchQuotaExceededError as exc:
+                debug_print(f'Semantic search quota exceeded during Assigned Knowledge action context search: {exc}')
+                return {
+                    'error': exc.user_message,
+                    'warning_type': SEMANTIC_SEARCH_QUOTA_WARNING_TYPE,
+                    'service_health_warning': True,
+                }, 503
+            except Exception as exc:
+                debug_print(f'[ChatDocumentAction] Assigned Knowledge context search failed: {exc}')
+                return {
+                    'error': 'There was an issue searching the assigned knowledge for this agent.'
+                }, 500
+
+            assigned_context_metadata = assigned_knowledge_action_context.get('metadata') or {}
+            assigned_knowledge_context_citations = list(assigned_knowledge_action_context.get('citations') or [])
+            if assigned_context_metadata.get('searched'):
+                user_metadata.setdefault('workspace_search', {})['assigned_knowledge_context'] = assigned_context_metadata
+                user_metadata.setdefault('document_action', {})['assigned_knowledge_context'] = assigned_context_metadata
+                user_message_doc['metadata'] = user_metadata
+                cosmos_messages_container.upsert_item(user_message_doc)
+                assigned_context_thought = (
+                    'Searched assigned knowledge for '
+                    f"{assigned_context_metadata.get('result_count', 0)} reference excerpt(s)"
+                )
+                if callable(publish_stream_thought):
+                    publish_stream_thought(assigned_context_thought)
+                elif thought_tracker.enabled:
+                    thought_tracker.add_thought('search', assigned_context_thought)
+
+        workflow_task_prompt = _build_document_action_prompt_with_assigned_knowledge_context(
+            user_message,
+            assigned_knowledge_action_context.get('context_block'),
+            normalized_action.get('type'),
+        )
+
         workflow_like = {
             'id': f'chat-analyze:{conversation_id}',
             'user_id': user_id,
             'name': 'Chat Document Action',
-            'task_prompt': user_message,
+            'task_prompt': workflow_task_prompt,
             'runner_type': runner_type,
             'selected_agent': request_agent_info,
+            'assigned_knowledge_context': assigned_context_metadata,
             'model_endpoint_id': str(data.get('model_endpoint_id') or '').strip(),
             'model_id': str(data.get('model_id') or '').strip(),
             'legacy_model_deployment': str(data.get('model_deployment') or '').strip(),
@@ -11575,6 +11872,9 @@ def register_route_backend_chats(app):
 
         assistant_timestamp = datetime.utcnow().isoformat()
         hybrid_citations_list = _build_document_action_hybrid_citations(execution_result)
+        if assigned_knowledge_context_citations:
+            hybrid_citations_list.extend(assigned_knowledge_context_citations)
+            hybrid_citations_list.sort(key=_build_hybrid_citation_sort_key, reverse=True)
         prepared_agent_citations = persist_agent_citation_artifacts(
             conversation_id=conversation_id,
             assistant_message_id=assistant_message_id,
@@ -11640,6 +11940,7 @@ def register_route_backend_chats(app):
                     'enabled': normalized_action.get('type') == DOCUMENT_ACTION_TYPE_COMPARISON,
                     'document_count': len(selected_document_ids),
                 },
+                'assigned_knowledge_context': assigned_context_metadata,
                 'document_action': normalized_action,
             },
         })
@@ -12437,17 +12738,29 @@ def register_route_backend_chats(app):
             _set_authorized_chat_request_context(user_id, conversation_id, scope_context)
 
             auto_linked_chat_upload_document_ids = []
-            (
-                effective_document_scope,
-                effective_selected_document_ids,
-                auto_linked_chat_upload_document_ids,
-            ) = _merge_chat_upload_workspace_context(
+            chat_upload_context = _resolve_chat_upload_workspace_context(
                 user_id=user_id,
                 conversation_id=conversation_id,
                 effective_document_scope=effective_document_scope,
                 effective_selected_document_ids=effective_selected_document_ids,
                 assigned_knowledge_filters=assigned_knowledge_filters,
                 assigned_knowledge_user_context_active=assigned_knowledge_user_context_active,
+                candidate_document_ids=data.get('conversation_task_document_ids'),
+            )
+            task_resolution = chat_upload_context.get('task_resolution') or {}
+            if task_resolution.get('blocked') and task_resolution.get('linked_count'):
+                return jsonify({'error': 'This agent does not allow uploaded task documents for search.'}), 403
+            if (
+                task_resolution.get('pending_count')
+                and not task_resolution.get('document_ids')
+                and not _has_nonpending_requested_task_document_selection(data, task_resolution)
+            ):
+                return jsonify(_build_chat_upload_pending_response_payload(task_resolution)), 400
+
+            effective_document_scope = chat_upload_context.get('effective_document_scope')
+            effective_selected_document_ids = list(chat_upload_context.get('effective_selected_document_ids') or [])
+            auto_linked_chat_upload_document_ids = list(
+                chat_upload_context.get('auto_linked_chat_upload_document_ids') or []
             )
             if auto_linked_chat_upload_document_ids:
                 auto_linked_assigned_knowledge_user_context = (
@@ -13176,7 +13489,7 @@ def register_route_backend_chats(app):
                             assigned_knowledge_filters,
                             query=search_query,
                             user_id=user_id,
-                            top_n=top_n,
+                            top_n=ASSIGNED_KNOWLEDGE_CONTEXT_TOP_N,
                         )
                         assigned_search_results = hybrid_search(**assigned_search_args)
                         if assigned_knowledge_user_context_active:
@@ -13184,7 +13497,7 @@ def register_route_backend_chats(app):
                             search_results = _merge_assigned_knowledge_user_context_search_results(
                                 assigned_search_results,
                                 user_context_search_results,
-                                top_n=top_n,
+                                top_n=ASSIGNED_KNOWLEDGE_CONTEXT_TOP_N,
                             )
                         else:
                             search_results = assigned_search_results
@@ -15999,17 +16312,31 @@ def register_route_backend_chats(app):
                         return
 
                 auto_linked_chat_upload_document_ids = []
-                (
-                    effective_document_scope,
-                    effective_selected_document_ids,
-                    auto_linked_chat_upload_document_ids,
-                ) = _merge_chat_upload_workspace_context(
+                chat_upload_context = _resolve_chat_upload_workspace_context(
                     user_id=user_id,
                     conversation_id=conversation_id,
                     effective_document_scope=effective_document_scope,
                     effective_selected_document_ids=effective_selected_document_ids,
                     assigned_knowledge_filters=assigned_knowledge_filters,
                     assigned_knowledge_user_context_active=assigned_knowledge_user_context_active,
+                    candidate_document_ids=data.get('conversation_task_document_ids'),
+                )
+                task_resolution = chat_upload_context.get('task_resolution') or {}
+                if task_resolution.get('blocked') and task_resolution.get('linked_count'):
+                    yield f"data: {json.dumps({'error': 'This agent does not allow uploaded task documents for search.'})}\n\n"
+                    return
+                if (
+                    task_resolution.get('pending_count')
+                    and not task_resolution.get('document_ids')
+                    and not _has_nonpending_requested_task_document_selection(data, task_resolution)
+                ):
+                    yield f"data: {json.dumps(_build_chat_upload_pending_response_payload(task_resolution))}\n\n"
+                    return
+
+                effective_document_scope = chat_upload_context.get('effective_document_scope')
+                effective_selected_document_ids = list(chat_upload_context.get('effective_selected_document_ids') or [])
+                auto_linked_chat_upload_document_ids = list(
+                    chat_upload_context.get('auto_linked_chat_upload_document_ids') or []
                 )
                 if auto_linked_chat_upload_document_ids:
                     auto_linked_assigned_knowledge_user_context = (
@@ -16624,7 +16951,7 @@ def register_route_backend_chats(app):
                                 assigned_knowledge_filters,
                                 query=search_query,
                                 user_id=user_id,
-                                top_n=12,
+                                top_n=ASSIGNED_KNOWLEDGE_CONTEXT_TOP_N,
                             )
                             assigned_search_results = hybrid_search(**assigned_search_args)
                             if assigned_knowledge_user_context_active:
@@ -16632,7 +16959,7 @@ def register_route_backend_chats(app):
                                 search_results = _merge_assigned_knowledge_user_context_search_results(
                                     assigned_search_results,
                                     user_context_search_results,
-                                    top_n=12,
+                                    top_n=ASSIGNED_KNOWLEDGE_CONTEXT_TOP_N,
                                 )
                             else:
                                 search_results = assigned_search_results

@@ -1,8 +1,8 @@
 # test_chat_upload_personal_workspace_handoff.py
 """
 Functional test for chat upload personal workspace handoff.
-Version: 0.241.203
-Implemented in: 0.241.203
+Version: 0.241.207
+Implemented in: 0.241.203; expanded in: 0.241.207
 
 This test ensures chat uploads are wired to queue personal workspace documents,
 replace eligible chat-local file processing with workspace-backed messages,
@@ -16,7 +16,11 @@ duplicate workspace filename isolation for repeated chat uploads, and clean
 workspace tagging that keeps conversation IDs in metadata instead of tags. It
 also validates that chat upload progress can refresh from the workspace document
 and that assigned-knowledge chats treat ready linked uploads as explicit
-conversation task documents for allowed Search and Analyze actions.
+conversation task documents for allowed Search and Analyze actions. It also
+validates that assigned knowledge stays separate from task documents, is searched
+as top-12 reference context for Search, Analyze, and Compare, and does not let
+Search answer from assigned knowledge alone while uploaded task documents are
+still processing.
 """
 
 import sys
@@ -160,6 +164,29 @@ def test_analyze_uses_conversation_task_documents_contract():
     assert_contains(chat_messages, "This agent does not allow uploaded task documents for analysis", "Analyze disallowed task document warning")
 
 
+def test_assigned_knowledge_context_is_separate_from_task_documents_contract():
+    """Validate assigned knowledge is searched as reference context, not task docs."""
+    route_backend_chats = read_repo_file("application/single_app/route_backend_chats.py")
+
+    assert_contains(route_backend_chats, "ASSIGNED_KNOWLEDGE_CONTEXT_TOP_N = 12", "assigned knowledge top-12 context constant")
+    assert_contains(route_backend_chats, "def _build_assigned_knowledge_reference_context(", "assigned knowledge reference search helper")
+    assert_contains(route_backend_chats, "top_n=ASSIGNED_KNOWLEDGE_CONTEXT_TOP_N", "assigned knowledge search uses fixed top-12 cap")
+    assert_contains(route_backend_chats, "metadata_type='assigned_knowledge_context'", "assigned knowledge context citation marker")
+    assert_contains(route_backend_chats, "assigned_knowledge_context_citations", "assigned knowledge citations retained for action responses")
+    assert_contains(route_backend_chats, "hybrid_citations_list.extend(assigned_knowledge_context_citations)", "action citations include assigned knowledge references")
+    assert_contains(route_backend_chats, "def _build_document_action_prompt_with_assigned_knowledge_context(", "document-action prompt enrichment helper")
+    assert_contains(route_backend_chats, "Do not treat these assigned-knowledge excerpts as task documents", "assigned context is not analyzed as task corpus")
+    assert_contains(route_backend_chats, "workflow_task_prompt = _build_document_action_prompt_with_assigned_knowledge_context", "action runner receives enriched prompt")
+    assert_contains(route_backend_chats, "'assigned_knowledge_context': assigned_context_metadata", "assigned context metadata is stored with action response")
+    assert_contains(route_backend_chats, "def _resolve_chat_upload_workspace_context(", "chat upload context state helper")
+    assert_occurs_at_least(route_backend_chats, "candidate_document_ids=data.get('conversation_task_document_ids')", 2, "normal and streaming search respect task document hints")
+    assert_contains(route_backend_chats, "'pending_document_ids': []", "pending linked upload ids tracked for guard decisions")
+    assert_contains(route_backend_chats, "def _build_chat_upload_pending_response_payload", "pending upload response helper")
+    assert_contains(route_backend_chats, "def _has_nonpending_requested_task_document_selection", "pending guard allows explicit non-pending task selections")
+    assert_occurs_at_least(route_backend_chats, "_build_chat_upload_pending_response_payload(task_resolution)", 2, "normal and streaming search block pending-only uploads")
+    assert_contains(route_backend_chats, "This agent does not allow uploaded task documents for search.", "search policy denial for blocked uploaded task docs")
+
+
 def test_frontend_progress_and_workspace_notices_contract():
     """Validate chat progress UI and workspace linked-conversation notices."""
     chat_input_actions = read_repo_file("application/single_app/static/js/chat/chat-input-actions.js")
@@ -250,6 +277,7 @@ def main():
         test_backend_handoff_contract,
         test_chat_search_includes_ready_linked_workspace_documents_contract,
         test_analyze_uses_conversation_task_documents_contract,
+        test_assigned_knowledge_context_is_separate_from_task_documents_contract,
         test_frontend_progress_and_workspace_notices_contract,
         test_conversation_delete_selectable_workspace_document_contract,
     ]
