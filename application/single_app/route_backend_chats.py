@@ -489,13 +489,6 @@ def _merge_document_scope_with_conversation_task_documents(
     if not linked_scopes:
         return effective_document_scope
 
-    if (
-        assigned_knowledge_filters
-        and assigned_knowledge_filters.get('has_workspace_knowledge')
-        and not assigned_knowledge_user_context_active
-    ):
-        return 'all'
-
     if normalized_scope in ('', 'none', 'null'):
         normalized_scope = 'personal'
     if normalized_scope == 'all' or len(linked_scopes) > 1:
@@ -537,9 +530,17 @@ def _resolve_chat_upload_workspace_context(
     if not linked_document_ids:
         return context_result
 
+    base_document_ids = list(effective_selected_document_ids or [])
+    if (
+        assigned_knowledge_filters
+        and assigned_knowledge_filters.get('has_workspace_knowledge')
+        and not assigned_knowledge_user_context_active
+    ):
+        base_document_ids = []
+
     merged_document_ids = []
     seen_document_ids = set()
-    for document_id in list(effective_selected_document_ids or []) + linked_document_ids:
+    for document_id in base_document_ids + linked_document_ids:
         normalized_document_id = str(document_id or '').strip()
         if not normalized_document_id or normalized_document_id in seen_document_ids:
             continue
@@ -548,7 +549,7 @@ def _resolve_chat_upload_workspace_context(
 
     explicit_document_id_set = {
         str(item or '').strip()
-        for item in effective_selected_document_ids or []
+        for item in base_document_ids
         if str(item or '').strip()
     }
     auto_linked_document_ids = [
@@ -560,8 +561,18 @@ def _resolve_chat_upload_workspace_context(
         context_result['effective_selected_document_ids'] = merged_document_ids
         return context_result
 
+    merged_scope_source = effective_document_scope
+    linked_scope_set = task_resolution.get('scope_set') if isinstance(task_resolution.get('scope_set'), set) else set()
+    if (
+        assigned_knowledge_filters
+        and assigned_knowledge_filters.get('has_workspace_knowledge')
+        and not assigned_knowledge_user_context_active
+        and len(linked_scope_set) == 1
+    ):
+        merged_scope_source = next(iter(linked_scope_set))
+
     merged_scope = _merge_document_scope_with_conversation_task_documents(
-        effective_document_scope,
+        merged_scope_source,
         task_resolution.get('documents') or [],
         assigned_knowledge_filters=assigned_knowledge_filters,
         assigned_knowledge_user_context_active=assigned_knowledge_user_context_active,
@@ -756,19 +767,27 @@ def _get_search_result_identity(result):
     )
 
 
-def _is_personal_or_group_search_result(result):
+def _is_personal_or_group_search_result(result, user_id=None):
     if not isinstance(result, dict):
         return False
 
+    normalized_user_id = str(user_id or '').strip()
     result_scope = str(result.get('scope') or '').strip().lower()
-    if result_scope in {'personal', 'group'}:
-        return True
+    result_user_id = str(result.get('user_id') or '').strip()
+    if result_scope == 'personal':
+        return bool(normalized_user_id and result_user_id == normalized_user_id)
+    if result_scope == 'group':
+        return bool(result.get('group_id'))
     if result_scope == 'public' or result.get('public_workspace_id'):
         return False
-    return bool(result.get('group_id') or result.get('document_id'))
+    if result.get('group_id'):
+        return True
+    if result_user_id:
+        return bool(normalized_user_id and result_user_id == normalized_user_id)
+    return False
 
 
-def _merge_assigned_knowledge_user_context_search_results(assigned_results, user_context_results, *, top_n):
+def _merge_assigned_knowledge_user_context_search_results(assigned_results, user_context_results, *, top_n, user_id=None):
     assigned_limit = max(0, int(top_n or 0))
     merged_results = []
     seen_keys = set()
@@ -784,7 +803,7 @@ def _merge_assigned_knowledge_user_context_search_results(assigned_results, user
 
     user_context_appended_count = 0
     for result in user_context_results or []:
-        if not _is_personal_or_group_search_result(result):
+        if not _is_personal_or_group_search_result(result, user_id=user_id):
             continue
         identity = _get_search_result_identity(result)
         if identity in seen_keys:
@@ -3077,43 +3096,40 @@ def _resolve_tabular_related_document_scope_ids(
             'public_workspace_id': resolved_public_workspace_id,
         }
 
-    if normalized_source_hint == 'group' and resolved_group_id:
-        return {
-            'group_id': resolved_group_id,
-            'public_workspace_id': resolved_public_workspace_id,
-        }
-
-    if normalized_source_hint == 'public' and resolved_public_workspace_id:
-        return {
-            'group_id': resolved_group_id,
-            'public_workspace_id': resolved_public_workspace_id,
-        }
-
     if not has_request_context():
-        return {
-            'group_id': resolved_group_id,
-            'public_workspace_id': resolved_public_workspace_id,
-        }
+        return {'group_id': None, 'public_workspace_id': None}
 
     authorized_context = getattr(g, 'authorized_chat_context', None)
     if not isinstance(authorized_context, dict):
-        return {
-            'group_id': resolved_group_id,
-            'public_workspace_id': resolved_public_workspace_id,
-        }
+        return {'group_id': None, 'public_workspace_id': None}
 
     authorized_user_id = str(authorized_context.get('user_id') or '').strip()
     if authorized_user_id and authorized_user_id != str(user_id or '').strip():
-        return {
-            'group_id': resolved_group_id,
-            'public_workspace_id': resolved_public_workspace_id,
-        }
+        return {'group_id': None, 'public_workspace_id': None}
 
     normalized_conversation_id = str(conversation_id or '').strip()
     authorized_conversation_id = str(authorized_context.get('conversation_id') or '').strip()
     if normalized_conversation_id and authorized_conversation_id and authorized_conversation_id != normalized_conversation_id:
+        return {'group_id': None, 'public_workspace_id': None}
+
+    authorized_group_ids = _normalize_requested_scope_ids(authorized_context.get('active_group_ids'))
+    authorized_public_workspace_ids = _normalize_requested_scope_ids(
+        authorized_context.get('active_public_workspace_ids')
+    )
+
+    if normalized_source_hint == 'group' and resolved_group_id:
+        if resolved_group_id not in authorized_group_ids:
+            return {'group_id': None, 'public_workspace_id': None}
         return {
             'group_id': resolved_group_id,
+            'public_workspace_id': None,
+        }
+
+    if normalized_source_hint == 'public' and resolved_public_workspace_id:
+        if resolved_public_workspace_id not in authorized_public_workspace_ids:
+            return {'group_id': None, 'public_workspace_id': None}
+        return {
+            'group_id': None,
             'public_workspace_id': resolved_public_workspace_id,
         }
 
@@ -3131,8 +3147,12 @@ def _resolve_tabular_related_document_scope_ids(
         ).strip() or None
 
     return {
-        'group_id': resolved_group_id,
-        'public_workspace_id': resolved_public_workspace_id,
+        'group_id': resolved_group_id if resolved_group_id in authorized_group_ids else None,
+        'public_workspace_id': (
+            resolved_public_workspace_id
+            if resolved_public_workspace_id in authorized_public_workspace_ids
+            else None
+        ),
     }
 
 
@@ -11136,7 +11156,15 @@ def register_route_backend_chats(app):
 
         return citations
 
-    def _resolve_document_action_selected_documents(document_ids, document_scope, conversation_id=None, max_documents=5):
+    def _resolve_document_action_selected_documents(
+        document_ids,
+        document_scope,
+        user_id=None,
+        conversation_id=None,
+        active_group_ids=None,
+        active_public_workspace_ids=None,
+        max_documents=5,
+    ):
         resolved_documents = []
         normalized_conversation_id = str(conversation_id or '').strip()
 
@@ -11154,23 +11182,14 @@ def register_route_backend_chats(app):
             }
 
             try:
-                doc_query = (
-                    'SELECT TOP 1 c.file_name, c.title, c.group_id, c.public_workspace_id '
-                    'FROM c WHERE c.id = @doc_id '
-                    'ORDER BY c.version DESC'
+                doc_info = _resolve_chat_selected_document_metadata(
+                    normalized_document_id,
+                    user_id=user_id,
+                    document_scope=document_scope,
+                    active_group_ids=active_group_ids,
+                    active_public_workspace_ids=active_public_workspace_ids,
                 )
-                doc_params = [{'name': '@doc_id', 'value': normalized_document_id}]
-
-                for source_hint, cosmos_container in get_document_containers_for_scope(document_scope):
-                    doc_results = list(cosmos_container.query_items(
-                        query=doc_query,
-                        parameters=doc_params,
-                        enable_cross_partition_query=True,
-                    ))
-                    if not doc_results:
-                        continue
-
-                    doc_info = doc_results[0]
+                if doc_info:
                     display_name = str(
                         doc_info.get('title') or doc_info.get('file_name') or normalized_document_id
                     ).strip() or normalized_document_id
@@ -11180,9 +11199,8 @@ def register_route_backend_chats(app):
                         'file_name': doc_info.get('file_name'),
                         'group_id': doc_info.get('group_id'),
                         'public_workspace_id': doc_info.get('public_workspace_id'),
-                        'source_hint': source_hint,
+                        'source_hint': doc_info.get('source_hint'),
                     }
-                    break
 
                 if normalized_conversation_id:
                     message_query = (
@@ -11258,7 +11276,10 @@ def register_route_backend_chats(app):
         resolved_documents = _resolve_document_action_selected_documents(
             selected_document_ids,
             document_scope,
+            user_id=user_id,
             conversation_id=conversation_id,
+            active_group_ids=active_group_ids,
+            active_public_workspace_ids=active_public_workspace_ids,
         )
         resolved_documents_by_id = {
             document.get('id'): document
@@ -11638,6 +11659,33 @@ def register_route_backend_chats(app):
 
         selected_document_ids = normalized_action.get('document_ids', [])
         document_scope = normalized_action.get('doc_scope', 'all')
+        requested_action_group_ids = _normalize_requested_scope_ids(normalized_action.get('active_group_ids'))
+        requested_action_public_workspace_ids = _normalize_requested_scope_ids(
+            normalized_action.get('active_public_workspace_id')
+        )
+        action_scope_context = _get_authorized_chat_scope_context(
+            user_id,
+            active_group_ids=requested_action_group_ids,
+            active_public_workspace_ids=requested_action_public_workspace_ids,
+        )
+        unauthorized_group_ids = [
+            group_id
+            for group_id in requested_action_group_ids
+            if group_id not in action_scope_context.get('active_group_ids', [])
+        ]
+        unauthorized_public_workspace_ids = [
+            workspace_id
+            for workspace_id in requested_action_public_workspace_ids
+            if workspace_id not in action_scope_context.get('active_public_workspace_ids', [])
+        ]
+        if unauthorized_group_ids or unauthorized_public_workspace_ids:
+            return {
+                'error': 'You do not have access to one or more selected workspaces.'
+            }, 403
+
+        normalized_action = dict(normalized_action)
+        normalized_action['active_group_ids'] = action_scope_context.get('active_group_ids', [])
+        normalized_action['active_public_workspace_id'] = action_scope_context.get('active_public_workspace_ids', [])
         active_group_ids = normalized_action.get('active_group_ids', [])
         active_public_workspace_ids = normalized_action.get('active_public_workspace_id', [])
         if assigned_knowledge_filters and not _assigned_knowledge_allows_document_action(
@@ -13475,6 +13523,8 @@ def register_route_backend_chats(app):
                         search_args["document_ids"] = effective_selected_document_ids
                     elif effective_selected_document_id:
                         search_args["document_id"] = effective_selected_document_id
+                    if auto_linked_chat_upload_document_ids:
+                        search_args["enable_file_sharing"] = False
                     
                     # Add tags filter if provided
                     if tags_filter and isinstance(tags_filter, list) and len(tags_filter) > 0:
@@ -13498,6 +13548,7 @@ def register_route_backend_chats(app):
                                 assigned_search_results,
                                 user_context_search_results,
                                 top_n=ASSIGNED_KNOWLEDGE_CONTEXT_TOP_N,
+                                user_id=user_id,
                             )
                         else:
                             search_results = assigned_search_results
@@ -16941,6 +16992,8 @@ def register_route_backend_chats(app):
                             search_args['document_ids'] = effective_selected_document_ids
                         elif effective_selected_document_id:
                             search_args['document_id'] = effective_selected_document_id
+                        if auto_linked_chat_upload_document_ids:
+                            search_args['enable_file_sharing'] = False
                         
                         # Add tags filter if provided
                         if tags_filter and isinstance(tags_filter, list) and len(tags_filter) > 0:
@@ -16960,6 +17013,7 @@ def register_route_backend_chats(app):
                                     assigned_search_results,
                                     user_context_search_results,
                                     top_n=ASSIGNED_KNOWLEDGE_CONTEXT_TOP_N,
+                                    user_id=user_id,
                                 )
                             else:
                                 search_results = assigned_search_results

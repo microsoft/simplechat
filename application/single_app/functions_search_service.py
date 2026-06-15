@@ -64,36 +64,66 @@ def _normalize_window_unit(window_unit, chunks):
     return "chunks"
 
 
+def _get_user_accessible_group_ids(user_id):
+    if not user_id:
+        return []
+
+    try:
+        return normalize_search_id_list([
+            group.get("id")
+            for group in get_user_groups(user_id)
+            if group.get("id")
+        ])
+    except Exception as exc:
+        log_event(
+            f"[SearchService] Failed to resolve authorized group ids: {exc}",
+            extra={"user_id": user_id},
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+        return []
+
+
 def _resolve_active_group_ids(user_id, active_group_ids=None, fallback_to_memberships=False):
-    normalized_group_ids = normalize_search_id_list(active_group_ids)
-    if normalized_group_ids:
-        return normalized_group_ids
+    accessible_group_ids = _get_user_accessible_group_ids(user_id)
+    authorized_group_ids = set(accessible_group_ids)
+    requested_group_ids = normalize_search_id_list(active_group_ids)
+    if requested_group_ids:
+        return [group_id for group_id in requested_group_ids if group_id in authorized_group_ids]
 
     user_settings = get_user_settings(user_id)
     active_group_id = str(user_settings.get("settings", {}).get("activeGroupOid") or "").strip()
-    if active_group_id:
+    if active_group_id and active_group_id in authorized_group_ids:
         return [active_group_id]
 
     if not fallback_to_memberships:
         return []
 
-    try:
-        user_groups = get_user_groups(user_id)
-    except Exception:
-        return []
-
-    return normalize_search_id_list([group.get("id") for group in user_groups if group.get("id")])
+    return accessible_group_ids
 
 
 def _resolve_public_workspace_ids(user_id, active_public_workspace_id=None):
-    normalized_workspace_ids = normalize_search_id_list(active_public_workspace_id)
-    if normalized_workspace_ids:
-        return normalized_workspace_ids
-
     try:
-        return normalize_search_id_list(get_user_visible_public_workspace_ids_from_settings(user_id))
-    except Exception:
+        visible_workspace_ids = normalize_search_id_list(get_user_visible_public_workspace_ids_from_settings(user_id))
+    except Exception as exc:
+        log_event(
+            f"[SearchService] Failed to resolve visible public workspace ids: {exc}",
+            extra={"user_id": user_id},
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
         return []
+
+    requested_workspace_ids = normalize_search_id_list(active_public_workspace_id)
+    if requested_workspace_ids:
+        visible_workspace_id_set = set(visible_workspace_ids)
+        return [
+            workspace_id
+            for workspace_id in requested_workspace_ids
+            if workspace_id in visible_workspace_id_set
+        ]
+
+    return visible_workspace_ids
 
 
 def _serialize_document(document_item, scope_name):

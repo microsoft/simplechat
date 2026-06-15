@@ -1,8 +1,8 @@
 # test_chat_upload_personal_workspace_handoff.py
 """
 Functional test for chat upload personal workspace handoff.
-Version: 0.241.207
-Implemented in: 0.241.203; expanded in: 0.241.207
+Version: 0.241.209
+Implemented in: 0.241.203; expanded in: 0.241.207, 0.241.208, and 0.241.209
 
 This test ensures chat uploads are wired to queue personal workspace documents,
 replace eligible chat-local file processing with workspace-backed messages,
@@ -20,7 +20,9 @@ conversation task documents for allowed Search and Analyze actions. It also
 validates that assigned knowledge stays separate from task documents, is searched
 as top-12 reference context for Search, Analyze, and Compare, and does not let
 Search answer from assigned knowledge alone while uploaded task documents are
-still processing.
+still processing. It also validates that auto-linked uploads cannot broaden
+search into other users' personal workspace documents and that chat document
+actions cannot use unauthorized group or public workspace scope ids.
 """
 
 import sys
@@ -121,9 +123,14 @@ def test_chat_search_includes_ready_linked_workspace_documents_contract():
     assert_contains(route_backend_chats, "assigned_knowledge_user_context_active = True", "auto-linked uploads activate assigned knowledge user context")
     assert_contains(route_backend_chats, "g.assigned_knowledge_user_context_active = True", "request context reflects auto-linked assigned knowledge user context")
     assert_contains(route_backend_chats, "Enabled Assigned Knowledge user context", "debug log for linked chat upload user context activation")
-    assert_contains(route_backend_chats, "return 'all'", "assigned public plus linked personal uploads search all scopes")
+    assert_contains(route_backend_chats, "base_document_ids = []", "assigned knowledge ids excluded from uploaded task document merge")
+    assert_contains(route_backend_chats, "merged_scope_source = next(iter(linked_scope_set))", "auto-linked task search uses linked document scope instead of assigned knowledge scope")
+    assert_contains(route_backend_chats, "search_args[\"enable_file_sharing\"] = False", "normal search disables shared personal docs for auto-linked uploads")
+    assert_contains(route_backend_chats, "search_args['enable_file_sharing'] = False", "streaming search disables shared personal docs for auto-linked uploads")
     assert_contains(route_backend_chats, "def _merge_assigned_knowledge_user_context_search_results", "assigned knowledge user-context preserving search merge helper")
-    assert_contains(route_backend_chats, "_is_personal_or_group_search_result(result)", "assigned knowledge merge appends only personal/group user-context hits")
+    assert_contains(route_backend_chats, "_is_personal_or_group_search_result(result, user_id=user_id)", "assigned knowledge merge filters user-context hits by current user")
+    assert_contains(route_backend_chats, "result_user_id == normalized_user_id", "personal user-context results must belong to current user")
+    assert_contains(route_backend_chats, "user_id=user_id,", "assigned knowledge merge receives current user id")
     assert_contains(route_backend_chats, "user_context_appended_count += 1", "assigned knowledge merge keeps appended user-context result count")
     assert_contains(route_backend_chats, "user_context_appended=", "assigned knowledge merge logs appended user-context hits")
     assert_not_contains(route_backend_chats, ")[:top_n]\n                        else:\n                            search_results = assigned_search_results", "assigned knowledge merge must not slice off user-context hits after merge")
@@ -185,6 +192,35 @@ def test_assigned_knowledge_context_is_separate_from_task_documents_contract():
     assert_contains(route_backend_chats, "def _has_nonpending_requested_task_document_selection", "pending guard allows explicit non-pending task selections")
     assert_occurs_at_least(route_backend_chats, "_build_chat_upload_pending_response_payload(task_resolution)", 2, "normal and streaming search block pending-only uploads")
     assert_contains(route_backend_chats, "This agent does not allow uploaded task documents for search.", "search policy denial for blocked uploaded task docs")
+
+
+def test_document_action_scope_authorization_contract():
+    """Validate document actions and related tabular evidence use authorized scopes."""
+    route_backend_chats = read_repo_file("application/single_app/route_backend_chats.py")
+    functions_search_service = read_repo_file("application/single_app/functions_search_service.py")
+
+    assert_contains(route_backend_chats, "requested_action_group_ids = _normalize_requested_scope_ids", "document action normalizes requested group ids")
+    assert_contains(route_backend_chats, "requested_action_public_workspace_ids = _normalize_requested_scope_ids", "document action normalizes requested public workspace ids")
+    assert_contains(route_backend_chats, "action_scope_context = _get_authorized_chat_scope_context(", "document action revalidates group/public scopes")
+    assert_contains(route_backend_chats, "unauthorized_group_ids = [", "document action detects unauthorized groups")
+    assert_contains(route_backend_chats, "unauthorized_public_workspace_ids = [", "document action detects unauthorized public workspaces")
+    assert_contains(route_backend_chats, "You do not have access to one or more selected workspaces.", "document action rejects unauthorized scopes")
+    assert_contains(route_backend_chats, "normalized_action['active_group_ids'] = action_scope_context.get('active_group_ids', [])", "document action replaces group ids with authorized group ids")
+    assert_contains(route_backend_chats, "normalized_action['active_public_workspace_id'] = action_scope_context.get('active_public_workspace_ids', [])", "document action replaces public workspace ids with authorized public ids")
+    assert_contains(route_backend_chats, "doc_info = _resolve_chat_selected_document_metadata(", "document action selected metadata uses safe resolver")
+    assert_contains(route_backend_chats, "active_group_ids=active_group_ids,", "document action metadata resolver receives authorized group ids")
+    assert_contains(route_backend_chats, "active_public_workspace_ids=active_public_workspace_ids,", "document action metadata resolver receives authorized public ids")
+    assert_not_contains(route_backend_chats, "'FROM c WHERE c.id = @doc_id '\n                    'ORDER BY c.version DESC'", "document action unscoped metadata lookup")
+    assert_contains(route_backend_chats, "authorized_group_ids = _normalize_requested_scope_ids(authorized_context.get('active_group_ids'))", "tabular related-document scope uses authorized group ids")
+    assert_contains(route_backend_chats, "authorized_public_workspace_ids = _normalize_requested_scope_ids(", "tabular related-document scope uses authorized public workspace ids")
+    assert_contains(route_backend_chats, "if resolved_group_id not in authorized_group_ids:", "tabular related-document rejects unauthorized group id")
+    assert_contains(route_backend_chats, "if resolved_public_workspace_id not in authorized_public_workspace_ids:", "tabular related-document rejects unauthorized public workspace id")
+
+    assert_contains(functions_search_service, "def _get_user_accessible_group_ids(user_id):", "search service group access helper")
+    assert_contains(functions_search_service, "authorized_group_ids = set(accessible_group_ids)", "search service builds authorized group set")
+    assert_contains(functions_search_service, "return [group_id for group_id in requested_group_ids if group_id in authorized_group_ids]", "search service intersects requested group ids")
+    assert_contains(functions_search_service, "visible_workspace_id_set = set(visible_workspace_ids)", "search service builds visible public workspace set")
+    assert_contains(functions_search_service, "if workspace_id in visible_workspace_id_set", "search service intersects requested public workspace ids")
 
 
 def test_frontend_progress_and_workspace_notices_contract():
@@ -278,6 +314,7 @@ def main():
         test_chat_search_includes_ready_linked_workspace_documents_contract,
         test_analyze_uses_conversation_task_documents_contract,
         test_assigned_knowledge_context_is_separate_from_task_documents_contract,
+        test_document_action_scope_authorization_contract,
         test_frontend_progress_and_workspace_notices_contract,
         test_conversation_delete_selectable_workspace_document_contract,
     ]
