@@ -169,6 +169,9 @@ function showAdminTab(tabId) {
     
     // Update the hash in URL for deep linking
     window.location.hash = tabId;
+    if (typeof window.updateAdminSettingsSaveButtonState === 'function') {
+        window.updateAdminSettingsSaveButtonState();
+    }
 }
 
 // Make function globally available
@@ -216,10 +219,13 @@ function scrollToSection(sectionId) {
         // Security tab sections
         'keyvault-section': 'keyvault-section',
         // Data Management tab sections
+        'data-management-backup-section': 'data-management-backup-section',
         'data-management-schedule-section': 'data-management-schedule-section',
         'data-management-storage-section': 'data-management-storage-section',
         'data-management-encryption-section': 'data-management-encryption-section',
+        'data-management-migration-section': 'data-management-migration-section',
         'data-management-target-cosmos-section': 'data-management-target-cosmos-section',
+        'data-management-backup-inventory-section': 'data-management-backup-inventory-section',
         'data-management-jobs-section': 'data-management-jobs-section',
         // Search & Extract tab sections
         'web-search-section': 'web-search-foundry-section',

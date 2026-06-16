@@ -8113,7 +8113,7 @@ function setupFormChangeTracking() {
     updateSaveButtonState();
     
     // Add event listeners to all form inputs, selects, and textareas
-    const formElements = adminForm.querySelectorAll('input:not([data-ignore-settings-change="true"]), select:not([data-ignore-settings-change="true"]), textarea:not([data-ignore-settings-change="true"])');
+    const formElements = Array.from(adminForm.querySelectorAll('input, select, textarea')).filter(element => !isIgnoredSettingsChangeElement(element));
     formElements.forEach(element => {
         // For checkboxes and radios, listen for change event
         if (element.type === 'checkbox' || element.type === 'radio') {
@@ -8133,6 +8133,14 @@ function setupFormChangeTracking() {
         formModified = false;
         updateSaveButtonState();
     });
+
+    document.querySelectorAll('button[data-bs-toggle="tab"]').forEach(tabButton => {
+        tabButton.addEventListener('shown.bs.tab', updateSaveButtonState);
+    });
+}
+
+function isIgnoredSettingsChangeElement(element) {
+    return Boolean(element?.closest('[data-ignore-settings-change="true"]'));
 }
 
 /**
@@ -8151,6 +8159,13 @@ window.isAdminSettingsFormModified = () => formModified;
  */
 function updateSaveButtonState() {
     if (!saveButton) return;
+
+    const dataManagementPane = document.getElementById('data-management');
+    const isDataManagementActive = Boolean(dataManagementPane?.classList.contains('active'));
+    saveButton.classList.toggle('d-none', isDataManagementActive);
+    if (isDataManagementActive) {
+        return;
+    }
     
     if (formModified) {
         // Enable button, make it blue, and update text
@@ -8166,6 +8181,8 @@ function updateSaveButtonState() {
         saveButton.innerHTML = '<i class="bi bi-floppy"></i> Save Settings';
     }
 }
+
+window.updateAdminSettingsSaveButtonState = updateSaveButtonState;
 
 function setupLatestFeatureImageModal() {
     const modalElement = document.getElementById('latestFeatureImageModal');

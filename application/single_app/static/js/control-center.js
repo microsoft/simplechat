@@ -2801,6 +2801,7 @@ class ControlCenter {
             'document_deletion': 'Document Deleted',
             'document_metadata_update': 'Document Metadata Updated',
             'file_sync': 'File Sync',
+            'data_management': 'Data Management',
             'token_usage': 'Token Usage',
             'group_status_change': 'Group Status Change',
             'group_member_deleted': 'Group Member Deleted',
@@ -2934,6 +2935,17 @@ class ControlCenter {
                     fileSyncDetails.push(`Error: ${this.escapeHtml(fileSyncAdditionalContext.error)}`);
                 }
                 return `Action: ${this.escapeHtml(fileSyncAction)}<br>Source: ${this.escapeHtml(fileSyncSource)}<br><small class="text-muted">Scope: ${this.escapeHtml(fileSyncScope)}${fileSyncDetails.length ? ' · ' + fileSyncDetails.join(' · ') : ''}</small>`;
+
+            case 'data_management':
+                const dataManagementContext = log.additional_context || {};
+                const dataManagementAction = this.formatActivityValue(log.action || 'data_management_event');
+                const dataManagementJobId = dataManagementContext.job_id || log.workspace_context?.job_id || 'N/A';
+                const dataManagementStatus = this.formatActivityValue(dataManagementContext.status || 'unknown');
+                const dataManagementOperation = this.formatActivityValue(dataManagementContext.operation || log.workspace_context?.operation || 'job');
+                const dataManagementBackupType = dataManagementContext.backup_type
+                    ? ` · ${this.escapeHtml(this.formatActivityValue(dataManagementContext.backup_type))}`
+                    : '';
+                return `Action: ${this.escapeHtml(dataManagementAction)}<br>Job: ${this.escapeHtml(dataManagementJobId)}<br><small class="text-muted">${this.escapeHtml(dataManagementOperation)}${dataManagementBackupType} · ${this.escapeHtml(dataManagementStatus)}</small>`;
                 
             case 'token_usage':
                 const tokenType = log.token_type || 'unknown';

@@ -13,12 +13,17 @@ from functions_data_management import (
     DATA_MANAGEMENT_OPERATION_DRY_RUN,
     DATA_MANAGEMENT_OPERATION_MIGRATION,
     DATA_MANAGEMENT_OPERATION_RESTORE,
+    DataManagementSettingsValidationError,
     generate_data_management_encryption_key,
+    get_data_management_backup_summary,
+    get_data_management_job_detail,
     get_data_management_jobs,
+    get_data_management_migration_catalog,
     get_data_management_settings,
     queue_data_management_job,
     sanitize_data_management_job_for_admin,
     sanitize_data_management_settings_for_admin,
+    summarize_data_management_migration_plan,
     submit_data_management_job,
     test_backup_storage_connection,
     update_data_management_settings,
@@ -70,6 +75,8 @@ def register_route_backend_data_management(app):
         payload = request.get_json(silent=True) or {}
         try:
             settings = update_data_management_settings(payload)
+        except DataManagementSettingsValidationError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
         except Exception as exc:
             log_event(
                 "[DataManagement] Settings update failed.",
@@ -122,6 +129,8 @@ def register_route_backend_data_management(app):
         settings_payload = payload.get("settings") if isinstance(payload.get("settings"), dict) else None
         try:
             result = test_backup_storage_connection(settings=settings_payload, create_container=create_container)
+        except DataManagementSettingsValidationError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
         except Exception as exc:
             log_event(
                 "[DataManagement] Backup storage connection test failed.",
@@ -139,6 +148,50 @@ def register_route_backend_data_management(app):
         limit = request.args.get("limit", 25)
         jobs = [sanitize_data_management_job_for_admin(job) for job in get_data_management_jobs(limit=limit)]
         return jsonify({"success": True, "jobs": jobs}), 200
+
+    @app.route("/api/admin/data-management/jobs/<job_id>", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def get_admin_data_management_job_detail(job_id):
+        detail = get_data_management_job_detail(job_id)
+        if not detail:
+            return jsonify({"success": False, "error": "Data Management job was not found."}), 404
+        return jsonify({"success": True, **detail}), 200
+
+    @app.route("/api/admin/data-management/backups", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def list_admin_data_management_backups():
+        limit = request.args.get("limit", 100)
+        backup_summary = get_data_management_backup_summary(limit=limit)
+        return jsonify({"success": True, **backup_summary}), 200
+
+    @app.route("/api/admin/data-management/migration/catalog/<target_type>", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def get_admin_data_management_migration_catalog(target_type):
+        search = request.args.get("search", "")
+        limit = request.args.get("limit", 50)
+        try:
+            catalog = get_data_management_migration_catalog(target_type, search_text=search, limit=limit)
+        except DataManagementSettingsValidationError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
+        return jsonify({"success": True, **catalog}), 200
+
+    @app.route("/api/admin/data-management/migration/summary", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def summarize_admin_data_management_migration():
+        payload = request.get_json(silent=True) or {}
+        try:
+            summary = summarize_data_management_migration_plan(payload)
+        except DataManagementSettingsValidationError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
+        return jsonify({"success": True, "summary": summary}), 200
 
     @app.route("/api/admin/data-management/jobs", methods=["POST"])
     @swagger_route(security=get_auth_security())

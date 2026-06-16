@@ -382,6 +382,7 @@ def build_activity_logs_query_context(activity_type_filter='all', search_term=''
                 "(IS_DEFINED(c.chat_context) AND CONTAINS(LOWER(c.chat_context), @activity_search_term))",
                 "(IS_DEFINED(c.token_type) AND CONTAINS(LOWER(c.token_type), @activity_search_term))",
                 "(IS_DEFINED(c.workspace_type) AND CONTAINS(LOWER(c.workspace_type), @activity_search_term))",
+                "(IS_DEFINED(c.action) AND CONTAINS(LOWER(c.action), @activity_search_term))",
                 "(IS_DEFINED(c.group_id) AND CONTAINS(LOWER(c.group_id), @activity_search_term))",
                 "(IS_DEFINED(c.public_workspace_id) AND CONTAINS(LOWER(c.public_workspace_id), @activity_search_term))",
                 "(IS_DEFINED(c.description) AND CONTAINS(LOWER(c.description), @activity_search_term))",
@@ -393,7 +394,11 @@ def build_activity_logs_query_context(activity_type_filter='all', search_term=''
                 "(IS_DEFINED(c.additional_context.conversation_source) AND CONTAINS(LOWER(c.additional_context.conversation_source), @activity_search_term))",
                 "(IS_DEFINED(c.additional_context.document_action_type) AND CONTAINS(LOWER(c.additional_context.document_action_type), @activity_search_term))",
                 "(IS_DEFINED(c.additional_context.conversation_kind) AND CONTAINS(LOWER(c.additional_context.conversation_kind), @activity_search_term))",
-                "(IS_DEFINED(c.additional_context.visibility_mode) AND CONTAINS(LOWER(c.additional_context.visibility_mode), @activity_search_term))"
+                "(IS_DEFINED(c.additional_context.visibility_mode) AND CONTAINS(LOWER(c.additional_context.visibility_mode), @activity_search_term))",
+                "(IS_DEFINED(c.additional_context.job_id) AND CONTAINS(LOWER(c.additional_context.job_id), @activity_search_term))",
+                "(IS_DEFINED(c.additional_context.operation) AND CONTAINS(LOWER(c.additional_context.operation), @activity_search_term))",
+                "(IS_DEFINED(c.additional_context.backup_type) AND CONTAINS(LOWER(c.additional_context.backup_type), @activity_search_term))",
+                "(IS_DEFINED(c.additional_context.status) AND CONTAINS(LOWER(c.additional_context.status), @activity_search_term))"
             ]) + ")"
         )
         parameters.append({"name": "@activity_search_term", "value": normalized_search_term})
@@ -551,6 +556,19 @@ def format_activity_log_details_for_csv(log_record):
             detail_parts.append(', '.join(count_parts))
         if additional_context.get('error'):
             detail_parts.append(f"Error: {additional_context.get('error')}")
+        return '; '.join(detail_parts)
+
+    if activity_type == 'data_management':
+        workspace_context = log_record.get('workspace_context', {})
+        additional_context = log_record.get('additional_context', {})
+        detail_parts = [
+            f"Action: {log_record.get('action', 'data_management_event')}",
+            f"Job: {additional_context.get('job_id') or workspace_context.get('job_id') or 'N/A'}",
+            f"Operation: {additional_context.get('operation') or workspace_context.get('operation') or 'N/A'}",
+            f"Status: {additional_context.get('status') or 'N/A'}",
+        ]
+        if additional_context.get('backup_type') or workspace_context.get('backup_type'):
+            detail_parts.append(f"Backup type: {additional_context.get('backup_type') or workspace_context.get('backup_type')}")
         return '; '.join(detail_parts)
 
     if activity_type == 'token_usage':
