@@ -50,6 +50,7 @@ from functions_debug import debug_print
 from flask import g
 from config import cognitive_services_scope
 from functions_databricks_operations import DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE, DATABRICKS_PLUGIN_TYPE
+from functions_tableau_operations import TABLEAU_PLUGIN_TYPE
 from functions_keyvault import (
     SQL_PLUGIN_SENSITIVE_ADDITIONAL_FIELDS,
     SQL_PLUGIN_SENSITIVE_AUTH_FIELDS,
@@ -102,6 +103,7 @@ from functions_mcp_operations import MCP_PLUGIN_TYPE
 from semantic_kernel_plugins.databricks_plugin_factory import DatabricksPluginFactory
 from semantic_kernel_plugins.mcp_plugin_factory import McpPluginFactory
 from semantic_kernel_plugins.openapi_plugin_factory import OpenApiPluginFactory
+from semantic_kernel_plugins.tableau_plugin_factory import TableauPluginFactory
 from functions_agent_scope import find_agent_by_scope, is_selected_agent_scope_enabled
 import app_settings_cache
 
@@ -1459,6 +1461,9 @@ def _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label="gl
                     elif plugin_type in {DATABRICKS_PLUGIN_TYPE, DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE}:
                         plugin = DatabricksPluginFactory.create_from_config(manifest)
                         print(f"[SK Loader] Created Databricks plugin: {name}")
+                    elif plugin_type == TABLEAU_PLUGIN_TYPE:
+                        plugin = TableauPluginFactory.create_from_config(manifest)
+                        print(f"[SK Loader] Created Tableau plugin: {name}")
                     elif plugin_type == MCP_PLUGIN_TYPE or normalized_type == normalize(MCP_PLUGIN_TYPE):
                         plugin = McpPluginFactory.create_from_config(manifest)
                         print(f"[SK Loader] Created MCP plugin: {name}")
@@ -2322,6 +2327,8 @@ def _load_plugins_original_method(kernel, plugin_manifests, settings, mode_label
                         plugin = OpenApiPluginFactory.create_from_config(manifest)
                     elif plugin_type in {DATABRICKS_PLUGIN_TYPE, DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE}:
                         plugin = DatabricksPluginFactory.create_from_config(manifest)
+                    elif plugin_type == TABLEAU_PLUGIN_TYPE:
+                        plugin = TableauPluginFactory.create_from_config(manifest)
                     elif plugin_type == MCP_PLUGIN_TYPE or normalized_type == normalize(MCP_PLUGIN_TYPE):
                         plugin = McpPluginFactory.create_from_config(manifest)
                     else:

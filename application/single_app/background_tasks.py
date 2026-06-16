@@ -26,6 +26,7 @@ from functions_cosmos_throughput import (
     evaluate_and_apply_cosmos_throughput_scaling,
 )
 from functions_debug import debug_print
+from functions_data_management import check_due_data_management_jobs_once
 from functions_file_sync import check_due_file_sync_sources_once
 from functions_tabular_generated_exports import check_due_tabular_generated_output_runs_once
 from functions_personal_workflows import (
@@ -677,6 +678,24 @@ def run_tabular_generated_output_scheduler_loop():
         time.sleep(30)
 
 
+def run_data_management_scheduler_loop():
+    """Queue due Data Management backup jobs across scaled-out workers."""
+    while True:
+        lock_document = None
+        try:
+            lock_document = acquire_distributed_task_lock('data_management_scheduler_scan', lease_seconds=300)
+            if lock_document:
+                check_due_data_management_jobs_once()
+        except Exception as exc:
+            print(f"Error in Data Management scheduler check: {exc}")
+            log_event(f"[DataManagement] Error in scheduler check: {exc}", level=logging.ERROR)
+        finally:
+            if lock_document:
+                release_distributed_task_lock(lock_document)
+
+        time.sleep(60)
+
+
 def start_background_task_threads():
     """Start all background task loops for the current process."""
     task_specs = [
@@ -688,6 +707,7 @@ def start_background_task_threads():
         ('Workflow scheduler background task started.', run_workflow_scheduler_loop),
         ('File Sync scheduler background task started.', run_file_sync_scheduler_loop),
         ('Tabular generated-output scheduler background task started.', run_tabular_generated_output_scheduler_loop),
+        ('Data Management scheduler background task started.', run_data_management_scheduler_loop),
     ]
 
     started_threads = []

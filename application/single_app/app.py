@@ -84,6 +84,7 @@ from route_backend_thoughts import register_route_backend_thoughts
 from route_backend_speech import register_route_backend_speech
 from route_backend_tts import register_route_backend_tts
 from route_backend_collaboration import register_route_backend_collaboration
+from route_backend_data_management import register_route_backend_data_management
 from route_backend_msgraph_pending_actions import register_route_backend_msgraph_pending_actions
 from route_enhanced_citations import register_enhanced_citations_routes
 from plugin_validation_endpoint import plugin_validation_bp
@@ -936,6 +937,9 @@ register_route_backend_feedback(app)
 
 # ------------------- API Settings Routes ---------------
 register_route_backend_settings(app)
+
+# ------------------- API Data Management Routes ---------
+register_route_backend_data_management(app)
 
 # ------------------- API Prompts Routes ----------------
 register_route_backend_prompts(app)

@@ -215,6 +215,12 @@ function scrollToSection(sectionId) {
         'conversation-archiving-section': 'conversation-archiving-section',
         // Security tab sections
         'keyvault-section': 'keyvault-section',
+        // Data Management tab sections
+        'data-management-schedule-section': 'data-management-schedule-section',
+        'data-management-storage-section': 'data-management-storage-section',
+        'data-management-encryption-section': 'data-management-encryption-section',
+        'data-management-target-cosmos-section': 'data-management-target-cosmos-section',
+        'data-management-jobs-section': 'data-management-jobs-section',
         // Search & Extract tab sections
         'web-search-section': 'web-search-foundry-section',
         'azure-ai-search-section': 'azure-ai-search-section',

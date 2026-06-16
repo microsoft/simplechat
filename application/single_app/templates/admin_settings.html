@@ -959,6 +959,13 @@
             </li>
 
             <li class="nav-item" role="presentation">
+                <button class="nav-link" id="data-management-tab" data-bs-toggle="tab" data-bs-target="#data-management"
+                    type="button" role="tab" aria-controls="data-management" aria-selected="false">
+                    Data Management
+                </button>
+            </li>
+
+            <li class="nav-item" role="presentation">
                 <button class="nav-link" id="logging-tab" data-bs-toggle="tab" data-bs-target="#logging" 
                     type="button" role="tab" aria-controls="logging" aria-selected="false">
                     Logging
@@ -4018,6 +4025,236 @@
                             <li><strong>Separation of Duties:</strong> Enable role requirements if you need to restrict Control Center access from general application admins</li>
                             <li><strong>Audit Trail:</strong> All Control Center actions are logged in Activity Logs for compliance and security auditing</li>
                         </ul>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tab-pane fade" id="data-management" role="tabpanel" aria-labelledby="data-management-tab" data-testid="data-management-tab-pane">
+                <div class="d-flex align-items-center justify-content-between gap-3 mb-2">
+                    <div>
+                        <h3 class="mb-1">Data Management</h3>
+                        <p class="text-muted mb-0">Configure best-effort backups, restore preparation, and migration job orchestration.</p>
+                    </div>
+                    <button type="button" class="btn btn-primary" id="data-management-save-settings-btn">
+                        <i class="bi bi-save me-1"></i>Save Settings
+                    </button>
+                </div>
+
+                <div class="alert alert-warning" id="data-management-operational-warning" role="alert">
+                    We suggest not running backups, restores, or migrations during your operational business hours. These jobs run inside the App Service environment and can affect application performance.
+                </div>
+
+                <div class="alert d-none" id="data-management-status" role="status" aria-live="polite"></div>
+
+                <div class="card p-4 mb-4 border-primary shadow-sm" id="data-management-schedule-section">
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                        <div class="d-flex align-items-center">
+                            <div class="bg-primary text-white rounded-circle p-3 me-3" style="width: 50px; height: 50px; display: flex; align-items: center; justify-content: center;">
+                                <i class="bi bi-calendar-event fs-4"></i>
+                            </div>
+                            <div>
+                                <h4 class="mb-1">Backup Schedule</h4>
+                                <p class="text-muted mb-0 small">Full backups run on the selected cadence; partial backups run daily only.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" role="switch" id="data_management_enabled">
+                        <label class="form-check-label ms-2 fw-bold" for="data_management_enabled">Enable scheduled backups</label>
+                    </div>
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <label class="form-label" for="data_management_full_frequency">Full backup frequency</label>
+                            <select class="form-select" id="data_management_full_frequency">
+                                <option value="daily">Daily</option>
+                                <option value="weekly">Weekly</option>
+                                <option value="14_days">Every 14 days</option>
+                                <option value="30_days">Every 30 days</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="data_management_scheduled_time_utc">Scheduled time (UTC)</label>
+                            <input class="form-control" type="time" id="data_management_scheduled_time_utc" value="03:00">
+                            <div class="form-text">Default is 03:00 UTC.</div>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="data_management_retention_days">Retention days</label>
+                            <input class="form-control" type="number" id="data_management_retention_days" min="1" max="3650" value="30">
+                        </div>
+                    </div>
+                    <div class="row g-3 mt-1">
+                        <div class="col-md-6">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" role="switch" id="data_management_partial_enabled" checked>
+                                <label class="form-check-label" for="data_management_partial_enabled">Run partial backups daily between full backups</label>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" role="switch" id="data_management_low_impact_mode" checked>
+                                <label class="form-check-label" for="data_management_low_impact_mode">Use low impact mode for scheduled jobs</label>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row g-3 mt-1">
+                        <div class="col-md-4">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" role="switch" id="data_management_include_cosmos" checked>
+                                <label class="form-check-label" for="data_management_include_cosmos">Include Cosmos DB data</label>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" role="switch" id="data_management_include_ai_search" checked>
+                                <label class="form-check-label" for="data_management_include_ai_search">Include AI Search indexes</label>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" role="switch" id="data_management_include_source_blobs">
+                                <label class="form-check-label" for="data_management_include_source_blobs">Include source document blobs</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-4 mb-4 border-secondary shadow-sm" id="data-management-storage-section">
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                        <div>
+                            <h4 class="mb-1">Backup Storage</h4>
+                            <p class="text-muted mb-0 small">Store backup artifacts in Azure Blob Storage.</p>
+                        </div>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="data-management-test-storage-btn">
+                            <i class="bi bi-plug me-1"></i>Test Storage
+                        </button>
+                    </div>
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <label class="form-label" for="data_management_storage_auth">Authentication</label>
+                            <select class="form-select" id="data_management_storage_auth">
+                                <option value="managed_identity">Managed identity</option>
+                                <option value="connection_string">Connection string</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="data_management_blob_endpoint">Blob endpoint</label>
+                            <input class="form-control" type="url" id="data_management_blob_endpoint" placeholder="https://account.blob.core.windows.net">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="data_management_container_name">Container</label>
+                            <input class="form-control" type="text" id="data_management_container_name" value="simplechat-backups">
+                        </div>
+                    </div>
+                    <div class="row g-3 mt-1">
+                        <div class="col-md-8">
+                            <label class="form-label" for="data_management_connection_string">Connection string</label>
+                            <input class="form-control" type="password" id="data_management_connection_string" autocomplete="off" placeholder="Stored connection strings stay redacted after save">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="data_management_path_prefix">Blob prefix</label>
+                            <input class="form-control" type="text" id="data_management_path_prefix" value="simplechat-backups">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-4 mb-4 border-info shadow-sm" id="data-management-encryption-section">
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                        <div>
+                            <h4 class="mb-1">Encryption</h4>
+                            <p class="text-muted mb-0 small">Generate a 256-bit backup encryption key.</p>
+                        </div>
+                        <button type="button" class="btn btn-outline-primary btn-sm" id="data-management-generate-key-btn">
+                            <i class="bi bi-key me-1"></i>Generate Key
+                        </button>
+                    </div>
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" role="switch" id="data_management_encryption_enabled" checked>
+                        <label class="form-check-label" for="data_management_encryption_enabled">Encrypt backup artifacts</label>
+                    </div>
+                    <dl class="row mb-0">
+                        <dt class="col-sm-3">Key storage</dt>
+                        <dd class="col-sm-9" id="data-management-key-storage">Not configured</dd>
+                        <dt class="col-sm-3">Key reference</dt>
+                        <dd class="col-sm-9" id="data-management-key-reference">Not configured</dd>
+                    </dl>
+                </div>
+
+                <div class="card p-4 mb-4 border-warning shadow-sm" id="data-management-target-cosmos-section">
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                        <div>
+                            <h4 class="mb-1">Target Cosmos DB</h4>
+                            <p class="text-muted mb-0 small">Used for migration dry runs and future migration apply jobs.</p>
+                        </div>
+                    </div>
+                    <div class="alert alert-info mb-3" role="note">
+                        For managed identity, assign this App Service identity Cosmos DB Data Contributor on the target account and allow network access from this application environment.
+                    </div>
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <label class="form-label" for="data_management_target_cosmos_auth">Authentication</label>
+                            <select class="form-select" id="data_management_target_cosmos_auth">
+                                <option value="managed_identity">Managed identity</option>
+                                <option value="key">Account key</option>
+                            </select>
+                        </div>
+                        <div class="col-md-5">
+                            <label class="form-label" for="data_management_target_cosmos_endpoint">Endpoint</label>
+                            <input class="form-control" type="url" id="data_management_target_cosmos_endpoint" placeholder="https://account.documents.azure.com:443/">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label" for="data_management_target_cosmos_database">Database</label>
+                            <input class="form-control" type="text" id="data_management_target_cosmos_database" value="SimpleChat">
+                        </div>
+                    </div>
+                    <div class="mt-3">
+                        <label class="form-label" for="data_management_target_cosmos_key">Account key</label>
+                        <input class="form-control" type="password" id="data_management_target_cosmos_key" autocomplete="off" placeholder="Stored keys stay redacted after save">
+                    </div>
+                </div>
+
+                <div class="card p-4 mb-4 border-success shadow-sm" id="data-management-operations-section">
+                    <h4 class="mb-3">Operations</h4>
+                    <div class="d-flex flex-wrap gap-2 mb-3">
+                        <button type="button" class="btn btn-primary" id="data-management-run-full-backup-btn">
+                            <i class="bi bi-archive me-1"></i>Queue Full Backup
+                        </button>
+                        <button type="button" class="btn btn-outline-primary" id="data-management-run-partial-backup-btn">
+                            <i class="bi bi-archive-fill me-1"></i>Queue Partial Backup
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary" id="data-management-restore-dry-run-btn">
+                            <i class="bi bi-arrow-counterclockwise me-1"></i>Restore Dry Run
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary" id="data-management-migration-dry-run-btn">
+                            <i class="bi bi-arrow-left-right me-1"></i>Migration Dry Run
+                        </button>
+                    </div>
+                    <p class="text-muted mb-0">Jobs use Cosmos-backed leases so scaled-out App Service workers do not run the same operation twice.</p>
+                </div>
+
+                <div class="card p-4 mb-4 border-dark shadow-sm" id="data-management-jobs-section">
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                        <h4 class="mb-0">Job History</h4>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="data-management-refresh-jobs-btn">
+                            <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                        </button>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle">
+                            <thead>
+                                <tr>
+                                    <th scope="col">Created</th>
+                                    <th scope="col">Operation</th>
+                                    <th scope="col">Status</th>
+                                    <th scope="col">Progress</th>
+                                    <th scope="col">Message</th>
+                                </tr>
+                            </thead>
+                            <tbody id="data-management-jobs-tbody">
+                                <tr>
+                                    <td colspan="5" class="text-muted">Job history has not loaded yet.</td>
+                                </tr>
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             </div>
@@ -8371,6 +8608,7 @@
 <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-identities.js') }}?v={{ config['VERSION'] }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-file-sync.js') }}?v={{ config['VERSION'] }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_settings.js') }}?v={{ config['VERSION'] }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/admin/admin_data_management.js') }}?v={{ config['VERSION'] }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_model_endpoints.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_sidebar_nav.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/plugin_modal_stepper.js') }}"></script>

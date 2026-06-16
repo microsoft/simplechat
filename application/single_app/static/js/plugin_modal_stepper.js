@@ -10,9 +10,13 @@ const SQL_ACTION_IDENTITY_AUTH_TYPES = ['connection_string', 'managed_identity',
 const OPENAPI_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'bearer_token', 'username_password'];
 const MCP_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'bearer_token', 'managed_identity', 'username_password'];
 const DATABRICKS_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'bearer_token', 'managed_identity'];
+const TABLEAU_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'username_password'];
 const BLOB_STORAGE_PLUGIN_TYPE = 'blob_storage';
 const DATABRICKS_PLUGIN_TYPE = 'databricks';
 const DATABRICKS_DEFAULT_CLOUD = 'azure_commercial';
+const TABLEAU_PLUGIN_TYPE = 'tableau';
+const TABLEAU_AUTH_METHOD_PAT = 'personal_access_token';
+const TABLEAU_AUTH_METHOD_USERNAME_PASSWORD = 'username_password';
 const MCP_PLUGIN_TYPE = 'mcp';
 const AZURE_MAPS_PLUGIN_TYPE = 'azure_maps_openlayers';
 const AZURE_MAPS_DEFAULT_ENDPOINT = 'https://atlas.microsoft.com';
@@ -417,6 +421,9 @@ export class PluginModalStepper {
     if (kind === 'databricks') {
       return this.actionIdentities.filter(identity => DATABRICKS_ACTION_IDENTITY_AUTH_TYPES.includes(this.getIdentityAuthType(identity)));
     }
+    if (kind === 'tableau') {
+      return this.actionIdentities.filter(identity => TABLEAU_ACTION_IDENTITY_AUTH_TYPES.includes(this.getIdentityAuthType(identity)));
+    }
     return this.actionIdentities;
   }
 
@@ -424,6 +431,7 @@ export class PluginModalStepper {
     this.populateActionIdentitySelector('openapi', 'plugin-auth-identity-select', 'openapi-action-identity-group', 'plugin-auth-identity-status');
     this.populateActionIdentitySelector('mcp', 'mcp-identity-select', 'mcp-action-identity-group', 'mcp-identity-status');
     this.populateActionIdentitySelector('databricks', 'databricks-identity-select', 'databricks-action-identity-group', 'databricks-identity-status');
+    this.populateActionIdentitySelector('tableau', 'tableau-identity-select', 'tableau-action-identity-group', 'tableau-identity-status');
     this.populateActionIdentitySelector('generic', 'plugin-auth-identity-select-generic', 'generic-action-identity-group', 'plugin-auth-identity-status-generic');
     this.populateActionIdentitySelector('sql', 'sql-identity-select', 'sql-action-identity-group', 'sql-identity-status');
   }
@@ -484,6 +492,7 @@ export class PluginModalStepper {
       openapi: 'plugin-auth-identity-select',
       mcp: 'mcp-identity-select',
       databricks: 'databricks-identity-select',
+      tableau: 'tableau-identity-select',
       generic: 'plugin-auth-identity-select-generic',
       sql: 'sql-identity-select'
     };
@@ -499,6 +508,7 @@ export class PluginModalStepper {
       openapi: 'plugin-auth-identity-select',
       mcp: 'mcp-identity-select',
       databricks: 'databricks-identity-select',
+      tableau: 'tableau-identity-select',
       generic: 'plugin-auth-identity-select-generic',
       sql: 'sql-identity-select'
     };
@@ -535,7 +545,7 @@ export class PluginModalStepper {
 
     const authSelect = document.getElementById(kind === 'openapi'
       ? 'plugin-auth-type'
-      : (kind === 'mcp' ? 'mcp-auth-method' : (kind === 'databricks' ? 'databricks-auth-method' : 'plugin-auth-type-generic')));
+      : (kind === 'mcp' ? 'mcp-auth-method' : (kind === 'databricks' ? 'databricks-auth-method' : (kind === 'tableau' ? 'tableau-auth-method' : 'plugin-auth-type-generic'))));
     if (authSelect) {
       authSelect.disabled = !!selectedIdentity;
     }
@@ -545,6 +555,8 @@ export class PluginModalStepper {
       this.toggleMcpAuthFields();
     } else if (kind === 'databricks') {
       this.toggleDatabricksAuthFields();
+    } else if (kind === 'tableau') {
+      this.toggleTableauAuthFields();
     } else {
       this.toggleGenericAuthFields();
     }
@@ -569,6 +581,8 @@ export class PluginModalStepper {
     document.getElementById('mcp-discover-tools-btn').addEventListener('click', () => this.discoverMcpTools());
     document.getElementById('databricks-auth-method').addEventListener('change', () => this.toggleDatabricksAuthFields());
     document.getElementById('databricks-identity-select').addEventListener('change', () => this.handleActionIdentityChange('databricks'));
+    document.getElementById('tableau-auth-method').addEventListener('change', () => this.toggleTableauAuthFields());
+    document.getElementById('tableau-identity-select').addEventListener('change', () => this.handleActionIdentityChange('tableau'));
     document.getElementById('plugin-auth-identity-select-generic').addEventListener('change', () => this.handleActionIdentityChange('generic'));
     const msGraphMailSendMode = document.getElementById('msgraph-mail-send-mode');
     if (msGraphMailSendMode) {
@@ -990,6 +1004,10 @@ export class PluginModalStepper {
 
   isDatabricksType(type = this.selectedType) {
     return !!(type && [DATABRICKS_PLUGIN_TYPE, 'databricks_table'].includes(type.toLowerCase()));
+  }
+
+  isTableauType(type = this.selectedType) {
+    return !!(type && type.toLowerCase() === TABLEAU_PLUGIN_TYPE);
   }
 
   isMcpType(type = this.selectedType) {
@@ -1845,6 +1863,136 @@ export class PluginModalStepper {
     };
   }
 
+  normalizeTableauServerUrl(serverUrl = '') {
+    const value = String(serverUrl || '').trim().replace(/\/+$/, '');
+    if (!value) {
+      return '';
+    }
+    if (!/^https?:\/\//i.test(value)) {
+      return `https://${value}`;
+    }
+    return value;
+  }
+
+  getTableauIdentityAuthMethod(identity) {
+    const authType = this.getIdentityAuthType(identity);
+    return authType === 'username_password' ? TABLEAU_AUTH_METHOD_USERNAME_PASSWORD : TABLEAU_AUTH_METHOD_PAT;
+  }
+
+  formatTableauAuthMethod(authMethod) {
+    return authMethod === TABLEAU_AUTH_METHOD_USERNAME_PASSWORD ? 'Username and Password' : 'Personal Access Token';
+  }
+
+  toggleTableauAuthFields() {
+    const selectedIdentity = this.getSelectedActionIdentity('tableau');
+    const selectedIdentityAuthType = this.getIdentityAuthType(selectedIdentity);
+    const authMethodSelect = document.getElementById('tableau-auth-method');
+    const patGroup = document.getElementById('tableau-pat-group');
+    const patSecretGroup = document.getElementById('tableau-pat-secret-group');
+    const usernamePasswordGroup = document.getElementById('tableau-username-password-group');
+
+    if (authMethodSelect) {
+      authMethodSelect.disabled = Boolean(selectedIdentity);
+      if (selectedIdentity) {
+        authMethodSelect.value = this.getTableauIdentityAuthMethod(selectedIdentity);
+      }
+    }
+
+    [patGroup, patSecretGroup, usernamePasswordGroup].forEach(group => {
+      if (group) {
+        group.classList.add('d-none');
+      }
+    });
+
+    if (selectedIdentity) {
+      if (selectedIdentityAuthType === 'api_key') {
+        patGroup?.classList.remove('d-none');
+      }
+      return;
+    }
+
+    const authMethod = authMethodSelect?.value || TABLEAU_AUTH_METHOD_PAT;
+    if (authMethod === TABLEAU_AUTH_METHOD_PAT) {
+      patGroup?.classList.remove('d-none');
+      patSecretGroup?.classList.remove('d-none');
+    } else if (authMethod === TABLEAU_AUTH_METHOD_USERNAME_PASSWORD) {
+      usernamePasswordGroup?.classList.remove('d-none');
+    }
+  }
+
+  populateTableauForm(plugin) {
+    const additionalFields = plugin.additionalFields || plugin.additional_fields || {};
+    const auth = plugin.auth || {};
+    const serverUrl = this.normalizeTableauServerUrl(plugin.endpoint || additionalFields.server_url || '');
+
+    document.getElementById('tableau-server-url').value = serverUrl;
+    document.getElementById('tableau-site-content-url').value = additionalFields.site_content_url || '';
+    document.getElementById('tableau-pat-name').value = auth.identity || additionalFields.pat_name || '';
+    document.getElementById('tableau-page-size').value = additionalFields.page_size || 100;
+    document.getElementById('tableau-max-results').value = additionalFields.max_results || 100;
+    document.getElementById('tableau-timeout').value = additionalFields.timeout || 30;
+    document.getElementById('tableau-use-server-version').checked = additionalFields.use_server_version !== false;
+
+    let authMethod = additionalFields.auth_method || TABLEAU_AUTH_METHOD_PAT;
+    if (auth.type === 'username_password') {
+      authMethod = TABLEAU_AUTH_METHOD_USERNAME_PASSWORD;
+      document.getElementById('tableau-username').value = auth.identity || '';
+      document.getElementById('tableau-password').value = auth.key || '';
+    } else if (auth.type === 'key') {
+      document.getElementById('tableau-pat-secret').value = auth.key || '';
+    }
+
+    document.getElementById('tableau-auth-method').value = authMethod;
+    this.setSelectedActionIdentity('tableau', plugin.identity_id || '');
+    this.handleActionIdentityChange('tableau');
+  }
+
+  getTableauConfiguration() {
+    const serverUrl = this.normalizeTableauServerUrl(document.getElementById('tableau-server-url')?.value || '');
+    const selectedIdentity = this.getSelectedActionIdentity('tableau');
+    const authMethod = selectedIdentity
+      ? this.getTableauIdentityAuthMethod(selectedIdentity)
+      : (document.getElementById('tableau-auth-method')?.value || TABLEAU_AUTH_METHOD_PAT);
+    const patName = document.getElementById('tableau-pat-name')?.value.trim() || '';
+    const additionalFields = {
+      server_url: serverUrl,
+      site_content_url: String(document.getElementById('tableau-site-content-url')?.value || '').trim().replace(/^\/+|\/+$/g, ''),
+      auth_method: authMethod,
+      page_size: parseInt(document.getElementById('tableau-page-size')?.value, 10) || 100,
+      max_results: parseInt(document.getElementById('tableau-max-results')?.value, 10) || 100,
+      timeout: parseInt(document.getElementById('tableau-timeout')?.value, 10) || 30,
+      use_server_version: document.getElementById('tableau-use-server-version')?.checked !== false
+    };
+    const auth = {};
+    let identityId = '';
+
+    if (authMethod === TABLEAU_AUTH_METHOD_PAT && patName) {
+      additionalFields.pat_name = patName;
+    }
+
+    if (selectedIdentity) {
+      identityId = selectedIdentity.id || selectedIdentity.identity_id || '';
+      auth.type = 'identity';
+      auth.identity = identityId;
+      additionalFields.identity_auth_type = this.getIdentityAuthType(selectedIdentity);
+    } else if (authMethod === TABLEAU_AUTH_METHOD_USERNAME_PASSWORD) {
+      auth.type = 'username_password';
+      auth.identity = document.getElementById('tableau-username')?.value.trim() || '';
+      auth.key = document.getElementById('tableau-password')?.value.trim() || '';
+    } else {
+      auth.type = 'key';
+      auth.identity = patName;
+      auth.key = document.getElementById('tableau-pat-secret')?.value.trim() || '';
+    }
+
+    return {
+      endpoint: serverUrl,
+      auth,
+      additionalFields,
+      identityId
+    };
+  }
+
   initializeDocumentSearchConfiguration() {
     const defaults = {
       'document-search-scope': 'all',
@@ -2236,7 +2384,7 @@ export class PluginModalStepper {
   }
 
   isStructuredConfigType(type = this.selectedType) {
-    return this.isSqlType(type) || this.isCosmosType(type) || this.isDocumentSearchType(type) || this.isBlobStorageType(type) || this.isDatabricksType(type) || this.isMcpType(type) || this.isSimpleChatType(type) || this.isMsGraphType(type) || this.isAzureMapsType(type) || this.isChartType(type);
+    return this.isSqlType(type) || this.isCosmosType(type) || this.isDocumentSearchType(type) || this.isBlobStorageType(type) || this.isDatabricksType(type) || this.isTableauType(type) || this.isMcpType(type) || this.isSimpleChatType(type) || this.isMsGraphType(type) || this.isAzureMapsType(type) || this.isChartType(type);
   }
 
   showConfigSectionForType() {
@@ -2248,6 +2396,7 @@ export class PluginModalStepper {
       documentSearch: document.getElementById('document-search-config-section'),
       blobStorage: document.getElementById('blob-storage-config-section'),
       databricks: document.getElementById('databricks-config-section'),
+      tableau: document.getElementById('tableau-config-section'),
       simpleChat: document.getElementById('simplechat-config-section'),
       msGraph: document.getElementById('msgraph-config-section'),
       mcp: document.getElementById('mcp-config-section'),
@@ -2281,6 +2430,9 @@ export class PluginModalStepper {
     } else if (this.isDatabricksType()) {
       showOnly('databricks');
       this.toggleDatabricksAuthFields();
+    } else if (this.isTableauType()) {
+      showOnly('tableau');
+      this.toggleTableauAuthFields();
     } else if (this.isMcpType()) {
       showOnly('mcp');
       this.initializeMcpConfiguration();
@@ -2328,6 +2480,7 @@ export class PluginModalStepper {
         const isDocumentSearchType = this.isDocumentSearchType();
         const isBlobStorageType = this.isBlobStorageType();
         const isDatabricksType = this.isDatabricksType();
+        const isTableauType = this.isTableauType();
         const isMcpType = this.isMcpType();
         const isAzureMapsType = this.isAzureMapsType();
         const isChartType = this.isChartType();
@@ -2344,6 +2497,8 @@ export class PluginModalStepper {
           titleEl.textContent = 'Blob Storage Configuration';
         } else if (isDatabricksType) {
           titleEl.textContent = 'Databricks Configuration';
+        } else if (isTableauType) {
+          titleEl.textContent = 'Tableau Configuration';
         } else if (isMcpType) {
           titleEl.textContent = 'MCP Server Configuration';
         } else if (this.isSimpleChatType()) {
@@ -2532,6 +2687,7 @@ export class PluginModalStepper {
         const documentSearchSection = document.getElementById('document-search-config-section');
         const blobStorageSection = document.getElementById('blob-storage-config-section');
         const databricksSection = document.getElementById('databricks-config-section');
+        const tableauSection = document.getElementById('tableau-config-section');
         const mcpSection = document.getElementById('mcp-config-section');
         const simpleChatSection = document.getElementById('simplechat-config-section');
         const msGraphSection = document.getElementById('msgraph-config-section');
@@ -2543,6 +2699,7 @@ export class PluginModalStepper {
         const isDocumentSearchVisible = !documentSearchSection.classList.contains('d-none');
         const isBlobStorageVisible = !blobStorageSection.classList.contains('d-none');
         const isDatabricksVisible = !databricksSection.classList.contains('d-none');
+        const isTableauVisible = !tableauSection.classList.contains('d-none');
         const isMcpVisible = !mcpSection.classList.contains('d-none');
         const isSimpleChatVisible = !simpleChatSection.classList.contains('d-none');
         const isMsGraphVisible = !msGraphSection.classList.contains('d-none');
@@ -2765,6 +2922,51 @@ export class PluginModalStepper {
           }
           if (Number.isNaN(waitTimeout) || waitTimeout < 1 || waitTimeout > 50) {
             this.showError('Databricks wait timeout must be between 1 and 50 seconds.');
+            return false;
+          }
+        } else if (isTableauVisible) {
+          const serverUrl = this.normalizeTableauServerUrl(document.getElementById('tableau-server-url').value);
+          const selectedIdentity = this.getSelectedActionIdentity('tableau');
+          const selectedIdentityAuthType = this.getIdentityAuthType(selectedIdentity);
+          const authMethod = document.getElementById('tableau-auth-method').value;
+          const patName = document.getElementById('tableau-pat-name').value.trim();
+          const patSecret = document.getElementById('tableau-pat-secret').value.trim();
+          const username = document.getElementById('tableau-username').value.trim();
+          const password = document.getElementById('tableau-password').value.trim();
+          const pageSize = parseInt(document.getElementById('tableau-page-size').value, 10);
+          const maxResults = parseInt(document.getElementById('tableau-max-results').value, 10);
+          const timeout = parseInt(document.getElementById('tableau-timeout').value, 10);
+
+          if (!serverUrl || !serverUrl.startsWith('https://')) {
+            this.showError('Tableau Server URL must be an HTTPS URL.');
+            return false;
+          }
+          if (![TABLEAU_AUTH_METHOD_PAT, TABLEAU_AUTH_METHOD_USERNAME_PASSWORD].includes(authMethod)) {
+            this.showError('Select a supported Tableau authentication method.');
+            return false;
+          }
+          if (selectedIdentity && selectedIdentityAuthType === 'api_key' && !patName) {
+            this.showError('Tableau PAT name is required when using an API key reusable identity.');
+            return false;
+          }
+          if (!selectedIdentity && authMethod === TABLEAU_AUTH_METHOD_PAT && (!patName || !patSecret)) {
+            this.showError('Tableau PAT name and secret are required for personal access token authentication.');
+            return false;
+          }
+          if (!selectedIdentity && authMethod === TABLEAU_AUTH_METHOD_USERNAME_PASSWORD && (!username || !password)) {
+            this.showError('Tableau username and password are required for username/password authentication.');
+            return false;
+          }
+          if (Number.isNaN(pageSize) || pageSize < 1 || pageSize > 1000) {
+            this.showError('Tableau page size must be between 1 and 1000.');
+            return false;
+          }
+          if (Number.isNaN(maxResults) || maxResults < 1 || maxResults > 1000) {
+            this.showError('Tableau max results must be between 1 and 1000.');
+            return false;
+          }
+          if (Number.isNaN(timeout) || timeout < 1 || timeout > 300) {
+            this.showError('Tableau timeout must be between 1 and 300 seconds.');
             return false;
           }
         } else if (isMcpVisible) {
@@ -3878,6 +4080,8 @@ export class PluginModalStepper {
       });
     } else if (this.isDatabricksType(plugin.type)) {
       this.populateDatabricksForm(plugin);
+    } else if (this.isTableauType(plugin.type)) {
+      this.populateTableauForm(plugin);
     } else if (this.isMcpType(plugin.type)) {
       this.populateMcpForm(plugin);
     } else if (this.isSimpleChatType(plugin.type)) {
@@ -3932,6 +4136,7 @@ export class PluginModalStepper {
     const documentSearchSection = document.getElementById('document-search-config-section');
     const blobStorageSection = document.getElementById('blob-storage-config-section');
     const databricksSection = document.getElementById('databricks-config-section');
+    const tableauSection = document.getElementById('tableau-config-section');
     const mcpSection = document.getElementById('mcp-config-section');
     const azureMapsSection = document.getElementById('azure-maps-config-section');
     const isOpenApiVisible = !openApiSection.classList.contains('d-none');
@@ -3940,6 +4145,7 @@ export class PluginModalStepper {
     const isDocumentSearchVisible = !documentSearchSection.classList.contains('d-none');
     const isBlobStorageVisible = !blobStorageSection.classList.contains('d-none');
     const isDatabricksVisible = !databricksSection.classList.contains('d-none');
+    const isTableauVisible = !tableauSection.classList.contains('d-none');
     const isMcpVisible = !mcpSection.classList.contains('d-none');
     const isAzureMapsVisible = !azureMapsSection.classList.contains('d-none');
     
@@ -4190,6 +4396,12 @@ export class PluginModalStepper {
       auth = databricksConfig.auth;
       additionalFields = databricksConfig.additionalFields;
       identityId = databricksConfig.identityId;
+    } else if (isTableauVisible) {
+      const tableauConfig = this.getTableauConfiguration();
+      endpoint = tableauConfig.endpoint;
+      auth = tableauConfig.auth;
+      additionalFields = tableauConfig.additionalFields;
+      identityId = tableauConfig.identityId;
     } else if (isMcpVisible) {
       const mcpConfig = this.getMcpConfiguration();
       endpoint = mcpConfig.endpoint;
@@ -4310,6 +4522,7 @@ export class PluginModalStepper {
     const isDocumentSearchType = this.isDocumentSearchType();
     const isBlobStorageType = this.isBlobStorageType();
     const isDatabricksType = this.isDatabricksType();
+    const isTableauType = this.isTableauType();
     const isMcpType = this.isMcpType();
     const isSimpleChatType = this.isSimpleChatType();
     const isMsGraphType = this.isMsGraphType();
@@ -4345,6 +4558,12 @@ export class PluginModalStepper {
       document.getElementById('summary-plugin-endpoint').textContent = endpoint || '-';
       endpointRow.style.display = '';
       document.getElementById('summary-plugin-database-type').textContent = 'Azure Commercial Databricks SQL Warehouse';
+      databaseTypeRow.style.display = '';
+    } else if (isTableauType) {
+      const endpoint = this.getEndpointValue();
+      document.getElementById('summary-plugin-endpoint').textContent = endpoint || '-';
+      endpointRow.style.display = '';
+      document.getElementById('summary-plugin-database-type').textContent = 'Tableau Server or Tableau Cloud';
       databaseTypeRow.style.display = '';
     } else if (isMcpType) {
       const endpoint = this.getEndpointValue();
@@ -4390,10 +4609,10 @@ export class PluginModalStepper {
     }
     
     const databaseType = this.getSqlDatabaseType();
-    if (!isSqlType && !isCosmosType && !isDocumentSearchType && !isBlobStorageType && !isDatabricksType && !isMcpType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType && databaseType) {
+    if (!isSqlType && !isCosmosType && !isDocumentSearchType && !isBlobStorageType && !isDatabricksType && !isTableauType && !isMcpType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType && databaseType) {
       document.getElementById('summary-plugin-database-type').textContent = databaseType;
       databaseTypeRow.style.display = '';
-    } else if (!isSqlType && !isCosmosType && !isDocumentSearchType && !isBlobStorageType && !isDatabricksType && !isMcpType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType) {
+    } else if (!isSqlType && !isCosmosType && !isDocumentSearchType && !isBlobStorageType && !isDatabricksType && !isTableauType && !isMcpType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType) {
       databaseTypeRow.style.display = 'none';
     }
     
@@ -4404,6 +4623,7 @@ export class PluginModalStepper {
     this.populateDocumentSearchSummary();
     this.populateBlobStorageSummary();
     this.populateDatabricksSummary();
+    this.populateTableauSummary();
     this.populateMcpSummary();
     this.populateSimpleChatSummary();
     this.populateMsGraphSummary();
@@ -4420,6 +4640,7 @@ export class PluginModalStepper {
     const isDocumentSearchType = this.isDocumentSearchType();
     const isBlobStorageType = this.isBlobStorageType();
     const isDatabricksType = this.isDatabricksType();
+    const isTableauType = this.isTableauType();
     const isMcpType = this.isMcpType();
     const isSimpleChatType = this.isSimpleChatType();
     const isMsGraphType = this.isMsGraphType();
@@ -4439,6 +4660,8 @@ export class PluginModalStepper {
       return this.deriveBlobStorageEndpointFromConnectionString(connectionString) || this.originalPlugin?.endpoint || '';
     } else if (isDatabricksType) {
       return this.normalizeDatabricksWorkspaceUrl(document.getElementById('databricks-workspace-url')?.value || '');
+    } else if (isTableauType) {
+      return this.normalizeTableauServerUrl(document.getElementById('tableau-server-url')?.value || '');
     } else if (isMcpType) {
       const transport = document.getElementById('mcp-transport')?.value || 'streamable_http';
       return transport === 'stdio' ? MCP_STDIO_ENDPOINT : document.getElementById('mcp-endpoint').value.trim();
@@ -4461,6 +4684,7 @@ export class PluginModalStepper {
     const isDocumentSearchType = this.isDocumentSearchType();
     const isBlobStorageType = this.isBlobStorageType();
     const isDatabricksType = this.isDatabricksType();
+    const isTableauType = this.isTableauType();
     const isMcpType = this.isMcpType();
     const isSimpleChatType = this.isSimpleChatType();
     const isMsGraphType = this.isMsGraphType();
@@ -4485,6 +4709,11 @@ export class PluginModalStepper {
         return 'Reusable Identity';
       }
       return this.formatAuthType(document.getElementById('databricks-auth-method')?.value || 'pat');
+    } else if (isTableauType) {
+      if (this.getSelectedActionIdentity('tableau')) {
+        return 'Reusable Identity';
+      }
+      return this.formatTableauAuthMethod(document.getElementById('tableau-auth-method')?.value || TABLEAU_AUTH_METHOD_PAT);
     } else if (isMcpType) {
       if (this.getSelectedActionIdentity('mcp')) {
         return 'Reusable Identity';
@@ -4524,6 +4753,7 @@ export class PluginModalStepper {
       'basic': 'Basic',
       'NoAuth': 'No Authentication',
       'pat': 'Personal Access Token',
+      'personal_access_token': 'Personal Access Token',
       'bearer': 'Bearer Token',
       'service_principal': 'Service Principal'
     };
@@ -4714,6 +4944,34 @@ export class PluginModalStepper {
     document.getElementById('summary-databricks-timeout').textContent = `${document.getElementById('databricks-timeout')?.value || '30'} seconds`;
     document.getElementById('summary-databricks-wait-timeout').textContent = `${document.getElementById('databricks-wait-timeout')?.value || '30'} seconds`;
     databricksSection.classList.remove('d-none');
+  }
+
+  populateTableauSummary() {
+    const tableauSection = document.getElementById('summary-tableau-section');
+    if (!tableauSection) {
+      return;
+    }
+
+    if (!this.isTableauType()) {
+      tableauSection.classList.add('d-none');
+      return;
+    }
+
+    const siteContentUrl = document.getElementById('tableau-site-content-url')?.value.trim() || 'Default site';
+    const selectedIdentity = this.getSelectedActionIdentity('tableau');
+    const authMethod = selectedIdentity
+      ? this.getTableauIdentityAuthMethod(selectedIdentity)
+      : (document.getElementById('tableau-auth-method')?.value || TABLEAU_AUTH_METHOD_PAT);
+
+    document.getElementById('summary-tableau-site-content-url').textContent = siteContentUrl;
+    document.getElementById('summary-tableau-auth-method').textContent = selectedIdentity
+      ? `Reusable Identity (${this.formatTableauAuthMethod(authMethod)})`
+      : this.formatTableauAuthMethod(authMethod);
+    document.getElementById('summary-tableau-page-size').textContent = document.getElementById('tableau-page-size')?.value.trim() || '100';
+    document.getElementById('summary-tableau-max-results').textContent = document.getElementById('tableau-max-results')?.value.trim() || '100';
+    document.getElementById('summary-tableau-timeout').textContent = `${document.getElementById('tableau-timeout')?.value || '30'} seconds`;
+    document.getElementById('summary-tableau-use-server-version').textContent = document.getElementById('tableau-use-server-version')?.checked === false ? 'No' : 'Yes';
+    tableauSection.classList.remove('d-none');
   }
 
   populateMcpSummary() {
@@ -4931,6 +5189,7 @@ export class PluginModalStepper {
       const isCosmosType = this.isCosmosType();
       const isDocumentSearchType = this.isDocumentSearchType();
       const isDatabricksType = this.isDatabricksType();
+      const isTableauType = this.isTableauType();
       const isMcpType = this.isMcpType();
       const isSimpleChatType = this.isSimpleChatType();
       const isMsGraphType = this.isMsGraphType();
@@ -4947,6 +5206,8 @@ export class PluginModalStepper {
         currentEndpoint = INTERNAL_DOCUMENT_SEARCH_ENDPOINT;
       } else if (isDatabricksType) {
         currentEndpoint = this.normalizeDatabricksWorkspaceUrl(document.getElementById('databricks-workspace-url')?.value || '');
+      } else if (isTableauType) {
+        currentEndpoint = this.normalizeTableauServerUrl(document.getElementById('tableau-server-url')?.value || '');
       } else if (isMcpType) {
         currentEndpoint = this.getEndpointValue();
       } else if (isSimpleChatType) {
@@ -4985,6 +5246,14 @@ export class PluginModalStepper {
         }
       } else if (isDocumentSearchType) {
         currentAuthType = 'NoAuth';
+      } else if (isTableauType) {
+        const selectedIdentity = this.getSelectedActionIdentity('tableau');
+        currentAuthType = selectedIdentity ? 'identity' : (document.getElementById('tableau-auth-method')?.value || TABLEAU_AUTH_METHOD_PAT);
+        if (!selectedIdentity && currentAuthType === TABLEAU_AUTH_METHOD_PAT) {
+          currentAuthKey = document.getElementById('tableau-pat-secret')?.value || '';
+        } else if (!selectedIdentity && currentAuthType === TABLEAU_AUTH_METHOD_USERNAME_PASSWORD) {
+          currentAuthKey = document.getElementById('tableau-password')?.value || '';
+        }
       } else if (isMcpType) {
         const selectedIdentity = this.getSelectedActionIdentity('mcp');
         currentAuthType = selectedIdentity ? 'identity' : (document.getElementById('mcp-auth-method')?.value || 'none');
@@ -5024,6 +5293,8 @@ export class PluginModalStepper {
         }, null, 2);
       } else if (isDocumentSearchType) {
         currentAdditionalFields = JSON.stringify(this.getDocumentSearchAdditionalFields(), null, 2);
+      } else if (isTableauType) {
+        currentAdditionalFields = JSON.stringify(this.getTableauConfiguration().additionalFields, null, 2);
       } else if (isMcpType) {
         currentAdditionalFields = JSON.stringify(this.getMcpConfiguration().additionalFields, null, 2);
       } else if (isSimpleChatType) {
@@ -5362,6 +5633,23 @@ export class PluginModalStepper {
     safeSetValue('databricks-max-rows', '1000');
     safeSetValue('databricks-timeout', '30');
     safeSetValue('databricks-wait-timeout', '30');
+
+    // Step 3 fields - Tableau Plugin
+    safeSetValue('tableau-server-url');
+    safeSetValue('tableau-site-content-url');
+    safeSetValue('tableau-auth-method', TABLEAU_AUTH_METHOD_PAT);
+    safeSetValue('tableau-identity-select');
+    safeSetValue('tableau-pat-name');
+    safeSetValue('tableau-pat-secret');
+    safeSetValue('tableau-username');
+    safeSetValue('tableau-password');
+    safeSetValue('tableau-page-size', '100');
+    safeSetValue('tableau-max-results', '100');
+    safeSetValue('tableau-timeout', '30');
+    const tableauUseServerVersion = document.getElementById('tableau-use-server-version');
+    if (tableauUseServerVersion) {
+      tableauUseServerVersion.checked = true;
+    }
     
     // Step 3 fields - SQL Plugin
     safeSetValue('sql-connection-method', 'connection_string');
@@ -5374,7 +5662,7 @@ export class PluginModalStepper {
     safeSetValue('sql-identity-select');
     safeSetValue('sql-database-type', 'sql_server');
 
-    ['plugin-auth-type', 'plugin-auth-type-generic', 'mcp-auth-method', 'databricks-auth-method', 'sql-auth-type'].forEach(id => {
+    ['plugin-auth-type', 'plugin-auth-type-generic', 'mcp-auth-method', 'databricks-auth-method', 'tableau-auth-method', 'sql-auth-type'].forEach(id => {
       const element = document.getElementById(id);
       if (element) {
         element.disabled = false;
@@ -5430,6 +5718,7 @@ export class PluginModalStepper {
       this.toggleMcpTransportFields();
       this.toggleMcpAuthFields();
       this.toggleDatabricksAuthFields();
+      this.toggleTableauAuthFields();
       this.toggleGenericAuthFields();
       this.handleSqlAuthTypeChange();
       this.handleCosmosAuthTypeChange();

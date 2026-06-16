@@ -94,7 +94,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.241.209"
+VERSION = "0.241.211"
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 
@@ -325,6 +325,18 @@ cosmos_tabular_export_runs_container_name = "tabular_export_runs"
 cosmos_tabular_export_runs_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_tabular_export_runs_container_name,
     partition_key=PartitionKey(path="/user_id")
+)
+
+cosmos_data_management_jobs_container_name = "data_management_jobs"
+cosmos_data_management_jobs_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_data_management_jobs_container_name,
+    partition_key=PartitionKey(path="/id")
+)
+
+cosmos_data_management_job_items_container_name = "data_management_job_items"
+cosmos_data_management_job_items_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_data_management_job_items_container_name,
+    partition_key=PartitionKey(path="/job_id")
 )
 
 cosmos_personal_workflows_container_name = "personal_workflows"

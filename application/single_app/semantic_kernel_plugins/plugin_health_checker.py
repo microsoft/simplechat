@@ -18,6 +18,22 @@ from functions_databricks_operations import (
     DATABRICKS_PLUGIN_TYPE,
     normalize_databricks_additional_fields,
 )
+from functions_tableau_operations import (
+    TABLEAU_AUTH_METHOD_PAT,
+    TABLEAU_AUTH_METHOD_USERNAME_PASSWORD,
+    TABLEAU_DEFAULT_MAX_RESULTS,
+    TABLEAU_DEFAULT_PAGE_SIZE,
+    TABLEAU_DEFAULT_TIMEOUT,
+    TABLEAU_MAX_MAX_RESULTS,
+    TABLEAU_MAX_PAGE_SIZE,
+    TABLEAU_MAX_TIMEOUT,
+    TABLEAU_MIN_MAX_RESULTS,
+    TABLEAU_MIN_PAGE_SIZE,
+    TABLEAU_MIN_TIMEOUT,
+    TABLEAU_PLUGIN_TYPE,
+    normalize_tableau_additional_fields,
+    normalize_tableau_server_url,
+)
 from functions_mcp_operations import (
     MCP_MAX_TIMEOUT_SECONDS,
     MCP_PLUGIN_TYPE,
@@ -119,6 +135,61 @@ class PluginHealthChecker:
             if auth_type == 'servicePrincipal':
                 if not auth.get('identity') or not auth.get('key') or not auth.get('tenantId'):
                     errors.append("Databricks service principal auth requires auth.identity, auth.key, and auth.tenantId")
+
+        elif plugin_type == TABLEAU_PLUGIN_TYPE:
+            auth = manifest.get('auth', {}) if isinstance(manifest.get('auth'), dict) else {}
+            auth_type = str(auth.get('type') or 'key').strip()
+            raw_additional_fields = manifest.get('additionalFields', {})
+            if not isinstance(raw_additional_fields, dict):
+                raw_additional_fields = {}
+            additional_fields = normalize_tableau_additional_fields(raw_additional_fields, auth_type=auth_type)
+            endpoint = normalize_tableau_server_url(
+                manifest.get('endpoint') or additional_fields.get('server_url') or ''
+            )
+            parsed_endpoint = urlparse(endpoint)
+            identity_id = str(manifest.get('identity_id') or '').strip()
+            raw_auth_method = str(raw_additional_fields.get('auth_method') or '').strip().lower()
+            auth_method = additional_fields.get('auth_method')
+
+            if parsed_endpoint.scheme != 'https' or not parsed_endpoint.netloc:
+                errors.append("Tableau plugin requires an HTTPS Tableau Server or Tableau Cloud endpoint")
+            if auth_type not in {'key', 'username_password', 'identity'}:
+                errors.append("Tableau plugin supports auth.type values 'key', 'username_password', or 'identity'")
+            if raw_auth_method and raw_auth_method not in {TABLEAU_AUTH_METHOD_PAT, TABLEAU_AUTH_METHOD_USERNAME_PASSWORD}:
+                errors.append("Tableau plugin supports additionalFields.auth_method values 'personal_access_token' or 'username_password'")
+            if auth_method == TABLEAU_AUTH_METHOD_PAT:
+                if auth_type == 'key' and not auth.get('key'):
+                    errors.append("Tableau personal access token auth requires auth.key")
+                if auth_type == 'key' and not (auth.get('identity') or additional_fields.get('pat_name')):
+                    errors.append("Tableau personal access token auth requires auth.identity or additionalFields.pat_name")
+                if auth_type == 'identity' and not auth.get('identity') and not identity_id:
+                    errors.append("Tableau reusable identity auth requires auth.identity or identity_id")
+                if auth_type == 'identity' and additional_fields.get('identity_auth_type') == 'api_key' and not additional_fields.get('pat_name'):
+                    errors.append("Tableau API key reusable identity auth requires additionalFields.pat_name")
+            elif auth_method == TABLEAU_AUTH_METHOD_USERNAME_PASSWORD:
+                if auth_type == 'username_password' and (not auth.get('identity') or not auth.get('key')):
+                    errors.append("Tableau username/password auth requires auth.identity and auth.key")
+                if auth_type == 'identity' and not auth.get('identity') and not identity_id:
+                    errors.append("Tableau reusable username/password identity auth requires auth.identity or identity_id")
+                if auth_type == 'key':
+                    errors.append("Tableau username/password auth cannot use auth.type='key'")
+
+            range_fields = {
+                'page_size': (TABLEAU_DEFAULT_PAGE_SIZE, TABLEAU_MIN_PAGE_SIZE, TABLEAU_MAX_PAGE_SIZE),
+                'max_results': (TABLEAU_DEFAULT_MAX_RESULTS, TABLEAU_MIN_MAX_RESULTS, TABLEAU_MAX_MAX_RESULTS),
+                'timeout': (TABLEAU_DEFAULT_TIMEOUT, TABLEAU_MIN_TIMEOUT, TABLEAU_MAX_TIMEOUT),
+            }
+            for field_name, (_default, minimum, maximum) in range_fields.items():
+                raw_value = raw_additional_fields.get(field_name)
+                if raw_value in [None, '']:
+                    continue
+                try:
+                    parsed_value = int(raw_value)
+                except (TypeError, ValueError):
+                    errors.append(f"Tableau additionalFields.{field_name} must be an integer")
+                    continue
+                if parsed_value < minimum or parsed_value > maximum:
+                    errors.append(f"Tableau additionalFields.{field_name} must be between {minimum} and {maximum}")
         
         elif plugin_type in ['sql_query', 'sql_schema']:
             additional_fields = manifest.get('additionalFields', {})

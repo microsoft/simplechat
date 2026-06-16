@@ -1,0 +1,53 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Tableau Plugin Additional Settings",
+  "type": "object",
+  "properties": {
+    "server_url": {
+      "type": "string",
+      "description": "Tableau Server or Tableau Cloud base URL, such as https://10ax.online.tableau.com."
+    },
+    "site_content_url": {
+      "type": "string",
+      "description": "Optional Tableau site content URL. Leave blank for the default Tableau Server site."
+    },
+    "auth_method": {
+      "type": "string",
+      "enum": ["personal_access_token", "username_password"],
+      "default": "personal_access_token",
+      "description": "Authentication method used by the Tableau action."
+    },
+    "pat_name": {
+      "type": "string",
+      "description": "Personal access token name used for Tableau PAT authentication."
+    },
+    "page_size": {
+      "type": "integer",
+      "default": 100,
+      "minimum": 1,
+      "maximum": 1000,
+      "description": "Tableau REST API page size for content listings."
+    },
+    "max_results": {
+      "type": "integer",
+      "default": 100,
+      "minimum": 1,
+      "maximum": 1000,
+      "description": "Maximum content items returned to an agent call."
+    },
+    "timeout": {
+      "type": "integer",
+      "default": 30,
+      "minimum": 1,
+      "maximum": 300,
+      "description": "HTTP request timeout in seconds."
+    },
+    "use_server_version": {
+      "type": "boolean",
+      "default": true,
+      "description": "Allow Tableau Server Client to negotiate the REST API version with the server."
+    }
+  },
+  "required": ["server_url", "auth_method"],
+  "additionalProperties": true
+}

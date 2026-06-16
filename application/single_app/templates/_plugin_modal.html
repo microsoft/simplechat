@@ -299,6 +299,92 @@
             </div>
           </div>
 
+          <div id="tableau-config-section" class="d-none">
+            <div class="alert alert-info mb-3">
+              <strong>Tableau action:</strong> Configure a Tableau Server or Tableau Cloud site and expose read-only content discovery tools to agents.
+            </div>
+
+            <div class="simplechat-config-card mb-3">
+              <div class="config-section-label">
+                <i class="bi bi-bar-chart me-2"></i>Server and Site
+              </div>
+              <div class="mb-3">
+                <label for="tableau-server-url" class="form-label">Server URL <span class="text-danger">*</span></label>
+                <input type="url" class="form-control" id="tableau-server-url" placeholder="https://10ax.online.tableau.com" />
+                <div class="form-text">Use the Tableau Server or Tableau Cloud base URL without the site path.</div>
+              </div>
+              <div class="mb-0">
+                <label for="tableau-site-content-url" class="form-label">Site Content URL</label>
+                <input type="text" class="form-control" id="tableau-site-content-url" placeholder="my-site" />
+                <div class="form-text">Leave blank for the default Tableau Server site.</div>
+              </div>
+            </div>
+
+            <div class="simplechat-config-card mb-3">
+              <div class="config-section-label">
+                <i class="bi bi-shield-lock me-2"></i>Authentication
+              </div>
+              <div class="mb-3 d-none" id="tableau-action-identity-group">
+                <label for="tableau-identity-select" class="form-label">Reusable Identity</label>
+                <select class="form-select" id="tableau-identity-select"></select>
+                <div class="form-text" id="tableau-identity-status"></div>
+              </div>
+              <div class="mb-3">
+                <label for="tableau-auth-method" class="form-label">Authentication Method</label>
+                <select class="form-select" id="tableau-auth-method">
+                  <option value="personal_access_token">Personal Access Token</option>
+                  <option value="username_password">Username and Password</option>
+                </select>
+              </div>
+              <div id="tableau-pat-group">
+                <div class="mb-3">
+                  <label for="tableau-pat-name" class="form-label">PAT Name <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="tableau-pat-name" placeholder="simplechat-agent" />
+                </div>
+                <div class="mb-0" id="tableau-pat-secret-group">
+                  <label for="tableau-pat-secret" class="form-label">PAT Secret <span class="text-danger">*</span></label>
+                  <input type="password" class="form-control" id="tableau-pat-secret" placeholder="Personal access token secret" autocomplete="new-password" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" />
+                </div>
+              </div>
+              <div class="row g-3 d-none" id="tableau-username-password-group">
+                <div class="col-md-6">
+                  <label for="tableau-username" class="form-label">Username <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="tableau-username" placeholder="user@example.com" autocomplete="username" />
+                </div>
+                <div class="col-md-6">
+                  <label for="tableau-password" class="form-label">Password <span class="text-danger">*</span></label>
+                  <input type="password" class="form-control" id="tableau-password" placeholder="Password" autocomplete="new-password" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" />
+                </div>
+              </div>
+            </div>
+
+            <div class="simplechat-config-card mb-0">
+              <div class="config-section-label">
+                <i class="bi bi-sliders me-2"></i>Discovery Limits
+              </div>
+              <div class="row g-3">
+                <div class="col-md-4">
+                  <label for="tableau-page-size" class="form-label">Page Size</label>
+                  <input type="number" class="form-control" id="tableau-page-size" value="100" min="1" max="1000" />
+                </div>
+                <div class="col-md-4">
+                  <label for="tableau-max-results" class="form-label">Max Results</label>
+                  <input type="number" class="form-control" id="tableau-max-results" value="100" min="1" max="1000" />
+                </div>
+                <div class="col-md-4">
+                  <label for="tableau-timeout" class="form-label">Timeout (seconds)</label>
+                  <input type="number" class="form-control" id="tableau-timeout" value="30" min="1" max="300" />
+                </div>
+                <div class="col-12">
+                  <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="tableau-use-server-version" checked />
+                    <label class="form-check-label" for="tableau-use-server-version">Use Tableau server version negotiation</label>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div id="simplechat-config-section" class="d-none">
             <div class="alert alert-primary mb-0">
               <strong>Built-in action:</strong> SimpleChat does not require a URL or external credentials.
@@ -1367,6 +1453,54 @@
                   <div class="d-flex flex-column">
                     <label class="text-muted small mb-1">Wait Timeout</label>
                     <span class="fw-medium" id="summary-databricks-wait-timeout">-</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card mb-3 border-0 shadow-sm d-none" id="summary-tableau-section">
+            <div class="card-header text-white p-3" style="background: linear-gradient(135deg, #0d6efd 0%, #0a58ca 100%);">
+              <h6 class="mb-0 fw-bold">
+                <i class="bi bi-bar-chart me-2"></i>Tableau Configuration
+              </h6>
+            </div>
+            <div class="card-body p-3">
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Site Content URL</label>
+                    <span class="fw-medium" id="summary-tableau-site-content-url">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Authentication</label>
+                    <span class="fw-medium" id="summary-tableau-auth-method">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Page Size</label>
+                    <span class="fw-medium" id="summary-tableau-page-size">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Max Results</label>
+                    <span class="fw-medium" id="summary-tableau-max-results">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Timeout</label>
+                    <span class="fw-medium" id="summary-tableau-timeout">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Server Version Negotiation</label>
+                    <span class="fw-medium" id="summary-tableau-use-server-version">-</span>
                   </div>
                 </div>
               </div>

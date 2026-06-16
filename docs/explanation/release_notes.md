@@ -1,8 +1,17 @@
 <!-- BEGIN release_notes.md BLOCK -->
 
-This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.241.201, and the per-version entries continue immediately after it.
+This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.241.210, and the per-version entries continue immediately after it.
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
+
+### **(v0.241.210)**
+
+#### New Features
+
+*   **Tableau Action**
+    *   Added a first-class, read-only Tableau action powered by `tableauserverclient` for discovering Tableau Server and Tableau Cloud projects, workbooks, views, datasources, and workbook details.
+    *   Added a dedicated Tableau action configuration workflow with server/site fields, PAT and username/password authentication, reusable workspace identity support, discovery limits, schemas, health validation, and Semantic Kernel loader integration.
+    *   (Ref: `tableau_plugin.py`, `tableau_plugin_factory.py`, `functions_tableau_operations.py`, `plugin_modal_stepper.js`, `TABLEAU_ACTION.md`)
 
 ### **(v0.241.201)**
 
