@@ -4,6 +4,15 @@ This page tracks notable Simple Chat releases and organizes the detailed change 
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.242.044)**
+
+#### New Features
+
+*   **User Settings Cache Optimization**
+    *   Added request-scoped memoization for full user settings reads and a lightweight user UI settings cache that works with Redis-enabled and no-Redis deployments.
+    *   Shared page scripts now reuse injected UI preferences for dark mode and navigation layout before falling back to the full user settings API.
+    *   (Ref: user settings cache, user UI settings cache, `functions_settings.py`, `app_settings_cache.py`, `dark-mode.js`, `sidebar.js`)
+
 ### **(v0.242.033)**
 
 #### New Features
