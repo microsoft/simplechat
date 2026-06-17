@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """
 Functional test for the Agents catalog page and agent icon/tag metadata.
-Version: 0.241.229
+Version: 0.241.231
 Implemented in: 0.241.218
 
 This test ensures the global Agents page, shared catalog APIs, safe agent
 metadata, and chat handoff contract are present and regression-resistant.
 """
 
+from datetime import datetime, timedelta, timezone
+import importlib
 from pathlib import Path
 import sys
+from types import ModuleType, SimpleNamespace
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -76,6 +79,7 @@ def test_agents_catalog_routes_and_navigation():
     assert_contains(app_route, "HEX_COLOR_PATTERN", "agents page hero color validation")
     assert_contains(backend_route, "@bpa.route('/api/agents/catalog'", "catalog API route")
     assert_contains(backend_route, "@bpa.route('/api/agents/popular'", "popular API route")
+    assert_contains(backend_route, "usage_window = str(request.args.get('usage_window')", "popular API usage-window query")
     assert_contains(app_py, "register_route_frontend_agents(app)", "Agents route registration")
     assert_contains(sidebar, "url_for('agents')", "main sidebar Agents link")
     assert_contains(short_sidebar, "url_for('agents')", "chat sidebar Agents link")
@@ -87,6 +91,7 @@ def test_agents_catalog_routes_and_navigation():
 
 def test_agents_catalog_browser_rendering_uses_safe_dom_patterns():
     script = read_repo_file("application/single_app/static/js/agents_catalog.js")
+    styles = read_repo_file("application/single_app/static/css/agents-catalog.css")
     template = read_repo_file("application/single_app/templates/agents.html")
 
     assert_contains(script, "fetch('/api/agents/catalog?include_usage=true')", "catalog fetch")
@@ -107,13 +112,29 @@ def test_agents_catalog_browser_rendering_uses_safe_dom_patterns():
     assert_contains(template, "agents_page_config.hero_primary_color", "custom hero primary color binding")
     assert_contains(template, "agents_page_config.disclaimer_markdown", "custom markdown disclaimer payload")
     assert_contains(template, "id=\"agents-new-agent-link\"", "contextual new agent link")
+    assert_not_contains(template, "id=\"agents-count-label\"", "visible shown and available counts")
+    assert_not_contains(template, "id=\"agents-results-count\"", "hidden results count")
+    assert_contains(template, "id=\"agents-popular-window-toggle\"", "popular usage-window toggle")
+    assert_contains(template, "data-agent-usage-window=\"all_time\"", "all-time popular toggle")
+    assert_contains(template, "data-agent-usage-window=\"30_days\"", "last-30-days popular toggle")
     assert_contains(template, "id=\"item-view-modal\"", "shared details modal")
     assert_not_contains(template, "id=\"agentCatalogDetailsModal\"", "legacy catalog details modal")
     assert_contains(script, "TAB_LABELS.search", "search results title")
     assert_contains(script, "syncTabsForSearch", "search tab selection handler")
+    assert_contains(script, "popularUsageWindow = 'all_time'", "default all-time popular ranking")
+    assert_contains(script, "syncPopularWindowToggle", "popular usage-window toggle sync")
+    assert_contains(script, "usage_count_all_time", "all-time usage count field")
+    assert_contains(script, "usage_count_30_days", "last-30-days usage count field")
     assert_contains(script, "attachOpenDetailsInteraction", "card click details interaction")
-    assert_contains(script, "createDetailsButton", "labeled details control")
-    assert_contains(script, "document.createTextNode('Details')", "details button label")
+    assert_contains(script, "createDetailsButton", "details icon control")
+    assert_contains(script, "agent-info-icon-btn", "icon-only details control")
+    assert_contains(script, "agent-card-media-row", "rank and icon alignment row")
+    assert_not_contains(script, "document.createTextNode('Details')", "full details button label")
+    assert_contains(styles, ".agent-row:hover", "list row hover highlight")
+    assert_contains(styles, "transform: translateY(-2px)", "workspace-style hover lift")
+    assert_contains(styles, ".agents-popular-window-toggle", "popular usage-window toggle styles")
+    assert_contains(styles, ".agent-info-icon-btn", "icon-only details control styles")
+    assert_contains(styles, ".agent-card-media-row .agent-rank", "card rank alignment styles")
     assert_contains(script, "openViewModal", "shared modal details helper")
     assert_contains(script, "scope_label: getScopeLabel(agent)", "catalog scope label handoff")
     assert_not_contains(script, "agentCatalogDetails", "legacy modal element references")
@@ -231,9 +252,93 @@ def test_agents_catalog_resolves_model_and_action_labels():
     assert_contains(catalog_helper, "_build_action_label_map", "catalog action label map")
     assert_contains(catalog_helper, "\"instructions\"", "instructions in catalog response")
     assert_contains(catalog_helper, "\"action_labels\"", "resolved action labels in catalog response")
+    assert_contains(catalog_helper, "usage_count_all_time", "all-time usage count serialization")
+    assert_contains(catalog_helper, "usage_count_30_days", "last-30-days usage count serialization")
+    assert_contains(catalog_helper, "usage_window", "popular usage-window ranking")
     assert_contains(view_utils, "agent.action_labels", "details use resolved action labels")
     assert_contains(view_utils, "agent.model_label", "details use resolved model label")
+    assert_contains(view_utils, "Times Used All Time", "details all-time usage label")
+    assert_contains(view_utils, "Times Used Last 30 Days", "details recent usage label")
     assert_contains(view_utils, "marked.parse(rawInstructions)", "details render instructions markdown")
+
+
+def test_agent_catalog_usage_windows_rank_independently():
+    stub_modules = {
+        "config": {"cosmos_activity_logs_container": SimpleNamespace(query_items=lambda **kwargs: [])},
+        "functions_appinsights": {"log_event": lambda *args, **kwargs: None},
+        "functions_assigned_knowledge": {"get_agent_assigned_knowledge": lambda *args, **kwargs: {}},
+        "functions_global_actions": {"get_global_actions": lambda *args, **kwargs: []},
+        "functions_global_agents": {"get_global_agents": lambda *args, **kwargs: []},
+        "functions_group": {"get_group_model_endpoints": lambda *args, **kwargs: [], "get_user_groups": lambda *args, **kwargs: []},
+        "functions_group_actions": {"get_group_actions": lambda *args, **kwargs: []},
+        "functions_group_agents": {"get_group_agents": lambda *args, **kwargs: []},
+        "functions_keyvault": {"SecretReturnType": SimpleNamespace(NAME="name")},
+        "functions_personal_actions": {"get_personal_actions": lambda *args, **kwargs: []},
+        "functions_personal_agents": {"ensure_migration_complete": lambda *args, **kwargs: None, "get_personal_agents": lambda *args, **kwargs: []},
+        "functions_settings": {
+            "get_settings": lambda *args, **kwargs: {},
+            "get_user_settings": lambda *args, **kwargs: {"settings": {}},
+            "normalize_model_endpoints": lambda endpoints: (endpoints or [], []),
+        },
+    }
+    original_modules = {name: sys.modules.get(name) for name in stub_modules}
+    original_catalog_module = sys.modules.pop("functions_agent_catalog", None)
+    for module_name, attributes in stub_modules.items():
+        module = ModuleType(module_name)
+        for attribute_name, value in attributes.items():
+            setattr(module, attribute_name, value)
+        sys.modules[module_name] = module
+
+    catalog_module = importlib.import_module("functions_agent_catalog")
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    records = [
+        {"agent_catalog_key": "global:global:alpha", "timestamp": (now - timedelta(days=2)).isoformat()},
+        {"agent_catalog_key": "global:global:alpha", "timestamp": (now - timedelta(days=45)).isoformat()},
+        {"agent_catalog_key": "global:global:alpha", "timestamp": (now - timedelta(days=90)).isoformat()},
+        {"agent_catalog_key": "global:global:beta", "timestamp": (now - timedelta(days=1)).isoformat()},
+        {"agent_catalog_key": "global:global:beta", "timestamp": (now - timedelta(days=3)).isoformat()},
+    ]
+
+    class FakeActivityLogContainer:
+        def query_items(self, query, parameters=None, enable_cross_partition_query=False):
+            since = None
+            for parameter in parameters or []:
+                if parameter.get("name") == "@since":
+                    since = datetime.fromisoformat(parameter.get("value"))
+
+            if since is None:
+                return list(records)
+
+            return [record for record in records if datetime.fromisoformat(record["timestamp"]) >= since]
+
+    catalog_module.cosmos_activity_logs_container = FakeActivityLogContainer()
+    try:
+        catalog = [
+            {"catalog_key": "global:global:alpha", "display_name": "Alpha"},
+            {"catalog_key": "global:global:beta", "display_name": "Beta"},
+        ]
+        catalog_module.apply_agent_usage_counts(catalog, days=30)
+
+        alpha, beta = catalog
+        assert alpha["usage_count_all_time"] == 3
+        assert alpha["usage_count_30_days"] == 1
+        assert beta["usage_count_all_time"] == 2
+        assert beta["usage_count_30_days"] == 2
+
+        all_time_names = [agent["display_name"] for agent in catalog_module.get_popular_agents(catalog, limit=2, usage_window="all_time")]
+        recent_names = [agent["display_name"] for agent in catalog_module.get_popular_agents(catalog, limit=2, usage_window="30_days")]
+        assert all_time_names == ["Alpha", "Beta"]
+        assert recent_names == ["Beta", "Alpha"]
+    finally:
+        sys.modules.pop("functions_agent_catalog", None)
+        if original_catalog_module is not None:
+            sys.modules["functions_agent_catalog"] = original_catalog_module
+        for module_name, original_module in original_modules.items():
+            if original_module is None:
+                sys.modules.pop(module_name, None)
+            else:
+                sys.modules[module_name] = original_module
 
 
 def run_tests():
@@ -248,6 +353,7 @@ def run_tests():
         test_agent_modal_icon_picker_and_upload_contract,
         test_model_icon_contract,
         test_agents_catalog_resolves_model_and_action_labels,
+        test_agent_catalog_usage_windows_rank_independently,
     ]
     results = []
     for test in tests:

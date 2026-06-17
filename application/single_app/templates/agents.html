@@ -36,7 +36,6 @@
         <div class="agents-directory-toolbar">
             <div class="min-w-0">
                 <h2 class="agents-results-title" id="agents-results-title">Popular</h2>
-                <div class="agents-results-subtitle" id="agents-count-label">Loading agents...</div>
             </div>
             <div class="agents-directory-actions">
                 <a class="btn btn-primary btn-sm d-none" id="agents-new-agent-link" href="/workspace?tab=agents&new_agent=1">
@@ -57,9 +56,13 @@
             </div>
         </div>
 
+        <div class="btn-group btn-group-sm agents-popular-window-toggle" id="agents-popular-window-toggle" role="group" aria-label="Popular agents time range">
+            <button type="button" class="btn btn-outline-secondary active" data-agent-usage-window="all_time" aria-pressed="true">Most Popular All Time</button>
+            <button type="button" class="btn btn-outline-secondary" data-agent-usage-window="30_days" aria-pressed="false">Last 30 Days</button>
+        </div>
+
         <div class="d-flex flex-wrap gap-2 d-none" id="agents-tag-filters" aria-label="Agent tag filters"></div>
         <div id="agents-catalog-alert" class="alert d-none" role="status"></div>
-        <div class="visually-hidden" id="agents-results-count">0</div>
         <div id="agents-list-view" class="agents-list"></div>
         <div id="agents-card-view" class="row g-3 d-none"></div>
     </section>

@@ -392,7 +392,8 @@ function hydrateAgentViewIcons(container, agent) {
 }
 
 function buildAgentCapabilitiesHtml(agent) {
-    const hasUsage = hasAgentValue(agent, "usage_count");
+    const hasDetailedUsage = hasAgentValue(agent, "usage_count_all_time") || hasAgentValue(agent, "usage_count_30_days");
+    const hasUsage = hasDetailedUsage || hasAgentValue(agent, "usage_count");
     const hasActions = Array.isArray(agent.action_labels)
         || Array.isArray(agent.actions_to_load)
         || Array.isArray(agent.actions)
@@ -404,16 +405,29 @@ function buildAgentCapabilitiesHtml(agent) {
 
     const actionLabels = getAgentActionLabels(agent);
     const tagLabels = normalizeDetailList(agent.tags);
-    const usageNumber = Number(agent.usage_count || 0);
-    const usageText = Number.isFinite(usageNumber) ? String(usageNumber) : normalizeDetailText(agent.usage_count);
+    const usageAllTimeNumber = Number(agent.usage_count_all_time ?? agent.usage_count ?? 0);
+    const usageRecentNumber = Number(agent.usage_count_30_days ?? agent.usage_count ?? 0);
+    const usageLegacyNumber = Number(agent.usage_count || 0);
+    const usageAllTimeText = Number.isFinite(usageAllTimeNumber) ? String(usageAllTimeNumber) : normalizeDetailText(agent.usage_count_all_time);
+    const usageRecentText = Number.isFinite(usageRecentNumber) ? String(usageRecentNumber) : normalizeDetailText(agent.usage_count_30_days);
+    const usageLegacyText = Number.isFinite(usageLegacyNumber) ? String(usageLegacyNumber) : normalizeDetailText(agent.usage_count);
+    const actionsColumnClass = hasDetailedUsage ? "col-md-4" : "col-md-8";
 
-    const usageHtml = hasUsage ? `
+    const usageHtml = hasDetailedUsage ? `
+                    <div class="col-md-4">
+                        <label class="text-muted small mb-1 d-block">Times Used All Time</label>
+                        <span class="fw-medium">${escapeHtml(usageAllTimeText || "0")}</span>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="text-muted small mb-1 d-block">Times Used Last 30 Days</label>
+                        <span class="fw-medium">${escapeHtml(usageRecentText || "0")}</span>
+                    </div>` : hasUsage ? `
                     <div class="col-md-4">
                         <label class="text-muted small mb-1 d-block">Times Used</label>
-                        <span class="fw-medium">${escapeHtml(usageText || "0")}</span>
+                        <span class="fw-medium">${escapeHtml(usageLegacyText || "0")}</span>
                     </div>` : "";
     const actionsHtml = hasActions ? `
-                    <div class="col-md-8">
+                    <div class="${actionsColumnClass}">
                         <label class="text-muted small mb-1 d-block">Actions</label>
                         <div>${buildBadgeListHtml(actionLabels, "No actions assigned")}</div>
                     </div>` : "";

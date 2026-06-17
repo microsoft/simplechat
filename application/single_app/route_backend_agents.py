@@ -1269,10 +1269,11 @@ def get_popular_agents_catalog():
         limit = int(request.args.get('limit') or 3)
     except (TypeError, ValueError):
         limit = 3
+    usage_window = str(request.args.get('usage_window') or request.args.get('window') or '30_days').strip().lower()
     try:
         catalog = build_accessible_agent_catalog(user_id, settings=get_settings())
         catalog = apply_agent_usage_counts(catalog)
-        return jsonify({'agents': get_popular_agents(catalog, limit=limit)}), 200
+        return jsonify({'agents': get_popular_agents(catalog, limit=limit, usage_window=usage_window)}), 200
     except Exception as exc:
         log_event(
             '[AgentsCatalog] Failed to load popular agents.',

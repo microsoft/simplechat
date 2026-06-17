@@ -1,10 +1,11 @@
 # test_agents_catalog_details_modal.py
 """
 UI test for the Agents catalog details modal.
-Version: 0.241.229
+Version: 0.241.231
 Implemented in: 0.241.225
 
-This test ensures the Agents tab uses the shared workspace-style details modal
+This test ensures the Agents tab uses the shared workspace-style details modal,
+opens details from the row/card surface, supports Popular time-window filters,
 and renders agent instructions as sanitized Markdown.
 """
 
@@ -66,12 +67,37 @@ def test_agents_catalog_details_modal_renders_markdown(playwright):
                 "scope_name": None,
                 "model_id": "gpt-5-mini",
                 "model_label": "GPT 5 Mini",
-                "usage_count": 4,
+                "usage_count": 2,
+                "usage_count_all_time": 7,
+                "usage_count_30_days": 2,
                 "actions_to_load": ["document_search"],
                 "action_labels": ["Document Search"],
                 "tags": ["Markdown", "Catalog"],
                 "icon": {"kind": "image", "value": icon_data_url},
                 "catalog_key": "global:global:agent-markdown-1",
+            },
+            {
+                "id": "agent-recent-1",
+                "name": "recent_catalog_agent",
+                "display_name": "Recent Catalog Agent",
+                "description": "Shows the recent popularity window.",
+                "instructions": "Recent usage helper.",
+                "agent_type": "local",
+                "is_global": True,
+                "is_group": False,
+                "scope_type": "global",
+                "scope_id": "global",
+                "scope_name": None,
+                "model_id": "gpt-5-mini",
+                "model_label": "GPT 5 Mini",
+                "usage_count": 5,
+                "usage_count_all_time": 3,
+                "usage_count_30_days": 5,
+                "actions_to_load": [],
+                "action_labels": [],
+                "tags": ["Recent"],
+                "icon": {"kind": "bootstrap", "value": "bi-clock-history"},
+                "catalog_key": "global:global:agent-recent-1",
             }
         ]
     }
@@ -85,10 +111,24 @@ def test_agents_catalog_details_modal_renders_markdown(playwright):
 
         expect(page.get_by_role("heading", name="Find your next AI partner")).to_be_visible()
         expect(page.get_by_role("button", name="Search")).to_be_visible()
-        expect(page.locator("#agents-list-view .agent-row .agent-icon img")).to_have_attribute("src", icon_data_url)
-        expect(page.locator("#agents-list-view .agent-row").first.get_by_role("button", name="Details")).to_be_visible()
+        expect(page.locator("#agents-count-label")).to_have_count(0)
+        expect(page.locator("#agents-results-count")).to_have_count(0)
+        expect(page.locator("#agents-list-view .agent-row").first).to_contain_text("Markdown Catalog Agent")
+        expect(page.get_by_role("button", name="Most Popular All Time")).to_have_attribute("aria-pressed", "true")
+        page.get_by_role("button", name="Last 30 Days").click()
+        expect(page.get_by_role("button", name="Last 30 Days")).to_have_attribute("aria-pressed", "true")
+        expect(page.locator("#agents-list-view .agent-row").first).to_contain_text("Recent Catalog Agent")
+        page.get_by_role("button", name="Most Popular All Time").click()
+        expect(page.locator("#agents-list-view .agent-row").first).to_contain_text("Markdown Catalog Agent")
+        agent_row = page.locator("#agents-list-view .agent-row").first
+        expect(agent_row.locator(".agent-icon img")).to_have_attribute("src", icon_data_url)
+        expect(agent_row.locator(".agent-info-icon-btn")).to_have_attribute(
+            "aria-label",
+            "View details for Markdown Catalog Agent",
+        )
+        expect(agent_row.get_by_text("Details", exact=True)).to_have_count(0)
 
-        page.locator("#agents-list-view .agent-row").first.click()
+        agent_row.click()
 
         modal = page.locator("#item-view-modal")
         expect(modal).to_be_visible()
@@ -97,7 +137,10 @@ def test_agents_catalog_details_modal_renders_markdown(playwright):
         expect(modal).to_contain_text("Enterprise")
         expect(modal).to_contain_text("GPT 5 Mini")
         expect(modal).to_contain_text("Document Search")
-        expect(modal).to_contain_text("Times Used")
+        expect(modal).to_contain_text("Times Used All Time")
+        expect(modal).to_contain_text("Times Used Last 30 Days")
+        expect(modal).to_contain_text("7")
+        expect(modal).to_contain_text("2")
         expect(modal.locator(".agent-view-icon img")).to_have_attribute("src", icon_data_url)
 
         markdown_heading = modal.locator(".rendered-markdown h1")

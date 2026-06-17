@@ -179,6 +179,14 @@
   justify-content: flex-end;
 }
 
+.agents-popular-window-toggle {
+  margin: 0 0 0.75rem;
+}
+
+.agents-popular-window-toggle .btn {
+  font-weight: 700;
+}
+
 .agents-list {
   display: flex;
   flex-direction: column;
@@ -196,15 +204,17 @@
   grid-template-columns: 1.5rem 48px minmax(0, 1fr) 88px;
   min-height: 104px;
   padding: 0.9rem 1rem;
-  transition: background-color 0.2s ease, border-color 0.2s ease;
+  transition: all 0.3s ease;
 }
 
 .agent-row:hover,
 .agent-row:focus-visible {
-  background: #f8fafc;
-  border-color: transparent;
-  box-shadow: none;
-  transform: none;
+  background: var(--bs-body-bg);
+  border-color: #adb5bd;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+  position: relative;
+  transform: translateY(-2px);
+  z-index: 1;
 }
 
 .agent-row:not(:last-child) {
@@ -216,10 +226,14 @@
 }
 
 .agent-rank {
+  align-items: center;
   align-self: center;
   color: var(--bs-body-color);
+  display: inline-flex;
   font-size: 0.95rem;
   font-weight: 700;
+  height: 48px;
+  justify-content: center;
   min-width: 2rem;
   text-align: right;
 }
@@ -318,8 +332,23 @@
   min-height: 230px;
 }
 
+.agent-card-media-row .agent-rank {
+  flex: 0 0 2rem;
+}
+
+.agent-info-icon-btn {
+  min-width: 2.25rem;
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+  width: 2.25rem;
+}
+
 .agent-details-btn i {
   margin-right: 0.25rem;
+}
+
+.agent-info-icon-btn i {
+  margin-right: 0;
 }
 
 .min-w-0 {
@@ -359,6 +388,15 @@
   .agents-directory-actions {
     justify-content: flex-start;
     width: 100%;
+  }
+
+  .agents-popular-window-toggle {
+    display: flex;
+    width: 100%;
+  }
+
+  .agents-popular-window-toggle .btn {
+    flex: 1 1 0;
   }
 
   .agent-row {

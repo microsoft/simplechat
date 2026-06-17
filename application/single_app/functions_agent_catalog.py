@@ -25,6 +25,8 @@ def build_agent_catalog_key(agent: Dict[str, Any]) -> str:
         return ""
 
     scope_type = str(agent.get("scope_type") or "").strip().lower()
+    if scope_type == "enterprise":
+        scope_type = "global"
     if not scope_type:
         if agent.get("is_group"):
             scope_type = "group"
@@ -314,68 +316,113 @@ def build_accessible_agent_catalog(
     return catalog
 
 
-def apply_agent_usage_counts(
-    catalog: List[Dict[str, Any]],
+def _resolve_usage_catalog_key(record: Dict[str, Any]) -> str:
+    key = str(record.get("agent_catalog_key") or "").strip()
+    if key:
+        return key
+
+    agent = record.get("agent") if isinstance(record.get("agent"), dict) else {}
+    workspace_context = record.get("workspace_context") if isinstance(record.get("workspace_context"), dict) else {}
+    return build_agent_catalog_key({
+        "id": agent.get("id"),
+        "name": agent.get("name"),
+        "scope_type": record.get("workspace_type"),
+        "scope_id": workspace_context.get("group_id") or record.get("user_id"),
+        "group_id": workspace_context.get("group_id"),
+        "user_id": record.get("user_id"),
+    })
+
+
+def _load_agent_usage_counts(
+    catalog_keys: Iterable[str],
     *,
-    days: int = 30,
-) -> List[Dict[str, Any]]:
-    """Attach recent usage counts to catalog records."""
-    if not catalog:
-        return catalog
+    since: Optional[str] = None,
+) -> Dict[str, int]:
+    resolved_keys = {key for key in catalog_keys if key}
+    if not resolved_keys:
+        return {}
 
-    catalog_keys = {agent.get("catalog_key") for agent in catalog if agent.get("catalog_key")}
-    if not catalog_keys:
-        return catalog
-
-    since = (datetime.utcnow() - timedelta(days=max(1, int(days or 30)))).isoformat()
     counts: Dict[str, int] = {}
     try:
         query = """
-            SELECT c.agent_catalog_key, c.agent, c.workspace_type, c.workspace_context
+            SELECT c.agent_catalog_key, c.agent, c.workspace_type, c.workspace_context, c.user_id
             FROM c
-            WHERE c.activity_type = 'agent_run' AND c.timestamp >= @since
+            WHERE c.activity_type = 'agent_run'
         """
-        parameters = [{"name": "@since", "value": since}]
+        parameters = []
+        if since:
+            query += " AND c.timestamp >= @since"
+            parameters.append({"name": "@since", "value": since})
+
         records = cosmos_activity_logs_container.query_items(
             query=query,
             parameters=parameters,
             enable_cross_partition_query=True,
         )
         for record in records:
-            key = str(record.get("agent_catalog_key") or "").strip()
-            if not key:
-                agent = record.get("agent") if isinstance(record.get("agent"), dict) else {}
-                workspace_context = record.get("workspace_context") if isinstance(record.get("workspace_context"), dict) else {}
-                key = build_agent_catalog_key({
-                    "id": agent.get("id"),
-                    "name": agent.get("name"),
-                    "scope_type": record.get("workspace_type"),
-                    "scope_id": workspace_context.get("group_id") or record.get("user_id"),
-                    "group_id": workspace_context.get("group_id"),
-                    "user_id": record.get("user_id"),
-                })
-            if key in catalog_keys:
+            key = _resolve_usage_catalog_key(record)
+            if key in resolved_keys:
                 counts[key] = counts.get(key, 0) + 1
     except Exception as exc:
         log_event(
             "[AgentCatalog] Failed to load agent usage counts.",
-            extra={"error": str(exc)},
+            extra={"error": str(exc), "since": since or "all_time"},
             level=logging.WARNING,
             exceptionTraceback=True,
         )
 
+    return counts
+
+
+def apply_agent_usage_counts(
+    catalog: List[Dict[str, Any]],
+    *,
+    days: int = 30,
+) -> List[Dict[str, Any]]:
+    """Attach all-time and recent usage counts to catalog records."""
+    if not catalog:
+        return catalog
+
+    catalog_keys = {agent.get("catalog_key") for agent in catalog if agent.get("catalog_key")}
+    if not catalog_keys:
+        for agent in catalog:
+            agent["usage_count_all_time"] = 0
+            agent["usage_count_30_days"] = 0
+            agent["usage_count"] = 0
+        return catalog
+
+    since = (datetime.utcnow() - timedelta(days=max(1, int(days or 30)))).isoformat()
+    all_time_counts = _load_agent_usage_counts(catalog_keys)
+    recent_counts = _load_agent_usage_counts(catalog_keys, since=since)
+
     for agent in catalog:
-        agent["usage_count"] = counts.get(agent.get("catalog_key"), 0)
+        catalog_key = agent.get("catalog_key")
+        agent["usage_count_all_time"] = all_time_counts.get(catalog_key, 0)
+        agent["usage_count_30_days"] = recent_counts.get(catalog_key, 0)
+        agent["usage_count"] = agent["usage_count_30_days"]
 
     return catalog
 
 
-def get_popular_agents(catalog: List[Dict[str, Any]], limit: int = 3) -> List[Dict[str, Any]]:
+def _get_usage_count(agent: Dict[str, Any], usage_field: str) -> int:
+    try:
+        return int(agent.get(usage_field) or agent.get("usage_count") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def get_popular_agents(
+    catalog: List[Dict[str, Any]],
+    limit: int = 3,
+    usage_window: str = "30_days",
+) -> List[Dict[str, Any]]:
     """Return the most-used catalog records with nonzero usage."""
-    ranked_agents = [agent for agent in catalog if int(agent.get("usage_count") or 0) > 0]
+    normalized_window = str(usage_window or "30_days").strip().lower().replace("-", "_")
+    usage_field = "usage_count_all_time" if normalized_window in {"all", "all_time"} else "usage_count_30_days"
+    ranked_agents = [agent for agent in catalog if _get_usage_count(agent, usage_field) > 0]
     ranked_agents.sort(
         key=lambda agent: (
-            -int(agent.get("usage_count") or 0),
+            -_get_usage_count(agent, usage_field),
             str(agent.get("display_name") or agent.get("name") or "").lower(),
         )
     )

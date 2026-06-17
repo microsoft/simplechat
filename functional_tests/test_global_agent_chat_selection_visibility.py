@@ -1,7 +1,7 @@
 # test_global_agent_chat_selection_visibility.py
 """
 Functional test for global agent chat selection visibility.
-Version: 0.241.224
+Version: 0.241.231
 Implemented in: 0.241.122
 
 This test ensures global agents are exposed in chat when app agents are enabled

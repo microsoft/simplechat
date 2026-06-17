@@ -11,14 +11,14 @@ const listModeInput = document.getElementById('agents-catalog-list-mode');
 const cardModeInput = document.getElementById('agents-catalog-card-mode');
 const listView = document.getElementById('agents-list-view');
 const cardView = document.getElementById('agents-card-view');
-const resultsCount = document.getElementById('agents-results-count');
-const countLabel = document.getElementById('agents-count-label');
 const resultsTitle = document.getElementById('agents-results-title');
 const alertBox = document.getElementById('agents-catalog-alert');
 const newAgentLink = document.getElementById('agents-new-agent-link');
 const searchForm = document.getElementById('agents-catalog-search-form');
 const disclaimerMarkdownScript = document.getElementById('agents-page-disclaimer-markdown');
 const disclaimerContainer = document.getElementById('agents-page-disclaimer');
+const popularWindowToggle = document.getElementById('agents-popular-window-toggle');
+const popularWindowButtons = Array.from(document.querySelectorAll('[data-agent-usage-window]'));
 
 const VIEW_STORAGE_KEY = 'simplechat-agents-catalog-view';
 const TAB_LABELS = Object.freeze({
@@ -33,6 +33,7 @@ const ALLOWED_BADGE_VARIANTS = new Set(['primary', 'secondary', 'success', 'info
 let allAgents = [];
 let activeTab = 'popular';
 let activeTags = new Set();
+let popularUsageWindow = 'all_time';
 let currentViewMode = localStorage.getItem(VIEW_STORAGE_KEY) === 'card' ? 'card' : 'list';
 
 function normalizeText(value) {
@@ -162,14 +163,13 @@ function createActionButton(iconClass, label, buttonClass, clickHandler) {
 function createDetailsButton(agent) {
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = 'btn btn-sm btn-outline-secondary agent-details-btn';
+    button.className = 'btn btn-sm btn-outline-secondary agent-details-btn agent-info-icon-btn';
     button.title = 'View details';
     button.setAttribute('aria-label', `View details for ${getAgentDisplayName(agent)}`);
     const icon = document.createElement('i');
     icon.className = 'bi bi-info-circle';
     icon.setAttribute('aria-hidden', 'true');
     button.appendChild(icon);
-    button.appendChild(document.createTextNode('Details'));
     button.addEventListener('click', event => {
         event.preventDefault();
         event.stopPropagation();
@@ -264,7 +264,7 @@ function createAgentCard(agent, index = null) {
     body.className = 'card-body';
 
     const topRow = document.createElement('div');
-    topRow.className = 'd-flex align-items-start gap-3 mb-2';
+    topRow.className = 'agent-card-media-row d-flex align-items-center gap-3 mb-2';
     if (index !== null) {
         const rank = document.createElement('div');
         rank.className = 'agent-rank';
@@ -300,11 +300,17 @@ function getSearchableText(agent) {
     ].map(normalizeText).join(' ').toLowerCase();
 }
 
+function getAgentUsageCount(agent, usageWindow = popularUsageWindow) {
+    const usageProperty = usageWindow === '30_days' ? 'usage_count_30_days' : 'usage_count_all_time';
+    const count = Number(agent?.[usageProperty] ?? agent?.usage_count ?? 0);
+    return Number.isFinite(count) ? count : 0;
+}
+
 function getPopularAgents() {
     return allAgents
-        .filter(agent => Number(agent.usage_count || 0) > 0)
+        .filter(agent => getAgentUsageCount(agent) > 0)
         .sort((left, right) => {
-            const usageDelta = Number(right.usage_count || 0) - Number(left.usage_count || 0);
+            const usageDelta = getAgentUsageCount(right) - getAgentUsageCount(left);
             if (usageDelta !== 0) {
                 return usageDelta;
             }
@@ -375,6 +381,17 @@ function syncTabsForSearch() {
     });
 }
 
+function syncPopularWindowToggle() {
+    const hasSearch = Boolean(normalizeText(catalogSearch?.value));
+    const isPopularView = !hasSearch && activeTab === 'popular';
+    popularWindowToggle?.classList.toggle('d-none', !isPopularView);
+    popularWindowButtons.forEach(button => {
+        const isActive = button.dataset.agentUsageWindow === popularUsageWindow;
+        button.classList.toggle('active', isActive);
+        button.setAttribute('aria-pressed', String(isActive));
+    });
+}
+
 function applyViewMode() {
     if (listModeInput) {
         listModeInput.checked = currentViewMode === 'list';
@@ -411,23 +428,18 @@ function syncNewAgentLink() {
     newAgentLink.classList.toggle('d-none', !visible);
 }
 
-function updateResultsCopy(visibleAgents) {
+function updateResultsCopy() {
     const searchTerm = normalizeText(catalogSearch?.value);
     const title = searchTerm ? TAB_LABELS.search : TAB_LABELS[activeTab] || 'Agents';
     if (resultsTitle) {
         resultsTitle.textContent = title;
-    }
-    if (countLabel) {
-        countLabel.textContent = `${visibleAgents.length} shown · ${allAgents.length} available`;
-    }
-    if (resultsCount) {
-        resultsCount.textContent = String(visibleAgents.length);
     }
 }
 
 function renderCatalog() {
     const visibleAgents = getVisibleAgents();
     syncTabsForSearch();
+    syncPopularWindowToggle();
     renderTagFilters(visibleAgents);
     clearElement(listView);
     clearElement(cardView);
@@ -446,7 +458,7 @@ function renderCatalog() {
         cardView.appendChild(empty);
     }
 
-    updateResultsCopy(visibleAgents);
+    updateResultsCopy();
     syncNewAgentLink();
     applyViewMode();
 }
@@ -572,6 +584,12 @@ function initialize() {
     catalogSearch?.addEventListener('input', renderCatalog);
     agentTabs.forEach(tab => {
         tab.addEventListener('click', () => setActiveTab(tab.dataset.agentTab || 'popular'));
+    });
+    popularWindowButtons.forEach(button => {
+        button.addEventListener('click', () => {
+            popularUsageWindow = button.dataset.agentUsageWindow === '30_days' ? '30_days' : 'all_time';
+            renderCatalog();
+        });
     });
     listModeInput?.addEventListener('change', () => {
         if (listModeInput.checked) {
