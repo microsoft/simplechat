@@ -44,6 +44,7 @@ from route_frontend_admin_settings import *
 from route_frontend_control_center import *
 from route_frontend_workspace import *
 from route_frontend_chats import *
+from route_frontend_agents import *
 from route_frontend_conversations import *
 from route_frontend_groups import *
 from route_frontend_group_workspaces import *
@@ -870,6 +871,9 @@ register_route_frontend_control_center(app)
 
 # ------------------- Chats Routes -----------------------
 register_route_frontend_chats(app)
+
+# ------------------- Agents Catalog Routes --------------
+register_route_frontend_agents(app)
 
 # ------------------- Conversations Routes ---------------
 register_route_frontend_conversations(app)

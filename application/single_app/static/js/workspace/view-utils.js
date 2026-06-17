@@ -39,9 +39,9 @@ export function truncateDescription(text, maxLen = 100) {
  * Escape HTML entities to prevent XSS.
  */
 export function escapeHtml(str) {
-    if (!str) return "";
-    return str.replace(/[&<>"']/g, (c) =>
-        ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
+    if (str === null || str === undefined) return "";
+    return String(str).replace(/[&<>"']/g, (character) =>
+        ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character])
     );
 }
 
@@ -208,6 +208,7 @@ export function openViewModal(item, type, callbacks = {}) {
     if (type === "agent") {
         titleEl.textContent = "Agent Details";
         bodyEl.innerHTML = buildAgentViewHtml(item);
+        hydrateAgentViewIcons(bodyEl, item);
     } else if (type === "prompt") {
         titleEl.textContent = "Prompt Details";
         bodyEl.innerHTML = buildPromptViewHtml(item);
@@ -267,27 +268,185 @@ export function openViewModal(item, type, callbacks = {}) {
     modal.show();
 }
 
+function normalizeDetailText(value) {
+    return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function normalizeDetailList(value) {
+    if (!Array.isArray(value)) return [];
+    return value
+        .map(item => {
+            if (item && typeof item === "object") {
+                return normalizeDetailText(item.display_name || item.displayName || item.name || item.label);
+            }
+            return normalizeDetailText(item);
+        })
+        .filter(Boolean);
+}
+
+function hasAgentValue(agent, propertyName) {
+    return Object.prototype.hasOwnProperty.call(agent, propertyName)
+        && agent[propertyName] !== null
+        && agent[propertyName] !== undefined
+        && agent[propertyName] !== "";
+}
+
+function getAgentModelLabel(agent) {
+    return normalizeDetailText(
+        agent.azure_openai_gpt_deployment
+        || agent.model_label
+        || agent.model
+        || agent.model_id
+        || agent.azure_openai_gpt_model
+        || "Default"
+    );
+}
+
+function formatAgentType(agent) {
+    const rawType = normalizeDetailText(agent.agent_type || agent.type).toLowerCase();
+    const typeLabels = {
+        aifoundry: "Foundry (classic)",
+        foundry_workflow: "Foundry Workflow",
+        local: "Local (Semantic Kernel)",
+        new_foundry: "New Foundry",
+    };
+    return typeLabels[rawType] || (rawType ? humanizeName(rawType) : "Local (Semantic Kernel)");
+}
+
+function getAgentScopeBadgeHtml(agent) {
+    const scopeType = normalizeDetailText(agent.scope_type || agent.scopeType).toLowerCase();
+    if (agent.is_group || scopeType === "group") {
+        const groupLabel = normalizeDetailText(agent.scope_label || agent.group_name || agent.scope_name || "Group");
+        return `<span class="badge bg-primary">${escapeHtml(groupLabel)}</span>`;
+    }
+
+    if (agent.is_global || scopeType === "global" || scopeType === "enterprise") {
+        const defaultGlobalLabel = scopeType === "enterprise" ? "Enterprise" : "Global";
+        const globalLabel = normalizeDetailText(agent.scope_label || agent.scope_name || defaultGlobalLabel);
+        return `<span class="badge bg-info text-dark">${escapeHtml(globalLabel)}</span>`;
+    }
+
+    const personalLabel = normalizeDetailText(agent.scope_label || agent.scope_name || "Personal");
+    return `<span class="badge bg-secondary">${escapeHtml(personalLabel)}</span>`;
+}
+
+function getAgentActionLabels(agent) {
+    const actionLabels = normalizeDetailList(agent.action_labels);
+    if (actionLabels.length || Array.isArray(agent.action_labels)) {
+        return actionLabels;
+    }
+
+    return normalizeDetailList(agent.actions_to_load || agent.actions || agent.plugins);
+}
+
+function buildBadgeListHtml(values, fallbackText) {
+    if (!values.length) {
+        return `<span class="text-muted">${escapeHtml(fallbackText)}</span>`;
+    }
+
+    return values
+        .map(value => `<span class="badge bg-light text-dark border me-1 mb-1">${escapeHtml(value)}</span>`)
+        .join("");
+}
+
+function normalizeAgentIconPayload(iconPayload) {
+    if (!iconPayload || typeof iconPayload !== "object" || Array.isArray(iconPayload)) {
+        return null;
+    }
+
+    const kind = normalizeDetailText(iconPayload.kind).toLowerCase();
+    const value = normalizeDetailText(iconPayload.value);
+    if (kind === "bootstrap" && /^bi-[a-z0-9][a-z0-9-]{0,80}$/.test(value)) {
+        return { kind, value };
+    }
+    if (kind === "image" && /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(value) && value.length <= 350000) {
+        return { kind, value };
+    }
+    return null;
+}
+
+function appendAgentIconContent(container, agent, className = "agent-view-icon") {
+    if (!container) return;
+
+    container.textContent = "";
+    container.className = className;
+    const icon = normalizeAgentIconPayload(agent?.icon);
+    if (icon?.kind === "image") {
+        const image = document.createElement("img");
+        image.src = icon.value;
+        image.alt = "";
+        container.appendChild(image);
+        return;
+    }
+
+    const iconElement = document.createElement("i");
+    iconElement.className = `bi ${icon?.kind === "bootstrap" ? icon.value : "bi-robot"}`;
+    iconElement.setAttribute("aria-hidden", "true");
+    container.appendChild(iconElement);
+}
+
+function hydrateAgentViewIcons(container, agent) {
+    container
+        ?.querySelectorAll("[data-agent-view-icon]")
+        .forEach(iconContainer => appendAgentIconContent(iconContainer, agent, "agent-view-icon"));
+}
+
+function buildAgentCapabilitiesHtml(agent) {
+    const hasUsage = hasAgentValue(agent, "usage_count");
+    const hasActions = Array.isArray(agent.action_labels)
+        || Array.isArray(agent.actions_to_load)
+        || Array.isArray(agent.actions)
+        || Array.isArray(agent.plugins);
+    const hasTags = Array.isArray(agent.tags);
+    if (!hasUsage && !hasActions && !hasTags) {
+        return "";
+    }
+
+    const actionLabels = getAgentActionLabels(agent);
+    const tagLabels = normalizeDetailList(agent.tags);
+    const usageNumber = Number(agent.usage_count || 0);
+    const usageText = Number.isFinite(usageNumber) ? String(usageNumber) : normalizeDetailText(agent.usage_count);
+
+    const usageHtml = hasUsage ? `
+                    <div class="col-md-4">
+                        <label class="text-muted small mb-1 d-block">Times Used</label>
+                        <span class="fw-medium">${escapeHtml(usageText || "0")}</span>
+                    </div>` : "";
+    const actionsHtml = hasActions ? `
+                    <div class="col-md-8">
+                        <label class="text-muted small mb-1 d-block">Actions</label>
+                        <div>${buildBadgeListHtml(actionLabels, "No actions assigned")}</div>
+                    </div>` : "";
+    const tagsHtml = hasTags ? `
+                    <div class="col-12">
+                        <label class="text-muted small mb-1 d-block">Tags</label>
+                        <div>${buildBadgeListHtml(tagLabels, "No tags assigned")}</div>
+                    </div>` : "";
+
+    return `
+        <div class="card mb-3 border-0 shadow-sm">
+            <div class="card-header text-white py-2" style="background: linear-gradient(135deg, #6f42c1 0%, #4c2c92 100%);">
+                <i class="bi bi-lightning-charge me-2"></i><strong>Capabilities</strong>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+${usageHtml}${actionsHtml}${tagsHtml}
+                </div>
+            </div>
+        </div>`;
+}
+
 function buildAgentViewHtml(agent) {
     const displayName = escapeHtml(agent.display_name || agent.displayName || agent.name || "");
     const name = escapeHtml(agent.name || "");
     const description = escapeHtml(agent.description || "No description available.");
-    const model = escapeHtml(agent.azure_openai_gpt_deployment || agent.model || "Default");
-    const agentType = agent.agent_type === "foundry_workflow"
-        ? "Foundry Workflow"
-        : agent.agent_type === "new_foundry"
-        ? "New Foundry"
-        : agent.agent_type === "aifoundry"
-            ? "Foundry (classic)"
-            : "Local (Semantic Kernel)";
-    const rawInstructions = agent.instructions || "No instructions defined.";
-    // Render instructions as Markdown (marked + DOMPurify are loaded globally in base.html)
+    const model = escapeHtml(getAgentModelLabel(agent));
+    const agentType = escapeHtml(formatAgentType(agent));
+    const rawInstructions = String(agent.instructions || "No instructions defined.");
     const renderedInstructions = (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined')
         ? DOMPurify.sanitize(marked.parse(rawInstructions))
         : escapeHtml(rawInstructions);
-    const isGlobal = agent.is_global;
-    const scopeBadge = isGlobal
-        ? '<span class="badge bg-info text-dark">Global</span>'
-        : '<span class="badge bg-secondary">Personal</span>';
+    const scopeBadge = getAgentScopeBadgeHtml(agent);
 
     return `
         <div class="card mb-3 border-0 shadow-sm">
@@ -296,11 +455,15 @@ function buildAgentViewHtml(agent) {
             </div>
             <div class="card-body">
                 <div class="row g-3">
-                    <div class="col-md-6">
+                    <div class="col-md-2">
+                        <label class="text-muted small mb-1 d-block">Icon</label>
+                        <div class="agent-view-icon" data-agent-view-icon aria-hidden="true"></div>
+                    </div>
+                    <div class="col-md-5">
                         <label class="text-muted small mb-1 d-block">Display Name</label>
                         <span class="fw-medium">${displayName}</span>
                     </div>
-                    <div class="col-md-6">
+                    <div class="col-md-5">
                         <label class="text-muted small mb-1 d-block">Generated Name</label>
                         <span class="fw-medium font-monospace">${name}</span>
                     </div>
@@ -310,7 +473,7 @@ function buildAgentViewHtml(agent) {
                     </div>
                     <div class="col-md-6">
                         <label class="text-muted small mb-1 d-block">Agent Type</label>
-                        <span class="badge bg-info text-dark">${escapeHtml(agentType)}</span>
+                        <span class="badge bg-info text-dark">${agentType}</span>
                     </div>
                     <div class="col-12">
                         <label class="text-muted small mb-1 d-block">Description</label>
@@ -332,6 +495,7 @@ function buildAgentViewHtml(agent) {
                 </div>
             </div>
         </div>
+        ${buildAgentCapabilitiesHtml(agent)}
         <div class="card mb-3 border-0 shadow-sm">
             <div class="card-header text-white py-2" style="background: linear-gradient(135deg, #28a745 0%, #1e7e34 100%);">
                 <i class="bi bi-file-text me-2"></i><strong>Instructions</strong>
@@ -496,9 +660,7 @@ export function createAgentCard(agent, options = {}) {
     col.innerHTML = `
         <div class="card item-card h-100">
             <div class="card-body d-flex flex-column">
-                <div class="item-card-icon mb-2">
-                    <i class="bi bi-robot" style="font-size: 1.75rem;"></i>
-                </div>
+                <div class="item-card-icon mb-2" data-agent-card-icon></div>
                 <h6 class="card-title mb-1">${escapeHtml(displayName)}${badgeHtml}</h6>
                 <p class="card-text small text-muted flex-grow-1">${escapeHtml(truncateDescription(description, 120))}</p>
                 <div class="item-card-buttons mt-2 d-flex flex-wrap gap-1">
@@ -506,6 +668,8 @@ export function createAgentCard(agent, options = {}) {
                 </div>
             </div>
         </div>`;
+
+    appendAgentIconContent(col.querySelector("[data-agent-card-icon]"), agent, "item-card-icon mb-2");
 
     // Bind button events
     const chatBtn = col.querySelector(".item-card-chat-btn");

@@ -2177,6 +2177,66 @@ def log_agent_deletion(
         debug_print(f"⚠️  Warning: Failed to log agent deletion: {str(e)}")
 
 
+def log_agent_run(
+    user_id: str,
+    agent_id: Optional[str],
+    agent_name: str,
+    agent_display_name: Optional[str] = None,
+    scope: str = 'personal',
+    group_id: Optional[str] = None,
+    conversation_id: Optional[str] = None,
+    message_id: Optional[str] = None,
+    model: Optional[str] = None,
+    agent_catalog_key: Optional[str] = None
+) -> None:
+    """Log an agent runtime invocation for analytics and popularity ranking."""
+    try:
+        workspace_context = {}
+        if scope == 'group' and group_id:
+            workspace_context['group_id'] = group_id
+
+        activity_record = {
+            'id': str(uuid.uuid4()),
+            'user_id': user_id,
+            'activity_type': 'agent_run',
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'entity_type': 'agent',
+            'operation': 'run',
+            'agent_catalog_key': agent_catalog_key,
+            'agent': {
+                'id': agent_id,
+                'name': agent_name,
+                'display_name': agent_display_name or agent_name,
+            },
+            'workspace_type': scope,
+            'workspace_context': workspace_context,
+            'conversation_id': conversation_id,
+            'message_id': message_id,
+            'model_deployment_name': model,
+        }
+        cosmos_activity_logs_container.create_item(body=activity_record)
+        log_event(
+            message=f"[AgentRun] Agent used: {agent_name} ({scope}) by user {user_id}",
+            extra=activity_record,
+            level=logging.INFO,
+        )
+        debug_print(f"Agent run logged: {agent_name} ({scope})")
+    except Exception as e:
+        log_event(
+            message=f"[AgentRun] Error logging agent run: {str(e)}",
+            extra={
+                'user_id': user_id,
+                'agent_id': agent_id,
+                'agent_name': agent_name,
+                'scope': scope,
+                'error': str(e),
+            },
+            level=logging.ERROR,
+        )
+        debug_print(f"Warning: Failed to log agent run: {str(e)}")
+
+
 def log_action_creation(
     user_id: str,
     action_id: str,

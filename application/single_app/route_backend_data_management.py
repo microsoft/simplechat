@@ -26,6 +26,9 @@ from functions_data_management import (
     summarize_data_management_migration_plan,
     submit_data_management_job,
     test_backup_storage_connection,
+    test_target_cosmos_connection,
+    test_target_enhanced_citation_storage_connection,
+    test_target_search_connection,
     update_data_management_settings,
 )
 from swagger_wrapper import get_auth_security, swagger_route
@@ -138,6 +141,64 @@ def register_route_backend_data_management(app):
                 level=logging.WARNING,
             )
             return jsonify({"success": False, "error": "Backup storage connection test failed."}), 400
+        return jsonify(result), 200
+
+    @app.route("/api/admin/data-management/target/cosmos/test", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def test_admin_data_management_target_cosmos():
+        payload = request.get_json(silent=True) or {}
+        settings_payload = payload.get("settings") if isinstance(payload.get("settings"), dict) else None
+        try:
+            result = test_target_cosmos_connection(settings=settings_payload)
+        except Exception as exc:
+            log_event(
+                "[DataManagement] Target Cosmos connection test failed.",
+                {"error": str(exc)},
+                level=logging.WARNING,
+            )
+            return jsonify({"success": False, "error": "Target Cosmos connection test failed."}), 400
+        return jsonify(result), 200
+
+    @app.route("/api/admin/data-management/target/search/test", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def test_admin_data_management_target_search():
+        payload = request.get_json(silent=True) or {}
+        settings_payload = payload.get("settings") if isinstance(payload.get("settings"), dict) else None
+        try:
+            result = test_target_search_connection(settings=settings_payload)
+        except Exception as exc:
+            log_event(
+                "[DataManagement] Target Search connection test failed.",
+                {"error": str(exc)},
+                level=logging.WARNING,
+            )
+            return jsonify({"success": False, "error": "Target Search connection test failed."}), 400
+        return jsonify(result), 200
+
+    @app.route("/api/admin/data-management/target/enhanced-citation-storage/test", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def test_admin_data_management_target_enhanced_citation_storage():
+        payload = request.get_json(silent=True) or {}
+        settings_payload = payload.get("settings") if isinstance(payload.get("settings"), dict) else None
+        create_containers = bool(payload.get("create_containers", False))
+        try:
+            result = test_target_enhanced_citation_storage_connection(
+                settings=settings_payload,
+                create_containers=create_containers,
+            )
+        except Exception as exc:
+            log_event(
+                "[DataManagement] Target Enhanced Citation Storage connection test failed.",
+                {"error": str(exc)},
+                level=logging.WARNING,
+            )
+            return jsonify({"success": False, "error": "Target Enhanced Citation Storage connection test failed."}), 400
         return jsonify(result), 200
 
     @app.route("/api/admin/data-management/jobs", methods=["GET"])

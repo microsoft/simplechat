@@ -3,6 +3,7 @@
 {% set sidebar_toggle_compact = sidebar_toggle_style == 'compact' %}
 {% set sidebar_menu_state_raw = user_settings.get('settings', {}).get('sidebarMenuState', {}) %}
 {% set sidebar_menu_state = sidebar_menu_state_raw if sidebar_menu_state_raw is mapping else {} %}
+{% set sidebar_settings = settings if settings is defined else app_settings %}
 <div id="sidebar-nav" class="d-flex flex-column bg-light border-end sidebar-expanded chat-sidebar-nav offcanvas-lg offcanvas-start" tabindex="-1" aria-labelledby="chatSidebarDrawerLabel" data-navigation-drawer="chat-rail">
 
   <div class="offcanvas-header chat-sidebar-mobile-header">
@@ -64,6 +65,11 @@
           <a class="list-group-item list-group-item-action" href="{{ url_for('chats') }}">
             <i class="bi bi-chat-dots me-2"></i>Chat
           </a>
+          {% if sidebar_settings.enable_semantic_kernel %}
+          <a class="list-group-item list-group-item-action" href="{{ url_for('agents') }}">
+            <i class="bi bi-robot me-2"></i>Agents
+          </a>
+          {% endif %}
         </div>
       </div>
 
@@ -95,6 +101,13 @@
           </a>
           {% endif %}
         </li>
+        {% if sidebar_settings.enable_semantic_kernel %}
+        <li class="nav-item">
+          <a class="nav-link d-flex align-items-center" href="{{ url_for('agents') }}">
+            <i class="bi bi-robot me-2"></i><span class="nav-text">Agents</span>
+          </a>
+        </li>
+        {% endif %}
       {% endif %}
     </ul>
 
@@ -184,7 +197,7 @@
           <div class="text-center p-2 text-muted small">Loading conversations...</div>
         </div>
       </div>
-      {% if settings.allow_user_workflows %}
+      {% if sidebar_settings.allow_user_workflows %}
       <div id="sidebar-workflow-section" class="d-none">
         <div id="sidebar-workflows-toggle" class="sidebar-section-toggle mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center" role="button" tabindex="0" aria-controls="sidebar-workflow-list-container" aria-expanded="true">
           <span class="nav-text">Workflows</span>

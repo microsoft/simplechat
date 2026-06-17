@@ -4,6 +4,8 @@
 from copy import deepcopy
 from typing import Any, Dict, List
 
+from functions_icon_utils import normalize_icon_payload
+
 _SUPPORTED_AGENT_TYPES = {"local", "aifoundry", "new_foundry", "foundry_workflow"}
 _APIM_FIELDS = [
     "azure_agent_apim_gpt_endpoint",
@@ -84,6 +86,8 @@ _MAX_FIELD_LENGTHS = {
     "model_id": 128,
     "model_provider": 32,
 }
+_MAX_AGENT_TAGS = 20
+_MAX_AGENT_TAG_LENGTH = 40
 _FOUNDRY_FIELD_LENGTHS = {
     "agent_id": 128,
     "endpoint": 2048,
@@ -221,6 +225,38 @@ def _coerce_actions(actions: Any) -> List[str]:
     return cleaned
 
 
+def _coerce_tags(tags: Any) -> List[str]:
+    if tags in (None, ""):
+        return []
+
+    if isinstance(tags, str):
+        raw_tags = tags.replace(",", "\n").splitlines()
+    elif isinstance(tags, list):
+        raw_tags = tags
+    else:
+        raise AgentPayloadError("tags must be an array of strings.")
+
+    cleaned: List[str] = []
+    seen = set()
+    for item in raw_tags:
+        if not isinstance(item, str):
+            raise AgentPayloadError("tags entries must be strings.")
+        tag = item.strip()
+        if not tag:
+            continue
+        if len(tag) > _MAX_AGENT_TAG_LENGTH:
+            raise AgentPayloadError(f"tags entries must be {_MAX_AGENT_TAG_LENGTH} characters or fewer.")
+        tag_key = tag.lower()
+        if tag_key in seen:
+            continue
+        seen.add(tag_key)
+        cleaned.append(tag)
+        if len(cleaned) > _MAX_AGENT_TAGS:
+            raise AgentPayloadError(f"tags supports at most {_MAX_AGENT_TAGS} entries.")
+
+    return cleaned
+
+
 def _coerce_other_settings(settings: Any) -> Dict[str, Any]:
     if settings in (None, ""):
         return {}
@@ -323,6 +359,11 @@ def sanitize_agent_payload(agent: Dict[str, Any]) -> Dict[str, Any]:
 
     sanitized["other_settings"] = _coerce_other_settings(sanitized.get("other_settings"))
     sanitized["actions_to_load"] = _coerce_actions(sanitized.get("actions_to_load"))
+    sanitized["tags"] = _coerce_tags(sanitized.get("tags"))
+    try:
+        sanitized["icon"] = normalize_icon_payload(sanitized.get("icon"), field_name="icon")
+    except ValueError as exc:
+        raise AgentPayloadError(str(exc)) from exc
     sanitized["max_completion_tokens"] = _coerce_completion_tokens(
         sanitized.get("max_completion_tokens")
     )

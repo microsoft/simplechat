@@ -432,6 +432,7 @@ function renderModalModels(models) {
         const modelName = model.modelName || "";
         const displayName = model.displayName || deploymentName;
         const description = model.description || "";
+        const iconClass = model.icon?.kind === "bootstrap" ? model.icon.value || "" : "";
         const modelId = model.id || generateId();
         model.id = modelId;
 
@@ -458,6 +459,10 @@ function renderModalModels(models) {
                 <label class="form-label small">Description</label>
                 <textarea class="form-control form-control-sm" rows="2" data-description-for="${modelId}">${escapeHtml(description)}</textarea>
             </div>
+            <div class="mt-2">
+                <label class="form-label small">Icon (optional)</label>
+                <input class="form-control form-control-sm" data-icon-class-for="${modelId}" value="${escapeHtml(iconClass)}" placeholder="bi-stars" />
+            </div>
         `;
 
         fragment.appendChild(wrapper);
@@ -477,10 +482,13 @@ function collectModalModels() {
         const checkbox = modelsListEl.querySelector(`input[data-model-id="${model.id}"]`);
         const deploymentInput = modelsListEl.querySelector(`input[data-deployment-name-for="${model.id}"]`);
         const displayInput = modelsListEl.querySelector(`input[data-display-name-for="${model.id}"]`);
+        const iconInput = modelsListEl.querySelector(`input[data-icon-class-for="${model.id}"]`);
         const descriptionInput = modelsListEl.querySelector(`textarea[data-description-for="${model.id}"]`);
         model.enabled = checkbox ? checkbox.checked : model.enabled;
         model.deploymentName = deploymentInput ? deploymentInput.value.trim() : model.deploymentName;
         model.displayName = displayInput ? displayInput.value.trim() : model.displayName;
+        const iconClass = iconInput ? iconInput.value.trim() : "";
+        model.icon = iconClass ? { kind: "bootstrap", value: iconClass } : {};
         model.description = descriptionInput ? descriptionInput.value.trim() : model.description;
     });
     return updated;
@@ -787,6 +795,7 @@ function addManualModel() {
         deploymentName: "",
         modelName: "",
         displayName: "",
+        icon: {},
         description: "",
         enabled: true
     });

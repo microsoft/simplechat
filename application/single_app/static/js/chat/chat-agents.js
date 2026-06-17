@@ -65,6 +65,7 @@ function initializeAgentSelector() {
         placeholderText: 'Select an Agent',
         emptyMessage: 'No agents available',
         emptySearchMessage: 'No matching agents found',
+        renderOptionContent: renderAgentOptionContent,
         dropdownConfig: FLOATING_SELECTOR_DROPDOWN_CONFIG,
     });
 
@@ -119,6 +120,56 @@ function getAgentOptionLabel(agent, duplicateCounts) {
     }
 
     return `${displayName} (${agent.name || agent.id || 'agent'})`;
+}
+
+function normalizeIconPayload(iconPayload) {
+    if (!iconPayload || typeof iconPayload !== 'object' || Array.isArray(iconPayload)) {
+        return null;
+    }
+    const kind = String(iconPayload.kind || '').trim().toLowerCase();
+    const value = String(iconPayload.value || '').trim();
+    if (kind === 'bootstrap' && /^bi-[a-z0-9][a-z0-9-]{0,80}$/.test(value)) {
+        return { kind, value };
+    }
+    if (kind === 'image' && /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(value) && value.length <= 350000) {
+        return { kind, value };
+    }
+    return null;
+}
+
+function createOptionIconElement(iconPayload) {
+    const icon = normalizeIconPayload(iconPayload);
+    if (!icon) {
+        return null;
+    }
+    if (icon.kind === 'image') {
+        const image = document.createElement('img');
+        image.src = icon.value;
+        image.alt = '';
+        image.className = 'chat-searchable-select-item-icon';
+        return image;
+    }
+    const iconWrapper = document.createElement('span');
+    iconWrapper.className = 'chat-searchable-select-item-icon';
+    const iconElement = document.createElement('i');
+    iconElement.className = `bi ${icon.value}`;
+    iconElement.setAttribute('aria-hidden', 'true');
+    iconWrapper.appendChild(iconElement);
+    return iconWrapper;
+}
+
+function renderAgentOptionContent(option, optionLabel) {
+    const wrapper = document.createElement('span');
+    wrapper.className = 'd-flex align-items-center gap-2 min-w-0';
+    const iconElement = createOptionIconElement(parseJsonObject(option.dataset.agentIcon || ''));
+    if (iconElement) {
+        wrapper.appendChild(iconElement);
+    }
+    const textEl = document.createElement('span');
+    textEl.className = 'chat-searchable-select-item-text text-truncate';
+    textEl.textContent = optionLabel;
+    wrapper.appendChild(textEl);
+    return wrapper;
 }
 
 function shouldUseConversationScopeGuard(filteringContext) {
@@ -271,6 +322,9 @@ function rebuildAgentOptions(sections, selectedAgentObj, filteringContext) {
             option.dataset.groupId = agent.group_id || '';
             option.dataset.groupName = agent.group_name || '';
             option.dataset.assignedKnowledge = JSON.stringify(agent.assigned_knowledge || { enabled: false });
+            option.dataset.agentIcon = JSON.stringify(agent.icon || {});
+            option.dataset.agentTags = JSON.stringify(Array.isArray(agent.tags) ? agent.tags : []);
+            option.dataset.catalogKey = agent.catalog_key || '';
             option.disabled = agent.disabled;
             option.selected = !agent.disabled && optionKey === selectedKey;
 
@@ -374,6 +428,30 @@ function parseAssignedKnowledge(rawValue) {
     }
 }
 
+function parseJsonObject(rawValue) {
+    if (!rawValue) {
+        return {};
+    }
+    try {
+        const parsed = JSON.parse(rawValue);
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch (error) {
+        return {};
+    }
+}
+
+function parseJsonArray(rawValue) {
+    if (!rawValue) {
+        return [];
+    }
+    try {
+        const parsed = JSON.parse(rawValue);
+        return Array.isArray(parsed) ? parsed : [];
+    } catch (error) {
+        return [];
+    }
+}
+
 function buildAgentPayloadFromOption(selectedOption) {
     if (!selectedOption) {
         return null;
@@ -386,7 +464,10 @@ function buildAgentPayloadFromOption(selectedOption) {
         is_group: selectedOption.dataset.isGroup === 'true',
         group_id: selectedOption.dataset.groupId || null,
         group_name: selectedOption.dataset.groupName || (window.activeGroupName || null),
-        assigned_knowledge: parseAssignedKnowledge(selectedOption.dataset.assignedKnowledge || '')
+        assigned_knowledge: parseAssignedKnowledge(selectedOption.dataset.assignedKnowledge || ''),
+        icon: parseJsonObject(selectedOption.dataset.agentIcon || ''),
+        tags: parseJsonArray(selectedOption.dataset.agentTags || '[]'),
+        catalog_key: selectedOption.dataset.catalogKey || null
     };
 }
 

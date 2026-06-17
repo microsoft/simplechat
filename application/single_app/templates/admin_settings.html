@@ -4223,6 +4223,24 @@
                             </div>
                         </div>
                     </div>
+
+                    <div class="card p-3 mt-3 border-success-subtle" id="data-management-backup-operations-section">
+                        <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
+                            <div>
+                                <h5 class="mb-1">Backup Operations</h5>
+                                <p class="text-muted mb-0 small">Queue immediate full or partial backup jobs using the settings above.</p>
+                            </div>
+                            <div class="d-flex flex-wrap gap-2">
+                                <button type="button" class="btn btn-primary" id="data-management-run-full-backup-btn">
+                                    <i class="bi bi-archive me-1"></i>Queue Full Backup
+                                </button>
+                                <button type="button" class="btn btn-outline-primary" id="data-management-run-partial-backup-btn">
+                                    <i class="bi bi-archive-fill me-1"></i>Queue Partial Backup
+                                </button>
+                            </div>
+                        </div>
+                        <p class="text-muted mb-0 mt-2">Jobs use Cosmos-backed leases so scaled-out App Service workers do not run the same backup twice.</p>
+                    </div>
                 </div>
 
                 <div class="card p-4 mb-4 border-warning shadow-sm" id="data-management-migration-section">
@@ -4240,9 +4258,14 @@
                     </p>
 
                     <div class="card p-3 border-warning-subtle" id="data-management-target-cosmos-section">
-                        <div class="mb-3">
-                            <h5 class="mb-1">Target Cosmos Database</h5>
-                            <p class="text-muted mb-0 small">Fill out the target Cosmos account connection that migration dry runs and future migration apply jobs will validate.</p>
+                        <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+                            <div>
+                                <h5 class="mb-1">Target Cosmos Database</h5>
+                                <p class="text-muted mb-0 small">Fill out the target Cosmos account connection that migration jobs will validate and write to.</p>
+                            </div>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" id="data-management-test-target-cosmos-btn">
+                                <i class="bi bi-plug me-1"></i>Test Target Cosmos
+                            </button>
                         </div>
                         <div class="alert alert-info mb-3" role="note">
                             For managed identity, assign this App Service identity Cosmos DB Data Contributor on the target account and allow network access from this application environment.
@@ -4272,9 +4295,14 @@
                     </div>
 
                     <div class="card p-3 border-warning-subtle mt-3" id="data-management-target-ai-search-section">
-                        <div class="mb-3">
-                            <h5 class="mb-1">Destination AI Search</h5>
-                            <p class="text-muted mb-0 small">Migration copies selected indexed documents into matching SimpleChat AI Search indexes on the destination search service.</p>
+                        <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+                            <div>
+                                <h5 class="mb-1">Target Search</h5>
+                                <p class="text-muted mb-0 small">Migration copies selected indexed documents into matching SimpleChat AI Search indexes on the target search service.</p>
+                            </div>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" id="data-management-test-target-search-btn">
+                                <i class="bi bi-plug me-1"></i>Test Target Search
+                            </button>
                         </div>
                         <div class="row g-3">
                             <div class="col-md-4">
@@ -4296,9 +4324,14 @@
                     </div>
 
                     <div class="card p-3 border-warning-subtle mt-3" id="data-management-target-enhanced-citations-section">
-                        <div class="mb-3">
-                            <h5 class="mb-1">Destination Enhanced Citations Storage</h5>
-                            <p class="text-muted mb-0 small">Required only when migrating source document blobs for Enhanced Citations.</p>
+                        <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+                            <div>
+                                <h5 class="mb-1">Target Enhanced Citation Storage</h5>
+                                <p class="text-muted mb-0 small">Required only when migrating source document blobs for Enhanced Citations.</p>
+                            </div>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" id="data-management-test-target-ec-storage-btn">
+                                <i class="bi bi-plug me-1"></i>Test Target Enhanced Citation Storage
+                            </button>
                         </div>
                         <div class="row g-3">
                             <div class="col-md-4">
@@ -4423,25 +4456,6 @@
                             </button>
                         </div>
                     </div>
-                </div>
-
-                <div class="card p-4 mb-4 border-success shadow-sm" id="data-management-operations-section">
-                    <h4 class="mb-3">Operations</h4>
-                    <div class="d-flex flex-wrap gap-2 mb-3">
-                        <button type="button" class="btn btn-primary" id="data-management-run-full-backup-btn">
-                            <i class="bi bi-archive me-1"></i>Queue Full Backup
-                        </button>
-                        <button type="button" class="btn btn-outline-primary" id="data-management-run-partial-backup-btn">
-                            <i class="bi bi-archive-fill me-1"></i>Queue Partial Backup
-                        </button>
-                        <button type="button" class="btn btn-outline-secondary" id="data-management-restore-dry-run-btn">
-                            <i class="bi bi-arrow-counterclockwise me-1"></i>Restore Dry Run
-                        </button>
-                        <button type="button" class="btn btn-outline-secondary" id="data-management-migration-dry-run-btn">
-                            <i class="bi bi-arrow-left-right me-1"></i>Migration Dry Run
-                        </button>
-                    </div>
-                    <p class="text-muted mb-0">Jobs use Cosmos-backed leases so scaled-out App Service workers do not run the same operation twice.</p>
                 </div>
 
                 <div class="card p-4 mb-4 border-primary shadow-sm" id="data-management-backup-inventory-section">

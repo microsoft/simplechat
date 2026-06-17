@@ -1,0 +1,81 @@
+<!-- templates/agents.html -->
+{% extends "base.html" %}
+{% block title %}Agents - {{ app_settings.app_title }}{% endblock %}
+
+{% block head %}
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/agents-catalog.css') }}?v={{ config['VERSION'] }}" />
+{% endblock %}
+
+{% block content %}
+<main class="agents-page" aria-labelledby="agents-page-title">
+    <header class="agents-hero text-center">
+        <h1 id="agents-page-title">Agents</h1>
+        <p class="agents-hero-copy">Explore agents built for how you work.</p>
+    </header>
+
+    <section class="agents-directory" aria-label="Agent directory" data-allow-personal-create="{{ 'true' if settings.allow_user_agents else 'false' }}" data-allow-group-create="{{ 'true' if settings.allow_group_agents and settings.enable_group_workspaces else 'false' }}">
+        <div class="agents-search-wrap">
+            <label class="visually-hidden" for="agents-catalog-search">Search agents</label>
+            <i class="bi bi-search agents-search-icon" aria-hidden="true"></i>
+            <input type="search" class="form-control agents-search-input" id="agents-catalog-search" placeholder="Search" autocomplete="off" />
+        </div>
+
+        <nav class="agents-tabs" aria-label="Agent categories">
+            <button type="button" class="agents-tab active" data-agent-tab="popular">Popular</button>
+            <button type="button" class="agents-tab d-none" data-agent-tab="search">Search Results</button>
+            <button type="button" class="agents-tab" data-agent-tab="personal">Personal</button>
+            <button type="button" class="agents-tab" data-agent-tab="group">Group</button>
+            <button type="button" class="agents-tab" data-agent-tab="enterprise">Enterprise</button>
+        </nav>
+
+        <div class="agents-directory-toolbar">
+            <div class="min-w-0">
+                <h2 class="agents-results-title" id="agents-results-title">Popular</h2>
+                <div class="agents-results-subtitle" id="agents-count-label">Loading agents...</div>
+            </div>
+            <div class="agents-directory-actions">
+                <a class="btn btn-primary btn-sm d-none" id="agents-new-agent-link" href="/workspace?tab=agents&new_agent=1">
+                    <i class="bi bi-plus-lg me-1" aria-hidden="true"></i>New Agent
+                </a>
+                <div class="btn-group btn-group-sm agents-view-toggle" role="group" aria-label="Agent view mode">
+                    <input type="radio" class="btn-check" name="agents-catalog-view" id="agents-catalog-list-mode" autocomplete="off" checked />
+                    <label class="btn btn-outline-secondary" for="agents-catalog-list-mode" title="List view">
+                        <i class="bi bi-list-ul" aria-hidden="true"></i>
+                        <span class="visually-hidden">List view</span>
+                    </label>
+                    <input type="radio" class="btn-check" name="agents-catalog-view" id="agents-catalog-card-mode" autocomplete="off" />
+                    <label class="btn btn-outline-secondary" for="agents-catalog-card-mode" title="Card view">
+                        <i class="bi bi-grid-3x3-gap" aria-hidden="true"></i>
+                        <span class="visually-hidden">Card view</span>
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <div class="d-flex flex-wrap gap-2 d-none" id="agents-tag-filters" aria-label="Agent tag filters"></div>
+        <div id="agents-catalog-alert" class="alert d-none" role="status"></div>
+        <div class="visually-hidden" id="agents-results-count">0</div>
+        <div id="agents-list-view" class="agents-list"></div>
+        <div id="agents-card-view" class="row g-3 d-none"></div>
+    </section>
+</main>
+
+<div class="modal fade" id="item-view-modal" tabindex="-1" aria-labelledby="item-view-modal-label" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="item-view-modal-label">Details</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body"></div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+  <script type="module" src="{{ url_for('static', filename='js/agents_catalog.js') }}?v={{ config['VERSION'] }}"></script>
+{% endblock %}

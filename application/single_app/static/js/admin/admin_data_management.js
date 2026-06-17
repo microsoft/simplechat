@@ -74,17 +74,20 @@ function bindElements() {
         "data_management_target_cosmos_database",
         "data-management-target-cosmos-key-field",
         "data_management_target_cosmos_key",
+        "data-management-test-target-cosmos-btn",
         "data-management-target-ai-search-section",
         "data_management_target_ai_search_auth",
         "data_management_target_ai_search_endpoint",
         "data-management-target-ai-search-key-field",
         "data_management_target_ai_search_key",
+        "data-management-test-target-search-btn",
         "data-management-target-enhanced-citations-section",
         "data_management_target_ec_storage_auth",
         "data-management-target-ec-blob-endpoint-field",
         "data_management_target_ec_blob_endpoint",
         "data-management-target-ec-connection-string-field",
         "data_management_target_ec_connection_string",
+        "data-management-test-target-ec-storage-btn",
         "data-management-refresh-migration-summary-btn",
         "data_management_migration_users_mode",
         "data_management_migration_users_search",
@@ -112,8 +115,6 @@ function bindElements() {
         "data-management-test-storage-btn",
         "data-management-run-full-backup-btn",
         "data-management-run-partial-backup-btn",
-        "data-management-restore-dry-run-btn",
-        "data-management-migration-dry-run-btn",
         "data-management-refresh-backups-btn",
         "data-management-view-full-backups-btn",
         "data-management-view-partial-backups-btn",
@@ -165,13 +166,14 @@ function bindEvents() {
     });
     elements.dataManagementGenerateKeyBtn?.addEventListener("click", generateEncryptionKey);
     elements.dataManagementTestStorageBtn?.addEventListener("click", testBackupStorage);
+    elements.dataManagementTestTargetCosmosBtn?.addEventListener("click", testTargetCosmos);
+    elements.dataManagementTestTargetSearchBtn?.addEventListener("click", testTargetSearch);
+    elements.dataManagementTestTargetEcStorageBtn?.addEventListener("click", testTargetEnhancedCitationStorage);
     elements.dataManagementRunFullBackupBtn?.addEventListener("click", () => queueBackup("full"));
     elements.dataManagementRunPartialBackupBtn?.addEventListener("click", () => queueBackup("partial"));
-    elements.dataManagementRestoreDryRunBtn?.addEventListener("click", () => queueOperation("restore", null, { dry_run: true }));
-    elements.dataManagementMigrationDryRunBtn?.addEventListener("click", () => queueMigration(true));
-    elements.dataManagementMigrationPreviewBtn?.addEventListener("click", loadMigrationSummary);
+    elements.dataManagementMigrationPreviewBtn?.addEventListener("click", () => loadMigrationSummary(elements.dataManagementMigrationPreviewBtn, true));
     elements.dataManagementExecuteMigrationBtn?.addEventListener("click", () => queueMigration(false));
-    elements.dataManagementRefreshMigrationSummaryBtn?.addEventListener("click", loadMigrationSummary);
+    elements.dataManagementRefreshMigrationSummaryBtn?.addEventListener("click", () => loadMigrationSummary(elements.dataManagementRefreshMigrationSummaryBtn, true));
     bindMigrationPickerEvents();
     elements.dataManagementRefreshBackupsBtn?.addEventListener("click", loadDataManagementBackups);
     elements.dataManagementViewFullBackupsBtn?.addEventListener("click", () => setBackupFilter("full"));
@@ -629,6 +631,61 @@ async function testBackupStorage() {
     }
 }
 
+async function testTargetCosmos() {
+    setBusy(elements.dataManagementTestTargetCosmosBtn, true, "Testing...");
+    try {
+        const data = await requestJson("/api/admin/data-management/target/cosmos/test", {
+            method: "POST",
+            body: JSON.stringify({ settings: collectSettings() }),
+        });
+        setStatus(`Target Cosmos connection succeeded. Database: ${data.database_name || targetCosmosDatabaseName}.`, "success");
+        showToast("Target Cosmos connection succeeded.", "success");
+    } catch (error) {
+        setStatus(error.message || "Target Cosmos connection test failed.", "danger");
+        showToast(error.message || "Target Cosmos connection test failed.", "danger");
+    } finally {
+        setBusy(elements.dataManagementTestTargetCosmosBtn, false);
+    }
+}
+
+async function testTargetSearch() {
+    setBusy(elements.dataManagementTestTargetSearchBtn, true, "Testing...");
+    try {
+        const data = await requestJson("/api/admin/data-management/target/search/test", {
+            method: "POST",
+            body: JSON.stringify({ settings: collectSettings() }),
+        });
+        const existingCount = Array.isArray(data.existing_indexes) ? data.existing_indexes.length : 0;
+        const missingCount = Array.isArray(data.missing_indexes) ? data.missing_indexes.length : 0;
+        setStatus(`Target Search connection succeeded. ${formatNumber(existingCount)} expected indexes found, ${formatNumber(missingCount)} missing. Missing indexes can be created during migration.`, "success");
+        showToast("Target Search connection succeeded.", "success");
+    } catch (error) {
+        setStatus(error.message || "Target Search connection test failed.", "danger");
+        showToast(error.message || "Target Search connection test failed.", "danger");
+    } finally {
+        setBusy(elements.dataManagementTestTargetSearchBtn, false);
+    }
+}
+
+async function testTargetEnhancedCitationStorage() {
+    setBusy(elements.dataManagementTestTargetEcStorageBtn, true, "Testing...");
+    try {
+        const data = await requestJson("/api/admin/data-management/target/enhanced-citation-storage/test", {
+            method: "POST",
+            body: JSON.stringify({ settings: collectSettings(), create_containers: true }),
+        });
+        const containers = Array.isArray(data.containers) ? data.containers : [];
+        const readyCount = containers.filter((container) => container.container_exists).length;
+        setStatus(`Target Enhanced Citation Storage connection succeeded. ${formatNumber(readyCount)} containers are ready.`, "success");
+        showToast("Target Enhanced Citation Storage connection succeeded.", "success");
+    } catch (error) {
+        setStatus(error.message || "Target Enhanced Citation Storage connection test failed.", "danger");
+        showToast(error.message || "Target Enhanced Citation Storage connection test failed.", "danger");
+    } finally {
+        setBusy(elements.dataManagementTestTargetEcStorageBtn, false);
+    }
+}
+
 function queueBackup(backupType) {
     return queueOperation("backup", backupType, {
         include_cosmos: Boolean(elements.datamanagementincludecosmos?.checked),
@@ -660,7 +717,7 @@ async function queueOperation(operation, backupType = null, options = {}, trigge
 }
 
 function queueMigration(dryRun) {
-    const button = dryRun ? elements.dataManagementMigrationDryRunBtn : elements.dataManagementExecuteMigrationBtn;
+    const button = elements.dataManagementExecuteMigrationBtn;
     return queueOperation("migration", null, {
         dry_run: Boolean(dryRun),
         migration_plan: buildMigrationPlan(),
@@ -674,11 +731,8 @@ function buttonForOperation(operation, backupType) {
     if (operation === "backup" && backupType === "partial") {
         return elements.dataManagementRunPartialBackupBtn;
     }
-    if (operation === "restore") {
-        return elements.dataManagementRestoreDryRunBtn;
-    }
     if (operation === "migration") {
-        return elements.dataManagementMigrationDryRunBtn;
+        return elements.dataManagementExecuteMigrationBtn;
     }
     return null;
 }
@@ -838,19 +892,30 @@ function buildMigrationSelection(targetType) {
     };
 }
 
-async function loadMigrationSummary() {
+async function loadMigrationSummary(triggerButton = null, showSuccess = false) {
     const summaryElement = elements.dataManagementMigrationSummary;
     if (!summaryElement) {
         return;
     }
+    setBusy(triggerButton, true, "Previewing...");
     try {
         const data = await requestJson("/api/admin/data-management/migration/summary", {
             method: "POST",
             body: JSON.stringify({ migration_plan: buildMigrationPlan() }),
         });
         renderMigrationSummary(data.summary || {});
+        if (showSuccess) {
+            setStatus("Migration preview refreshed.", "success");
+            showToast("Migration preview refreshed.", "success");
+        }
     } catch (error) {
         summaryElement.replaceChildren(createSmallMutedElement(error.message || "Migration summary could not be loaded."));
+        if (showSuccess) {
+            setStatus(error.message || "Migration summary could not be loaded.", "danger");
+            showToast(error.message || "Migration summary could not be loaded.", "danger");
+        }
+    } finally {
+        setBusy(triggerButton, false);
     }
 }
 

@@ -255,6 +255,7 @@ export function createSearchableSingleSelect({
     emptySearchMessage,
     getOptionLabel,
     getOptionSearchText,
+    renderOptionContent,
     dropdownConfig,
 }) {
     if (!selectEl || !dropdownEl || !buttonEl || !buttonTextEl || !menuEl || !searchInputEl || !itemsContainerEl) {
@@ -263,6 +264,7 @@ export function createSearchableSingleSelect({
 
     const readOptionLabel = getOptionLabel || (option => option.textContent.trim());
     const readOptionSearchText = getOptionSearchText || (option => option.textContent.trim());
+    const renderOption = typeof renderOptionContent === 'function' ? renderOptionContent : null;
     const resolvedDropdownConfig = dropdownConfig || {
         autoClose: 'outside',
     };
@@ -334,10 +336,19 @@ export function createSearchableSingleSelect({
                 item.disabled = true;
             }
 
-            const textEl = document.createElement('span');
-            textEl.className = 'chat-searchable-select-item-text';
-            textEl.textContent = optionLabel;
-            item.appendChild(textEl);
+            if (renderOption) {
+                const renderedContent = renderOption(option, optionLabel);
+                if (renderedContent instanceof Node) {
+                    item.appendChild(renderedContent);
+                }
+            }
+
+            if (!item.childNodes.length) {
+                const textEl = document.createElement('span');
+                textEl.className = 'chat-searchable-select-item-text';
+                textEl.textContent = optionLabel;
+                item.appendChild(textEl);
+            }
 
             itemsContainerEl.appendChild(item);
         };

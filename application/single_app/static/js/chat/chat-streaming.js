@@ -515,6 +515,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         recoveryConversationId = null,
         cancelEndpoint = null,
         reconnectStatusLabel = 'Reconnecting...',
+        fallbackAgentInfo = null,
     } = options;
 
     if (currentStreamController) {
@@ -648,7 +649,8 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                 finalizeStreamingMessage(
                     tempAiMessageId,
                     tempUserMessageId,
-                    data
+                    data,
+                    fallbackAgentInfo
                 );
 
                 if (typeof onDone === 'function') {
@@ -1153,6 +1155,45 @@ function finalizeCancelledStreamingMessage(messageId, userMessageId, finalData, 
     }
 }
 
+function normalizeFallbackAgentIcon(iconPayload) {
+    if (!iconPayload || typeof iconPayload !== 'object' || Array.isArray(iconPayload)) {
+        return null;
+    }
+
+    const kind = String(iconPayload.kind || '').trim().toLowerCase();
+    const value = String(iconPayload.value || '').trim();
+    if (kind === 'bootstrap' && /^bi-[a-z0-9][a-z0-9-]{0,80}$/.test(value)) {
+        return { kind, value };
+    }
+    if (kind === 'image' && /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(value) && value.length <= 350000) {
+        return { kind, value };
+    }
+    return null;
+}
+
+function applyFallbackAgentIcon(finalData = {}, fallbackAgentInfo = null) {
+    if (!fallbackAgentInfo || typeof fallbackAgentInfo !== 'object' || finalData.agent_icon) {
+        return finalData;
+    }
+
+    const fallbackIcon = normalizeFallbackAgentIcon(fallbackAgentInfo.icon || fallbackAgentInfo.agent_icon);
+    if (!fallbackIcon) {
+        return finalData;
+    }
+
+    return {
+        ...finalData,
+        agent_icon: fallbackIcon,
+        metadata: {
+            ...(finalData.metadata || {}),
+            agent_selection: {
+                ...(finalData.metadata?.agent_selection || {}),
+                agent_icon: fallbackIcon,
+            },
+        },
+    };
+}
+
 function handleStreamError(messageId, partialContent, errorMessage, errorDetails = {}) {
     const messageElement = document.querySelector(`[data-message-id="${messageId}"]`);
     if (!messageElement) return;
@@ -1187,7 +1228,8 @@ function handleStreamError(messageId, partialContent, errorMessage, errorDetails
     showToast(`Stream error: ${displayMessage}`, 'error');
 }
 
-function finalizeStreamingMessage(messageId, userMessageId, finalData) {
+function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackAgentInfo = null) {
+    finalData = applyFallbackAgentIcon(finalData, fallbackAgentInfo);
     const messageElement = document.querySelector(`[data-message-id="${messageId}"]`);
     if (!messageElement) return;
 

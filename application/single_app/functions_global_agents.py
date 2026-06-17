@@ -126,6 +126,8 @@ def get_global_agents(include_disabled=False):
             agent.setdefault('model_endpoint_id', '')
             agent.setdefault('model_id', '')
             agent.setdefault('model_provider', '')
+            agent.setdefault('tags', [])
+            agent.setdefault('icon', {})
             # Remove empty reasoning_effort to prevent validation errors
             if agent.get('reasoning_effort') == '':
                 agent.pop('reasoning_effort', None)
@@ -165,6 +167,8 @@ def get_global_agent(agent_id):
         agent.setdefault('model_endpoint_id', '')
         agent.setdefault('model_id', '')
         agent.setdefault('model_provider', '')
+        agent.setdefault('tags', [])
+        agent.setdefault('icon', {})
         # Remove empty reasoning_effort to prevent validation errors
         if agent.get('reasoning_effort') == '':
             agent.pop('reasoning_effort', None)
@@ -200,6 +204,8 @@ def save_global_agent(agent_data, user_id=None):
             cleaned_agent['id'] = str(uuid.uuid4())
         cleaned_agent['is_global'] = True
         cleaned_agent['is_group'] = False
+        cleaned_agent.setdefault('tags', [])
+        cleaned_agent.setdefault('icon', {})
         now = datetime.utcnow().isoformat()
 
         # Check if this is a new agent or an update to preserve created_by/created_at

@@ -8,6 +8,7 @@ from config import *
 from functions_appinsights import log_event
 from functions_cosmos_throughput import get_default_cosmos_throughput_settings
 from functions_document_actions import get_default_document_action_capabilities
+from functions_icon_utils import normalize_icon_payload
 from functions_service_health import get_default_service_health
 import app_settings_cache
 import inspect
@@ -1349,6 +1350,15 @@ def normalize_model_endpoints(endpoints):
                     changed = True
             if model_copy.get("enabled") is None:
                 model_copy["enabled"] = True
+                changed = True
+            try:
+                normalized_icon = normalize_icon_payload(model_copy.get("icon"), field_name="model.icon")
+            except ValueError:
+                normalized_icon = {}
+                if model_copy.get("icon"):
+                    changed = True
+            if model_copy.get("icon") != normalized_icon:
+                model_copy["icon"] = normalized_icon
                 changed = True
             normalized_models.append(model_copy)
 

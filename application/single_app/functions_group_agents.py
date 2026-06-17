@@ -102,6 +102,8 @@ def save_group_agent(group_id: str, agent_data: Dict[str, Any], user_id: Optiona
     payload.setdefault("instructions", "")
     payload.setdefault("actions_to_load", [])
     payload.setdefault("other_settings", {})
+    payload.setdefault("tags", [])
+    payload.setdefault("icon", {})
     payload.setdefault("max_completion_tokens", -1)
     payload.setdefault("enable_agent_gpt_apim", False)
     payload.setdefault("agent_type", "local")
@@ -230,6 +232,8 @@ def _clean_agent(agent: Dict[str, Any]) -> Dict[str, Any]:
     cleaned.setdefault("model_endpoint_id", "")
     cleaned.setdefault("model_id", "")
     cleaned.setdefault("model_provider", "")
+    cleaned.setdefault("tags", [])
+    cleaned.setdefault("icon", {})
     # Remove empty reasoning_effort to prevent validation errors
     if cleaned.get("reasoning_effort") == "":
         cleaned.pop("reasoning_effort", None)

@@ -41,6 +41,11 @@ from functions_group_agents import (
 from functions_debug import debug_print
 from functions_authentication import *
 from functions_appinsights import log_event
+from functions_agent_catalog import (
+    apply_agent_usage_counts,
+    build_accessible_agent_catalog,
+    get_popular_agents,
+)
 from functions_group import get_group_model_endpoints, require_active_group
 from json_schema_validation import validate_agent
 from swagger_wrapper import swagger_route, get_auth_security
@@ -169,46 +174,7 @@ def _build_agent_instruction_api_params(model_name, messages):
 def _build_user_selectable_agents(user_id, requested_agent=None):
     """Build the set of agents the current user is allowed to select."""
     settings = get_settings()
-    requested_agent = requested_agent or {}
-    candidates = []
-
-    for agent in get_personal_agents(user_id):
-        candidate = dict(agent)
-        candidate['is_global'] = False
-        candidate['is_group'] = False
-        candidate['group_id'] = None
-        candidate['group_name'] = None
-        candidates.append(candidate)
-
-    merge_global = settings.get('per_user_semantic_kernel', False) and settings.get('merge_global_semantic_kernel_with_workspace', False)
-    if merge_global or requested_agent.get('is_global'):
-        for agent in get_global_agents():
-            candidate = dict(agent)
-            candidate['is_global'] = True
-            candidate['is_group'] = False
-            candidate['group_id'] = None
-            candidate['group_name'] = None
-            candidates.append(candidate)
-
-    requested_group_id = str(requested_agent.get('group_id') or '').strip()
-    if requested_agent.get('is_group') and not requested_group_id:
-        try:
-            requested_group_id = require_active_group(user_id)
-        except Exception:
-            requested_group_id = ''
-
-    if requested_group_id:
-        requested_group_name = requested_agent.get('group_name')
-        for agent in get_group_agents(requested_group_id):
-            candidate = dict(agent)
-            candidate['is_global'] = False
-            candidate['is_group'] = True
-            candidate['group_id'] = requested_group_id
-            if requested_group_name and not candidate.get('group_name'):
-                candidate['group_name'] = requested_group_name
-            candidates.append(candidate)
-
-    return candidates
+    return build_accessible_agent_catalog(user_id, settings=settings)
 
 
 def _find_matching_user_selected_agent(candidates, requested_agent):
@@ -1192,7 +1158,10 @@ def set_user_selected_agent():
         "is_global": matched_agent.get('is_global', False),
         "is_group": matched_agent.get('is_group', False),
         "group_id": matched_agent.get('group_id'),
-        "group_name": matched_agent.get('group_name')
+        "group_name": matched_agent.get('group_name'),
+        "icon": matched_agent.get('icon') or {},
+        "tags": matched_agent.get('tags') or [],
+        "catalog_key": matched_agent.get('catalog_key')
     }
     settings_to_update['selected_agent'] = agent
     settings_to_update['enable_agents'] = True
@@ -1266,6 +1235,52 @@ def set_selected_agent():
     except Exception as e:
         log_event(f"Error setting default agent: {e}", level=logging.ERROR)
         return jsonify({'error': 'Failed to set default agent.'}), 500
+
+@bpa.route('/api/agents/catalog', methods=['GET'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+@enabled_required('enable_semantic_kernel')
+def get_agents_catalog():
+    user_id = get_current_user_id()
+    include_usage = str(request.args.get('include_usage') or '').strip().lower() in ('1', 'true', 'yes')
+    try:
+        catalog = build_accessible_agent_catalog(user_id, settings=get_settings())
+        if include_usage:
+            catalog = apply_agent_usage_counts(catalog)
+        return jsonify({'agents': catalog}), 200
+    except Exception as exc:
+        log_event(
+            '[AgentsCatalog] Failed to load accessible agent catalog.',
+            extra={'user_id': user_id, 'error': str(exc)},
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        return jsonify({'error': 'Failed to load agents.'}), 500
+
+@bpa.route('/api/agents/popular', methods=['GET'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+@enabled_required('enable_semantic_kernel')
+def get_popular_agents_catalog():
+    user_id = get_current_user_id()
+    try:
+        limit = int(request.args.get('limit') or 3)
+    except (TypeError, ValueError):
+        limit = 3
+    try:
+        catalog = build_accessible_agent_catalog(user_id, settings=get_settings())
+        catalog = apply_agent_usage_counts(catalog)
+        return jsonify({'agents': get_popular_agents(catalog, limit=limit)}), 200
+    except Exception as exc:
+        log_event(
+            '[AgentsCatalog] Failed to load popular agents.',
+            extra={'user_id': user_id, 'error': str(exc)},
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        return jsonify({'error': 'Failed to load popular agents.'}), 500
 
 
 @bpa.route('/api/admin/agents', methods=['GET'])

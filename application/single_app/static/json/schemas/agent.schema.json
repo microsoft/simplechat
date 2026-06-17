@@ -30,6 +30,18 @@
         "description": {
           "type": "string"
         },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 40
+          },
+          "maxItems": 20,
+          "description": "Browse and discovery tags for the agent catalog."
+        },
+        "icon": {
+          "$ref": "#/definitions/IconPayload"
+        },
         "azure_openai_gpt_endpoint": {
           "type": "string",
           "description": "Endpoint for Azure OpenAI (local agents) or Azure AI Foundry (foundry agents)."
@@ -206,6 +218,24 @@
           }
         }
       ]
+    },
+    "IconPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["bootstrap", "image"]
+        },
+        "value": {
+          "type": "string",
+          "maxLength": 350000
+        },
+        "mime_type": {
+          "type": "string",
+          "enum": ["image/png", "image/jpeg"]
+        }
+      }
     },
     "OtherSettings": {
       "type": "object",

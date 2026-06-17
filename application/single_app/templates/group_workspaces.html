@@ -4552,6 +4552,17 @@ app_settings.app_title }} {% endblock %} {% block head %}
         }
       });
     });
+
+    const navigationParams = new URLSearchParams(window.location.search);
+    if (navigationParams.get("tab") === "group-agents") {
+      const groupAgentsTab = document.getElementById("group-agents-tab-btn");
+      if (groupAgentsTab) {
+        bootstrap.Tab.getOrCreateInstance(groupAgentsTab).show();
+      }
+      const url = new URL(window.location.href);
+      url.searchParams.delete("tab");
+      window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+    }
   }); // End DOMContentLoaded
 
   /* ===================== GROUPS / ROLE / CONTEXT ===================== */

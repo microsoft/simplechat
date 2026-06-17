@@ -109,6 +109,68 @@ function getPreloadedModelOptions() {
     return Array.isArray(window.chatModelOptions) ? window.chatModelOptions : [];
 }
 
+function parseJsonObject(rawValue) {
+    if (!rawValue) {
+        return {};
+    }
+    try {
+        const parsed = JSON.parse(rawValue);
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch (error) {
+        return {};
+    }
+}
+
+function normalizeIconPayload(iconPayload) {
+    if (!iconPayload || typeof iconPayload !== 'object' || Array.isArray(iconPayload)) {
+        return null;
+    }
+    const kind = String(iconPayload.kind || '').trim().toLowerCase();
+    const value = String(iconPayload.value || '').trim();
+    if (kind === 'bootstrap' && /^bi-[a-z0-9][a-z0-9-]{0,80}$/.test(value)) {
+        return { kind, value };
+    }
+    if (kind === 'image' && /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(value) && value.length <= 350000) {
+        return { kind, value };
+    }
+    return null;
+}
+
+function createOptionIconElement(iconPayload) {
+    const icon = normalizeIconPayload(iconPayload);
+    if (!icon) {
+        return null;
+    }
+    if (icon.kind === 'image') {
+        const image = document.createElement('img');
+        image.src = icon.value;
+        image.alt = '';
+        image.className = 'chat-searchable-select-item-icon';
+        return image;
+    }
+    const iconWrapper = document.createElement('span');
+    iconWrapper.className = 'chat-searchable-select-item-icon';
+    const iconElement = document.createElement('i');
+    iconElement.className = `bi ${icon.value}`;
+    iconElement.setAttribute('aria-hidden', 'true');
+    iconWrapper.appendChild(iconElement);
+    return iconWrapper;
+}
+
+function renderModelOptionContent(option, optionLabel) {
+    const wrapper = document.createElement('span');
+    wrapper.className = 'd-flex align-items-center gap-2 min-w-0';
+    const iconElement = createOptionIconElement(parseJsonObject(option.dataset.modelIcon || ''));
+    if (iconElement) {
+        wrapper.appendChild(iconElement);
+    }
+    const textEl = document.createElement('span');
+    textEl.className = 'chat-searchable-select-item-text text-truncate';
+    textEl.textContent = optionLabel;
+    wrapper.appendChild(textEl);
+    return wrapper;
+}
+
 function isModelEnabledForContext(option, scopes, filteringContext) {
     if (!filteringContext.isNewConversation && filteringContext.conversationScope === 'group') {
         return option.scope_type === 'global'
@@ -326,6 +388,7 @@ function rebuildModelOptions(sections, restoreOptions = {}) {
             modelOption.dataset.scopeId = option.scope_id || '';
             modelOption.dataset.scopeName = option.scope_name || '';
             modelOption.dataset.searchText = option.searchText || '';
+            modelOption.dataset.modelIcon = JSON.stringify(option.icon || {});
             modelOption.disabled = option.disabled;
             modelOption.selected = !option.disabled && option.selection_key === selectedSelectionKey;
             optGroup.appendChild(modelOption);
@@ -486,6 +549,7 @@ export function initializeModelSelector() {
             emptyMessage: 'No models available',
             emptySearchMessage: 'No matching models found',
             getOptionSearchText: option => option.dataset.searchText || option.textContent.trim(),
+            renderOptionContent: renderModelOptionContent,
             dropdownConfig: FLOATING_SELECTOR_DROPDOWN_CONFIG,
         });
     }

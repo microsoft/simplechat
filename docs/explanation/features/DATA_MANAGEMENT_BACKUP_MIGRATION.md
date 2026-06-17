@@ -1,7 +1,7 @@
 # Data Management Backup and Migration
 
 Implemented in version: **0.241.211**
-Updated in version: **0.241.217**
+Updated in version: **0.241.221**
 
 ## Overview
 
@@ -43,11 +43,11 @@ Partial backup details use the same artifact layout but also expose the partial 
 
 The Migration card supports a guided migration workflow:
 
-- Configure destination Cosmos DB, destination AI Search, and destination Enhanced Citations Blob Storage.
+- Configure Target Cosmos DB, Target Search, and Target Enhanced Citation Storage, with test buttons for each target service.
 - Select whether to migrate no users, all users, or selected users, with optional user document migration.
 - Select whether to migrate no groups, all groups, or selected groups, with optional group document migration.
 - Select whether to migrate no public workspaces, all public workspaces, or selected public workspaces, with optional public workspace document migration.
-- Preview the migration plan to see counts and selected IDs before execution.
+- Preview the migration plan to refresh counts and selected IDs before execution.
 - Execute Migration queues a durable Data Management migration job. The job history modal shows live progress, per-step timeline events, migrated artifact counts, and warnings.
 
 Migration execution currently copies selected SimpleChat Cosmos records, matching AI Search documents for selected document scopes, and source document blobs when Enhanced Citations source and destination storage are configured.
@@ -74,8 +74,8 @@ Migration execution currently copies selected SimpleChat Cosmos records, matchin
 - Backup encryption keys can be stored in Key Vault when Key Vault secret storage is enabled. If Key Vault is unavailable, generated keys fall back to the Data Management settings document and the admin UI recommends enabling Key Vault.
 - Target Cosmos authentication: managed identity or account key.
 - Target Cosmos database name: always `SimpleChat`.
-- Target AI Search authentication: managed identity or admin key.
-- Target Enhanced Citations storage authentication: managed identity or connection string.
+- Target Search authentication: managed identity or admin key.
+- Target Enhanced Citation Storage authentication: managed identity or connection string.
 - Backup scope toggles for Cosmos DB, AI Search, and source document blobs.
 
 The admin portal groups schedule, storage, and encryption controls under a parent **Backup** card. Migration settings are grouped under a separate **Migration** card with an inner **Target Cosmos Database** card.
@@ -90,7 +90,7 @@ Data Management settings save through their own API and are excluded from the re
 4. Generate an encryption key or let the first encrypted backup generate one automatically.
 5. Configure the full backup cadence and scheduled UTC time.
 6. Queue a full or partial backup, or use the restore/migration dry-run buttons to create durable orchestration records.
-7. Configure destination Cosmos, destination AI Search, and destination Enhanced Citations storage before running an actual migration.
+7. Configure and test Target Cosmos, Target Search, and Target Enhanced Citation Storage before running an actual migration.
 8. Use the Migration Workflow to choose users, groups, and public workspaces, then decide whether documents, AI Search entries, and source blobs should be included.
 9. Preview the migration plan, then Execute Migration to queue the job.
 10. Open Advanced backup scope only when you need to alter the default Cosmos DB, AI Search index, or source blob backup surfaces.
@@ -114,5 +114,5 @@ For managed identity target Cosmos migration, assign this App Service identity C
 
 ## Version References
 
-- Application version updated in `application/single_app/config.py` to `0.241.217`.
+- Application version updated in `application/single_app/config.py` to `0.241.221`.
 - Functional and UI tests include the same implementation version.

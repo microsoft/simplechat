@@ -89,6 +89,47 @@
             <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="A clear description helps teammates know exactly when to launch this agent during manual routing."></i>
             <textarea class="form-control" id="agent-description" rows="3" placeholder="Describe what this agent does and when to use it..."></textarea>
           </div>
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label for="agent-tags" class="form-label">Tags</label>
+              <input type="text" class="form-control" id="agent-tags" placeholder="research, finance, planning" />
+            </div>
+            <div class="col-md-6">
+              <label class="form-label d-block" for="agent-icon-picker-search">Icon</label>
+              <input type="hidden" id="agent-icon-mode" value="bootstrap" />
+              <input type="hidden" id="agent-icon-class" value="" />
+              <input type="hidden" id="agent-icon-image-data" value="" />
+              <div class="agent-icon-editor border rounded p-2">
+                <div class="d-flex align-items-center gap-2 mb-2">
+                  <div class="agent-icon-preview" id="agent-icon-preview" aria-hidden="true">
+                    <i class="bi bi-robot"></i>
+                  </div>
+                  <div class="btn-group btn-group-sm" role="group" aria-label="Agent icon type">
+                    <input type="radio" class="btn-check" name="agent-icon-type" id="agent-icon-type-bootstrap" value="bootstrap" checked autocomplete="off" />
+                    <label class="btn btn-outline-secondary" for="agent-icon-type-bootstrap">Bootstrap Icon</label>
+                    <input type="radio" class="btn-check" name="agent-icon-type" id="agent-icon-type-image" value="image" autocomplete="off" />
+                    <label class="btn btn-outline-secondary" for="agent-icon-type-image">Image</label>
+                  </div>
+                </div>
+                <div id="agent-bootstrap-icon-controls">
+                  <div class="dropdown agent-icon-picker-dropdown">
+                    <button class="btn btn-outline-secondary btn-sm dropdown-toggle w-100 text-start" type="button" id="agent-icon-picker-button" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">
+                      <i class="bi bi-robot me-1" aria-hidden="true"></i><span id="agent-icon-picker-label">bi-robot</span>
+                    </button>
+                    <div class="dropdown-menu p-2 agent-icon-picker-menu" aria-labelledby="agent-icon-picker-button">
+                      <input type="search" class="form-control form-control-sm mb-2" id="agent-icon-picker-search" placeholder="Search icons" autocomplete="off" />
+                      <div class="agent-icon-picker-list" id="agent-icon-picker-list" role="listbox" aria-label="Bootstrap icons"></div>
+                    </div>
+                  </div>
+                </div>
+                <div id="agent-image-icon-controls" class="d-none">
+                  <input type="file" class="form-control form-control-sm" id="agent-icon-image-file" accept=".png,.jpg,.jpeg,image/png,image/jpeg" />
+                  <div class="form-text">PNG or JPEG. The image is resized and saved on the agent record.</div>
+                  <button type="button" class="btn btn-outline-secondary btn-sm mt-2" id="agent-icon-image-clear">Remove Image</button>
+                </div>
+              </div>
+            </div>
+          </div>
           <!-- Hidden field to store generated name -->
           <input type="hidden" id="agent-name" name="agent_name" />
         </div>
@@ -664,13 +705,19 @@
             </div>
             <div class="card-body">
               <div class="row g-3">
-                <div class="col-md-6">
+                <div class="col-md-2">
+                  <div class="summary-item">
+                    <label class="fw-bold text-muted small">Icon:</label>
+                    <div id="summary-agent-icon" class="agent-view-icon" aria-hidden="true"></div>
+                  </div>
+                </div>
+                <div class="col-md-5">
                   <div class="summary-item">
                     <label class="fw-bold text-muted small">Display Name:</label>
                     <div id="summary-display-name" class="text-dark">-</div>
                   </div>
                 </div>
-                <div class="col-md-6">
+                <div class="col-md-5">
                   <div class="summary-item">
                     <label class="fw-bold text-muted small">Generated Name:</label>
                     <div id="summary-name" class="text-dark">-</div>
@@ -944,6 +991,58 @@
 
 .agent-modal-dialog {
   max-width: min(96vw, 1180px);
+}
+
+.agent-icon-preview {
+  align-items: center;
+  background: var(--bs-tertiary-bg);
+  border: 1px solid var(--bs-border-color);
+  border-radius: 50%;
+  color: var(--bs-primary);
+  display: inline-flex;
+  flex: 0 0 42px;
+  height: 42px;
+  justify-content: center;
+  overflow: hidden;
+  width: 42px;
+}
+
+.agent-icon-preview img {
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
+}
+
+.agent-icon-preview i {
+  font-size: 1.3rem;
+}
+
+.agent-icon-picker-menu {
+  max-height: 320px;
+  min-width: 280px;
+  overflow: hidden;
+}
+
+.agent-icon-picker-list {
+  display: grid;
+  gap: 0.25rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  max-height: 250px;
+  overflow-y: auto;
+}
+
+.agent-icon-picker-option {
+  align-items: center;
+  display: flex;
+  gap: 0.35rem;
+  min-width: 0;
+  text-align: left;
+}
+
+.agent-icon-picker-option span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-action-card .action-type-badge {

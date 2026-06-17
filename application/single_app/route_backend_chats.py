@@ -101,6 +101,7 @@ from functions_chart_operations import (
 from functions_conversation_metadata import collect_conversation_metadata, update_conversation_with_metadata
 from functions_conversation_unread import mark_conversation_unread
 from functions_image_messages import build_image_message_documents, decode_image_content
+from functions_icon_utils import normalize_icon_payload
 from functions_image_generation import (
     build_image_proposal_guidance_message,
     generate_chat_image_message,
@@ -111,7 +112,7 @@ from functions_image_generation import (
 from functions_appinsights import log_event
 from functions_debug import debug_print
 from functions_notifications import create_chat_response_notification
-from functions_activity_logging import log_chat_activity, log_conversation_creation, log_token_usage
+from functions_activity_logging import log_agent_run, log_chat_activity, log_conversation_creation, log_token_usage
 from flask import current_app
 from swagger_wrapper import swagger_route, get_auth_security
 from azure.identity import ClientSecretCredential, DefaultAzureCredential, get_bearer_token_provider
@@ -1947,6 +1948,9 @@ def _build_agent_selection_metadata(agent_info, assigned_knowledge_filters=None)
             'group_id': None,
             'group_name': None,
             'agent_id': None,
+            'agent_icon': None,
+            'agent_tags': [],
+            'catalog_key': None,
         }
         assigned_knowledge_enabled = bool(assigned_knowledge_filters)
     elif isinstance(agent_info, dict):
@@ -1958,6 +1962,9 @@ def _build_agent_selection_metadata(agent_info, assigned_knowledge_filters=None)
             'group_id': agent_info.get('group_id'),
             'group_name': agent_info.get('group_name'),
             'agent_id': agent_info.get('id') or agent_info.get('agent_id'),
+            'agent_icon': agent_info.get('icon') or agent_info.get('agent_icon'),
+            'agent_tags': agent_info.get('tags') or agent_info.get('agent_tags') or [],
+            'catalog_key': agent_info.get('catalog_key'),
         }
         assigned_knowledge_enabled = bool(
             assigned_knowledge_filters
@@ -1972,8 +1979,38 @@ def _build_agent_selection_metadata(agent_info, assigned_knowledge_filters=None)
             'group_id': getattr(agent_info, 'group_id', None),
             'group_name': getattr(agent_info, 'group_name', None),
             'agent_id': getattr(agent_info, 'id', None),
+            'agent_icon': getattr(agent_info, 'icon', None),
+            'agent_tags': getattr(agent_info, 'tags', []),
+            'catalog_key': getattr(agent_info, 'catalog_key', None),
         }
         assigned_knowledge_enabled = bool(assigned_knowledge_filters)
+
+    agent_icon = metadata.get('agent_icon')
+    try:
+        metadata['agent_icon'] = normalize_icon_payload(agent_icon, field_name='agent_icon') if agent_icon else None
+    except ValueError:
+        metadata['agent_icon'] = None
+
+    agent_tags = metadata.get('agent_tags')
+    if isinstance(agent_tags, list):
+        cleaned_tags = []
+        seen_tags = set()
+        for tag in agent_tags:
+            if not isinstance(tag, str):
+                continue
+            cleaned_tag = tag.strip()
+            if not cleaned_tag or len(cleaned_tag) > 40:
+                continue
+            tag_key = cleaned_tag.lower()
+            if tag_key in seen_tags:
+                continue
+            seen_tags.add(tag_key)
+            cleaned_tags.append(cleaned_tag)
+            if len(cleaned_tags) >= 20:
+                break
+        metadata['agent_tags'] = cleaned_tags
+    else:
+        metadata['agent_tags'] = []
 
     if assigned_knowledge_enabled:
         metadata['assigned_knowledge_enabled'] = True
@@ -15455,6 +15492,8 @@ def register_route_backend_chats(app):
             actual_model_used = final_model_used
             agent_display_name = None
             agent_name = None
+            agent_icon = None
+            agent_tags = []
             
             if selected_agent:
                 # When using an agent, use the agent's actual model deployment
@@ -15466,6 +15505,20 @@ def register_route_backend_chats(app):
                     agent_display_name = selected_agent.display_name
                 if hasattr(selected_agent, 'name'):
                     agent_name = selected_agent.name
+            agent_scope_for_usage = 'personal'
+            agent_group_id_for_usage = None
+            agent_catalog_key_for_usage = None
+            if selected_agent:
+                selection_metadata = user_metadata.get('agent_selection') if isinstance(user_metadata, dict) else None
+                if isinstance(selection_metadata, dict):
+                    if selection_metadata.get('is_global'):
+                        agent_scope_for_usage = 'global'
+                    elif selection_metadata.get('is_group'):
+                        agent_scope_for_usage = 'group'
+                        agent_group_id_for_usage = selection_metadata.get('group_id')
+                    agent_catalog_key_for_usage = selection_metadata.get('catalog_key')
+                    agent_icon = selection_metadata.get('agent_icon')
+                    agent_tags = selection_metadata.get('agent_tags') or []
             
             # assistant_message_id was generated earlier for thought tracking
 
@@ -15533,6 +15586,8 @@ def register_route_backend_chats(app):
                 'model_deployment_name': actual_model_used,
                 'agent_display_name': agent_display_name,
                 'agent_name': agent_name,
+                'agent_icon': agent_icon,
+                'agent_tags': agent_tags,
                 'metadata': {
                     'user_info': user_info_for_assistant,  # Track which user created this assistant message
                     'reasoning_effort': reasoning_effort,
@@ -15559,6 +15614,20 @@ def register_route_backend_chats(app):
             debug_print(f"    is_retry: {is_retry}")
             
             cosmos_messages_container.upsert_item(assistant_doc)
+
+            if selected_agent and agent_name:
+                log_agent_run(
+                    user_id=get_current_user_id(),
+                    agent_id=getattr(selected_agent, 'id', None),
+                    agent_name=agent_name,
+                    agent_display_name=agent_display_name,
+                    scope=agent_scope_for_usage,
+                    group_id=agent_group_id_for_usage,
+                    conversation_id=conversation_id,
+                    message_id=assistant_message_id,
+                    model=actual_model_used,
+                    agent_catalog_key=agent_catalog_key_for_usage,
+                )
             
             # Log chat token usage to activity_logs for easy reporting
             if token_usage_data and token_usage_data.get('total_tokens'):
@@ -15666,6 +15735,8 @@ def register_route_backend_chats(app):
                 'model_deployment_name': actual_model_used,
                 'agent_display_name': agent_display_name,
                 'agent_name': agent_name,
+                'agent_icon': agent_icon,
+                'agent_tags': agent_tags,
                 'message_id': assistant_message_id,
                 'user_message_id': user_message_id,  # Include the user message ID
                 'blocked': False, # Explicitly false if we got this far
@@ -17857,6 +17928,8 @@ def register_route_backend_chats(app):
                 selected_agent_metadata = None
                 agent_name_used = None
                 agent_display_name_used = None
+                agent_icon_used = None
+                agent_tags_used = []
                 use_agent_streaming = False
                 
                 if enable_semantic_kernel and user_enable_agents:
@@ -17900,6 +17973,9 @@ def register_route_backend_chats(app):
                                     assigned_knowledge_filters,
                                 )
                             actual_model_used = getattr(selected_agent, 'deployment_name', None) or gpt_model
+                            if isinstance(selected_agent_metadata, dict):
+                                agent_icon_used = selected_agent_metadata.get('agent_icon')
+                                agent_tags_used = selected_agent_metadata.get('agent_tags') or []
                             debug_print(f"--- Streaming from Agent: {agent_name_used} (model: {actual_model_used}) ---")
                         else:
                             debug_print(f"[Streaming] ⚠️ No agent selected, falling back to GPT")
@@ -17962,6 +18038,8 @@ def register_route_backend_chats(app):
                             'model_deployment_name': final_model_used if use_agent_streaming else gpt_model,
                             'agent_display_name': agent_display_name_used if use_agent_streaming else None,
                             'agent_name': agent_name_used if use_agent_streaming else None,
+                            'agent_icon': agent_icon_used if use_agent_streaming else None,
+                            'agent_tags': agent_tags_used if use_agent_streaming else [],
                             'metadata': {
                                 **cancel_metadata,
                                 'reasoning_effort': reasoning_effort,
@@ -18010,6 +18088,8 @@ def register_route_backend_chats(app):
                             'model_deployment_name': final_model_used if use_agent_streaming else gpt_model,
                             'agent_display_name': agent_display_name_used if use_agent_streaming else None,
                             'agent_name': agent_name_used if use_agent_streaming else None,
+                            'agent_icon': agent_icon_used if use_agent_streaming else None,
+                            'agent_tags': agent_tags_used if use_agent_streaming else [],
                             'metadata': cancel_metadata,
                             'thoughts_enabled': thought_tracker.enabled,
                         },
@@ -18470,6 +18550,8 @@ def register_route_backend_chats(app):
                         'model_deployment_name': final_model_used if use_agent_streaming else gpt_model,
                         'agent_display_name': agent_display_name_used if use_agent_streaming else None,
                         'agent_name': agent_name_used if use_agent_streaming else None,
+                        'agent_icon': agent_icon_used if use_agent_streaming else None,
+                        'agent_tags': agent_tags_used if use_agent_streaming else [],
                         'metadata': {
                             'reasoning_effort': reasoning_effort,
                             'history_context': history_debug_info,
@@ -18488,6 +18570,29 @@ def register_route_backend_chats(app):
                         }
                     })
                     cosmos_messages_container.upsert_item(assistant_doc)
+                    if use_agent_streaming and agent_name_used:
+                        agent_scope_for_usage = 'personal'
+                        agent_group_id_for_usage = None
+                        agent_catalog_key_for_usage = None
+                        if isinstance(selected_agent_metadata, dict):
+                            if selected_agent_metadata.get('is_global'):
+                                agent_scope_for_usage = 'global'
+                            elif selected_agent_metadata.get('is_group'):
+                                agent_scope_for_usage = 'group'
+                                agent_group_id_for_usage = selected_agent_metadata.get('group_id')
+                            agent_catalog_key_for_usage = selected_agent_metadata.get('catalog_key')
+                        log_agent_run(
+                            user_id=user_id,
+                            agent_id=getattr(selected_agent, 'id', None) if selected_agent else None,
+                            agent_name=agent_name_used,
+                            agent_display_name=agent_display_name_used,
+                            scope=agent_scope_for_usage,
+                            group_id=agent_group_id_for_usage,
+                            conversation_id=conversation_id,
+                            message_id=assistant_message_id,
+                            model=final_model_used if use_agent_streaming else gpt_model,
+                            agent_catalog_key=agent_catalog_key_for_usage,
+                        )
                     
                     # Log chat token usage to activity_logs for easy reporting
                     if token_usage_data and token_usage_data.get('total_tokens'):
@@ -18609,6 +18714,8 @@ def register_route_backend_chats(app):
                         'agent_citations': prepared_agent_citations,
                         'agent_display_name': agent_display_name_used if use_agent_streaming else None,
                         'agent_name': agent_name_used if use_agent_streaming else None,
+                        'agent_icon': agent_icon_used if use_agent_streaming else None,
+                        'agent_tags': agent_tags_used if use_agent_streaming else [],
                         'metadata': assistant_doc.get('metadata', {}),
                         'full_content': accumulated_content,
                         'thoughts_enabled': thought_tracker.enabled

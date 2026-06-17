@@ -4,6 +4,7 @@
 {% set sidebar_brand_visible = app_settings.show_logo or not app_settings.hide_app_title %}
 {% set sidebar_menu_state_raw = user_settings.get('settings', {}).get('sidebarMenuState', {}) %}
 {% set sidebar_menu_state = sidebar_menu_state_raw if sidebar_menu_state_raw is mapping else {} %}
+{% set sidebar_settings = settings if settings is defined else app_settings %}
 <div id="sidebar-nav" class="d-flex flex-column vh-100 bg-light border-end sidebar-expanded" style="width: var(--sidebar-width, 260px); min-width: var(--sidebar-min-width, 220px); position: fixed; left: 0; top: 0; z-index: 1040; transition: transform 0.3s ease;">
 
   <div id="sidebar-resize-handle" class="sidebar-resize-handle" aria-label="Resize sidebar" role="separator" tabindex="0">
@@ -93,6 +94,13 @@
           </a>
           {% endif %}
         </li>
+        {% if sidebar_settings.enable_semantic_kernel %}
+        <li class="nav-item">
+          <a class="nav-link d-flex align-items-center" href="{{ url_for('agents') }}">
+            <i class="bi bi-robot me-2"></i><span class="nav-text">Agents</span>
+          </a>
+        </li>
+        {% endif %}
       {% endif %}
     </ul>
 
@@ -125,14 +133,14 @@
                   <i class="bi bi-lightbulb me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Prompts</span>
                 </a>
               </li>
-              {% if settings.allow_user_workflows %}
+              {% if sidebar_settings.allow_user_workflows %}
               <li class="nav-item">
                 <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="workflows-tab">
                   <i class="bi bi-diagram-3 me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Workflows</span>
                 </a>
               </li>
               {% endif %}
-              {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
+              {% if sidebar_settings.per_user_semantic_kernel and sidebar_settings.enable_semantic_kernel %}
               <li class="nav-item">
                 <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="agents-tab">
                   <i class="bi bi-robot me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Agents</span>
@@ -144,7 +152,7 @@
                 </a>
               </li>
               {% endif %}
-              {% if settings.allow_user_custom_endpoints and settings.enable_multi_model_endpoints %}
+              {% if sidebar_settings.allow_user_custom_endpoints and sidebar_settings.enable_multi_model_endpoints %}
               <li class="nav-item">
                 <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="endpoints-tab">
                   <i class="bi bi-hdd-network me-2" style="font-size: 0.8em;"></i><span class="nav-text">Your Endpoints</span>
@@ -158,7 +166,7 @@
                 </a>
               </li>
               {% endif %}
-              {% if file_sync_enabled or settings.enable_semantic_kernel or settings.enable_multi_model_endpoints %}
+              {% if file_sync_enabled or sidebar_settings.enable_semantic_kernel or sidebar_settings.enable_multi_model_endpoints %}
               <li class="nav-item">
                 <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="identities-tab">
                   <i class="bi bi-person-badge me-2" style="font-size: 0.8em;"></i><span class="nav-text">Identities</span>
@@ -193,7 +201,7 @@
                   <i class="bi bi-lightbulb me-2" style="font-size: 0.8em;"></i><span class="nav-text">Group Prompts</span>
                 </a>
               </li>
-              {% if settings.allow_group_agents and settings.enable_semantic_kernel %}
+              {% if sidebar_settings.allow_group_agents and sidebar_settings.enable_semantic_kernel %}
                 <li class="nav-item">
                   <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="group-agents-tab">
                     <i class="bi bi-robot me-2" style="font-size: 0.8em;"></i><span class="nav-text">Group Agents</span>
@@ -205,7 +213,7 @@
                   </a>
                 </li>
               {% endif %}
-              {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel and settings.allow_group_custom_endpoints and settings.enable_multi_model_endpoints %}
+              {% if sidebar_settings.per_user_semantic_kernel and sidebar_settings.enable_semantic_kernel and sidebar_settings.allow_group_custom_endpoints and sidebar_settings.enable_multi_model_endpoints %}
                 <li class="nav-item">
                   <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="group-endpoints-tab">
                     <i class="bi bi-hdd-network me-2" style="font-size: 0.8em;"></i><span class="nav-text">Group Endpoints</span>
@@ -219,7 +227,7 @@
                   </a>
                 </li>
               {% endif %}
-              {% if file_sync_enabled or settings.enable_semantic_kernel or settings.enable_multi_model_endpoints %}
+              {% if file_sync_enabled or sidebar_settings.enable_semantic_kernel or sidebar_settings.enable_multi_model_endpoints %}
                 <li class="nav-item d-none" data-group-identities-sidebar-nav>
                   <a class="nav-link d-flex align-items-center workspace-nav-tab" href="#" data-tab="identities-tab">
                     <i class="bi bi-person-badge me-2" style="font-size: 0.8em;"></i><span class="nav-text">Identities</span>
@@ -847,7 +855,7 @@
           <div class="text-center p-2 text-muted small">Loading conversations...</div>
         </div>
       </div>
-      {% if settings.allow_user_workflows %}
+      {% if sidebar_settings.allow_user_workflows %}
       <div id="sidebar-workflow-section" class="d-none">
         <div id="sidebar-workflows-toggle" class="sidebar-section-toggle mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center justify-content-between" role="button" tabindex="0" aria-controls="sidebar-workflow-list-container" aria-expanded="true">
           <div class="d-flex align-items-center">

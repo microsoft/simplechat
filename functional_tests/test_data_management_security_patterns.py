@@ -2,9 +2,9 @@
 # test_data_management_security_patterns.py
 """
 Functional test for Data Management security patterns.
-Version: 0.241.217
+Version: 0.241.224
 Implemented in: 0.241.211
-Updated in: 0.241.217
+Updated in: 0.241.224
 
 This test ensures Data Management admin routes require authenticated admin
 access, secrets stay redacted in frontend responses, and the admin browser
@@ -59,7 +59,7 @@ def test_version_and_container_registration():
     """Validate the Data Management version and Cosmos job container registrations."""
     config_source = read_text(CONFIG_FILE)
 
-    assert 'VERSION = "0.241.217"' in config_source
+    assert 'VERSION = "0.241.224"' in config_source
     assert 'cosmos_data_management_jobs_container_name = "data_management_jobs"' in config_source
     assert 'partition_key=PartitionKey(path="/id")' in config_source
     assert 'cosmos_data_management_job_items_container_name = "data_management_job_items"' in config_source
@@ -69,7 +69,7 @@ def test_version_and_container_registration():
 def test_admin_routes_require_login_admin_and_swagger_security():
     """Validate every Data Management route has the required admin security stack."""
     routes = route_functions_with_decorators()
-    assert len(routes) == 10
+    assert len(routes) == 13
 
     for function_name, decorators in routes:
         assert "swagger_route" in decorators, f"{function_name} missing swagger_route"
@@ -84,6 +84,9 @@ def test_admin_routes_require_login_admin_and_swagger_security():
     assert '/api/admin/data-management/backups' in source
     assert '/api/admin/data-management/migration/catalog/<target_type>' in source
     assert '/api/admin/data-management/migration/summary' in source
+    assert '/api/admin/data-management/target/cosmos/test' in source
+    assert '/api/admin/data-management/target/search/test' in source
+    assert '/api/admin/data-management/target/enhanced-citation-storage/test' in source
     assert 'current_app._get_current_object()' in source
 
 
@@ -120,6 +123,9 @@ def test_settings_secrets_are_redacted_for_frontend():
     assert '_copy_source_blobs_to_target' in source
     assert 'get_data_management_migration_catalog' in source
     assert 'summarize_data_management_migration_plan' in source
+    assert 'test_target_cosmos_connection' in source
+    assert 'test_target_search_connection' in source
+    assert 'test_target_enhanced_citation_storage_connection' in source
     assert 'DATA_MANAGEMENT_REDACTED_VALUE = "***REDACTED***"' in source
     assert 'sanitize_data_management_settings_for_admin' in source
     assert 'sanitize_data_management_job_item_for_admin' in source
@@ -156,6 +162,10 @@ def test_admin_javascript_uses_safe_dom_patterns():
         'queueMigration(false)',
         'loadMigrationCatalog(targetType)',
         'renderMigrationSummary(data.summary || {})',
+        'testTargetCosmos',
+        'testTargetSearch',
+        'testTargetEnhancedCitationStorage',
+        'Migration preview refreshed.',
         'setMigrationTargetVisibility()',
         'updateSourceBlobBackupAvailability(settings)',
         'updateKeyStorageExperience(settings)',
@@ -211,8 +221,11 @@ def test_admin_ui_exposes_data_management_without_external_assets():
         'id="data_management_target_cosmos_endpoint"',
         'id="data_management_target_cosmos_database" value="SimpleChat" readonly aria-readonly="true"',
         'id="data-management-target-cosmos-key-field"',
+        'id="data-management-test-target-cosmos-btn"',
         'id="data-management-target-ai-search-section"',
+        'id="data-management-test-target-search-btn"',
         'id="data-management-target-enhanced-citations-section"',
+        'id="data-management-test-target-ec-storage-btn"',
         'id="data-management-migration-workflow-section"',
         'id="data-management-migration-summary"',
         'id="data-management-execute-migration-btn"',
@@ -256,6 +269,8 @@ def test_admin_ui_exposes_data_management_without_external_assets():
     assert 'target_cosmos_database_name: targetCosmosDatabaseName' in read_text(ADMIN_JS)
     assert 'DataManagementSettingsValidationError as exc' in read_text(ROUTE_FILE)
     assert 'get_data_management_migration_catalog(target_type, search_text=search, limit=limit)' in read_text(ROUTE_FILE)
+    assert 'data-management-restore-dry-run-btn' not in template
+    assert 'data-management-migration-dry-run-btn' not in template
     admin_settings_js = read_text(APP_ROOT / "static" / "js" / "admin" / "admin_settings.js")
     assert "closest('[data-ignore-settings-change=\"true\"]')" in admin_settings_js
     assert "saveButton.classList.toggle('d-none', isDataManagementActive);" in admin_settings_js

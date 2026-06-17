@@ -602,6 +602,78 @@ def test_backup_storage_connection(settings=None, create_container=False):
     }
 
 
+def _normalize_data_management_settings_from_payload(settings=None):
+    existing_settings = get_data_management_settings()
+    if isinstance(settings, dict):
+        settings_payload = dict(settings)
+        for secret_field in DATA_MANAGEMENT_FRONTEND_SECRET_FIELDS:
+            if settings_payload.get(secret_field) == DATA_MANAGEMENT_REDACTED_VALUE:
+                settings_payload[secret_field] = existing_settings.get(secret_field, "")
+        application_settings = _get_application_settings_for_data_management()
+        return normalize_data_management_settings(
+            payload=settings_payload,
+            existing_settings=existing_settings,
+            application_settings=application_settings,
+        )
+    application_settings = _get_application_settings_for_data_management()
+    return normalize_data_management_settings(existing_settings=existing_settings, application_settings=application_settings)
+
+
+def test_target_cosmos_connection(settings=None):
+    normalized_settings = _normalize_data_management_settings_from_payload(settings)
+    target_database = _get_target_cosmos_database(normalized_settings)
+    properties = target_database.read()
+    return {
+        "success": True,
+        "target": "cosmos",
+        "database_name": properties.get("id") or DATA_MANAGEMENT_TARGET_COSMOS_DATABASE_NAME,
+        "authentication_type": normalized_settings.get("target_cosmos_authentication_type"),
+    }
+
+
+def test_target_search_connection(settings=None):
+    normalized_settings = _normalize_data_management_settings_from_payload(settings)
+    endpoint = _safe_text(normalized_settings.get("target_ai_search_endpoint"))
+    if not endpoint:
+        raise ValueError("Target Search endpoint is required.")
+    index_client = SearchIndexClient(endpoint=endpoint, credential=_get_target_ai_search_credential(normalized_settings))
+    existing_indexes = set(index_client.list_index_names())
+    expected_indexes = [artifact["index_name"] for artifact in DATA_MANAGEMENT_SEARCH_ARTIFACTS]
+    return {
+        "success": True,
+        "target": "search",
+        "authentication_type": normalized_settings.get("target_ai_search_authentication_type"),
+        "expected_indexes": expected_indexes,
+        "existing_indexes": sorted(existing_indexes.intersection(expected_indexes)),
+        "missing_indexes": [index_name for index_name in expected_indexes if index_name not in existing_indexes],
+    }
+
+
+def test_target_enhanced_citation_storage_connection(settings=None, create_containers=False):
+    normalized_settings = _normalize_data_management_settings_from_payload(settings)
+    blob_service_client = _get_target_enhanced_citations_blob_client(normalized_settings)
+    container_results = []
+    for container_name in _source_blob_container_names():
+        container_client = blob_service_client.get_container_client(container_name)
+        exists = container_client.exists()
+        created = False
+        if not exists and create_containers:
+            container_client.create_container()
+            exists = True
+            created = True
+        container_results.append({
+            "container_name": container_name,
+            "container_exists": exists,
+            "container_created": created,
+        })
+    return {
+        "success": True,
+        "target": "enhanced_citation_storage",
+        "authentication_type": normalized_settings.get("target_enhanced_citations_storage_authentication_type"),
+        "containers": container_results,
+    }
+
+
 def _safe_list(value, limit=1000):
     if not isinstance(value, list):
         return []

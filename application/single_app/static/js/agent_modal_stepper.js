@@ -2961,6 +2961,7 @@ export class AgentModalStepper {
     const actionsCount = selectedActions.length;
     
     // Update basic information
+    this.renderAgentSummaryIcon();
     document.getElementById('summary-display-name').textContent = displayName;
     document.getElementById('summary-name').textContent = generatedName;
     document.getElementById('summary-description').textContent = description;
@@ -3982,6 +3983,44 @@ export class AgentModalStepper {
     return div.innerHTML;
   }
 
+  normalizeAgentIconPayload(iconPayload) {
+    if (!iconPayload || typeof iconPayload !== 'object' || Array.isArray(iconPayload)) {
+      return null;
+    }
+
+    const kind = String(iconPayload.kind || '').trim().toLowerCase();
+    const value = String(iconPayload.value || '').trim();
+    if (kind === 'bootstrap' && /^bi-[a-z0-9][a-z0-9-]{0,80}$/.test(value)) {
+      return { kind, value };
+    }
+    if (kind === 'image' && /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(value) && value.length <= 350000) {
+      return { kind, value };
+    }
+    return null;
+  }
+
+  renderAgentSummaryIcon() {
+    const container = document.getElementById('summary-agent-icon');
+    if (!container) {
+      return;
+    }
+
+    container.textContent = '';
+    const icon = this.normalizeAgentIconPayload(agentsCommon.getAgentIconPayload(document));
+    if (icon?.kind === 'image') {
+      const image = document.createElement('img');
+      image.src = icon.value;
+      image.alt = '';
+      container.appendChild(image);
+      return;
+    }
+
+    const iconElement = document.createElement('i');
+    iconElement.className = `bi ${icon?.kind === 'bootstrap' ? icon.value : 'bi-robot'}`;
+    iconElement.setAttribute('aria-hidden', 'true');
+    container.appendChild(iconElement);
+  }
+
   async saveAgent() {
     try {
       // Get agent data from form
@@ -4163,6 +4202,11 @@ export class AgentModalStepper {
       display_name: document.getElementById('agent-display-name')?.value || '',
       name: document.getElementById('agent-name')?.value || '',
       description: document.getElementById('agent-description')?.value || '',
+      tags: (document.getElementById('agent-tags')?.value || '')
+        .split(',')
+        .map(tag => tag.trim())
+        .filter(Boolean),
+      icon: agentsCommon.getAgentIconPayload(document),
       instructions: this.getInstructionsValue() || '',
       model: modelSelect?.value || '',
       instructions: this.getInstructionsValue() || '',

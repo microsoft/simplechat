@@ -2284,6 +2284,49 @@ function createCollaboratorAvatarHtml(fullMessageObject, senderLabel) {
     </div>`;
 }
 
+function normalizeAssistantAgentIcon(iconPayload) {
+  if (!iconPayload || typeof iconPayload !== 'object' || Array.isArray(iconPayload)) {
+    return null;
+  }
+
+  const kind = String(iconPayload.kind || '').trim().toLowerCase();
+  const value = String(iconPayload.value || '').trim();
+  if (!kind || !value) {
+    return null;
+  }
+
+  if (kind === 'bootstrap' && /^bi-[a-z0-9][a-z0-9-]{0,80}$/.test(value)) {
+    return { kind, value };
+  }
+
+  if (
+    kind === 'image'
+    && /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(value)
+    && value.length <= 350000
+  ) {
+    return { kind, value };
+  }
+
+  return null;
+}
+
+function createAssistantAvatarHtml(fullMessageObject, senderLabel, defaultAvatarSrc) {
+  const iconPayload = normalizeAssistantAgentIcon(
+    fullMessageObject?.agent_icon || fullMessageObject?.metadata?.agent_selection?.agent_icon
+  );
+  const altText = `${stripHtmlTags(senderLabel || 'AI').replace(/\s+/g, ' ').trim() || 'AI'} Avatar`;
+
+  if (iconPayload?.kind === 'image') {
+    return `<img src="${iconPayload.value}" alt="${escapeHtml(altText)}" class="avatar agent-avatar" />`;
+  }
+
+  if (iconPayload?.kind === 'bootstrap') {
+    return `<div class="avatar avatar-initials agent-avatar" aria-label="${escapeHtml(altText)}"><i class="bi ${iconPayload.value}" aria-hidden="true"></i></div>`;
+  }
+
+  return `<img src="${escapeHtml(defaultAvatarSrc)}" alt="${escapeHtml(altText)}" class="avatar" />`;
+}
+
 function hydrateCollaboratorAvatar(messageDiv, senderUserId, senderLabel) {
   if (!messageDiv || !senderUserId) {
     return;
@@ -4602,6 +4645,7 @@ export function appendMessage(
     } else {
       senderLabel = "AI";
     }
+    avatarHtml = createAssistantAvatarHtml(fullMessageObject, senderLabel, avatarImg);
 
     const messageConversationId = resolveMessageConversationId(fullMessageObject);
     const renderCompletedAssistantActions = shouldRenderCompletedAssistantActions(
@@ -4756,7 +4800,7 @@ export function appendMessage(
     // Build AI message inner HTML
     messageDiv.innerHTML = `
             <div class="message-content">
-                <img src="${avatarImg}" alt="${avatarAltText}" class="avatar">
+          ${avatarHtml}
                 <div class="message-bubble">
                     <div class="message-sender">${senderLabel}</div>
                     ${mainMessageHtml}
@@ -5484,6 +5528,30 @@ function getCurrentAgentSelection() {
     assignedKnowledge = { enabled: false };
   }
 
+  const parseAgentJsonObject = (rawValue) => {
+    if (!rawValue) {
+      return {};
+    }
+    try {
+      const parsedValue = JSON.parse(rawValue);
+      return parsedValue && typeof parsedValue === 'object' && !Array.isArray(parsedValue) ? parsedValue : {};
+    } catch (error) {
+      return {};
+    }
+  };
+
+  const parseAgentJsonArray = (rawValue) => {
+    if (!rawValue) {
+      return [];
+    }
+    try {
+      const parsedValue = JSON.parse(rawValue);
+      return Array.isArray(parsedValue) ? parsedValue : [];
+    } catch (error) {
+      return [];
+    }
+  };
+
   return {
     id: selectedAgentOption.dataset.agentId || null,
     name: selectedAgentOption.dataset.name || selectedAgentOption.value || '',
@@ -5493,6 +5561,9 @@ function getCurrentAgentSelection() {
     group_id: selectedAgentOption.dataset.groupId || null,
     group_name: selectedAgentOption.dataset.groupName || null,
     assigned_knowledge: assignedKnowledge,
+    icon: parseAgentJsonObject(selectedAgentOption.dataset.agentIcon || ''),
+    tags: parseAgentJsonArray(selectedAgentOption.dataset.agentTags || '[]'),
+    catalog_key: selectedAgentOption.dataset.catalogKey || null,
   };
 }
 
@@ -5531,6 +5602,30 @@ function getCollaborativeAgentDisplayName(option = {}) {
     || option.value
     || ''
   ).trim();
+}
+
+function parseSafeJsonObject(rawValue) {
+  if (!rawValue) {
+    return {};
+  }
+  try {
+    const parsedValue = JSON.parse(rawValue);
+    return parsedValue && typeof parsedValue === 'object' && !Array.isArray(parsedValue) ? parsedValue : {};
+  } catch (error) {
+    return {};
+  }
+}
+
+function parseSafeJsonArray(rawValue) {
+  if (!rawValue) {
+    return [];
+  }
+  try {
+    const parsedValue = JSON.parse(rawValue);
+    return Array.isArray(parsedValue) ? parsedValue : [];
+  } catch (error) {
+    return [];
+  }
 }
 
 function buildCollaborativeModelTarget(option = {}) {
@@ -5597,6 +5692,8 @@ function buildCollaborativeAgentTarget(option = {}) {
   const isGlobal = String(dataset.isGlobal || option.is_global || '').trim() === 'true' || option.is_global === true;
   const isGroup = String(dataset.isGroup || option.is_group || '').trim() === 'true' || option.is_group === true;
   const groupName = String(dataset.groupName || option.group_name || '').trim() || null;
+  const parsedIcon = parseSafeJsonObject(dataset.agentIcon);
+  const parsedTags = parseSafeJsonArray(dataset.agentTags);
 
   return {
     action: 'ai_tag',
@@ -5612,6 +5709,9 @@ function buildCollaborativeAgentTarget(option = {}) {
       is_group: isGroup,
       group_id: String(dataset.groupId || option.group_id || '').trim() || null,
       group_name: groupName,
+      icon: Object.keys(parsedIcon).length ? parsedIcon : (option.icon || {}),
+      tags: parsedTags.length ? parsedTags : (Array.isArray(option.tags) ? option.tags : []),
+      catalog_key: String(dataset.catalogKey || option.catalog_key || '').trim() || null,
     },
     subtitle: isGroup && groupName
       ? `Group agent · ${groupName}`
@@ -6097,6 +6197,7 @@ export function actuallySendMessage(finalMessageToSend) {
     currentConversationId,
     {
       endpoint: useDocumentAction ? '/api/chat/document-action/stream' : '/api/chat/stream',
+      fallbackAgentInfo: messageData.agent_info || null,
     }
   );
 

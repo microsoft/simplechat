@@ -5,7 +5,7 @@ from config import *
 from functions_authentication import *
 from functions_content import *
 from functions_settings import *
-from functions_assigned_knowledge import get_agent_assigned_knowledge
+from functions_agent_catalog import build_accessible_agent_catalog
 from functions_collaboration import (
     assert_user_can_participate_in_collaboration_conversation,
     create_collaboration_message_notifications,
@@ -29,10 +29,7 @@ from functions_group import (
     get_user_role_in_group,
     require_active_group,
 )
-from functions_group_agents import get_group_agents
-from functions_global_agents import get_global_agents
 from functions_image_messages import build_image_message_documents
-from functions_personal_agents import ensure_migration_complete, get_personal_agents
 from functions_prompts import list_all_prompts_for_scope
 from functions_public_workspaces import find_public_workspace_by_id, get_user_visible_public_workspace_ids_from_settings
 from functions_simplechat_operations import upload_chat_image_bytes_for_user
@@ -382,30 +379,6 @@ def _resolve_chat_upload_context(conversation_id, user_id, current_user_info):
     }
 
 
-def _serialize_chat_agent_option(agent, *, is_global=False, is_group=False, group_id=None, group_name=None):
-    if is_group:
-        agent_scope = 'group'
-    elif is_global:
-        agent_scope = 'global'
-    else:
-        agent_scope = 'personal'
-
-    return {
-        'id': agent.get('id'),
-        'name': agent.get('name', ''),
-        'display_name': agent.get('display_name') or agent.get('displayName') or agent.get('name', ''),
-        'is_global': is_global,
-        'is_group': is_group,
-        'group_id': group_id,
-        'group_name': group_name,
-        'assigned_knowledge': get_agent_assigned_knowledge(
-            agent,
-            agent_scope=agent_scope,
-            group_id=group_id,
-        ),
-    }
-
-
 def _serialize_chat_prompt_option(prompt, *, scope_type, scope_id=None, scope_name=None):
     return {
         'id': prompt.get('id'),
@@ -457,6 +430,7 @@ def _build_initial_chat_model_selection(*, chat_model_options, preferred_model_i
             'scope_type': scope_type,
             'scope_id': _normalize_chat_model_value(option.get('scope_id')),
             'scope_name': scope_name,
+            'icon': option.get('icon') if isinstance(option.get('icon'), dict) else {},
             'option_value': deployment_name or model_id or selection_key,
             'search_text': ' '.join(part for part in search_parts if part),
         }
@@ -538,6 +512,7 @@ def _build_chat_model_catalog(*, user_id, settings, user_settings_dict, user_gro
                     'scope_type': scope_type,
                     'scope_id': scope_id,
                     'scope_name': scope_name,
+                    'icon': model.get('icon') if isinstance(model.get('icon'), dict) else {},
                 })
 
     append_models(settings.get('model_endpoints', []) or [], 'global', None, 'Global')
@@ -697,7 +672,8 @@ def register_route_frontend_chats(app):
                         "display_name": model.get("displayName") or model.get("deploymentName") or model.get("modelName") or "",
                         "deployment_name": model.get("deploymentName") or "",
                         "endpoint_id": endpoint.get("id"),
-                        "provider": endpoint.get("provider")
+                        "provider": endpoint.get("provider"),
+                        "icon": model.get("icon") if isinstance(model.get("icon"), dict) else {}
                     })
 
         if not user_id:
@@ -728,34 +704,11 @@ def register_route_frontend_chats(app):
 
         chat_agent_options = []
         try:
-            if settings.get('allow_user_agents', False):
-                ensure_migration_complete(user_id)
-                for agent in get_personal_agents(user_id):
-                    chat_agent_options.append(_serialize_chat_agent_option(agent))
-
-            include_global_agents = settings.get('enable_semantic_kernel', False) and (
-                not settings.get('per_user_semantic_kernel', False)
-                or settings.get('merge_global_semantic_kernel_with_workspace', False)
+            chat_agent_options = build_accessible_agent_catalog(
+                user_id,
+                settings=settings,
+                user_groups=user_groups_raw,
             )
-            if include_global_agents:
-                for agent in get_global_agents():
-                    chat_agent_options.append(_serialize_chat_agent_option(agent, is_global=True))
-
-            if settings.get('enable_group_workspaces', False) and settings.get('allow_group_agents', False):
-                for group_doc in user_groups_raw:
-                    group_id = group_doc.get('id')
-                    if not group_id:
-                        continue
-                    group_name = group_doc.get('name', 'Unnamed Group')
-                    for agent in get_group_agents(group_id):
-                        chat_agent_options.append(
-                            _serialize_chat_agent_option(
-                                agent,
-                                is_group=True,
-                                group_id=group_id,
-                                group_name=group_name,
-                            )
-                        )
         except Exception as e:
             logger.warning(f"Failed to load chat agent options: {e}")
 

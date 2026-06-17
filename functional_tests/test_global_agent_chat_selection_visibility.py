@@ -1,7 +1,7 @@
 # test_global_agent_chat_selection_visibility.py
 """
 Functional test for global agent chat selection visibility.
-Version: 0.241.122
+Version: 0.241.224
 Implemented in: 0.241.122
 
 This test ensures global agents are exposed in chat when app agents are enabled
@@ -49,12 +49,14 @@ def test_global_agent_button_visible_when_agents_enabled():
 
 
 def test_global_agents_preloaded_for_global_mode():
-    """Verify global agents are included in the chat agent catalog outside workspace mode."""
+    """Verify chat uses the shared agent catalog that includes global agents."""
     frontend_route = read_repo_file("application/single_app/route_frontend_chats.py")
+    catalog_helper = read_repo_file("application/single_app/functions_agent_catalog.py")
 
-    assert_contains(frontend_route, "include_global_agents = settings.get('enable_semantic_kernel', False)", "global agent preload flag")
-    assert_contains(frontend_route, "not settings.get('per_user_semantic_kernel', False)", "global mode preload condition")
-    assert_contains(frontend_route, "chat_agent_options.append(_serialize_chat_agent_option(agent, is_global=True))", "global agent serialization")
+    assert_contains(frontend_route, "build_accessible_agent_catalog(", "shared agent catalog preload")
+    assert_contains(catalog_helper, "def _should_include_global_agents", "global agent catalog gate")
+    assert_contains(catalog_helper, "return bool(settings.get(\"enable_semantic_kernel\", False))", "agents-enabled global gate")
+    assert_contains(catalog_helper, "get_global_agents()", "global agent catalog source")
 
 
 def test_chat_requires_explicit_agent_selection():
@@ -68,7 +70,7 @@ def test_chat_requires_explicit_agent_selection():
     )
     assert_contains(
         backend_route,
-        "if selected_agent and kernel:",
+        "if selected_agent:",
         "selected-agent-gated kernel fallback",
     )
     assert_contains(

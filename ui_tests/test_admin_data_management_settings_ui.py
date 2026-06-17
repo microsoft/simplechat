@@ -1,9 +1,9 @@
 # test_admin_data_management_settings_ui.py
 """
 UI test for Admin Settings Data Management controls.
-Version: 0.241.217
+Version: 0.241.221
 Implemented in: 0.241.211
-Updated in: 0.241.217
+Updated in: 0.241.221
 
 This test ensures admins can discover the Data Management tab, see the
 operational-business-hours warning, and access the backup, encryption,
@@ -68,17 +68,20 @@ def test_admin_data_management_controls_render_from_template():
         "data_management_target_cosmos_endpoint",
         "data_management_target_cosmos_database",
         "data-management-target-cosmos-key-field",
+        "data-management-test-target-cosmos-btn",
         "data-management-target-ai-search-section",
         "data_management_target_ai_search_auth",
         "data_management_target_ai_search_endpoint",
         "data-management-target-ai-search-key-field",
         "data_management_target_ai_search_key",
+        "data-management-test-target-search-btn",
         "data-management-target-enhanced-citations-section",
         "data_management_target_ec_storage_auth",
         "data-management-target-ec-blob-endpoint-field",
         "data_management_target_ec_blob_endpoint",
         "data-management-target-ec-connection-string-field",
         "data_management_target_ec_connection_string",
+        "data-management-test-target-ec-storage-btn",
         "data-management-migration-workflow-section",
         "data_management_migration_users_mode",
         "data-management-migration-users-available",
@@ -92,10 +95,9 @@ def test_admin_data_management_controls_render_from_template():
         "data-management-migration-summary",
         "data-management-migration-preview-btn",
         "data-management-execute-migration-btn",
+        "data-management-backup-operations-section",
         "data-management-run-full-backup-btn",
         "data-management-run-partial-backup-btn",
-        "data-management-restore-dry-run-btn",
-        "data-management-migration-dry-run-btn",
         "data-management-backup-inventory-section",
         "data-management-full-backup-count",
         "data-management-partial-backup-count",
@@ -128,8 +130,8 @@ def test_admin_data_management_controls_render_from_template():
     assert 'Backup Contents' in template
     assert 'Storage and Manifest' in template
     assert '<h5 class="mb-1">Target Cosmos Database</h5>' in template
-    assert '<h5 class="mb-1">Destination AI Search</h5>' in template
-    assert '<h5 class="mb-1">Destination Enhanced Citations Storage</h5>' in template
+    assert '<h5 class="mb-1">Target Search</h5>' in template
+    assert '<h5 class="mb-1">Target Enhanced Citation Storage</h5>' in template
     assert '<h5 class="mb-1">Migration Workflow</h5>' in template
     assert "Use migration when moving SimpleChat data into another SimpleChat environment" in template
     assert "Full backups run on the selected cadence; partial backups run daily only." in template
@@ -150,6 +152,10 @@ def test_admin_data_management_controls_render_from_template():
     assert 'buildMigrationPlan' in js_source
     assert 'queueMigration(false)' in js_source
     assert 'loadMigrationCatalog(targetType)' in js_source
+    assert 'testTargetCosmos' in js_source
+    assert 'testTargetSearch' in js_source
+    assert 'testTargetEnhancedCitationStorage' in js_source
+    assert 'Migration preview refreshed.' in js_source
     assert 'Enhanced Citations is off, so source document blob backups are unavailable.' in js_source
     assert 'Stored connection string saved. You can test storage without re-entering it.' in js_source
     assert 'target_cosmos_database_name: targetCosmosDatabaseName' in js_source
@@ -163,6 +169,8 @@ def test_admin_data_management_controls_render_from_template():
     assert "admin_data_management.js') }}?v={{ config['VERSION'] }}" in template
     assert "innerHTML" not in js_source
     assert "insertAdjacentHTML" not in js_source
+    assert "data-management-restore-dry-run-btn" not in template
+    assert "data-management-migration-dry-run-btn" not in template
 
 
 @pytest.mark.ui
@@ -203,6 +211,7 @@ def test_admin_data_management_tab_browser_workflow():
         expect(page.locator("#data_management_target_cosmos_database")).to_have_value("SimpleChat")
         expect(page.locator("#data_management_target_cosmos_database")).to_have_attribute("readonly", "")
         expect(page.locator("#data-management-target-ai-search-section")).to_be_visible()
+        expect(page.locator("#data-management-test-target-search-btn")).to_be_visible()
         expect(page.locator("#data-management-migration-workflow-section")).to_be_visible()
         expect(page.locator("#data-management-execute-migration-btn")).to_be_visible()
         expect(page.locator("#data-management-save-settings-btn")).to_be_visible()
