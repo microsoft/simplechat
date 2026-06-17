@@ -3,7 +3,7 @@
 from config import *
 from functions_authentication import *
 from functions_group import get_group_model_endpoints, require_active_group, update_active_group_for_user
-from functions_governance import filter_governed_model_endpoints, is_governance_access_allowed
+from functions_governance import filter_governed_model_endpoints, is_action_scope_access_allowed, is_governance_access_allowed
 from functions_settings import *
 from functions_file_sync import FILE_SYNC_MANAGER_ROLES, is_file_sync_enabled_for_group
 from swagger_wrapper import swagger_route, get_auth_security
@@ -67,7 +67,7 @@ def register_route_frontend_group_workspaces(app):
 
         workspace_governance = {
             "group_agents": is_governance_access_allowed("governance_group_agents", user_id),
-            "group_actions": is_governance_access_allowed("governance_group_actions", user_id),
+            "group_actions": is_action_scope_access_allowed("governance_group_actions", user_id, "group"),
             "group_endpoints": is_governance_access_allowed("governance_group_endpoints", user_id),
             "global_endpoints": is_governance_access_allowed("governance_global_endpoints", user_id),
         }

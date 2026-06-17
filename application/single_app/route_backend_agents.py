@@ -42,6 +42,7 @@ from functions_debug import debug_print
 from functions_authentication import *
 from functions_appinsights import log_event
 from functions_agent_catalog import (
+    apply_agent_popular_promotions,
     apply_agent_usage_counts,
     build_accessible_agent_catalog,
     get_popular_agents,
@@ -1320,6 +1321,7 @@ def get_agents_catalog():
         catalog = build_accessible_agent_catalog(user_id, settings=settings)
         if include_usage:
             catalog = apply_agent_usage_counts(catalog)
+            catalog = apply_agent_popular_promotions(catalog, settings=settings)
         if not settings.get('agents_page_show_instructions_in_details', True):
             catalog = _redact_catalog_agent_instructions(catalog)
         return jsonify({'agents': catalog}), 200
@@ -1348,6 +1350,7 @@ def get_popular_agents_catalog():
         settings = get_settings()
         catalog = build_accessible_agent_catalog(user_id, settings=settings)
         catalog = apply_agent_usage_counts(catalog)
+        catalog = apply_agent_popular_promotions(catalog, settings=settings)
         popular_agents = get_popular_agents(catalog, limit=limit, usage_window=usage_window)
         if not settings.get('agents_page_show_instructions_in_details', True):
             popular_agents = _redact_catalog_agent_instructions(popular_agents)

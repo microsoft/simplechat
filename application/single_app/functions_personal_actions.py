@@ -21,7 +21,7 @@ from functions_workspace_identities import (
 from functions_debug import debug_print
 from config import cosmos_personal_actions_container
 import logging
-from functions_governance import ensure_governance_access
+from functions_governance import ensure_action_type_access, filter_actions_by_action_type_access
 
 
 def get_governed_personal_actions(user_id, return_type=SecretReturnType.TRIGGER):
@@ -34,8 +34,8 @@ def get_governed_personal_actions(user_id, return_type=SecretReturnType.TRIGGER)
     Returns:
         list: List of action/plugin dictionaries
     """
-    ensure_governance_access('governance_user_actions', user_id)
-    return get_personal_actions(user_id, return_type=return_type)
+    actions = get_personal_actions(user_id, return_type=return_type)
+    return filter_actions_by_action_type_access(user_id, actions, 'governance_user_actions', 'personal')
 
 def get_personal_actions(user_id, return_type=SecretReturnType.TRIGGER):
     """
@@ -127,7 +127,7 @@ def get_personal_action(user_id, action_id, return_type=SecretReturnType.TRIGGER
         debug_print(f"Error fetching action {action_id} for user {user_id}: {e}")
         return None
 
-def save_personal_action(user_id, action_data):
+def save_personal_action(user_id, action_data, enforce_governance=True):
     """
     Save or update a personal action/plugin.
     
@@ -139,7 +139,6 @@ def save_personal_action(user_id, action_data):
         dict: Saved action data with ID
     """
     try:
-        ensure_governance_access('governance_user_actions', user_id)
         # Check if an action with this name already exists
         existing_action = None
         if action_data.get('id'):
@@ -203,6 +202,9 @@ def save_personal_action(user_id, action_data):
             action_data['auth'] = {'type': 'identity'}
         elif 'type' not in action_data['auth']:
             action_data['auth']['type'] = 'identity'
+
+        if enforce_governance:
+            ensure_action_type_access('governance_user_actions', user_id, action_data.get('type'), 'personal')
         
         # Store secrets in Key Vault before upsert
         action_data = keyvault_plugin_save_helper(
@@ -232,11 +234,12 @@ def delete_personal_action(user_id, action_id):
         bool: True if deleted, False if not found
     """
     try:
-        ensure_governance_access('governance_user_actions', user_id)
         # Try to find the action first to get the correct ID
         action = get_personal_action(user_id, action_id, return_type=SecretReturnType.NAME)
         if not action:
             return False
+
+        ensure_action_type_access('governance_user_actions', user_id, action.get('type'), 'personal')
             
         # Delete secrets from Key Vault before deleting the action
         keyvault_plugin_delete_helper(action, scope_value=user_id, scope="user")
@@ -319,7 +322,7 @@ def migrate_actions_from_user_settings(user_id):
                     plugin['id'] = str(uuid.uuid4())
                 # Store secrets in Key Vault before migration
                 plugin = keyvault_plugin_save_helper(plugin, scope_value=user_id, scope="user")
-                save_personal_action(user_id, plugin)
+                save_personal_action(user_id, plugin, enforce_governance=False)
                 migrated_count += 1
             except Exception as e:
                 debug_print(f"Error migrating plugin {plugin.get('name', 'unknown')} for user {user_id}: {e}")

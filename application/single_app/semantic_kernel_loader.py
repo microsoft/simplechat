@@ -72,6 +72,7 @@ from functions_personal_actions import (
     ensure_migration_complete as ensure_actions_migration_complete,
 )
 from functions_personal_agents import get_personal_agents, ensure_migration_complete as ensure_agents_migration_complete
+from functions_governance import filter_actions_by_action_type_access, filter_governed_global_actions_for_user
 from functions_agent_payload import can_agent_use_default_multi_endpoint_model
 from functions_workspace_identities import (
     WORKSPACE_IDENTITY_SCOPE_GLOBAL,
@@ -1190,6 +1191,20 @@ def _get_governed_personal_plugin_manifests(user_id, return_type=SecretReturnTyp
         return []
 
 
+def _get_governed_group_plugin_manifests(user_id, group_id, return_type=SecretReturnType.NAME):
+    group_manifests = get_group_actions(group_id, return_type=return_type)
+    if not user_id:
+        return group_manifests
+    return filter_actions_by_action_type_access(user_id, group_manifests, 'governance_group_actions', 'group')
+
+
+def _get_governed_global_plugin_manifests(user_id, return_type=SecretReturnType.NAME):
+    global_manifests = get_global_actions(return_type=return_type)
+    if not user_id:
+        return global_manifests
+    return filter_governed_global_actions_for_user(user_id, global_manifests)
+
+
 def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="global", user_id=None, group_id=None, agent_other_settings=None):
     """
     Load specific plugins by name for an agent with enhanced logging.
@@ -1217,17 +1232,17 @@ def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="glob
                 debug_print(f"[SK Loader] Warning: Group mode requested without group_id. Skipping plugin load.")
                 all_plugin_manifests = []
             else:
-                all_plugin_manifests = get_group_actions(group_id, return_type=SecretReturnType.NAME)
+                all_plugin_manifests = _get_governed_group_plugin_manifests(user_id, group_id, return_type=SecretReturnType.NAME)
                 debug_print(f"[SK Loader] Retrieved {len(all_plugin_manifests)} group plugin manifests for group {group_id}")
                 if merge_global:
-                    global_plugins = get_global_actions(return_type=SecretReturnType.NAME)
+                    global_plugins = _get_governed_global_plugin_manifests(user_id, return_type=SecretReturnType.NAME)
                     all_plugin_manifests.extend(global_plugins)
                     debug_print(f"[SK Loader] Merged global plugins for group mode. Total manifests: {len(all_plugin_manifests)}")
         elif mode_label == "per-user":
             if user_id:
                 all_plugin_manifests = _get_governed_personal_plugin_manifests(user_id, return_type=SecretReturnType.NAME)
                 if merge_global:
-                    global_plugins = get_global_actions(return_type=SecretReturnType.NAME)
+                    global_plugins = _get_governed_global_plugin_manifests(user_id, return_type=SecretReturnType.NAME)
                     for g in global_plugins:
                         all_plugin_manifests.append(g)
                 debug_print(f"[SK Loader] Retrieved {len(all_plugin_manifests)} personal plugin manifests for user {user_id}")
@@ -1236,7 +1251,7 @@ def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="glob
                 all_plugin_manifests = []
         else:
             # Global mode - get from global actions container
-            all_plugin_manifests = get_global_actions(return_type=SecretReturnType.NAME)
+            all_plugin_manifests = _get_governed_global_plugin_manifests(user_id, return_type=SecretReturnType.NAME)
             print(f"[SK Loader] Retrieved {len(all_plugin_manifests)} global plugin manifests")
             
         # Filter manifests to only include requested plugins
@@ -1321,9 +1336,9 @@ def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="glob
             # Get plugin manifests again for fallback
             if mode_label == "group":
                 if group_id:
-                    all_plugin_manifests = get_group_actions(group_id, return_type=SecretReturnType.NAME)
+                    all_plugin_manifests = _get_governed_group_plugin_manifests(user_id, group_id, return_type=SecretReturnType.NAME)
                     if merge_global:
-                        global_plugins = get_global_actions(return_type=SecretReturnType.NAME)
+                        global_plugins = _get_governed_global_plugin_manifests(user_id, return_type=SecretReturnType.NAME)
                         all_plugin_manifests.extend(global_plugins)
                 else:
                     all_plugin_manifests = []
@@ -1331,13 +1346,13 @@ def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="glob
                 if user_id:
                     all_plugin_manifests = _get_governed_personal_plugin_manifests(user_id, return_type=SecretReturnType.NAME)
                     if merge_global:
-                        global_plugins = get_global_actions(return_type=SecretReturnType.NAME)
+                        global_plugins = _get_governed_global_plugin_manifests(user_id, return_type=SecretReturnType.NAME)
                         for g in global_plugins:
                             all_plugin_manifests.append(g)
                 else:
                     all_plugin_manifests = []
             else:
-                all_plugin_manifests = get_global_actions(return_type=SecretReturnType.NAME)
+                all_plugin_manifests = _get_governed_global_plugin_manifests(user_id, return_type=SecretReturnType.NAME)
 
             plugin_manifests = [p for p in all_plugin_manifests if p.get('name') in plugin_names or p.get('id') in plugin_names]
             plugin_manifests = _apply_agent_plugin_runtime_overlays(
@@ -1918,7 +1933,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
             else:
                 plugin_mode = mode_label
 
-            resolved_user_id = None if agent_is_global else get_current_user_id()
+            resolved_user_id = get_current_user_id()
             group_id = agent_config.get("group_id") if agent_is_group else None
             print(f"[SK Loader] Agent scope - is_global: {agent_is_global}, is_group: {agent_is_group}, plugin_mode: {plugin_mode}, group_id: {group_id}")
             load_agent_specific_plugins(
@@ -2642,7 +2657,7 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
         
     # PATCH: Merge global plugins if enabled
     if merge_global:
-        global_plugins = get_global_actions(return_type=SecretReturnType.NAME)
+        global_plugins = _get_governed_global_plugin_manifests(user_id, return_type=SecretReturnType.NAME)
         # User plugins take precedence
         all_plugins = {p.get('name'): p for p in plugin_manifests}
         all_plugins.update({p.get('name'): p for p in global_plugins})

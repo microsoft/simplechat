@@ -36,6 +36,63 @@ DEFAULT_ITEM_POLICY_ENTITY_TYPES = {
     "global_endpoint",
     "global_agent",
     "global_action",
+    "personal_action_type",
+    "group_action_type",
+    "global_action_type",
+}
+
+
+ACTION_TYPE_POLICY_ENTITY_TYPES = {
+    "personal": "personal_action_type",
+    "user": "personal_action_type",
+    "group": "group_action_type",
+    "global": "global_action_type",
+}
+
+
+ACTION_TYPE_FEATURE_KEYS = {
+    "personal": "governance_user_actions",
+    "user": "governance_user_actions",
+    "group": "governance_group_actions",
+    "global": "governance_global_actions_usage",
+}
+
+
+ACTION_TYPE_ALIASES = {
+    "sql_query": "sql",
+    "sql_schema": "sql",
+    "sql": "sql",
+    "simplechat": "simplechat",
+    "simple_chat": "simplechat",
+    "openapi": "openapi",
+    "open_api": "openapi",
+    "mcp": "mcp",
+    "model_context_protocol": "mcp",
+    "msgraph": "msgraph",
+    "microsoft_graph": "msgraph",
+    "databricks_table": "databricks",
+    "databricks": "databricks",
+    "tableau": "tableau",
+    "chart": "chart",
+    "azure_maps": "azure_maps",
+    "blob_storage": "blob_storage",
+    "document_search": "document_search",
+    "search": "document_search",
+}
+
+
+ACTION_TYPE_LABELS = {
+    "sql": "SQL",
+    "simplechat": "SimpleChat",
+    "openapi": "OpenAPI",
+    "mcp": "MCP",
+    "msgraph": "Microsoft Graph",
+    "databricks": "Databricks",
+    "tableau": "Tableau",
+    "chart": "Chart",
+    "azure_maps": "Azure Maps",
+    "blob_storage": "Blob Storage",
+    "document_search": "Document Search",
 }
 
 
@@ -188,6 +245,13 @@ def _normalize_item_policy_entity_type(entity_type: str) -> str:
     return LEGACY_ITEM_POLICY_ENTITY_TYPE_ALIASES.get(normalized_entity_type, normalized_entity_type)
 
 
+def _normalize_item_policy_item_id(entity_type: str, item_id: str) -> str:
+    normalized_entity_type = _normalize_item_policy_entity_type(entity_type)
+    if normalized_entity_type in set(ACTION_TYPE_POLICY_ENTITY_TYPES.values()):
+        return normalize_governed_action_type(item_id)
+    return str(item_id or "").strip()
+
+
 def _get_legacy_item_policy_entity_types(entity_type: str) -> List[str]:
     normalized_entity_type = _normalize_item_policy_entity_type(entity_type)
     return [
@@ -199,14 +263,14 @@ def _get_legacy_item_policy_entity_types(entity_type: str) -> List[str]:
 
 def _item_policy_document_id(entity_type: str, item_id: str, policy_id: str) -> str:
     normalized_entity_type = _normalize_item_policy_entity_type(entity_type)
-    normalized_item_id = str(item_id or "").strip()
+    normalized_item_id = _normalize_item_policy_item_id(normalized_entity_type, item_id)
     normalized_policy_id = str(policy_id or "default").strip() or "default"
     return f"item:{normalized_entity_type}:{normalized_item_id}:{normalized_policy_id}"
 
 
 def _legacy_item_policy_document_id(entity_type: str, item_id: str) -> str:
     normalized_entity_type = _normalize_item_policy_entity_type(entity_type)
-    normalized_item_id = str(item_id or "").strip()
+    normalized_item_id = _normalize_item_policy_item_id(normalized_entity_type, item_id)
     return f"item:{normalized_entity_type}:{normalized_item_id}"
 
 
@@ -217,7 +281,7 @@ def _extract_policy_id_from_item_doc(policy: Dict[str, Any], entity_type: str, i
 
     doc_id = str((policy or {}).get("id") or "").strip()
     normalized_entity_type = _normalize_item_policy_entity_type(entity_type)
-    normalized_item_id = str(item_id or "").strip()
+    normalized_item_id = _normalize_item_policy_item_id(normalized_entity_type, item_id)
     prefix = f"item:{normalized_entity_type}:{normalized_item_id}:"
     if doc_id.startswith(prefix):
         suffix = doc_id[len(prefix):].strip()
@@ -236,7 +300,7 @@ def _default_item_policy_name(entity_type: str, item_id: str, resource_label: st
 def _normalize_item_policy_doc(policy: Dict[str, Any]) -> Dict[str, Any]:
     normalized_policy = dict(policy)
     normalized_entity_type = _normalize_item_policy_entity_type(normalized_policy.get("entity_type", ""))
-    normalized_item_id = str(normalized_policy.get("item_id") or "").strip()
+    normalized_item_id = _normalize_item_policy_item_id(normalized_entity_type, normalized_policy.get("item_id") or "")
     normalized_policy_id = _extract_policy_id_from_item_doc(normalized_policy, normalized_entity_type, normalized_item_id)
     normalized_resource_label = str(normalized_policy.get("resource_label") or "").strip()
     normalized_policy_name = str(normalized_policy.get("policy_name") or "").strip() or _default_item_policy_name(
@@ -301,7 +365,7 @@ def _default_item_policy_doc(
     resource_label: str = "",
 ) -> Dict[str, Any]:
     normalized_entity_type = _normalize_item_policy_entity_type(entity_type)
-    normalized_item_id = str(item_id or "").strip()
+    normalized_item_id = _normalize_item_policy_item_id(normalized_entity_type, item_id)
     normalized_policy_id = str(policy_id or "default").strip() or "default"
     normalized_resource_label = str(resource_label or "").strip()
     normalized_policy_name = str(policy_name or "").strip() or _default_item_policy_name(
@@ -354,11 +418,11 @@ def _read_stored_feature_policy(feature_key: str) -> Dict[str, Any]:
     return cosmos_governance_policies_container.read_item(item=policy_id, partition_key=policy_id)
 
 
-def _read_item_policies(entity_type: str, item_id: str) -> List[Dict[str, Any]]:
+def _read_item_policies(entity_type: str, item_id: str, include_default: bool = True) -> List[Dict[str, Any]]:
     normalized_entity_type = _normalize_item_policy_entity_type(entity_type)
-    normalized_item_id = str(item_id or "").strip()
+    normalized_item_id = _normalize_item_policy_item_id(normalized_entity_type, item_id)
     if not normalized_item_id:
-        return [_default_item_policy_doc(normalized_entity_type, normalized_item_id)]
+        return [_default_item_policy_doc(normalized_entity_type, normalized_item_id)] if include_default else []
 
     candidate_entity_types = [normalized_entity_type] + _get_legacy_item_policy_entity_types(normalized_entity_type)
     rows = []
@@ -403,7 +467,7 @@ def _read_item_policies(entity_type: str, item_id: str) -> List[Dict[str, Any]]:
 
     normalized_rows = list(normalized_rows_by_key.values())
     if not normalized_rows:
-        return [_default_item_policy_doc(normalized_entity_type, normalized_item_id)]
+        return [_default_item_policy_doc(normalized_entity_type, normalized_item_id)] if include_default else []
 
     return sorted(normalized_rows, key=lambda item: (str(item.get("policy_name") or ""), str(item.get("policy_id") or "")))
 
@@ -413,7 +477,7 @@ def _read_item_policy(entity_type: str, item_id: str) -> Dict[str, Any]:
 
 
 def _read_stored_item_policy(entity_type: str, item_id: str) -> Dict[str, Any]:
-    normalized_item_id = str(item_id or "").strip()
+    normalized_item_id = _normalize_item_policy_item_id(entity_type, item_id)
     policy_id = _legacy_item_policy_document_id(entity_type, normalized_item_id)
     return cosmos_governance_item_policies_container.read_item(item=policy_id, partition_key=policy_id)
 
@@ -436,7 +500,7 @@ def get_item_policy(entity_type: str, item_id: str) -> Dict[str, Any]:
 
 def get_item_policies(entity_type: str, item_id: str) -> List[Dict[str, Any]]:
     normalized_entity_type = _normalize_item_policy_entity_type(entity_type)
-    normalized_item_id = str(item_id or "").strip()
+    normalized_item_id = _normalize_item_policy_item_id(normalized_entity_type, item_id)
 
     def load_policies() -> List[Dict[str, Any]]:
         policies = []
@@ -449,6 +513,25 @@ def get_item_policies(entity_type: str, item_id: str) -> List[Dict[str, Any]]:
 
     return _get_cached_governance_value(
         ("item_policies", normalized_entity_type, normalized_item_id),
+        load_policies,
+    )
+
+
+def get_explicit_item_policies(entity_type: str, item_id: str) -> List[Dict[str, Any]]:
+    normalized_entity_type = _normalize_item_policy_entity_type(entity_type)
+    normalized_item_id = _normalize_item_policy_item_id(normalized_entity_type, item_id)
+
+    def load_policies() -> List[Dict[str, Any]]:
+        policies = []
+        for policy in _read_item_policies(normalized_entity_type, normalized_item_id, include_default=False):
+            normalized_policy = dict(policy)
+            normalized = _normalize_policy_state(normalized_policy)
+            normalized_policy.update(normalized)
+            policies.append(normalized_policy)
+        return policies
+
+    return _get_cached_governance_value(
+        ("explicit_item_policies", normalized_entity_type, normalized_item_id),
         load_policies,
     )
 
@@ -515,7 +598,7 @@ def upsert_item_policy(
     actor_email: str,
 ) -> Dict[str, Any]:
     normalized_entity_type = _normalize_item_policy_entity_type(entity_type)
-    normalized_item_id = str(item_id or "").strip()
+    normalized_item_id = _normalize_item_policy_item_id(normalized_entity_type, item_id)
     incoming_policy_id = str((payload or {}).get("policy_id") or "").strip()
     normalized_policy_id = incoming_policy_id or str(uuid.uuid4())
     policy_id = _item_policy_document_id(normalized_entity_type, normalized_item_id, normalized_policy_id)
@@ -842,6 +925,178 @@ def is_governance_access_allowed(
         return True
     except PermissionError:
         return False
+
+
+def _normalize_action_scope(scope: str) -> str:
+    normalized_scope = str(scope or "").strip().lower()
+    if normalized_scope == "user":
+        return "personal"
+    return normalized_scope
+
+
+def normalize_governed_action_type(action_type: Any) -> str:
+    normalized_type = str(action_type or "").strip().lower().replace("-", "_").replace(" ", "_")
+    return ACTION_TYPE_ALIASES.get(normalized_type, normalized_type)
+
+
+def get_governed_action_type_label(action_type: Any) -> str:
+    normalized_type = normalize_governed_action_type(action_type)
+    if not normalized_type:
+        return "Unknown Action Type"
+    return ACTION_TYPE_LABELS.get(normalized_type, normalized_type.replace("_", " ").title())
+
+
+def get_action_type_policy_entity_type(scope: str) -> str:
+    normalized_scope = _normalize_action_scope(scope)
+    return ACTION_TYPE_POLICY_ENTITY_TYPES.get(normalized_scope, "")
+
+
+def get_action_type_feature_key(scope: str) -> str:
+    normalized_scope = _normalize_action_scope(scope)
+    return ACTION_TYPE_FEATURE_KEYS.get(normalized_scope, "")
+
+
+def ensure_action_type_access(
+    feature_key: str,
+    user_id: str,
+    action_type: Any,
+    scope: str,
+) -> None:
+    normalized_feature_key = str(feature_key or "").strip()
+    normalized_user_id = str(user_id or "").strip()
+    normalized_scope = _normalize_action_scope(scope)
+    normalized_action_type = normalize_governed_action_type(action_type)
+    action_type_entity_type = get_action_type_policy_entity_type(normalized_scope)
+
+    if not normalized_feature_key:
+        raise ValueError("feature_key is required for action type governance.")
+    if not normalized_action_type:
+        raise PermissionError("Governance policy blocks access to an unknown action type.")
+    if not action_type_entity_type:
+        raise ValueError(f"Unsupported action type governance scope: {scope}")
+
+    decision_key = (
+        "action_type_access_decision",
+        normalized_feature_key,
+        normalized_user_id,
+        normalized_scope,
+        normalized_action_type,
+    )
+    cached_decision = _get_request_cache_value(decision_key)
+    if cached_decision is True:
+        return
+
+    settings = _get_request_cached_governance_value(("settings",), get_settings)
+    if not bool((settings or {}).get(normalized_feature_key, False)):
+        _set_request_cache_value(decision_key, True)
+        return
+
+    user_group_ids = get_user_governance_group_ids(normalized_user_id)
+    feature_policy = get_feature_policy(normalized_feature_key)
+    if _passes_policy(feature_policy, normalized_user_id, user_group_ids):
+        _set_request_cache_value(decision_key, True)
+        return
+
+    action_type_policies = get_explicit_item_policies(action_type_entity_type, normalized_action_type)
+    if any(_passes_policy(policy, normalized_user_id, user_group_ids) for policy in action_type_policies):
+        _set_request_cache_value(decision_key, True)
+        return
+
+    action_type_label = get_governed_action_type_label(normalized_action_type)
+    raise PermissionError(
+        f"Governance policy blocks access to {normalized_scope} action type '{action_type_label}'."
+    )
+
+
+def is_action_type_access_allowed(feature_key: str, user_id: str, action_type: Any, scope: str) -> bool:
+    try:
+        ensure_action_type_access(feature_key, user_id, action_type, scope)
+        return True
+    except PermissionError:
+        return False
+
+
+def filter_actions_by_action_type_access(
+    user_id: str,
+    actions: Any,
+    feature_key: str,
+    scope: str,
+) -> List[Dict[str, Any]]:
+    governed_actions = []
+    for action in actions or []:
+        if not isinstance(action, dict):
+            continue
+        if is_action_type_access_allowed(feature_key, user_id, action.get("type"), scope):
+            governed_actions.append(action)
+    return governed_actions
+
+
+def is_action_scope_access_allowed(feature_key: str, user_id: str, scope: str) -> bool:
+    normalized_feature_key = str(feature_key or "").strip()
+    normalized_user_id = str(user_id or "").strip()
+    normalized_scope = _normalize_action_scope(scope)
+    action_type_entity_type = get_action_type_policy_entity_type(normalized_scope)
+    if not normalized_feature_key or not action_type_entity_type:
+        return False
+
+    settings = _get_request_cached_governance_value(("settings",), get_settings)
+    if not bool((settings or {}).get(normalized_feature_key, False)):
+        return True
+
+    user_group_ids = get_user_governance_group_ids(normalized_user_id)
+    feature_policy = get_feature_policy(normalized_feature_key)
+    if _passes_policy(feature_policy, normalized_user_id, user_group_ids):
+        return True
+
+    return any(
+        _passes_policy(policy, normalized_user_id, user_group_ids)
+        for policy in list_item_policies(entity_type=action_type_entity_type)
+    )
+
+
+def ensure_global_action_access(user_id: str, action: Dict[str, Any]) -> None:
+    if not isinstance(action, dict):
+        raise PermissionError("Governance policy blocks access to this global action.")
+
+    if not bool(action.get("is_enabled", True)):
+        raise PermissionError("This global action is disabled.")
+
+    normalized_user_id = str(user_id or "").strip()
+    ensure_action_type_access(
+        "governance_global_actions_usage",
+        normalized_user_id,
+        action.get("type"),
+        "global",
+    )
+
+    settings = _get_request_cached_governance_value(("settings",), get_settings)
+    if not bool((settings or {}).get("governance_global_actions_usage", False)):
+        return
+
+    action_id = str(action.get("id") or action.get("name") or "").strip()
+    if not action_id:
+        raise PermissionError("Governance policy blocks access to this global action.")
+
+    user_group_ids = get_user_governance_group_ids(normalized_user_id)
+    item_policies = get_item_policies("global_action", action_id)
+    if not any(_passes_policy(policy, normalized_user_id, user_group_ids) for policy in item_policies):
+        raise PermissionError(f"Governance policy blocks access to global action '{action_id}'.")
+
+
+def is_global_action_access_allowed(user_id: str, action: Dict[str, Any]) -> bool:
+    try:
+        ensure_global_action_access(user_id, action)
+        return True
+    except PermissionError:
+        return False
+
+
+def filter_governed_global_actions_for_user(user_id: str, actions: Any) -> List[Dict[str, Any]]:
+    return [
+        action
+        for action in actions or []
+        if isinstance(action, dict) and is_global_action_access_allowed(user_id, action)
+    ]
 
 
 def filter_governed_model_endpoints(

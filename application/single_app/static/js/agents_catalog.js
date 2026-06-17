@@ -82,6 +82,58 @@ function getScopeBadgeVariant(agent) {
     return 'secondary';
 }
 
+function getPromotedPopularBadgeLabel(agent) {
+    if (!agent?.is_promoted_popular || agent?.promoted_popular_tag_enabled === false) {
+        return '';
+    }
+    const label = normalizeText(agent?.promoted_popular_tag_label || 'Promoted');
+    return label.slice(0, 40) || 'Promoted';
+}
+
+function normalizePopularPromotionWindow(value) {
+    const normalizedValue = normalizeText(value).toLowerCase().replace(/-/g, '_');
+    if (normalizedValue === 'all' || normalizedValue === 'alltime') {
+        return 'all_time';
+    }
+    if (normalizedValue === '30' || normalizedValue === 'last30' || normalizedValue === 'last_30_days') {
+        return '30_days';
+    }
+    return ['all_time', '30_days', 'both'].includes(normalizedValue) ? normalizedValue : 'both';
+}
+
+function isPromotedPopularForWindow(agent, usageWindow = popularUsageWindow) {
+    if (!agent?.is_promoted_popular) {
+        return false;
+    }
+    const promotionWindow = normalizePopularPromotionWindow(agent.promoted_popular_window);
+    const selectedWindow = usageWindow === '30_days' ? '30_days' : 'all_time';
+    return promotionWindow === 'both' || promotionWindow === selectedWindow;
+}
+
+function getPromotedPopularRank(agent) {
+    const rank = Number(agent?.promoted_popular_rank);
+    return Number.isFinite(rank) ? rank : 1000000;
+}
+
+function getPromotedPopularOrder(agent) {
+    const order = normalizeText(agent?.promoted_popular_order).toLowerCase();
+    return ['before', 'after', 'mixed'].includes(order) ? order : 'before';
+}
+
+function dedupeAgentsByCatalogKey(agents) {
+    const seenKeys = new Set();
+    const dedupedAgents = [];
+    agents.forEach(agent => {
+        const catalogKey = normalizeText(agent?.catalog_key || agent?.id || getAgentDisplayName(agent));
+        if (seenKeys.has(catalogKey)) {
+            return;
+        }
+        seenKeys.add(catalogKey);
+        dedupedAgents.push(agent);
+    });
+    return dedupedAgents;
+}
+
 function normalizeIconPayload(iconPayload) {
     if (!iconPayload || typeof iconPayload !== 'object' || Array.isArray(iconPayload)) {
         return null;
@@ -187,6 +239,10 @@ function appendAgentSummary(container, agent) {
     title.textContent = getAgentDisplayName(agent);
     titleRow.appendChild(title);
     titleRow.appendChild(createBadge(getScopeLabel(agent), getScopeBadgeVariant(agent)));
+    const promotedBadgeLabel = getPromotedPopularBadgeLabel(agent);
+    if (promotedBadgeLabel) {
+        titleRow.appendChild(createBadge(promotedBadgeLabel, 'success'));
+    }
 
     const description = document.createElement('div');
     description.className = 'agent-description text-muted small mb-2';
@@ -307,8 +363,18 @@ function getAgentUsageCount(agent, usageWindow = popularUsageWindow) {
 }
 
 function getPopularAgents() {
-    return allAgents
-        .filter(agent => getAgentUsageCount(agent) > 0)
+    const promotedAgents = allAgents
+        .filter(agent => isPromotedPopularForWindow(agent))
+        .sort((left, right) => {
+            const rankDelta = getPromotedPopularRank(left) - getPromotedPopularRank(right);
+            if (rankDelta !== 0) {
+                return rankDelta;
+            }
+            return getAgentDisplayName(left).localeCompare(getAgentDisplayName(right), undefined, { sensitivity: 'base' });
+        });
+    const promotedKeys = new Set(promotedAgents.map(agent => normalizeText(agent?.catalog_key)));
+    const usageRankedAgents = allAgents
+        .filter(agent => getAgentUsageCount(agent) > 0 && !promotedKeys.has(normalizeText(agent?.catalog_key)))
         .sort((left, right) => {
             const usageDelta = getAgentUsageCount(right) - getAgentUsageCount(left);
             if (usageDelta !== 0) {
@@ -317,6 +383,24 @@ function getPopularAgents() {
             return getAgentDisplayName(left).localeCompare(getAgentDisplayName(right), undefined, { sensitivity: 'base' });
         })
         .slice(0, 12);
+    const promotionOrder = promotedAgents.length ? getPromotedPopularOrder(promotedAgents[0]) : 'mixed';
+    if (promotionOrder === 'before') {
+        return dedupeAgentsByCatalogKey([...promotedAgents, ...usageRankedAgents]);
+    }
+    if (promotionOrder === 'after') {
+        return dedupeAgentsByCatalogKey([...usageRankedAgents, ...promotedAgents]);
+    }
+    return dedupeAgentsByCatalogKey([...usageRankedAgents, ...promotedAgents]).sort((left, right) => {
+        const usageDelta = getAgentUsageCount(right) - getAgentUsageCount(left);
+        if (usageDelta !== 0) {
+            return usageDelta;
+        }
+        const rankDelta = getPromotedPopularRank(left) - getPromotedPopularRank(right);
+        if (rankDelta !== 0) {
+            return rankDelta;
+        }
+        return getAgentDisplayName(left).localeCompare(getAgentDisplayName(right), undefined, { sensitivity: 'base' });
+    });
 }
 
 function getVisibleAgents() {

@@ -22,7 +22,7 @@ from functions_workspace_identities import (
     hydrate_action_identity_reference,
     validate_action_identity_reference,
 )
-from functions_governance import ensure_governance_access
+from functions_governance import ensure_action_type_access, filter_actions_by_action_type_access
 
 
 _NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -52,6 +52,16 @@ def get_group_actions(
             "Error fetching group actions for %s: %s", group_id, exc
         )
         return []
+
+
+def get_governed_group_actions(
+    group_id: str,
+    user_id: str,
+    return_type: SecretReturnType = SecretReturnType.TRIGGER,
+) -> List[Dict[str, Any]]:
+    """Return group actions that the user can access by action type governance."""
+    actions = get_group_actions(group_id, return_type=return_type)
+    return filter_actions_by_action_type_access(user_id, actions, 'governance_group_actions', 'group')
 
 
 def get_group_action(
@@ -90,9 +100,6 @@ def get_group_action(
 
 def save_group_action(group_id: str, action_data: Dict[str, Any], user_id: Optional[str] = None) -> Dict[str, Any]:
     """Create or update a group action entry."""
-    if user_id:
-        ensure_governance_access('governance_group_actions', user_id)
-
     payload = dict(action_data)
     action_id = payload.get("id") or str(uuid.uuid4())
 
@@ -135,6 +142,9 @@ def save_group_action(group_id: str, action_data: Dict[str, Any], user_id: Optio
         payload["auth"] = {"type": "identity"}
     elif "type" not in payload["auth"]:
         payload["auth"]["type"] = "identity"
+
+    if user_id:
+        ensure_action_type_access('governance_group_actions', user_id, payload.get('type'), 'group')
 
     payload.pop("user_id", None)
 

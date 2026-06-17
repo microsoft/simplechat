@@ -2,7 +2,7 @@
 """
 UI test for chat file upload access control.
 
-Version: 0.242.063
+Version: 0.242.064
 Implemented in: 0.241.110; expanded in: 0.242.063
 
 This test ensures the chat toolbar renders the file upload controls only when

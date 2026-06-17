@@ -5,7 +5,7 @@ import logging
 from config import *
 from functions_authentication import *
 from functions_group import get_user_groups
-from functions_governance import filter_governed_model_endpoints, is_governance_access_allowed
+from functions_governance import filter_governed_model_endpoints, is_action_scope_access_allowed, is_governance_access_allowed
 from functions_public_workspaces import get_user_visible_public_workspace_docs
 from functions_settings import *
 from functions_file_sync import is_file_sync_enabled_for_user
@@ -71,7 +71,7 @@ def register_route_frontend_workspace(app):
         
         workspace_governance = {
             "user_agents": is_governance_access_allowed("governance_user_agents", user_id),
-            "user_actions": is_governance_access_allowed("governance_user_actions", user_id),
+            "user_actions": is_action_scope_access_allowed("governance_user_actions", user_id, "personal"),
             "user_endpoints": is_governance_access_allowed("governance_user_endpoints", user_id),
             "global_endpoints": is_governance_access_allowed("governance_global_endpoints", user_id),
         }

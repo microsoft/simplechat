@@ -31,6 +31,7 @@ from functions_personal_actions import *
 from functions_group import require_active_group, assert_group_role
 from functions_group_actions import (
     get_group_actions,
+    get_governed_group_actions,
     get_group_action,
     save_group_action,
     delete_group_action,
@@ -94,7 +95,12 @@ from functions_workspace_identities import (
     hydrate_action_identity_reference,
     validate_action_identity_reference,
 )
-from functions_governance import ensure_governance_access, upsert_item_policy
+from functions_governance import (
+    ensure_action_type_access,
+    filter_governed_global_actions_for_user,
+    is_action_type_access_allowed,
+    upsert_item_policy,
+)
 
 
 DOCUMENT_SEARCH_INTERNAL_ENDPOINT = 'internal://document-search'
@@ -248,7 +254,7 @@ def discover_plugin_types():
                         types.add(module_name.replace('_plugin', ''))
     return types
 
-def get_plugin_types():
+def get_plugin_types(allowed_type_filter=None):
     # Path to the plugin types directory (semantic_kernel_plugins)
     plugintypes_dir = os.path.join(current_app.root_path, 'semantic_kernel_plugins')
     types = []
@@ -458,6 +464,9 @@ def get_plugin_types():
             if not found:
                 debug_log.append(f"No valid plugin class found in {fname}")
     # Log the debug output to the server log
+    if callable(allowed_type_filter):
+        types = [plugin_type for plugin_type in types if allowed_type_filter(plugin_type.get('type'))]
+
     print("[PLUGIN DISCOVERY DEBUG]", *debug_log, sep="\n")
     return jsonify(types)
 
@@ -634,16 +643,11 @@ def _load_existing_plugin_for_sql_test(plugin_context, user_id):
 @user_required
 def get_user_plugins():
     user_id = get_current_user_id()
-    try:
-        ensure_governance_access('governance_user_actions', user_id)
-    except PermissionError as exc:
-        return jsonify({'error': str(exc)}), 403
-
     # Ensure migration is complete (will migrate any remaining legacy data)
     ensure_migration_complete(user_id)
     
     # Get plugins from the new personal_actions container
-    plugins = get_personal_actions(user_id)
+    plugins = get_governed_personal_actions(user_id)
     
     # Always mark user plugins as is_global: False
     for plugin in plugins:
@@ -654,19 +658,7 @@ def get_user_plugins():
     merge_global = settings.get('merge_global_semantic_kernel_with_workspace', False)
     if merge_global:
         # Import and get global actions from container
-        global_plugins = get_global_actions()
-        filtered_global_plugins = []
-        for plugin in global_plugins:
-            try:
-                ensure_governance_access(
-                    'governance_global_actions_usage',
-                    user_id,
-                    item_entity_type='global_action',
-                    item_id=str(plugin.get('id') or plugin.get('name') or ''),
-                )
-            except PermissionError:
-                continue
-            filtered_global_plugins.append(plugin)
+        filtered_global_plugins = filter_governed_global_actions_for_user(user_id, get_global_actions())
 
         # Mark global plugins
         for plugin in filtered_global_plugins:
@@ -697,11 +689,6 @@ def get_user_plugins():
 @enabled_required("allow_user_plugins")
 def set_user_plugins():
     user_id = get_current_user_id()
-    try:
-        ensure_governance_access('governance_user_actions', user_id)
-    except PermissionError as exc:
-        return jsonify({'error': str(exc)}), 403
-
     plugins = request.json if isinstance(request.json, list) else []
     
     # Get global plugin names (case-insensitive)
@@ -803,6 +790,9 @@ def set_user_plugins():
     except ValueError as e:
         debug_print(f"Validation error saving personal actions for user {user_id}: {e}")
         return jsonify({'error': str(e)}), 400
+    except PermissionError as e:
+        debug_print(f"Governance denied saving personal actions for user {user_id}: {e}")
+        return jsonify({'error': str(e)}), 403
     except Exception as e:
         debug_print(f"Error saving personal actions for user {user_id}: {e}")
         return jsonify({'error': 'Failed to save plugins'}), 500
@@ -830,13 +820,12 @@ def set_user_plugins():
 @user_required
 def delete_user_plugin(plugin_name):
     user_id = get_current_user_id()
+
+    # Try to delete from personal_actions container
     try:
-        ensure_governance_access('governance_user_actions', user_id)
+        deleted = delete_personal_action(user_id, plugin_name)
     except PermissionError as exc:
         return jsonify({'error': str(exc)}), 403
-    
-    # Try to delete from personal_actions container
-    deleted = delete_personal_action(user_id, plugin_name)
     
     if not deleted:
         return jsonify({'error': 'Plugin not found.'}), 404
@@ -869,13 +858,16 @@ def get_group_actions_route():
     except PermissionError as exc:
         return jsonify({'error': str(exc)}), 403
 
-    actions = get_group_actions(active_group, return_type=SecretReturnType.TRIGGER)
+    actions = get_governed_group_actions(active_group, user_id, return_type=SecretReturnType.TRIGGER)
 
     settings = get_settings()
     merge_global = bool(settings.get('merge_global_semantic_kernel_with_workspace', False)) if settings else False
 
     if merge_global:
-        global_actions = get_global_actions(return_type=SecretReturnType.TRIGGER)
+        global_actions = filter_governed_global_actions_for_user(
+            user_id,
+            get_global_actions(return_type=SecretReturnType.TRIGGER),
+        )
         merged_actions = _merge_group_and_global_actions(actions, global_actions)
     else:
         merged_actions = [_normalize_group_action(action) for action in actions]
@@ -908,6 +900,10 @@ def get_group_action_route(action_id):
     action = get_group_action(active_group, action_id, return_type=SecretReturnType.TRIGGER)
     if not action:
         return jsonify({'error': 'Action not found'}), 404
+    try:
+        ensure_action_type_access('governance_group_actions', user_id, action.get('type'), 'group')
+    except PermissionError as exc:
+        return jsonify({'error': str(exc)}), 403
     return jsonify(action), 200
 
 
@@ -1072,7 +1068,12 @@ def delete_group_action_route(action_id):
         return jsonify({'error': str(exc)}), 403
 
     try:
+        existing = get_group_action(active_group, action_id, return_type=SecretReturnType.NAME)
+        if existing:
+            ensure_action_type_access('governance_group_actions', user_id, existing.get('type'), 'group')
         removed = delete_group_action(active_group, action_id)
+    except PermissionError as exc:
+        return jsonify({'error': str(exc)}), 403
     except Exception as exc:
         debug_print('Failed to delete group action %s: %s', action_id, exc)
         return jsonify({'error': 'Unable to delete action'}), 500
@@ -1087,7 +1088,15 @@ def delete_group_action_route(action_id):
 @login_required
 @user_required
 def get_user_plugin_types():
-    return get_plugin_types()
+    user_id = get_current_user_id()
+    return get_plugin_types(
+        allowed_type_filter=lambda action_type: is_action_type_access_allowed(
+            'governance_user_actions',
+            user_id,
+            action_type,
+            'personal',
+        )
+    )
 
 # === ADMIN PLUGINS ENDPOINTS ===
 

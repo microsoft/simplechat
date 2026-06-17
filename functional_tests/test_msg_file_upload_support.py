@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Outlook MSG file upload support.
-Version: 0.242.063
+Version: 0.242.064
 Implemented in: 0.242.063
 
 This test ensures Outlook .msg files are accepted for workspace and chat uploads,
@@ -28,7 +28,8 @@ CHAT_ROUTE_PATH = SINGLE_APP_DIR / "route_frontend_chats.py"
 GROUP_ROUTE_PATH = SINGLE_APP_DIR / "route_frontend_group_workspaces.py"
 CHAT_TEMPLATE_PATH = SINGLE_APP_DIR / "templates" / "chats.html"
 FEATURE_DOC_PATH = ROOT_DIR / "docs" / "explanation" / "features" / "v0.242.063" / "MSG_FILE_INGESTION.md"
-EXPECTED_VERSION = "0.242.063"
+EXPECTED_CONFIG_VERSION = "0.242.064"
+EXPECTED_FEATURE_VERSION = "0.242.063"
 
 
 def read_text(path):
@@ -161,7 +162,7 @@ def test_msg_extension_is_centrally_allowed():
     config_source = read_text(CONFIG_PATH)
     settings_source = read_text(FUNCTIONS_SETTINGS_PATH)
 
-    assert f'VERSION = "{EXPECTED_VERSION}"' in config_source
+    assert f'VERSION = "{EXPECTED_CONFIG_VERSION}"' in config_source
     assert_contains(
         config_source,
         [
@@ -302,8 +303,8 @@ def test_feature_documentation_exists():
     assert_contains(
         feature_doc,
         [
-            "Implemented in version: **0.242.063**",
-            "Fixed/Implemented in version: **0.242.063**",
+            f"Implemented in version: **{EXPECTED_FEATURE_VERSION}**",
+            f"Fixed/Implemented in version: **{EXPECTED_FEATURE_VERSION}**",
             "Outlook `.msg`",
         ],
         ".msg feature documentation",

@@ -195,6 +195,135 @@ DOCUMENT_INTELLIGENCE_PDF_IMAGE_EXTRACTION_MODES = {"read", "layout", "auto"}
 DOCUMENT_INTELLIGENCE_MANUAL_EXTRACTION_MODES = {"read", "layout"}
 DOCUMENT_INTELLIGENCE_AUTO_SAMPLE_PAGES_DEFAULT = 3
 DOCUMENT_INTELLIGENCE_AUTO_SAMPLE_PAGES_MAX = 20
+AGENTS_PAGE_PROMOTED_POPULAR_ORDER_OPTIONS = {"before", "after", "mixed"}
+AGENTS_PAGE_PROMOTED_POPULAR_WINDOW_OPTIONS = {"all_time", "30_days", "both"}
+AGENTS_PAGE_PROMOTED_POPULAR_TAG_LABEL_DEFAULT = "Promoted"
+
+
+def normalize_agents_page_promoted_popular_order(value):
+    """Normalize where admin-promoted popular agents appear relative to usage-ranked agents."""
+    normalized_value = str(value or "before").strip().lower().replace("-", "_")
+    return normalized_value if normalized_value in AGENTS_PAGE_PROMOTED_POPULAR_ORDER_OPTIONS else "before"
+
+
+def normalize_agents_page_promoted_popular_window(value):
+    """Normalize the Popular page time window where an admin promotion is visible."""
+    normalized_value = str(value or "both").strip().lower().replace("-", "_")
+    if normalized_value in {"all", "alltime"}:
+        return "all_time"
+    if normalized_value in {"30", "thirty_days", "last_30_days", "last30"}:
+        return "30_days"
+    return normalized_value if normalized_value in AGENTS_PAGE_PROMOTED_POPULAR_WINDOW_OPTIONS else "both"
+
+
+def normalize_agents_page_promoted_popular_tag_label(value):
+    """Normalize the optional badge label shown on admin-promoted popular agents."""
+    normalized_value = str(value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    normalized_value = " ".join(normalized_value.split())
+    if not normalized_value:
+        normalized_value = AGENTS_PAGE_PROMOTED_POPULAR_TAG_LABEL_DEFAULT
+    return normalized_value[:40]
+
+
+def normalize_agents_page_promoted_popular_tag_enabled(value):
+    """Normalize persisted promoted badge toggle values into a strict boolean."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized_value = value.strip().lower()
+        if normalized_value in {"false", "0", "no", "off"}:
+            return False
+        if normalized_value in {"true", "1", "yes", "on"}:
+            return True
+    return bool(value)
+
+
+def _iter_agents_page_promoted_popular_candidates(value):
+    if value is None:
+        return []
+    if isinstance(value, str):
+        stripped_value = value.strip()
+        if not stripped_value:
+            return []
+        try:
+            parsed_value = json.loads(stripped_value)
+            return parsed_value if isinstance(parsed_value, list) else []
+        except (TypeError, ValueError):
+            return [{"catalog_key": line.strip()} for line in stripped_value.splitlines() if line.strip()]
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    return []
+
+
+def normalize_agents_page_promoted_popular_agents(value):
+    """Normalize admin-selected Popular page agent promotions into stable catalog-key references."""
+    normalized_agents = []
+    seen_catalog_keys = set()
+    for candidate in _iter_agents_page_promoted_popular_candidates(value):
+        if isinstance(candidate, str):
+            candidate = {"catalog_key": candidate}
+        if not isinstance(candidate, dict):
+            continue
+
+        catalog_key = str(candidate.get("catalog_key") or "").strip()
+        if not catalog_key or len(catalog_key) > 512 or catalog_key in seen_catalog_keys:
+            continue
+        seen_catalog_keys.add(catalog_key)
+
+        display_name = " ".join(str(candidate.get("display_name") or candidate.get("name") or "").split())[:160]
+        scope_label = " ".join(str(candidate.get("scope_label") or candidate.get("scope_name") or "").split())[:120]
+        scope_type = str(candidate.get("scope_type") or "").strip().lower()
+        if scope_type == "enterprise":
+            scope_type = "global"
+        if scope_type not in {"personal", "group", "global"}:
+            scope_type = ""
+
+        normalized_agents.append({
+            "catalog_key": catalog_key,
+            "display_name": display_name,
+            "scope_label": scope_label,
+            "scope_type": scope_type,
+            "window": normalize_agents_page_promoted_popular_window(candidate.get("window")),
+        })
+
+    return normalized_agents
+
+
+def normalize_agents_page_promoted_popular_settings(settings):
+    """Normalize persisted Agents page promotion settings in-place."""
+    if not isinstance(settings, dict):
+        return False
+
+    changed = False
+    normalized_agents = normalize_agents_page_promoted_popular_agents(
+        settings.get("agents_page_promoted_popular_agents")
+    )
+    if settings.get("agents_page_promoted_popular_agents") != normalized_agents:
+        settings["agents_page_promoted_popular_agents"] = normalized_agents
+        changed = True
+
+    normalized_order = normalize_agents_page_promoted_popular_order(
+        settings.get("agents_page_promoted_popular_order")
+    )
+    if settings.get("agents_page_promoted_popular_order") != normalized_order:
+        settings["agents_page_promoted_popular_order"] = normalized_order
+        changed = True
+
+    normalized_tag_enabled = normalize_agents_page_promoted_popular_tag_enabled(
+        settings.get("agents_page_promoted_popular_tag_enabled", True)
+    )
+    if settings.get("agents_page_promoted_popular_tag_enabled") != normalized_tag_enabled:
+        settings["agents_page_promoted_popular_tag_enabled"] = normalized_tag_enabled
+        changed = True
+
+    normalized_tag_label = normalize_agents_page_promoted_popular_tag_label(
+        settings.get("agents_page_promoted_popular_tag_label")
+    )
+    if settings.get("agents_page_promoted_popular_tag_label") != normalized_tag_label:
+        settings["agents_page_promoted_popular_tag_label"] = normalized_tag_label
+        changed = True
+
+    return changed
 
 
 def normalize_document_intelligence_pdf_image_extraction_mode(value):
@@ -695,6 +824,10 @@ def get_settings(use_cosmos=False, include_source=False):
         'agents_page_hero_secondary_color': '#1e293b',
         'agents_page_disclaimer_markdown': '',
         'agents_page_show_instructions_in_details': True,
+        'agents_page_promoted_popular_agents': [],
+        'agents_page_promoted_popular_order': 'before',
+        'agents_page_promoted_popular_tag_enabled': True,
+        'agents_page_promoted_popular_tag_label': AGENTS_PAGE_PROMOTED_POPULAR_TAG_LABEL_DEFAULT,
         'allow_group_plugins': False,
         'id': 'app_settings',
         # Control Center settings
@@ -1209,11 +1342,12 @@ def get_settings(use_cosmos=False, include_source=False):
         merged = settings_item
         migration_updated = apply_custom_endpoint_setting_migration(merged)
         assignment_settings_updated = normalize_group_workflow_assignment_settings(merged)
+        promoted_popular_settings_updated = normalize_agents_page_promoted_popular_settings(merged)
 
         merged['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(merged)
 
         # If merging added anything new, upsert back to Cosmos so future reads remain up to date
-        if merge_changed or migration_updated or assignment_settings_updated:
+        if merge_changed or migration_updated or assignment_settings_updated or promoted_popular_settings_updated:
             cosmos_settings_container.upsert_item(merged)
             _refresh_app_settings_cache_after_write(merged, context="merge_upsert")
 
@@ -1261,6 +1395,7 @@ def update_settings(new_settings):
         existing_multi_endpoint_enabled = settings_item.get('enable_multi_model_endpoints', False)
         settings_item.update(new_settings)
         normalize_group_workflow_assignment_settings(settings_item)
+        normalize_agents_page_promoted_popular_settings(settings_item)
         settings_item['enable_multi_model_endpoints'] = coerce_multi_model_endpoint_enablement(
             existing_multi_endpoint_enabled,
             settings_item.get('enable_multi_model_endpoints', False),
@@ -2140,6 +2275,8 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
 
     for k, v in full_settings.items():
         if k == 'support_feedback_recipient_email':
+            continue
+        if k == 'agents_page_promoted_popular_agents':
             continue
         if any(term in k.lower() for term in sensitive_terms):
             continue

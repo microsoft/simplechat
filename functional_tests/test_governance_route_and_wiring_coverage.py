@@ -95,12 +95,14 @@ def test_governance_enforcement_hooks_across_changed_routes():
     ]:
         assert key in agents_content, f"Missing governance key in route_backend_agents.py: {key}"
 
-    # Plugins route: user/global action governance hooks and item policy persistence.
-    for key in [
-        "governance_user_actions",
-        "governance_global_actions_usage",
+    # Plugins route: user/group/global action governance hooks and item policy persistence.
+    for marker in [
+        "get_governed_personal_actions",
+        "get_governed_group_actions",
+        "filter_governed_global_actions_for_user",
+        "is_action_type_access_allowed",
     ]:
-        assert key in plugins_content, f"Missing governance key in route_backend_plugins.py: {key}"
+        assert marker in plugins_content, f"Missing action type governance marker in route_backend_plugins.py: {marker}"
     assert "upsert_item_policy(" in plugins_content, (
         "Expected route_backend_plugins.py to persist governance item policy updates"
     )

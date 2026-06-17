@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for the Agents catalog page and agent icon/tag metadata.
-Version: 0.242.063
-Implemented in: 0.242.061; updated in 0.242.063
+Version: 0.242.064
+Implemented in: 0.242.061; updated in 0.242.064
 
 This test ensures the global Agents page, shared catalog APIs, safe agent
 metadata, and chat handoff contract are present and regression-resistant.
@@ -174,6 +174,10 @@ def test_agents_page_admin_customization_settings():
         "agents_page_hero_secondary_color",
         "agents_page_disclaimer_markdown",
         "agents_page_show_instructions_in_details",
+        "agents_page_promoted_popular_agents",
+        "agents_page_promoted_popular_order",
+        "agents_page_promoted_popular_tag_enabled",
+        "agents_page_promoted_popular_tag_label",
     ]:
         assert_contains(settings_defaults, field_name, f"default {field_name}")
         assert_contains(admin_route, field_name, f"admin save {field_name}")
@@ -181,9 +185,13 @@ def test_agents_page_admin_customization_settings():
 
     assert_contains(admin_route, "normalize_agents_page_color", "admin hero color validation")
     assert_contains(admin_route, "normalize_agents_page_color_mode", "admin color mode validation")
+    assert_contains(admin_route, "normalize_agents_page_promoted_popular_agents", "promoted popular agent validation")
+    assert_contains(settings_defaults, "normalize_agents_page_promoted_popular_settings", "promoted popular settings migration")
     assert_contains(admin_template, "Agents Page Customization", "admin customization section title")
     assert_contains(admin_template, "Markdown supported", "admin disclaimer markdown helper")
     assert_contains(admin_template, "Show agent instructions in Agents page details", "admin instruction visibility toggle")
+    assert_contains(admin_template, "Promoted Popular Agents", "admin promoted popular agents section")
+    assert_contains(admin_template, "agents_page_promoted_popular_agents_json", "promoted popular hidden JSON field")
 
 
 def test_chat_agent_metadata_and_avatar_handoff():
@@ -260,10 +268,16 @@ def test_agents_catalog_resolves_model_and_action_labels():
     assert_contains(catalog_helper, "usage_count_all_time", "all-time usage count serialization")
     assert_contains(catalog_helper, "usage_count_30_days", "last-30-days usage count serialization")
     assert_contains(catalog_helper, "usage_window", "popular usage-window ranking")
+    assert_contains(catalog_helper, "apply_agent_popular_promotions", "popular promotion catalog annotation")
+    assert_contains(catalog_helper, "is_promoted_popular", "popular promotion response flag")
+    assert_contains(catalog_route, "apply_agent_popular_promotions(catalog, settings=settings)", "popular promotion route application")
     assert_contains(catalog_route, "_redact_catalog_agent_instructions", "catalog instruction redaction helper")
     assert_contains(catalog_route, "agents_page_show_instructions_in_details", "catalog instruction visibility setting")
     assert_contains(catalog_template, "data-show-instructions-in-details", "catalog instruction visibility flag")
     assert_contains(catalog_script, "showInstructions: shouldShowInstructionsInDetails()", "catalog modal instruction visibility option")
+    assert_contains(catalog_script, "isPromotedPopularForWindow", "client promoted popular window filtering")
+    assert_contains(catalog_script, "promoted_popular_tag_label", "client promoted popular badge label")
+    assert_contains(catalog_script, "getPromotedPopularOrder", "client promoted popular placement")
     assert_contains(view_utils, "callbacks.showInstructions !== false", "shared modal defaults to showing instructions")
     assert_contains(view_utils, "agent.action_labels", "details use resolved action labels")
     assert_contains(view_utils, "agent.model_label", "details use resolved model label")
@@ -301,6 +315,34 @@ def test_agents_catalog_omits_instructions_when_admin_disabled():
 
 
 def test_agent_catalog_usage_windows_rank_independently():
+    def normalize_promoted_agents(value):
+        normalized_agents = []
+        seen_keys = set()
+        for candidate in value if isinstance(value, list) else []:
+            if not isinstance(candidate, dict):
+                continue
+            catalog_key = str(candidate.get("catalog_key") or "").strip()
+            if not catalog_key or catalog_key in seen_keys:
+                continue
+            seen_keys.add(catalog_key)
+            normalized_agents.append({
+                "catalog_key": catalog_key,
+                "display_name": str(candidate.get("display_name") or "").strip(),
+                "scope_label": str(candidate.get("scope_label") or "").strip(),
+                "scope_type": str(candidate.get("scope_type") or "").strip(),
+                "window": str(candidate.get("window") or "both").strip() or "both",
+            })
+        return normalized_agents
+
+    def normalize_promotion_order(value):
+        return value if value in {"before", "after", "mixed"} else "before"
+
+    def normalize_promotion_window(value):
+        return value if value in {"all_time", "30_days", "both"} else "both"
+
+    def normalize_promotion_tag_label(value):
+        return str(value or "Promoted").strip()[:40] or "Promoted"
+
     stub_modules = {
         "config": {"cosmos_activity_logs_container": SimpleNamespace(query_items=lambda **kwargs: [])},
         "functions_appinsights": {"log_event": lambda *args, **kwargs: None},
@@ -310,6 +352,10 @@ def test_agent_catalog_usage_windows_rank_independently():
         "functions_group": {"get_group_model_endpoints": lambda *args, **kwargs: [], "get_user_groups": lambda *args, **kwargs: []},
         "functions_group_actions": {"get_group_actions": lambda *args, **kwargs: []},
         "functions_group_agents": {"get_group_agents": lambda *args, **kwargs: []},
+        "functions_governance": {
+            "filter_actions_by_action_type_access": lambda _user_id, actions, _feature_key, _scope: actions or [],
+            "filter_governed_global_actions_for_user": lambda _user_id, actions: actions or [],
+        },
         "functions_keyvault": {"SecretReturnType": SimpleNamespace(NAME="name")},
         "functions_personal_actions": {
             "get_governed_personal_actions": lambda *args, **kwargs: [],
@@ -319,6 +365,11 @@ def test_agent_catalog_usage_windows_rank_independently():
         "functions_settings": {
             "get_settings": lambda *args, **kwargs: {},
             "get_user_settings": lambda *args, **kwargs: {"settings": {}},
+            "normalize_agents_page_promoted_popular_agents": normalize_promoted_agents,
+            "normalize_agents_page_promoted_popular_order": normalize_promotion_order,
+            "normalize_agents_page_promoted_popular_tag_enabled": lambda value: bool(value),
+            "normalize_agents_page_promoted_popular_tag_label": normalize_promotion_tag_label,
+            "normalize_agents_page_promoted_popular_window": normalize_promotion_window,
             "normalize_model_endpoints": lambda endpoints: (endpoints or [], []),
         },
     }
@@ -371,6 +422,39 @@ def test_agent_catalog_usage_windows_rank_independently():
         recent_names = [agent["display_name"] for agent in catalog_module.get_popular_agents(catalog, limit=2, usage_window="30_days")]
         assert all_time_names == ["Alpha", "Beta"]
         assert recent_names == ["Beta", "Alpha"]
+
+        promoted_catalog = [
+            {"catalog_key": "global:global:seed", "display_name": "Seed", "usage_count_all_time": 0, "usage_count_30_days": 0},
+            {"catalog_key": "global:global:alpha", "display_name": "Alpha", "usage_count_all_time": 3, "usage_count_30_days": 1},
+            {"catalog_key": "global:global:beta", "display_name": "Beta", "usage_count_all_time": 2, "usage_count_30_days": 2},
+        ]
+        catalog_module.apply_agent_popular_promotions(
+            promoted_catalog,
+            settings={
+                "agents_page_promoted_popular_agents": [
+                    {"catalog_key": "global:global:seed", "display_name": "Seed", "window": "all_time"},
+                    {"catalog_key": "group:missing:hidden", "display_name": "Hidden", "window": "both"},
+                ],
+                "agents_page_promoted_popular_order": "before",
+                "agents_page_promoted_popular_tag_enabled": True,
+                "agents_page_promoted_popular_tag_label": "Featured",
+            },
+        )
+
+        seed_agent = promoted_catalog[0]
+        assert seed_agent["is_promoted_popular"] is True
+        assert seed_agent["promoted_popular_window"] == "all_time"
+        assert seed_agent["promoted_popular_tag_label"] == "Featured"
+        all_time_promoted_names = [
+            agent["display_name"]
+            for agent in catalog_module.get_popular_agents(promoted_catalog, limit=2, usage_window="all_time")
+        ]
+        recent_promoted_names = [
+            agent["display_name"]
+            for agent in catalog_module.get_popular_agents(promoted_catalog, limit=2, usage_window="30_days")
+        ]
+        assert all_time_promoted_names == ["Seed", "Alpha", "Beta"]
+        assert recent_promoted_names == ["Beta", "Alpha"]
     finally:
         sys.modules.pop("functions_agent_catalog", None)
         if original_catalog_module is not None:

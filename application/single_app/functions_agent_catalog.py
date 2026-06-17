@@ -13,10 +13,20 @@ from functions_global_agents import get_global_agents
 from functions_group import get_group_model_endpoints, get_user_groups
 from functions_group_actions import get_group_actions
 from functions_group_agents import get_group_agents
+from functions_governance import filter_actions_by_action_type_access, filter_governed_global_actions_for_user
 from functions_keyvault import SecretReturnType
 from functions_personal_actions import get_governed_personal_actions
 from functions_personal_agents import ensure_migration_complete, get_personal_agents
-from functions_settings import get_settings, get_user_settings, normalize_model_endpoints
+from functions_settings import (
+    get_settings,
+    get_user_settings,
+    normalize_agents_page_promoted_popular_agents,
+    normalize_agents_page_promoted_popular_order,
+    normalize_agents_page_promoted_popular_tag_enabled,
+    normalize_agents_page_promoted_popular_tag_label,
+    normalize_agents_page_promoted_popular_window,
+    normalize_model_endpoints,
+)
 
 
 def build_agent_catalog_key(agent: Dict[str, Any]) -> str:
@@ -180,7 +190,7 @@ def _build_action_label_map(
     user_groups: Iterable[Dict[str, Any]],
 ) -> Dict[str, str]:
     action_labels: Dict[str, str] = {}
-    _add_action_labels(action_labels, get_global_actions(return_type=SecretReturnType.NAME))
+    _add_action_labels(action_labels, filter_governed_global_actions_for_user(user_id, get_global_actions(return_type=SecretReturnType.NAME)))
     if settings.get("allow_user_plugins", False):
         try:
             _add_action_labels(action_labels, get_governed_personal_actions(user_id, return_type=SecretReturnType.NAME))
@@ -190,7 +200,11 @@ def _build_action_label_map(
         for group_doc in user_groups:
             group_id = group_doc.get("id")
             if group_id:
-                _add_action_labels(action_labels, get_group_actions(group_id, return_type=SecretReturnType.NAME))
+                group_actions = get_group_actions(group_id, return_type=SecretReturnType.NAME)
+                _add_action_labels(
+                    action_labels,
+                    filter_actions_by_action_type_access(user_id, group_actions, "governance_group_actions", "group"),
+                )
     return action_labels
 
 
@@ -414,19 +428,139 @@ def _get_usage_count(agent: Dict[str, Any], usage_field: str) -> int:
         return 0
 
 
+def apply_agent_popular_promotions(
+    catalog: List[Dict[str, Any]],
+    *,
+    settings: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    """Annotate accessible catalog records selected by admins for the Popular page."""
+    if not catalog:
+        return catalog
+
+    resolved_settings = settings or get_settings()
+    promotions = normalize_agents_page_promoted_popular_agents(
+        (resolved_settings or {}).get("agents_page_promoted_popular_agents")
+    )
+    if not promotions:
+        return catalog
+
+    promotion_map = {
+        promotion["catalog_key"]: (index, promotion)
+        for index, promotion in enumerate(promotions)
+        if promotion.get("catalog_key")
+    }
+    if not promotion_map:
+        return catalog
+
+    order_mode = normalize_agents_page_promoted_popular_order(
+        (resolved_settings or {}).get("agents_page_promoted_popular_order")
+    )
+    tag_enabled = normalize_agents_page_promoted_popular_tag_enabled(
+        (resolved_settings or {}).get("agents_page_promoted_popular_tag_enabled", True)
+    )
+    tag_label = normalize_agents_page_promoted_popular_tag_label(
+        (resolved_settings or {}).get("agents_page_promoted_popular_tag_label")
+    )
+
+    for agent in catalog:
+        catalog_key = str(agent.get("catalog_key") or "").strip()
+        if catalog_key not in promotion_map:
+            continue
+        promotion_rank, promotion = promotion_map[catalog_key]
+        agent["is_promoted_popular"] = True
+        agent["promoted_popular_window"] = normalize_agents_page_promoted_popular_window(promotion.get("window"))
+        agent["promoted_popular_rank"] = promotion_rank
+        agent["promoted_popular_order"] = order_mode
+        agent["promoted_popular_tag_enabled"] = tag_enabled
+        agent["promoted_popular_tag_label"] = tag_label if tag_enabled else ""
+
+    return catalog
+
+
+def _is_promoted_popular_for_window(agent: Dict[str, Any], usage_window: str) -> bool:
+    if not agent.get("is_promoted_popular"):
+        return False
+    promoted_window = normalize_agents_page_promoted_popular_window(agent.get("promoted_popular_window"))
+    if promoted_window == "both":
+        return True
+    normalized_window = normalize_agents_page_promoted_popular_window(usage_window)
+    return promoted_window == normalized_window
+
+
+def _get_promoted_popular_rank(agent: Dict[str, Any]) -> int:
+    try:
+        return int(agent.get("promoted_popular_rank"))
+    except (TypeError, ValueError):
+        return 1000000
+
+
+def _get_catalog_sort_name(agent: Dict[str, Any]) -> str:
+    return str(agent.get("display_name") or agent.get("name") or "").lower()
+
+
+def _dedupe_catalog_agents(agents: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    deduped_agents = []
+    seen_keys = set()
+    for agent in agents:
+        catalog_key = str(agent.get("catalog_key") or agent.get("id") or id(agent))
+        if catalog_key in seen_keys:
+            continue
+        seen_keys.add(catalog_key)
+        deduped_agents.append(agent)
+    return deduped_agents
+
+
 def get_popular_agents(
     catalog: List[Dict[str, Any]],
     limit: int = 3,
     usage_window: str = "30_days",
 ) -> List[Dict[str, Any]]:
-    """Return the most-used catalog records with nonzero usage."""
+    """Return the most-used catalog records plus admin-promoted Popular page agents."""
     normalized_window = str(usage_window or "30_days").strip().lower().replace("-", "_")
     usage_field = "usage_count_all_time" if normalized_window in {"all", "all_time"} else "usage_count_30_days"
-    ranked_agents = [agent for agent in catalog if _get_usage_count(agent, usage_field) > 0]
+    normalized_promotion_window = "all_time" if usage_field == "usage_count_all_time" else "30_days"
+    promoted_agents = [
+        agent for agent in catalog
+        if _is_promoted_popular_for_window(agent, normalized_promotion_window)
+    ]
+    promoted_keys = {str(agent.get("catalog_key") or "") for agent in promoted_agents}
+    ranked_agents = [
+        agent for agent in catalog
+        if _get_usage_count(agent, usage_field) > 0
+        and str(agent.get("catalog_key") or "") not in promoted_keys
+    ]
     ranked_agents.sort(
         key=lambda agent: (
             -_get_usage_count(agent, usage_field),
-            str(agent.get("display_name") or agent.get("name") or "").lower(),
+            _get_catalog_sort_name(agent),
         )
     )
-    return ranked_agents[:max(1, int(limit or 3))]
+    promoted_agents.sort(
+        key=lambda agent: (
+            _get_promoted_popular_rank(agent),
+            _get_catalog_sort_name(agent),
+        )
+    )
+
+    order_mode = "mixed"
+    if promoted_agents:
+        order_mode = normalize_agents_page_promoted_popular_order(
+            promoted_agents[0].get("promoted_popular_order")
+        )
+
+    usage_limit = max(1, int(limit or 3))
+    limited_ranked_agents = ranked_agents[:usage_limit]
+    if order_mode == "before":
+        return _dedupe_catalog_agents([*promoted_agents, *limited_ranked_agents])
+    if order_mode == "after":
+        return _dedupe_catalog_agents([*limited_ranked_agents, *promoted_agents])
+
+    mixed_agents = _dedupe_catalog_agents([*limited_ranked_agents, *promoted_agents])
+    mixed_agents.sort(
+        key=lambda agent: (
+            -_get_usage_count(agent, usage_field),
+            _get_promoted_popular_rank(agent),
+            _get_catalog_sort_name(agent),
+        )
+    )
+    return mixed_agents

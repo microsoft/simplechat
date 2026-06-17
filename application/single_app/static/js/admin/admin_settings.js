@@ -16,6 +16,9 @@ let enableDocumentClassification = window.enableDocumentClassification || false;
 let externalLinks = window.externalLinks || [];
 let enableExternalLinks = window.enableExternalLinks || false;
 let externalLinksMenuName = window.externalLinksMenuName || 'External Links';
+let agentsPagePromotedPopularAgents = Array.isArray(window.agentsPagePromotedPopularAgents)
+    ? window.agentsPagePromotedPopularAgents
+    : [];
 let releaseNotificationsRegistration = window.releaseNotificationsRegistration || {
     registered: false,
     name: '',
@@ -57,6 +60,13 @@ const externalLinksSettingsDiv = document.getElementById('external_links_setting
 const externalLinksTbody = document.getElementById('external-links-tbody');
 const addExternalLinkBtn = document.getElementById('add-external-link-btn');
 const externalLinksJsonInput = document.getElementById('external_links_json');
+const promotedPopularAgentsInput = document.getElementById('agents_page_promoted_popular_agents_json');
+const promotedPopularAgentsSelect = document.getElementById('agents-page-promoted-agent-select');
+const promotedPopularAgentsAddButton = document.getElementById('agents-page-promoted-agent-add');
+const promotedPopularAgentsBody = document.getElementById('agents-page-promoted-popular-tbody');
+const promotedPopularAgentsEmpty = document.getElementById('agents-page-promoted-popular-empty');
+const promotedPopularAgentsLoadError = document.getElementById('agents-page-promoted-popular-load-error');
+let agentsPagePromotedAvailableAgents = [];
 
 const enableSupportMenuToggle = document.getElementById('enable_support_menu');
 const supportMenuSettingsDiv = document.getElementById('support_menu_settings');
@@ -167,6 +177,262 @@ function createIconButton(iconClass, label, buttonClass = 'btn-outline-secondary
     button.appendChild(icon);
 
     return button;
+}
+
+function normalizeAdminText(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function getAdminAgentDisplayName(agent) {
+    return normalizeAdminText(agent?.display_name || agent?.displayName || agent?.name || 'Unnamed Agent') || 'Unnamed Agent';
+}
+
+function getAdminAgentScopeType(agent) {
+    const scopeType = normalizeAdminText(agent?.scope_type).toLowerCase();
+    if (agent?.is_group || scopeType === 'group') {
+        return 'group';
+    }
+    if (agent?.is_global || scopeType === 'global' || scopeType === 'enterprise') {
+        return 'global';
+    }
+    return 'personal';
+}
+
+function getAdminAgentScopeLabel(agent) {
+    const scopeType = getAdminAgentScopeType(agent);
+    if (scopeType === 'group') {
+        return normalizeAdminText(agent?.group_name || agent?.scope_name || 'Group');
+    }
+    if (scopeType === 'global') {
+        return 'Enterprise';
+    }
+    return 'Personal';
+}
+
+function normalizePromotedPopularWindow(value) {
+    const normalizedValue = normalizeAdminText(value).toLowerCase().replace(/-/g, '_');
+    if (normalizedValue === 'all' || normalizedValue === 'alltime') {
+        return 'all_time';
+    }
+    if (normalizedValue === '30' || normalizedValue === 'last30' || normalizedValue === 'last_30_days') {
+        return '30_days';
+    }
+    return ['all_time', '30_days', 'both'].includes(normalizedValue) ? normalizedValue : 'both';
+}
+
+function normalizePromotedPopularAgent(candidate) {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+        return null;
+    }
+    const catalogKey = normalizeAdminText(candidate.catalog_key);
+    if (!catalogKey) {
+        return null;
+    }
+    return {
+        catalog_key: catalogKey,
+        display_name: getAdminAgentDisplayName(candidate),
+        scope_label: normalizeAdminText(candidate.scope_label || candidate.scope_name || getAdminAgentScopeLabel(candidate)),
+        scope_type: getAdminAgentScopeType(candidate),
+        window: normalizePromotedPopularWindow(candidate.window),
+    };
+}
+
+function normalizePromotedPopularAgents(candidates) {
+    const seenCatalogKeys = new Set();
+    const normalizedAgents = [];
+    (Array.isArray(candidates) ? candidates : []).forEach(candidate => {
+        const normalizedAgent = normalizePromotedPopularAgent(candidate);
+        if (!normalizedAgent || seenCatalogKeys.has(normalizedAgent.catalog_key)) {
+            return;
+        }
+        seenCatalogKeys.add(normalizedAgent.catalog_key);
+        normalizedAgents.push(normalizedAgent);
+    });
+    return normalizedAgents;
+}
+
+function setPromotedPopularLoadError(message) {
+    if (!promotedPopularAgentsLoadError) {
+        return;
+    }
+    promotedPopularAgentsLoadError.textContent = message || '';
+    promotedPopularAgentsLoadError.classList.toggle('d-none', !message);
+}
+
+function syncPromotedPopularAgentsInput() {
+    agentsPagePromotedPopularAgents = normalizePromotedPopularAgents(agentsPagePromotedPopularAgents);
+    if (promotedPopularAgentsInput) {
+        promotedPopularAgentsInput.value = JSON.stringify(agentsPagePromotedPopularAgents);
+    }
+}
+
+function renderPromotedPopularAgentSelect() {
+    if (!promotedPopularAgentsSelect) {
+        return;
+    }
+
+    promotedPopularAgentsSelect.textContent = '';
+    const promotedKeys = new Set(agentsPagePromotedPopularAgents.map(agent => agent.catalog_key));
+    const availableAgents = agentsPagePromotedAvailableAgents
+        .map(agent => normalizePromotedPopularAgent(agent))
+        .filter(agent => agent && !promotedKeys.has(agent.catalog_key))
+        .sort((left, right) => left.display_name.localeCompare(right.display_name, undefined, { sensitivity: 'base' }));
+
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = availableAgents.length ? 'Select an agent to promote...' : 'No additional agents available';
+    promotedPopularAgentsSelect.appendChild(placeholder);
+
+    availableAgents.forEach(agent => {
+        const option = document.createElement('option');
+        option.value = agent.catalog_key;
+        option.textContent = `${agent.display_name} (${agent.scope_label})`;
+        promotedPopularAgentsSelect.appendChild(option);
+    });
+
+    if (promotedPopularAgentsAddButton) {
+        promotedPopularAgentsAddButton.disabled = availableAgents.length === 0;
+    }
+}
+
+function createPromotedPopularWindowSelect(agent, index) {
+    const select = document.createElement('select');
+    select.className = 'form-select form-select-sm';
+    select.setAttribute('aria-label', `Popular tab time range for ${agent.display_name}`);
+    [
+        ['both', 'Both'],
+        ['all_time', 'All Time'],
+        ['30_days', 'Last 30 Days'],
+    ].forEach(([value, label]) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = label;
+        option.selected = agent.window === value;
+        select.appendChild(option);
+    });
+    select.addEventListener('change', () => {
+        agentsPagePromotedPopularAgents[index].window = normalizePromotedPopularWindow(select.value);
+        syncPromotedPopularAgentsInput();
+        markFormAsModified();
+    });
+    return select;
+}
+
+function renderPromotedPopularAgents() {
+    if (!promotedPopularAgentsBody) {
+        return;
+    }
+
+    syncPromotedPopularAgentsInput();
+    promotedPopularAgentsBody.textContent = '';
+    promotedPopularAgentsEmpty?.classList.toggle('d-none', agentsPagePromotedPopularAgents.length > 0);
+
+    agentsPagePromotedPopularAgents.forEach((agent, index) => {
+        const row = document.createElement('tr');
+
+        const agentCell = document.createElement('td');
+        const nameElement = document.createElement('div');
+        nameElement.className = 'fw-semibold';
+        nameElement.textContent = agent.display_name;
+        const scopeElement = document.createElement('div');
+        scopeElement.className = 'text-muted small';
+        scopeElement.textContent = agent.scope_label;
+        agentCell.appendChild(nameElement);
+        agentCell.appendChild(scopeElement);
+
+        const windowCell = document.createElement('td');
+        windowCell.appendChild(createPromotedPopularWindowSelect(agent, index));
+
+        const actionsCell = document.createElement('td');
+        actionsCell.className = 'text-end text-nowrap';
+        const moveUpButton = createIconButton('bi bi-arrow-up', `Move ${agent.display_name} up`);
+        moveUpButton.disabled = index === 0;
+        moveUpButton.addEventListener('click', () => {
+            const previousAgent = agentsPagePromotedPopularAgents[index - 1];
+            agentsPagePromotedPopularAgents[index - 1] = agent;
+            agentsPagePromotedPopularAgents[index] = previousAgent;
+            renderPromotedPopularAgents();
+            markFormAsModified();
+        });
+        const moveDownButton = createIconButton('bi bi-arrow-down', `Move ${agent.display_name} down`);
+        moveDownButton.disabled = index === agentsPagePromotedPopularAgents.length - 1;
+        moveDownButton.addEventListener('click', () => {
+            const nextAgent = agentsPagePromotedPopularAgents[index + 1];
+            agentsPagePromotedPopularAgents[index + 1] = agent;
+            agentsPagePromotedPopularAgents[index] = nextAgent;
+            renderPromotedPopularAgents();
+            markFormAsModified();
+        });
+        const removeButton = createIconButton('bi bi-trash', `Remove ${agent.display_name}`, 'btn-outline-danger');
+        removeButton.addEventListener('click', () => {
+            agentsPagePromotedPopularAgents.splice(index, 1);
+            renderPromotedPopularAgents();
+            renderPromotedPopularAgentSelect();
+            markFormAsModified();
+        });
+        actionsCell.appendChild(moveUpButton);
+        actionsCell.appendChild(document.createTextNode(' '));
+        actionsCell.appendChild(moveDownButton);
+        actionsCell.appendChild(document.createTextNode(' '));
+        actionsCell.appendChild(removeButton);
+
+        row.appendChild(agentCell);
+        row.appendChild(windowCell);
+        row.appendChild(actionsCell);
+        promotedPopularAgentsBody.appendChild(row);
+    });
+
+    renderPromotedPopularAgentSelect();
+}
+
+async function loadPromotedPopularAvailableAgents() {
+    if (!promotedPopularAgentsSelect) {
+        return;
+    }
+    try {
+        const response = await fetch('/api/agents/catalog?include_usage=true');
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(payload.error || 'Failed to load available agents.');
+        }
+        agentsPagePromotedAvailableAgents = Array.isArray(payload.agents) ? payload.agents : [];
+        setPromotedPopularLoadError('');
+    } catch (error) {
+        agentsPagePromotedAvailableAgents = [];
+        setPromotedPopularLoadError(error.message || 'Failed to load available agents.');
+    }
+    renderPromotedPopularAgentSelect();
+}
+
+function setupAgentsPagePromotedPopularAgents() {
+    if (!promotedPopularAgentsInput || !promotedPopularAgentsBody) {
+        return;
+    }
+
+    try {
+        const storedAgents = JSON.parse(promotedPopularAgentsInput.value || '[]');
+        agentsPagePromotedPopularAgents = normalizePromotedPopularAgents(storedAgents);
+    } catch (error) {
+        agentsPagePromotedPopularAgents = normalizePromotedPopularAgents(agentsPagePromotedPopularAgents);
+    }
+
+    promotedPopularAgentsAddButton?.addEventListener('click', () => {
+        const catalogKey = normalizeAdminText(promotedPopularAgentsSelect?.value);
+        if (!catalogKey) {
+            return;
+        }
+        const selectedAgent = agentsPagePromotedAvailableAgents.find(agent => normalizeAdminText(agent?.catalog_key) === catalogKey);
+        const normalizedAgent = normalizePromotedPopularAgent(selectedAgent);
+        if (!normalizedAgent) {
+            return;
+        }
+        agentsPagePromotedPopularAgents.push(normalizedAgent);
+        renderPromotedPopularAgents();
+        markFormAsModified();
+    });
+
+    renderPromotedPopularAgents();
+    loadPromotedPopularAvailableAgents();
 }
 
 function getFieldValue(fieldId) {
@@ -2653,6 +2919,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- NEW: Support Menu Setup ---
     setupSupportMenuSettings();
+
+    // --- Agents page promoted Popular tab setup ---
+    setupAgentsPagePromotedPopularAgents();
 
     // --- NEW: Chunk size controls ---
     setupChunkSizeControls();

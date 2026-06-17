@@ -45,6 +45,10 @@ AGENTS_PAGE_DEFAULTS = {
     'agents_page_hero_secondary_color': '#1e293b',
     'agents_page_disclaimer_markdown': '',
     'agents_page_show_instructions_in_details': True,
+    'agents_page_promoted_popular_agents': [],
+    'agents_page_promoted_popular_order': 'before',
+    'agents_page_promoted_popular_tag_enabled': True,
+    'agents_page_promoted_popular_tag_label': AGENTS_PAGE_PROMOTED_POPULAR_TAG_LABEL_DEFAULT,
 }
 HEX_COLOR_PATTERN = re.compile(r'^#[0-9a-fA-F]{6}$')
 
@@ -1391,6 +1395,18 @@ def register_route_frontend_admin_settings(app):
             agents_page_show_instructions_in_details = form_data.get(
                 'agents_page_show_instructions_in_details'
             ) == 'on'
+            agents_page_promoted_popular_agents = normalize_agents_page_promoted_popular_agents(
+                form_data.get('agents_page_promoted_popular_agents_json')
+            )
+            agents_page_promoted_popular_order = normalize_agents_page_promoted_popular_order(
+                form_data.get('agents_page_promoted_popular_order')
+            )
+            agents_page_promoted_popular_tag_enabled = form_data.get(
+                'agents_page_promoted_popular_tag_enabled'
+            ) == 'on'
+            agents_page_promoted_popular_tag_label = normalize_agents_page_promoted_popular_tag_label(
+                form_data.get('agents_page_promoted_popular_tag_label')
+            )
 
             # --- Application Insights Logging Toggle ---
             enable_appinsights_global_logging = form_data.get('enable_appinsights_global_logging') == 'on'
@@ -1728,6 +1744,10 @@ def register_route_frontend_admin_settings(app):
                 'agents_page_hero_secondary_color': agents_page_hero_secondary_color,
                 'agents_page_disclaimer_markdown': agents_page_disclaimer_markdown,
                 'agents_page_show_instructions_in_details': agents_page_show_instructions_in_details,
+                'agents_page_promoted_popular_agents': agents_page_promoted_popular_agents,
+                'agents_page_promoted_popular_order': agents_page_promoted_popular_order,
+                'agents_page_promoted_popular_tag_enabled': agents_page_promoted_popular_tag_enabled,
+                'agents_page_promoted_popular_tag_label': agents_page_promoted_popular_tag_label,
                 'governance_user_endpoints': form_data.get('governance_user_endpoints') == 'on' and form_data.get('allow_user_custom_endpoints') == 'on',
                 'governance_group_endpoints': form_data.get('governance_group_endpoints') == 'on' and form_data.get('allow_group_custom_endpoints') == 'on',
                 'governance_global_endpoints': True,

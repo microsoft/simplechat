@@ -1,7 +1,7 @@
 # test_agents_catalog_details_modal.py
 """
 UI test for the Agents catalog details modal.
-Version: 0.242.061
+Version: 0.242.064
 Implemented in: 0.242.061
 
 This test ensures the Agents tab uses the shared workspace-style details modal,
@@ -53,6 +53,35 @@ def test_agents_catalog_details_modal_renders_markdown(playwright):
 
     agent_payload = {
         "agents": [
+            {
+                "id": "agent-featured-1",
+                "name": "featured_catalog_agent",
+                "display_name": "Featured Catalog Agent",
+                "description": "Seeded into Popular by an admin.",
+                "instructions": "Featured helper.",
+                "agent_type": "local",
+                "is_global": True,
+                "is_group": False,
+                "scope_type": "global",
+                "scope_id": "global",
+                "scope_name": None,
+                "model_id": "gpt-5-mini",
+                "model_label": "GPT 5 Mini",
+                "usage_count": 0,
+                "usage_count_all_time": 0,
+                "usage_count_30_days": 0,
+                "actions_to_load": [],
+                "action_labels": [],
+                "tags": ["Featured"],
+                "icon": {"kind": "bootstrap", "value": "bi-stars"},
+                "catalog_key": "global:global:agent-featured-1",
+                "is_promoted_popular": True,
+                "promoted_popular_window": "both",
+                "promoted_popular_rank": 0,
+                "promoted_popular_order": "before",
+                "promoted_popular_tag_enabled": True,
+                "promoted_popular_tag_label": "Featured",
+            },
             {
                 "id": "agent-markdown-1",
                 "name": "markdown_catalog_agent",
@@ -113,14 +142,15 @@ def test_agents_catalog_details_modal_renders_markdown(playwright):
         expect(page.get_by_role("button", name="Search")).to_be_visible()
         expect(page.locator("#agents-count-label")).to_have_count(0)
         expect(page.locator("#agents-results-count")).to_have_count(0)
-        expect(page.locator("#agents-list-view .agent-row").first).to_contain_text("Markdown Catalog Agent")
+        expect(page.locator("#agents-list-view .agent-row").first).to_contain_text("Featured Catalog Agent")
+        expect(page.locator("#agents-list-view .agent-row").first).to_contain_text("Featured")
         expect(page.get_by_role("button", name="Most Popular All Time")).to_have_attribute("aria-pressed", "true")
         page.get_by_role("button", name="Last 30 Days").click()
         expect(page.get_by_role("button", name="Last 30 Days")).to_have_attribute("aria-pressed", "true")
-        expect(page.locator("#agents-list-view .agent-row").first).to_contain_text("Recent Catalog Agent")
+        expect(page.locator("#agents-list-view .agent-row").first).to_contain_text("Featured Catalog Agent")
         page.get_by_role("button", name="Most Popular All Time").click()
-        expect(page.locator("#agents-list-view .agent-row").first).to_contain_text("Markdown Catalog Agent")
-        agent_row = page.locator("#agents-list-view .agent-row").first
+        expect(page.locator("#agents-list-view .agent-row").first).to_contain_text("Featured Catalog Agent")
+        agent_row = page.locator("#agents-list-view .agent-row").filter(has_text="Markdown Catalog Agent").first
         expect(agent_row.locator(".agent-icon img")).to_have_attribute("src", icon_data_url)
         expect(agent_row.locator(".agent-info-icon-btn")).to_have_attribute(
             "aria-label",

@@ -1234,6 +1234,62 @@
                                 </div>
                                 <div class="form-text">When disabled, the Agents tab details popup hides instructions and the catalog API response omits them.</div>
                             </div>
+                            <div class="col-12">
+                                <hr class="my-2" />
+                                <h6 class="mb-2">Promoted Popular Agents</h6>
+                                <p class="text-muted small mb-3">Highlight selected agents in the Popular tab even before they have usage counts. Users only see promoted agents that are already visible to them.</p>
+                                <textarea class="d-none" id="agents_page_promoted_popular_agents_json" name="agents_page_promoted_popular_agents_json">{{ settings.agents_page_promoted_popular_agents | default([], true) | tojson }}</textarea>
+                                <div class="row g-3 mb-3">
+                                    <div class="col-lg-4">
+                                        <label for="agents_page_promoted_popular_order" class="form-label">Placement</label>
+                                        <select class="form-select" id="agents_page_promoted_popular_order" name="agents_page_promoted_popular_order">
+                                            <option value="before" {% if settings.agents_page_promoted_popular_order | default('before') == 'before' %}selected{% endif %}>Before actual popular agents</option>
+                                            <option value="after" {% if settings.agents_page_promoted_popular_order | default('before') == 'after' %}selected{% endif %}>After actual popular agents</option>
+                                            <option value="mixed" {% if settings.agents_page_promoted_popular_order | default('before') == 'mixed' %}selected{% endif %}>Mixed by usage</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-lg-4">
+                                        <label for="agents_page_promoted_popular_tag_label" class="form-label">Promoted Tag Label</label>
+                                        <input type="text" class="form-control" id="agents_page_promoted_popular_tag_label" name="agents_page_promoted_popular_tag_label" maxlength="40" value="{{ settings.agents_page_promoted_popular_tag_label | default('Promoted') }}" />
+                                    </div>
+                                    <div class="col-lg-4 d-flex align-items-end">
+                                        <div>
+                                            <div class="form-check form-switch">
+                                                <input class="form-check-input" type="checkbox" role="switch" id="agents_page_promoted_popular_tag_enabled" name="agents_page_promoted_popular_tag_enabled" {% if settings.agents_page_promoted_popular_tag_enabled | default(true) %}checked{% endif %} />
+                                                <label class="form-check-label" for="agents_page_promoted_popular_tag_enabled">Show promoted tag</label>
+                                            </div>
+                                            <div class="form-text">When enabled, promoted agents show the configured tag in the Popular tab.</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="row g-2 align-items-end mb-3">
+                                    <div class="col-lg-9">
+                                        <label for="agents-page-promoted-agent-select" class="form-label">Add Agent</label>
+                                        <select class="form-select" id="agents-page-promoted-agent-select">
+                                            <option value="">Loading available agents...</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-lg-3">
+                                        <button type="button" class="btn btn-outline-primary w-100" id="agents-page-promoted-agent-add">
+                                            <i class="bi bi-plus-lg me-1" aria-hidden="true"></i>Add Agent
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="table-responsive">
+                                    <table class="table table-sm align-middle mb-2">
+                                        <thead>
+                                            <tr>
+                                                <th scope="col">Agent</th>
+                                                <th scope="col" class="text-nowrap">Show In</th>
+                                                <th scope="col" class="text-end">Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="agents-page-promoted-popular-tbody"></tbody>
+                                    </table>
+                                </div>
+                                <div class="alert alert-info py-2 mb-0" id="agents-page-promoted-popular-empty">No agents are promoted yet.</div>
+                                <div class="alert alert-warning py-2 mt-2 mb-0 d-none" id="agents-page-promoted-popular-load-error" role="status"></div>
+                            </div>
                         </div>
                     </div>
                 <div class="mb-3">
@@ -1584,9 +1640,9 @@
                             <button type="button" class="btn btn-outline-secondary btn-sm" id="governance-refresh-item-policies-btn">Refresh</button>
                         </div>
                     </div>
-                    <p class="text-muted mb-1">Manage per-item governance for global endpoints, agents, and actions that admins delegate to specific users or groups.</p>
+                    <p class="text-muted mb-1">Manage delegated governance for configured global resources and action type entitlements that admins assign to specific users or groups.</p>
                     <div class="alert alert-info py-2 small" role="alert">
-                        Delegated item policies are OR combined whitelists. A user can access a delegated item when they are allowed by any policy for that item.
+                        Delegated item policies are OR combined whitelists. Action type policies grant create/use entitlement for a type; global action policies grant access to one configured global action.
                     </div>
 
                     <div class="row g-2 align-items-end mb-3" id="governance-item-policy-card-controls">
@@ -1601,6 +1657,9 @@
                                 <option value="global_endpoint">Global Endpoint</option>
                                 <option value="global_agent">Global Agent</option>
                                 <option value="global_action">Global Action</option>
+                                <option value="personal_action_type">Personal Action Type</option>
+                                <option value="group_action_type">Group Action Type</option>
+                                <option value="global_action_type">Global Action Type</option>
                             </select>
                         </div>
                         <div class="col-lg-2 col-md-4">
@@ -9456,6 +9515,10 @@
     window.enableExternalLinks = "{{ enable_external_links }}";
     window.externalLinksMenuName = "{{ settings.external_links_menu_name or 'External Links' }}";
     window.externalLinksForceMenu = "{{ settings.external_links_force_menu }}";
+    window.agentsPagePromotedPopularAgents = {{ settings.agents_page_promoted_popular_agents | default([], true) | tojson(indent=None) | safe }};
+    if (!Array.isArray(window.agentsPagePromotedPopularAgents)) {
+        window.agentsPagePromotedPopularAgents = [];
+    }
     window.customPages = [];
     window.customPagesInitiallyEnabled = {{ 'true' if settings.enable_custom_pages else 'false' }};
     window.releaseNotificationsRegistration = {
