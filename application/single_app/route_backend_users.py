@@ -501,6 +501,7 @@ def register_route_backend_users(app):
                     'publicDirectorySavedLists', 'publicDirectorySettings', 'activePublicWorkspaceOid',
                     # Chat UI settings
                     'navbar_layout', 'chatLayout', 'showChatTitle', 'chatSplitSizes',
+                    'deepResearchDefaultEnabled',
                     'sidebarToggleStyle', 'sidebarMenuState',
                     # Microphone permission settings
                     'microphonePermissionPreference', 'microphonePermissionState',

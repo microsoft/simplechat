@@ -37,6 +37,7 @@ from functions_activity_logging import *
 import threading
 import time
 from datetime import datetime
+from urllib.parse import urlparse
 
 from route_frontend_authentication import *
 from route_frontend_profile import *
@@ -112,6 +113,9 @@ executor.init_app(app)
 app.config['SESSION_TYPE'] = SESSION_TYPE
 app.config['VERSION'] = VERSION
 app.config['SECRET_KEY'] = SECRET_KEY
+app.config['SESSION_COOKIE_SAMESITE'] = SESSION_COOKIE_SAMESITE
+app.config['SESSION_COOKIE_HTTPONLY'] = SESSION_COOKIE_HTTPONLY
+app.config['SESSION_COOKIE_SECURE'] = SESSION_COOKIE_SECURE
 
 # Ensure filesystem session directory (when used) points to a writable path inside container.
 if SESSION_TYPE == 'filesystem':
@@ -601,6 +605,153 @@ def reload_kernel_if_needed():
         initialize_semantic_kernel()
         """
         setattr(builtins, "kernel_reload_needed", False)
+
+
+UNSAFE_STATE_CHANGING_METHODS = {'POST', 'PUT', 'PATCH', 'DELETE'}
+GET_STATE_CHANGING_PATH_PREFIXES = (
+    '/api/chat/stream/reattach/',
+)
+SAME_ORIGIN_FETCH_SITE_VALUES = {'same-origin', 'same-site', 'none'}
+
+
+def _normalize_origin_from_url(raw_url):
+    """Return the scheme/host/port origin for a URL-like value."""
+    if not raw_url:
+        return ''
+
+    try:
+        parsed_url = urlparse(str(raw_url).strip())
+    except ValueError:
+        return ''
+
+    if not parsed_url.scheme or not parsed_url.hostname:
+        return ''
+
+    scheme = parsed_url.scheme.lower()
+    hostname = parsed_url.hostname.lower()
+    display_host = f'[{hostname}]' if ':' in hostname and not hostname.startswith('[') else hostname
+    try:
+        port = parsed_url.port
+    except ValueError:
+        return ''
+    if port and not ((scheme == 'http' and port == 80) or (scheme == 'https' and port == 443)):
+        display_host = f'{display_host}:{port}'
+
+    return f'{scheme}://{display_host}'
+
+
+def _first_forwarded_header_value(header_name):
+    header_value = request.headers.get(header_name, '')
+    if not header_value:
+        return ''
+    return header_value.split(',', 1)[0].strip()
+
+
+def _add_allowed_origin(allowed_origins, raw_origin):
+    normalized_origin = _normalize_origin_from_url(raw_origin)
+    if normalized_origin:
+        allowed_origins.add(normalized_origin)
+
+
+def _build_allowed_request_origins():
+    allowed_origins = set()
+    _add_allowed_origin(allowed_origins, request.host_url)
+    _add_allowed_origin(allowed_origins, f'{request.scheme}://{request.host}')
+
+    forwarded_host = (
+        _first_forwarded_header_value('X-Forwarded-Host')
+        or _first_forwarded_header_value('X-Original-Host')
+    )
+    forwarded_proto = _first_forwarded_header_value('X-Forwarded-Proto') or request.scheme
+    if forwarded_host:
+        _add_allowed_origin(allowed_origins, f'{forwarded_proto}://{forwarded_host}')
+
+    _add_allowed_origin(allowed_origins, HOME_REDIRECT_URL)
+    _add_allowed_origin(allowed_origins, LOGIN_REDIRECT_URL)
+
+    for trusted_origin in CSRF_TRUSTED_ORIGINS:
+        _add_allowed_origin(allowed_origins, trusted_origin)
+
+    try:
+        request_settings = get_request_settings()
+        if request_settings.get('enable_front_door'):
+            _add_allowed_origin(allowed_origins, request_settings.get('front_door_url'))
+    except Exception as e:
+        log_event(
+            f"[CSRF] Failed to load Front Door trusted origin from settings: {e}",
+            level=logging.WARNING,
+            debug_only=True,
+        )
+
+    return allowed_origins
+
+
+def _state_changing_request_has_same_origin_boundary():
+    fetch_site = request.headers.get('Sec-Fetch-Site', '').strip().lower()
+    origin_header = request.headers.get('Origin', '').strip()
+    referer_header = request.headers.get('Referer', '').strip()
+
+    if fetch_site == 'cross-site':
+        return False, 'cross-site fetch metadata'
+    if fetch_site == 'same-site' and not origin_header and not referer_header:
+        return False, 'same-site fetch metadata without origin headers'
+    if fetch_site and fetch_site not in SAME_ORIGIN_FETCH_SITE_VALUES:
+        return False, f'unexpected fetch metadata: {fetch_site}'
+
+    allowed_origins = _build_allowed_request_origins()
+    if origin_header:
+        request_origin = _normalize_origin_from_url(origin_header)
+        if request_origin and request_origin in allowed_origins:
+            return True, 'origin matched'
+        return False, 'origin mismatch'
+
+    if referer_header:
+        request_origin = _normalize_origin_from_url(referer_header)
+        if request_origin and request_origin in allowed_origins:
+            return True, 'referer matched'
+        return False, 'referer mismatch'
+
+    return True, 'no browser origin headers present'
+
+
+def _requires_same_origin_state_change_boundary():
+    if request.method in UNSAFE_STATE_CHANGING_METHODS:
+        return True
+    if request.method == 'GET':
+        return any(request.path.startswith(prefix) for prefix in GET_STATE_CHANGING_PATH_PREFIXES)
+    return False
+
+
+@app.before_request
+def enforce_same_origin_for_state_changing_requests():
+    """Reject authenticated browser mutations that originate off-site."""
+    if not CSRF_ENFORCE_ORIGIN_FOR_UNSAFE_METHODS:
+        return None
+    if not _requires_same_origin_state_change_boundary():
+        return None
+    if 'user' not in session:
+        return None
+
+    has_boundary, reason = _state_changing_request_has_same_origin_boundary()
+    if has_boundary:
+        return None
+
+    log_event(
+        "[CSRF] Blocked state-changing request with invalid same-origin boundary.",
+        extra={
+            'path': request.path,
+            'method': request.method,
+            'reason': reason,
+            'origin_present': bool(request.headers.get('Origin')),
+            'referer_present': bool(request.headers.get('Referer')),
+            'sec_fetch_site': request.headers.get('Sec-Fetch-Site', ''),
+        },
+        level=logging.WARNING,
+    )
+    return jsonify({
+        'error': 'Forbidden',
+        'message': 'State-changing requests must originate from SimpleChat.',
+    }), 403
 
 
 def _is_idle_timeout_exempt(path):

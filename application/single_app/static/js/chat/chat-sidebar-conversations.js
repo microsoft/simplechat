@@ -2,6 +2,7 @@
 // Handles conversations list in the sidebar when on the chats page
 
 import { showToast } from "./chat-toast.js";
+import { escapeHtml } from "./chat-utils.js";
 
 const sidebarConversationsList = document.getElementById("sidebar-conversations-list");
 const sidebarNewChatBtn = document.getElementById("sidebar-new-chat-btn");
@@ -478,7 +479,10 @@ export function loadSidebarConversations(options = {}) {
     })
     .catch(error => {
       console.error("Error loading sidebar conversations:", error);
-      sidebarConversationsList.innerHTML = `<div class="text-center p-2 text-danger small">Error loading conversations: ${error.error || 'Unknown error'}</div>`;
+      const errorMessage = document.createElement('div');
+      errorMessage.className = 'text-center p-2 text-danger small';
+      errorMessage.textContent = `Error loading conversations: ${error?.error || 'Unknown error'}`;
+      sidebarConversationsList.replaceChildren(errorMessage);
       dispatchSidebarConversationsLoaded({ loaded: true, count: 0, hasVisibleConversations: false, isError: true });
       isLoadingSidebarConversations = false; // Reset flag on error too
       
@@ -938,7 +942,10 @@ export function setSidebarSelectionMode(isActive) {
         indicator = document.createElement('button');
         indicator.className = 'selection-indicator btn btn-sm ms-1';
         indicator.style.cssText = 'background: none; border: none; padding: 2px 4px; border-radius: 4px; color: #ffc107; transition: background-color 0.2s ease;';
-        indicator.innerHTML = '<i class="bi bi-check-square" style="font-size: 0.8em;"></i>';
+        const indicatorIcon = document.createElement('i');
+        indicatorIcon.className = 'bi bi-check-square';
+        indicatorIcon.style.fontSize = '0.8em';
+        indicator.appendChild(indicatorIcon);
         indicator.title = 'Exit selection mode';
         indicator.setAttribute('aria-label', 'Exit selection mode');
         

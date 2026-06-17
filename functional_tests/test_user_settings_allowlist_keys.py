@@ -1,12 +1,13 @@
 # test_user_settings_allowlist_keys.py
 """
 Functional test for user settings allowlist synchronization.
-Version: 0.241.077
+Version: 0.242.051
 Implemented in: 0.241.077
+Updated in: 0.242.051
 
 This test ensures that the backend user settings route accepts the
 user-setting keys currently managed by microphone, retention policy,
-personal model endpoint, and tag workflows.
+personal model endpoint, tag, and chat preference workflows.
 """
 
 import os
@@ -34,6 +35,7 @@ def test_user_settings_allowlist_contains_known_keys():
             'retention_policy_days',
             'personal_model_endpoints',
             'tag_definitions',
+            'deepResearchDefaultEnabled',
         ]
 
         missing_keys = [

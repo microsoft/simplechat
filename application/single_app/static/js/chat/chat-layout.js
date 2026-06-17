@@ -38,34 +38,17 @@ export async function loadUserSettings() {
 export function saveUserSetting(settingUpdate) {
     if (!settingUpdate || typeof settingUpdate !== 'object') {
         console.warn('Cannot save user setting: invalid setting update provided');
-        return;
+        return Promise.resolve(false);
     }
 
-    // First, load current settings, then merge and save
-    fetch('/api/user/settings')
-        .then(response => {
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            return response.json();
-        })
-        .then(data => {
-            // Get current settings or initialize empty object
-            const currentSettings = data && data.settings ? data.settings : {};
-            
-            // Merge the new setting(s) with existing settings
-            const updatedSettings = { ...currentSettings, ...settingUpdate };
-            
-            // Save the updated settings
-            return fetch('/api/user/settings', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                credentials: 'same-origin',
-                body: JSON.stringify({ settings: updatedSettings })
-            });
-        })
+    return fetch('/api/user/settings', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        credentials: 'same-origin',
+        body: JSON.stringify({ settings: settingUpdate })
+    })
         .then(response => {
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
@@ -74,9 +57,11 @@ export function saveUserSetting(settingUpdate) {
         })
         .then(result => {
             console.log('User setting saved successfully:', settingUpdate, 'Response:', result);
+            return true;
         })
         .catch(error => {
             console.error('Failed to save user setting:', error);
             // Graceful degradation - continue without saving
+            return false;
         });
 }
