@@ -1,8 +1,8 @@
 # test_csrf_state_changing_route_guard.py
 """
 Functional test for CSRF state-changing route guard.
-Version: 0.242.052
-Implemented in: 0.242.052
+Version: 0.242.053
+Implemented in: 0.242.053
 
 This test ensures authenticated unsafe-method Flask requests have a same-origin
 browser boundary and explicit session-cookie defaults.
@@ -48,6 +48,7 @@ def test_csrf_guard_structure():
         "SAME_ORIGIN_FETCH_SITE_VALUES = {'same-origin', 'same-site', 'none'}",
         "def _requires_same_origin_state_change_boundary():",
         "request.headers.get('Sec-Fetch-Site'",
+        "same-origin fetch metadata",
         "same-site fetch metadata without origin headers",
         "request.headers.get('Origin'",
         "request.headers.get('Referer'",
@@ -62,6 +63,11 @@ def test_csrf_guard_structure():
     missing_snippets = [snippet for snippet in required_snippets if snippet not in app_source]
     assert not missing_snippets, f"Missing CSRF guard snippets: {missing_snippets}"
 
+    cross_site_index = app_source.index("if fetch_site == 'cross-site':")
+    same_origin_index = app_source.index("if fetch_site == 'same-origin':")
+    origin_compare_index = app_source.index("allowed_origins = _build_allowed_request_origins()")
+    assert cross_site_index < same_origin_index < origin_compare_index
+
 
 def test_session_cookie_defaults_are_explicit():
     """Validate session cookies have explicit SameSite/HttpOnly defaults."""
@@ -69,7 +75,7 @@ def test_session_cookie_defaults_are_explicit():
     app_source = _read_text(APP_FILE)
 
     config_required = [
-        "VERSION = \"0.242.052\"",
+        "VERSION = \"0.242.053\"",
         "SESSION_COOKIE_SAMESITE = os.getenv('SESSION_COOKIE_SAMESITE', 'Lax')",
         "SESSION_COOKIE_HTTPONLY = os.getenv('SESSION_COOKIE_HTTPONLY', 'true').lower() != 'false'",
         "SESSION_COOKIE_SECURE = os.getenv('SESSION_COOKIE_SECURE', 'false').lower() == 'true'",

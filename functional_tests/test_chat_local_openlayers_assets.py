@@ -2,8 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test for local chat OpenLayers assets.
-Version: 0.241.116
+Version: 0.242.053
 Implemented in: 0.241.116
+CSP allowlist regression fixed in: 0.242.053
 
 This test ensures the chat page loads OpenLayers from SimpleChat static files,
 the CSP no longer allows jsDelivr for scripts or styles, and SimpleMDE editor
@@ -84,8 +85,8 @@ def test_csp_keeps_scripts_and_styles_local():
     content = _read(CONFIG_FILE)
     errors = []
 
-    if _get_current_version() != "0.241.116":
-        errors.append("config.py VERSION must match the test header version 0.241.116.")
+    if _get_current_version() != "0.242.053":
+        errors.append("config.py VERSION must match the test header version 0.242.053.")
 
     for csp_fragment in [
         "script-src 'self' 'unsafe-inline' 'unsafe-eval';",

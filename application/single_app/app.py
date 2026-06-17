@@ -693,6 +693,8 @@ def _state_changing_request_has_same_origin_boundary():
 
     if fetch_site == 'cross-site':
         return False, 'cross-site fetch metadata'
+    if fetch_site == 'same-origin':
+        return True, 'same-origin fetch metadata'
     if fetch_site == 'same-site' and not origin_header and not referer_header:
         return False, 'same-site fetch metadata without origin headers'
     if fetch_site and fetch_site not in SAME_ORIGIN_FETCH_SITE_VALUES:

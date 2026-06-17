@@ -7,6 +7,7 @@ category: Version History
 ---
 
 - [CSRF State-Changing Route Guard Fix](CSRF_STATE_CHANGING_ROUTE_GUARD_FIX.md)
+- [External Browser Asset CSP Allowlist Fix](EXTERNAL_BROWSER_ASSET_CSP_ALLOWLIST_FIX.md)
 - [Semantic Search Quota Warning Fix](SEMANTIC_SEARCH_QUOTA_WARNING_FIX.md)
 - [Route Authentication Audit Findings Fix](ROUTE_AUTHENTICATION_AUDIT_FINDINGS_FIX.md)
 - [Cosmos Container Throughput Deployer Fix](COSMOS_CONTAINER_THROUGHPUT_DEPLOYER_FIX.md)

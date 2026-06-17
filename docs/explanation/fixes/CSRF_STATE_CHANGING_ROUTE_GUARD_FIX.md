@@ -1,6 +1,6 @@
 # CSRF State-Changing Route Guard Fix
 
-Fixed in version: **0.242.052**
+Fixed in version: **0.242.053**
 
 ## Issue Description
 
@@ -23,6 +23,7 @@ Code changes summary:
 - Added explicit session cookie defaults for `SESSION_COOKIE_SAMESITE`, `SESSION_COOKIE_HTTPONLY`, and `SESSION_COOKIE_SECURE`.
 - Added `CSRF_ENFORCE_ORIGIN_FOR_UNSAFE_METHODS` and `CSRF_TRUSTED_ORIGINS` configuration knobs.
 - Added a global before-request guard that checks authenticated POST, PUT, PATCH, and DELETE requests for same-origin browser metadata using `Sec-Fetch-Site`, `Origin`, and `Referer`.
+- Fixed the same-origin browser fetch path so normal in-app `fetch()` calls are allowed even when Azure proxy metadata makes Flask see a different scheme or host than the public browser origin.
 - Covered the GET stream reattach endpoint because it mutates in-memory stream consumer state while keeping the existing fetch-based streaming contract.
 - Included forwarded host/proto, Front Door URL, login/home redirect URLs, and configured trusted origins when resolving allowed origins.
 - Kept non-browser clients without browser origin headers compatible while rejecting browser requests that clearly originate cross-site.
@@ -41,4 +42,4 @@ Before/after comparison:
 
 Related config.py version update:
 
-- Updated `VERSION` to **0.242.052**.
+- Updated `VERSION` to **0.242.053**.
