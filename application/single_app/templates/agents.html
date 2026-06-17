@@ -8,18 +8,23 @@
 
 {% block content %}
 <main class="agents-page" aria-labelledby="agents-page-title">
-    <header class="agents-hero text-center">
-        <h1 id="agents-page-title">Agents</h1>
-        <p class="agents-hero-copy">Explore agents built for how you work.</p>
+    <header class="agents-hero text-center {% if agents_page_config.hero_color_mode == 'two_tone' %}agents-hero-two-tone{% endif %}" style="--agents-hero-primary: {{ agents_page_config.hero_primary_color }}; --agents-hero-secondary: {{ agents_page_config.hero_secondary_color }};">
+        <h1 id="agents-page-title">{{ agents_page_config.title }}</h1>
+        <p class="agents-hero-copy">{{ agents_page_config.subtitle }}</p>
+        <form class="agents-search-form" id="agents-catalog-search-form" role="search">
+            <div class="agents-search-wrap">
+                <label class="visually-hidden" for="agents-catalog-search">Search agents</label>
+                <i class="bi bi-search agents-search-icon" aria-hidden="true"></i>
+                <input type="search" class="form-control agents-search-input" id="agents-catalog-search" placeholder="Search for agents, skills, or workflows..." autocomplete="off" />
+                <button type="submit" class="btn btn-primary agents-search-button">Search</button>
+            </div>
+        </form>
     </header>
 
-    <section class="agents-directory" aria-label="Agent directory" data-allow-personal-create="{{ 'true' if settings.allow_user_agents else 'false' }}" data-allow-group-create="{{ 'true' if settings.allow_group_agents and settings.enable_group_workspaces else 'false' }}">
-        <div class="agents-search-wrap">
-            <label class="visually-hidden" for="agents-catalog-search">Search agents</label>
-            <i class="bi bi-search agents-search-icon" aria-hidden="true"></i>
-            <input type="search" class="form-control agents-search-input" id="agents-catalog-search" placeholder="Search" autocomplete="off" />
-        </div>
+    <section id="agents-page-disclaimer" class="agents-page-disclaimer rendered-markdown d-none" aria-label="Agents page guidance"></section>
+    <script type="application/json" id="agents-page-disclaimer-markdown">{{ agents_page_config.disclaimer_markdown | tojson }}</script>
 
+    <section class="agents-directory" aria-label="Agent directory" data-allow-personal-create="{{ 'true' if settings.allow_user_agents else 'false' }}" data-allow-group-create="{{ 'true' if settings.allow_group_agents and settings.enable_group_workspaces else 'false' }}">
         <nav class="agents-tabs" aria-label="Agent categories">
             <button type="button" class="agents-tab active" data-agent-tab="popular">Popular</button>
             <button type="button" class="agents-tab d-none" data-agent-tab="search">Search Results</button>

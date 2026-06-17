@@ -1,5 +1,7 @@
 # route_frontend_admin_settings.py
 
+import re
+
 from config import *
 from functions_documents import *
 from functions_authentication import *
@@ -35,6 +37,15 @@ from support_menu_config import (
 
 ALLOWED_PIL_IMAGE_UPLOAD_FORMATS = ('PNG', 'JPEG')
 MAX_CUSTOM_LOGO_STORAGE_HEIGHT = 500
+AGENTS_PAGE_DEFAULTS = {
+    'agents_page_title': 'Find your next AI partner',
+    'agents_page_subtitle': 'Explore specialized agents built to accelerate how you work.',
+    'agents_page_hero_color_mode': 'single',
+    'agents_page_hero_primary_color': '#0f172a',
+    'agents_page_hero_secondary_color': '#1e293b',
+    'agents_page_disclaimer_markdown': '',
+}
+HEX_COLOR_PATTERN = re.compile(r'^#[0-9a-fA-F]{6}$')
 
 def allowed_file(filename, allowed_extensions):
     return '.' in filename and \
@@ -77,6 +88,20 @@ def prepare_logo_image_for_storage(file_bytes, filename, max_height=MAX_CUSTOM_L
         'png_data': png_data,
         'base64_str': base64.b64encode(png_data).decode('utf-8'),
     }
+
+def normalize_agents_page_color(value, fallback):
+    candidate = str(value or '').strip()
+    fallback_value = fallback if HEX_COLOR_PATTERN.fullmatch(str(fallback or '')) else '#0f172a'
+    return candidate if HEX_COLOR_PATTERN.fullmatch(candidate) else fallback_value
+
+def normalize_agents_page_color_mode(value):
+    return 'two_tone' if str(value or '').strip() == 'two_tone' else 'single'
+
+def normalize_agents_page_text(value, fallback, max_length):
+    candidate = str(value or '').replace('\r\n', '\n').replace('\r', '\n').strip()
+    if not candidate:
+        candidate = fallback
+    return candidate[:max_length]
 
 def register_route_frontend_admin_settings(app):
     @app.route('/admin/settings', methods=['GET', 'POST'])
@@ -343,6 +368,20 @@ def register_route_frontend_admin_settings(app):
             settings['agent_templates_allow_user_submission'] = True
         if 'agent_templates_require_approval' not in settings:
             settings['agent_templates_require_approval'] = True
+        for agents_page_key, agents_page_default in AGENTS_PAGE_DEFAULTS.items():
+            if agents_page_key not in settings:
+                settings[agents_page_key] = agents_page_default
+        settings['agents_page_hero_color_mode'] = normalize_agents_page_color_mode(
+            settings.get('agents_page_hero_color_mode')
+        )
+        settings['agents_page_hero_primary_color'] = normalize_agents_page_color(
+            settings.get('agents_page_hero_primary_color'),
+            AGENTS_PAGE_DEFAULTS['agents_page_hero_primary_color'],
+        )
+        settings['agents_page_hero_secondary_color'] = normalize_agents_page_color(
+            settings.get('agents_page_hero_secondary_color'),
+            AGENTS_PAGE_DEFAULTS['agents_page_hero_secondary_color'],
+        )
 
         # --- Add defaults for classification banner ---
         if 'classification_banner_enabled' not in settings:
@@ -1216,6 +1255,33 @@ def register_route_frontend_admin_settings(app):
             classification_banner_color = form_data.get('classification_banner_color', '#ffc107').strip()
             classification_banner_text_color = form_data.get('classification_banner_text_color', '#ffffff').strip()
 
+            agents_page_title = normalize_agents_page_text(
+                form_data.get('agents_page_title'),
+                AGENTS_PAGE_DEFAULTS['agents_page_title'],
+                120,
+            )
+            agents_page_subtitle = normalize_agents_page_text(
+                form_data.get('agents_page_subtitle'),
+                AGENTS_PAGE_DEFAULTS['agents_page_subtitle'],
+                240,
+            )
+            agents_page_hero_color_mode = normalize_agents_page_color_mode(
+                form_data.get('agents_page_hero_color_mode')
+            )
+            agents_page_hero_primary_color = normalize_agents_page_color(
+                form_data.get('agents_page_hero_primary_color'),
+                AGENTS_PAGE_DEFAULTS['agents_page_hero_primary_color'],
+            )
+            agents_page_hero_secondary_color = normalize_agents_page_color(
+                form_data.get('agents_page_hero_secondary_color'),
+                AGENTS_PAGE_DEFAULTS['agents_page_hero_secondary_color'],
+            )
+            agents_page_disclaimer_markdown = normalize_agents_page_text(
+                form_data.get('agents_page_disclaimer_markdown'),
+                '',
+                3000,
+            )
+
             # --- Application Insights Logging Toggle ---
             enable_appinsights_global_logging = form_data.get('enable_appinsights_global_logging') == 'on'
             
@@ -1545,6 +1611,12 @@ def register_route_frontend_admin_settings(app):
                 'enable_agent_template_gallery': form_data.get('enable_agent_template_gallery') == 'on',
                 'agent_templates_allow_user_submission': form_data.get('agent_templates_allow_user_submission') == 'on',
                 'agent_templates_require_approval': form_data.get('agent_templates_require_approval') == 'on',
+                'agents_page_title': agents_page_title,
+                'agents_page_subtitle': agents_page_subtitle,
+                'agents_page_hero_color_mode': agents_page_hero_color_mode,
+                'agents_page_hero_primary_color': agents_page_hero_primary_color,
+                'agents_page_hero_secondary_color': agents_page_hero_secondary_color,
+                'agents_page_disclaimer_markdown': agents_page_disclaimer_markdown,
 
                 # GPT (Direct & APIM)
                 'enable_gpt_apim': form_data.get('enable_gpt_apim') == 'on',

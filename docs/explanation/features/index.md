@@ -19,6 +19,7 @@ category: Version History
 
 ## Agent and Action Features
 
+- [Agents Page Customization](v0.241.229/AGENTS_PAGE_CUSTOMIZATION.md)
 - [Microsoft Graph Send Mail Action](MSGRAPH_SEND_MAIL_ACTION.md)
 
 ## Chat Upload Features

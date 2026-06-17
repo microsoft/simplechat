@@ -434,6 +434,12 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_agent_template_gallery': True,
         'agent_templates_allow_user_submission': True,
         'agent_templates_require_approval': True,
+        'agents_page_title': 'Find your next AI partner',
+        'agents_page_subtitle': 'Explore specialized agents built to accelerate how you work.',
+        'agents_page_hero_color_mode': 'single',
+        'agents_page_hero_primary_color': '#0f172a',
+        'agents_page_hero_secondary_color': '#1e293b',
+        'agents_page_disclaimer_markdown': '',
         'allow_group_plugins': False,
         'id': 'app_settings',
         # Control Center settings

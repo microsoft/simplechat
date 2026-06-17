@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Functional test for the Agents catalog page and agent icon/tag metadata.
-Version: 0.241.227
+Version: 0.241.229
 Implemented in: 0.241.218
 
 This test ensures the global Agents page, shared catalog APIs, safe agent
@@ -71,6 +71,9 @@ def test_agents_catalog_routes_and_navigation():
     assert_contains(app_route, "@login_required", "Agents route login guard")
     assert_contains(app_route, "@user_required", "Agents route user guard")
     assert_contains(app_route, "@enabled_required('enable_semantic_kernel')", "Agents enabled gate")
+    assert_contains(app_route, "def build_agents_page_config", "agents page presentation config")
+    assert_contains(app_route, "agents_page_config=build_agents_page_config(public_settings)", "agents page config template handoff")
+    assert_contains(app_route, "HEX_COLOR_PATTERN", "agents page hero color validation")
     assert_contains(backend_route, "@bpa.route('/api/agents/catalog'", "catalog API route")
     assert_contains(backend_route, "@bpa.route('/api/agents/popular'", "popular API route")
     assert_contains(app_py, "register_route_frontend_agents(app)", "Agents route registration")
@@ -96,21 +99,30 @@ def test_agents_catalog_browser_rendering_uses_safe_dom_patterns():
     assert_contains(template, "data-agent-tab=\"personal\"", "personal tab")
     assert_contains(template, "data-agent-tab=\"group\"", "group tab")
     assert_contains(template, "data-agent-tab=\"enterprise\"", "enterprise tab")
+    assert_contains(template, "id=\"agents-catalog-search-form\"", "hero search form")
+    assert_contains(template, "Search for agents, skills, or workflows", "hero search placeholder")
+    assert_contains(template, "agents-search-button", "hero search button")
+    assert_contains(template, "agents_page_config.title", "custom hero title binding")
+    assert_contains(template, "agents_page_config.subtitle", "custom hero subtitle binding")
+    assert_contains(template, "agents_page_config.hero_primary_color", "custom hero primary color binding")
+    assert_contains(template, "agents_page_config.disclaimer_markdown", "custom markdown disclaimer payload")
     assert_contains(template, "id=\"agents-new-agent-link\"", "contextual new agent link")
     assert_contains(template, "id=\"item-view-modal\"", "shared details modal")
     assert_not_contains(template, "id=\"agentCatalogDetailsModal\"", "legacy catalog details modal")
     assert_contains(script, "TAB_LABELS.search", "search results title")
     assert_contains(script, "syncTabsForSearch", "search tab selection handler")
     assert_contains(script, "attachOpenDetailsInteraction", "card click details interaction")
-    assert_contains(script, "createInfoIconButton", "compact info icon details control")
+    assert_contains(script, "createDetailsButton", "labeled details control")
+    assert_contains(script, "document.createTextNode('Details')", "details button label")
     assert_contains(script, "openViewModal", "shared modal details helper")
     assert_contains(script, "scope_label: getScopeLabel(agent)", "catalog scope label handoff")
-    assert_not_contains(script, "'Details'", "full Details button label")
     assert_not_contains(script, "agentCatalogDetails", "legacy modal element references")
     assert_not_contains(script, "No tags", "empty tag placeholder")
     assert_not_contains(script, "runs", "implementation-flavored usage label")
     assert_contains(template, "id=\"agents-card-view\"", "card view container")
     assert_contains(template, "id=\"agents-list-view\"", "list view container")
+    assert_contains(script, "DOMPurify.sanitize(marked.parse(markdownText))", "safe markdown disclaimer rendering")
+    assert_contains(script, "new DOMParser().parseFromString", "sanitized disclaimer DOM parsing")
 
 
 def test_agents_catalog_workspace_creation_links():
@@ -126,6 +138,29 @@ def test_agents_catalog_workspace_creation_links():
     assert_contains(workspace_init, "params.get('tab') !== 'agents'", "workspace agents tab query gate")
     assert_contains(workspace_init, "document.getElementById('create-agent-btn')?.click();", "personal new agent modal launch")
     assert_contains(group_workspace_template, "navigationParams.get(\"tab\") === \"group-agents\"", "group agents tab query gate")
+
+
+def test_agents_page_admin_customization_settings():
+    settings_defaults = read_repo_file("application/single_app/functions_settings.py")
+    admin_route = read_repo_file("application/single_app/route_frontend_admin_settings.py")
+    admin_template = read_repo_file("application/single_app/templates/admin_settings.html")
+
+    for field_name in [
+        "agents_page_title",
+        "agents_page_subtitle",
+        "agents_page_hero_color_mode",
+        "agents_page_hero_primary_color",
+        "agents_page_hero_secondary_color",
+        "agents_page_disclaimer_markdown",
+    ]:
+        assert_contains(settings_defaults, field_name, f"default {field_name}")
+        assert_contains(admin_route, field_name, f"admin save {field_name}")
+        assert_contains(admin_template, field_name, f"admin control {field_name}")
+
+    assert_contains(admin_route, "normalize_agents_page_color", "admin hero color validation")
+    assert_contains(admin_route, "normalize_agents_page_color_mode", "admin color mode validation")
+    assert_contains(admin_template, "Agents Page Customization", "admin customization section title")
+    assert_contains(admin_template, "Markdown supported", "admin disclaimer markdown helper")
 
 
 def test_chat_agent_metadata_and_avatar_handoff():
@@ -208,6 +243,7 @@ def run_tests():
         test_agents_catalog_routes_and_navigation,
         test_agents_catalog_browser_rendering_uses_safe_dom_patterns,
         test_agents_catalog_workspace_creation_links,
+        test_agents_page_admin_customization_settings,
         test_chat_agent_metadata_and_avatar_handoff,
         test_agent_modal_icon_picker_and_upload_contract,
         test_model_icon_contract,

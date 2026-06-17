@@ -16,6 +16,9 @@ const countLabel = document.getElementById('agents-count-label');
 const resultsTitle = document.getElementById('agents-results-title');
 const alertBox = document.getElementById('agents-catalog-alert');
 const newAgentLink = document.getElementById('agents-new-agent-link');
+const searchForm = document.getElementById('agents-catalog-search-form');
+const disclaimerMarkdownScript = document.getElementById('agents-page-disclaimer-markdown');
+const disclaimerContainer = document.getElementById('agents-page-disclaimer');
 
 const VIEW_STORAGE_KEY = 'simplechat-agents-catalog-view';
 const TAB_LABELS = Object.freeze({
@@ -156,16 +159,17 @@ function createActionButton(iconClass, label, buttonClass, clickHandler) {
     return button;
 }
 
-function createInfoIconButton(agent) {
+function createDetailsButton(agent) {
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = 'btn btn-sm btn-outline-secondary agent-info-icon-btn';
+    button.className = 'btn btn-sm btn-outline-secondary agent-details-btn';
     button.title = 'View details';
     button.setAttribute('aria-label', `View details for ${getAgentDisplayName(agent)}`);
     const icon = document.createElement('i');
     icon.className = 'bi bi-info-circle';
     icon.setAttribute('aria-hidden', 'true');
     button.appendChild(icon);
+    button.appendChild(document.createTextNode('Details'));
     button.addEventListener('click', event => {
         event.preventDefault();
         event.stopPropagation();
@@ -206,7 +210,7 @@ function createAgentActions(agent, className) {
     const actions = document.createElement('div');
     actions.className = className;
     actions.appendChild(createActionButton('bi-chat-dots-fill', 'Chat', 'btn-primary', () => chatWithAgent(agent)));
-    actions.appendChild(createInfoIconButton(agent));
+    actions.appendChild(createDetailsButton(agent));
     return actions;
 }
 
@@ -463,6 +467,35 @@ function hideAlert() {
     alertBox.textContent = '';
 }
 
+function renderAgentsPageDisclaimer() {
+    if (!disclaimerContainer || !disclaimerMarkdownScript) {
+        return;
+    }
+
+    let markdownText = '';
+    try {
+        markdownText = JSON.parse(disclaimerMarkdownScript.textContent || '""');
+    } catch (error) {
+        markdownText = '';
+    }
+
+    markdownText = String(markdownText || '').trim();
+    disclaimerContainer.textContent = '';
+    disclaimerContainer.classList.toggle('d-none', !markdownText);
+    if (!markdownText) {
+        return;
+    }
+
+    if (typeof marked === 'undefined' || typeof DOMPurify === 'undefined') {
+        disclaimerContainer.textContent = markdownText;
+        return;
+    }
+
+    const sanitizedHtml = DOMPurify.sanitize(marked.parse(markdownText));
+    const parsedDocument = new DOMParser().parseFromString(sanitizedHtml, 'text/html');
+    disclaimerContainer.replaceChildren(...Array.from(parsedDocument.body.childNodes));
+}
+
 function openAgentDetails(agent) {
     const detailAgent = {
         ...agent,
@@ -531,6 +564,11 @@ function setActiveTab(tabName) {
 }
 
 function initialize() {
+    renderAgentsPageDisclaimer();
+    searchForm?.addEventListener('submit', event => {
+        event.preventDefault();
+        renderCatalog();
+    });
     catalogSearch?.addEventListener('input', renderCatalog);
     agentTabs.forEach(tab => {
         tab.addEventListener('click', () => setActiveTab(tab.dataset.agentTab || 'popular'));

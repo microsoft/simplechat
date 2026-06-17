@@ -1179,6 +1179,43 @@
                     <p class="text-muted small">
                         Configure AI agents powered by Semantic Kernel for task automation and orchestration.
                     </p>
+                    <div class="card p-3 mb-3" id="agents-page-customization-card">
+                        <h6 class="mb-2">
+                            <i class="bi bi-palette me-2"></i>Agents Page Customization
+                        </h6>
+                        <p class="text-muted small">Customize the public Agents page hero, color treatment, and optional guidance message.</p>
+                        <div class="row g-3">
+                            <div class="col-lg-6">
+                                <label for="agents_page_title" class="form-label">Hero Title</label>
+                                <input type="text" class="form-control" id="agents_page_title" name="agents_page_title" maxlength="120" value="{{ settings.agents_page_title | default('Find your next AI partner') }}" />
+                            </div>
+                            <div class="col-lg-6">
+                                <label for="agents_page_subtitle" class="form-label">Hero Subtitle</label>
+                                <input type="text" class="form-control" id="agents_page_subtitle" name="agents_page_subtitle" maxlength="240" value="{{ settings.agents_page_subtitle | default('Explore specialized agents built to accelerate how you work.') }}" />
+                            </div>
+                            <div class="col-md-4">
+                                <label for="agents_page_hero_color_mode" class="form-label">Hero Color Mode</label>
+                                <select class="form-select" id="agents_page_hero_color_mode" name="agents_page_hero_color_mode">
+                                    <option value="single" {% if settings.agents_page_hero_color_mode != 'two_tone' %}selected{% endif %}>Single color</option>
+                                    <option value="two_tone" {% if settings.agents_page_hero_color_mode == 'two_tone' %}selected{% endif %}>Two tone gradient</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label for="agents_page_hero_primary_color" class="form-label">Primary Color</label>
+                                <input type="color" class="form-control form-control-color" id="agents_page_hero_primary_color" name="agents_page_hero_primary_color" value="{{ settings.agents_page_hero_primary_color | default('#0f172a') }}" />
+                            </div>
+                            <div class="col-md-4">
+                                <label for="agents_page_hero_secondary_color" class="form-label">Secondary Color</label>
+                                <input type="color" class="form-control form-control-color" id="agents_page_hero_secondary_color" name="agents_page_hero_secondary_color" value="{{ settings.agents_page_hero_secondary_color | default('#1e293b') }}" />
+                                <div class="form-text">Used when two tone gradient is selected.</div>
+                            </div>
+                            <div class="col-12">
+                                <label for="agents_page_disclaimer_markdown" class="form-label">Disclaimer / Guidance Text <span class="text-muted fw-normal">(Markdown supported)</span></label>
+                                <textarea class="form-control" id="agents_page_disclaimer_markdown" name="agents_page_disclaimer_markdown" rows="4" maxlength="3000" placeholder="Need a new agent? Contact ai-support@example.com.">{{ settings.agents_page_disclaimer_markdown | default('') }}</textarea>
+                                <div class="form-text">Shown below the Agents page hero. Use this for contact details, request guidance, or governance reminders.</div>
+                            </div>
+                        </div>
+                    </div>
                 <div class="mb-3">
                     <div class="form-check form-switch mb-2">
                         <input class="form-check-input" type="checkbox" role="switch" id="toggle-enable-agents-agents" name="enable_semantic_kernel" {% if settings.enable_semantic_kernel %}checked{% endif %}>

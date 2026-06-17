@@ -1,7 +1,7 @@
 # test_agents_catalog_details_modal.py
 """
 UI test for the Agents catalog details modal.
-Version: 0.241.227
+Version: 0.241.229
 Implemented in: 0.241.225
 
 This test ensures the Agents tab uses the shared workspace-style details modal
@@ -83,7 +83,10 @@ def test_agents_catalog_details_modal_renders_markdown(playwright):
         assert response is not None, "Expected a navigation response when loading /agents."
         assert response.ok, f"Expected /agents to load successfully, got HTTP {response.status}."
 
+        expect(page.get_by_role("heading", name="Find your next AI partner")).to_be_visible()
+        expect(page.get_by_role("button", name="Search")).to_be_visible()
         expect(page.locator("#agents-list-view .agent-row .agent-icon img")).to_have_attribute("src", icon_data_url)
+        expect(page.locator("#agents-list-view .agent-row").first.get_by_role("button", name="Details")).to_be_visible()
 
         page.locator("#agents-list-view .agent-row").first.click()
 
