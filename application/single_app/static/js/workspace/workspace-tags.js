@@ -752,6 +752,7 @@ function buildFolderDocumentsTable(docs) {
                 </div>`;
         }
 
+        // xss-check: ignore reviewed legacy document row shell; document fields are escaped and action fragments are built by local helpers.
         html += `
             <tr>
                 <td class="align-middle">${firstColHtml}</td>

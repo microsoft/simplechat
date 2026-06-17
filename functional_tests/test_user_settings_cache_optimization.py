@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for user settings cache optimization.
-Version: 0.242.044
+Version: 0.242.048
 Implemented in: 0.242.044
 
 This test ensures user settings reads use request-scoped caching, shared UI settings
@@ -82,6 +82,12 @@ def test_user_ui_settings_cache_contract():
     assert "USER_UI_SETTINGS_CACHE_VERSION_DOC_ID" not in cache_content, (
         "User UI settings cache should not add per-user Cosmos version documents"
     )
+    assert '"sidebarToggleStyle"' in settings_content, (
+        "Expected sidebar toggle preference to be included in lightweight UI settings"
+    )
+    assert '"sidebarMenuState"' in settings_content, (
+        "Expected sidebar menu state to be included in lightweight UI settings"
+    )
 
     print("PASS: user UI settings cache contract verified")
 
@@ -116,6 +122,8 @@ def test_frontend_reuses_injected_user_ui_settings():
     base_content = _read("application", "single_app", "templates", "base.html")
     dark_mode_content = _read("application", "single_app", "static", "js", "dark-mode.js")
     sidebar_content = _read("application", "single_app", "static", "js", "sidebar.js")
+    sidebar_template = _read("application", "single_app", "templates", "_sidebar_nav.html")
+    short_sidebar_template = _read("application", "single_app", "templates", "_sidebar_short_nav.html")
 
     assert "window.simplechatUserSettings" in base_content, (
         "Expected base template to expose lightweight user UI settings to scripts"
@@ -128,6 +136,12 @@ def test_frontend_reuses_injected_user_ui_settings():
     )
     assert "window.simplechatUserSettings && typeof window.simplechatUserSettings === 'object'" in sidebar_content, (
         "Expected sidebar script to reuse injected user settings before API fallback"
+    )
+    assert "sidebarToggleStyle" in sidebar_template, (
+        "Expected primary sidebar template to render the saved toggle style"
+    )
+    assert "sidebarToggleStyle" in short_sidebar_template, (
+        "Expected chat sidebar template to render the saved toggle style"
     )
 
     print("PASS: frontend injected user UI settings reuse verified")

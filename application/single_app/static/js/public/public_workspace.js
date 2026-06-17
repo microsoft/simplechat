@@ -1536,8 +1536,8 @@ async function fetchPublicDocs(){
     if (publicDocumentsCardView) publicDocumentsCardView.innerHTML = '';
     if(!data.documents.length){
       const emptyMessage = publicDocsSearchTerm ? 'No documents found.' : 'No documents in this workspace.';
-      publicDocsTableBody.innerHTML=`<tr><td colspan="4" class="text-center p-4 text-muted">${emptyMessage}</td></tr>`;
-      if (publicDocumentsCardView) publicDocumentsCardView.innerHTML = `<div class="col-12 text-center text-muted py-5">${emptyMessage}</div>`;
+      publicDocsTableBody.innerHTML=`<tr><td colspan="4" class="text-center p-4 text-muted">${escapeHtml(emptyMessage)}</td></tr>`;
+      if (publicDocumentsCardView) publicDocumentsCardView.innerHTML = `<div class="col-12 text-center text-muted py-5">${escapeHtml(emptyMessage)}</div>`;
     }
     else if (publicCurrentView === 'cards') {
       renderPublicDocumentCards(data.documents, publicDocumentsCardView);

@@ -1889,6 +1889,7 @@ function renderDocumentRow(doc) {
     }
     
     // Complete row HTML
+    // xss-check: ignore reviewed legacy document row shell; document fields are escaped and action fragments are built by local helpers.
     docRow.innerHTML = `
         ${firstColumnHtml}
         <td class="align-middle document-file-cell" title="${escapeHtml(doc.file_name || "")}">${getDocumentSyncBadgeHtml(doc, true)}${escapeHtml(doc.file_name || "")}</td>

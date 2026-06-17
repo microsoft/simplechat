@@ -31,6 +31,8 @@ USER_UI_SETTINGS_KEYS = (
     "chatLayout",
     "streamingEnabled",
     "notifications_per_page",
+    "sidebarToggleStyle",
+    "sidebarMenuState",
 )
 
 

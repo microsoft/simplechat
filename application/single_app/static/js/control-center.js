@@ -4106,11 +4106,12 @@ class ControlCenter {
             console.error('❌ Error loading groups:', error);
             
             // Show error state like users do
+            // xss-check: ignore reviewed legacy static table shell; dynamic error text is escaped before interpolation.
             tbody.innerHTML = `
                 <tr>
                     <td colspan="8" class="text-center py-4 text-danger">
                         <i class="bi bi-exclamation-triangle" style="font-size: 2rem;"></i>
-                        <div class="mt-2">Error loading groups: ${error.message}</div>
+                        <div class="mt-2">Error loading groups: ${this.escapeHtml(error.message)}</div>
                         <button class="btn btn-sm btn-outline-primary mt-2" onclick="window.controlCenter.loadGroups()">
                             <i class="bi bi-arrow-clockwise me-1"></i>Retry
                         </button>
@@ -4127,6 +4128,7 @@ class ControlCenter {
         console.log('🎨 Rendering', groups.length, 'groups');
         
         if (groups.length === 0) {
+            // xss-check: ignore reviewed legacy static empty table shell with no untrusted interpolation.
             tbody.innerHTML = `
                 <tr>
                     <td colspan="8" class="text-center py-4">

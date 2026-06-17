@@ -12,6 +12,7 @@ on:
       - 'functional_tests/test_xss_guardrails_checker.py'
       - '.github/workflows/xss-sink-check.yml'
       - '.github/instructions/xss-prevention.instructions.md'
+      - '.github/prompts/xss-full-audit-and-remediation.prompt.md'
 
 jobs:
   xss-sink-check:
@@ -42,7 +43,8 @@ jobs:
               - 'functional_tests/test_xss_guardrails_checker.py'
               - '.github/workflows/xss-sink-check.yml'
               - '.github/instructions/xss-prevention.instructions.md'
-              - 'docs/explanation/features/v0.241.021/XSS_PR_GUARDRAILS.md'
+              - '.github/prompts/xss-full-audit-and-remediation.prompt.md'
+              - 'docs/explanation/features/v0.241.022/XSS_PR_GUARDRAILS.md'
 
       - name: Run XSS sink validation
         env:

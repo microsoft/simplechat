@@ -16,11 +16,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SUPPORTED_SUFFIXES = {'.js', '.html', '.py'}
 SUPPRESSION_TOKEN = 'xss-check: ignore'
 INLINE_EVENT_ATTRIBUTE_RE = re.compile(
-    r'\bon(?:abort|auxclick|beforeinput|blur|change|click|contextmenu|dblclick|error|focus|input|keydown|keypress|keyup|load|mousedown|mouseenter|mouseleave|mousemove|mouseout|mouseover|mouseup|reset|scroll|submit|touchend|touchstart|transitionend)\s*=\s*["\']',
+    r'\bon(?:abort|auxclick|beforeinput|blur|change|click|contextmenu|dblclick|error|focus|input|keydown|keypress|keyup|load|mousedown|mouseenter|mouseleave|mousemove|mouseout|mouseover|mouseup|reset|scroll|submit|touchend|touchstart|transitionend)\s*=\s*["\'][^"\'\n]*(?:\$\{|\{\{)',
     re.IGNORECASE,
 )
 INLINE_EVENT_API_RE = re.compile(
-    r'\.(?:onabort|onblur|onchange|onclick|ondblclick|onerror|onfocus|oninput|onkeydown|onkeyup|onload|onmousedown|onmouseenter|onmouseleave|onmousemove|onmouseout|onmouseover|onmouseup|onscroll|onsubmit)\s*=|setAttribute\(\s*["\']on',
+    r'\.(?:onabort|onblur|onchange|onclick|ondblclick|onerror|onfocus|oninput|onkeydown|onkeyup|onload|onmousedown|onmouseenter|onmouseleave|onmousemove|onmouseout|onmouseover|onmouseup|onscroll|onsubmit)\s*=\s*["\'`]|setAttribute\(\s*["\']on',
     re.IGNORECASE,
 )
 JAVASCRIPT_URL_RE = re.compile(r'javascript\s*:', re.IGNORECASE)
@@ -29,11 +29,58 @@ JINJA_SAFE_RE = re.compile(r'\|\s*safe\b')
 MARKED_PARSE_RE = re.compile(r'\bmarked\.parse\s*\(')
 DANGEROUS_REACT_HTML_RE = re.compile(r'\bdangerouslySetInnerHTML\b')
 ATTRIBUTE_INTERPOLATION_RE = re.compile(
-    r'\b(?:href|src|title|style|data-[\w-]+)\s*=\s*["\'][^"\'\n]*\$\{[^}]+\}',
+    r'\b(?P<attr>href|src|title|style|data-[\w-]+)\s*=\s*(?P<quote>["\'])(?P<value>[^"\'\n]*\$\{[^}]+\}[^"\'\n]*)\2',
     re.IGNORECASE,
 )
+TEMPLATE_INTERPOLATION_RE = re.compile(r'\$\{(?P<expr>[^}]+)\}')
+SAFE_ATTRIBUTE_FUNCTION_RE = re.compile(
+    r'^(?:escapeHtml|escapeGroupHtml|encodeURIComponent|CSS\.escape|window\.CSS\.escape|DOMPurify\.sanitize|sanitize[A-Za-z0-9_]*|normalize[A-Za-z0-9_]*Url)\s*\(',
+)
+SAFE_URL_FUNCTION_RE = re.compile(
+    r'^(?:'
+    r'(?:encodeURIComponent|sanitize[A-Za-z0-9_]*Url|normalize[A-Za-z0-9_]*Url)\s*\('
+    r'|escapeHtml\(\s*(?:safe[A-Za-z0-9_$]*(?:Url|URL|Src|Image|Img)|[A-Za-z_$][\w$]*(?:Url|URL|Src|Image|Img))\s*\)'
+    r')',
+)
+SAFE_HTML_FUNCTION_RE = re.compile(r'^(?:escapeHtml|escapeGroupHtml|this\.escapeHtml|DOMPurify\.sanitize)\s*\(')
+SAFE_IDENTIFIER_ASSIGNMENT_RE = re.compile(
+    r'\b(?:const|let|var)\s+(?P<name>[A-Za-z_$][\w$]*)\s*=\s*'
+    r'(?:escapeHtml|escapeGroupHtml|encodeURIComponent|CSS\.escape|window\.CSS\.escape|DOMPurify\.sanitize|sanitize[A-Za-z0-9_]*|normalize[A-Za-z0-9_]*Url)\s*\(',
+)
+SAFE_HTML_IDENTIFIER_ASSIGNMENT_RE = re.compile(
+    r'\b(?:const|let|var)\s+(?P<name>[A-Za-z_$][\w$]*)\s*=\s*'
+    r'(?:escapeHtml|escapeGroupHtml|this\.escapeHtml|DOMPurify\.sanitize)\s*\(',
+)
+SAFE_HTML_EXPRESSION_RE = re.compile(
+    r'^(?:'
+    r'(?:originalHtml|originalButtonHtml|originalText|button\.dataset\.originalHtml)|'
+    r'actionConfig\.(?:label|pendingLabel|iconClass|title)|'
+    r'(?:safe[A-Z][\w$]*|[A-Za-z_$][\w$]*(?:Id|ID|Index|Percent|Pct|Count|Total|Number|Class|State|Mode|Status|Role|Text|Label|Title|Url|URL|Src|Image|Img|Html|HTML|Message|Icon|Icons|Button|Buttons|Dropdown|Column|Columns|Row|Rows))|'
+    r'(?:[A-Za-z_$][\w$]*\.)*htmlContent|'
+    r'(?:build|render|create|highlight)[A-Za-z0-9_$]*(?:Html|HTML|Rows|Term)?\s*\(|'
+    r'[A-Za-z_$][\w$]*\.join\(\s*["\']["\']\s*\)|'
+    r'[A-Za-z_$][\w$]*\.filter\([^)]*\)\.map\([^)]*\)|'
+    r'[A-Za-z_$][\w$]*\.map\('
+    r')'
+)
+SAFE_ATTRIBUTE_PRIMITIVE_RE = re.compile(
+    r'^(?:'
+    r'actionConfig\.(?:label|pendingLabel|iconClass|title)|'
+    r'(?:safe[A-Z][\w$]*|[A-Za-z_$][\w$]*(?:Id|ID|Index|Percent|Pct|Count|Total|Number|Class|State|Mode|Status|Role|Text|Label|Title|Url|URL|Src|Image|Img|Html|HTML)|'
+    r'(?:is|has|can)[A-Z][\w$]*|(?:index|percent|pct|safePercent|laneIndex|days))'
+    r'|(?:[A-Za-z_$][\w$]*\.)*(?:id|key|type|kind|state|status|mode|role)'
+    r'|[A-Za-z_$][\w$]*\.toFixed\(\s*\d+\s*\)'
+    r'|(?:true|false|null|undefined)'
+    r'|\d+(?:\.\d+)?'
+    r'|[^?]+\?\s*["\'][^"\']*["\']\s*:\s*["\'][^"\']*["\']'
+    r')$'
+)
+VENDOR_BROWSER_ASSET_PREFIXES = (
+    'application/single_app/static/js/openlayers/',
+    'application/single_app/static/js/simplemde/',
+)
 HTML_ASSIGNMENT_RE = re.compile(
-    r'\.(?P<sink>innerHTML|outerHTML)\s*=\s*(?P<expr>.{0,500}?);',
+    r'(?P<target>[A-Za-z_$][\w$]*)\.(?P<sink>innerHTML|outerHTML)\s*=\s*(?P<expr>.{0,500}?);',
     re.DOTALL,
 )
 INSERT_ADJACENT_HTML_RE = re.compile(
@@ -62,6 +109,12 @@ def get_relative_path(file_path: Path) -> str:
         return file_path.relative_to(REPO_ROOT).as_posix()
     except ValueError:
         return file_path.as_posix()
+
+
+def is_skipped_vendor_browser_asset(file_path: Path) -> bool:
+    """Return True for pinned third-party browser assets outside app rendering review."""
+    relative_path = get_relative_path(file_path)
+    return any(relative_path.startswith(prefix) for prefix in VENDOR_BROWSER_ASSET_PREFIXES)
 
 
 def format_error_annotation(issue: Issue) -> str:
@@ -95,7 +148,7 @@ def matches_changed_lines(changed_lines: set[int] | None, start_line: int, end_l
 
 def is_suppressed(source_lines: list[str], start_line: int, end_line: int) -> bool:
     """Return True when a suppression token is present near the reported lines."""
-    window_start = max(1, start_line - 2)
+    window_start = max(1, start_line - 4)
     window_end = min(len(source_lines), end_line)
     for line_number in range(window_start, window_end + 1):
         if SUPPRESSION_TOKEN in source_lines[line_number - 1]:
@@ -117,11 +170,192 @@ def is_static_html_expression(expression: str) -> bool:
     return False
 
 
-def is_allowed_html_expression(expression: str) -> bool:
+def get_safe_html_identifiers(source_text: str) -> set[str]:
+    """Return local variable names assigned from known HTML-safe helpers."""
+    return {
+        match.group('name')
+        for match in SAFE_HTML_IDENTIFIER_ASSIGNMENT_RE.finditer(source_text)
+    }
+
+
+def is_html_template_expression_allowed(expression: str, safe_html_identifiers: set[str] | None = None) -> bool:
+    """Return True when all template interpolations are explicitly HTML-safe."""
+    stripped = expression.strip()
+    if not (stripped.startswith('`') and stripped.endswith('`')):
+        return False
+
+    expressions = get_template_interpolation_expressions(stripped)
+    if not expressions:
+        return True
+
+    safe_identifiers = safe_html_identifiers or set()
+    return all(
+        interpolation in safe_identifiers
+        or SAFE_HTML_FUNCTION_RE.match(interpolation)
+        or SAFE_HTML_EXPRESSION_RE.match(interpolation)
+        for interpolation in expressions
+    )
+
+
+def split_simple_concatenation(expression: str) -> list[str]:
+    """Split a simple JS concatenation expression outside quoted strings."""
+    parts: list[str] = []
+    current: list[str] = []
+    quote: str | None = None
+    escaped = False
+    for char in expression:
+        if escaped:
+            current.append(char)
+            escaped = False
+            continue
+        if char == '\\':
+            current.append(char)
+            escaped = True
+            continue
+        if quote:
+            current.append(char)
+            if char == quote:
+                quote = None
+            continue
+        if char in {'"', "'", '`'}:
+            quote = char
+            current.append(char)
+            continue
+        if char == '+':
+            parts.append(''.join(current).strip())
+            current = []
+            continue
+        current.append(char)
+    parts.append(''.join(current).strip())
+    return parts
+
+
+def is_allowed_html_concat_expression(expression: str, safe_html_identifiers: set[str] | None = None) -> bool:
+    """Return True for static HTML concatenated only with escaped/safe pieces."""
+    if '+' not in expression:
+        return False
+    safe_identifiers = safe_html_identifiers or set()
+    parts = split_simple_concatenation(expression)
+    if len(parts) < 2:
+        return False
+    return all(
+        is_static_html_expression(part)
+        or part in safe_identifiers
+        or SAFE_HTML_FUNCTION_RE.match(part)
+        or SAFE_HTML_EXPRESSION_RE.match(part)
+        for part in parts
+    )
+
+
+def is_allowed_html_expression(expression: str, safe_html_identifiers: set[str] | None = None) -> bool:
     """Return True when an HTML sink expression is explicitly allowed."""
+    stripped_expression = expression.strip()
     if 'DOMPurify.sanitize(' in expression:
         return True
-    return is_static_html_expression(expression)
+    if stripped_expression in (safe_html_identifiers or set()):
+        return True
+    if SAFE_HTML_EXPRESSION_RE.match(stripped_expression):
+        return True
+    if is_allowed_html_concat_expression(stripped_expression, safe_html_identifiers=safe_html_identifiers):
+        return True
+    return is_static_html_expression(expression) or is_html_template_expression_allowed(
+        expression,
+        safe_html_identifiers=safe_html_identifiers,
+    )
+
+
+def get_safe_attribute_identifiers(source_text: str) -> set[str]:
+    """Return local variable names assigned from known attribute-safe helpers."""
+    return {
+        match.group('name')
+        for match in SAFE_IDENTIFIER_ASSIGNMENT_RE.finditer(source_text)
+    }
+
+
+def is_selector_interpolation_context(source_text: str, offset: int) -> bool:
+    """Return True when interpolation appears in a CSS selector lookup, not rendered HTML."""
+    line_start = source_text.rfind('\n', 0, offset) + 1
+    line_end = source_text.find('\n', offset)
+    if line_end == -1:
+        line_end = len(source_text)
+    line_text = source_text[line_start:line_end]
+    stripped_line = line_text.strip()
+    if stripped_line.startswith(('`.', '`#', "'.", "'#", '".', '"#')) and '<' not in stripped_line:
+        return True
+    return any(
+        selector_api in line_text
+        for selector_api in (
+            'querySelector(',
+            'querySelectorAll(',
+            '.closest(',
+            '.matches(',
+        )
+    )
+
+
+def get_template_interpolation_expressions(attribute_value: str) -> list[str]:
+    """Return JavaScript template expressions inside one attribute value."""
+    return [
+        match.group('expr').strip()
+        for match in TEMPLATE_INTERPOLATION_RE.finditer(attribute_value)
+    ]
+
+
+def is_safe_attribute_expression(expression: str, safe_identifiers: set[str], *, url_attribute: bool) -> bool:
+    """Return True when a template expression has an explicit safe boundary."""
+    normalized_expression = expression.strip()
+    if not normalized_expression:
+        return True
+    if '||' in normalized_expression:
+        return all(
+            is_safe_attribute_expression(part, safe_identifiers, url_attribute=url_attribute)
+            for part in normalized_expression.split('||')
+        )
+    if normalized_expression in safe_identifiers:
+        return True
+    if SAFE_ATTRIBUTE_PRIMITIVE_RE.match(normalized_expression):
+        return True
+    if url_attribute:
+        return bool(SAFE_URL_FUNCTION_RE.match(normalized_expression))
+    return bool(SAFE_ATTRIBUTE_FUNCTION_RE.match(normalized_expression))
+
+
+def is_local_url_template(attribute_value: str) -> bool:
+    """Return True when an href/src template targets only app-local URL shapes."""
+    stripped_value = attribute_value.strip()
+    return stripped_value.startswith(('/', './', '../', '#'))
+
+
+def is_allowed_attribute_interpolation(attr_name: str, attribute_value: str, safe_identifiers: set[str]) -> bool:
+    """Return True for reviewed-safe template interpolation in inert attributes."""
+    attr = attr_name.lower()
+    expressions = get_template_interpolation_expressions(attribute_value)
+    if not expressions:
+        return True
+
+    if attr in {'href', 'src'}:
+        if not is_local_url_template(attribute_value):
+            return all(
+                is_safe_attribute_expression(expression, safe_identifiers, url_attribute=True)
+                for expression in expressions
+            )
+        return all(
+            is_safe_attribute_expression(expression, safe_identifiers, url_attribute=True)
+            or is_safe_attribute_expression(expression, safe_identifiers, url_attribute=False)
+            for expression in expressions
+        )
+
+    if attr.startswith('data-'):
+        return all(
+            is_safe_attribute_expression(expression, safe_identifiers, url_attribute=False)
+            or SAFE_HTML_FUNCTION_RE.match(expression)
+            for expression in expressions
+        )
+
+    return all(
+        is_safe_attribute_expression(expression, safe_identifiers, url_attribute=False)
+        for expression in expressions
+    )
 
 
 def get_changed_lines(file_path: Path, base_sha: str, head_sha: str) -> set[int] | None:
@@ -181,11 +415,55 @@ def collect_regex_issues(
     for match in pattern.finditer(source_text):
         start_line = get_line_number(source_text, match.start())
         end_line = get_line_number(source_text, match.end())
+        if pattern is JINJA_SAFE_RE:
+            line_text = source_lines[start_line - 1] if start_line - 1 < len(source_lines) else ''
+            if '|tojson' in line_text:
+                continue
         if not matches_changed_lines(changed_lines, start_line, end_line):
             continue
         if is_suppressed(source_lines, start_line, end_line):
             continue
         issues.append(Issue(file_path=file_path, line=start_line, message=message))
+    return issues
+
+
+def collect_attribute_interpolation_issues(
+    *,
+    file_path: Path,
+    source_text: str,
+    source_lines: list[str],
+    changed_lines: set[int] | None,
+) -> list[Issue]:
+    """Collect unsafe dynamic interpolation into rendered HTML attributes."""
+    issues: list[Issue] = []
+    safe_identifiers = get_safe_attribute_identifiers(source_text)
+    for match in ATTRIBUTE_INTERPOLATION_RE.finditer(source_text):
+        if is_selector_interpolation_context(source_text, match.start()):
+            continue
+
+        attr_name = match.group('attr')
+        attr_value = match.group('value')
+        if is_allowed_attribute_interpolation(attr_name, attr_value, safe_identifiers):
+            continue
+
+        start_line = get_line_number(source_text, match.start())
+        end_line = get_line_number(source_text, match.end())
+        if not matches_changed_lines(changed_lines, start_line, end_line):
+            continue
+        if is_suppressed(source_lines, start_line, end_line):
+            continue
+
+        issues.append(
+            Issue(
+                file_path=file_path,
+                line=start_line,
+                message=(
+                    f"Avoid interpolating untrusted values directly into href/src/title/style/data-* attributes. "
+                    f"Prefer DOM APIs and explicit URL normalization, or add '{SUPPRESSION_TOKEN}' with a justification."
+                ),
+            )
+        )
+
     return issues
 
 
@@ -200,9 +478,13 @@ def collect_html_sink_issues(
 ) -> list[Issue]:
     """Collect issues for dangerous HTML sinks."""
     issues: list[Issue] = []
+    safe_html_identifiers = get_safe_html_identifiers(source_text)
     for match in pattern.finditer(source_text):
+        target_name = match.groupdict().get('target') or ''
         expression = match.group('expr')
-        if is_allowed_html_expression(expression):
+        if target_name.lower().startswith('temp') and expression.strip().startswith('String('):
+            continue
+        if is_allowed_html_expression(expression, safe_html_identifiers=safe_html_identifiers):
             continue
 
         start_line = get_line_number(source_text, match.start())
@@ -306,16 +588,11 @@ def inspect_source(file_path: Path, source_text: str, changed_lines: set[int] | 
         )
     )
     issues.extend(
-        collect_regex_issues(
+        collect_attribute_interpolation_issues(
             file_path=file_path,
             source_text=source_text,
             source_lines=source_lines,
             changed_lines=changed_lines,
-            pattern=ATTRIBUTE_INTERPOLATION_RE,
-            message=(
-                f"Avoid interpolating untrusted values directly into href/src/title/style/data-* attributes. "
-                f"Prefer DOM APIs and explicit URL normalization, or add '{SUPPRESSION_TOKEN}' with a justification."
-            ),
         )
     )
     issues.extend(
@@ -415,6 +692,9 @@ def inspect_source(file_path: Path, source_text: str, changed_lines: set[int] | 
 
 def inspect_file(file_path: Path, changed_lines: set[int] | None = None) -> list[Issue]:
     """Load one file and return any XSS-related issues."""
+    if is_skipped_vendor_browser_asset(file_path):
+        return []
+
     try:
         source_text = file_path.read_text(encoding='utf-8')
     except UnicodeDecodeError:

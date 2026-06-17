@@ -361,7 +361,9 @@ function renderSearchResults(data) {
         const matchesDiv = document.createElement('div');
         matchesDiv.className = 'mt-2';
         if (result.match_count > 0) {
-            matchesDiv.innerHTML = `<strong>${result.match_count} message${result.match_count !== 1 ? 's' : ''} matched:</strong>`;
+            const matchSummary = document.createElement('strong');
+            matchSummary.textContent = `${result.match_count} message${result.match_count !== 1 ? 's' : ''} matched:`;
+            matchesDiv.replaceChildren(matchSummary);
         }
         
         result.messages.forEach(msg => {

@@ -1187,7 +1187,10 @@ export function createConversationItem(convo) {
   const deleteA = document.createElement("a");
   deleteA.classList.add("dropdown-item", "delete-btn", "text-danger");
   deleteA.href = "#";
-  deleteA.innerHTML = `<i class="bi bi-trash-fill me-2"></i>${isCollaborativeConversation ? collaborativeDeleteLabel : 'Delete'}`;
+  const deleteIcon = document.createElement("i");
+  deleteIcon.className = "bi bi-trash-fill me-2";
+  deleteA.appendChild(deleteIcon);
+  deleteA.appendChild(document.createTextNode(isCollaborativeConversation ? collaborativeDeleteLabel : 'Delete'));
   deleteLi.appendChild(deleteA);
 
   dropdownMenu.appendChild(detailsLi);
@@ -2001,9 +2004,13 @@ function configureDeleteConversationModal(conversationId, metadata = {}) {
       deleteConversationTransferOptionEl.classList.remove('d-none');
     }
     if (deleteConversationNewOwnerSelectEl) {
-      deleteConversationNewOwnerSelectEl.innerHTML = transferableParticipants
-        .map(participant => `<option value="${participant.user_id}">${participant.display_name || participant.email || participant.user_id}</option>`)
-        .join('');
+      deleteConversationNewOwnerSelectEl.replaceChildren();
+      transferableParticipants.forEach((participant) => {
+        const option = document.createElement('option');
+        option.value = String(participant.user_id || '');
+        option.textContent = participant.display_name || participant.email || participant.user_id || '';
+        deleteConversationNewOwnerSelectEl.appendChild(option);
+      });
     }
     return;
   }

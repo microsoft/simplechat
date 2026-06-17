@@ -3489,15 +3489,15 @@ export class PluginModalStepper {
       resultDiv.classList.remove('d-none');
       if (data.success) {
         alertDiv.className = 'alert alert-success mb-0 py-2 px-3 small';
-        alertDiv.innerHTML = '<i class="bi bi-check-circle me-2"></i>' + (data.message || 'Connection successful!');
+        alertDiv.innerHTML = '<i class="bi bi-check-circle me-2"></i>' + this.escapeHtml(data.message || 'Connection successful!');
       } else {
         alertDiv.className = 'alert alert-danger mb-0 py-2 px-3 small';
-        alertDiv.innerHTML = '<i class="bi bi-x-circle me-2"></i>' + (data.error || 'Connection failed.');
+        alertDiv.innerHTML = '<i class="bi bi-x-circle me-2"></i>' + this.escapeHtml(data.error || 'Connection failed.');
       }
     } catch (error) {
       resultDiv.classList.remove('d-none');
       alertDiv.className = 'alert alert-danger mb-0 py-2 px-3 small';
-      alertDiv.innerHTML = '<i class="bi bi-x-circle me-2"></i>Test failed: ' + (error.message || 'Network error');
+      alertDiv.innerHTML = '<i class="bi bi-x-circle me-2"></i>Test failed: ' + this.escapeHtml(error.message || 'Network error');
     } finally {
       btn.innerHTML = originalText;
       btn.disabled = false;

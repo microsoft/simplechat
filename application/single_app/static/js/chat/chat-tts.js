@@ -36,8 +36,8 @@ export async function initializeTTS() {
         const data = await response.json();
         const settings = data.settings || {};
         
-        ttsEnabled = settings.ttsEnabled || false;
-        ttsAutoplay = settings.ttsAutoplay || false;
+        ttsEnabled = Boolean(settings.ttsEnabled || settings.ttsAutoplay);
+        ttsAutoplay = Boolean(settings.ttsAutoplay);
         ttsVoice = settings.ttsVoice || 'en-US-Andrew:DragonHDLatestNeural';
         ttsSpeed = settings.ttsSpeed || 1.0;
         
@@ -974,9 +974,20 @@ export function autoplayTTSIfEnabled(messageId, text) {
  * Toggle TTS autoplay on/off
  */
 export async function toggleTTSAutoplay() {
+    const previousTTSEnabled = ttsEnabled;
+    const previousTTSAutoplay = ttsAutoplay;
     ttsAutoplay = !ttsAutoplay;
+    if (ttsAutoplay) {
+        ttsEnabled = true;
+    }
     
     console.log('[TTS Autoplay] Toggled to:', ttsAutoplay);
+    const settingsUpdate = {
+        ttsAutoplay: ttsAutoplay
+    };
+    if (ttsAutoplay) {
+        settingsUpdate.ttsEnabled = true;
+    }
     
     // Save to user settings
     try {
@@ -986,9 +997,7 @@ export async function toggleTTSAutoplay() {
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                settings: {
-                    ttsAutoplay: ttsAutoplay
-                }
+                settings: settingsUpdate
             })
         });
         
@@ -1007,7 +1016,8 @@ export async function toggleTTSAutoplay() {
         console.error('Error saving AI Voice setting:', error);
         showToast('Failed to save AI Voice setting', 'danger');
         // Revert the toggle
-        ttsAutoplay = !ttsAutoplay;
+        ttsEnabled = previousTTSEnabled;
+        ttsAutoplay = previousTTSAutoplay;
     }
 }
 

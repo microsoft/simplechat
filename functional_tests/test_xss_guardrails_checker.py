@@ -2,12 +2,12 @@
 # test_xss_guardrails_checker.py
 """
 Functional test for XSS PR guardrail checker.
-Version: 0.241.022
+Version: 0.242.048
 Implemented in: 0.241.021
 
 This test ensures the changed-file XSS checker flags the repo's target sink
 patterns, allows the approved safe rendering patterns, and stays wired into
-the repo instruction and PR workflow.
+the repo instruction, PR workflow, and full-audit prompt.
 """
 
 import importlib.util
@@ -20,7 +20,8 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 CHECKER_FILE = ROOT_DIR / 'scripts' / 'check_xss_sinks.py'
 WORKFLOW_FILE = ROOT_DIR / '.github' / 'workflows' / 'xss-sink-check.yml'
 INSTRUCTION_FILE = ROOT_DIR / '.github' / 'instructions' / 'xss-prevention.instructions.md'
-FEATURE_DOC = ROOT_DIR / 'docs' / 'explanation' / 'features' / 'v0.241.021' / 'XSS_PR_GUARDRAILS.md'
+FULL_AUDIT_PROMPT_FILE = ROOT_DIR / '.github' / 'prompts' / 'xss-full-audit-and-remediation.prompt.md'
+FEATURE_DOC = ROOT_DIR / 'docs' / 'explanation' / 'features' / 'v0.241.022' / 'XSS_PR_GUARDRAILS.md'
 CONFIG_FILE = ROOT_DIR / 'application' / 'single_app' / 'config.py'
 
 
@@ -74,6 +75,7 @@ def test_checker_flags_marked_parse_inline_handlers_and_server_side_bypasses() -
     js_source = """
 const html = marked.parse(markdown);
 button.setAttribute('onclick', 'runDanger()');
+const rowHtml = `<button onclick="runDanger('${userName}')">Run</button>`;
 """.strip()
     js_messages = issue_messages(module, 'sample.js', js_source)
     assert any('DOMPurify.sanitize' in message for message in js_messages), js_messages
@@ -106,6 +108,9 @@ actionButton.dataset.userName = userName;
 actionButton.addEventListener('click', handleClick);
 modal.innerHTML = '<div class="modal"><h5 class="modal-title"></h5></div>';
 const renderedHtml = DOMPurify.sanitize(marked.parse(markdown));
+const escapedName = escapeHtml(userName);
+row.innerHTML = `<td title="${escapeHtml(userName)}" data-user-name="${escapedName}">${escapeHtml(userName)}</td>`;
+document.querySelector(`[data-user-id="${userId}"]`);
 """.strip()
     assert issue_messages(module, 'safe.js', safe_js_source) == []
 
@@ -117,16 +122,18 @@ container.innerHTML = htmlFromReviewedBoundary;
 
 
 def test_checker_assets_and_version_are_wired_into_repo() -> None:
-    """Verify the new workflow, instruction, doc, and version bump landed together."""
+    """Verify the new workflow, instruction, prompt, doc, and version bump landed together."""
     assert CHECKER_FILE.exists(), f'Expected checker script at {CHECKER_FILE}'
     assert WORKFLOW_FILE.exists(), f'Expected workflow file at {WORKFLOW_FILE}'
     assert INSTRUCTION_FILE.exists(), f'Expected instruction file at {INSTRUCTION_FILE}'
+    assert FULL_AUDIT_PROMPT_FILE.exists(), f'Expected full-audit prompt at {FULL_AUDIT_PROMPT_FILE}'
     assert FEATURE_DOC.exists(), f'Expected feature document at {FEATURE_DOC}'
-    assert read_config_version() == '0.241.022'
+    assert read_config_version() == '0.242.048'
 
     workflow_source = read_text(WORKFLOW_FILE)
     assert 'scripts/check_xss_sinks.py' in workflow_source
     assert 'functional_tests/test_xss_guardrails_checker.py' in workflow_source
+    assert '.github/prompts/xss-full-audit-and-remediation.prompt.md' in workflow_source
 
     instruction_source = read_text(INSTRUCTION_FILE)
     assert 'xss-check: ignore' in instruction_source
@@ -137,6 +144,11 @@ def test_checker_assets_and_version_are_wired_into_repo() -> None:
     assert 'Fixed/Implemented in version: **0.241.021**' in feature_doc_source
     assert 'scripts/check_xss_sinks.py' in feature_doc_source
     assert '.github/workflows/xss-sink-check.yml' in feature_doc_source
+
+    prompt_source = read_text(FULL_AUDIT_PROMPT_FILE)
+    assert 'python scripts/check_xss_sinks.py --full-file' in prompt_source
+    assert 'rg -n "innerHTML|outerHTML|insertAdjacentHTML' in prompt_source
+    assert 'DOMPurify.sanitize(marked.parse' in prompt_source
 
 
 if __name__ == '__main__':

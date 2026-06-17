@@ -14,7 +14,7 @@ import {
 } from "./chat-conversations.js";
 import { updateSidebarConversationTitle } from "./chat-sidebar-conversations.js";
 import { getActiveConversationContext, getActiveConversationScope } from "./chat-conversation-scope.js";
-import { escapeHtml, isColorLight, addTargetBlankToExternalLinks } from "./chat-utils.js";
+import { escapeHtml, isColorLight, addTargetBlankToExternalLinks, sanitizeHttpUrl } from "./chat-utils.js";
 import { showToast } from "./chat-toast.js";
 import { autoplayTTSIfEnabled } from "./chat-tts.js";
 import { saveUserSetting } from "./chat-layout.js";
@@ -976,12 +976,14 @@ function renderComparisonInlineSummary(selectedVersions = []) {
   const targetVersions = selectedVersions.slice(1);
 
   if (documentComparisonInlineSourceTags) {
+    // xss-check: ignore reviewed legacy summary badge HTML built from renderComparisonSummary* helpers that escape labels.
     documentComparisonInlineSourceTags.innerHTML = sourceVersion
       ? renderComparisonSummaryBadge(sourceVersion, 'text-bg-primary')
       : renderComparisonSummaryPlaceholder('Not set');
   }
 
   if (documentComparisonInlineTargetTags) {
+    // xss-check: ignore reviewed legacy summary badge HTML built from renderComparisonSummary* helpers that escape labels.
     documentComparisonInlineTargetTags.innerHTML = targetVersions.length
       ? targetVersions.map(targetVersion => renderComparisonSummaryBadge(targetVersion, 'text-bg-secondary')).join('')
       : renderComparisonSummaryPlaceholder('None selected');
@@ -1944,13 +1946,15 @@ function createCitationsHtml(
     hasCitations = true;
     webCitations.forEach((cite) => {
       // Example: cite.url, cite.title
+      const safeWebCitationUrl = sanitizeHttpUrl(cite.url);
+      if (!safeWebCitationUrl) {
+        return;
+      }
       const displayText = cite.title
         ? escapeHtml(cite.title)
-        : escapeHtml(cite.url);
+        : escapeHtml(safeWebCitationUrl);
       citationsHtml += `
-              <a href="${escapeHtml(
-                cite.url
-              )}" target="_blank" rel="noopener noreferrer"
+              <a href="${escapeHtml(safeWebCitationUrl)}" target="_blank" rel="noopener noreferrer"
                  class="btn btn-sm citation-button web-citation-link"
                  title="View web source: ${displayText}">
                   <i class="bi bi-globe me-1"></i>${displayText}
@@ -2273,9 +2277,10 @@ function createCollaboratorAvatarHtml(fullMessageObject, senderLabel) {
   const senderUserId = getMessageSenderUserId(fullMessageObject);
   const cachedProfileImage = senderUserId ? collaboratorProfileImageCache.get(senderUserId) : null;
   const altText = `${senderLabel} Avatar`;
+  const safeCachedProfileImage = sanitizeAvatarImageSrc(cachedProfileImage);
 
-  if (cachedProfileImage) {
-    return `<img src="${cachedProfileImage}" alt="${escapeHtml(altText)}" class="avatar collaborator-avatar" data-avatar-user-id="${escapeHtml(senderUserId || "")}" />`;
+  if (safeCachedProfileImage) {
+    return `<img src="${escapeHtml(safeCachedProfileImage)}" alt="${escapeHtml(altText)}" class="avatar collaborator-avatar" data-avatar-user-id="${escapeHtml(senderUserId || "")}" />`;
   }
 
   return `
@@ -2310,6 +2315,26 @@ function normalizeAssistantAgentIcon(iconPayload) {
   return null;
 }
 
+function sanitizeAvatarImageSrc(value) {
+  const normalizedValue = String(value || '').trim();
+  if (!normalizedValue) {
+    return '';
+  }
+
+  if (/^\/static\/images\/[A-Za-z0-9_.-]+$/.test(normalizedValue)) {
+    return normalizedValue;
+  }
+
+  if (
+    /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(normalizedValue)
+    && normalizedValue.length <= 350000
+  ) {
+    return normalizedValue;
+  }
+
+  return '';
+}
+
 function createAssistantAvatarHtml(fullMessageObject, senderLabel, defaultAvatarSrc) {
   const iconPayload = normalizeAssistantAgentIcon(
     fullMessageObject?.agent_icon || fullMessageObject?.metadata?.agent_selection?.agent_icon
@@ -2317,14 +2342,18 @@ function createAssistantAvatarHtml(fullMessageObject, senderLabel, defaultAvatar
   const altText = `${stripHtmlTags(senderLabel || 'AI').replace(/\s+/g, ' ').trim() || 'AI'} Avatar`;
 
   if (iconPayload?.kind === 'image') {
-    return `<img src="${iconPayload.value}" alt="${escapeHtml(altText)}" class="avatar agent-avatar" />`;
+    const safeIconImageSrc = sanitizeAvatarImageSrc(iconPayload.value);
+    if (safeIconImageSrc) {
+      return `<img src="${escapeHtml(safeIconImageSrc)}" alt="${escapeHtml(altText)}" class="avatar agent-avatar" />`;
+    }
   }
 
   if (iconPayload?.kind === 'bootstrap') {
     return `<div class="avatar avatar-initials agent-avatar" aria-label="${escapeHtml(altText)}"><i class="bi ${iconPayload.value}" aria-hidden="true"></i></div>`;
   }
 
-  return `<img src="${escapeHtml(defaultAvatarSrc)}" alt="${escapeHtml(altText)}" class="avatar" />`;
+  const safeDefaultAvatarSrc = sanitizeAvatarImageSrc(defaultAvatarSrc) || '/static/images/ai-avatar.png';
+  return `<img src="${escapeHtml(safeDefaultAvatarSrc)}" alt="${escapeHtml(altText)}" class="avatar" />`;
 }
 
 function hydrateCollaboratorAvatar(messageDiv, senderUserId, senderLabel) {
@@ -2338,13 +2367,14 @@ function hydrateCollaboratorAvatar(messageDiv, senderUserId, senderLabel) {
   }
 
   const cachedProfileImage = collaboratorProfileImageCache.get(senderUserId);
-  if (cachedProfileImage) {
+  const safeCachedProfileImage = sanitizeAvatarImageSrc(cachedProfileImage);
+  if (safeCachedProfileImage) {
     if (avatarElement.tagName === "IMG") {
-      avatarElement.src = cachedProfileImage;
+      avatarElement.src = safeCachedProfileImage;
       avatarElement.alt = `${senderLabel} Avatar`;
     } else {
       const imageElement = document.createElement("img");
-      imageElement.src = cachedProfileImage;
+      imageElement.src = safeCachedProfileImage;
       imageElement.alt = `${senderLabel} Avatar`;
       imageElement.className = "avatar collaborator-avatar";
       imageElement.dataset.avatarUserId = senderUserId;
@@ -2363,7 +2393,7 @@ function hydrateCollaboratorAvatar(messageDiv, senderUserId, senderLabel) {
       return response.json();
     })
     .then(userData => {
-      const profileImage = String(userData?.profile_image || "").trim();
+      const profileImage = sanitizeAvatarImageSrc(userData?.profile_image);
       if (!profileImage) {
         return;
       }
@@ -5272,6 +5302,7 @@ export function appendMessage(
     }
 
     // Set innerHTML using the variables determined above
+    const safeAvatarImg = sanitizeAvatarImageSrc(avatarImg);
     messageDiv.innerHTML = `
             <div class="message-content ${
               sender === "You" || sender === "File" ? "flex-row-reverse" : ""
@@ -5279,8 +5310,8 @@ export function appendMessage(
                 ${
                   avatarHtml
                     ? avatarHtml
-                    : avatarImg
-                      ? `<img src="${avatarImg}" alt="${avatarAltText}" class="avatar">`
+                    : safeAvatarImg
+                      ? `<img src="${escapeHtml(safeAvatarImg)}" alt="${escapeHtml(avatarAltText)}" class="avatar">`
                       : ""
                 }
                 <div class="message-bubble">

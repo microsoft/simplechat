@@ -555,9 +555,10 @@ function createSidebarConversationItem(convo) {
           <li><a class="dropdown-item delete-btn text-danger" href="#"><i class="bi bi-trash-fill me-2"></i>Delete</a></li>
       `;
   
+  // xss-check: ignore reviewed legacy sidebar item shell; untrusted title/tooltip values are escaped before interpolation.
   convoItem.innerHTML = `
     <div class="d-flex justify-content-between align-items-center">
-      <div class="sidebar-conversation-title flex-grow-1" title="${titleTooltip}">${pinIcon}${hiddenIcon}${collaborationIcon}${convo.title}</div>
+      <div class="sidebar-conversation-title flex-grow-1" title="${escapeHtml(titleTooltip)}">${pinIcon}${hiddenIcon}${collaborationIcon}${escapeHtml(convo.title || '')}</div>
       <div class="dropdown conversation-dropdown" style="opacity: 0; transition: opacity 0.2s;">
         <button class="btn btn-light btn-sm" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Conversation options">
           <i class="bi bi-three-dots-vertical"></i>

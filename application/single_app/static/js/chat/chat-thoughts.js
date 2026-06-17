@@ -110,7 +110,7 @@ function renderProgressDetailsToggle(progressDetailsKey, detailsId, isExpanded) 
     const title = isExpanded ? 'Hide document details' : 'Show document details';
     const iconClass = isExpanded ? 'bi-chevron-up' : 'bi-chevron-down';
 
-    return `<button type="button" class="btn btn-sm btn-outline-secondary action-progress-details-toggle" data-progress-details-key="${escapeHtml(progressDetailsKey)}" aria-expanded="${isExpanded ? 'true' : 'false'}" aria-controls="${escapeHtml(detailsId)}" aria-label="${title}" title="${title}">
+    return `<button type="button" class="btn btn-sm btn-outline-secondary action-progress-details-toggle" data-progress-details-key="${escapeHtml(progressDetailsKey)}" aria-expanded="${isExpanded ? 'true' : 'false'}" aria-controls="${escapeHtml(detailsId)}" aria-label="${escapeHtml(title)}" title="${escapeHtml(title)}">
         <i class="bi ${iconClass}" aria-hidden="true"></i>
     </button>`;
 }

@@ -49,6 +49,21 @@ export function escapeHtml(unsafe) {
       .replace(/'/g, "&#39;");
 }
 
+export function sanitizeHttpUrl(value) {
+  if (!value || typeof value !== 'string') return '';
+
+  try {
+    const parsedUrl = new URL(value);
+    if (parsedUrl.protocol === 'http:' || parsedUrl.protocol === 'https:') {
+      return parsedUrl.toString();
+    }
+  } catch (error) {
+    return '';
+  }
+
+  return '';
+}
+
 // Add target="_blank" and rel="noopener noreferrer" to external links in HTML content
 export function addTargetBlankToExternalLinks(htmlContent) {
   if (!htmlContent || typeof htmlContent !== 'string') return htmlContent;

@@ -1570,7 +1570,7 @@ function renderParticipantResults(results, emptyMessage = 'No collaborators foun
     }
 
     if (!Array.isArray(results) || results.length === 0) {
-        participantResults.innerHTML = `<div class="list-group-item text-muted small">${emptyMessage}</div>`;
+        participantResults.innerHTML = `<div class="list-group-item text-muted small">${escapeHtml(emptyMessage)}</div>`;
         return;
     }
 
@@ -1634,7 +1634,14 @@ function openParticipantConfirmation(userSummary, context = {}) {
         collaborator,
         context,
     };
-    confirmMessageEl.innerHTML = `Are you sure you want to add <strong>${collaborator.display_name}</strong>${collaborator.email ? ` (${collaborator.email})` : ''} to this conversation?`;
+    const nameElement = document.createElement('strong');
+    nameElement.textContent = collaborator.display_name || collaborator.email || 'this collaborator';
+    confirmMessageEl.replaceChildren(
+        document.createTextNode('Are you sure you want to add '),
+        nameElement,
+        document.createTextNode(collaborator.email ? ` (${collaborator.email})` : ''),
+        document.createTextNode(' to this conversation?')
+    );
     bootstrap.Modal.getOrCreateInstance(confirmModalEl).show();
 }
 

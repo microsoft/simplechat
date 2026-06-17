@@ -14,6 +14,24 @@ function toNonEmptyString(value) {
     return typeof value === "string" ? value.trim() : "";
 }
 
+function sanitizeHttpUrl(value) {
+    const normalizedValue = toNonEmptyString(value);
+    if (!normalizedValue) {
+        return "";
+    }
+
+    try {
+        const parsedUrl = new URL(normalizedValue);
+        if (parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:") {
+            return parsedUrl.toString();
+        }
+    } catch (error) {
+        return "";
+    }
+
+    return "";
+}
+
 function parseJsonValue(value) {
     if (value === null || value === undefined || value === "") {
         return null;
@@ -461,12 +479,13 @@ function buildImageDetailsRows(item) {
         `);
     }
 
-    if (item.source_url) {
+    const safeSourceUrl = sanitizeHttpUrl(item.source_url);
+    if (safeSourceUrl) {
         rows.push(`
             <div class="inline-image-modal-meta-row">
                 <span class="inline-image-modal-meta-label">Link</span>
                 <span class="inline-image-modal-meta-value">
-                    <a href="${escapeHtml(item.source_url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.source_url)}</a>
+                    <a href="${escapeHtml(safeSourceUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(safeSourceUrl)}</a>
                 </span>
             </div>
         `);
