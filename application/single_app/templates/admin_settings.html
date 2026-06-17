@@ -9515,7 +9515,7 @@
     window.enableExternalLinks = "{{ enable_external_links }}";
     window.externalLinksMenuName = "{{ settings.external_links_menu_name or 'External Links' }}";
     window.externalLinksForceMenu = "{{ settings.external_links_force_menu }}";
-    window.agentsPagePromotedPopularAgents = {{ settings.agents_page_promoted_popular_agents | default([], true) | tojson(indent=None) | safe }};
+    window.agentsPagePromotedPopularAgents = {{ settings.agents_page_promoted_popular_agents | default([], true) | tojson(indent=None) }};
     if (!Array.isArray(window.agentsPagePromotedPopularAgents)) {
         window.agentsPagePromotedPopularAgents = [];
     }

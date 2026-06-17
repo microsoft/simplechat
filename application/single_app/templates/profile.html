@@ -2065,11 +2065,18 @@ function updateProfileHeroImage() {
 
     if (profileImageData && profileImageData.startsWith('data:image')) {
         console.log('Rendering profile image in hero');
-        container.innerHTML = `<img src="${profileImageData}" alt="Profile Image" class="profile-hero-image">`;
+        const profileImage = document.createElement('img');
+        profileImage.src = profileImageData;
+        profileImage.alt = 'Profile Image';
+        profileImage.className = 'profile-hero-image';
+        container.replaceChildren(profileImage);
     } else {
         console.log('Rendering placeholder in hero');
         const initials = userName.split(' ').map(name => name.charAt(0)).join('').toUpperCase().substring(0, 2);
-        container.innerHTML = `<div class="profile-hero-placeholder">${initials}</div>`;
+        const placeholder = document.createElement('div');
+        placeholder.className = 'profile-hero-placeholder';
+        placeholder.textContent = initials;
+        container.replaceChildren(placeholder);
     }
 }
 

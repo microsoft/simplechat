@@ -2798,22 +2798,41 @@ app_settings.app_title }} {% endblock %} {% block head %}
     if (documentCount === 1) {
       return {
         title: "Delete Group Document",
-        body: `
-          <p class="mb-2">Choose how to delete this group document revision.</p>
-          <p class="mb-2"><strong>Delete Current Version</strong> removes the visible revision and keeps older revisions for later comparison.</p>
-          <p class="mb-0"><strong>Delete All Versions</strong> permanently removes every stored revision for this document.</p>
-        `,
+        intro: "Choose how to delete this group document revision.",
+        currentDescription: "removes the visible revision and keeps older revisions for later comparison.",
+        allDescription: "permanently removes every stored revision for this document.",
       };
     }
 
     return {
       title: "Delete Selected Group Documents",
-      body: `
-        <p class="mb-2">Choose how to delete ${documentCount} selected current group document revision(s).</p>
-        <p class="mb-2"><strong>Delete Current Version</strong> removes only the visible revision for each selected document and keeps older revisions.</p>
-        <p class="mb-0"><strong>Delete All Versions</strong> permanently removes every stored revision for each selected document.</p>
-      `,
+      intro: `Choose how to delete ${documentCount} selected current group document revision(s).`,
+      currentDescription: "removes only the visible revision for each selected document and keeps older revisions.",
+      allDescription: "permanently removes every stored revision for each selected document.",
     };
+  }
+
+  function appendGroupDeleteModalParagraph(container, label, description, className) {
+    const paragraph = document.createElement("p");
+    paragraph.className = className;
+
+    if (label) {
+      const strongLabel = document.createElement("strong");
+      strongLabel.textContent = label;
+      paragraph.appendChild(strongLabel);
+      paragraph.appendChild(document.createTextNode(` ${description}`));
+    } else {
+      paragraph.textContent = description;
+    }
+
+    container.appendChild(paragraph);
+  }
+
+  function renderGroupDeleteModalBody(container, modalContent) {
+    container.replaceChildren();
+    appendGroupDeleteModalParagraph(container, "", modalContent.intro, "mb-2");
+    appendGroupDeleteModalParagraph(container, "Delete Current Version", modalContent.currentDescription, "mb-2");
+    appendGroupDeleteModalParagraph(container, "Delete All Versions", modalContent.allDescription, "mb-0");
   }
 
   function showGroupDocumentDeleteFeedback(message, variant = "danger") {
@@ -3023,7 +3042,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     if (groupDocumentDeleteModalTitle) {
       groupDocumentDeleteModalTitle.textContent = modalContent.title;
     }
-    groupDocumentDeleteModalBody.innerHTML = modalContent.body;
+    renderGroupDeleteModalBody(groupDocumentDeleteModalBody, modalContent);
 
     return new Promise((resolve) => {
       let settled = false;

@@ -1,8 +1,17 @@
 <!-- BEGIN release_notes.md BLOCK -->
 
-This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.242.065, and the per-version entries continue immediately after it.
+This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.242.066, and the per-version entries continue immediately after it.
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
+
+### **(v0.242.066)**
+
+#### Bug Fixes
+
+*   **Python 3.12 CI and XSS Guardrail Fix**
+    *   Updated GitHub workflow Python setup from 3.11 to 3.12 to match the supported SimpleChat runtime and prevent valid Python 3.12 f-string syntax from failing CI parse checks.
+    *   Reworked changed Admin Settings, group workspace delete modal, and profile hero rendering paths to satisfy the XSS sink guardrail without broad suppressions.
+    *   (Ref: Python 3.12 CI, XSS sink validation, Admin Settings bootstrap data, group workspace delete modal, profile hero image)
 
 ### **(v0.242.065)**
 

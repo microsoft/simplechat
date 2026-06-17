@@ -6,6 +6,7 @@ order: 120
 category: Version History
 ---
 
+- [Python 3.12 CI and XSS Guardrail Fix](PYTHON_312_CI_AND_XSS_GUARDRAIL_FIX.md)
 - [PR Readiness Guardrail Cleanup Fix](PR_READINESS_GUARDRAIL_CLEANUP_FIX.md)
 - [CSRF State-Changing Route Guard Fix](CSRF_STATE_CHANGING_ROUTE_GUARD_FIX.md)
 - [Governance Personal Actions Enforcement Fix](GOVERNANCE_PERSONAL_ACTIONS_ENFORCEMENT_FIX.md)
