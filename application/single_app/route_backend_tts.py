@@ -65,6 +65,8 @@ TTS_LOCALE_LABELS = {
 }
 TTS_VOICE_CACHE = {}
 TTS_VOICE_CACHE_LOCK = threading.Lock()
+TTS_CONFIG_ERROR_MESSAGE = "Text-to-speech is not configured correctly."
+TTS_SYNTHESIS_ERROR_MESSAGE = "Text-to-speech synthesis failed. Check Application Insights for [TTS] details."
 
 
 def _get_speech_service_settings(settings):
@@ -339,7 +341,12 @@ def register_route_backend_tts(app):
                 speech_synthesizer = _build_tts_synthesizer(settings, speech_endpoint, speech_region, voice)
             except ValueError as config_error:
                 debug_print(f"[TTS] Speech service configuration invalid: {str(config_error)}")
-                return jsonify({"error": str(config_error)}), 500
+                log_event(
+                    "[TTS] Speech service configuration invalid.",
+                    extra={"error": str(config_error)},
+                    level=logging.ERROR,
+                )
+                return jsonify({"error": TTS_CONFIG_ERROR_MESSAGE}), 500
             
             # Perform synthesis with retry logic for rate limiting (429 errors)
             max_retries = 3
@@ -434,7 +441,12 @@ def register_route_backend_tts(app):
                                 # Other error, don't retry
                                 error_msg = f"Speech synthesis canceled: {cancellation_details.reason} - {error_details}"
                                 debug_print(f"[TTS] ERROR - Synthesis failed: {error_msg}")
-                                return jsonify({"error": error_msg}), 500
+                                log_event(
+                                    "[TTS] Speech synthesis canceled with Azure error details.",
+                                    extra={"reason": str(cancellation_details.reason), "error_details": str(error_details)},
+                                    level=logging.ERROR,
+                                )
+                                return jsonify({"error": TTS_SYNTHESIS_ERROR_MESSAGE}), 500
                     
                     # Success - break out of retry loop
                     break
@@ -474,22 +486,24 @@ def register_route_backend_tts(app):
                 if cancellation_details.reason == speechsdk.CancellationReason.Error:
                     error_msg += f" - {cancellation_details.error_details}"
                 debug_print(f"[TTS] ERROR - Synthesis failed: {error_msg}")
-                print(f"[ERROR] TTS synthesis failed: {error_msg}")
-                return jsonify({"error": error_msg}), 500
+                log_event(
+                    "[TTS] Speech synthesis canceled.",
+                    extra={"reason": str(cancellation_details.reason), "error_details": str(getattr(cancellation_details, 'error_details', ''))},
+                    level=logging.ERROR,
+                )
+                return jsonify({"error": TTS_SYNTHESIS_ERROR_MESSAGE}), 500
             else:
                 debug_print(f"[TTS] ERROR - Unknown synthesis error, reason: {result.reason}")
                 return jsonify({"error": "Unknown synthesis error"}), 500
                 
         except ValueError as e:
             debug_print(f"[TTS] ERROR - Invalid parameter: {str(e)}")
-            return jsonify({"error": f"Invalid parameter: {str(e)}"}), 400
+            log_event("[TTS] Invalid request parameter.", extra={"error": str(e)}, level=logging.WARNING)
+            return jsonify({"error": "Invalid text-to-speech request parameter."}), 400
         except Exception as e:
             debug_print(f"[TTS] ERROR - Exception: {str(e)}")
-            log_event(f"TTS synthesis failed: {str(e)}", level=logging.ERROR)
-            print(f"[ERROR] TTS synthesis exception: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return jsonify({"error": f"TTS synthesis failed: {str(e)}"}), 500
+            log_event("[TTS] Speech synthesis failed.", extra={"error": str(e)}, level=logging.ERROR, exceptionTraceback=True)
+            return jsonify({"error": TTS_SYNTHESIS_ERROR_MESSAGE}), 500
 
     @app.route("/api/chat/tts/voices", methods=["GET"])
     @swagger_route(security=get_auth_security())

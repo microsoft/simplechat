@@ -526,6 +526,7 @@ def register_route_frontend_admin_settings(app):
                 settings_for_template.get('source_review_allow_js_rendering'),
                 source_review_runtime_capabilities,
             )
+            settings_for_template = redact_admin_settings_secrets_for_form(settings_for_template)
 
             return render_template(
                 'admin_settings.html',
@@ -555,6 +556,10 @@ def register_route_frontend_admin_settings(app):
         if request.method == 'POST':
             form_data = request.form # Use a variable for easier access
             user_id = get_current_user_id()
+
+            def admin_secret(field_name, form_field_name=None):
+                submitted_value = form_data.get(form_field_name or field_name, '').strip()
+                return resolve_admin_settings_secret_value(field_name, submitted_value, settings)
 
             def parse_admin_int(raw_value, fallback_value, field_name="unknown", hard_default=0):
                 """
@@ -844,7 +849,7 @@ def register_route_frontend_admin_settings(app):
             file_sync_submitted_settings.update({
                 'enable_redis_cache': form_data.get('enable_redis_cache') == 'on',
                 'redis_url': form_data.get('redis_url', '').strip(),
-                'redis_key': form_data.get('redis_key', '').strip(),
+                'redis_key': admin_secret('redis_key'),
                 'redis_auth_type': form_data.get('redis_auth_type', '').strip(),
                 'enable_file_sync': requested_enable_file_sync,
                 'enable_file_sync_personal': form_data.get('enable_file_sync_personal') == 'on',
@@ -1735,7 +1740,7 @@ def register_route_frontend_admin_settings(app):
                 'azure_openai_gpt_authentication_type': form_data.get('azure_openai_gpt_authentication_type', 'key'),
                 'azure_openai_gpt_subscription_id': form_data.get('azure_openai_gpt_subscription_id', '').strip(),
                 'azure_openai_gpt_resource_group': form_data.get('azure_openai_gpt_resource_group', '').strip(),
-                'azure_openai_gpt_key': form_data.get('azure_openai_gpt_key', '').strip(), # Consider encryption/decryption here if needed
+                'azure_openai_gpt_key': admin_secret('azure_openai_gpt_key'),
                 'gpt_model': gpt_model_obj,
                 'enable_multi_model_endpoints': enable_multi_model_endpoints,
                 'model_endpoints': parsed_model_endpoints,
@@ -1743,7 +1748,7 @@ def register_route_frontend_admin_settings(app):
                 'multi_endpoint_migrated_at': migrated_at,
                 'multi_endpoint_migration_notice': migration_notice,
                 'azure_apim_gpt_endpoint': form_data.get('azure_apim_gpt_endpoint', '').strip(),
-                'azure_apim_gpt_subscription_key': form_data.get('azure_apim_gpt_subscription_key', '').strip(),
+                'azure_apim_gpt_subscription_key': admin_secret('azure_apim_gpt_subscription_key'),
                 'azure_apim_gpt_deployment': form_data.get('azure_apim_gpt_deployment', '').strip(),
                 'azure_apim_gpt_api_version': form_data.get('azure_apim_gpt_api_version', '').strip(),
 
@@ -1754,10 +1759,10 @@ def register_route_frontend_admin_settings(app):
                 'azure_openai_embedding_authentication_type': form_data.get('azure_openai_embedding_authentication_type', 'key'),
                 'azure_openai_embedding_subscription_id': form_data.get('azure_openai_embedding_subscription_id', '').strip(),
                 'azure_openai_embedding_resource_group': form_data.get('azure_openai_embedding_resource_group', '').strip(),
-                'azure_openai_embedding_key': form_data.get('azure_openai_embedding_key', '').strip(),
+                'azure_openai_embedding_key': admin_secret('azure_openai_embedding_key'),
                 'embedding_model': embedding_model_obj,
                 'azure_apim_embedding_endpoint': form_data.get('azure_apim_embedding_endpoint', '').strip(),
-                'azure_apim_embedding_subscription_key': form_data.get('azure_apim_embedding_subscription_key', '').strip(),
+                'azure_apim_embedding_subscription_key': admin_secret('azure_apim_embedding_subscription_key'),
                 'azure_apim_embedding_deployment': form_data.get('azure_apim_embedding_deployment', '').strip(),
                 'azure_apim_embedding_api_version': form_data.get('azure_apim_embedding_api_version', '').strip(),
 
@@ -1769,17 +1774,17 @@ def register_route_frontend_admin_settings(app):
                 'azure_openai_image_gen_authentication_type': form_data.get('azure_openai_image_gen_authentication_type', 'key'),
                 'azure_openai_image_gen_subscription_id': form_data.get('azure_openai_image_gen_subscription_id', '').strip(),
                 'azure_openai_image_gen_resource_group': form_data.get('azure_openai_image_gen_resource_group', '').strip(),
-                'azure_openai_image_gen_key': form_data.get('azure_openai_image_gen_key', '').strip(),
+                'azure_openai_image_gen_key': admin_secret('azure_openai_image_gen_key'),
                 'image_gen_model': image_gen_model_obj,
                 'azure_apim_image_gen_endpoint': form_data.get('azure_apim_image_gen_endpoint', '').strip(),
-                'azure_apim_image_gen_subscription_key': form_data.get('azure_apim_image_gen_subscription_key', '').strip(),
+                'azure_apim_image_gen_subscription_key': admin_secret('azure_apim_image_gen_subscription_key'),
                 'azure_apim_image_gen_deployment': form_data.get('azure_apim_image_gen_deployment', '').strip(),
                 'azure_apim_image_gen_api_version': form_data.get('azure_apim_image_gen_api_version', '').strip(),
 
                 # Redis Cache
                 'enable_redis_cache': form_data.get('enable_redis_cache') == 'on',
                 'redis_url': form_data.get('redis_url', '').strip(),
-                'redis_key': form_data.get('redis_key', '').strip(),
+                'redis_key': admin_secret('redis_key'),
                 'redis_auth_type': form_data.get('redis_auth_type', '').strip(),
 
                 # Workspaces
@@ -1894,25 +1899,25 @@ def register_route_frontend_admin_settings(app):
                 'enable_enhanced_citations_mount': form_data.get('enable_enhanced_citations_mount') == 'on' and enable_enhanced_citations,
                 'enhanced_citations_mount': form_data.get('enhanced_citations_mount', '/view_documents').strip(),
                 'tabular_preview_max_blob_size_mb': int(form_data.get('tabular_preview_max_blob_size_mb', 200)),
-                'office_docs_storage_account_blob_endpoint': office_docs_storage_account_blob_endpoint,
-                'office_docs_storage_account_url': office_docs_storage_account_url,
+                'office_docs_storage_account_blob_endpoint': admin_secret('office_docs_storage_account_blob_endpoint'),
+                'office_docs_storage_account_url': admin_secret('office_docs_storage_account_url'),
                 'office_docs_authentication_type': form_data.get('office_docs_authentication_type', 'key'),
                 'office_docs_key': form_data.get('office_docs_key', '').strip(),
-                'video_files_storage_account_url': form_data.get('video_files_storage_account_url', '').strip(),
+                'video_files_storage_account_url': admin_secret('video_files_storage_account_url'),
                 'video_files_authentication_type': form_data.get('video_files_authentication_type', 'key'),
                 'video_files_key': form_data.get('video_files_key', '').strip(),
-                'audio_files_storage_account_url': form_data.get('audio_files_storage_account_url', '').strip(),
+                'audio_files_storage_account_url': admin_secret('audio_files_storage_account_url'),
                 'audio_files_authentication_type': form_data.get('audio_files_authentication_type', 'key'),
                 'audio_files_key': form_data.get('audio_files_key', '').strip(),
 
                 # Safety (Content Safety Direct & APIM)
                 'enable_content_safety': form_data.get('enable_content_safety') == 'on',
                 'content_safety_endpoint': form_data.get('content_safety_endpoint', '').strip(),
-                'content_safety_key': form_data.get('content_safety_key', '').strip(),
+                'content_safety_key': admin_secret('content_safety_key'),
                 'content_safety_authentication_type': form_data.get('content_safety_authentication_type', 'key'),
                 'enable_content_safety_apim': form_data.get('enable_content_safety_apim') == 'on',
                 'azure_apim_content_safety_endpoint': form_data.get('azure_apim_content_safety_endpoint', '').strip(),
-                'azure_apim_content_safety_subscription_key': form_data.get('azure_apim_content_safety_subscription_key', '').strip(),
+                'azure_apim_content_safety_subscription_key': admin_secret('azure_apim_content_safety_subscription_key'),
                 'require_member_of_safety_violation_admin': require_member_of_safety_violation_admin, # ADDED
                 'require_member_of_feedback_admin': require_member_of_feedback_admin, # ADDED
 
@@ -1941,7 +1946,10 @@ def register_route_frontend_admin_settings(app):
                             'managed_identity_client_id': form_data.get('web_search_foundry_managed_identity_client_id', '').strip(),
                             'tenant_id': form_data.get('web_search_foundry_tenant_id', '').strip(),
                             'client_id': form_data.get('web_search_foundry_client_id', '').strip(),
-                            'client_secret': form_data.get('web_search_foundry_client_secret', '').strip(),
+                            'client_secret': admin_secret(
+                                'web_search_agent.other_settings.azure_ai_foundry.client_secret',
+                                'web_search_foundry_client_secret'
+                            ),
                             'cloud': form_data.get('web_search_foundry_cloud', '').strip(),
                             'authority': form_data.get('web_search_foundry_authority', '').strip(),
                             'notes': form_data.get('web_search_foundry_notes', '').strip()
@@ -1983,23 +1991,23 @@ def register_route_frontend_admin_settings(app):
 
                 # Search (AI Search Direct & APIM)
                 'azure_ai_search_endpoint': form_data.get('azure_ai_search_endpoint', '').strip(),
-                'azure_ai_search_key': form_data.get('azure_ai_search_key', '').strip(),
+                'azure_ai_search_key': admin_secret('azure_ai_search_key'),
                 'azure_ai_search_authentication_type': form_data.get('azure_ai_search_authentication_type', 'key'),
                 'enable_ai_search_apim': form_data.get('enable_ai_search_apim') == 'on',
                 'azure_apim_ai_search_endpoint': form_data.get('azure_apim_ai_search_endpoint', '').strip(),
-                'azure_apim_ai_search_subscription_key': form_data.get('azure_apim_ai_search_subscription_key', '').strip(),
+                'azure_apim_ai_search_subscription_key': admin_secret('azure_apim_ai_search_subscription_key'),
                 'enable_chunk_size_override': enable_chunk_size_override,
                 'chunk_size': normalized_chunk_sizes,
 
                 # Extract (Doc Intelligence Direct & APIM)
                 'azure_document_intelligence_endpoint': form_data.get('azure_document_intelligence_endpoint', '').strip(),
-                'azure_document_intelligence_key': form_data.get('azure_document_intelligence_key', '').strip(),
+                'azure_document_intelligence_key': admin_secret('azure_document_intelligence_key'),
                 'azure_document_intelligence_authentication_type': form_data.get('azure_document_intelligence_authentication_type', 'key'),
                 'document_intelligence_pdf_image_extraction_mode': document_intelligence_pdf_image_extraction_mode,
                 'document_intelligence_auto_sample_pages': document_intelligence_auto_sample_pages,
                 'enable_document_intelligence_apim': form_data.get('enable_document_intelligence_apim') == 'on',
                 'azure_apim_document_intelligence_endpoint': form_data.get('azure_apim_document_intelligence_endpoint', '').strip(),
-                'azure_apim_document_intelligence_subscription_key': form_data.get('azure_apim_document_intelligence_subscription_key', '').strip(),
+                'azure_apim_document_intelligence_subscription_key': admin_secret('azure_apim_document_intelligence_subscription_key'),
 
                 'enable_key_vault_secret_storage': form_data.get('enable_key_vault_secret_storage') == 'on',
                 'key_vault_name': form_data.get('key_vault_name', '').strip(),
@@ -2038,7 +2046,7 @@ def register_route_frontend_admin_settings(app):
                 'speech_service_resource_id': form_data.get('speech_service_resource_id', '').strip(),
                 'speech_service_locale': form_data.get('speech_service_locale', '').strip(),
                 'speech_service_authentication_type': form_data.get('speech_service_authentication_type', 'key'),
-                'speech_service_key': form_data.get('speech_service_key', '').strip(),
+                'speech_service_key': admin_secret('speech_service_key'),
                 
                 # Speech-to-text chat input
                 'enable_speech_to_text_input': form_data.get('enable_speech_to_text_input') == 'on',

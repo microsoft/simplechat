@@ -34,6 +34,71 @@ USER_UI_SETTINGS_KEYS = (
     "sidebarToggleStyle",
     "sidebarMenuState",
 )
+ADMIN_SETTINGS_SECRET_REDACTED_VALUE = "***REDACTED***"
+ADMIN_SETTINGS_FORM_SECRET_FIELDS = (
+    "azure_openai_gpt_key",
+    "azure_apim_gpt_subscription_key",
+    "azure_openai_embedding_key",
+    "azure_apim_embedding_subscription_key",
+    "azure_openai_image_gen_key",
+    "azure_apim_image_gen_subscription_key",
+    "redis_key",
+    "office_docs_storage_account_url",
+    "office_docs_storage_account_blob_endpoint",
+    "video_files_storage_account_url",
+    "audio_files_storage_account_url",
+    "content_safety_key",
+    "azure_apim_content_safety_subscription_key",
+    "azure_ai_search_key",
+    "azure_apim_ai_search_subscription_key",
+    "azure_document_intelligence_key",
+    "azure_apim_document_intelligence_subscription_key",
+    "speech_service_key",
+)
+ADMIN_SETTINGS_NESTED_SECRET_FIELDS = (
+    "web_search_agent.other_settings.azure_ai_foundry.client_secret",
+)
+
+
+def is_admin_settings_redacted_secret(value):
+    return str(value or '').strip() == ADMIN_SETTINGS_SECRET_REDACTED_VALUE
+
+
+def _get_nested_setting_value(settings, field_path):
+    current = settings if isinstance(settings, dict) else {}
+    for part in str(field_path or '').split('.'):
+        if not isinstance(current, dict):
+            return ''
+        current = current.get(part)
+    return current if current is not None else ''
+
+
+def _set_nested_setting_value(settings, field_path, value):
+    current = settings
+    parts = str(field_path or '').split('.')
+    for part in parts[:-1]:
+        if not isinstance(current.get(part), dict):
+            current[part] = {}
+        current = current[part]
+    current[parts[-1]] = value
+
+
+def resolve_admin_settings_secret_value(field_name, submitted_value, existing_settings):
+    submitted_text = str(submitted_value or '').strip()
+    if not is_admin_settings_redacted_secret(submitted_text):
+        return submitted_text
+    return str(_get_nested_setting_value(existing_settings, field_name) or '').strip()
+
+
+def redact_admin_settings_secrets_for_form(settings):
+    redacted_settings = copy.deepcopy(settings or {})
+    for field_name in ADMIN_SETTINGS_FORM_SECRET_FIELDS:
+        if redacted_settings.get(field_name):
+            redacted_settings[field_name] = ADMIN_SETTINGS_SECRET_REDACTED_VALUE
+    for field_path in ADMIN_SETTINGS_NESTED_SECRET_FIELDS:
+        if _get_nested_setting_value(redacted_settings, field_path):
+            _set_nested_setting_value(redacted_settings, field_path, ADMIN_SETTINGS_SECRET_REDACTED_VALUE)
+    return redacted_settings
 
 
 def _clone_user_settings_doc(doc):

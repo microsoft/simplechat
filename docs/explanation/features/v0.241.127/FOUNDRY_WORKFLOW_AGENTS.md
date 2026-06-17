@@ -10,15 +10,28 @@ Updated in version: **0.241.193**
 
 Updated in version: **0.241.196**
 
+Updated in version: **0.242.060**
+
 ## Overview
 
 SimpleChat supports generic Microsoft Foundry workflow agents as selectable chat agents through the `foundry_workflow` agent type. The feature is workflow-name driven and does not hardcode any specific workflow names.
 
 ## Dependencies
 
-- Microsoft Foundry project endpoint with permission to invoke workflow agents
+- Microsoft Foundry project endpoint with RBAC permission to invoke workflow agents
 - Existing SimpleChat Foundry managed identity, service principal, or default credential access
 - Project workflow OpenAI-compatible REST protocol version configured on the agent or endpoint
+
+### Foundry RBAC Role Name Guidance
+
+Microsoft Foundry commercial clouds now display the renamed Foundry RBAC role names. Azure Government and custom cloud deployments may still display the earlier Azure AI role names while the rename rolls out. Use the role name shown in the target portal, or use the role definition ID in automation when possible because the IDs and core permissions are unchanged.
+
+| Commercial Foundry role name | Azure Government and custom cloud name that may still appear | Notes |
+|------------------------------|--------------------------------------------------------------|-------|
+| `Foundry User` | `Azure AI User` | Minimum role for identities that build with or invoke Foundry project capabilities. |
+| `Foundry Project Manager` | `Azure AI Project Manager` | Project management role; can conditionally assign the user role where supported. |
+| `Foundry Account Owner` | `Azure AI Account Owner` | Account/resource administration role; in commercial Foundry, can assign selected dependent roles such as `Foundry User`, supported Container Registry roles, and `Log Analytics Reader`. |
+| `Foundry Owner` | `Azure AI Owner` | Full Foundry administration and build role; in commercial Foundry, can assign selected dependent roles such as `Foundry User`, supported Container Registry roles, and `Log Analytics Reader`. |
 
 ## Technical Specifications
 
@@ -27,7 +40,7 @@ SimpleChat supports generic Microsoft Foundry workflow agents as selectable chat
 - Agent records store workflow configuration in `other_settings.foundry_workflow`.
 - Workflow discovery uses the Foundry project agents API and normalizes returned agents into workflow-capable entries, preserving `workflow_agent_id`, `application_id`, `application_version`, and `agent_reference` when available.
 - Runtime invocation mirrors the Foundry SDK flow for delegated workflow calls: create a Foundry OpenAI conversation, call Responses with `agent_reference`, stream events, and delete the Foundry conversation after the run.
-- Workflow invocation requires Microsoft Entra ID/RBAC access. API keys remain supported for model endpoint inference but are not used for chat-selectable Foundry Workflow agents.
+- Workflow invocation requires Microsoft Entra ID/RBAC access. In commercial Foundry, start with `Foundry User` on the project or resource scope used by the endpoint. In Azure Government and custom clouds, use the equivalent role name shown in the portal, which may still be `Azure AI User`. API keys remain supported for model endpoint inference but are not used for chat-selectable Foundry Workflow agents.
 - The verified OpenAI-compatible workflow REST protocol for the test project uses `v1` paths such as `/openai/v1/responses` and `/openai/v1/conversations`, without an `api-version` query parameter.
 - The UI defaults workflow agents to `v1` and no longer exposes `v2` as a normal REST protocol option. Existing saved `v2` workflow values are normalized to `v1` at runtime.
 - Dated preview versions are sent as `api-version` query parameters on both conversation and response endpoints.

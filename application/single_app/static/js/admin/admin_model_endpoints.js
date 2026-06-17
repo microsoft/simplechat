@@ -1,6 +1,7 @@
 // admin_model_endpoints.js
 
 import { showToast } from "../chat/chat-toast.js";
+import { getIconPayload, setIconPayload } from "../agents_common.js";
 
 const enableMultiEndpointToggle = document.getElementById("enable_multi_model_endpoints");
 const endpointsWrapper = document.getElementById("model-endpoints-wrapper");
@@ -105,6 +106,25 @@ const DEFAULT_AOAI_OPENAI_API_VERSION = "2024-05-01-preview";
 const DEFAULT_FOUNDRY_OPENAI_API_VERSION = "v1";
 const DEFAULT_FOUNDRY_PROJECT_API_VERSION = "v1";
 const CUSTOM_VERSION_VALUE = "custom";
+const MODEL_ICON_CLASS_PATTERN = /^bi-[a-z0-9][a-z0-9-]{0,80}$/;
+const MODEL_ICON_CONTROL_CONFIG = Object.freeze({
+    editor: ".model-icon-editor",
+    mode: ".model-icon-mode",
+    classInput: ".model-icon-class",
+    imageData: ".model-icon-image-data",
+    preview: ".model-icon-preview",
+    typeBootstrap: ".model-icon-type-bootstrap",
+    typeImage: ".model-icon-type-image",
+    bootstrapControls: ".model-bootstrap-icon-controls",
+    imageControls: ".model-image-icon-controls",
+    pickerButton: ".model-icon-picker-button",
+    pickerLabel: ".model-icon-picker-label",
+    pickerSearch: ".model-icon-picker-search",
+    pickerList: ".model-icon-picker-list",
+    imageFile: ".model-icon-image-file",
+    imageClear: ".model-icon-image-clear",
+    defaultBootstrapIcon: "bi-stars"
+});
 
 function generateId() {
     if (window.crypto && window.crypto.randomUUID) {
@@ -954,6 +974,162 @@ function duplicateEndpoint(endpoint) {
     openDuplicateEndpointModal(duplicate);
 }
 
+function createElement(tagName, className = "") {
+    const element = document.createElement(tagName);
+    if (className) {
+        element.className = className;
+    }
+    return element;
+}
+
+function createSmallLabel(text) {
+    const label = createElement("label", "form-label small");
+    label.textContent = text;
+    return label;
+}
+
+function createModelTextInput(modelId, datasetKey, value, readOnly = false) {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "form-control form-control-sm";
+    input.dataset[datasetKey] = modelId;
+    input.value = value || "";
+    input.readOnly = readOnly;
+    return input;
+}
+
+function getModelIconDomId(modelId, suffix) {
+    const safeModelId = String(modelId || "model").replace(/[^A-Za-z0-9_-]/g, "-");
+    return `model-${safeModelId}-${suffix}`;
+}
+
+function normalizeModelBootstrapIcon(value) {
+    const iconClass = String(value || "").replace(/^bi\s+/, "").trim();
+    return MODEL_ICON_CLASS_PATTERN.test(iconClass) ? iconClass : "bi-stars";
+}
+
+function appendModelIconModeToggle(buttonGroup, modelId, mode, labelText) {
+    const input = document.createElement("input");
+    input.type = "radio";
+    input.className = `btn-check model-icon-type-${mode}`;
+    input.name = getModelIconDomId(modelId, "icon-type");
+    input.id = getModelIconDomId(modelId, `icon-type-${mode}`);
+    input.value = mode;
+    input.autocomplete = "off";
+    if (mode === "bootstrap") {
+        input.checked = true;
+    }
+
+    const label = document.createElement("label");
+    label.className = "btn btn-outline-secondary";
+    label.htmlFor = input.id;
+    label.textContent = labelText;
+
+    buttonGroup.appendChild(input);
+    buttonGroup.appendChild(label);
+}
+
+function createModelIconEditor(model, modelId) {
+    const iconPayload = model.icon && typeof model.icon === "object" && !Array.isArray(model.icon)
+        ? model.icon
+        : {};
+    const bootstrapIcon = normalizeModelBootstrapIcon(
+        iconPayload.kind === "bootstrap" ? iconPayload.value : "bi-stars"
+    );
+    const editor = createElement("div", "agent-icon-editor model-icon-editor border rounded p-2");
+    editor.dataset.modelEditorFor = modelId;
+
+    const modeInput = document.createElement("input");
+    modeInput.type = "hidden";
+    modeInput.className = "model-icon-mode";
+    modeInput.value = "bootstrap";
+    const classInput = document.createElement("input");
+    classInput.type = "hidden";
+    classInput.className = "model-icon-class";
+    classInput.setAttribute("data-icon-class-for", modelId);
+    classInput.value = bootstrapIcon;
+    const imageDataInput = document.createElement("input");
+    imageDataInput.type = "hidden";
+    imageDataInput.className = "model-icon-image-data";
+    imageDataInput.value = iconPayload.kind === "image" ? iconPayload.value || "" : "";
+
+    const topRow = createElement("div", "d-flex align-items-center gap-2 mb-2");
+    const preview = createElement("div", "agent-icon-preview model-icon-preview");
+    preview.setAttribute("aria-hidden", "true");
+    const buttonGroup = createElement("div", "btn-group btn-group-sm");
+    buttonGroup.setAttribute("role", "group");
+    buttonGroup.setAttribute("aria-label", "Model icon type");
+    appendModelIconModeToggle(buttonGroup, modelId, "bootstrap", "Bootstrap Icon");
+    appendModelIconModeToggle(buttonGroup, modelId, "image", "Image");
+    topRow.appendChild(preview);
+    topRow.appendChild(buttonGroup);
+
+    const bootstrapControls = createElement("div", "model-bootstrap-icon-controls");
+    const dropdown = createElement("div", "dropdown agent-icon-picker-dropdown");
+    const pickerButton = document.createElement("button");
+    pickerButton.type = "button";
+    pickerButton.className = "btn btn-outline-secondary btn-sm dropdown-toggle w-100 text-start model-icon-picker-button";
+    pickerButton.setAttribute("data-bs-toggle", "dropdown");
+    pickerButton.setAttribute("data-bs-auto-close", "outside");
+    pickerButton.setAttribute("aria-expanded", "false");
+    const pickerButtonIcon = document.createElement("i");
+    pickerButtonIcon.className = `bi ${bootstrapIcon} me-1`;
+    pickerButtonIcon.setAttribute("aria-hidden", "true");
+    const pickerLabel = createElement("span", "model-icon-picker-label");
+    pickerLabel.textContent = bootstrapIcon;
+    pickerButton.appendChild(pickerButtonIcon);
+    pickerButton.appendChild(pickerLabel);
+
+    const menu = createElement("div", "dropdown-menu p-2 agent-icon-picker-menu");
+    const search = document.createElement("input");
+    search.type = "search";
+    search.className = "form-control form-control-sm mb-2 model-icon-picker-search";
+    search.placeholder = "Search icons";
+    search.autocomplete = "off";
+    const list = createElement("div", "agent-icon-picker-list model-icon-picker-list");
+    list.setAttribute("role", "listbox");
+    list.setAttribute("aria-label", "Bootstrap icons");
+    menu.appendChild(search);
+    menu.appendChild(list);
+    dropdown.appendChild(pickerButton);
+    dropdown.appendChild(menu);
+    bootstrapControls.appendChild(dropdown);
+
+    const imageControls = createElement("div", "model-image-icon-controls d-none");
+    const fileInput = document.createElement("input");
+    fileInput.type = "file";
+    fileInput.className = "form-control form-control-sm model-icon-image-file";
+    fileInput.accept = ".png,.jpg,.jpeg,image/png,image/jpeg";
+    const helpText = createElement("div", "form-text");
+    helpText.textContent = "PNG or JPEG. The image is resized and saved with the model.";
+    const clearButton = document.createElement("button");
+    clearButton.type = "button";
+    clearButton.className = "btn btn-outline-secondary btn-sm mt-2 model-icon-image-clear";
+    clearButton.textContent = "Remove Image";
+    imageControls.appendChild(fileInput);
+    imageControls.appendChild(helpText);
+    imageControls.appendChild(clearButton);
+
+    editor.appendChild(modeInput);
+    editor.appendChild(classInput);
+    editor.appendChild(imageDataInput);
+    editor.appendChild(topRow);
+    editor.appendChild(bootstrapControls);
+    editor.appendChild(imageControls);
+
+    setIconPayload(
+        editor,
+        iconPayload.kind ? iconPayload : { kind: "bootstrap", value: bootstrapIcon },
+        MODEL_ICON_CONTROL_CONFIG
+    );
+    return editor;
+}
+
+function findModelEditor(modelId) {
+    return Array.from(modelsListEl?.querySelectorAll("[data-model-editor-for]") || [])
+        .find((editor) => editor.dataset.modelEditorFor === String(modelId));
+}
+
 function renderModalModels(models) {
     if (!modelsListEl) {
         return;
@@ -972,41 +1148,64 @@ function renderModalModels(models) {
         const modelName = model.modelName || "";
         const displayName = model.displayName || deploymentName;
         const description = model.description || "";
-        const iconClass = model.icon?.kind === "bootstrap" ? model.icon.value || "" : "";
         const deploymentReadonly = model.isDiscovered ? "readonly" : "";
         const modelId = model.id || generateId();
         model.id = modelId;
 
-        wrapper.innerHTML = `
-            <div class="form-check mb-2">
-                <input class="form-check-input" type="checkbox" data-model-id="${modelId}" ${model.enabled ? "checked" : ""}>
-                <label class="form-check-label">
-                    ${escapeHtml(deploymentName)} ${modelName ? `<span class=\"text-muted\">(${escapeHtml(modelName)})</span>` : ""}
-                </label>
-            </div>
-            <div class="row g-2">
-                <div class="col-md-4">
-                    <label class="form-label small">Deployment Name</label>
-                    <input type="text" class="form-control form-control-sm" data-deployment-name-for="${modelId}" value="${escapeHtml(deploymentName)}" ${deploymentReadonly}>
-                </div>
-                <div class="col-md-6">
-                    <label class="form-label small">Display Name</label>
-                    <input type="text" class="form-control form-control-sm" data-display-name-for="${modelId}" value="${escapeHtml(displayName)}">
-                </div>
-                <div class="col-md-4">
-                    <label class="form-label small">Icon (optional)</label>
-                    <input type="text" class="form-control form-control-sm" data-icon-class-for="${modelId}" value="${escapeHtml(iconClass)}" placeholder="bi-stars">
-                </div>
-                <div class="col-md-6">
-                    <label class="form-label small">Description (optional)</label>
-                    <input type="text" class="form-control form-control-sm" data-description-for="${modelId}" value="${escapeHtml(description)}">
-                </div>
-            </div>
-            <div class="d-flex gap-2 mt-2">
-                <button type="button" class="btn btn-sm btn-outline-secondary" data-action="test-model" data-model-id="${modelId}">Test Connection</button>
-                <button type="button" class="btn btn-sm btn-outline-danger" data-action="remove-model" data-model-id="${modelId}">Remove</button>
-            </div>
-        `;
+        const checkWrapper = createElement("div", "form-check mb-2");
+        const checkbox = document.createElement("input");
+        checkbox.className = "form-check-input";
+        checkbox.type = "checkbox";
+        checkbox.dataset.modelId = modelId;
+        checkbox.checked = !!model.enabled;
+        const checkboxLabel = createElement("label", "form-check-label");
+        checkboxLabel.appendChild(document.createTextNode(deploymentName));
+        if (modelName) {
+            checkboxLabel.appendChild(document.createTextNode(" "));
+            const modelNameLabel = createElement("span", "text-muted");
+            modelNameLabel.textContent = `(${modelName})`;
+            checkboxLabel.appendChild(modelNameLabel);
+        }
+        checkWrapper.appendChild(checkbox);
+        checkWrapper.appendChild(checkboxLabel);
+
+        const fieldsRow = createElement("div", "row g-2");
+        const deploymentCol = createElement("div", "col-md-4");
+        deploymentCol.appendChild(createSmallLabel("Deployment Name"));
+        deploymentCol.appendChild(createModelTextInput(modelId, "deploymentNameFor", deploymentName, Boolean(deploymentReadonly)));
+        const displayCol = createElement("div", "col-md-4");
+        displayCol.appendChild(createSmallLabel("Display Name"));
+        displayCol.appendChild(createModelTextInput(modelId, "displayNameFor", displayName));
+        const iconCol = createElement("div", "col-md-4");
+        iconCol.appendChild(createSmallLabel("Icon"));
+        iconCol.appendChild(createModelIconEditor(model, modelId));
+        const descriptionCol = createElement("div", "col-md-8");
+        descriptionCol.appendChild(createSmallLabel("Description (optional)"));
+        descriptionCol.appendChild(createModelTextInput(modelId, "descriptionFor", description));
+        fieldsRow.appendChild(deploymentCol);
+        fieldsRow.appendChild(displayCol);
+        fieldsRow.appendChild(iconCol);
+        fieldsRow.appendChild(descriptionCol);
+
+        const actions = createElement("div", "d-flex gap-2 mt-2");
+        const testButton = document.createElement("button");
+        testButton.type = "button";
+        testButton.className = "btn btn-sm btn-outline-secondary";
+        testButton.dataset.action = "test-model";
+        testButton.dataset.modelId = modelId;
+        testButton.textContent = "Test Connection";
+        const removeButton = document.createElement("button");
+        removeButton.type = "button";
+        removeButton.className = "btn btn-sm btn-outline-danger";
+        removeButton.dataset.action = "remove-model";
+        removeButton.dataset.modelId = modelId;
+        removeButton.textContent = "Remove";
+        actions.appendChild(testButton);
+        actions.appendChild(removeButton);
+
+        wrapper.appendChild(checkWrapper);
+        wrapper.appendChild(fieldsRow);
+        wrapper.appendChild(actions);
         fragment.appendChild(wrapper);
     });
 
@@ -1024,13 +1223,12 @@ function collectModalModels() {
         const checkbox = modelsListEl.querySelector(`input[data-model-id="${model.id}"]`);
         const deploymentInput = modelsListEl.querySelector(`input[data-deployment-name-for="${model.id}"]`);
         const displayInput = modelsListEl.querySelector(`input[data-display-name-for="${model.id}"]`);
-        const iconInput = modelsListEl.querySelector(`input[data-icon-class-for="${model.id}"]`);
         const descriptionInput = modelsListEl.querySelector(`input[data-description-for="${model.id}"]`);
+        const iconEditor = findModelEditor(model.id);
         model.enabled = checkbox ? checkbox.checked : model.enabled;
         model.deploymentName = deploymentInput ? deploymentInput.value.trim() : model.deploymentName;
         model.displayName = displayInput ? displayInput.value.trim() : model.displayName;
-        const iconClass = iconInput ? iconInput.value.trim() : "";
-        model.icon = iconClass ? { kind: "bootstrap", value: iconClass } : {};
+        model.icon = iconEditor ? getIconPayload(iconEditor, MODEL_ICON_CONTROL_CONFIG) : model.icon || {};
         model.description = descriptionInput ? descriptionInput.value.trim() : model.description;
     });
     return updated;

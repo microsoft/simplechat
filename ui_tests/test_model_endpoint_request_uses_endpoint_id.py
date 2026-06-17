@@ -1,13 +1,14 @@
 # test_model_endpoint_request_uses_endpoint_id.py
 """
 UI test for model endpoint request identity wiring.
-Version: 0.241.179
+Version: 0.242.060
 Implemented in: 0.241.179
 
 This test ensures the admin multi-endpoint modal exposes the supported
 providers, shows the APIM provider guidance, handles Foundry API version
-selection and project endpoint parsing, and sends the endpoint ID in the
-test-model request payload so the backend can resolve Key Vault-backed secrets.
+selection and project endpoint parsing, exposes model icon picker controls,
+and sends the endpoint ID in the test-model request payload so the backend can
+resolve Key Vault-backed secrets.
 """
 
 import os
@@ -94,6 +95,17 @@ def test_model_endpoint_request_uses_endpoint_id():
             page.locator("#model-endpoint-api-key").fill("temporary-ui-secret")
             page.locator("#model-endpoint-add-model-btn").click()
             page.locator("input[data-deployment-name-for]").first.fill("gpt-4o")
+            expect(page.locator(".model-icon-preview").first).to_be_visible()
+            expect(page.locator(".model-icon-picker-button").first).to_contain_text("bi-stars")
+            page.locator(".model-icon-picker-button").first.click()
+            expect(page.locator(".model-icon-picker-search").first).to_be_visible()
+            page.locator(".model-icon-picker-search").first.fill("robot")
+            expect(page.locator(".agent-icon-picker-option[data-icon-class='bi-robot']").first).to_be_visible()
+            page.locator(".agent-icon-picker-option[data-icon-class='bi-robot']").first.click()
+            expect(page.locator(".model-icon-picker-button").first).to_contain_text("bi-robot")
+            page.locator(".model-icon-type-image").first.check()
+            expect(page.locator(".model-icon-image-file").first).to_be_visible()
+            page.locator(".model-icon-type-bootstrap").first.check()
             page.locator("button[data-action='test-model']").first.click()
 
             expect(page.locator("#modelEndpointModal")).to_be_visible()

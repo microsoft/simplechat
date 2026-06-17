@@ -23,19 +23,40 @@ const AGENT_ICON_FALLBACK_CLASSES = Object.freeze([
 const AGENT_ICON_IMAGE_MAX_SIZE = 128;
 const AGENT_ICON_IMAGE_MAX_DATA_URL_LENGTH = 350000;
 const AGENT_ICON_CLASS_PATTERN = /^bi-[a-z0-9][a-z0-9-]{0,80}$/;
+const DEFAULT_ICON_CONTROL_SELECTORS = Object.freeze({
+	editor: '.agent-icon-editor',
+	mode: '#agent-icon-mode',
+	classInput: '#agent-icon-class',
+	imageData: '#agent-icon-image-data',
+	preview: '#agent-icon-preview',
+	typeBootstrap: '#agent-icon-type-bootstrap',
+	typeImage: '#agent-icon-type-image',
+	bootstrapControls: '#agent-bootstrap-icon-controls',
+	imageControls: '#agent-image-icon-controls',
+	pickerButton: '#agent-icon-picker-button',
+	pickerLabel: '#agent-icon-picker-label',
+	pickerSearch: '#agent-icon-picker-search',
+	pickerList: '#agent-icon-picker-list',
+	imageFile: '#agent-icon-image-file',
+	imageClear: '#agent-icon-image-clear',
+	defaultBootstrapIcon: 'bi-robot'
+});
 let bootstrapIconClassesPromise = null;
 
-function getScopedElement(root, id) {
-	if (!root) return null;
-	if (typeof root.getElementById === 'function') {
-		return root.getElementById(id);
-	}
-	return root.querySelector(`#${id}`);
+function getIconControlConfig(options = {}) {
+	return { ...DEFAULT_ICON_CONTROL_SELECTORS, ...(options || {}) };
 }
 
-function normalizeBootstrapIconClass(value) {
+function getScopedElement(root, selector) {
+	if (!root || !selector) return null;
+	const normalizedSelector = /^[#.\[]/.test(selector) ? selector : `#${selector}`;
+	return root.querySelector(normalizedSelector);
+}
+
+function normalizeBootstrapIconClass(value, fallbackIcon = 'bi-robot') {
+	const normalizedFallback = AGENT_ICON_CLASS_PATTERN.test(fallbackIcon) ? fallbackIcon : 'bi-robot';
 	const iconClass = String(value || '').replace(/^bi\s+/, '').trim();
-	return AGENT_ICON_CLASS_PATTERN.test(iconClass) ? iconClass : 'bi-robot';
+	return AGENT_ICON_CLASS_PATTERN.test(iconClass) ? iconClass : normalizedFallback;
 }
 
 async function loadBootstrapIconClasses() {
@@ -59,14 +80,15 @@ async function loadBootstrapIconClasses() {
 	return iconClasses.length ? iconClasses : Array.from(AGENT_ICON_FALLBACK_CLASSES);
 }
 
-function setAgentIconPreview(root) {
-	const mode = getScopedElement(root, 'agent-icon-mode')?.value || 'bootstrap';
-	const preview = getScopedElement(root, 'agent-icon-preview');
+function setIconPreview(root, options = {}) {
+	const config = getIconControlConfig(options);
+	const mode = getScopedElement(root, config.mode)?.value || 'bootstrap';
+	const preview = getScopedElement(root, config.preview);
 	if (!preview) return;
 	preview.textContent = '';
 
 	if (mode === 'image') {
-		const imageData = getScopedElement(root, 'agent-icon-image-data')?.value || '';
+		const imageData = getScopedElement(root, config.imageData)?.value || '';
 		if (/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(imageData)) {
 			const image = document.createElement('img');
 			image.src = imageData;
@@ -77,35 +99,37 @@ function setAgentIconPreview(root) {
 	}
 
 	const iconElement = document.createElement('i');
-	iconElement.className = `bi ${normalizeBootstrapIconClass(getScopedElement(root, 'agent-icon-class')?.value)}`;
+	iconElement.className = `bi ${normalizeBootstrapIconClass(getScopedElement(root, config.classInput)?.value, config.defaultBootstrapIcon)}`;
 	iconElement.setAttribute('aria-hidden', 'true');
 	preview.appendChild(iconElement);
 }
 
-function setAgentBootstrapIcon(root, iconClass) {
-	const normalizedIcon = normalizeBootstrapIconClass(iconClass);
-	const classInput = getScopedElement(root, 'agent-icon-class');
-	const pickerLabel = getScopedElement(root, 'agent-icon-picker-label');
-	const pickerButtonIcon = getScopedElement(root, 'agent-icon-picker-button')?.querySelector('i');
+function setBootstrapIcon(root, iconClass, options = {}) {
+	const config = getIconControlConfig(options);
+	const normalizedIcon = normalizeBootstrapIconClass(iconClass, config.defaultBootstrapIcon);
+	const classInput = getScopedElement(root, config.classInput);
+	const pickerLabel = getScopedElement(root, config.pickerLabel);
+	const pickerButtonIcon = getScopedElement(root, config.pickerButton)?.querySelector('i');
 	if (classInput) classInput.value = normalizedIcon;
 	if (pickerLabel) pickerLabel.textContent = normalizedIcon;
 	if (pickerButtonIcon) pickerButtonIcon.className = `bi ${normalizedIcon} me-1`;
-	setAgentIconPreview(root);
+	setIconPreview(root, config);
 }
 
-function setAgentIconMode(root, mode) {
+function setIconMode(root, mode, options = {}) {
+	const config = getIconControlConfig(options);
 	const normalizedMode = mode === 'image' ? 'image' : 'bootstrap';
-	const modeInput = getScopedElement(root, 'agent-icon-mode');
-	const bootstrapRadio = getScopedElement(root, 'agent-icon-type-bootstrap');
-	const imageRadio = getScopedElement(root, 'agent-icon-type-image');
-	const bootstrapControls = getScopedElement(root, 'agent-bootstrap-icon-controls');
-	const imageControls = getScopedElement(root, 'agent-image-icon-controls');
+	const modeInput = getScopedElement(root, config.mode);
+	const bootstrapRadio = getScopedElement(root, config.typeBootstrap);
+	const imageRadio = getScopedElement(root, config.typeImage);
+	const bootstrapControls = getScopedElement(root, config.bootstrapControls);
+	const imageControls = getScopedElement(root, config.imageControls);
 	if (modeInput) modeInput.value = normalizedMode;
 	if (bootstrapRadio) bootstrapRadio.checked = normalizedMode === 'bootstrap';
 	if (imageRadio) imageRadio.checked = normalizedMode === 'image';
 	bootstrapControls?.classList.toggle('d-none', normalizedMode !== 'bootstrap');
 	imageControls?.classList.toggle('d-none', normalizedMode !== 'image');
-	setAgentIconPreview(root);
+	setIconPreview(root, config);
 }
 
 function createImageFromUrl(imageUrl) {
@@ -143,8 +167,9 @@ async function resizeIconFileToDataUrl(file) {
 	}
 }
 
-async function renderAgentIconPickerOptions(root, filterText = '') {
-	const list = getScopedElement(root, 'agent-icon-picker-list');
+async function renderIconPickerOptions(root, filterText = '', options = {}) {
+	const config = getIconControlConfig(options);
+	const list = getScopedElement(root, config.pickerList);
 	if (!list) return;
 	list.textContent = '';
 	const normalizedFilter = String(filterText || '').trim().toLowerCase();
@@ -179,70 +204,82 @@ async function renderAgentIconPickerOptions(root, filterText = '') {
 	list.appendChild(fragment);
 }
 
-function initializeAgentIconControls(root = document) {
-	const editor = getScopedElement(root, 'agent-icon-preview')?.closest('.agent-icon-editor');
-	if (!editor || editor.dataset.bound === 'true') {
+export function initializeIconControls(root = document, options = {}) {
+	const config = getIconControlConfig(options);
+	const editor = getScopedElement(root, config.preview)?.closest(config.editor);
+	if (!editor || editor.dataset.iconControlsBound === 'true') {
 		return;
 	}
-	editor.dataset.bound = 'true';
+	editor.dataset.iconControlsBound = 'true';
 
-	getScopedElement(root, 'agent-icon-type-bootstrap')?.addEventListener('change', () => setAgentIconMode(root, 'bootstrap'));
-	getScopedElement(root, 'agent-icon-type-image')?.addEventListener('change', () => setAgentIconMode(root, 'image'));
-	getScopedElement(root, 'agent-icon-picker-search')?.addEventListener('input', event => {
-		renderAgentIconPickerOptions(root, event.target.value);
+	getScopedElement(root, config.typeBootstrap)?.addEventListener('change', () => setIconMode(root, 'bootstrap', config));
+	getScopedElement(root, config.typeImage)?.addEventListener('change', () => setIconMode(root, 'image', config));
+	getScopedElement(root, config.pickerSearch)?.addEventListener('input', event => {
+		renderIconPickerOptions(root, event.target.value, config);
 	});
-	getScopedElement(root, 'agent-icon-picker-list')?.addEventListener('click', event => {
+	getScopedElement(root, config.pickerList)?.addEventListener('click', event => {
 		const option = event.target.closest('.agent-icon-picker-option[data-icon-class]');
 		if (!option) return;
-		setAgentBootstrapIcon(root, option.dataset.iconClass);
-		bootstrap.Dropdown.getInstance(getScopedElement(root, 'agent-icon-picker-button'))?.hide();
+		setBootstrapIcon(root, option.dataset.iconClass, config);
+		window.bootstrap?.Dropdown?.getInstance(getScopedElement(root, config.pickerButton))?.hide();
 	});
-	getScopedElement(root, 'agent-icon-image-file')?.addEventListener('change', async event => {
+	getScopedElement(root, config.imageFile)?.addEventListener('change', async event => {
 		const file = event.target.files?.[0];
 		if (!file) return;
 		try {
 			const dataUrl = await resizeIconFileToDataUrl(file);
-			const imageDataInput = getScopedElement(root, 'agent-icon-image-data');
+			const imageDataInput = getScopedElement(root, config.imageData);
 			if (imageDataInput) imageDataInput.value = dataUrl;
-			setAgentIconMode(root, 'image');
+			setIconMode(root, 'image', config);
 		} catch (error) {
 			showToast(error.message || 'Unable to load icon image.', 'warning');
 			event.target.value = '';
 		}
 	});
-	getScopedElement(root, 'agent-icon-image-clear')?.addEventListener('click', () => {
-		const imageDataInput = getScopedElement(root, 'agent-icon-image-data');
-		const fileInput = getScopedElement(root, 'agent-icon-image-file');
+	getScopedElement(root, config.imageClear)?.addEventListener('click', () => {
+		const imageDataInput = getScopedElement(root, config.imageData);
+		const fileInput = getScopedElement(root, config.imageFile);
 		if (imageDataInput) imageDataInput.value = '';
 		if (fileInput) fileInput.value = '';
-		setAgentIconMode(root, 'bootstrap');
+		setIconMode(root, 'bootstrap', config);
 	});
 
-	renderAgentIconPickerOptions(root);
+	renderIconPickerOptions(root, '', config);
+}
+
+export function setIconPayload(root, iconPayload, options = {}) {
+	const config = getIconControlConfig(options);
+	initializeIconControls(root, config);
+	if (iconPayload && iconPayload.kind === 'image' && iconPayload.value) {
+		const imageDataInput = getScopedElement(root, config.imageData);
+		if (imageDataInput) imageDataInput.value = iconPayload.value;
+		setIconMode(root, 'image', config);
+		return;
+	}
+	setBootstrapIcon(root, iconPayload && iconPayload.kind === 'bootstrap' ? iconPayload.value : config.defaultBootstrapIcon, config);
+	setIconMode(root, 'bootstrap', config);
 }
 
 function setAgentIconPayload(root, iconPayload) {
-	initializeAgentIconControls(root);
-	if (iconPayload && iconPayload.kind === 'image' && iconPayload.value) {
-		const imageDataInput = getScopedElement(root, 'agent-icon-image-data');
-		if (imageDataInput) imageDataInput.value = iconPayload.value;
-		setAgentIconMode(root, 'image');
-		return;
+	setIconPayload(root, iconPayload);
+}
+
+export function getIconPayload(root, options = {}) {
+	const config = getIconControlConfig(options);
+	const mode = getScopedElement(root, config.mode)?.value || 'bootstrap';
+	if (mode === 'image') {
+		const imageData = getScopedElement(root, config.imageData)?.value || '';
+		if (/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(imageData)) {
+			const mimeType = imageData.startsWith('data:image/jpeg') ? 'image/jpeg' : 'image/png';
+			return { kind: 'image', value: imageData, mime_type: mimeType };
+		}
 	}
-	setAgentBootstrapIcon(root, iconPayload && iconPayload.kind === 'bootstrap' ? iconPayload.value : 'bi-robot');
-	setAgentIconMode(root, 'bootstrap');
+	const iconClass = getScopedElement(root, config.classInput)?.value || '';
+	return { kind: 'bootstrap', value: normalizeBootstrapIconClass(iconClass, config.defaultBootstrapIcon) };
 }
 
 export function getAgentIconPayload(root) {
-	const mode = getScopedElement(root, 'agent-icon-mode')?.value || 'bootstrap';
-	if (mode === 'image') {
-		const imageData = getScopedElement(root, 'agent-icon-image-data')?.value || '';
-		if (/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(imageData)) {
-			return { kind: 'image', value: imageData, mime_type: 'image/png' };
-		}
-	}
-	const iconClass = getScopedElement(root, 'agent-icon-class')?.value || '';
-	return { kind: 'bootstrap', value: normalizeBootstrapIconClass(iconClass) };
+	return getIconPayload(root);
 }
 
 /**

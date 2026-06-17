@@ -27,6 +27,7 @@ from semantic_kernel_plugins.base_plugin import BasePlugin
 from semantic_kernel.functions import kernel_function
 from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
 from functions_authentication import get_valid_access_token_for_plugins
+from functions_appinsights import log_event
 from functions_debug import debug_print
 from azure.core.credentials import AccessToken, TokenCredential
 from config import cosmos_messages_container, cosmos_conversations_container
@@ -41,6 +42,10 @@ AGGREGATION_FUNCTIONS = ["Sum"] #, "Average", "Min", "Max", "Count", "None"]
 AGGREGATION_COLUMNS= ["Cost", "CostUSD", "PreTaxCost", "PreTaxCostUSD"]
 DEFAULT_GROUPING_DIMENSIONS = ["None", "BillingPeriod", "ChargeType", "Frequency", "MeterCategory", "MeterId", "MeterSubCategory", "Product", "ResourceGroupName", "ResourceLocation", "ResourceType", "ServiceFamily", "ServiceName", "SubscriptionId", "SubscriptionName", "Tag"]
 SUPPORTED_GRAPH_TYPES = ["pie", "column_stacked", "column_grouped", "line", "area"]
+AZURE_BILLING_AUTH_FAILURE_MESSAGE = (
+    "Azure Billing service principal authentication failed. "
+    "Check Application Insights for [AzureBilling] details."
+)
 
 class AzureBillingPlugin(BasePlugin):
     def __init__(self, manifest: Dict[str, Any]):
@@ -89,21 +94,36 @@ class AzureBillingPlugin(BasePlugin):
                 resp = requests.post(token_url, data=data, timeout=10)
                 resp.raise_for_status()
             except requests.exceptions.HTTPError as e:
-                # Log the response text for diagnostics and raise a clear error
-                resp_text = getattr(e.response, 'text', '') if hasattr(e, 'response') else ''
-                logging.error("Failed to obtain service principal token. URL=%s, Error=%s, Response=%s", token_url, e, resp_text)
-                raise RuntimeError(f"Failed to obtain service principal token: {e}. Response: {resp_text}")
+                status_code = getattr(getattr(e, 'response', None), 'status_code', None)
+                log_event(
+                    "[AzureBilling] Service principal token request failed.",
+                    extra={"status_code": status_code, "error_type": type(e).__name__},
+                    level=logging.ERROR,
+                )
+                raise RuntimeError(AZURE_BILLING_AUTH_FAILURE_MESSAGE) from e
             except requests.exceptions.RequestException as e:
-                logging.error("Error requesting service principal token: %s", e)
-                raise
+                log_event(
+                    "[AzureBilling] Service principal token request error.",
+                    extra={"error_type": type(e).__name__},
+                    level=logging.ERROR,
+                )
+                raise RuntimeError(AZURE_BILLING_AUTH_FAILURE_MESSAGE) from e
             try:
                 token = resp.json().get('access_token')
             except ValueError:
-                logging.error("Invalid JSON returned from token endpoint: %s", resp.text)
-                raise RuntimeError(f"Invalid JSON returned from token endpoint: {resp.text}")
+                log_event(
+                    "[AzureBilling] Token endpoint returned invalid JSON.",
+                    extra={"status_code": getattr(resp, 'status_code', None)},
+                    level=logging.ERROR,
+                )
+                raise RuntimeError(AZURE_BILLING_AUTH_FAILURE_MESSAGE)
             if not token:
-                logging.error("Token endpoint did not return access_token. Response: %s", resp.text)
-                raise RuntimeError(f"Token endpoint did not return access_token. Response: {resp.text}")
+                log_event(
+                    "[AzureBilling] Token endpoint response did not include an access token.",
+                    extra={"status_code": getattr(resp, 'status_code', None)},
+                    level=logging.ERROR,
+                )
+                raise RuntimeError(AZURE_BILLING_AUTH_FAILURE_MESSAGE)
             return token
         else:
             class UserTokenCredential(TokenCredential):

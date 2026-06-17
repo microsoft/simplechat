@@ -44,7 +44,7 @@ The Foundry runtime built credentials with Azure Identity defaults unless a serv
 
 ## Impact Analysis
 
-Foundry agents and workflows now follow each signed-in user's Azure AI Foundry permissions by default. Users without Foundry access receive a sign-in or consent path instead of silently depending on the App Service identity. Model endpoint inference remains separate and continues to use its configured endpoint authentication.
+Foundry agents and workflows now follow each signed-in user's Azure AI Foundry permissions by default. Users without Foundry access receive a sign-in or consent path instead of silently depending on the App Service identity. In commercial Foundry, grant the user `Foundry User` or another appropriate renamed Foundry role. In Azure Government and custom clouds, the equivalent role may still appear under its earlier Azure AI role name. Model endpoint inference remains separate and continues to use its configured endpoint authentication.
 
 ## Validation
 

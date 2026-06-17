@@ -1,9 +1,10 @@
 # test_web_search_admin_connection_test.py
 """
 Functional test for Web Search admin connection testing.
-Version: 0.241.094
+Version: 0.242.060
 Implemented in: 0.241.069
 Updated in: 0.241.094
+Updated in: 0.242.060
 
 This test ensures the Admin Settings Web Search test validates Foundry settings,
 uses a live-search prompt boundary, returns actionable permission guidance, and
@@ -240,7 +241,8 @@ def test_permission_error_redacts_secret_and_returns_guidance():
     assert response["status"] == "permission"
     assert "super-secret-value" not in response["error"]
     assert "[redacted]" in response["error"]
-    assert any("Cognitive Services User" in item for item in response["guidance"])
+    assert any("Foundry User" in item for item in response["guidance"])
+    assert any("Azure AI User" in item for item in response["guidance"])
     print("Permission diagnostics checks passed")
 
 

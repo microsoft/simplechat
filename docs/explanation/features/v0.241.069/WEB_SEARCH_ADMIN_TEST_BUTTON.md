@@ -12,7 +12,7 @@ Admins can now test Web Search from Admin Settings before relying on it in chat.
 
 - `application/single_app/config.py` version `0.241.069`
 - Azure AI Foundry project endpoint and agent ID
-- Managed identity or service principal access to the Foundry project
+- Managed identity or service principal access to the Foundry project. Commercial Foundry uses the renamed `Foundry User` role for minimum project access; Azure Government and custom clouds may still show the equivalent `Azure AI User` role name.
 - Foundry agent with Grounding with Bing Search configured
 
 ## Technical Specifications

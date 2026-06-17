@@ -33,6 +33,65 @@ import time
 import uuid
 
 
+def _resolve_test_payload_secret(payload, path, settings, field_name):
+    current = payload if isinstance(payload, dict) else {}
+    for part in path[:-1]:
+        current = current.get(part) if isinstance(current, dict) else None
+    if not isinstance(current, dict) or path[-1] not in current:
+        return
+    current[path[-1]] = resolve_admin_settings_secret_value(field_name, current.get(path[-1]), settings)
+
+
+def _resolve_admin_settings_test_secrets(payload):
+    settings = get_settings()
+    test_type = str((payload or {}).get('test_type') or '').strip()
+    if test_type == 'gpt':
+        if payload.get('enable_apim'):
+            _resolve_test_payload_secret(payload, ('apim', 'subscription_key'), settings, 'azure_apim_gpt_subscription_key')
+        else:
+            _resolve_test_payload_secret(payload, ('direct', 'key'), settings, 'azure_openai_gpt_key')
+    elif test_type == 'embedding':
+        if payload.get('enable_apim'):
+            _resolve_test_payload_secret(payload, ('apim', 'subscription_key'), settings, 'azure_apim_embedding_subscription_key')
+        else:
+            _resolve_test_payload_secret(payload, ('direct', 'key'), settings, 'azure_openai_embedding_key')
+    elif test_type == 'image':
+        if payload.get('enable_apim'):
+            _resolve_test_payload_secret(payload, ('apim', 'subscription_key'), settings, 'azure_apim_image_gen_subscription_key')
+        else:
+            _resolve_test_payload_secret(payload, ('direct', 'key'), settings, 'azure_openai_image_gen_key')
+    elif test_type == 'safety':
+        if payload.get('enable_apim'):
+            _resolve_test_payload_secret(payload, ('apim', 'subscription_key'), settings, 'azure_apim_content_safety_subscription_key')
+        else:
+            _resolve_test_payload_secret(payload, ('direct', 'key'), settings, 'content_safety_key')
+    elif test_type == 'azure_ai_search':
+        if payload.get('enable_apim'):
+            _resolve_test_payload_secret(payload, ('apim', 'subscription_key'), settings, 'azure_apim_ai_search_subscription_key')
+        else:
+            _resolve_test_payload_secret(payload, ('direct', 'key'), settings, 'azure_ai_search_key')
+    elif test_type == 'azure_doc_intelligence':
+        if payload.get('enable_apim'):
+            _resolve_test_payload_secret(payload, ('apim', 'subscription_key'), settings, 'azure_apim_document_intelligence_subscription_key')
+        else:
+            _resolve_test_payload_secret(payload, ('direct', 'key'), settings, 'azure_document_intelligence_key')
+    elif test_type == 'redis':
+        _resolve_test_payload_secret(payload, ('key',), settings, 'redis_key')
+    elif test_type == 'web_search':
+        _resolve_test_payload_secret(
+            payload,
+            ('foundry', 'client_secret'),
+            settings,
+            'web_search_agent.other_settings.azure_ai_foundry.client_secret',
+        )
+    elif test_type == 'multimodal_vision':
+        if payload.get('enable_apim'):
+            _resolve_test_payload_secret(payload, ('apim', 'subscription_key'), settings, 'azure_apim_gpt_subscription_key')
+        else:
+            _resolve_test_payload_secret(payload, ('direct', 'key'), settings, 'azure_openai_gpt_key')
+    return payload
+
+
 def auto_fix_index_fields(idx_type: str, user_id: str = 'system', admin_email: str = None) -> dict:
     """
     Automatically fix missing fields in an Azure AI Search index.
@@ -408,7 +467,8 @@ def register_route_backend_settings(app):
         data from admin_settings.js. Uses that data to attempt an actual connection
         to GPT, Embeddings, etc., and returns success/failure.
         """
-        data = request.get_json(force=True)
+        data = request.get_json(force=True) or {}
+        data = _resolve_admin_settings_test_secrets(data)
         test_type = data.get('test_type', '')
 
         try:

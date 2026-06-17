@@ -5,6 +5,8 @@ Dependencies: Azure AI Foundry project endpoints, agent modal stepper, scoped ag
 
 Fixed/Implemented in version: **0.239.154**
 
+Updated in version: **0.242.060**
+
 ## Overview
 
 SimpleChat now supports both Foundry experiences at the same time instead of forcing a migration path.
@@ -14,6 +16,12 @@ SimpleChat now supports both Foundry experiences at the same time instead of for
 - The agent modal, schema validation, backend payload sanitizer, loader, and chat runtime now recognize both modes side by side.
 
 This change is intentionally additive. Existing classic Foundry agents continue to work without migration.
+
+## Foundry RBAC Role Name Guidance
+
+For Microsoft Entra ID/RBAC access, commercial Microsoft Foundry now uses the renamed role names `Foundry User`, `Foundry Owner`, `Foundry Account Owner`, and `Foundry Project Manager`. Azure Government and custom cloud deployments may still show the earlier names `Azure AI User`, `Azure AI Owner`, `Azure AI Account Owner`, and `Azure AI Project Manager`. Treat these as cloud-specific names for the same built-in roles while the rename rolls out; use role definition IDs in automation when possible.
+
+For chat-selectable Foundry agents and workflows, start with `Foundry User` in commercial clouds or `Azure AI User` where that older name is still shown. Administrative setup can use the owner/project-manager roles appropriate to the target cloud. In supported commercial Foundry scenarios, Foundry Account Owner and Foundry Owner can assign selected dependent roles such as `Foundry User`, supported Container Registry roles, and `Log Analytics Reader`.
 
 ## Technical Specifications
 

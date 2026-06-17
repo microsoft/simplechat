@@ -178,22 +178,31 @@
                                 <table class="table table-sm table-bordered">
                                     <thead class="table-light">
                                         <tr>
-                                            <th>Role</th>
+                                            <th>Commercial role name</th>
+                                            <th>Azure Government/custom cloud name that may still appear</th>
                                             <th>Purpose</th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         <tr>
-                                            <td><strong>Cognitive Services User</strong></td>
-                                            <td>Required to invoke AI models</td>
+                                            <td><strong>Foundry User</strong></td>
+                                            <td><strong>Azure AI User</strong></td>
+                                            <td>Minimum role for the identity that accesses and runs the Foundry agent</td>
                                         </tr>
                                         <tr>
-                                            <td><strong>Azure AI Developer</strong></td>
-                                            <td>Required to access and run agents</td>
+                                            <td><strong>Foundry Project Manager</strong></td>
+                                            <td><strong>Azure AI Project Manager</strong></td>
+                                            <td>Optional project management role for users who create and manage project access</td>
+                                        </tr>
+                                        <tr>
+                                            <td><strong>Foundry Account Owner / Foundry Owner</strong></td>
+                                            <td><strong>Azure AI Account Owner / Azure AI Owner</strong></td>
+                                            <td>Administrative roles; in commercial Foundry, can assign selected dependent roles such as Foundry User, supported Container Registry roles, and Log Analytics Reader</td>
                                         </tr>
                                     </tbody>
                                 </table>
                             </div>
+                            <p class="small text-muted mb-0">Use the role name shown in the target cloud portal. Role IDs and core permissions are unchanged by the Foundry rename, so role definition IDs are safest for automation during the transition.</p>
                         </div>
 
                         <!-- Step 10: Configure SimpleChat -->
@@ -277,7 +286,7 @@
                                         <ul>
                                             <li><strong>Verify Agent ID:</strong> Ensure the Agent ID matches exactly (starts with <code>asst_</code>)</li>
                                             <li><strong>Check Endpoint Format:</strong> Use the project endpoint, not the inference endpoint</li>
-                                            <li><strong>Confirm RBAC Roles:</strong> App Service identity needs both Cognitive Services User and Azure AI Developer roles</li>
+                                            <li><strong>Confirm RBAC Role:</strong> App Service identity needs Foundry User on the Foundry project; Azure Government and custom clouds may still show this role as Azure AI User</li>
                                             <li><strong>Wait for Role Propagation:</strong> After assigning roles, wait 5-10 minutes</li>
                                             <li><strong>Enable Debug Logging:</strong> Check Logging tab to enable debug output</li>
                                         </ul>
@@ -328,7 +337,7 @@
                                     <div class="accordion-body">
                                         <ul>
                                             <li><strong>Managed Identity Enabled:</strong> Verify System-Assigned Managed Identity is enabled on App Service</li>
-                                            <li><strong>Check Both Roles:</strong> Identity needs <strong>both</strong> Cognitive Services User AND Azure AI Developer roles</li>
+                                            <li><strong>Check Role Name:</strong> Identity needs <strong>Foundry User</strong> in commercial Foundry, or <strong>Azure AI User</strong> where the older role name still appears</li>
                                             <li><strong>Correct Scope:</strong> Roles must be assigned at the Foundry project level, not subscription</li>
                                             <li><strong>For Service Principal:</strong> Verify Tenant ID, Client ID, and Client Secret are correct</li>
                                         </ul>

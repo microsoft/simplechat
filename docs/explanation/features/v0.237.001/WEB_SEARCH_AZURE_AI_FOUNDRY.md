@@ -179,6 +179,20 @@ When consent is accepted, the following information is logged:
 
 - Azure AI Foundry account with Grounding with Bing Search enabled
 - Proper Azure AI Foundry configuration in SimpleChat
+- Microsoft Entra ID/RBAC access to the Foundry project. In commercial Foundry, assign `Foundry User` to the identity that runs the agent. In Azure Government and custom clouds, the same role may still appear as `Azure AI User`; use the role name shown in that cloud's portal.
+
+## Foundry RBAC Role Names
+
+The Foundry RBAC role names are being updated in commercial Microsoft Foundry:
+
+| Commercial Foundry role name | Earlier role name that may still appear in Azure Government and custom clouds |
+|------------------------------|-------------------------------------------------------------------------------|
+| `Foundry Account Owner` | `Azure AI Account Owner` |
+| `Foundry Owner` | `Azure AI Owner` |
+| `Foundry User` | `Azure AI User` |
+| `Foundry Project Manager` | `Azure AI Project Manager` |
+
+The role IDs and core permissions are unchanged by the rename. For scripts or runbooks, prefer role definition IDs where practical so automation works during the naming transition. Foundry Account Owner and Foundry Owner can assign selected dependent roles in supported commercial Foundry scenarios, including `Foundry User`, supported Container Registry roles, and `Log Analytics Reader`; check the target cloud portal for the currently available assignment set.
 
 ## Known Limitations
 

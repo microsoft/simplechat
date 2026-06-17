@@ -50,4 +50,4 @@ python -m py_compile application/single_app/foundry_agent_runtime.py application
 
 ## Impact Analysis
 
-Users can continue using API-key saved model endpoints for normal model inference. Chat-selectable Foundry agents and workflows now require signed-in user, managed identity, or service principal access with the appropriate Foundry RBAC permissions. Web Search configuration remains isolated and unchanged.
+Users can continue using API-key saved model endpoints for normal model inference. Chat-selectable Foundry agents and workflows now require signed-in user, managed identity, or service principal access with the appropriate Foundry RBAC permissions. In commercial Foundry, use the renamed role names such as `Foundry User`; in Azure Government and custom clouds, use the equivalent role name shown in the portal, which may still be `Azure AI User`. Web Search configuration remains isolated and unchanged.

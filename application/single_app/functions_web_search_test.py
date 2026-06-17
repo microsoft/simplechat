@@ -178,7 +178,7 @@ def _categorize_web_search_error(error: Exception) -> Tuple[str, str, List[str]]
             "permission",
             "Foundry rejected the request because the configured identity does not have enough access.",
             [
-                "Grant the identity Cognitive Services User and Azure AI Developer roles on the Foundry project.",
+                "Grant the identity Foundry User on the Foundry project; Azure Government and custom clouds may still show this role as Azure AI User.",
                 "If role assignments were just added, wait a few minutes for propagation and test again.",
                 "Confirm the agent itself has access to Grounding with Bing Search in the selected project.",
             ],
