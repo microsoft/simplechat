@@ -4,6 +4,7 @@ import logging
 
 from config import *
 from functions_authentication import *
+from functions_governance import ensure_governance_access
 from functions_group import assert_group_role, get_group_model_endpoints, require_active_group, update_group_model_endpoints
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_get_helper, keyvault_model_endpoint_save_helper
 from functions_settings import *
@@ -89,20 +90,60 @@ def register_route_backend_models(app):
     def resolve_scoped_model_endpoints(user_id, scope):
         settings = get_settings()
         endpoints = []
+
+        def get_governed_endpoints(candidate_endpoints, feature_key, endpoint_scope):
+            try:
+                ensure_governance_access(feature_key, user_id)
+            except PermissionError:
+                return []
+
+            governed_endpoints = []
+            for endpoint in candidate_endpoints or []:
+                if not isinstance(endpoint, dict):
+                    continue
+                endpoint_id = str(endpoint.get("id") or "").strip()
+                if endpoint_id:
+                    try:
+                        ensure_governance_access(
+                            feature_key,
+                            user_id,
+                            item_entity_type="global_endpoint",
+                            item_id=endpoint_id,
+                        )
+                    except PermissionError:
+                        continue
+                governed_endpoint = dict(endpoint)
+                governed_endpoint["_governance_endpoint_scope"] = endpoint_scope
+                governed_endpoints.append(governed_endpoint)
+            return governed_endpoints
+
         if scope == "group":
             if settings.get("allow_group_custom_endpoints", False):
                 group_id = require_active_group(user_id)
-                endpoints.extend(get_group_model_endpoints(group_id))
+                endpoints.extend(get_governed_endpoints(get_group_model_endpoints(group_id), "governance_group_endpoints", "group"))
         elif scope == "user":
             if settings.get("allow_user_custom_endpoints", False):
                 user_settings = get_user_settings(user_id)
-                endpoints.extend(user_settings.get("settings", {}).get("personal_model_endpoints", []))
-        endpoints.extend(settings.get("model_endpoints", []) or [])
+                endpoints.extend(get_governed_endpoints(user_settings.get("settings", {}).get("personal_model_endpoints", []), "governance_user_endpoints", "user"))
+        endpoints.extend(get_governed_endpoints(settings.get("model_endpoints", []) or [], "governance_global_endpoints", "global"))
         return endpoints
 
     def resolve_endpoint_by_id(user_id, scope, endpoint_id):
         endpoints = resolve_scoped_model_endpoints(user_id, scope)
-        return next((endpoint for endpoint in endpoints if endpoint.get("id") == endpoint_id), None)
+        endpoint = next((endpoint for endpoint in endpoints if endpoint.get("id") == endpoint_id), None)
+        if endpoint:
+            endpoint = dict(endpoint)
+            endpoint_scope = endpoint.pop("_governance_endpoint_scope", scope)
+            feature_key = "governance_global_endpoints"
+            if endpoint_scope in ("user", "group"):
+                feature_key = f"governance_{endpoint_scope}_endpoints"
+            ensure_governance_access(
+                feature_key,
+                user_id,
+                item_entity_type="global_endpoint",
+                item_id=endpoint_id,
+            )
+        return endpoint
 
     def resolve_endpoint_scope_value(endpoint_cfg, fallback_endpoint_id=""):
         endpoint_id = (fallback_endpoint_id or endpoint_cfg.get("id") or "").strip()
@@ -742,6 +783,9 @@ def register_route_backend_models(app):
                 level=logging.WARNING,
             )
             return build_safe_error_response("The selected model endpoint could not be found.", 404)
+        except PermissionError as e:
+            log_models_exception("Test connection blocked by governance policy", e, level=logging.WARNING)
+            return build_safe_error_response(str(e), 403)
         except ValueError as e:
             log_models_exception("Test connection validation failed", e, level=logging.WARNING)
             return build_safe_error_response(
@@ -772,6 +816,10 @@ def register_route_backend_models(app):
     @enabled_required('allow_user_custom_endpoints')
     def get_user_model_endpoints():
         user_id = get_current_user_id()
+        try:
+            ensure_governance_access("governance_user_endpoints", user_id)
+        except PermissionError as exc:
+            return jsonify({"error": str(exc)}), 403
         user_settings = get_user_settings(user_id)
         endpoints = user_settings.get("settings", {}).get("personal_model_endpoints", [])
         return jsonify({
@@ -786,6 +834,10 @@ def register_route_backend_models(app):
     @enabled_required('allow_user_custom_endpoints')
     def save_user_model_endpoints():
         user_id = get_current_user_id()
+        try:
+            ensure_governance_access("governance_user_endpoints", user_id)
+        except PermissionError as exc:
+            return jsonify({"error": str(exc)}), 403
         data = request.get_json() or {}
         incoming = data.get("endpoints", [])
         if not isinstance(incoming, list):
@@ -850,6 +902,7 @@ def register_route_backend_models(app):
     def get_group_model_endpoints_route():
         user_id = get_current_user_id()
         try:
+            ensure_governance_access("governance_group_endpoints", user_id)
             group_id = require_active_group(user_id)
             assert_group_role(
                 user_id,
@@ -876,6 +929,10 @@ def register_route_backend_models(app):
     @enabled_required('allow_group_custom_endpoints')
     def save_group_model_endpoints():
         user_id = get_current_user_id()
+        try:
+            ensure_governance_access("governance_group_endpoints", user_id)
+        except PermissionError as exc:
+            return jsonify({"error": str(exc)}), 403
         data = request.get_json() or {}
         incoming = data.get("endpoints", [])
         if not isinstance(incoming, list):
@@ -965,7 +1022,10 @@ def register_route_backend_models(app):
             except PermissionError as exc:
                 return build_group_access_error_response(user_id, exc, "group Foundry agents")
 
-        endpoint_cfg = resolve_endpoint_by_id(user_id, scope, endpoint_id)
+        try:
+            endpoint_cfg = resolve_endpoint_by_id(user_id, scope, endpoint_id)
+        except PermissionError as exc:
+            return jsonify({"error": str(exc)}), 403
         if not endpoint_cfg:
             return jsonify({"error": "Model endpoint not found."}), 404
         endpoint_cfg = keyvault_model_endpoint_get_helper(

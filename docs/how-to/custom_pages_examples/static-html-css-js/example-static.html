@@ -1,0 +1,45 @@
+<!-- example-static.html -->
+<section class="custom-static-example" data-static-example>
+    <div class="custom-static-example__hero">
+        <div>
+            <p class="custom-static-example__eyebrow">Static HTML, CSS, and JS</p>
+            <h2 class="custom-static-example__title">Custom static experience</h2>
+            <p class="custom-static-example__summary">
+                This page combines a deployed HTML fragment, a page-specific stylesheet,
+                and a JavaScript module served through the Custom Pages asset route.
+            </p>
+        </div>
+        <span class="custom-static-example__badge" data-static-status>Ready</span>
+    </div>
+
+    <div class="custom-static-example__grid">
+        <div class="custom-static-example__panel">
+            <span class="custom-static-example__metric" data-static-counter-value>0</span>
+            <span class="custom-static-example__label">Button clicks</span>
+        </div>
+        <div class="custom-static-example__panel">
+            <span class="custom-static-example__metric" data-static-time>Not refreshed yet</span>
+            <span class="custom-static-example__label">Last client refresh</span>
+        </div>
+    </div>
+
+    <div class="custom-static-example__viewer" aria-label="Cat video viewer">
+        <div class="custom-static-example__viewer-header">
+            <span class="custom-static-example__label">Asset viewer</span>
+            <span class="custom-static-example__viewer-file">cat.mp4</span>
+        </div>
+        <video class="custom-static-example__video" controls preload="metadata">
+            <source src="/custom/assets/example-static/assets/cat.mp4" type="video/mp4">
+            Your browser does not support the video element.
+        </video>
+    </div>
+
+    <div class="custom-static-example__actions">
+        <button type="button" class="btn btn-primary" data-static-counter-button>
+            Count Click
+        </button>
+        <button type="button" class="btn btn-outline-secondary" data-static-time-button>
+            Refresh Time
+        </button>
+    </div>
+</section>

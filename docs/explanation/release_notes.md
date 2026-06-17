@@ -1,8 +1,62 @@
 <!-- BEGIN release_notes.md BLOCK -->
 
-This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.241.210, and the per-version entries continue immediately after it.
+This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.242.045, and the per-version entries continue immediately after it.
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
+
+### **(v0.242.045)**
+
+#### New Features
+
+*   **Beta Feature Integration with Development Governance**
+    *   Prepared the beta feature branch for integration with the latest `Development` governance, custom pages, and user settings cache changes.
+    *   Preserved beta capabilities for agent catalog customization, file sync, workflows, workspace identities, Data Management, and chat/workspace productivity while applying Development governance gates where required.
+    *   (Ref: Development merge resolution, governance integration, PR readiness)
+
+### **(v0.242.044)**
+
+#### New Features
+
+*   **User Settings Cache Optimization**
+    *   Added request-scoped memoization for full user settings reads and a lightweight user UI settings cache that works with Redis-enabled and no-Redis deployments.
+    *   Shared page scripts now reuse injected UI preferences for dark mode and navigation layout before falling back to the full user settings API.
+    *   (Ref: user settings cache, user UI settings cache, `functions_settings.py`, `app_settings_cache.py`, `dark-mode.js`, `sidebar.js`)
+
+### **(v0.242.033)**
+
+#### New Features
+
+*   **Custom Pages**
+    *   Added administrator-managed custom pages with static HTML/CSS/JS assets, optional Python-backed page extensions, and authenticated host routes for publishing internal experiences inside SimpleChat.
+    *   Added Admin Settings controls, navigation wiring, example page templates, documentation, and functional coverage for disabled-by-default fail-closed behavior.
+    *   (Ref: custom pages, Admin Settings Custom Pages tab, `route_custom_pages.py`, `functions_custom_pages.py`)
+
+### **(v0.242.022)**
+
+#### New Features
+
+*   **Governance Controls for Endpoints, Agents, and Actions**
+    *   Added in-app governance policies that let administrators control access to personal, group, and global endpoints, agents, and actions.
+    *   Added feature-level policies, delegated item policies, review workflows, backend enforcement, and Admin Settings UI for managing governance allowlists.
+    *   (Ref: governance policies, delegated item policies, Admin Settings Governance tab)
+
+*   **Governance and App Settings Cache Versioning**
+    *   Added cache-version coordination so settings and governance policy changes can invalidate stale worker process caches across Redis-enabled and non-Redis deployments.
+    *   Keeps hot-path settings and governance checks fast while reducing stale reads after admin changes.
+    *   (Ref: app settings cache, governance cache versioning)
+
+*   **Pull Request Preparation Prompt**
+    *   Added a reusable Copilot prompt for preparing SimpleChat branches for pull requests into `Development`.
+    *   The workflow verifies branch freshness against `Development`, runs repo-aligned validation checks, updates release notes when needed, and gates push or PR creation behind explicit user confirmation.
+    *   Optional merge or rebase from `Development` is supported only when requested, with conflicts resolved interactively by the agent after explaining each side of the conflict.
+    *   (Ref: `.github/prompts/prepare-for-pull-request.prompt.md`, PR readiness workflow, Development branch validation)
+
+#### Bug Fixes
+
+*   **Governance Admin Rendering XSS Hardening**
+    *   Reworked changed admin governance, model endpoint, agent, and plugin table rendering paths so untrusted names, descriptions, IDs, and labels are populated with DOM APIs and `textContent` instead of interpolated HTML attributes.
+    *   Added narrow reviewed XSS guardrail suppressions only for static Bootstrap modal shells that do not interpolate untrusted values.
+    *   (Ref: governance admin UI, model endpoint table, plugin table rendering, XSS sink validation)
 
 ### **(v0.241.210)**
 

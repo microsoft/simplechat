@@ -2,15 +2,18 @@
 # test_chat_searchable_selectors.py
 """
 Functional test for grouped searchable chat selectors.
-Version: 0.241.031
-Implemented in: 0.241.031
+Version: 0.242.017
+Implemented in: 0.242.017
 
 This test ensures that the chat page exposes grouped searchable selectors for
 documents, prompts, models, and agents, that grouped headers are preserved by
 the shared renderer during search, and that chat prompt data is preloaded for
 personal, group, and public workspace scopes while locked conversations hide
 unavailable agents and models while grounded search becomes a mobile drawer
-with an explicit mobile close control and a visible loading state for tags.
+with an explicit mobile close control, a visible loading state for tags, and
+responsive scope, tag, and document dropdown menu sizing.
+It also verifies that the document dropdown opens upward on desktop and down in
+the mobile grounded-search drawer.
 """
 
 import os
@@ -128,6 +131,7 @@ def test_chat_template_contains_searchable_selectors():
             'class="chat-search-panel-grid"',
             'id="search-documents-mobile-close"',
             'class="chat-search-panel-mobile-footer d-lg-none"',
+            'chat-search-filter-menu',
             'id="tags-dropdown-loading-spinner"',
             'Loading tags...',
             'class="chat-toolbar mb-2"',
@@ -417,8 +421,23 @@ def test_scope_tag_and_document_search_are_wired_in_chat_documents():
             'const scopeSearchInput = document.getElementById("scope-search-input");',
             'const tagsSearchInput = document.getElementById("tags-search-input");',
             'const SEARCH_DOCUMENTS_MOBILE_MEDIA_QUERY = \u0027(max-width: 991.98px)\u0027;',
-            'function getSearchDocumentsDropdownConfig() {',
+            'const SEARCH_DROPDOWN_VIEWPORT_PADDING = 16;',
+            'const SEARCH_FILTER_DESKTOP_MIN_WIDTH = 320;',
+            'const SEARCH_FILTER_DESKTOP_MAX_WIDTH = 640;',
             'function initializeSearchFilterDropdown({',
+            'openUpOnDesktop = false,',
+            'function getSearchDocumentsDropdownConfig({ openUpOnDesktop = false } = {}) {',
+            "placement: shouldOpenUp ? 'top-start' : 'bottom-start',",
+            "name: 'flip',",
+            'enabled: !shouldOpenUp,',
+            'const isMobileDrawer = isSearchDocumentsMobileDrawerViewport();',
+            "const popperPlacement = menuEl.getAttribute('data-popper-placement') || '';",
+            "const opensUp = popperPlacement.startsWith('top') && !isMobileDrawer;",
+            '? buttonRect.top - SEARCH_DROPDOWN_VIEWPORT_PADDING',
+            "bootstrap.Dropdown.getInstance(buttonEl)?.update();",
+            "menuEl.style.width = isMobileDrawer ? `${Math.round(minWidth)}px` : 'max-content';",
+            'menuEl.style.minWidth = `${Math.round(minWidth)}px`;',
+            'menuEl.style.maxWidth = `${Math.round(maxWidth)}px`;',
             "boundary: 'viewport',",
             "strategy: 'fixed',",
             'export async function showSearchDocumentsPanel() {',
@@ -430,6 +449,7 @@ def test_scope_tag_and_document_search_are_wired_in_chat_documents():
             'searchController: scopeSearchController,',
             'searchController: tagsSearchController,',
             'searchController: documentSearchController,',
+            'openUpOnDesktop: true,',
             "allItem.setAttribute('data-search-role', 'action');",
             "item.setAttribute('data-search-role', 'item');",
             'function appendDocumentSection(sectionLabel, documents, sectionIndex) {',
@@ -444,6 +464,7 @@ def test_scope_tag_and_document_search_are_wired_in_chat_documents():
 
         missing = [snippet for snippet in required_snippets if snippet not in content]
         assert not missing, f'Missing scope/tag/document search wiring: {missing}'
+        assert 'menuEl.style.maxWidth = `${containerWidth}px`;' not in content, 'Expected dropdown max width to avoid being capped to the trigger container'
 
         print('✅ Scope/tag/document grouped search wiring passed')
         return True
@@ -583,7 +604,7 @@ def test_version_bumped_for_grouped_chat_selector_change():
 
     try:
         config_content = read_file(CONFIG_FILE)
-        assert 'VERSION = "0.241.031"' in config_content, 'Expected config.py version 0.241.031'
+        assert 'VERSION = "0.242.017"' in config_content, 'Expected config.py version 0.242.017'
 
         print('✅ Config version bump passed')
         return True

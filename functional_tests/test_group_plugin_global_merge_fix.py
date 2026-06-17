@@ -2,8 +2,8 @@
 # test_group_plugin_global_merge_fix.py
 """
 Functional test for group plugin global merge behavior.
-Version: 0.233.164
-Implemented in: 0.233.164
+Version: 0.241.022
+Implemented in: 0.233.164; 0.241.022
 
 This test ensures that when global actions are merged into group workspaces,
 only group-owned actions remain editable and duplicate names are handled.
@@ -12,7 +12,10 @@ only group-owned actions remain editable and duplicate names are handled.
 import sys
 import os
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SINGLE_APP_DIR = os.path.join(ROOT_DIR, "application", "single_app")
+if SINGLE_APP_DIR not in sys.path:
+    sys.path.append(SINGLE_APP_DIR)
 
 
 def test_global_actions_are_included_without_duplicates():

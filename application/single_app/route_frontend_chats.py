@@ -29,6 +29,7 @@ from functions_group import (
     get_user_role_in_group,
     require_active_group,
 )
+from functions_governance import ensure_governance_access
 from functions_image_messages import build_image_message_documents
 from functions_prompts import list_all_prompts_for_scope
 from functions_public_workspaces import find_public_workspace_by_id, get_user_visible_public_workspace_ids_from_settings
@@ -394,6 +395,49 @@ def _normalize_chat_model_value(value):
     return str(value or '').strip()
 
 
+def _is_chat_agent_allowed_by_governance(user_id, agent, scope_type):
+    try:
+        if scope_type == 'global':
+            ensure_governance_access(
+                'governance_global_agents_usage',
+                user_id,
+                item_entity_type='global_agent',
+                item_id=str(agent.get('id') or agent.get('name') or ''),
+            )
+        elif scope_type == 'group':
+            ensure_governance_access('governance_group_agents', user_id)
+        else:
+            ensure_governance_access('governance_user_agents', user_id)
+        return True
+    except PermissionError:
+        return False
+
+
+def _filter_chat_model_endpoints_by_governance(user_id, endpoints, feature_key):
+    try:
+        ensure_governance_access(feature_key, user_id)
+    except PermissionError:
+        return []
+
+    allowed_endpoints = []
+    for endpoint in endpoints or []:
+        if not isinstance(endpoint, dict):
+            continue
+        endpoint_id = str(endpoint.get('id') or '').strip()
+        if endpoint_id:
+            try:
+                ensure_governance_access(
+                    feature_key,
+                    user_id,
+                    item_entity_type='global_endpoint',
+                    item_id=endpoint_id,
+                )
+            except PermissionError:
+                continue
+        allowed_endpoints.append(endpoint)
+    return allowed_endpoints
+
+
 def _build_initial_chat_model_selection(*, chat_model_options, preferred_model_id=None, preferred_model_deployment=None):
     scope_order = {
         'global': 0,
@@ -515,11 +559,16 @@ def _build_chat_model_catalog(*, user_id, settings, user_settings_dict, user_gro
                     'icon': model.get('icon') if isinstance(model.get('icon'), dict) else {},
                 })
 
-    append_models(settings.get('model_endpoints', []) or [], 'global', None, 'Global')
+    append_models(
+        _filter_chat_model_endpoints_by_governance(user_id, settings.get('model_endpoints', []) or [], 'governance_global_endpoints'),
+        'global',
+        None,
+        'Global'
+    )
 
     if settings.get('allow_user_custom_endpoints', False):
         append_models(
-            user_settings_dict.get('personal_model_endpoints', []) or [],
+            _filter_chat_model_endpoints_by_governance(user_id, user_settings_dict.get('personal_model_endpoints', []) or [], 'governance_user_endpoints'),
             'personal',
             user_id,
             'Personal'
@@ -531,7 +580,7 @@ def _build_chat_model_catalog(*, user_id, settings, user_settings_dict, user_gro
             if not group_id:
                 continue
             append_models(
-                get_group_model_endpoints(group_id),
+                _filter_chat_model_endpoints_by_governance(user_id, get_group_model_endpoints(group_id), 'governance_group_endpoints'),
                 'group',
                 group_id,
                 group_doc.get('name', 'Unnamed Group')
@@ -660,7 +709,8 @@ def register_route_frontend_chats(app):
 
         multi_endpoint_models = []
         if enable_multi_model_endpoints:
-            endpoints = public_settings.get("model_endpoints", []) or []
+            endpoints = _filter_chat_model_endpoints_by_governance(user_id, settings.get("model_endpoints", []) or [], 'governance_global_endpoints')
+            endpoints = sanitize_model_endpoints_for_frontend(endpoints)
             for endpoint in endpoints:
                 if not endpoint.get("enabled", True):
                     continue
@@ -704,11 +754,19 @@ def register_route_frontend_chats(app):
 
         chat_agent_options = []
         try:
-            chat_agent_options = build_accessible_agent_catalog(
+            all_chat_agent_options = build_accessible_agent_catalog(
                 user_id,
                 settings=settings,
                 user_groups=user_groups_raw,
             )
+            chat_agent_options = [
+                agent for agent in all_chat_agent_options
+                if _is_chat_agent_allowed_by_governance(
+                    user_id,
+                    agent,
+                    str(agent.get('scope_type') or '').strip().lower() or 'personal',
+                )
+            ]
         except Exception as e:
             logger.warning(f"Failed to load chat agent options: {e}")
 

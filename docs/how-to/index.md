@@ -18,7 +18,7 @@ How-to guides assume you already know what area of the product you are working i
         <div class="latest-release-card-icon"><i class="bi bi-file-earmark-arrow-up"></i></div>
         <h2>Content and agents</h2>
         <p>Add documents, create agents, and use the ServiceNow agent guides when your work is centered on user workflows and external system actions.</p>
-        <p><a href="{{ '/how-to/add_documents/' | relative_url }}">Add documents</a> · <a href="{{ '/how-to/create_agents/' | relative_url }}">Create agents</a> · <a href="{{ '/how-to/agents/ServiceNow/' | relative_url }}">ServiceNow guides</a></p>
+        <p><a href="{{ '/how-to/add_documents/' | relative_url }}">Add documents</a> · <a href="{{ '/how-to/create_agents/' | relative_url }}">Create agents</a> · <a href="{{ '/how-to/custom_pages/' | relative_url }}">Create custom pages</a> · <a href="{{ '/how-to/agents/ServiceNow/' | relative_url }}">ServiceNow guides</a></p>
     </article>
     <article class="latest-release-card">
         <div class="latest-release-card-icon"><i class="bi bi-person-badge"></i></div>

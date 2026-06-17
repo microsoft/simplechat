@@ -1,0 +1,48 @@
+{% if session.get('user') and app_settings.enable_custom_pages and custom_pages_nav %}
+<div class="offcanvas offcanvas-end custom-pages-drawer" tabindex="-1" id="customPagesDrawer" aria-labelledby="customPagesDrawerLabel">
+    <div class="offcanvas-header border-bottom">
+        <div>
+            <h5 class="offcanvas-title" id="customPagesDrawerLabel">{{ app_settings.custom_pages_menu_name or 'Custom Pages' }}</h5>
+            <div class="text-muted small">{{ custom_pages_nav|length }} page{% if custom_pages_nav|length != 1 %}s{% endif %}</div>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+    </div>
+    <div class="offcanvas-body">
+        <div class="list-group custom-pages-drawer-list">
+            {% for page in custom_pages_nav %}
+                <a class="list-group-item list-group-item-action custom-pages-drawer-item" href="{{ page.url }}" {% if page.open_in_new_tab %}target="_blank" rel="noopener noreferrer"{% endif %}>
+                    <i class="bi {{ page.icon }} me-2"></i>
+                    <span>{{ page.label }}</span>
+                </a>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+<script>
+    document.addEventListener('click', function(event) {
+        const trigger = event.target.closest('[data-custom-pages-open-drawer]');
+        if (!trigger) {
+            return;
+        }
+
+        event.preventDefault();
+        const drawerElement = document.getElementById('customPagesDrawer');
+        if (!drawerElement || typeof bootstrap === 'undefined' || !bootstrap.Offcanvas) {
+            return;
+        }
+
+        const drawer = bootstrap.Offcanvas.getOrCreateInstance(drawerElement);
+        const openOffcanvas = document.querySelector('.offcanvas.show:not(#customPagesDrawer)');
+        if (!openOffcanvas) {
+            drawer.show();
+            return;
+        }
+
+        const openInstance = bootstrap.Offcanvas.getInstance(openOffcanvas) || bootstrap.Offcanvas.getOrCreateInstance(openOffcanvas);
+        openOffcanvas.addEventListener('hidden.bs.offcanvas', function() {
+            drawer.show();
+        }, { once: true });
+        openInstance.hide();
+    });
+</script>
+{% endif %}

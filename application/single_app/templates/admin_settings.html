@@ -884,6 +884,12 @@
                     General
                 </button>
             </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="custom-pages-tab" data-bs-toggle="tab" data-bs-target="#custom-pages"
+                    type="button" role="tab" aria-controls="custom-pages" aria-selected="false">
+                    Custom Pages
+                </button>
+            </li>
             
             <!-- AI Models Group -->
             <li class="nav-item" role="presentation">
@@ -962,6 +968,13 @@
                 <button class="nav-link" id="data-management-tab" data-bs-toggle="tab" data-bs-target="#data-management"
                     type="button" role="tab" aria-controls="data-management" aria-selected="false">
                     Data Management
+                </button>
+            </li>
+
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="governance-tab" data-bs-toggle="tab" data-bs-target="#governance"
+                    type="button" role="tab" aria-controls="governance" aria-selected="false">
+                    Governance
                 </button>
             </li>
 
@@ -1221,6 +1234,8 @@
                         <input class="form-check-input" type="checkbox" role="switch" id="toggle-enable-agents-agents" name="enable_semantic_kernel" {% if settings.enable_semantic_kernel %}checked{% endif %}>
                         <label class="form-check-label ms-2" for="toggle-enable-agents-agents">Enable Agents</label>
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enable the agents system powered by Semantic Kernel for AI-driven task automation and orchestration."></i>
+                        <button type="button" class="btn btn-outline-info btn-sm ms-2 governance-primary-link" data-governance-target="governance_global_agents_usage">Govern Global Agents</button>
+                        <button type="button" class="btn btn-outline-info btn-sm ms-2 governance-primary-link" data-governance-target="governance_global_actions_usage">Govern Global Actions</button>
                     </div>
                     <div id="per-user-sk-restart-msg" class="text-muted small mb-2" style="display:none;">Requires a restart to take effect.</div>
                 </div>
@@ -1243,21 +1258,25 @@
                                     <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-user-agents" name="allow_user_agents" {% if settings.allow_user_agents %}checked{% endif %}>
                                     <label class="form-check-label ms-2" for="toggle-allow-user-agents">Allow User Agents</label>
                                     <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create and manage their own workspace-level agents for personal use and customization."></i>
+                                    <button type="button" class="btn btn-outline-info btn-sm ms-2 governance-primary-link" data-governance-target="governance_user_agents">Govern</button>
                                 </div>
                                 <div class="form-check form-switch mb-2">
                                     <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-group-agents" name="allow_group_agents" {% if settings.allow_group_agents %}checked{% endif %}>
                                     <label class="form-check-label ms-2" for="toggle-allow-group-agents">Allow Group Agents</label>
                                     <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create and manage group-level agents that can be shared within workgroups and teams."></i>
+                                    <button type="button" class="btn btn-outline-info btn-sm ms-2 governance-primary-link" data-governance-target="governance_group_agents">Govern</button>
                                 </div>
                                 <div class="form-check form-switch mb-2">
                                     <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-user-custom-endpoints" name="allow_user_custom_endpoints" {% if settings.allow_user_custom_endpoints %}checked{% endif %}>
                                     <label class="form-check-label ms-2" for="toggle-allow-user-custom-endpoints">Allow User Custom Endpoints</label>
                                     <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to configure custom endpoints for their personal workspace agents and model endpoints."></i>
+                                    <button type="button" class="btn btn-outline-info btn-sm ms-2 governance-primary-link" data-governance-target="governance_user_endpoints">Govern</button>
                                 </div>
                                 <div class="form-check form-switch mb-2">
                                     <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-group-custom-endpoints" name="allow_group_custom_endpoints" {% if settings.allow_group_custom_endpoints %}checked{% endif %}>
                                     <label class="form-check-label ms-2" for="toggle-allow-group-custom-endpoints">Allow Group Custom Endpoints</label>
                                     <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to configure custom endpoints for group workspace agents and model endpoints."></i>
+                                    <button type="button" class="btn btn-outline-info btn-sm ms-2 governance-primary-link" data-governance-target="governance_group_endpoints">Govern</button>
                                 </div>
                                 <div class="form-check form-switch mb-2">
                                     <input class="form-check-input" type="checkbox" role="switch" id="toggle-merge-global-sk" name="merge_global_semantic_kernel_with_workspace" {% if settings.merge_global_semantic_kernel_with_workspace %}checked{% endif %}>
@@ -1364,7 +1383,7 @@
                 <!-- Actions Configuration Section -->
                 <div class="card p-3 mb-4" id="actions-configuration">
                     <h5 class="card-title">
-                        <i class="bi bi-plugin me-2"></i>Actions Configuration
+                        <i class="bi bi-plugin me-2"></i>Global Actions Configuration
                     </h5>
                     <p class="text-muted small">
                         Configure custom actions and tools to extend functionality with integrations and specialized capabilities.
@@ -1387,13 +1406,15 @@
                                     <h6 class="mb-2">Workspace Action Feature Toggles</h6>
                                     <div class="form-check form-switch mb-2">
                                         <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-user-plugins" name="allow_user_plugins" {% if settings.allow_user_plugins %}checked{% endif %}>
-                                        <label class="form-check-label ms-2" for="toggle-allow-user-plugins">Allow User Actions</label>
+                                        <label class="form-check-label ms-2" for="toggle-allow-user-plugins">Allow Personal Actions</label>
                                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create and manage their own workspace-level actions/plugins for personal use."></i>
+                                        <button type="button" class="btn btn-outline-info btn-sm ms-2 governance-primary-link" data-governance-target="governance_user_actions">Govern</button>
                                     </div>
                                     <div class="form-check form-switch mb-2">
                                         <input class="form-check-input" type="checkbox" role="switch" id="toggle-allow-group-plugins" name="allow_group_plugins" {% if settings.allow_group_plugins %}checked{% endif %}>
                                         <label class="form-check-label ms-2" for="toggle-allow-group-plugins">Allow Group Actions</label>
                                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create and manage group-level actions/plugins that can be shared within workgroups."></i>
+                                        <button type="button" class="btn btn-outline-info btn-sm ms-2 governance-primary-link" data-governance-target="governance_group_actions">Govern</button>
                                     </div>
                                 </div>
                             {% endif %}
@@ -1459,6 +1480,164 @@
                 </div>
             </div>
 
+
+            <!-- Governance Tab Content -->
+            <div class="tab-pane fade" id="governance" role="tabpanel" aria-labelledby="governance-tab">
+                <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-start gap-2 mb-3">
+                    <p class="text-muted mb-0">
+                        Configure governance enforcement for endpoint, agent, and action creation or usage. Governance is disabled by default and only enforced when toggled on.
+                    </p>
+                    <button type="button" class="btn btn-outline-info btn-sm flex-shrink-0" id="governance-info-guide-btn" data-bs-toggle="modal" data-bs-target="#governanceInfoModal">
+                        <i class="bi bi-info-circle me-1"></i>Configuration Guide
+                    </button>
+                </div>
+
+                <div class="card p-3 mb-3" id="governance-feature-toggles-section">
+                    <h5>
+                        <i class="bi bi-braces-asterisk me-2"></i>Governance Feature Toggles
+                    </h5>
+                    <p class="text-muted">Turn on governance checks for each feature area. Save with the main Settings button to persist these toggles.</p>
+
+                    <div class="row">
+                        <div class="col-md-4">
+                            <div class="fw-semibold mb-2">Personal Scope</div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="governance_user_endpoints" name="governance_user_endpoints" {% if settings.governance_user_endpoints %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="governance_user_endpoints">Govern Personal Endpoints</label>
+                            </div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="governance_user_agents" name="governance_user_agents" {% if settings.governance_user_agents %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="governance_user_agents">Govern Personal Agents</label>
+                            </div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="governance_user_actions" name="governance_user_actions" {% if settings.governance_user_actions %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="governance_user_actions">Govern Personal Actions</label>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="fw-semibold mb-2">Group Scope</div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="governance_group_endpoints" name="governance_group_endpoints" {% if settings.governance_group_endpoints %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="governance_group_endpoints">Govern Group Endpoints</label>
+                            </div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="governance_group_agents" name="governance_group_agents" {% if settings.governance_group_agents %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="governance_group_agents">Govern Group Agents</label>
+                            </div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="governance_group_actions" name="governance_group_actions" {% if settings.governance_group_actions %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="governance_group_actions">Govern Group Actions</label>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="fw-semibold mb-2">Global Scope</div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="governance_global_endpoints" name="governance_global_endpoints" checked disabled data-governance-locked="true">
+                                <label class="form-check-label ms-2" for="governance_global_endpoints">Govern Global Endpoints</label>
+                                <span class="badge bg-info text-dark ms-2">Always On</span>
+                            </div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="governance_global_agents_usage" name="governance_global_agents_usage" {% if settings.governance_global_agents_usage %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="governance_global_agents_usage">Govern Global Agents</label>
+                            </div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="governance_global_actions_usage" name="governance_global_actions_usage" {% if settings.governance_global_actions_usage %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="governance_global_actions_usage">Govern Global Actions</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3" id="governance-feature-policies-section">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h5 class="mb-0"><i class="bi bi-sliders2 me-2"></i>Feature Policies</h5>
+                        <button type="button" class="btn btn-primary btn-sm" id="governance-save-feature-policies-btn">Save Feature Policies</button>
+                    </div>
+                    <p class="text-muted">Set allow-all or explicit allowlists for each governed feature.</p>
+                    <div class="table-responsive">
+                        <table class="table table-bordered" id="governance-feature-policies-table">
+                            <thead>
+                                <tr>
+                                    <th>Feature</th>
+                                    <th>Allow All</th>
+                                    <th>Allowed Users (Entra IDs)</th>
+                                    <th>Allowed Groups (Workspace IDs)</th>
+                                </tr>
+                            </thead>
+                            <tbody id="governance-feature-policies-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3" id="governance-item-policies-section">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h5 class="mb-0"><i class="bi bi-list-check me-2"></i>Delegated Item Policies</h5>
+                        <div class="d-flex gap-2">
+                            <button type="button" class="btn btn-primary btn-sm" id="governance-new-item-policy-btn">New Policy</button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" id="governance-refresh-item-policies-btn">Refresh</button>
+                        </div>
+                    </div>
+                    <p class="text-muted mb-1">Manage per-item governance for global endpoints, agents, and actions that admins delegate to specific users or groups.</p>
+                    <div class="alert alert-info py-2 small" role="alert">
+                        Delegated item policies are OR combined whitelists. A user can access a delegated item when they are allowed by any policy for that item.
+                    </div>
+
+                    <div class="row g-2 align-items-end mb-3" id="governance-item-policy-card-controls">
+                        <div class="col-lg-5 col-md-6">
+                            <label class="form-label" for="governance-item-review-search">Search</label>
+                            <input type="search" class="form-control" id="governance-item-review-search" placeholder="Search users, groups, endpoint IDs, or item IDs">
+                        </div>
+                        <div class="col-lg-3 col-md-6">
+                            <label class="form-label" for="governance-item-review-entity-type">Entity Type</label>
+                            <select class="form-select" id="governance-item-review-entity-type">
+                                <option value="">All</option>
+                                <option value="global_endpoint">Global Endpoint</option>
+                                <option value="global_agent">Global Agent</option>
+                                <option value="global_action">Global Action</option>
+                            </select>
+                        </div>
+                        <div class="col-lg-2 col-md-4">
+                            <label class="form-label" for="governance-item-review-page-size">Page Size</label>
+                            <select class="form-select" id="governance-item-review-page-size">
+                                <option value="10">10</option>
+                                <option value="25" selected>25</option>
+                                <option value="50">50</option>
+                            </select>
+                        </div>
+                        <div class="col-lg-2 col-md-8 d-flex gap-2">
+                            <button type="button" class="btn btn-primary flex-fill" id="governance-item-review-search-btn">Search</button>
+                            <button type="button" class="btn btn-outline-secondary flex-fill" id="governance-item-review-reset-btn">Reset</button>
+                        </div>
+                    </div>
+
+                    <div class="table-responsive">
+                        <table class="table table-sm table-striped align-middle" id="governance-item-policies-table">
+                            <thead>
+                                <tr>
+                                    <th>Policy</th>
+                                    <th>Entity Type</th>
+                                    <th>Item</th>
+                                    <th>Allow All</th>
+                                    <th>Allowed Users</th>
+                                    <th>Allowed Groups</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="governance-item-policies-review-body"></tbody>
+                        </table>
+                    </div>
+
+                    <div class="d-flex align-items-center justify-content-between gap-2 mt-3">
+                        <div class="text-muted small" id="governance-item-review-summary"></div>
+                        <div class="btn-group" role="group" aria-label="Delegated item policy pagination">
+                            <button type="button" class="btn btn-outline-secondary btn-sm" id="governance-item-review-prev-btn">Previous</button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" id="governance-item-review-next-btn">Next</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="governance-status" class="alert d-none" role="alert"></div>
+            </div>
 
             <!-- Logging Tab Content -->
             <div class="tab-pane fade" id="logging" role="tabpanel" aria-labelledby="logging-tab">
@@ -3220,6 +3399,88 @@
                 {% endfor %}
             </div>
 
+            <div class="tab-pane fade" id="custom-pages" role="tabpanel" aria-labelledby="custom-pages-tab">
+                <p class="text-muted">
+                    Enable trusted deployment-time custom pages and manage metadata for simple static pages served from the application custom_pages folders.
+                </p>
+
+                <div class="card p-3 mb-3" id="custom-pages-section">
+                    <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-between gap-2 mb-3">
+                        <h5 class="mb-0">
+                            <i class="bi bi-window-plus me-2"></i>Custom Pages
+                        </h5>
+                        <button type="button" class="btn btn-sm btn-outline-info" id="custom-pages-guide-btn">
+                            <i class="bi bi-book me-1"></i>Developer Guide
+                        </button>
+                    </div>
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="enable_custom_pages" name="enable_custom_pages"
+                            {% if settings.enable_custom_pages %}checked{% endif %}>
+                        <input type="hidden" id="custom_pages_restart_acknowledged" name="custom_pages_restart_acknowledged" value="">
+                        <label class="form-check-label ms-2" for="enable_custom_pages">
+                            Enable Custom Pages
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow trusted custom pages deployed under application/single_app/custom_pages to appear in navigation and be served under /custom."></i>
+                    </div>
+                    <p class="text-muted small">When disabled, /custom routes return Not Found before loading custom metadata, files, or Python extensions.</p>
+
+                    <div id="custom_pages_settings" class="{% if not settings.enable_custom_pages %}d-none{% endif %}">
+                        <div class="mb-3">
+                            <label for="custom_pages_menu_name" class="form-label">Menu Name</label>
+                            <input type="text" class="form-control" id="custom_pages_menu_name" name="custom_pages_menu_name"
+                                value="{{ settings.custom_pages_menu_name or 'Custom Pages' }}" placeholder="Custom Pages">
+                            <small class="form-text text-muted">This name appears when custom pages are grouped into a menu.</small>
+                        </div>
+
+                        <div class="form-check form-switch mb-3">
+                            <input class="form-check-input" type="checkbox" id="custom_pages_force_menu" name="custom_pages_force_menu"
+                                {% if settings.custom_pages_force_menu %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="custom_pages_force_menu">
+                                Force Menu Display
+                            </label>
+                            <small class="form-text text-muted d-block">When disabled, 1-2 custom pages show as top-level nav items and 3+ pages show as a menu.</small>
+                        </div>
+
+                        <div class="d-flex align-items-center justify-content-between mb-2">
+                            <div>
+                                <h6 class="mb-1">Static Page Metadata</h6>
+                                <p class="text-muted small mb-0">Create metadata contracts for simple pages that use files from custom_pages/html, css, js, assets, and json.</p>
+                            </div>
+                            <div class="d-flex flex-wrap gap-2 justify-content-end">
+                                <button type="button" class="btn btn-sm btn-outline-success" id="create-request-access-page-btn">
+                                    <i class="bi bi-person-plus me-1"></i>Add Request Access Page
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-primary" id="add-custom-page-btn">
+                                    <i class="bi bi-plus-circle me-1"></i>New Static Page
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="table-responsive">
+                            <table class="table table-sm table-bordered align-middle">
+                                <thead>
+                                    <tr>
+                                        <th>Slug</th>
+                                        <th>Title</th>
+                                        <th>Type</th>
+                                        <th>Access</th>
+                                        <th>Roles</th>
+                                        <th>Status</th>
+                                        <th>Nav</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="custom-pages-tbody">
+                                    <tr>
+                                        <td colspan="8" class="text-muted text-center">Loading custom pages...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             
             <div class="tab-pane fade" id="ai-models" role="tabpanel" aria-labelledby="ai-models-tab">
                 
@@ -3380,7 +3641,7 @@
 
                     <div id="model-endpoints-wrapper" class="{% if not settings.enable_multi_model_endpoints %}d-none{% endif %}">
                         <div class="d-flex justify-content-between align-items-center mb-2">
-                            <h6 class="mb-0">Configured Endpoints</h6>
+                            <h6 class="mb-0">Global Endpoints</h6>
                             <button type="button" class="btn btn-sm btn-outline-primary" id="add-model-endpoint-btn">
                                 <i class="bi bi-plus-circle me-1"></i>Add Endpoint
                             </button>
@@ -6161,25 +6422,14 @@
                   
                     <div id="metadata_extraction_model_settings" class="mb-3"
                          {% if not settings.enable_extract_meta_data %}style="display: none;"{% endif %}>
-                      <label for="metadata_extraction_model" class="form-label">Extraction Model</label>
-                      <select class="form-select" id="metadata_extraction_model" name="metadata_extraction_model"
-                              data-prev="{{ settings.metadata_extraction_model or '' }}">
-                        {% if settings.enable_gpt_apim %}
-                          {% for d in (settings.azure_apim_gpt_deployment or '').split(',') if d %}
-                            <option value="{{ d }}"
-                              {% if settings.metadata_extraction_model == d %}selected{% endif %}>
-                              {{ d }}
-                            </option>
-                          {% endfor %}
-                        {% else %}
-                          {% for m in settings.gpt_model.selected %}
-                            <option value="{{ m.deploymentName }}"
-                              {% if settings.metadata_extraction_model == m.deploymentName %}selected{% endif %}>
-                              {{ m.deploymentName }} ({{ m.modelName }})
-                            </option>
-                          {% endfor %}
-                        {% endif %}
-                      </select>
+                                            <label for="metadata_extraction_model" class="form-label">Extraction Model</label>
+                                            <select class="form-select" id="metadata_extraction_model" name="metadata_extraction_model">
+                                                <option value="">No metadata extraction model selected</option>
+                                            </select>
+                                            <input type="hidden" name="metadata_extraction_model_selection_json" id="metadata_extraction_model_selection_json" />
+                                            <div class="form-text">
+                                                Uses Global Endpoints when multi-endpoint model management is enabled; otherwise uses the legacy GPT/APIM deployment settings.
+                                            </div>
                     </div>
                 </div>
 
@@ -8577,6 +8827,221 @@
     <button type="submit" form="admin-settings-form" class="btn btn-secondary floating-save-btn" id="floating-save-btn" disabled>
         <i class="bi bi-floppy"></i> Save Settings
     </button>
+
+    <div class="modal fade" id="customPagesRestartModal" tabindex="-1" aria-labelledby="customPagesRestartModalLabel" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="customPagesRestartModalLabel">Restart Required</h5>
+                </div>
+                <div class="modal-body">
+                    <p>
+                        Custom Pages uses deployment-time files and Python discovery. After saving this setting, restart the App Service to fully enable newly deployed custom page files and Python-backed pages.
+                    </p>
+                    <p class="mb-0 text-muted small">
+                        Your acknowledgement will be written to the activity log when the setting is saved.
+                    </p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" id="custom-pages-restart-cancel-btn">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="custom-pages-restart-acknowledge-btn">I Understand</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="customPagesGuideModal" tabindex="-1" aria-labelledby="customPagesGuideModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-xl modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="customPagesGuideModalLabel">Custom Pages Developer Guide</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="custom-pages-guide-status" class="text-muted">Loading guide...</div>
+                    <div id="custom-pages-guide-content" class="d-none"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-primary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="requestAccessPageCreatedModal" tabindex="-1" aria-labelledby="requestAccessPageCreatedModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="requestAccessPageCreatedModalLabel">Request Access Page Created</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p>
+                        The optional Request Access page metadata has been created with slug <code>request-access</code>, and the access-denied home page button has been enabled.
+                    </p>
+                    <div class="border rounded p-3 mb-3">
+                        <div class="fw-semibold mb-2">Change the request email address</div>
+                        <p class="mb-2">
+                            Edit this deployed file:
+                        </p>
+                        <code>application/single_app/custom_pages/html/request-access.html</code>
+                        <p class="mt-3 mb-2">
+                            Find and replace this email address:
+                        </p>
+                        <code>accessrequest@example.com</code>
+                    </div>
+                    <p class="mb-0 text-muted small">
+                        The mailto subject and body are also in the same file if your deployment team wants to customize the generated email text.
+                    </p>
+                </div>
+                <div class="modal-footer">
+                    <a class="btn btn-outline-primary" href="/custom/request-access" target="_blank" rel="noopener noreferrer">
+                        <i class="bi bi-box-arrow-up-right me-1"></i>Open Page
+                    </a>
+                    <button type="button" class="btn btn-primary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="customPageDesignerModal" tabindex="-1" aria-labelledby="customPageDesignerModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="customPageDesignerModalLabel">Custom Page</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="custom-page-designer-form" autocomplete="off">
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label for="custom_page_slug" class="form-label">Slug</label>
+                                <input type="text" class="form-control" id="custom_page_slug" placeholder="team-dashboard" required>
+                                <div class="invalid-feedback" id="custom-page-slug-feedback">A custom page with this slug already exists.</div>
+                                <small class="form-text text-muted">Lowercase letters, numbers, and hyphens only. Served at /custom/&lt;slug&gt;.</small>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="custom_page_title" class="form-label">Title</label>
+                                <input type="text" class="form-control" id="custom_page_title" required>
+                            </div>
+                            <div class="col-12">
+                                <label for="custom_page_description" class="form-label">Description</label>
+                                <textarea class="form-control" id="custom_page_description" rows="2"></textarea>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="custom_page_nav_label" class="form-label">Navigation Label</label>
+                                <input type="text" class="form-control" id="custom_page_nav_label">
+                            </div>
+                            <div class="col-md-3">
+                                <label for="custom_page_nav_icon" class="form-label">Bootstrap Icon</label>
+                                <input type="text" class="form-control" id="custom_page_nav_icon" placeholder="bi-file-earmark-text">
+                            </div>
+                            <div class="col-md-3">
+                                <label for="custom_page_nav_order" class="form-label">Order</label>
+                                <input type="number" class="form-control" id="custom_page_nav_order" value="100">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="custom_page_roles" class="form-label">Allowed Roles</label>
+                                <input type="text" class="form-control" id="custom_page_roles" placeholder="Admin, User">
+                                <small class="form-text text-muted">Leave blank to allow all signed-in users. Admins can view custom pages for testing and management.</small>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="custom_page_html_file" class="form-label">HTML File</label>
+                                <input type="text" class="form-control" id="custom_page_html_file" placeholder="my-page.html" required>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="custom_page_access_level" class="form-label">Access Level</label>
+                                <select class="form-select" id="custom_page_access_level">
+                                    <option value="app_user">App users only</option>
+                                    <option value="authenticated">Any signed-in user</option>
+                                </select>
+                            </div>
+                            <div class="col-12">
+                                <div class="border rounded p-3">
+                                    <h6 class="mb-3">Deployed Files</h6>
+                                    <div class="row g-3">
+                                        <div class="col-md-6">
+                                            <label for="custom_page_css_file_entry" class="form-label">CSS Files</label>
+                                            <input type="hidden" id="custom_page_css_files" value="">
+                                            <div class="input-group mb-2">
+                                                <input type="text" class="form-control" id="custom_page_css_file_entry" data-custom-page-file-input="css_files" placeholder="my-page.css">
+                                                <button type="button" class="btn btn-outline-secondary" id="custom_page_css_file_add" data-custom-page-file-add="css_files">
+                                                    <i class="bi bi-plus-circle me-1"></i>Add
+                                                </button>
+                                            </div>
+                                            <ul class="list-group" id="custom_page_css_files_list" data-custom-page-file-list="css_files"></ul>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label for="custom_page_js_file_entry" class="form-label">JavaScript Files</label>
+                                            <input type="hidden" id="custom_page_js_files" value="">
+                                            <div class="input-group mb-2">
+                                                <input type="text" class="form-control" id="custom_page_js_file_entry" data-custom-page-file-input="js_files" placeholder="my-page.js">
+                                                <button type="button" class="btn btn-outline-secondary" id="custom_page_js_file_add" data-custom-page-file-add="js_files">
+                                                    <i class="bi bi-plus-circle me-1"></i>Add
+                                                </button>
+                                            </div>
+                                            <ul class="list-group" id="custom_page_js_files_list" data-custom-page-file-list="js_files"></ul>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label for="custom_page_asset_file_entry" class="form-label">Asset Files</label>
+                                            <input type="hidden" id="custom_page_asset_files" value="">
+                                            <div class="input-group mb-2">
+                                                <input type="text" class="form-control" id="custom_page_asset_file_entry" data-custom-page-file-input="asset_files" placeholder="logo.png">
+                                                <button type="button" class="btn btn-outline-secondary" id="custom_page_asset_file_add" data-custom-page-file-add="asset_files">
+                                                    <i class="bi bi-plus-circle me-1"></i>Add
+                                                </button>
+                                            </div>
+                                            <ul class="list-group" id="custom_page_asset_files_list" data-custom-page-file-list="asset_files"></ul>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label for="custom_page_json_file_entry" class="form-label">JSON Files</label>
+                                            <input type="hidden" id="custom_page_json_files" value="">
+                                            <div class="input-group mb-2">
+                                                <input type="text" class="form-control" id="custom_page_json_file_entry" data-custom-page-file-input="json_files" placeholder="config.json">
+                                                <button type="button" class="btn btn-outline-secondary" id="custom_page_json_file_add" data-custom-page-file-add="json_files">
+                                                    <i class="bi bi-plus-circle me-1"></i>Add
+                                                </button>
+                                            </div>
+                                            <ul class="list-group" id="custom_page_json_files_list" data-custom-page-file-list="json_files"></ul>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-12">
+                                <div class="border rounded p-3">
+                                    <h6 class="mb-3">Publishing</h6>
+                                    <div class="row g-3">
+                                        <div class="col-md-4">
+                                            <div class="form-check form-switch d-flex align-items-center gap-2 mb-0">
+                                                <input class="form-check-input mt-0" type="checkbox" id="custom_page_enabled" checked>
+                                                <label class="form-check-label" for="custom_page_enabled">Enabled</label>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <div class="form-check form-switch d-flex align-items-center gap-2 mb-0">
+                                                <input class="form-check-input mt-0" type="checkbox" id="custom_page_show_in_nav" checked>
+                                                <label class="form-check-label" for="custom_page_show_in_nav">Show in Navigation</label>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <div class="form-check form-switch d-flex align-items-center gap-2 mb-0">
+                                                <input class="form-check-input mt-0" type="checkbox" id="custom_page_open_in_new_tab">
+                                                <label class="form-check-label" for="custom_page_open_in_new_tab">Open in New Tab</label>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" form="custom-page-designer-form" class="btn btn-primary">Save Page</button>
+                </div>
+            </div>
+        </div>
+    </div>
     
     <div>
         <!-- Plugin Modal (moved outside form) -->
@@ -8596,6 +9061,9 @@
         
         <!-- Control Center Roles Info Modal -->
         {% include '_control_center_roles_info.html' %}
+
+        <!-- Governance Info Modal -->
+        {% include '_governance_info.html' %}
 
         <!-- Swagger Info Modal -->
         <div class="modal fade" id="swaggerInfoModal" tabindex="-1" aria-labelledby="swaggerInfoModalLabel" aria-hidden="true">
@@ -8936,6 +9404,8 @@
     window.enableMultiModelEndpoints = {{ 'true' if settings.enable_multi_model_endpoints else 'false' }};
     window.modelEndpoints = {{ settings.model_endpoints|default([], true)|tojson|safe }};
     window.defaultModelSelection = {{ settings.default_model_selection|default({}, true)|tojson|safe }};
+    window.metadataExtractionModelSelection = {{ settings.metadata_extraction_model_selection|default({}, true)|tojson }};
+    window.legacyMetadataExtractionModel = {{ settings.metadata_extraction_model|default('', true)|tojson }};
 
     if (!Array.isArray(window.gptSelected)) {
         window.gptSelected = [];
@@ -8979,6 +9449,8 @@
     window.enableExternalLinks = "{{ enable_external_links }}";
     window.externalLinksMenuName = "{{ settings.external_links_menu_name or 'External Links' }}";
     window.externalLinksForceMenu = "{{ settings.external_links_force_menu }}";
+    window.customPages = [];
+    window.customPagesInitiallyEnabled = {{ 'true' if settings.enable_custom_pages else 'false' }};
     window.releaseNotificationsRegistration = {
         registered: {{ 'true' if settings.release_notifications_registered else 'false' }},
         name: {{ (settings.release_notifications_name or session.get('user', {}).get('name', ''))|tojson|safe }},
@@ -9000,7 +9472,9 @@
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_settings.js') }}?v={{ config['VERSION'] }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_data_management.js') }}?v={{ config['VERSION'] }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_model_endpoints.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/admin/admin_governance.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_sidebar_nav.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/admin/admin_custom_pages.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/plugin_modal_stepper.js') }}"></script>
 {% if settings.enable_semantic_kernel %}
 <script type="module" src="{{ url_for('static', filename='js/admin/admin_plugins.js') }}"></script>

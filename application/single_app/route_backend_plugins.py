@@ -94,6 +94,7 @@ from functions_workspace_identities import (
     hydrate_action_identity_reference,
     validate_action_identity_reference,
 )
+from functions_governance import ensure_governance_access, upsert_item_policy
 
 
 DOCUMENT_SEARCH_INTERNAL_ENDPOINT = 'internal://document-search'
@@ -648,8 +649,21 @@ def get_user_plugins():
     if merge_global:
         # Import and get global actions from container
         global_plugins = get_global_actions()
-        # Mark global plugins
+        filtered_global_plugins = []
         for plugin in global_plugins:
+            try:
+                ensure_governance_access(
+                    'governance_global_actions_usage',
+                    user_id,
+                    item_entity_type='global_action',
+                    item_id=str(plugin.get('id') or plugin.get('name') or ''),
+                )
+            except PermissionError:
+                continue
+            filtered_global_plugins.append(plugin)
+
+        # Mark global plugins
+        for plugin in filtered_global_plugins:
             plugin['is_global'] = True
         
         # Merge plugins using ID as key to avoid name conflicts
@@ -662,7 +676,7 @@ def get_user_plugins():
             all_plugins[key] = plugin
             
         # Add global plugins
-        for plugin in global_plugins:
+        for plugin in filtered_global_plugins:
             key = f"global_{plugin.get('id', plugin['name'])}"
             all_plugins[key] = plugin
             
@@ -676,6 +690,11 @@ def get_user_plugins():
 @enabled_required("allow_user_plugins")
 def set_user_plugins():
     user_id = get_current_user_id()
+    try:
+        ensure_governance_access('governance_user_actions', user_id)
+    except PermissionError as exc:
+        return jsonify({'error': str(exc)}), 403
+
     plugins = request.json if isinstance(request.json, list) else []
     
     # Get global plugin names (case-insensitive)
@@ -933,6 +952,8 @@ def create_group_action_route():
 
     try:
         saved = save_group_action(active_group, payload, user_id=user_id)
+    except PermissionError as exc:
+        return jsonify({'error': str(exc)}), 403
     except Exception as exc:
         debug_print('Failed to save group action: %s', exc)
         return jsonify({'error': 'Unable to save action'}), 500
@@ -1009,6 +1030,8 @@ def update_group_action_route(action_id):
 
     try:
         saved = save_group_action(active_group, merged, user_id=user_id)
+    except PermissionError as exc:
+        return jsonify({'error': str(exc)}), 403
     except Exception as exc:
         debug_print('Failed to update group action %s: %s', action_id, exc)
         return jsonify({'error': 'Unable to update action'}), 500
@@ -1194,6 +1217,7 @@ def add_plugin():
     try:
         plugins = get_global_actions(include_disabled=True)
         new_plugin = request.get_json(silent=True) or {}
+        governance_policy_payload = new_plugin.pop('governance_policy', None) if isinstance(new_plugin, dict) else None
         _apply_plugin_runtime_defaults(new_plugin)
         new_plugin = apply_plugin_validation_defaults(new_plugin)
         
@@ -1241,6 +1265,15 @@ def add_plugin():
         
         # Save to global actions container
         save_global_action(new_plugin, user_id=str(get_current_user_id()))
+
+        if isinstance(governance_policy_payload, dict):
+            upsert_item_policy(
+                entity_type='global_action',
+                item_id=plugin_id,
+                payload=governance_policy_payload,
+                actor_user_id=str(get_current_user_id() or ''),
+                actor_email=str((session.get('user') or {}).get('email') or ''),
+            )
         
         log_action_creation(user_id=str(get_current_user_id()), action_id=plugin_id, action_name=new_plugin.get('name', ''), action_type=new_plugin.get('type', ''), scope='global')
         log_event("Plugin added", extra={"action": "add", "plugin": _redact_plugin_for_logging(new_plugin), "user": str(get_current_user_id())})
@@ -1260,6 +1293,7 @@ def edit_plugin(plugin_name):
     try:
         plugins = get_global_actions(include_disabled=True)
         updated_plugin = request.get_json(silent=True) or {}
+        governance_policy_payload = updated_plugin.pop('governance_policy', None) if isinstance(updated_plugin, dict) else None
         _apply_plugin_runtime_defaults(updated_plugin)
         updated_plugin = apply_plugin_validation_defaults(updated_plugin)
         
@@ -1319,6 +1353,15 @@ def edit_plugin(plugin_name):
                 updated_plugin['id'] = str(uuid.uuid4())
             
             save_global_action(updated_plugin, user_id=str(get_current_user_id()))
+
+            if isinstance(governance_policy_payload, dict):
+                upsert_item_policy(
+                    entity_type='global_action',
+                    item_id=str(updated_plugin.get('id') or ''),
+                    payload=governance_policy_payload,
+                    actor_user_id=str(get_current_user_id() or ''),
+                    actor_email=str((session.get('user') or {}).get('email') or ''),
+                )
             
             log_action_update(user_id=str(get_current_user_id()), action_id=updated_plugin.get('id', ''), action_name=plugin_name, action_type=updated_plugin.get('type', ''), scope='global')
             log_event("Plugin edited", extra={"action": "edit", "plugin": _redact_plugin_for_logging(updated_plugin), "user": str(get_current_user_id())})

@@ -1,0 +1,39 @@
+/* request-access.css */
+.request-access-page {
+    display: flex;
+    justify-content: center;
+    padding: 3rem 1rem;
+}
+
+.request-access-page__content {
+    width: min(100%, 42rem);
+    border: 1px solid var(--bs-border-color);
+    border-radius: 8px;
+    padding: 2rem;
+    background: var(--bs-body-bg);
+    text-align: center;
+}
+
+.request-access-page__eyebrow {
+    margin-bottom: 0.5rem;
+    color: var(--bs-secondary-color);
+    font-size: 0.8125rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.request-access-page__title {
+    margin-bottom: 0.75rem;
+    font-size: 2rem;
+}
+
+.request-access-page__summary {
+    margin: 0 auto 1.5rem;
+    max-width: 34rem;
+    color: var(--bs-secondary-color);
+}
+
+.request-access-page__button {
+    min-width: 12rem;
+}

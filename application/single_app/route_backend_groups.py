@@ -59,9 +59,10 @@ def register_route_backend_groups(app):
         for g in all_items:
             name = g.get("name", "").lower()
             desc = g.get("description", "").lower()
+            group_id = str(g.get("id", "")).lower()
 
             if search_query:
-                if search_query not in name and search_query not in desc:
+                if search_query not in name and search_query not in desc and search_query not in group_id:
                     continue
 
             if not show_all:
@@ -119,9 +120,11 @@ def register_route_backend_groups(app):
             total_count = len(all_matching_groups)
             paginated_groups = all_matching_groups[offset : offset + page_size]
 
-            # --- Get active group ID ---
-            user_settings_data = get_user_settings(user_id)
-            db_active_group_id = user_settings_data["settings"].get("activeGroupOid", "")
+            # --- Get active group ID through the authorization helper ---
+            try:
+                db_active_group_id = require_active_group(user_id)
+            except (ValueError, LookupError, PermissionError):
+                db_active_group_id = ""
 
             # --- Map results ---
             mapped_results = []

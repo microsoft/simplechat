@@ -272,6 +272,7 @@
       {% set left_sidebar_enabled = true %}
     {% endif %}
   {% endif %}
+  {% include "_custom_pages_drawer.html" %}
 
   <!-- Main Content Area -->
   <div class="container main-content{% if left_sidebar_enabled %} sidebar-padding{% endif %}" id="main-content">
@@ -639,15 +640,16 @@
       'displayName': session.get('user', {}).get('name'),
       'email': session.get('user', {}).get('preferred_username'),
       'roles': session.get('user', {}).get('roles', [])
-    } | tojson | safe }};
+    } | tojson }};
     window.currentUserIsAdmin = Array.isArray(window.userContext?.roles)
       ? window.userContext.roles.includes('Admin')
       : false;
     if (!window.current_user_id && window.userContext?.id) {
       window.current_user_id = window.userContext.id;
     }
-    const appSettings = {{ app_settings|tojson|safe }};
+    const appSettings = {{ app_settings|tojson }};
     window.appSettings = appSettings;
+    window.simplechatUserSettings = {{ user_settings.get('settings', {}) | tojson }};
   </script>
 
   <!-- Prism.js syntax highlighting script -->
@@ -712,7 +714,7 @@
       'heartbeatUrl': url_for('session_heartbeat'),
       'localLogoutUrl': url_for('local_logout'),
       'fullSsoLogoutUrl': url_for('logout')
-    } | tojson | safe }};
+    } | tojson }};
   </script>
   <script src="{{ url_for('static', filename='js/idle-logout-warning.js') }}"></script>
   {% endif %}

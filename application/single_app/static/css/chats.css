@@ -140,6 +140,14 @@
   width: min(32rem, calc(100vw - 1.25rem));
 }
 
+.chat-search-filter-menu {
+  width: max-content;
+  min-width: min(20rem, calc(100vw - 2rem));
+  max-width: min(40rem, calc(100vw - 2rem));
+  max-height: 60vh;
+  overflow: hidden;
+}
+
 .chat-search-panel {
   border-radius: 0.5rem;
 }
@@ -740,8 +748,18 @@ img.chat-searchable-select-item-icon {
 
 #scope-dropdown-items .dropdown-item,
 #tags-dropdown-items .dropdown-item {
+  min-width: 0;
   width: 100%;
   text-align: left;
+}
+
+#scope-dropdown-items .dropdown-item span,
+#tags-dropdown-items .dropdown-item span,
+#document-dropdown-items .dropdown-item span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Document dropdown items must be explicitly displayed */
@@ -756,6 +774,7 @@ img.chat-searchable-select-item-icon {
   width: 100%; /* Ensure items take full width of their container */
   text-align: left;
   max-width: 100%; /* Ensure items don't exceed container width */
+  min-width: 0;
 }
 
 #document-dropdown .dropdown-item[data-search-role="action"] {

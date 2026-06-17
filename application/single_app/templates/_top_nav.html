@@ -52,7 +52,46 @@
                 <div class="nav-item">
                     <a class="nav-link" href="{{ url_for('chats') }}">Chat</a>
                 </div>
+            {% endif %}
 
+                {% if session.get('user') and app_settings.enable_custom_pages and custom_pages_nav %}
+                    {% set custom_page_count = custom_pages_nav|length %}
+                    {% set custom_pages_drawer_threshold = 5 %}
+                    {% set custom_pages_use_drawer = custom_page_count > custom_pages_drawer_threshold %}
+                    {% set custom_pages_should_force_menu = app_settings.custom_pages_force_menu or custom_page_count >= 3 %}
+                    {% if custom_pages_use_drawer %}
+                        <div class="nav-item">
+                            <button type="button" class="nav-link btn btn-link custom-pages-top-drawer-trigger" data-custom-pages-open-drawer aria-controls="customPagesDrawer">
+                                {{ app_settings.custom_pages_menu_name or 'Custom Pages' }}
+                                <span class="badge rounded-pill text-bg-secondary ms-1">{{ custom_page_count }}</span>
+                            </button>
+                        </div>
+                    {% elif custom_pages_should_force_menu %}
+                        <div class="nav-item dropdown">
+                            <a class="nav-link dropdown-toggle" href="#" id="customPagesDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                {{ app_settings.custom_pages_menu_name or 'Custom Pages' }}
+                                <span class="badge rounded-pill text-bg-secondary ms-1">{{ custom_page_count }}</span>
+                            </a>
+                            <div class="dropdown-menu custom-pages-dropdown-menu" aria-labelledby="customPagesDropdown">
+                                {% for page in custom_pages_nav %}
+                                    <a class="dropdown-item" href="{{ page.url }}" {% if page.open_in_new_tab %}target="_blank" rel="noopener noreferrer"{% endif %}>
+                                        <i class="bi {{ page.icon }} me-2"></i>{{ page.label }}
+                                    </a>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    {% else %}
+                        {% for page in custom_pages_nav %}
+                            <div class="nav-item">
+                                <a class="nav-link" href="{{ page.url }}" {% if page.open_in_new_tab %}target="_blank" rel="noopener noreferrer"{% endif %}>
+                                    {{ page.label }}
+                                </a>
+                            </div>
+                        {% endfor %}
+                    {% endif %}
+                {% endif %}
+
+            {% if session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
                 {% set support_menu_role_allowed = 'Admin' in session['user']['roles'] or 'User' in session['user']['roles'] %}
                 {% if support_menu_role_allowed and app_settings.enable_support_menu %}
                     {% set show_support_latest_features = app_settings.enable_support_latest_features and app_settings.support_latest_features_has_visible_items %}
@@ -247,6 +286,28 @@
                 </a>
             </div>
 
+            {% if app_settings.enable_custom_pages and custom_pages_nav %}
+                {% set custom_page_count = custom_pages_nav|length %}
+                {% set custom_pages_drawer_threshold = 5 %}
+                {% set custom_pages_use_drawer = custom_page_count > custom_pages_drawer_threshold %}
+                <div class="top-nav-mobile-section-label">{{ app_settings.custom_pages_menu_name or 'Custom Pages' }}</div>
+                {% if custom_pages_use_drawer %}
+                    <div class="list-group list-group-flush top-nav-mobile-list">
+                        <button type="button" class="list-group-item list-group-item-action" data-custom-pages-open-drawer aria-controls="customPagesDrawer">
+                            <i class="bi bi-layout-sidebar-inset-reverse me-2"></i>Browse {{ custom_page_count }} custom pages
+                        </button>
+                    </div>
+                {% else %}
+                <div class="list-group list-group-flush top-nav-mobile-list">
+                    {% for page in custom_pages_nav %}
+                        <a class="list-group-item list-group-item-action" href="{{ page.url }}" {% if page.open_in_new_tab %}target="_blank" rel="noopener noreferrer"{% endif %}>
+                            <i class="bi {{ page.icon }} me-2"></i>{{ page.label }}
+                        </a>
+                    {% endfor %}
+                </div>
+                {% endif %}
+            {% endif %}
+
             {% set support_menu_role_allowed = 'Admin' in session['user']['roles'] or 'User' in session['user']['roles'] %}
             {% if support_menu_role_allowed and app_settings.enable_support_menu %}
                 {% set show_support_latest_features = app_settings.enable_support_latest_features and app_settings.support_latest_features_has_visible_items %}
@@ -279,11 +340,33 @@
                 </div>
             {% endif %}
         {% else %}
+            {% if session.get('user') and app_settings.enable_custom_pages and custom_pages_nav %}
+                {% set custom_page_count = custom_pages_nav|length %}
+                {% set custom_pages_drawer_threshold = 5 %}
+                {% set custom_pages_use_drawer = custom_page_count > custom_pages_drawer_threshold %}
+                <div class="top-nav-mobile-section-label">{{ app_settings.custom_pages_menu_name or 'Custom Pages' }}</div>
+                {% if custom_pages_use_drawer %}
+                    <div class="list-group list-group-flush top-nav-mobile-list">
+                        <button type="button" class="list-group-item list-group-item-action" data-custom-pages-open-drawer aria-controls="customPagesDrawer">
+                            <i class="bi bi-layout-sidebar-inset-reverse me-2"></i>Browse {{ custom_page_count }} custom pages
+                        </button>
+                    </div>
+                {% else %}
+                    <div class="list-group list-group-flush top-nav-mobile-list">
+                        {% for page in custom_pages_nav %}
+                            <a class="list-group-item list-group-item-action" href="{{ page.url }}" {% if page.open_in_new_tab %}target="_blank" rel="noopener noreferrer"{% endif %}>
+                                <i class="bi {{ page.icon }} me-2"></i>{{ page.label }}
+                            </a>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+            {% elif not session.get('user') %}
             <div class="list-group list-group-flush top-nav-mobile-list">
                 <a class="list-group-item list-group-item-action" href="{{ url_for('login') }}">
                     <i class="bi bi-box-arrow-in-right me-2"></i>Login
                 </a>
             </div>
+            {% endif %}
         {% endif %}
     </div>
 </div>

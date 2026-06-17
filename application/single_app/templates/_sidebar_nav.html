@@ -255,6 +255,56 @@
     </div>
     {% endif %}
 
+    <!-- Custom Pages Section - Show only when the signed-in user has visible custom pages -->
+    {% if session.get('user') and app_settings.enable_custom_pages and custom_pages_nav %}
+    <div class="overflow-auto custom-pages-menu-wrapper">
+      {% set custom_page_count = custom_pages_nav|length %}
+      {% set custom_pages_drawer_threshold = 5 %}
+      {% set custom_pages_use_drawer = custom_page_count > custom_pages_drawer_threshold %}
+      {% set custom_pages_should_force_menu = app_settings.custom_pages_force_menu or custom_page_count >= 3 %}
+      {% if custom_pages_use_drawer %}
+        <button type="button" class="custom-pages-menu-toggle mt-2 mb-1 text-muted small d-flex align-items-center w-100" data-custom-pages-open-drawer aria-controls="customPagesDrawer">
+          <span class="nav-text flex-grow-1 text-start">{{ app_settings.custom_pages_menu_name or 'Custom Pages' }}</span>
+          <span class="badge rounded-pill text-bg-secondary custom-pages-count-badge">{{ custom_page_count }}</span>
+          <i class="bi bi-layout-sidebar-inset-reverse ms-2 custom-pages-caret"></i>
+        </button>
+      {% elif custom_pages_should_force_menu %}
+        <div id="custom-pages-toggle" class="custom-pages-menu-toggle mt-2 mb-1 text-muted small d-flex align-items-center" role="button" tabindex="0" aria-controls="custom-pages-links-section" aria-expanded="true" data-sidebar-menu-key="customPages" data-sidebar-menu-target="custom-pages-links-section" data-sidebar-menu-caret="custom-pages-caret">
+          <span class="nav-text flex-grow-1">{{ app_settings.custom_pages_menu_name or 'Custom Pages' }}</span>
+          <span class="badge rounded-pill text-bg-secondary custom-pages-count-badge">{{ custom_page_count }}</span>
+          <i id="custom-pages-caret" class="bi bi-caret-down-fill ms-2 transition custom-pages-caret"></i>
+        </div>
+        <div id="custom-pages-links-section" class="custom-pages-menu-list">
+          <ul class="nav flex-column mb-2">
+            {% for page in custom_pages_nav %}
+            <li class="nav-item">
+              <a class="nav-link d-flex align-items-center" href="{{ page.url }}" {% if page.open_in_new_tab %}target="_blank" rel="noopener noreferrer"{% endif %}>
+                <i class="bi {{ page.icon }} me-2" style="font-size: 0.8em;"></i>
+                <span class="nav-text">{{ page.label }}</span>
+              </a>
+            </li>
+            {% endfor %}
+          </ul>
+        </div>
+      {% else %}
+        <div class="custom-pages-inline-label mt-2 mb-1 text-muted small d-flex align-items-center">
+          <span class="nav-text flex-grow-1">{{ app_settings.custom_pages_menu_name or 'Custom Pages' }}</span>
+          <span class="badge rounded-pill text-bg-secondary custom-pages-count-badge">{{ custom_page_count }}</span>
+        </div>
+        <ul class="nav flex-column mb-2">
+          {% for page in custom_pages_nav %}
+          <li class="nav-item">
+            <a class="nav-link d-flex align-items-center" href="{{ page.url }}" {% if page.open_in_new_tab %}target="_blank" rel="noopener noreferrer"{% endif %}>
+              <i class="bi {{ page.icon }} me-2" style="font-size: 0.8em;"></i>
+              <span class="nav-text">{{ page.label }}</span>
+            </a>
+          </li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    </div>
+    {% endif %}
+
     <!-- Support Menu Section - Only show when a signed-in app user can access at least one support destination -->
     {% set support_menu_role_allowed = session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
     {% if support_menu_role_allowed and app_settings.enable_support_menu %}
@@ -442,6 +492,18 @@
             </ul>
           </li>
           <li class="nav-item">
+            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="custom-pages">
+              <i class="bi bi-window-plus me-2"></i><span class="nav-text">Custom Pages</span>
+            </a>
+            <ul class="nav flex-column ms-3" style="display: none;" id="custom-pages-submenu">
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="custom-pages" data-section="custom-pages-section">
+                  <i class="bi bi-file-earmark-richtext me-2" style="font-size: 0.8em;"></i><span class="nav-text">Static Pages</span>
+                </a>
+              </li>
+            </ul>
+          </li>
+          <li class="nav-item">
             <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="ai-models">
               <i class="bi bi-cpu me-2"></i><span class="nav-text">AI Models</span>
             </a>
@@ -570,6 +632,11 @@
                 </a>
               </li>
             </ul>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="governance">
+              <i class="bi bi-braces-asterisk me-2"></i><span class="nav-text">Governance</span>
+            </a>
           </li>
           <li class="nav-item">
             <a class="nav-link d-flex align-items-center admin-nav-tab" href="#" data-tab="workspaces">

@@ -112,6 +112,9 @@ const tagsSearchController = initializeFilterableDropdownSearch({
 });
 
 const SEARCH_DOCUMENTS_MOBILE_MEDIA_QUERY = '(max-width: 991.98px)';
+const SEARCH_DROPDOWN_VIEWPORT_PADDING = 16;
+const SEARCH_FILTER_DESKTOP_MIN_WIDTH = 320;
+const SEARCH_FILTER_DESKTOP_MAX_WIDTH = 640;
 
 function isSearchDocumentsMobileDrawerViewport() {
   return typeof window !== 'undefined' && window.matchMedia(SEARCH_DOCUMENTS_MOBILE_MEDIA_QUERY).matches;
@@ -570,7 +573,6 @@ function refreshDocumentsAndTags({ source = null, showLoading = true } = {}) {
     });
 }
 
-const SEARCH_FILTER_DROPDOWN_VIEWPORT_PADDING = 10;
 const SEARCH_FILTER_DROPDOWN_FLIP_THRESHOLD = 180;
 const SEARCH_FILTER_DROPDOWN_MAX_HEIGHT = 420;
 const SEARCH_FILTER_DROPDOWN_WIDTHS = {
@@ -590,12 +592,16 @@ function getSearchFilterDropdownViewportSpace(buttonEl) {
   const buttonRect = buttonEl.getBoundingClientRect();
 
   return {
-    above: Math.max(0, buttonRect.top - SEARCH_FILTER_DROPDOWN_VIEWPORT_PADDING),
-    below: Math.max(0, window.innerHeight - buttonRect.bottom - SEARCH_FILTER_DROPDOWN_VIEWPORT_PADDING),
+    above: Math.max(0, buttonRect.top - SEARCH_DROPDOWN_VIEWPORT_PADDING),
+    below: Math.max(0, window.innerHeight - buttonRect.bottom - SEARCH_DROPDOWN_VIEWPORT_PADDING),
   };
 }
 
-function getSearchFilterDropdownPlacement(buttonEl) {
+function getSearchFilterDropdownPlacement(buttonEl, { openUpOnDesktop = false } = {}) {
+  if (openUpOnDesktop && !isSearchDocumentsMobileDrawerViewport()) {
+    return 'top-start';
+  }
+
   const viewportSpace = getSearchFilterDropdownViewportSpace(buttonEl);
 
   if (
@@ -608,13 +614,13 @@ function getSearchFilterDropdownPlacement(buttonEl) {
   return 'bottom-start';
 }
 
-function getSearchDocumentsDropdownConfig(buttonEl) {
+function getSearchDocumentsDropdownConfig({ buttonEl = null, openUpOnDesktop = false } = {}) {
   return {
     boundary: 'viewport',
     reference: 'toggle',
     autoClose: 'outside',
-    popperConfig: (defaultConfig) => {
-      const placement = getSearchFilterDropdownPlacement(buttonEl);
+    popperConfig(defaultConfig) {
+      const placement = getSearchFilterDropdownPlacement(buttonEl, { openUpOnDesktop });
       const baseModifiers = Array.isArray(defaultConfig.modifiers)
         ? defaultConfig.modifiers.filter(modifier => !['flip', 'preventOverflow'].includes(modifier.name))
         : [];
@@ -630,7 +636,7 @@ function getSearchDocumentsDropdownConfig(buttonEl) {
             options: {
               boundary: 'viewport',
               fallbackPlacements: placement.startsWith('top') ? ['bottom-start'] : ['top-start'],
-              padding: SEARCH_FILTER_DROPDOWN_VIEWPORT_PADDING,
+              padding: SEARCH_DROPDOWN_VIEWPORT_PADDING,
               rootBoundary: 'viewport',
             },
           },
@@ -638,7 +644,7 @@ function getSearchDocumentsDropdownConfig(buttonEl) {
             name: 'preventOverflow',
             options: {
               boundary: 'viewport',
-              padding: SEARCH_FILTER_DROPDOWN_VIEWPORT_PADDING,
+              padding: SEARCH_DROPDOWN_VIEWPORT_PADDING,
               rootBoundary: 'viewport',
             },
           },
@@ -662,7 +668,7 @@ function getSearchFilterDropdownAvailableHeight(buttonEl, menuEl) {
 function getSearchFilterDropdownWidth(buttonEl, menuEl) {
   const fieldContainer = buttonEl.closest('.chat-search-panel-field');
   const containerWidth = fieldContainer ? fieldContainer.offsetWidth : buttonEl.offsetWidth || 280;
-  const viewportMaxWidth = Math.max(0, window.innerWidth - (SEARCH_FILTER_DROPDOWN_VIEWPORT_PADDING * 2));
+  const viewportMaxWidth = Math.max(0, window.innerWidth - (SEARCH_DROPDOWN_VIEWPORT_PADDING * 2));
 
   if (isSearchDocumentsMobileDrawerViewport() || menuEl.closest('.document-comparison-picker-controls')) {
     return Math.min(containerWidth, viewportMaxWidth || containerWidth);
@@ -689,7 +695,6 @@ function sizeSearchFilterDropdown(buttonEl, menuEl, itemsContainerEl) {
   menuEl.style.maxHeight = `${Math.max(0, menuHeight)}px`;
   menuEl.style.overflowY = 'hidden';
   menuEl.style.zIndex = '1060';
-
   if (!itemsContainerEl) {
     return;
   }
@@ -728,13 +733,14 @@ function initializeSearchFilterDropdown({
   itemsContainerEl,
   searchInputEl,
   searchController,
+  openUpOnDesktop = false,
   onShown,
 }) {
   if (!dropdownEl || !buttonEl || !menuEl) {
     return;
   }
 
-  new bootstrap.Dropdown(buttonEl, getSearchDocumentsDropdownConfig(buttonEl));
+  new bootstrap.Dropdown(buttonEl, getSearchDocumentsDropdownConfig({ buttonEl, openUpOnDesktop }));
 
   dropdownEl.addEventListener('show.bs.dropdown', function() {
     if (searchInputEl) {
@@ -749,10 +755,11 @@ function initializeSearchFilterDropdown({
     sizeSearchFilterDropdown(buttonEl, menuEl, itemsContainerEl);
     onShown?.();
 
-    const dropdownInstance = bootstrap.Dropdown.getInstance(buttonEl);
-    if (dropdownInstance) {
-      dropdownInstance.update();
+    try {
+      bootstrap.Dropdown.getInstance(buttonEl)?.update();
       sizeSearchFilterDropdown(buttonEl, menuEl, itemsContainerEl);
+    } catch (error) {
+      console.error('Error updating search filter dropdown placement:', error);
     }
 
     if (searchInputEl) {
@@ -2948,6 +2955,7 @@ document.addEventListener('DOMContentLoaded', function() {
           itemsContainerEl: docDropdownItems,
           searchInputEl: docSearchInput,
           searchController: documentSearchController,
+          openUpOnDesktop: true,
           onShown: initializeDocumentDropdown,
         });
       }

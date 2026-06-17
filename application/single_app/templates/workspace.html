@@ -908,7 +908,7 @@
                 <button type="button" class="btn btn-sm btn-primary" id="manage-tags-btn">
                   <i class="bi bi-tags me-1"></i>Tag Assignment
                 </button>
-                <button type="button" class="btn btn-sm btn-primary ms-2" id="chat-selected-btn" onclick="window.chatWithSelected()">
+                <button type="button" class="btn btn-sm btn-primary ms-2" id="chat-selected-btn">
                   <i class="bi bi-chat-dots-fill me-1"></i>Chat with Selected
                 </button>
                 <button type="button" class="btn btn-sm btn-outline-primary ms-2 d-none" id="download-selected-btn">
@@ -1168,6 +1168,7 @@
         aria-labelledby="agents-tab-btn"
       >
         {% if settings.allow_user_agents %}
+          {% if workspace_governance.user_agents %}
           <div class="tab-pane-inner">
             <div class="card p-3 my-3">
               <div class="d-flex justify-content-between align-items-center mb-2">
@@ -1207,6 +1208,11 @@
             </div>
             <div id="workspace-agents-error"></div>
           </div>
+          {% else %}
+          <div class="alert alert-warning text-center my-4">
+            Personal agents are disabled by governance for your account. Please contact your admin.
+          </div>
+          {% endif %}
         {% else %}
           <div class="alert alert-warning text-center my-4">
             Custom User Agents are currently disabled. Please ask your admin to enable agents for your workspace.
@@ -1225,6 +1231,7 @@
         aria-labelledby="plugins-tab-btn"
       >
         {% if settings.allow_user_plugins %}
+          {% if workspace_governance.user_actions %}
           <div id="workspace-plugins-root"></div>
           <!-- Actions Table Template (hidden) -->
           <template id="plugins-table-template">
@@ -1254,6 +1261,11 @@
               <div id="plugins-grid-view" class="row g-3 d-none"></div>
             </div>
           </template>
+          {% else %}
+          <div class="alert alert-warning text-center my-4">
+            Personal actions are disabled by governance for your account. Please contact your admin.
+          </div>
+          {% endif %}
         {% else %}
           <div class="alert alert-warning text-center my-4">
             Custom User Actions are currently disabled. Please ask your admin to enable actions for your workspace.
@@ -1331,6 +1343,7 @@
         role="tabpanel"
         aria-labelledby="endpoints-tab-btn"
       >
+        {% if workspace_governance.user_endpoints %}
         <div class="tab-pane-inner">
           <!-- Workspace Model Endpoints -->
           <div class="card p-3 my-3" id="workspace-multi-endpoint-configuration">
@@ -1367,6 +1380,11 @@
             <input type="hidden" id="model_endpoints_json" />
           </div>
         </div>
+        {% else %}
+        <div class="alert alert-warning text-center my-4">
+          Personal endpoints are disabled by governance for your account. Please contact your admin.
+        </div>
+        {% endif %}
       </div>
       <!-- End ENDPOINTS TAB -->
       {% endif %}
@@ -1375,7 +1393,9 @@
   </div>
   <!--</div>-->
 
+  {% if settings.allow_user_custom_endpoints and settings.enable_multi_model_endpoints and workspace_governance.user_endpoints %}
   {% include '_multiendpoint_modal.html' %}
+  {% endif %}
   <!-- Shared Item View Modal (read-only details for agents/actions) -->
   <div class="modal fade" id="item-view-modal" tabindex="-1" aria-labelledby="item-view-modal-label" aria-hidden="true">
     <div class="modal-dialog modal-lg modal-dialog-scrollable">
@@ -2201,15 +2221,23 @@
   </div>
 </div>
 
+{% set load_user_agent_modal = settings.per_user_semantic_kernel and settings.enable_semantic_kernel and settings.allow_user_agents and workspace_governance.user_agents %}
+{% set load_user_action_modal = settings.per_user_semantic_kernel and settings.enable_semantic_kernel and settings.allow_user_plugins and workspace_governance.user_actions %}
+{% if load_user_agent_modal or load_user_action_modal %}
 <div>
   <!-- Modal for Creating/Editing Agent -->
 
+  {% if load_user_agent_modal %}
   {% include "_agent_modal.html" %}
+  {% endif %}
 
   <!-- Modal for Creating/Editing Plugin -->
 
+  {% if load_user_action_modal %}
   {% include "_plugin_modal.html" %}
+  {% endif %}
 </div>
+{% endif %}
 
 <!-- Share Document Modal -->
 <div class="modal fade" id="shareDocumentModal" tabindex="-1" aria-hidden="true" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
@@ -2392,9 +2420,11 @@
 
 {% block scripts %}
   {{ super() }}
-  {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
+  {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel and settings.allow_user_agents and workspace_governance.user_agents %}
     <script type="module" src="/static/js/agents_common.js"></script>
     <script type="module" src="/static/js/workspace/workspace_agents.js"></script>
+  {% endif %}
+  {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel and settings.allow_user_plugins and workspace_governance.user_actions %}
     <script type="module" src="/static/js/workspace/workspace_plugins.js"></script>
   {% endif %}
   {% if settings.allow_user_workflows %}
@@ -2403,17 +2433,17 @@
   <script>
     window.enableMultiModelEndpoints = {{ 'true' if settings.enable_multi_model_endpoints else 'false' }};
     window.modelEndpointScope = 'user';
-      window.workspaceModelEndpoints = {{ personal_model_endpoints|default([], true)|tojson|safe }};
-      window.globalModelEndpoints = {{ global_model_endpoints|default([], true)|tojson|safe }};
+      window.workspaceModelEndpoints = {{ personal_model_endpoints|default([], true)|tojson }};
+      window.globalModelEndpoints = {{ global_model_endpoints|default([], true)|tojson }};
   </script>
-  {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel and settings.allow_user_custom_endpoints and settings.enable_multi_model_endpoints %}
+  {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel and settings.allow_user_custom_endpoints and settings.enable_multi_model_endpoints and workspace_governance.user_endpoints %}
   <script type="module" src="{{ url_for('static', filename='js/workspace/workspace_model_endpoints.js') }}"></script>
   {% endif %}
    <script src="/static/js/simplemde/simplemde.min.js"></script>
 
   <script>
     // Pass settings/flags needed by JS
-    window.classification_categories = {{ settings.document_classification_categories|default([], true)|tojson(indent=None)|safe }};
+    window.classification_categories = {{ settings.document_classification_categories|default([], true)|tojson(indent=None) }};
     if (!Array.isArray(window.classification_categories)) {
         window.classification_categories = [];
     }

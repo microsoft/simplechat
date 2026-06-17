@@ -20,7 +20,7 @@ from functions_cosmos_throughput import (
     normalize_cosmos_throughput_settings,
     validate_cosmos_throughput_policy_settings,
 )
-from functions_activity_logging import log_web_search_consent_acceptance, log_general_admin_action
+from functions_activity_logging import log_web_search_consent_acceptance, log_general_admin_action, log_governance_change
 from functions_notifications import broadcast_system_notification
 from functions_logging import *
 from functions_document_actions import normalize_document_action_capabilities
@@ -131,6 +131,12 @@ def register_route_frontend_admin_settings(app):
                 'model_id': '',
                 'provider': ''
             }
+        if 'metadata_extraction_model_selection' not in settings or not isinstance(settings.get('metadata_extraction_model_selection'), dict):
+            settings['metadata_extraction_model_selection'] = {
+                'endpoint_id': '',
+                'model_id': '',
+                'provider': ''
+            }
         if 'multi_endpoint_migrated_at' not in settings:
             settings['multi_endpoint_migrated_at'] = None
         if 'multi_endpoint_migration_notice' not in settings or not isinstance(settings.get('multi_endpoint_migration_notice'), dict):
@@ -199,6 +205,18 @@ def register_route_frontend_admin_settings(app):
                 {"label": "Acceptable Use Policy", "url": "https://example.com/policy"},
                 {"label": "Prompt Ideas", "url": "https://example.com/prompts"}
             ]
+        if 'enable_custom_pages' not in settings:
+            settings['enable_custom_pages'] = False
+        if 'custom_pages_menu_name' not in settings:
+            settings['custom_pages_menu_name'] = 'Custom Pages'
+        if 'custom_pages_force_menu' not in settings:
+            settings['custom_pages_force_menu'] = False
+        if 'access_request_button_enabled' not in settings:
+            settings['access_request_button_enabled'] = False
+        if 'access_request_button_text' not in settings:
+            settings['access_request_button_text'] = 'Request Access'
+        if 'access_request_page_url' not in settings:
+            settings['access_request_page_url'] = '/custom/request-access'
         if 'enable_support_menu' not in settings:
             settings['enable_support_menu'] = False
         if 'support_menu_name' not in settings:
@@ -947,6 +965,20 @@ def register_route_frontend_admin_settings(app):
                 # Keep existing external links from the database instead of overwriting with bad data
                 parsed_external_links = settings.get('external_links', []) # Fallback to existing
 
+            enable_custom_pages = form_data.get('enable_custom_pages') == 'on'
+            custom_pages_was_enabled = bool(settings.get('enable_custom_pages', False))
+            custom_pages_restart_acknowledged = form_data.get('custom_pages_restart_acknowledged') == 'on'
+            if enable_custom_pages and not custom_pages_was_enabled and not custom_pages_restart_acknowledged:
+                flash(
+                    'Custom Pages requires acknowledgement that the App Service must be restarted before it is fully enabled. The feature was not enabled.',
+                    'danger'
+                )
+                enable_custom_pages = False
+            custom_pages_menu_name = form_data.get('custom_pages_menu_name', 'Custom Pages').strip()
+            if not custom_pages_menu_name:
+                custom_pages_menu_name = 'Custom Pages'
+            custom_pages_force_menu = form_data.get('custom_pages_force_menu') == 'on'
+
             enable_support_menu = form_data.get('enable_support_menu') == 'on'
             support_menu_name = form_data.get('support_menu_name', 'Support').strip()
             if not support_menu_name:
@@ -1244,6 +1276,75 @@ def register_route_frontend_admin_settings(app):
                             normalized_default_model_selection['provider'] = endpoint_provider
             else:
                 normalized_default_model_selection = {
+                    'endpoint_id': '',
+                    'model_id': '',
+                    'provider': ''
+                }
+
+            metadata_selection_json = form_data.get('metadata_extraction_model_selection_json', '{}')
+            parsed_metadata_model_selection = {}
+            try:
+                parsed_metadata_model_selection_raw = (
+                    json.loads(metadata_selection_json) if metadata_selection_json else {}
+                )
+                if isinstance(parsed_metadata_model_selection_raw, dict):
+                    parsed_metadata_model_selection = parsed_metadata_model_selection_raw
+                else:
+                    raise ValueError("Invalid format: metadata_extraction_model_selection must be an object.")
+            except (json.JSONDecodeError, ValueError) as e:
+                print(f"Error processing metadata_extraction_model_selection_json: {e}")
+                flash(f"Error processing metadata extraction model selection: {e}. Changes not saved.", 'danger')
+                parsed_metadata_model_selection = settings.get('metadata_extraction_model_selection', {})
+
+            normalized_metadata_model_selection = {
+                'endpoint_id': str(parsed_metadata_model_selection.get('endpoint_id') or '').strip(),
+                'model_id': str(parsed_metadata_model_selection.get('model_id') or '').strip(),
+                'provider': str(parsed_metadata_model_selection.get('provider') or '').strip().lower()
+            }
+            metadata_extraction_model_deployment = form_data.get('metadata_extraction_model', '').strip()
+
+            if not enable_multi_model_endpoints:
+                normalized_metadata_model_selection = {
+                    'endpoint_id': '',
+                    'model_id': '',
+                    'provider': ''
+                }
+            elif normalized_metadata_model_selection['endpoint_id'] and normalized_metadata_model_selection['model_id']:
+                endpoint_cfg = next(
+                    (e for e in parsed_model_endpoints if e.get('id') == normalized_metadata_model_selection['endpoint_id']),
+                    None
+                )
+                if not endpoint_cfg or not endpoint_cfg.get('enabled', True):
+                    flash('Metadata extraction model endpoint is not available. Please select a valid endpoint.', 'warning')
+                    normalized_metadata_model_selection = {
+                        'endpoint_id': '',
+                        'model_id': '',
+                        'provider': ''
+                    }
+                else:
+                    models = endpoint_cfg.get('models', []) or []
+                    model_cfg = next(
+                        (m for m in models if m.get('id') == normalized_metadata_model_selection['model_id']),
+                        None
+                    )
+                    if not model_cfg or not model_cfg.get('enabled', True):
+                        flash('Metadata extraction model is not available. Please select a valid model.', 'warning')
+                        normalized_metadata_model_selection = {
+                            'endpoint_id': '',
+                            'model_id': '',
+                            'provider': ''
+                        }
+                    else:
+                        endpoint_provider = (endpoint_cfg.get('provider') or '').strip().lower()
+                        if endpoint_provider:
+                            normalized_metadata_model_selection['provider'] = endpoint_provider
+                        metadata_extraction_model_deployment = str(
+                            model_cfg.get('deploymentName')
+                            or model_cfg.get('deployment')
+                            or ''
+                        ).strip()
+            else:
+                normalized_metadata_model_selection = {
                     'endpoint_id': '',
                     'model_id': '',
                     'provider': ''
@@ -1617,6 +1718,15 @@ def register_route_frontend_admin_settings(app):
                 'agents_page_hero_primary_color': agents_page_hero_primary_color,
                 'agents_page_hero_secondary_color': agents_page_hero_secondary_color,
                 'agents_page_disclaimer_markdown': agents_page_disclaimer_markdown,
+                'governance_user_endpoints': form_data.get('governance_user_endpoints') == 'on' and form_data.get('allow_user_custom_endpoints') == 'on',
+                'governance_group_endpoints': form_data.get('governance_group_endpoints') == 'on' and form_data.get('allow_group_custom_endpoints') == 'on',
+                'governance_global_endpoints': True,
+                'governance_user_agents': form_data.get('governance_user_agents') == 'on' and form_data.get('allow_user_agents') == 'on',
+                'governance_group_agents': form_data.get('governance_group_agents') == 'on' and form_data.get('allow_group_agents') == 'on',
+                'governance_global_agents_usage': form_data.get('governance_global_agents_usage') == 'on' and form_data.get('enable_semantic_kernel') == 'on',
+                'governance_user_actions': form_data.get('governance_user_actions') == 'on' and form_data.get('allow_user_plugins') == 'on',
+                'governance_group_actions': form_data.get('governance_group_actions') == 'on' and form_data.get('allow_group_plugins') == 'on',
+                'governance_global_actions_usage': form_data.get('governance_global_actions_usage') == 'on' and form_data.get('enable_semantic_kernel') == 'on',
 
                 # GPT (Direct & APIM)
                 'enable_gpt_apim': form_data.get('enable_gpt_apim') == 'on',
@@ -1760,6 +1870,14 @@ def register_route_frontend_admin_settings(app):
                 'external_links_menu_name': external_links_menu_name,
                 'external_links_force_menu': external_links_force_menu,
                 'external_links': parsed_external_links, # Store the PARSED LIST
+
+                # *** Custom Pages ***
+                'enable_custom_pages': enable_custom_pages,
+                'custom_pages_menu_name': custom_pages_menu_name,
+                'custom_pages_force_menu': custom_pages_force_menu,
+                'access_request_button_enabled': bool(settings.get('access_request_button_enabled', False)),
+                'access_request_button_text': settings.get('access_request_button_text', 'Request Access'),
+                'access_request_page_url': settings.get('access_request_page_url', '/custom/request-access'),
 
                 # *** Support Menu ***
                 'enable_support_menu': enable_support_menu,
@@ -1928,7 +2046,8 @@ def register_route_frontend_admin_settings(app):
                 # Text-to-speech chat output
                 'enable_text_to_speech': form_data.get('enable_text_to_speech') == 'on',
 
-                'metadata_extraction_model': form_data.get('metadata_extraction_model', '').strip(),
+                'metadata_extraction_model': metadata_extraction_model_deployment,
+                'metadata_extraction_model_selection': normalized_metadata_model_selection,
 
                 # Multi-modal vision settings
                 'enable_multimodal_vision': form_data.get('enable_multimodal_vision') == 'on',
@@ -2122,10 +2241,46 @@ def register_route_frontend_admin_settings(app):
                     flash(f"Error processing favicon file: {e}. Existing favicon preserved.", "danger")
                     log_event(f"Error processing favicon file: {e}", level=logging.ERROR)
 
+            governance_toggle_keys = [
+                'governance_user_endpoints',
+                'governance_group_endpoints',
+                'governance_global_endpoints',
+                'governance_user_agents',
+                'governance_group_agents',
+                'governance_global_agents_usage',
+                'governance_user_actions',
+                'governance_group_actions',
+                'governance_global_actions_usage',
+            ]
+            governance_toggle_changes = {}
+            for toggle_key in governance_toggle_keys:
+                before_value = bool(settings.get(toggle_key, False))
+                after_value = bool(new_settings.get(toggle_key, False))
+                if before_value != after_value:
+                    governance_toggle_changes[toggle_key] = {
+                        'before': before_value,
+                        'after': after_value,
+                    }
+
             # --- Update settings in DB ---
             # new_settings now contains either the new logo/favicon base64 or the original ones
             if update_settings(new_settings):
                 flash("Admin settings updated successfully.", "success")
+                if enable_custom_pages and not custom_pages_was_enabled and custom_pages_restart_acknowledged:
+                    log_general_admin_action(
+                        admin_user_id=user_id,
+                        admin_email=admin_email,
+                        action='custom_pages_enabled_acknowledged',
+                        description='Custom Pages enabled after restart acknowledgement.',
+                        additional_context={
+                            'feature': 'custom_pages',
+                            'enabled': True,
+                            'restart_required': True,
+                            'acknowledgement': 'Admin acknowledged that the App Service must be restarted before Custom Pages is fully enabled.',
+                            'custom_pages_menu_name': custom_pages_menu_name,
+                            'custom_pages_force_menu': custom_pages_force_menu,
+                        }
+                    )
                 # Reconfigure Application Insights logging immediately if the setting changed
                 from functions_appinsights import setup_appinsights_logging
                 setup_appinsights_logging(get_settings())
@@ -2138,6 +2293,32 @@ def register_route_frontend_admin_settings(app):
                     initialize_clients(updated_settings_for_file) # Important - reinitialize clients with new settings
                 else:
                     print("ERROR: Could not fetch settings after update to ensure logo/favicon files.")
+
+                if governance_toggle_changes:
+                    try:
+                        log_governance_change(
+                            admin_user_id=user_id,
+                            admin_email=admin_email,
+                            action='governance_feature_toggles_updated',
+                            scope='feature_policy',
+                            target_id='governance_feature_toggles',
+                            before_state={
+                                key: bool(settings.get(key, False))
+                                for key in governance_toggle_keys
+                            },
+                            after_state={
+                                key: bool(new_settings.get(key, False))
+                                for key in governance_toggle_keys
+                            },
+                            change_details={
+                                'changed_toggles': governance_toggle_changes
+                            },
+                        )
+                    except Exception as governance_log_error:
+                        log_event(
+                            f"Failed to log governance toggle change: {governance_log_error}",
+                            level=logging.ERROR,
+                        )
 
                 if chunk_size_changed:
                     try:

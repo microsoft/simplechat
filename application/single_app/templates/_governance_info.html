@@ -1,0 +1,339 @@
+<!-- Governance Configuration Information Modal -->
+<div class="modal fade" id="governanceInfoModal" tabindex="-1" aria-labelledby="governanceInfoModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="governanceInfoModalLabel">
+                    <i class="bi bi-diagram-3 me-2"></i>
+                    Governance Configuration Guide
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info" role="alert">
+                    <i class="bi bi-info-circle me-2"></i>
+                    <strong>Governance controls who can use capabilities and delegated resources.</strong>
+                    Feature policies decide whether a user can use a class of capability, while delegated item policies decide whether a user can use a specific global endpoint, global agent, or global action.
+                </div>
+                <div class="alert alert-secondary" role="alert">
+                    <strong>Governance Boundary:</strong>
+                    SimpleChat application-level features are governed by identity and app roles. Capabilities and resources configured inside SimpleChat, including agents, actions, endpoints, and delegated items added by admins or users, are governed by in-app governance rules. Use app roles for platform access boundaries, and use in-app governance for resources and capabilities created inside SimpleChat.
+                </div>
+
+                <ul class="nav nav-tabs mb-3" id="governanceInfoTabs" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link active" id="governance-info-overview-tab" data-bs-toggle="tab" data-bs-target="#governance-info-overview" type="button" role="tab" aria-controls="governance-info-overview" aria-selected="true">Overview</button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="governance-info-feature-policies-tab" data-bs-toggle="tab" data-bs-target="#governance-info-feature-policies" type="button" role="tab" aria-controls="governance-info-feature-policies" aria-selected="false">Feature Policies</button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="governance-info-workspace-cohorts-tab" data-bs-toggle="tab" data-bs-target="#governance-info-workspace-cohorts" type="button" role="tab" aria-controls="governance-info-workspace-cohorts" aria-selected="false">Workspace Cohorts</button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="governance-info-delegated-items-tab" data-bs-toggle="tab" data-bs-target="#governance-info-delegated-items" type="button" role="tab" aria-controls="governance-info-delegated-items" aria-selected="false">Delegated Items</button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="governance-info-flow-tab" data-bs-toggle="tab" data-bs-target="#governance-info-flow" type="button" role="tab" aria-controls="governance-info-flow" aria-selected="false">Evaluation Flow</button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="governance-info-troubleshooting-tab" data-bs-toggle="tab" data-bs-target="#governance-info-troubleshooting" type="button" role="tab" aria-controls="governance-info-troubleshooting" aria-selected="false">Troubleshooting</button>
+                    </li>
+                </ul>
+
+                <div class="tab-content" id="governanceInfoTabContent">
+                    <div class="tab-pane fade show active" id="governance-info-overview" role="tabpanel" aria-labelledby="governance-info-overview-tab" tabindex="0">
+                        <div class="card mb-3">
+                            <div class="card-header">
+                                <h6 class="mb-0"><i class="bi bi-layers me-2"></i>Two Layers of Governance</h6>
+                            </div>
+                            <div class="card-body">
+                                <div class="row g-3">
+                                    <div class="col-lg-6">
+                                        <div class="border rounded p-3 h-100">
+                                            <h6 class="mb-2">1. Feature Policies</h6>
+                                            <p class="small mb-2">Feature policies answer: <strong>Can this user use this type of capability?</strong></p>
+                                            <ul class="small mb-0">
+                                                <li>Personal agents, actions, and endpoints</li>
+                                                <li>Group agents, actions, and endpoints</li>
+                                                <li>Global agent, action, and endpoint usage</li>
+                                            </ul>
+                                        </div>
+                                    </div>
+                                    <div class="col-lg-6">
+                                        <div class="border rounded p-3 h-100">
+                                            <h6 class="mb-2">2. Delegated Item Policies</h6>
+                                            <p class="small mb-2">Delegated item policies answer: <strong>Can this user use this exact delegated resource?</strong></p>
+                                            <ul class="small mb-0">
+                                                <li>A specific global endpoint</li>
+                                                <li>A specific global agent</li>
+                                                <li>A specific global action</li>
+                                            </ul>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="alert alert-secondary mt-3 mb-0" role="alert">
+                                    <strong>Rule of thumb:</strong> The user must pass the feature policy first. Delegated item policies are additive whitelists inside that feature gate; they do not override feature-level governance.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="tab-pane fade" id="governance-info-feature-policies" role="tabpanel" aria-labelledby="governance-info-feature-policies-tab" tabindex="0">
+                        <div class="card mb-3">
+                            <div class="card-header">
+                                <h6 class="mb-0"><i class="bi bi-sliders2 me-2"></i>How Feature Policies Work</h6>
+                            </div>
+                            <div class="card-body">
+                                <p class="small">Feature toggles enable enforcement for a capability. The matching feature policy then decides who passes that check.</p>
+                                <div class="table-responsive">
+                                    <table class="table table-sm table-bordered align-middle">
+                                        <thead>
+                                            <tr>
+                                                <th>Setting</th>
+                                                <th>What It Governs</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr>
+                                                <td><code>Govern Personal Endpoints</code></td>
+                                                <td>Whether a user can use model endpoints configured in their personal workspace.</td>
+                                            </tr>
+                                            <tr>
+                                                <td><code>Govern Personal Agents</code></td>
+                                                <td>Whether a user can create, view, or use agents in their personal workspace.</td>
+                                            </tr>
+                                            <tr>
+                                                <td><code>Govern Personal Actions</code></td>
+                                                <td>Whether a user can create, view, or use actions in their personal workspace.</td>
+                                            </tr>
+                                            <tr>
+                                                <td><code>Govern Group Endpoints</code></td>
+                                                <td>Whether a user can use model endpoints configured in group workspaces.</td>
+                                            </tr>
+                                            <tr>
+                                                <td><code>Govern Group Agents</code></td>
+                                                <td>Whether a user can use agent capabilities in group workspaces where group agent features are enabled.</td>
+                                            </tr>
+                                            <tr>
+                                                <td><code>Govern Group Actions</code></td>
+                                                <td>Whether a user can use action capabilities in group workspaces where group action features are enabled.</td>
+                                            </tr>
+                                            <tr>
+                                                <td><code>Govern Global Endpoints</code></td>
+                                                <td>Whether a user can use global model endpoints shared by admins.</td>
+                                            </tr>
+                                            <tr>
+                                                <td><code>Govern Global Agents</code></td>
+                                                <td>Whether a user can select or use global agents shared by admins.</td>
+                                            </tr>
+                                            <tr>
+                                                <td><code>Govern Global Actions</code></td>
+                                                <td>Whether a user can use global actions shared by admins.</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div class="alert alert-warning mb-0" role="alert">
+                                    <strong>Important:</strong> If <code>Allow All</code> is off, add at least one allowed user or allowed group when you intend to restrict access. Empty explicit lists are treated permissively for backward compatibility.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="tab-pane fade" id="governance-info-workspace-cohorts" role="tabpanel" aria-labelledby="governance-info-workspace-cohorts-tab" tabindex="0">
+                        <div class="card mb-3 border-primary">
+                            <div class="card-header bg-primary text-white">
+                                <h6 class="mb-0"><i class="bi bi-people me-2"></i>Using Workspaces as Governance Cohorts</h6>
+                            </div>
+                            <div class="card-body">
+                                <div class="alert alert-primary" role="alert">
+                                    <strong>A group workspace can be used as a reusable group of users for governance.</strong>
+                                    In this context, the workspace membership is used as an access cohort, not as a content-sharing permission.
+                                </div>
+                                <p class="small">This is useful when admins want to pilot personal features with a defined set of people without managing every user ID in every governance policy.</p>
+                                <div class="row g-3">
+                                    <div class="col-lg-6">
+                                        <div class="border rounded p-3 h-100">
+                                            <h6 class="text-success">What It Does</h6>
+                                            <ul class="small mb-0">
+                                                <li>Uses group workspace membership as a reusable allow-list cohort.</li>
+                                                <li>Allows members of that workspace to pass selected feature policies.</li>
+                                                <li>Works for personal feature policies such as personal agents, personal actions, and personal endpoints.</li>
+                                            </ul>
+                                        </div>
+                                    </div>
+                                    <div class="col-lg-6">
+                                        <div class="border rounded p-3 h-100">
+                                            <h6 class="text-danger">What It Does Not Do</h6>
+                                            <ul class="small mb-0">
+                                                <li>It does not grant access to that group workspace's documents.</li>
+                                                <li>It does not grant access to group agents or group actions by itself.</li>
+                                                <li>It does not move personal agents into the group workspace.</li>
+                                            </ul>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="card bg-body-tertiary mt-3">
+                                    <div class="card-body">
+                                        <h6 class="mb-2">Example: Personal Agents Pilot</h6>
+                                        <ol class="small mb-0">
+                                            <li>Create a group workspace named <strong>Personal Agents Pilot Users</strong>.</li>
+                                            <li>Add the users who should test personal agents.</li>
+                                            <li>Open <strong>Governance &gt; Feature Policies</strong>.</li>
+                                            <li>Edit <strong>Personal Agents</strong>, turn off <strong>Allow All</strong>, and add the <strong>Personal Agents Pilot Users</strong> workspace ID as an allowed group.</li>
+                                            <li>Members can now use personal agents in their own personal workspaces. They do not automatically receive access to group documents, group agents, or delegated global resources.</li>
+                                        </ol>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="tab-pane fade" id="governance-info-delegated-items" role="tabpanel" aria-labelledby="governance-info-delegated-items-tab" tabindex="0">
+                        <div class="card mb-3">
+                            <div class="card-header">
+                                <h6 class="mb-0"><i class="bi bi-list-check me-2"></i>Delegated Item Policies</h6>
+                            </div>
+                            <div class="card-body">
+                                <p class="small">Delegated item policies are resource-specific checks for global resources. They are evaluated after the matching feature policy passes.</p>
+                                <div class="alert alert-warning py-2 small" role="alert">
+                                    <strong>Important:</strong> Item delegation cannot grant access by itself. If a user is allowed by an item policy for Agent X but does not pass <strong>Govern Global Agents</strong>, the user is blocked from Agent X.
+                                </div>
+                                <div class="row g-3">
+                                    <div class="col-lg-4">
+                                        <div class="border rounded p-3 h-100">
+                                            <h6>Global Endpoints</h6>
+                                            <p class="small mb-0">Restrict a specific global model endpoint to selected users or groups.</p>
+                                        </div>
+                                    </div>
+                                    <div class="col-lg-4">
+                                        <div class="border rounded p-3 h-100">
+                                            <h6>Global Agents</h6>
+                                            <p class="small mb-0">Restrict a specific global agent to selected users or groups.</p>
+                                        </div>
+                                    </div>
+                                    <div class="col-lg-4">
+                                        <div class="border rounded p-3 h-100">
+                                            <h6>Global Actions</h6>
+                                            <p class="small mb-0">Restrict a specific global action to selected users or groups.</p>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="alert alert-info mt-3 mb-0" role="alert">
+                                    <strong>Tip:</strong> Use delegated item policies when a feature is broadly available, but a particular global resource should only be available to a narrower audience.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="tab-pane fade" id="governance-info-flow" role="tabpanel" aria-labelledby="governance-info-flow-tab" tabindex="0">
+                        <div class="card mb-3">
+                            <div class="card-header">
+                                <h6 class="mb-0"><i class="bi bi-arrow-right-circle me-2"></i>Evaluation Flow</h6>
+                            </div>
+                            <div class="card-body">
+                                <ol class="small mb-3">
+                                    <li>The backend identifies the signed-in user.</li>
+                                    <li>The relevant governance setting is checked. If governance is off for that feature, access is allowed.</li>
+                                    <li>The user's governance groups are resolved from group workspace and public workspace memberships.</li>
+                                    <li>The feature policy is evaluated against <code>Allow All</code>, allowed users, and allowed groups.</li>
+                                    <li>If the request targets a delegated global endpoint, global agent, or global action, matching item policies are evaluated only after the feature policy passes.</li>
+                                    <li>If the feature policy blocks the user, item-level delegation is not considered and cannot override the denial.</li>
+                                    <li>The backend allows or denies the operation. Frontend filtering only improves the experience and is not the security boundary.</li>
+                                </ol>
+                                <div class="alert alert-secondary mb-0" role="alert">
+                                    <strong>Performance note:</strong> Governance decisions use request-level memoization, short-lived process caching, and shared cache-version invalidation when Redis is available.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="tab-pane fade" id="governance-info-troubleshooting" role="tabpanel" aria-labelledby="governance-info-troubleshooting-tab" tabindex="0">
+                        <div class="card">
+                            <div class="card-header">
+                                <h6 class="mb-0"><i class="bi bi-tools me-2"></i>Common Questions</h6>
+                            </div>
+                            <div class="card-body">
+                                <div class="accordion" id="governanceInfoTroubleshootingAccordion">
+                                    <div class="accordion-item">
+                                        <h2 class="accordion-header" id="governanceInfoTroubleOne">
+                                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#governanceInfoTroubleOneCollapse" aria-expanded="false" aria-controls="governanceInfoTroubleOneCollapse">
+                                                A user is in an allowed workspace cohort but still cannot use a feature
+                                            </button>
+                                        </h2>
+                                        <div id="governanceInfoTroubleOneCollapse" class="accordion-collapse collapse" aria-labelledby="governanceInfoTroubleOne" data-bs-parent="#governanceInfoTroubleshootingAccordion">
+                                            <div class="accordion-body small">
+                                                Confirm the base feature is enabled in Admin Settings, the matching governance toggle is enabled, and the feature policy includes the correct workspace ID under Allowed Groups. For delegated global resources, also confirm the item policy allows the same user or group.
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="accordion-item">
+                                        <h2 class="accordion-header" id="governanceInfoTroubleTwo">
+                                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#governanceInfoTroubleTwoCollapse" aria-expanded="false" aria-controls="governanceInfoTroubleTwoCollapse">
+                                                Adding a group workspace to Personal Agents seems unusual
+                                            </button>
+                                        </h2>
+                                        <div id="governanceInfoTroubleTwoCollapse" class="accordion-collapse collapse" aria-labelledby="governanceInfoTroubleTwo" data-bs-parent="#governanceInfoTroubleshootingAccordion">
+                                            <div class="accordion-body small">
+                                                Treat the group workspace as a named cohort. Its membership list is reused for the personal feature policy, but the personal feature remains personal. The users still create and use personal agents in their own workspace.
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="accordion-item">
+                                        <h2 class="accordion-header" id="governanceInfoTroubleThree">
+                                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#governanceInfoTroubleThreeCollapse" aria-expanded="false" aria-controls="governanceInfoTroubleThreeCollapse">
+                                                The UI hides an option but the API still matters
+                                            </button>
+                                        </h2>
+                                        <div id="governanceInfoTroubleThreeCollapse" class="accordion-collapse collapse" aria-labelledby="governanceInfoTroubleThree" data-bs-parent="#governanceInfoTroubleshootingAccordion">
+                                            <div class="accordion-body small">
+                                                The UI filters unavailable options to reduce confusion, but backend enforcement is the source of truth. API routes still check governance before allowing governed operations.
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="accordion-item">
+                                        <h2 class="accordion-header" id="governanceInfoTroubleFour">
+                                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#governanceInfoTroubleFourCollapse" aria-expanded="false" aria-controls="governanceInfoTroubleFourCollapse">
+                                                A user is allowed for a specific item but not for the feature
+                                            </button>
+                                        </h2>
+                                        <div id="governanceInfoTroubleFourCollapse" class="accordion-collapse collapse" aria-labelledby="governanceInfoTroubleFour" data-bs-parent="#governanceInfoTroubleshootingAccordion">
+                                            <div class="accordion-body small">
+                                                The user is blocked. Feature policy is evaluated first. Item-level whitelists only narrow or organize access after the user passes the feature policy, so they cannot grant access to a feature the user is not allowed to use.
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const governanceInfoModal = document.getElementById('governanceInfoModal');
+    const overviewTab = document.getElementById('governance-info-overview-tab');
+    const overviewPane = document.getElementById('governance-info-overview');
+
+    if (!governanceInfoModal || !overviewTab || !overviewPane) {
+        return;
+    }
+
+    governanceInfoModal.addEventListener('shown.bs.modal', function() {
+        if (window.bootstrap?.Tab) {
+            bootstrap.Tab.getOrCreateInstance(overviewTab).show();
+        }
+        overviewTab.classList.add('active');
+        overviewTab.setAttribute('aria-selected', 'true');
+        overviewPane.classList.add('show', 'active');
+    });
+});
+</script>

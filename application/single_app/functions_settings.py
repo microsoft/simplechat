@@ -2,7 +2,7 @@
 
 from functools import wraps
 
-from flask import has_request_context, jsonify, request, session
+from flask import g, has_request_context, jsonify, request, session
 
 from config import *
 from functions_appinsights import log_event
@@ -20,6 +20,101 @@ from support_menu_config import (
     has_visible_support_latest_features,
     normalize_support_latest_features_visibility,
 )
+
+
+USER_SETTINGS_REQUEST_CACHE_ATTR = "simplechat_user_settings_request_cache"
+USER_UI_SETTINGS_KEYS = (
+    "profileImage",
+    "navLayout",
+    "darkModeEnabled",
+    "showTutorialButtons",
+    "chatLayout",
+    "streamingEnabled",
+    "notifications_per_page",
+)
+
+
+def _clone_user_settings_doc(doc):
+    return copy.deepcopy(doc or {})
+
+
+def _get_user_settings_request_cache():
+    if not has_request_context():
+        return None
+
+    cache = getattr(g, USER_SETTINGS_REQUEST_CACHE_ATTR, None)
+    if cache is None:
+        cache = {}
+        setattr(g, USER_SETTINGS_REQUEST_CACHE_ATTR, cache)
+    return cache
+
+
+def _get_request_cached_user_settings(user_id):
+    cache = _get_user_settings_request_cache()
+    if cache is None or user_id not in cache:
+        return None
+    return _clone_user_settings_doc(cache[user_id])
+
+
+def _set_request_cached_user_settings(user_id, doc):
+    cache = _get_user_settings_request_cache()
+    if cache is not None:
+        cache[user_id] = _clone_user_settings_doc(doc)
+
+
+def _delete_request_cached_user_settings(user_id):
+    cache = _get_user_settings_request_cache()
+    if cache is not None:
+        cache.pop(user_id, None)
+
+
+def _extract_user_ui_settings(doc):
+    settings = (doc or {}).get('settings', {})
+    if not isinstance(settings, dict):
+        settings = {}
+    return {
+        key: copy.deepcopy(settings[key])
+        for key in USER_UI_SETTINGS_KEYS
+        if key in settings
+    }
+
+
+def _delete_user_ui_settings_cache(user_id):
+    cache_deleter = getattr(app_settings_cache, "delete_user_ui_settings_cache", None)
+    if callable(cache_deleter):
+        try:
+            cache_deleter(user_id)
+        except Exception as cache_error:
+            log_event(
+                "[UserSettingsCache] Failed to delete user UI settings cache.",
+                extra={
+                    "user_id": user_id,
+                    "error": str(cache_error)
+                },
+                level=logging.WARNING
+            )
+
+
+def _set_user_ui_settings_cache(user_id, doc):
+    cache_setter = getattr(app_settings_cache, "set_user_ui_settings_cache", None)
+    if callable(cache_setter):
+        try:
+            cache_setter(user_id, _extract_user_ui_settings(doc))
+        except Exception as cache_error:
+            log_event(
+                "[UserSettingsCache] Failed to set user UI settings cache.",
+                extra={
+                    "user_id": user_id,
+                    "error": str(cache_error)
+                },
+                level=logging.WARNING
+            )
+
+
+def invalidate_user_settings_caches(user_id):
+    """Clear request and lightweight UI caches for a user settings document."""
+    _delete_request_cached_user_settings(user_id)
+    _delete_user_ui_settings_cache(user_id)
 
 
 def is_tabular_processing_enabled(settings):
@@ -367,17 +462,84 @@ def _should_sync_session_profile(target_user_id, actor_user_id, allow_cross_user
     normalized_target_user_id = str(target_user_id or '').strip()
     normalized_actor_user_id = str(actor_user_id or '').strip()
     return bool(normalized_target_user_id and normalized_actor_user_id and normalized_target_user_id == normalized_actor_user_id)
-import copy
-from support_menu_config import (
-    get_default_support_latest_features_visibility,
-    has_visible_support_latest_features,
-    normalize_support_latest_features_visibility,
-)
 
 
-def is_tabular_processing_enabled(settings):
-    """Tabular processing is available whenever enhanced citations is enabled."""
-    return bool((settings or {}).get('enable_enhanced_citations', False))
+def _refresh_app_settings_cache_after_write(settings_payload, context="app_settings_write"):
+    """Update shared/local settings cache around a version bump."""
+    cache_updater = getattr(app_settings_cache, "update_settings_cache", None)
+    version_bumper = getattr(app_settings_cache, "bump_app_settings_cache_version", None)
+
+    def _update_cache(stage):
+        if not callable(cache_updater):
+            return
+        try:
+            cache_updater(copy.deepcopy(settings_payload))
+        except Exception as cache_error:
+            log_event(
+                "App settings cache update failed after settings write.",
+                extra={
+                    "context": context,
+                    "stage": stage,
+                    "error": str(cache_error)
+                },
+                level=logging.WARNING
+            )
+
+    _update_cache("before_version_bump")
+
+    if callable(version_bumper):
+        try:
+            version_bumper()
+        except Exception as version_error:
+            log_event(
+                "App settings cache version bump failed after settings write.",
+                extra={
+                    "context": context,
+                    "error": str(version_error)
+                },
+                level=logging.WARNING
+            )
+
+    _update_cache("after_version_bump")
+
+
+def _refresh_app_settings_cache_after_write(settings_payload, context="app_settings_write"):
+    """Update shared/local settings cache around a version bump."""
+    cache_updater = getattr(app_settings_cache, "update_settings_cache", None)
+    version_bumper = getattr(app_settings_cache, "bump_app_settings_cache_version", None)
+
+    def _update_cache(stage):
+        if not callable(cache_updater):
+            return
+        try:
+            cache_updater(copy.deepcopy(settings_payload))
+        except Exception as cache_error:
+            log_event(
+                "App settings cache update failed after settings write.",
+                extra={
+                    "context": context,
+                    "stage": stage,
+                    "error": str(cache_error)
+                },
+                level=logging.WARNING
+            )
+
+    _update_cache("before_version_bump")
+
+    if callable(version_bumper):
+        try:
+            version_bumper()
+        except Exception as version_error:
+            log_event(
+                "App settings cache version bump failed after settings write.",
+                extra={
+                    "context": context,
+                    "error": str(version_error)
+                },
+                level=logging.WARNING
+            )
+
+    _update_cache("after_version_bump")
 
 def get_settings(use_cosmos=False, include_source=False):
     import secrets
@@ -424,6 +586,15 @@ def get_settings(use_cosmos=False, include_source=False):
         'allow_group_agents': False,
         'allow_group_custom_endpoints': False,
         'allow_group_custom_agent_endpoints': False,
+        'governance_user_endpoints': False,
+        'governance_group_endpoints': False,
+        'governance_global_endpoints': True,
+        'governance_user_agents': False,
+        'governance_group_agents': False,
+        'governance_global_agents_usage': False,
+        'governance_user_actions': False,
+        'governance_group_actions': False,
+        'governance_global_actions_usage': False,
         'allow_ai_foundry_agents': False,
         'allow_group_ai_foundry_agents': False,
         'allow_personal_ai_foundry_agents': False,
@@ -597,6 +768,11 @@ def get_settings(use_cosmos=False, include_source=False):
         # Metadata Extraction
         'enable_extract_meta_data': False,
         'metadata_extraction_model': '',
+        'metadata_extraction_model_selection': {
+            'endpoint_id': '',
+            'model_id': '',
+            'provider': ''
+        },
         
         # Multimodal Vision
         'enable_multimodal_vision': False,
@@ -626,6 +802,11 @@ def get_settings(use_cosmos=False, include_source=False):
             {"label": "Acceptable Use Policy", "url": "https://example.com/policy"},
             {"label": "Prompt Ideas", "url": "https://example.com/prompts"}
         ],
+
+        # Custom Pages
+        'enable_custom_pages': False,
+        'custom_pages_menu_name': 'Custom Pages',
+        'custom_pages_force_menu': False,
 
         # Support Menu
         'enable_support_menu': False,
@@ -795,6 +976,9 @@ def get_settings(use_cosmos=False, include_source=False):
         # Access denied message shown on the home page for signed-in users who lack required roles.
         # Default is hard-coded; admins can override via Admin Settings (persisted in Cosmos DB).
         'access_denied_message': 'You are logged in but do not have the required permissions to access this application.\nPlease contact an administrator for access.',
+        'access_request_button_enabled': False,
+        'access_request_button_text': 'Request Access',
+        'access_request_page_url': '/custom/request-access',
         'enable_file_processing_logs': True,
         'file_processing_logs_timer_enabled': False,
         'file_timer_value': 1,
@@ -946,19 +1130,7 @@ def get_settings(use_cosmos=False, include_source=False):
         # If merging added anything new, upsert back to Cosmos so future reads remain up to date
         if merge_changed or migration_updated or assignment_settings_updated:
             cosmos_settings_container.upsert_item(merged)
-            cache_updater = getattr(app_settings_cache, "update_settings_cache", None)
-            if callable(cache_updater):
-                try:
-                    cache_updater(copy.deepcopy(merged))
-                except Exception as cache_error:
-                    log_event(
-                        "App settings cache update failed after merge upsert.",
-                        extra={
-                            "settings_source": settings_source,
-                            "error": str(cache_error)
-                        },
-                        level=logging.WARNING
-                    )
+            _refresh_app_settings_cache_after_write(merged, context="merge_upsert")
 
             log_event(
                 "App settings defaults or migrations were persisted to Cosmos DB.",
@@ -974,6 +1146,7 @@ def get_settings(use_cosmos=False, include_source=False):
 
     except CosmosResourceNotFoundError:
         cosmos_settings_container.create_item(body=default_settings)
+        _refresh_app_settings_cache_after_write(default_settings, context="default_create")
 
         log_event(
             "App settings document not found. Default settings created in Cosmos DB.",
@@ -1009,9 +1182,7 @@ def update_settings(new_settings):
         )
         settings_item['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(settings_item)
         cosmos_settings_container.upsert_item(settings_item)
-        cache_updater = getattr(app_settings_cache, "update_settings_cache", None)
-        if callable(cache_updater):
-            cache_updater(settings_item)
+        _refresh_app_settings_cache_after_write(settings_item, context="update_settings")
         log_event(
             "App settings updated successfully.",
             level=logging.INFO
@@ -1502,6 +1673,11 @@ def get_user_settings(user_id, allow_cross_user=False):
         actor_user_id,
         allow_cross_user=allow_cross_user,
     )
+
+    cached_doc = _get_request_cached_user_settings(user_id)
+    if cached_doc is not None:
+        return cached_doc
+
     try:
         doc = cosmos_user_settings_container.read_item(item=user_id, partition_key=user_id)
         updated = False
@@ -1555,7 +1731,10 @@ def get_user_settings(user_id, allow_cross_user=False):
         
         if updated:
             cosmos_user_settings_container.upsert_item(body=doc)
-        return doc
+            _set_user_ui_settings_cache(user_id, doc)
+
+        _set_request_cached_user_settings(user_id, doc)
+        return _clone_user_settings_doc(doc)
     except exceptions.CosmosResourceNotFoundError:
         # Return a default structure if the user has no settings saved yet
         doc = {"id": user_id, "settings": {}}
@@ -1587,7 +1766,9 @@ def get_user_settings(user_id, allow_cross_user=False):
                 doc['settings']['profileImage'] = None
             
         cosmos_user_settings_container.upsert_item(body=doc)
-        return doc
+        _set_user_ui_settings_cache(user_id, doc)
+        _set_request_cached_user_settings(user_id, doc)
+        return _clone_user_settings_doc(doc)
     except Exception as e:
         log_event(
             "Error retrieving user settings.",
@@ -1599,6 +1780,44 @@ def get_user_settings(user_id, allow_cross_user=False):
             exceptionTraceback=True
         )
         raise # Re-raise the exception to be handled by the route
+
+
+def get_user_ui_settings(user_id, allow_cross_user=False):
+    """Return a lightweight, cacheable subset of user settings used by shared page chrome."""
+    _authorize_user_settings_access(user_id, "read UI settings", allow_cross_user=allow_cross_user)
+
+    cached_doc = _get_request_cached_user_settings(user_id)
+    if cached_doc is not None:
+        return {
+            'id': user_id,
+            'settings': _extract_user_ui_settings(cached_doc),
+        }
+
+    cache_getter = getattr(app_settings_cache, "get_user_ui_settings_cache", None)
+    if callable(cache_getter):
+        try:
+            cached_ui_settings = cache_getter(user_id)
+            if cached_ui_settings is not None:
+                return {
+                    'id': user_id,
+                    'settings': copy.deepcopy(cached_ui_settings or {}),
+                }
+        except Exception as cache_error:
+            log_event(
+                "[UserSettingsCache] Failed to read user UI settings cache.",
+                extra={
+                    "user_id": user_id,
+                    "error": str(cache_error)
+                },
+                level=logging.WARNING
+            )
+
+    doc = get_user_settings(user_id, allow_cross_user=allow_cross_user)
+    _set_user_ui_settings_cache(user_id, doc)
+    return {
+        'id': user_id,
+        'settings': _extract_user_ui_settings(doc),
+    }
     
 def update_user_settings(user_id, settings_to_update, allow_cross_user=False):
     """
@@ -1755,6 +1974,8 @@ def update_user_settings(user_id, settings_to_update, allow_cross_user=False):
 
         # Upsert the modified document
         cosmos_user_settings_container.upsert_item(body=doc) # Use body=doc for clarity
+        _set_request_cached_user_settings(user_id, doc)
+        _delete_user_ui_settings_cache(user_id)
 
         return True
 
@@ -1951,6 +2172,7 @@ def add_search_to_history(user_id, search_term):
         
         doc['search_history'] = search_history
         cosmos_user_settings_container.upsert_item(body=doc)
+        invalidate_user_settings_caches(user_id)
         
         return search_history
     except Exception as e:
@@ -1975,6 +2197,7 @@ def clear_user_search_history(user_id):
         
         doc['search_history'] = []
         cosmos_user_settings_container.upsert_item(body=doc)
+        invalidate_user_settings_caches(user_id)
         
         return True
     except Exception as e:

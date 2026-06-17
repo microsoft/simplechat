@@ -1,5 +1,7 @@
 # route_backend_users.py
 
+from urllib.parse import quote
+
 from config import *
 from collaboration_models import (
     COLLABORATION_KIND,
@@ -29,6 +31,49 @@ PROFILE_LOOKUP_MEMBERSHIP_STATUSES = {
 
 def _escape_graph_odata_literal(value):
     return str(value or "").replace("'", "''")
+
+
+def _build_user_info_response(user_id, display_name="", email="", user_principal_name=""):
+    resolved_email = email or user_principal_name or ""
+    return {
+        "id": user_id,
+        "user_id": user_id,
+        "displayName": display_name or resolved_email or "",
+        "display_name": display_name or resolved_email or "",
+        "email": resolved_email,
+        "mail": email or "",
+        "userPrincipalName": user_principal_name or resolved_email,
+    }
+
+
+def _get_graph_user_info_by_id(user_id):
+    normalized_user_id = str(user_id or "").strip()
+    if not normalized_user_id:
+        return None
+
+    token = get_valid_access_token()
+    if not token:
+        return None
+
+    user_endpoint = get_graph_endpoint(f"/users/{quote(normalized_user_id, safe='')}")
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    params = {
+        "$select": "id,displayName,mail,userPrincipalName"
+    }
+
+    response = requests.get(user_endpoint, headers=headers, params=params)
+    response.raise_for_status()
+    user = response.json() or {}
+    graph_user_id = user.get("id") or normalized_user_id
+    return _build_user_info_response(
+        graph_user_id,
+        display_name=user.get("displayName", ""),
+        email=user.get("mail", ""),
+        user_principal_name=user.get("userPrincipalName", ""),
+    )
 
 
 def _normalize_user_lookup_id(value):
@@ -279,14 +324,22 @@ def register_route_backend_users(app):
         Get user info (email, display_name) by user_id (oid).
         """
         try:
-            _, normalized_user_id, user_doc = _read_authorized_user_profile_document(user_id)
-            return jsonify({
-                "user_id": normalized_user_id,
-                "email": user_doc.get("email", ""),
-                "display_name": user_doc.get("display_name", "")
-            }), 200
-        except (LookupError, PermissionError, exceptions.CosmosResourceNotFoundError):
+            _, normalized_user_id = _authorize_user_profile_access(user_id)
+        except (LookupError, PermissionError):
             return _user_profile_not_found_response()
+
+        try:
+            user_doc = cosmos_user_settings_container.read_item(
+                item=normalized_user_id,
+                partition_key=normalized_user_id,
+            )
+            return jsonify(_build_user_info_response(
+                normalized_user_id,
+                display_name=user_doc.get("display_name", ""),
+                email=user_doc.get("email", ""),
+            )), 200
+        except exceptions.CosmosResourceNotFoundError:
+            pass
         except Exception as ex:
             log_event(
                 '[UserProfile] Failed to load user info',
@@ -297,7 +350,23 @@ def register_route_backend_users(app):
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
-            return jsonify({'error': 'Failed to retrieve user profile'}), 500
+
+        try:
+            graph_user_info = _get_graph_user_info_by_id(normalized_user_id)
+            if graph_user_info:
+                return jsonify(graph_user_info), 200
+        except requests.exceptions.RequestException as ex:
+            log_event(
+                "[Users] Graph user info lookup failed",
+                level=logging.WARNING,
+                extra={
+                    "target_user_id": normalized_user_id,
+                    "status_code": getattr(ex.response, "status_code", None),
+                },
+                debug_only=True,
+            )
+
+        return _user_profile_not_found_response()
 
     @app.route('/api/user/collaboration-suggestions', methods=['GET'])
     @swagger_route(security=get_auth_security())

@@ -13,12 +13,17 @@ const sidebarMenuStateKeys = new Set([
   'workspaces',
   'support',
   'externalLinks',
+  'customPages',
   'adminSettings',
   'controlCenter',
   'conversations'
 ]);
 
 async function getUserSettings() {
+  if (window.simplechatUserSettings && typeof window.simplechatUserSettings === 'object') {
+    return window.simplechatUserSettings;
+  }
+
   try {
     const resp = await fetch('/api/user/settings');
     if (!resp.ok) return {};
@@ -32,11 +37,14 @@ async function getUserSettings() {
 
 async function setUserNavLayout(navLayout) {
   try {
-    await fetch('/api/user/settings', {
+    const resp = await fetch('/api/user/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ settings: { navLayout } })
     });
+    if (resp.ok && window.simplechatUserSettings && typeof window.simplechatUserSettings === 'object') {
+      window.simplechatUserSettings.navLayout = navLayout;
+    }
     console.log('Nav layout setting saved successfully:', navLayout);
   } catch (e) {
     console.error('Error saving nav layout setting:', e);

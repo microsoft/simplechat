@@ -10,6 +10,10 @@ const endpointsInput = document.getElementById("model_endpoints_json");
 const defaultModelSelect = document.getElementById("default-model-selection");
 const defaultModelInput = document.getElementById("default_model_selection_json");
 const defaultModelWrapper = document.getElementById("default-model-selection-wrapper");
+const metadataExtractionModelSelect = document.getElementById("metadata_extraction_model");
+const metadataExtractionModelInput = document.getElementById("metadata_extraction_model_selection_json");
+const legacyGptApimToggle = document.getElementById("enable_gpt_apim");
+const legacyApimGptDeploymentInput = document.getElementById("azure_apim_gpt_deployment");
 const migrationPanel = document.getElementById("agent-default-model-migration-panel");
 const migrationStatus = document.getElementById("agent-default-model-migration-status");
 const migrationCallout = document.getElementById("agent-default-model-migration-callout");
@@ -85,9 +89,15 @@ let modelEndpoints = Array.isArray(window.modelEndpoints) ? [...window.modelEndp
 let modalModels = [];
 let pendingDeleteEndpointId = null;
 let pendingDeleteTimeout = null;
+let pendingEndpointDuplicate = null;
+let endpointDuplicateKeyModal = null;
 let defaultModelSelection = window.defaultModelSelection && typeof window.defaultModelSelection === "object"
     ? { ...window.defaultModelSelection }
     : {};
+let metadataExtractionModelSelection = window.metadataExtractionModelSelection && typeof window.metadataExtractionModelSelection === "object"
+    ? { ...window.metadataExtractionModelSelection }
+    : {};
+const legacyMetadataExtractionModel = String(window.legacyMetadataExtractionModel || "").trim();
 let migrationPreviewState = null;
 let migrationSelectedKeys = new Set();
 
@@ -239,6 +249,21 @@ function updateDefaultModelInput() {
     defaultModelInput.value = JSON.stringify(defaultModelSelection || {});
 }
 
+function updateMetadataExtractionModelInput() {
+    if (!metadataExtractionModelInput) {
+        return;
+    }
+    metadataExtractionModelInput.value = JSON.stringify(metadataExtractionModelSelection || {});
+}
+
+function isMultiEndpointModeEnabled() {
+    if (enableMultiEndpointToggle) {
+        return !!enableMultiEndpointToggle.checked;
+    }
+
+    return window.enableMultiModelEndpoints === true || window.enableMultiModelEndpoints === "true";
+}
+
 function isAdminSettingsFormModified() {
     return typeof window.isAdminSettingsFormModified === "function" && window.isAdminSettingsFormModified();
 }
@@ -385,6 +410,7 @@ function renderEndpoints() {
         `;
         updateHiddenInput();
         buildDefaultModelOptions();
+        buildMetadataExtractionModelOptions();
         return;
     }
 
@@ -395,30 +421,98 @@ function renderEndpoints() {
         const statusClass = endpoint.enabled ? "success" : "secondary";
         const toggleLabel = endpoint.enabled ? "Disable" : "Enable";
 
-        row.innerHTML = `
-            <td>
-                <div class="fw-semibold">${escapeHtml(endpoint.name || "Unnamed Endpoint")}</div>
-                <div class="text-muted small">${escapeHtml(endpoint.connection?.endpoint || "")}</div>
-            </td>
-            <td>${escapeHtml(formatProviderLabel(endpoint.provider))}</td>
-            <td>
-                <span title="${escapeHtml(selectedModels)}">${escapeHtml(selectedModels)}</span>
-            </td>
-            <td><span class="badge bg-${statusClass}">${statusLabel}</span></td>
-            <td class="text-end">
-                <div class="btn-group btn-group-sm" role="group">
-                    <button type="button" class="btn btn-outline-primary" data-action="edit" data-endpoint-id="${endpoint.id}">Edit</button>
-                    <button type="button" class="btn btn-outline-${endpoint.enabled ? "warning" : "success"}" data-action="toggle" data-endpoint-id="${endpoint.id}">${toggleLabel}</button>
-                    <button type="button" class="btn btn-outline-danger" data-action="delete" data-endpoint-id="${endpoint.id}">Delete</button>
-                </div>
-            </td>
-        `;
+        const endpointCell = document.createElement("td");
+        const endpointName = document.createElement("div");
+        endpointName.className = "fw-semibold";
+        endpointName.textContent = endpoint.name || "Unnamed Endpoint";
+        const endpointUrl = document.createElement("div");
+        endpointUrl.className = "text-muted small";
+        endpointUrl.textContent = endpoint.connection?.endpoint || "";
+        endpointCell.appendChild(endpointName);
+        endpointCell.appendChild(endpointUrl);
+
+        const providerCell = document.createElement("td");
+        providerCell.textContent = formatProviderLabel(endpoint.provider);
+
+        const modelsCell = document.createElement("td");
+        const modelsSpan = document.createElement("span");
+        modelsSpan.title = selectedModels;
+        modelsSpan.textContent = selectedModels;
+        modelsCell.appendChild(modelsSpan);
+
+        const statusCell = document.createElement("td");
+        const statusBadge = document.createElement("span");
+        statusBadge.className = `badge bg-${statusClass}`;
+        statusBadge.textContent = statusLabel;
+        statusCell.appendChild(statusBadge);
+
+        const actionsCell = document.createElement("td");
+        actionsCell.className = "text-end";
+        const actionsGroup = document.createElement("div");
+        actionsGroup.className = "btn-group btn-group-sm";
+        actionsGroup.setAttribute("role", "group");
+
+        const createEndpointButton = (action, label, className) => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = className;
+            button.dataset.action = action;
+            button.dataset.endpointId = endpoint.id || "";
+            button.textContent = label;
+            return button;
+        };
+
+        actionsGroup.appendChild(createEndpointButton("edit", "Edit", "btn btn-outline-primary"));
+        actionsGroup.appendChild(createEndpointButton("govern", "Govern", "btn btn-outline-info"));
+        actionsGroup.appendChild(createEndpointButton("duplicate", "Duplicate", "btn btn-outline-secondary"));
+        actionsGroup.appendChild(createEndpointButton("toggle", toggleLabel, `btn btn-outline-${endpoint.enabled ? "warning" : "success"}`));
+        actionsGroup.appendChild(createEndpointButton("delete", "Delete", "btn btn-outline-danger"));
+        actionsCell.appendChild(actionsGroup);
+
+        row.appendChild(endpointCell);
+        row.appendChild(providerCell);
+        row.appendChild(modelsCell);
+        row.appendChild(statusCell);
+        row.appendChild(actionsCell);
 
         endpointsTbody.appendChild(row);
     });
 
     updateHiddenInput();
     buildDefaultModelOptions();
+    buildMetadataExtractionModelOptions();
+}
+
+function buildEndpointModelOption(endpoint, model) {
+    const modelId = model.id
+        || model.deploymentName
+        || model.deployment
+        || model.modelName
+        || model.name
+        || generateId();
+    if (!model.id) {
+        model.id = modelId;
+    }
+
+    const endpointLabel = endpoint.name || endpoint.connection?.endpoint || "Endpoint";
+    const provider = (endpoint.provider || "aoai").toLowerCase();
+    const providerLabel = formatProviderLabel(provider);
+    const endpointEnabled = endpoint.enabled !== false;
+    const modelEnabled = model.enabled !== false;
+    const modelLabel = model.displayName || model.deploymentName || model.modelName || "Unnamed model";
+    const option = document.createElement("option");
+    option.value = `${endpoint.id}:${modelId}`;
+    option.dataset.endpointId = endpoint.id || "";
+    option.dataset.modelId = modelId || "";
+    option.dataset.provider = provider;
+    option.dataset.deploymentName = model.deploymentName || model.deployment || "";
+    option.disabled = !(endpointEnabled && modelEnabled);
+    option.textContent = `${endpointLabel} — ${modelLabel} (${providerLabel})`;
+    if (option.disabled) {
+        option.textContent += " (disabled)";
+    }
+
+    return option;
 }
 
 function buildDefaultModelOptions() {
@@ -435,38 +529,116 @@ function buildDefaultModelOptions() {
 
     modelEndpoints.forEach((endpoint) => {
         const models = Array.isArray(endpoint.models) ? endpoint.models : [];
-        const endpointLabel = endpoint.name || endpoint.connection?.endpoint || "Endpoint";
-        const provider = (endpoint.provider || "aoai").toLowerCase();
-        const providerLabel = formatProviderLabel(provider);
-        const endpointEnabled = endpoint.enabled !== false;
 
         models.forEach((model) => {
-            const modelId = model.id
-                || model.deploymentName
-                || model.deployment
-                || model.modelName
-                || model.name
-                || generateId();
-            if (!model.id) {
-                model.id = modelId;
-            }
-            const modelEnabled = model.enabled !== false;
-            const modelLabel = model.displayName || model.deploymentName || model.modelName || "Unnamed model";
-            const option = document.createElement("option");
-            option.value = `${endpoint.id}:${modelId}`;
-            option.dataset.endpointId = endpoint.id || "";
-            option.dataset.modelId = modelId || "";
-            option.dataset.provider = provider;
-            option.disabled = !(endpointEnabled && modelEnabled);
-            option.textContent = `${endpointLabel} — ${modelLabel} (${providerLabel})`;
-            if (option.disabled) {
-                option.textContent += " (disabled)";
-            }
-            defaultModelSelect.appendChild(option);
+            defaultModelSelect.appendChild(buildEndpointModelOption(endpoint, model));
         });
     });
 
     applyDefaultModelSelection(defaultModelSelection);
+}
+
+function buildMetadataExtractionModelOptions() {
+    if (!metadataExtractionModelSelect) {
+        return;
+    }
+
+    metadataExtractionModelSelect.innerHTML = "";
+
+    const emptyOption = document.createElement("option");
+    emptyOption.value = "";
+    emptyOption.textContent = "No metadata extraction model selected";
+    metadataExtractionModelSelect.appendChild(emptyOption);
+
+    if (!isMultiEndpointModeEnabled()) {
+        buildLegacyMetadataExtractionModelOptions();
+        return;
+    }
+
+    modelEndpoints.forEach((endpoint) => {
+        const models = Array.isArray(endpoint.models) ? endpoint.models : [];
+        models.forEach((model) => {
+            metadataExtractionModelSelect.appendChild(buildEndpointModelOption(endpoint, model));
+        });
+    });
+
+    applyMetadataExtractionModelSelection(metadataExtractionModelSelection);
+}
+
+function buildLegacyMetadataExtractionModelOptions() {
+    metadataExtractionModelSelection = {
+        endpoint_id: "",
+        model_id: "",
+        provider: ""
+    };
+    updateMetadataExtractionModelInput();
+
+    if (legacyGptApimToggle?.checked) {
+        const deployments = String(legacyApimGptDeploymentInput?.value || "")
+            .split(",")
+            .map((deployment) => deployment.trim())
+            .filter(Boolean);
+
+        deployments.forEach((deployment) => {
+            metadataExtractionModelSelect.add(new Option(deployment, deployment));
+        });
+    } else {
+        const legacyModels = Array.isArray(window.gptSelected) ? window.gptSelected : [];
+        legacyModels.forEach((model) => {
+            const deploymentName = model?.deploymentName || "";
+            if (!deploymentName) {
+                return;
+            }
+            const modelName = model?.modelName || deploymentName;
+            metadataExtractionModelSelect.add(new Option(`${deploymentName} (${modelName})`, deploymentName));
+        });
+    }
+
+    if (legacyMetadataExtractionModel) {
+        metadataExtractionModelSelect.value = legacyMetadataExtractionModel;
+    }
+}
+
+function applyMetadataExtractionModelSelection(selection) {
+    if (!metadataExtractionModelSelect) {
+        return;
+    }
+
+    metadataExtractionModelSelection = normalizeDefaultModelSelection(selection);
+    const hasSelection = metadataExtractionModelSelection.endpoint_id && metadataExtractionModelSelection.model_id;
+    let matchingOption = null;
+
+    if (hasSelection) {
+        matchingOption = Array.from(metadataExtractionModelSelect.options).find((option) => {
+            return option.dataset.endpointId === metadataExtractionModelSelection.endpoint_id
+                && option.dataset.modelId === metadataExtractionModelSelection.model_id;
+        });
+    } else if (legacyMetadataExtractionModel) {
+        matchingOption = Array.from(metadataExtractionModelSelect.options).find((option) => {
+            return option.dataset.deploymentName === legacyMetadataExtractionModel;
+        });
+        if (matchingOption && !matchingOption.disabled) {
+            metadataExtractionModelSelection = {
+                endpoint_id: matchingOption.dataset.endpointId || "",
+                model_id: matchingOption.dataset.modelId || "",
+                provider: matchingOption.dataset.provider || ""
+            };
+        }
+    }
+
+    if (!matchingOption || matchingOption.disabled) {
+        metadataExtractionModelSelection = {
+            endpoint_id: "",
+            model_id: "",
+            provider: ""
+        };
+        metadataExtractionModelSelect.value = "";
+        updateMetadataExtractionModelInput();
+        return;
+    }
+
+    metadataExtractionModelSelect.value = matchingOption.value;
+    updateMetadataExtractionModelInput();
 }
 
 function applyDefaultModelSelection(selection) {
@@ -528,6 +700,40 @@ function handleDefaultModelChange() {
     handleMigrationConfigurationChange();
 }
 
+function handleMetadataExtractionModelChange() {
+    if (!metadataExtractionModelSelect) {
+        return;
+    }
+
+    if (!isMultiEndpointModeEnabled()) {
+        metadataExtractionModelSelection = {
+            endpoint_id: "",
+            model_id: "",
+            provider: ""
+        };
+        updateMetadataExtractionModelInput();
+        markModified();
+        return;
+    }
+
+    const selectedOption = metadataExtractionModelSelect.selectedOptions[0];
+    if (!selectedOption || !selectedOption.value) {
+        metadataExtractionModelSelection = {
+            endpoint_id: "",
+            model_id: "",
+            provider: ""
+        };
+    } else {
+        metadataExtractionModelSelection = {
+            endpoint_id: selectedOption.dataset.endpointId || "",
+            model_id: selectedOption.dataset.modelId || "",
+            provider: selectedOption.dataset.provider || ""
+        };
+    }
+    updateMetadataExtractionModelInput();
+    markModified();
+}
+
 function updateAuthVisibility() {
     const authType = endpointAuthTypeSelect?.value || "managed_identity";
     const provider = endpointProviderSelect?.value || "aoai";
@@ -556,6 +762,9 @@ function updateAuthVisibility() {
 }
 
 function resetModal() {
+    if (endpointModalEl) {
+        endpointModalEl.dataset.duplicateDisabledDefault = '';
+    }
     if (endpointIdInput) endpointIdInput.value = "";
     if (endpointNameInput) endpointNameInput.value = "";
     if (endpointProviderSelect) endpointProviderSelect.value = "aoai";
@@ -643,6 +852,106 @@ function openModalForEndpoint(endpoint) {
 
     updateAuthVisibility();
     endpointModal.show();
+}
+
+function makeEndpointCopyName(name) {
+    const baseName = `${String(name || 'Endpoint').trim() || 'Endpoint'} Copy`;
+    const existingNames = new Set((modelEndpoints || []).map((endpoint) => String(endpoint.name || '').trim().toLowerCase()));
+    if (!existingNames.has(baseName.toLowerCase())) {
+        return baseName;
+    }
+
+    let suffix = 2;
+    while (existingNames.has(`${baseName} ${suffix}`.toLowerCase())) {
+        suffix += 1;
+    }
+    return `${baseName} ${suffix}`;
+}
+
+function cloneEndpointForDuplicate(endpoint) {
+    const duplicate = JSON.parse(JSON.stringify(endpoint || {}));
+    duplicate.id = generateId();
+    duplicate.name = makeEndpointCopyName(endpoint?.name || 'Endpoint');
+    duplicate.enabled = false;
+    duplicate.models = Array.isArray(duplicate.models)
+        ? duplicate.models.map((model) => ({ ...model, id: generateId() }))
+        : [];
+
+    if (duplicate.auth?.type === 'api_key') {
+        duplicate.auth.api_key = '';
+        duplicate.has_api_key = false;
+    }
+
+    return duplicate;
+}
+
+function ensureEndpointDuplicateKeyModal() {
+    let modalElement = document.getElementById('endpoint-duplicate-key-confirm-modal');
+    if (!modalElement) {
+        const modalMarkup = `
+            <div class="modal fade" id="endpoint-duplicate-key-confirm-modal" tabindex="-1" aria-hidden="true">
+                <div class="modal-dialog modal-dialog-centered">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title">Duplicate Key-Based Endpoint</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                        </div>
+                        <div class="modal-body">
+                            <p class="mb-2">This endpoint uses API key authentication.</p>
+                            <div class="alert alert-warning mb-0" role="alert">The duplicated endpoint will be disabled and will not include the API key. Re-enter the API key before enabling it.</div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                            <button type="button" class="btn btn-primary" id="endpoint-duplicate-key-confirm-btn">Continue</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        const wrapper = document.createElement('div');
+        // xss-check: ignore - modalMarkup is a static Bootstrap shell; untrusted values are not interpolated.
+        wrapper.innerHTML = modalMarkup.trim();
+        modalElement = wrapper.firstElementChild;
+        document.body.appendChild(modalElement);
+    }
+
+    if (!endpointDuplicateKeyModal) {
+        endpointDuplicateKeyModal = bootstrap.Modal.getOrCreateInstance(modalElement);
+    }
+
+    if (!modalElement.dataset.wired) {
+        modalElement.dataset.wired = 'true';
+        modalElement.querySelector('#endpoint-duplicate-key-confirm-btn')?.addEventListener('click', () => {
+            const duplicate = pendingEndpointDuplicate;
+            pendingEndpointDuplicate = null;
+            endpointDuplicateKeyModal?.hide();
+            if (duplicate) {
+                openDuplicateEndpointModal(duplicate);
+            }
+        });
+    }
+
+    return modalElement;
+}
+
+function openDuplicateEndpointModal(duplicateEndpoint) {
+    openModalForEndpoint(duplicateEndpoint);
+    if (endpointModalEl) {
+        endpointModalEl.dataset.duplicateDisabledDefault = 'true';
+    }
+    showToast('Duplicated endpoint starts disabled. Review and save it, then enable intentionally.', 'info');
+}
+
+function duplicateEndpoint(endpoint) {
+    const duplicate = cloneEndpointForDuplicate(endpoint);
+    if (endpoint?.auth?.type === 'api_key' || endpoint?.has_api_key) {
+        pendingEndpointDuplicate = duplicate;
+        ensureEndpointDuplicateKeyModal();
+        endpointDuplicateKeyModal?.show();
+        return;
+    }
+
+    openDuplicateEndpointModal(duplicate);
 }
 
 function renderModalModels(models) {
@@ -943,7 +1252,9 @@ function saveEndpoint() {
             id: endpointId,
             name: payload.name,
             provider: payload.provider,
-            enabled: true,
+            enabled: endpointModalEl?.dataset.duplicateDisabledDefault === 'true'
+                ? false
+                : (existingEndpoint ? existingEndpoint.enabled !== false : true),
             auth: payload.auth,
             connection: payload.connection,
             management: payload.management,
@@ -1025,6 +1336,24 @@ function handleTableClick(event) {
         return;
     }
 
+    if (action === "govern") {
+        if (typeof window.openGovernanceDelegatedItemEditor === 'function') {
+            window.openGovernanceDelegatedItemEditor({
+                entityType: 'global_endpoint',
+                itemId: endpoint.id,
+                resourceLabel: endpoint.name || endpoint.id,
+            });
+        } else {
+            showToast('Governance editor is still loading. Try again in a moment.', 'warning');
+        }
+        return;
+    }
+
+    if (action === "duplicate") {
+        duplicateEndpoint(endpoint);
+        return;
+    }
+
     if (action === "toggle") {
         endpoint.enabled = !endpoint.enabled;
         renderEndpoints();
@@ -1066,6 +1395,7 @@ function handleToggleChange() {
     if (!enabled) {
         setElementVisibility(migrationResults, false);
     }
+    buildMetadataExtractionModelOptions();
     markModified();
     handleMigrationConfigurationChange();
 }
@@ -1498,6 +1828,18 @@ function init() {
 
     if (defaultModelSelect) {
         defaultModelSelect.addEventListener("change", handleDefaultModelChange);
+    }
+
+    if (metadataExtractionModelSelect) {
+        metadataExtractionModelSelect.addEventListener("change", handleMetadataExtractionModelChange);
+    }
+
+    if (legacyGptApimToggle) {
+        legacyGptApimToggle.addEventListener("change", buildMetadataExtractionModelOptions);
+    }
+
+    if (legacyApimGptDeploymentInput) {
+        legacyApimGptDeploymentInput.addEventListener("input", buildMetadataExtractionModelOptions);
     }
 
     if (previewMigrationBtn) {

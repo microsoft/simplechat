@@ -1,0 +1,45 @@
+<!-- example-python-dashboard.html -->
+{% extends "base.html" %}
+
+{% block head %}
+    <link rel="stylesheet" href="{{ stylesheet_url }}" />
+{% endblock %}
+
+{% block content %}
+<section class="custom-python-example" data-python-example data-api-status-url="{{ api_status_url }}">
+    <div class="custom-python-example__header">
+        <div>
+            <p class="custom-python-example__eyebrow">Python-backed Custom Page</p>
+            <h1 class="custom-python-example__title">{{ page_title }}</h1>
+            <p class="custom-python-example__summary">
+                This page is rendered from a Jinja template loaded by a trusted Python extension.
+                Its refresh button calls the custom page backend API dispatcher.
+            </p>
+        </div>
+        <span class="custom-python-example__badge" data-python-status>Waiting</span>
+    </div>
+
+    <div class="custom-python-example__grid">
+        <div class="custom-python-example__panel">
+            <span class="custom-python-example__label">Signed-in user</span>
+            <strong data-python-user>{{ user_name }}</strong>
+        </div>
+        <div class="custom-python-example__panel">
+            <span class="custom-python-example__label">Server time</span>
+            <strong data-python-server-time>Not loaded yet</strong>
+        </div>
+        <div class="custom-python-example__panel">
+            <span class="custom-python-example__label">Request count</span>
+            <strong data-python-request-count>0</strong>
+        </div>
+    </div>
+
+    <button type="button" class="btn btn-primary" data-python-refresh-button>
+        Refresh From Backend
+    </button>
+</section>
+{% endblock %}
+
+{% block scripts %}
+    <script type="module" src="{{ script_url }}"></script>
+{% endblock %}

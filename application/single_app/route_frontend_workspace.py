@@ -5,6 +5,7 @@ import logging
 from config import *
 from functions_authentication import *
 from functions_group import get_user_groups
+from functions_governance import filter_governed_model_endpoints, is_governance_access_allowed
 from functions_public_workspaces import get_user_visible_public_workspace_docs
 from functions_settings import *
 from functions_file_sync import is_file_sync_enabled_for_user
@@ -68,10 +69,19 @@ def register_route_frontend_workspace(app):
         ))
         allowed_extensions_str = "Allowed: " + ", ".join(allowed_extensions)
         
+        workspace_governance = {
+            "user_agents": is_governance_access_allowed("governance_user_agents", user_id),
+            "user_actions": is_governance_access_allowed("governance_user_actions", user_id),
+            "user_endpoints": is_governance_access_allowed("governance_user_endpoints", user_id),
+            "global_endpoints": is_governance_access_allowed("governance_global_endpoints", user_id),
+        }
+
         personal_endpoints = user_settings.get("settings", {}).get("personal_model_endpoints", [])
-        personal_model_endpoints = sanitize_model_endpoints_for_frontend(personal_endpoints)
+        personal_model_endpoints = sanitize_model_endpoints_for_frontend(
+            filter_governed_model_endpoints(user_id, personal_endpoints, "governance_user_endpoints")
+        )
         global_model_endpoints = sanitize_model_endpoints_for_frontend(
-            settings.get("model_endpoints", [])
+            filter_governed_model_endpoints(user_id, settings.get("model_endpoints", []), "governance_global_endpoints")
         )
         user_groups_simple = []
         try:
@@ -123,7 +133,8 @@ def register_route_frontend_workspace(app):
             global_model_endpoints=global_model_endpoints,
             file_sync_enabled=file_sync_enabled,
             user_groups=user_groups_simple,
-            user_visible_public_workspaces=user_visible_public_workspaces
+                user_visible_public_workspaces=user_visible_public_workspaces,
+            workspace_governance=workspace_governance
         )
 
     
