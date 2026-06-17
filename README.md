@@ -14,7 +14,7 @@ The application utilizes **Azure Cosmos DB** for storing conversations, metadata
 
 ## Community Call
 
-We have a Community Call every 6 weeks, please register here to receive the meeting. Our next call is July 23rd. 
+We have a Community Call every 6 weeks, please register here to receive the meeting. Our next call is July 23rd.
 
 [Simple Chat Community Call registration](https://aka.ms/simplechat-community-call)
 

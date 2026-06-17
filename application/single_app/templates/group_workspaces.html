@@ -13,12 +13,12 @@ app_settings.app_title }} {% endblock %} {% block head %}
     table-layout: fixed;
     width: 100%;
   }
-  
+
   /* Uniform width for action buttons (Approve, Delete, Chat) */
   .action-btn-wide {
     min-width: 90px;
   }
-  
+
   /* Styles for document checkboxes */
   .document-checkbox {
     cursor: pointer;
@@ -33,7 +33,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     min-height: 18px;
     display: none;
   }
-  
+
   /* Show checkboxes when in selection mode */
   .selection-mode .document-checkbox {
     display: block;
@@ -42,22 +42,22 @@ app_settings.app_title }} {% endblock %} {% block head %}
   .selection-mode .document-select-all-checkbox {
     display: block;
   }
-  
+
   /* Ensure the delete button is properly styled */
   #group-delete-selected-btn, #group-remove-selected-btn {
     transition: all 0.3s ease;
   }
-  
+
   /* Add some padding to the left when in selection mode */
   .selection-mode .document-row {
     padding-left: 0.5rem;
   }
-  
+
   /* Dropdown menu for actions */
   .action-dropdown .dropdown-toggle::after {
     display: none;
   }
-  
+
   #group-documents-table th:nth-child(1), /* Expand */
       #group-documents-table td:nth-child(1) {
     width: 50px;
@@ -235,7 +235,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
   .filter-controls-row + .filter-controls-row {
     margin-top: 0.75rem;
   }
-  
+
   /* Group dropdown custom styles */
   #group-dropdown .dropdown-item {
     padding: 0.5rem 1rem;
@@ -301,7 +301,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
       flex: 1 1 auto;
     }
   }
-  
+
   /* Group status badges */
   .group-status-badge {
     display: inline-block;
@@ -443,10 +443,10 @@ app_settings.app_title }} {% endblock %} {% block head %}
     <div class="col-12 col-lg">
       <!-- Custom searchable dropdown -->
       <div class="dropdown" id="group-dropdown">
-        <button class="form-select d-flex justify-content-between align-items-center" 
-                type="button" 
-                id="group-dropdown-button" 
-                data-bs-toggle="dropdown" 
+        <button class="form-select d-flex justify-content-between align-items-center"
+                type="button"
+                id="group-dropdown-button"
+                data-bs-toggle="dropdown"
                 aria-expanded="false">
           <span class="selected-group-text">Select a group...</span>
         </button>
@@ -608,7 +608,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
             Agents
           </button>
         </li>
-    
+
         {% if settings.enable_semantic_kernel and settings.allow_group_plugins %}
           <li class="nav-item" role="presentation">
             <button
@@ -644,7 +644,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
       {% endif %}
     {% endif %}
   </ul>
-    
+
 
   <!-- Tab Panes -->
   <div class="tab-content" id="groupWorkspaceTabContent">
@@ -1411,12 +1411,12 @@ app_settings.app_title }} {% endblock %} {% block head %}
       <div class="card p-4 my-3">
         <h5 class="mb-3"><i class="bi bi-hourglass-split me-2"></i>Retention Policy Settings</h5>
         <p class="text-muted">Configure how long to keep conversations and documents in this group workspace. Items older than the specified period will be automatically deleted.</p>
-        
+
         <div class="alert alert-info">
           <i class="bi bi-info-circle me-2"></i>
           <strong>Default:</strong> You can use the organization default or set a custom retention period. Choose "No automatic deletion" to keep items indefinitely.
         </div>
-        
+
         <div class="row g-3">
           <div class="col-md-6">
             <label for="group-conversation-retention-days" class="form-label">Conversation Retention</label>
@@ -1436,7 +1436,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
             </select>
             <small class="form-text text-muted">Conversations older than this will be automatically deleted.</small>
           </div>
-          
+
           <div class="col-md-6">
             <label for="group-document-retention-days" class="form-label">Document Retention</label>
             <select class="form-select" id="group-document-retention-days" name="document_retention_days">
@@ -1456,14 +1456,14 @@ app_settings.app_title }} {% endblock %} {% block head %}
             <small class="form-text text-muted">Documents older than this will be automatically deleted.</small>
           </div>
         </div>
-        
+
         <div class="mt-3">
           <button type="button" class="btn btn-primary" onclick="saveGroupRetentionSettings()">
             <i class="bi bi-save me-1"></i>Save Retention Settings
           </button>
           <span id="group-retention-save-status" class="ms-3"></span>
         </div>
-        
+
         <div class="alert alert-warning mt-3 mb-0">
           <i class="bi bi-exclamation-triangle me-2"></i>
           <strong>Important:</strong> Deleted conversations will be archived if archiving is enabled. All deletions are logged in activity history.
@@ -2460,7 +2460,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
 </div>
 {% endif %}
 
-{% endblock %} 
+{% endblock %}
 
 {% block scripts %}
 <!-- SimpleMDE -->
@@ -3228,7 +3228,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     // Client-side file size validation
     const maxFileSizeMB = window.max_file_size_mb || 16; // Default to 16MB if not set
     const maxFileSizeBytes = maxFileSizeMB * 1024 * 1024;
-    
+
     for (const file of files) {
         if (file.size > maxFileSizeBytes) {
             const fileSizeMB = (file.size / (1024 * 1024)).toFixed(1);
@@ -4273,7 +4273,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     const removeBtn = document.getElementById("group-remove-selected-btn");
     const downloadBtn = document.getElementById("group-download-selected-btn");
     const reprocessDropdown = document.getElementById("group-reprocess-selected-dropdown");
-    
+
     if (groupSelectedDocuments.size > 0) {
       // Show bulk actions bar with count
       if (bulkActionsBar) {
@@ -4285,10 +4285,10 @@ app_settings.app_title }} {% endblock %} {% block head %}
       if (downloadBtn) {
         downloadBtn.classList.toggle("d-none", !canDownloadGroupDocuments());
       }
-      
+
       // Check if user can manage documents (delete permission)
       const canManage = ["Owner", "Admin", "DocumentManager"].includes(userRoleInActiveGroup);
-      
+
       // Show/hide delete and remove buttons based on permissions
       if (deleteBtn) {
         deleteBtn.style.display = canManage ? "inline-block" : "none";
@@ -4297,7 +4297,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
       if (reprocessDropdown) {
         reprocessDropdown.classList.toggle("d-none", !canManage);
       }
-      
+
       // Remove button is available for group documents
       if (removeBtn) {
         removeBtn.style.display = "inline-block";
@@ -4373,11 +4373,11 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
   function removeGroupSelectedDocuments() {
     if (groupSelectedDocuments.size === 0) return;
-    
+
     // In group context, "remove" typically means removing the document from the group
     // but this depends on backend implementation. For now, we'll treat it as delete
     // since group documents are typically owned by the group, not individuals
-    
+
     if (!confirm(`Are you sure you want to remove ${groupSelectedDocuments.size} selected document(s) from this group? This action cannot be undone.`)) {
       return;
     }
@@ -4394,7 +4394,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     const documentIds = Array.from(groupSelectedDocuments);
     let completed = 0;
     let failed = 0;
-    
+
     // Process each document removal sequentially
     documentIds.forEach(docId => {
       fetch(`/api/group_documents/${docId}`, { method: "DELETE" })
@@ -4410,7 +4410,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
           } else {
             failed++;
           }
-          
+
           // Update status when all operations complete
           if (completed + failed === documentIds.length) {
             if (failed > 0) {
@@ -4418,10 +4418,10 @@ app_settings.app_title }} {% endblock %} {% block head %}
             } else {
               console.log(`Successfully removed ${completed} document(s) from group`);
             }
-            
+
             // Refresh the documents list
             fetchGroupDocuments();
-            
+
             // Exit selection mode
             toggleGroupSelectionMode();
           }
@@ -4429,20 +4429,20 @@ app_settings.app_title }} {% endblock %} {% block head %}
         .catch(error => {
           failed++;
           console.error("Error removing document from group:", error);
-          
+
           // Update status when all operations complete
           if (completed + failed === documentIds.length) {
             alert(`Removed ${completed} document(s) from group, but failed to remove ${failed} document(s).`);
-            
+
             // Refresh the documents list
             fetchGroupDocuments();
-            
+
             // Exit selection mode
             toggleGroupSelectionMode();
           }
         });
     });
-    
+
     // Reset button state after operations complete
     if (removeBtn) {
       setTimeout(() => {
@@ -4470,7 +4470,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
       // Make sure selection mode is initially off
       groupDocumentsTable.classList.remove('selection-mode');
     }
-    
+
     // Initialize event delegation for group document checkboxes
     document.addEventListener('change', function(event) {
       // Handle changes on group document checkboxes
@@ -4491,7 +4491,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     const groupDownloadSelectedBtn = document.getElementById("group-download-selected-btn");
     const groupRemoveSelectedBtn = document.getElementById("group-remove-selected-btn");
     const groupClearSelectionBtn = document.getElementById("group-clear-selection-btn");
-    
+
     if (groupDeleteSelectedBtn) {
       groupDeleteSelectedBtn.addEventListener("click", deleteGroupSelectedDocuments);
     }
@@ -4598,18 +4598,18 @@ app_settings.app_title }} {% endblock %} {% block head %}
   }); // End DOMContentLoaded
 
   /* ===================== GROUPS / ROLE / CONTEXT ===================== */
-  
+
   /**
    * Update the group status alert box based on the active group's status
    */
   function updateGroupStatusAlert() {
     const activeGroup = userGroups.find(g => g.id === activeGroupId);
     const alertBox = document.getElementById("group-status-alert");
-    
+
     if (!activeGroup || !alertBox) {
       return;
     }
-    
+
     const status = activeGroup.status || 'active';
     const statusMessages = {
       'locked': {
@@ -4651,7 +4651,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
         ]
       }
     };
-    
+
     if (status === 'active') {
       alertBox.classList.add('d-none');
     } else {
@@ -4659,9 +4659,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
       if (config) {
         alertBox.classList.remove('d-none', 'alert-warning', 'alert-info', 'alert-danger');
         alertBox.classList.add(`alert-${config.type}`);
-        
+
         const detailsList = config.details.map(d => `<li class="mb-1">${d}</li>`).join('');
-        
+
         alertBox.innerHTML = `
           <div class="d-flex align-items-start">
             <i class="bi ${config.icon} me-2 flex-shrink-0" style="font-size: 1.2rem;"></i>
@@ -4697,31 +4697,31 @@ app_settings.app_title }} {% endblock %} {% block head %}
       }
     }
   }
-  
+
   /**
    * Hide/show UI elements based on the active group's status
    */
   function updateGroupUIBasedOnStatus() {
     const activeGroup = userGroups.find(g => g.id === activeGroupId);
-    
+
     if (!activeGroup) {
       return;
     }
-    
+
     const status = activeGroup.status || 'active';
-    
+
     // Define elements to hide/show (note: upload-section is handled by updateRoleDisplay)
     const createPromptBtn = document.getElementById('create-group-prompt-btn');
     const createAgentBtn = document.getElementById('create-group-agent-btn');
     const createPluginBtn = document.getElementById('create-group-plugin-btn');
     const deleteSelectedBtn = document.getElementById('group-delete-selected-btn');
-    
+
     // Determine what operations are allowed based on status
     const canCreateItems = (status === 'active');
     const canModifyItems = (status === 'active'); // locked and inactive cannot modify
     const canDeleteDocs = (status === 'active' || status === 'upload_disabled'); // Can delete in upload_disabled
     const canChat = (status !== 'inactive'); // Chat disabled only for inactive
-    
+
     // Hide/show create buttons based on permissions
     if (createPromptBtn) {
       createPromptBtn.style.display = canCreateItems ? '' : 'none';
@@ -4732,21 +4732,21 @@ app_settings.app_title }} {% endblock %} {% block head %}
     if (createPluginBtn) {
       createPluginBtn.style.display = canCreateItems ? '' : 'none';
     }
-    
+
     // Hide/show delete button for documents (shown only if can delete)
     // Note: This will be further refined by role permissions in updateRoleDisplay
     if (deleteSelectedBtn && !canDeleteDocs) {
       deleteSelectedBtn.style.display = 'none';
     }
-    
+
     // Store status globally so other functions can check it
     window.currentGroupStatus = status;
     window.currentGroupCanModify = canModifyItems;
     window.currentGroupCanChat = canChat;
-    
+
     console.log(`UI updated for group ${activeGroupId} with status: ${status}`);
   }
-  
+
   function fetchUserGroups() {
     console.log("Fetching user groups...");
     // Add loading state to group selector?
@@ -4786,11 +4786,11 @@ app_settings.app_title }} {% endblock %} {% block head %}
         userGroups = data.groups || [];
 
         // Clear loading message
-        sel.innerHTML = ""; 
+        sel.innerHTML = "";
         dropdownItems.innerHTML = "";
-        
+
         let foundActive = false;
-        
+
         // Show/hide search based on number of groups
         if (userGroups.length > 10) {
           searchContainer.classList.remove("d-none");
@@ -4817,7 +4817,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
             const opt = document.createElement("option");
             opt.value = g.id;
             opt.text = g.name;
-            
+
             // Create dropdown item for custom dropdown
             const dropdownItem = document.createElement("button");
             dropdownItem.type = "button";
@@ -4850,19 +4850,19 @@ app_settings.app_title }} {% endblock %} {% block head %}
               if (!groupId) {
                 return;
               }
-              
+
               // Update hidden select
               sel.value = groupId;
-              
+
               // Update dropdown button text
               selectedGroupText.textContent = groupName;
-              
+
               // Update active state
               document.querySelectorAll("#group-dropdown-items .dropdown-item").forEach(i => {
                 i.classList.remove("active");
               });
               this.classList.add("active");
-              
+
               // Close dropdown
               const dropdownInstance = bootstrap.Dropdown.getInstance(dropdownButton);
               if (dropdownInstance) {
@@ -5070,7 +5070,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     const groupStatus = activeGroup ? (activeGroup.status || 'active') : 'active';
     const groupAllowsUpload = (groupStatus === 'active');
     const showUpload = canManageDocs && groupAllowsUpload;
-    
+
     if (uploadSection)
       uploadSection.style.display = showUpload ? "block" : "none";
     if (uploadHr) uploadHr.style.display = showUpload ? "block" : "none";
@@ -5851,7 +5851,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     const docRow = document.createElement("tr");
     docRow.id = `group-doc-row-${docId}`; // Use distinct prefix
     docRow.classList.add("document-row");
-    
+
     // First column with checkbox and expand/collapse
     let firstColumnHtml = `
         <td class="align-middle">
@@ -5867,11 +5867,11 @@ app_settings.app_title }} {% endblock %} {% block head %}
             </span>
         </td>
     `;
-    
+
     // Create the actions dropdown menu and chat button
     let actionsDropdown = '';
     let chatButton = '';
-    
+
     // Chat button for everyone with access (outside dropdown) - but only if group allows chat
     if (isComplete && !hasError && canChat) {
         chatButton = `
@@ -5885,7 +5885,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
             </button>
         `;
     }
-    
+
     if (isComplete && !hasError) {
         actionsDropdown = `
         <div class="dropdown action-dropdown d-inline-block">
@@ -5897,7 +5897,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
                     <i class="bi bi-check-square me-2"></i>Select
                 </a></li>
         `;
-        
+
         // Edit/Extract Metadata - only for active groups
         if (canModify) {
             actionsDropdown += `
@@ -5906,7 +5906,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
                     <i class="bi bi-pencil-fill me-2"></i>Edit Metadata
                 </a></li>
             `;
-            
+
             // Add Extract Metadata option if enabled
             if (window.enable_extract_meta_data === true || window.enable_extract_meta_data === "true") {
                 actionsDropdown += `
@@ -5918,7 +5918,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
             actionsDropdown += getGroupDocumentReprocessDropdownItems(doc);
         }
-        
+
         // Chat - only if chat is allowed (not inactive)
         if (canChat) {
             actionsDropdown += `
@@ -5934,7 +5934,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
             </a></li>
           `;
         }
-        
+
         // Add sharing and delete/remove actions based on user role AND group status
         if (canManage && access.isOwnerGroup) {
             // Share only available for active and upload_disabled groups (not locked or inactive)
@@ -5948,7 +5948,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
                     </a></li>
                 `;
             }
-            
+
             // Delete only available for active and upload_disabled groups (not locked or inactive)
             const canDelete = (groupStatus === 'active' || groupStatus === 'upload_disabled');
             if (canDelete) {
@@ -5971,7 +5971,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
             // This could be extended to support "request removal" or similar functionality
             // For now, we don't show any destructive actions for non-managers
         }
-        
+
         actionsDropdown += `
             </ul>
         </div>
@@ -6008,7 +6008,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
         </button>
       `;
     }
-    
+
     // Complete row HTML
     // xss-check: ignore reviewed legacy group document row shell; document fields are escaped and action fragments are built by local helpers.
     docRow.innerHTML = `
@@ -6101,7 +6101,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
       // Edit/Extract buttons only shown if user has management role AND group allows modification
       const groupStatus = window.currentGroupStatus || 'active';
       const canModify = (groupStatus === 'active');
-      
+
       if (canManage && canModify) {
         detailsHtml += `
                   <button class="btn btn-sm btn-info" onclick="onEditGroupDocument('${docId}')" title="Edit Metadata"> <i class="bi bi-pencil-fill"></i> Edit Metadata </button>`;
@@ -6571,7 +6571,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     // Client-side file size validation
     const maxFileSizeMB = window.max_file_size_mb || 16; // Default to 16MB if not set
     const maxFileSizeBytes = maxFileSizeMB * 1024 * 1024;
-    
+
     for (const file of files) {
         if (file.size > maxFileSizeBytes) {
             const fileSizeMB = (file.size / (1024 * 1024)).toFixed(1);
@@ -7277,7 +7277,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     document.getElementById("groupPromptModalLabel").textContent =
       "Create Group Prompt";
     groupPromptModalEl.show();
-    
+
     // Force refresh after modal is fully shown
     setTimeout(() => {
       if (groupSimplemde) {
@@ -7286,7 +7286,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
       }
     }, 300);
   });
-  
+
   // Add event listener for modal shown event
   document.getElementById("groupPromptModal")?.addEventListener('shown.bs.modal', function () {
     if (groupSimplemde) {
@@ -7451,16 +7451,16 @@ app_settings.app_title }} {% endblock %} {% block head %}
         ).textContent = `Edit: ${data.name}`;
         groupPromptIdEl.value = data.id;
         groupPromptNameEl.value = data.name;
-        
+
         // Clear the editor completely first
         if (groupSimplemde) {
           groupSimplemde.codemirror.setValue("");
           groupSimplemde.value(data.content || "");
         }
         else groupPromptContentEl.value = data.content || "";
-        
+
         groupPromptModalEl.show();
-        
+
         // Force refresh after modal is fully shown
         setTimeout(() => {
           if (groupSimplemde) {
@@ -7506,13 +7506,13 @@ app_settings.app_title }} {% endblock %} {% block head %}
     groupPromptsCurrentPage = 1;
     fetchGroupPrompts();
   }
-  
+
   // Remove any existing event listeners to prevent duplicates
   groupPromptsClearFiltersBtn?.removeEventListener("click", clearGroupPromptsFilters);
-  
+
   // Add the event listener
   groupPromptsClearFiltersBtn?.addEventListener("click", clearGroupPromptsFilters);
-  
+
   // Make the function globally available for other components to use
   window.clearGroupPromptsFilters = clearGroupPromptsFilters;
   groupPromptsPageSizeSelect?.addEventListener("change", (e) => {

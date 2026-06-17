@@ -1010,6 +1010,7 @@ class MSGraphPlugin(BasePlugin):
         )
 
     @plugin_function_logger("MSGraphPlugin")
+    # bac-check: ignore - _resolve_group_attendees validates group_id with require_active_group/assert_group_role.
     @kernel_function(description="Create a calendar invite for the signed-in user and optionally turn it into a Microsoft Teams meeting.")
     def create_calendar_invite(
         self,

@@ -6,6 +6,7 @@ order: 120
 category: Version History
 ---
 
+- [PR Readiness Guardrail Cleanup Fix](PR_READINESS_GUARDRAIL_CLEANUP_FIX.md)
 - [CSRF State-Changing Route Guard Fix](CSRF_STATE_CHANGING_ROUTE_GUARD_FIX.md)
 - [Governance Personal Actions Enforcement Fix](GOVERNANCE_PERSONAL_ACTIONS_ENFORCEMENT_FIX.md)
 - [Governance Scope Toggle Visibility Fix](GOVERNANCE_SCOPE_TOGGLE_VISIBILITY_FIX.md)

@@ -1,8 +1,17 @@
 <!-- BEGIN release_notes.md BLOCK -->
 
-This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.242.045, and the per-version entries continue immediately after it.
+This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.242.065, and the per-version entries continue immediately after it.
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
+
+### **(v0.242.065)**
+
+#### Bug Fixes
+
+*   **PR Readiness Guardrail Cleanup**
+    *   Fixed pull-request validation blockers by removing trailing whitespace, dropping an unnecessary `|safe` filter from JSON-rendered Admin Settings version data, removing a UTF-8 BOM from the Semantic Kernel loader, and documenting reviewed plugin authorization boundaries for the BAC guardrail.
+    *   Keeps the beta branch aligned with SimpleChat PR hygiene, XSS, route, and broken-access-control validation before draft PR creation.
+    *   (Ref: PR readiness, `check_xss_sinks.py`, `check_broken_access_control.py`, Semantic Kernel plugins)
 
 ### **(v0.242.045)**
 

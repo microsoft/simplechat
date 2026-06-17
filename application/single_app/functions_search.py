@@ -168,27 +168,27 @@ def get_search_result_scope_id(result_item):
 def normalize_scores(results: List[Dict[str, Any]], index_name: str = "unknown") -> List[Dict[str, Any]]:
     """
     Normalize search scores to [0, 1] range using min-max normalization.
-    
+
     This ensures scores from different indexes (user, group, public) are comparable
     when merged together. Without normalization, scores from indexes with different
     document counts or characteristics may not be directly comparable.
-    
+
     Args:
         results: List of search results with 'score' field
         index_name: Name of the index for debug logging
-        
+
     Returns:
         Same results list with normalized scores (original score preserved)
     """
     if not results or len(results) == 0:
         debug_print(f"No results to normalize from {index_name}", "NORMALIZE")
         return results
-    
+
     scores = [r['score'] for r in results]
     min_score = min(scores)
     max_score = max(scores)
     score_range = max_score - min_score if max_score > min_score else 1.0
-    
+
     debug_print(
         f"Score distribution BEFORE normalization ({index_name})",
         "NORMALIZE",
@@ -198,17 +198,17 @@ def normalize_scores(results: List[Dict[str, Any]], index_name: str = "unknown")
         max=f"{max_score:.4f}",
         range=f"{score_range:.4f}"
     )
-    
+
     # Apply min-max normalization
     for r in results:
         original_score = r['score']
         normalized_score = (original_score - min_score) / score_range if score_range > 0 else 0.5
-        
+
         # Store both scores for transparency
         r['original_score'] = original_score
         r['original_index'] = index_name
         r['score'] = normalized_score
-    
+
     # Log normalized distribution
     normalized_scores = [r['score'] for r in results]
     debug_print(
@@ -219,7 +219,7 @@ def normalize_scores(results: List[Dict[str, Any]], index_name: str = "unknown")
         min=f"{min(normalized_scores):.4f}",
         max=f"{max(normalized_scores):.4f}"
     )
-    
+
     return results
 
 def build_tags_filter(tags_filter):
@@ -331,7 +331,7 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
         else:
             conditions = " or ".join([_build_odata_eq("document_id", did) for did in document_ids])
             doc_id_filter = f"({conditions})"
-    
+
     # Generate cache key including document set fingerprints and tags filter
     cache_key = generate_search_cache_key(
         query=query,
@@ -367,7 +367,7 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
         )
         logger.info(f"Returning cached search results for query: '{query[:50]}...'")
         return cached_results
-    
+
     # Cache miss - proceed with search
     debug_print(
         "Cache MISS - Executing Azure AI Search",
@@ -377,21 +377,21 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
         top_n=top_n
     )
     logger.info(f"Cache miss - executing search for query: '{query[:50]}...'")
-    
+
     # Unpack tuple from generate_embedding (returns embedding, token_usage)
     result = generate_embedding(query)
     if result is None:
         return None
-    
+
     # Handle both tuple (new) and single value (backward compatibility)
     if isinstance(result, tuple):
         query_embedding, _ = result  # Ignore token_usage for search
     else:
         query_embedding = result
-    
+
     if query_embedding is None:
         return None
-    
+
     search_client_user = CLIENTS['search_client_user']
     search_client_group = CLIENTS['search_client_group']
     search_client_public = CLIENTS['search_client_public']
@@ -401,7 +401,7 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
         k_nearest_neighbors=top_n,
         fields="embedding"
     )
-    
+
     # Build document/tag content filter. Default behavior remains intersection;
     # Assigned Knowledge passes union so explicit documents add to tag matches.
     tags_filter_clause = build_tags_filter(tags_filter)
@@ -474,7 +474,7 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
             user_results_final = extract_search_results(user_results, top_n)
             group_results_final = extract_search_results(group_results, top_n)
             public_results_final = extract_search_results(public_results, top_n)
-            
+
             debug_print(
                 "Extracted raw results from indexes",
                 "SEARCH",
@@ -482,15 +482,15 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
                 group_count=len(group_results_final),
                 public_count=len(public_results_final)
             )
-            
+
             # Normalize scores from each index to [0, 1] range for fair comparison
             user_results_normalized = normalize_scores(user_results_final, "user_index")
             group_results_normalized = normalize_scores(group_results_final, "group_index")
             public_results_normalized = normalize_scores(public_results_final, "public_index")
-            
+
             # Merge normalized results
             results = user_results_normalized + group_results_normalized + public_results_normalized
-            
+
             debug_print(
                 "Merged results from all indexes",
                 "SEARCH",
@@ -527,7 +527,7 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
                     select=get_search_select_fields("group")
                 )
                 results = extract_search_results(group_results, top_n)
-        
+
         elif doc_scope == "public":
             if public_workspace_filter:
                 public_filter = _combine_odata_filters(public_workspace_filter, content_filter)
@@ -549,7 +549,7 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
             record_semantic_search_quota_exceeded(search_error, source="hybrid_search")
             raise SemanticSearchQuotaExceededError() from search_error
         raise
-    
+
     # Log pre-sort statistics
     if results:
         scores = [r['score'] for r in results]
@@ -561,7 +561,7 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
             max_score=f"{max(scores):.4f}",
             avg_score=f"{sum(scores)/len(scores):.4f}"
         )
-        
+
         # Show top 5 results before sorting (for debugging)
         if DEBUG_ENABLED and len(results) > 0:
             import os
@@ -576,7 +576,7 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
                         index=r.get('original_index', 'N/A'),
                         chunk=r['chunk_sequence']
                     )
-    
+
     # Sort with deterministic tie-breaking to ensure consistent ordering
     # Primary: score (descending)
     # Secondary: file_name (ascending) - ensures consistent order when scores are equal
@@ -589,14 +589,14 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
             x['chunk_sequence']    # Chunk order for same file
         )
     )[:top_n]
-    
+
     # Log post-sort results
     debug_print(
         f"Results AFTER sorting (top {top_n})",
         "SORT",
         final_count=len(results)
     )
-    
+
     # Show top results after sorting
     if DEBUG_ENABLED and len(results) > 0:
         import os
@@ -611,7 +611,7 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
                     index=r.get('original_index', 'N/A'),
                     chunk=r['chunk_sequence']
                 )
-    
+
     # Cache the results before returning (pass scope parameters for correct partition key)
     cache_search_results(
         cache_key,
@@ -621,7 +621,7 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
         active_group_ids=active_group_ids,
         active_public_workspace_id=active_public_workspace_ids
     )
-    
+
     debug_print(
         "Search complete - returning results",
         "SEARCH",
@@ -629,7 +629,7 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
         final_result_count=len(results)
     )
     clear_semantic_search_quota_warning(source="hybrid_search")
-    
+
     return results
 
 def extract_search_results(paged_results, top_n):

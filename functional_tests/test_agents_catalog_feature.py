@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for the Agents catalog page and agent icon/tag metadata.
-Version: 0.242.064
-Implemented in: 0.242.061; updated in 0.242.064
+Version: 0.242.065
+Implemented in: 0.242.061; updated in 0.242.064; 0.242.065
 
 This test ensures the global Agents page, shared catalog APIs, safe agent
 metadata, and chat handoff contract are present and regression-resistant.

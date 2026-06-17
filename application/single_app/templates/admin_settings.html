@@ -33,12 +33,12 @@
         #classification-categories-tbody td {
             vertical-align: middle;
         }
-        
+
         /* Ensure external links table cells have consistent vertical alignment */
         #external-links-tbody td {
             vertical-align: middle;
         }
-        
+
         /* Floating Save Button */
         .floating-save-btn {
             position: fixed;
@@ -53,21 +53,21 @@
             transition: all 0.3s ease;
             min-width: 160px;
         }
-        
+
         .floating-save-btn:hover {
             transform: translateY(-2px);
             box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
         }
-        
+
         .floating-save-btn:active {
             transform: translateY(0);
         }
-        
+
         /* Ensure the button is visible above other content */
         .floating-save-btn {
             backdrop-filter: blur(10px);
         }
-        
+
         /* Responsive adjustments */
         @media (max-width: 768px) {
             .floating-save-btn {
@@ -464,7 +464,7 @@
     Missing fields: <span id="missing-fields-user"></span>
     <button id="fix-user-index-btn" class="btn btn-sm btn-primary ms-2">Add missing user-fields</button>
 </div>
-  
+
 <div id="index-warning-group" class="alert alert-warning" style="display:none;">
     <strong>⚠️ Group-index schema mismatch:</strong>
     Missing fields: <span id="missing-fields-group"></span>
@@ -476,7 +476,7 @@
     Missing fields: <span id="missing-fields-public"></span>
     <button id="fix-public-index-btn" class="btn btn-sm btn-primary ms-2">Add missing public-fields</button>
 </div>
-  
+
 <!-- Flash messages display section -->
 {% with messages = get_flashed_messages(with_categories=true) %}
   {% if messages %}
@@ -513,7 +513,7 @@
             </button>
             Version: {{ config['VERSION'] }}
             {% if update_available %}
-                <span class="ms-2 badge bg-warning text-dark align-middle"> 
+                <span class="ms-2 badge bg-warning text-dark align-middle">
                     New version available, v{{ latest_version }}.
                     <a href="{{ download_url }}" target="_blank" rel="noopener noreferrer" class="link-primary text-decoration-underline">Download here</a>.
                 </span>
@@ -543,11 +543,11 @@
                     <div id="walkthrough-step-1" class="walkthrough-step">
                         <h4>1. Configure Application Basics</h4>
                         <p class="text-muted">Let's set up your Simple Chat instance. Let's start with some basic configuration options.</p>
-                        
+
                         <div class="alert alert-info">
                             <strong>Optional:</strong> Configure your application title and logo.
                         </div>
-                        
+
                         <ul class="list-group mb-4">
                             <li class="list-group-item d-flex justify-content-between align-items-center">
                                 <span>Application Title</span>
@@ -558,7 +558,7 @@
                                 <span class="badge bg-secondary">Optional</span>
                             </li>
                         </ul>
-                        
+
                         <p>Use the <strong>General</strong> tab to configure these settings.</p>
                     </div>
 
@@ -566,11 +566,11 @@
                     <div id="walkthrough-step-2" class="walkthrough-step" style="display: none;">
                         <h4>2. Configure GPT API Settings</h4>
                         <p class="text-muted">Configure the Azure OpenAI GPT API settings.</p>
-                        
+
                         <div class="alert alert-danger">
                             <strong>Required:</strong> GPT API configuration is required for Simple Chat to function.
                         </div>
-                        
+
                         <ul class="list-group mb-4">
                             <li class="list-group-item d-flex justify-content-between align-items-center">
                                 <span>GPT Endpoint</span>
@@ -581,12 +581,12 @@
                                 <span class="badge bg-danger">Required</span>
                             </li>
                         </ul>
-                        
+
                         <div class="alert alert-info">
                             <strong>API Management Option:</strong> You can configure a direct connection to Azure OpenAI or use Azure API Management (APIM).
                             <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="APIM provides an additional layer for security, monitoring, and rate limiting. Use APIM when you need centralized API governance or want to isolate direct access to your Azure OpenAI resources."></i>
                         </div>
-                        
+
                         <p>Configure GPT API settings in the <strong>GPT</strong> tab.</p>
                     </div>
 
@@ -594,22 +594,22 @@
                     <div id="walkthrough-step-3" class="walkthrough-step" style="display: none;">
                         <h4>3. Select GPT Models</h4>
                         <p class="text-muted">Now that you've configured the GPT API settings, fetch and select the GPT models to use.</p>
-                        
+
                         <div class="alert alert-danger">
                             <strong>Required:</strong> Select at least one GPT model for users to use.
                         </div>
-                        
+
                         <p class="mb-4">
                             <ol>
                                 <li id="fetch-models-step">Click the <strong>"Fetch GPT Models"</strong> button to retrieve available models</li>
                                 <li>Select one or more models from the list</li>
                             </ol>
                         </p>
-                        
+
                         <div class="alert alert-info" id="apim-model-note" style="display: none;">
                             <strong>APIM Configuration:</strong> When using APIM, enter model names directly in the "Azure APIM Deployment" field (e.g., "gpt-4o, gpt-35-turbo"). Fetching models is not available with APIM.
                         </div>
-                        
+
                         <div class="alert alert-info">
                             <strong>Note:</strong> Ensure the Service Principal has been assigned the Cognitive Service OpenAI User role on the Azure OpenAI endpoint.
                         </div>
@@ -619,11 +619,11 @@
                     <div id="walkthrough-step-4" class="walkthrough-step" style="display: none;">
                         <h4>4. Configure Workspaces</h4>
                         <p class="text-muted">Enable workspace features for your users.</p>
-                        
+
                         <div class="alert alert-info">
                             <strong>Optional:</strong> Enable personal and group workspaces for document management.
                         </div>
-                        
+
                         <ul class="list-group mb-4">
                             <li class="list-group-item d-flex justify-content-between align-items-center">
                                 <span>Personal Workspaces</span>
@@ -634,7 +634,7 @@
                                 <span class="badge bg-secondary">Optional</span>
                             </li>
                         </ul>
-                        
+
                         <p class="alert alert-warning">
                             <strong>Important:</strong> If you enable either workspace feature, you will need to configure additional services in the next steps.
                         </p>
@@ -644,11 +644,11 @@
                     <div id="walkthrough-step-5" class="walkthrough-step" style="display: none;">
                         <h4>5. Configure Embedding API Settings</h4>
                         <p class="text-muted">Configure the embedding service for document processing.</p>
-                        
+
                         <div id="embedding-requirement-alert" class="alert alert-danger">
                             <strong>Required:</strong> Embedding API configuration is required if workspaces are enabled.
                         </div>
-                        
+
                         <ul class="list-group mb-4">
                             <li class="list-group-item d-flex justify-content-between align-items-center">
                                 <span>Embedding Endpoint</span>
@@ -663,12 +663,12 @@
                                 <span id="fetch-models-badge" class="badge bg-danger">Required</span>
                             </li>
                         </ul>
-                        
+
                         <div class="alert alert-info">
                             <strong>API Management Option:</strong> You can configure a direct connection to Azure OpenAI or use Azure API Management (APIM).
                             <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="APIM provides an additional layer for security, monitoring, and rate limiting. APIM requires manual model configuration as the fetch functionality is not available."></i>
                         </div>
-                        
+
                         <div class="alert alert-info">
                             <strong>Note:</strong> Ensure the Service Principal has been assigned the Cognitive Service OpenAI User role on the Azure OpenAI endpoint.
                         </div>
@@ -678,11 +678,11 @@
                     <div id="walkthrough-step-6" class="walkthrough-step" style="display: none;">
                         <h4>6. Configure Azure AI Search</h4>
                         <p class="text-muted">Configure Azure AI Search for document indexing.</p>
-                        
+
                         <div id="ai-search-requirement-alert" class="alert alert-danger">
                             <strong>Required:</strong> Azure AI Search is required if workspaces are enabled.
                         </div>
-                        
+
                         <ul class="list-group mb-4">
                             <li class="list-group-item d-flex justify-content-between align-items-center">
                                 <span>AI Search Endpoint</span>
@@ -693,7 +693,7 @@
                                 <span id="search-auth-badge" class="badge bg-danger">Required</span>
                             </li>
                         </ul>
-                        
+
                         <div class="alert alert-info">
                             <strong>API Management Option:</strong> You can configure a direct connection to Azure AI Search or use Azure API Management (APIM).
                             <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="APIM provides an additional layer for security, monitoring, and rate limiting. Use APIM when you need centralized API governance or want to isolate direct access to your Azure resources."></i>
@@ -704,11 +704,11 @@
                     <div id="walkthrough-step-7" class="walkthrough-step" style="display: none;">
                         <h4>7. Configure Document Intelligence</h4>
                         <p class="text-muted">Configure Azure Document Intelligence for processing documents.</p>
-                        
+
                         <div id="doc-intelligence-requirement-alert" class="alert alert-danger">
                             <strong>Required:</strong> Document Intelligence is required if workspaces are enabled.
                         </div>
-                        
+
                         <ul class="list-group mb-4">
                             <li class="list-group-item d-flex justify-content-between align-items-center">
                                 <span>Document Intelligence Endpoint</span>
@@ -719,7 +719,7 @@
                                 <span id="doc-auth-badge" class="badge bg-danger">Required</span>
                             </li>
                         </ul>
-                        
+
                         <div class="alert alert-info">
                             <strong>API Management Option:</strong> You can configure a direct connection to Document Intelligence or use Azure API Management (APIM).
                             <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="APIM provides an additional layer for security, monitoring, and rate limiting. Use APIM when you need centralized API governance or want to isolate direct access to your Azure resources."></i>
@@ -730,13 +730,13 @@
                     <div id="walkthrough-step-8" class="walkthrough-step" style="display: none;">
                         <h4>8. Enable Video File Support</h4>
                         <p class="text-muted">Configure support for video file processing.</p>
-                        
+
                         <div id="video-support-requirement-alert" class="alert alert-danger">
                             <strong>Required:</strong> Video support configuration is required if workspaces are enabled.
                         </div>
-                        
+
                         <p class="mb-3">Use the <strong>Video Support</strong> settings on the Search &amp; Extract tab to enable video uploads, choose the correct cloud, and supply the ARM account details SimpleChat needs for managed identity access.</p>
-                        
+
                         <ul class="list-group mb-4">
                             <li class="list-group-item d-flex justify-content-between align-items-center">
                                 <span>Cloud / Endpoint Mode</span>
@@ -769,13 +769,13 @@
                     <div id="walkthrough-step-9" class="walkthrough-step" style="display: none;">
                         <h4>9. Configure Shared Speech Service</h4>
                         <p class="text-muted">Configure the Azure Speech resource shared by audio uploads, voice input, and voice responses.</p>
-                        
+
                         <div id="audio-support-requirement-alert" class="alert alert-danger">
                             <strong>Required:</strong> Configure Speech Service settings when any speech feature is enabled.
                         </div>
-                        
+
                         <p class="mb-3">Use the shared <strong>Azure Speech Service</strong> section on the Search &amp; Extract tab to configure the one Speech resource used by audio uploads, voice input, and voice responses.</p>
-                        
+
                         <ul class="list-group mb-4">
                             <li class="list-group-item d-flex justify-content-between align-items-center">
                                 <span>Speech Service Endpoint</span>
@@ -790,10 +790,10 @@
                                 <span class="badge bg-secondary">Required for managed identity voice responses</span>
                             </li>
                         </ul>
-                        
+
                         <div class="alert alert-info">
                             <strong>Note:</strong> All three speech features share the same Speech Service section. For managed identity, use a custom-domain endpoint. Start with the <strong>Cognitive Services Speech User</strong> role; add <strong>Cognitive Services Speech Contributor</strong> if transcription operations still return authorization errors. Voice responses also require the Speech Resource ID because of a Speech SDK requirement.
-                            
+
                             <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When a Cognitive Service has a custom domain name, the endpoint will typically look like https://<resource-name>.cognitiveservices.azure.<com or us> instead of https://<location>.cognitiveservices.azure.<com or us>"></i>
                         </div>
                     </div>
@@ -802,7 +802,7 @@
                     <div id="walkthrough-step-10" class="walkthrough-step" style="display: none;">
                         <h4>10. Content Safety Settings</h4>
                         <p class="text-muted">Configure content safety features.</p>
-                        
+
                         <div class="alert alert-info">
                             <strong>Optional:</strong> Enable content safety features to filter inappropriate content.
                         </div>
@@ -812,11 +812,11 @@
                     <div id="walkthrough-step-11" class="walkthrough-step" style="display: none;">
                         <h4>11. User Feedback and Conversation Archiving</h4>
                         <p class="text-muted">Configure user feedback and conversation archiving features.</p>
-                        
+
                         <div class="alert alert-info">
                             <strong>Optional:</strong> Enable user feedback and conversation archiving.
                         </div>
-                        
+
                         <ul class="list-group mb-4">
                             <li class="list-group-item d-flex justify-content-between align-items-center">
                                 <span>User Feedback</span>
@@ -833,11 +833,11 @@
                     <div id="walkthrough-step-12" class="walkthrough-step" style="display: none;">
                         <h4>12. Enhanced Citations and Image Generation</h4>
                         <p class="text-muted">Configure additional features.</p>
-                        
+
                         <div class="alert alert-info">
                             <strong>Optional:</strong> Enable enhanced citations and image generation features.
                         </div>
-                        
+
                         <ul class="list-group mb-4">
                             <li class="list-group-item d-flex justify-content-between align-items-center">
                                 <span>Enhanced Citations</span>
@@ -848,7 +848,7 @@
                                 <span class="badge bg-secondary">Optional</span>
                             </li>
                         </ul>
-                        
+
                         <div class="alert alert-success">
                             <strong>Congratulations!</strong> You've completed the initial setup walkthrough. You can now continue to configure your Simple Chat instance in detail.
                         </div>
@@ -866,7 +866,7 @@
                 </div>
             </div>
         </div>
-        
+
         <!-- Hide tabs when left navigation is enabled -->
         {% set nav_layout = user_settings.get('settings', {}).get('navLayout') %}
         {% if not (nav_layout == 'sidebar' or (not nav_layout and app_settings.enable_left_nav_default)) %}
@@ -890,7 +890,7 @@
                     Custom Pages
                 </button>
             </li>
-            
+
             <!-- AI Models Group -->
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="ai-models-tab" data-bs-toggle="tab" data-bs-target="#ai-models"
@@ -898,7 +898,7 @@
                     AI Models
                 </button>
             </li>
-            
+
             <!-- Content Processing Group -->
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="search-extract-tab" data-bs-toggle="tab" data-bs-target="#search-extract"
@@ -930,7 +930,7 @@
                     Citations
                 </button>
             </li>
-            
+
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="safety-tab" data-bs-toggle="tab" data-bs-target="#safety"
                     type="button" role="tab" aria-controls="safety" aria-selected="false">
@@ -942,14 +942,14 @@
                     Security
                 </button>
             </li>
-            
+
             <li class="nav-item" role="presentation">
-                <button class="nav-link" id="agents-tab" data-bs-toggle="tab" data-bs-target="#agents" 
+                <button class="nav-link" id="agents-tab" data-bs-toggle="tab" data-bs-target="#agents"
                     type="button" role="tab" aria-controls="agents" aria-selected="false">
                     Agents
                 </button>
             </li>
-            
+
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="scale-tab" data-bs-toggle="tab" data-bs-target="#scale"
                     type="button" role="tab" aria-controls="scale" aria-selected="false">
@@ -979,7 +979,7 @@
             </li>
 
             <li class="nav-item" role="presentation">
-                <button class="nav-link" id="logging-tab" data-bs-toggle="tab" data-bs-target="#logging" 
+                <button class="nav-link" id="logging-tab" data-bs-toggle="tab" data-bs-target="#logging"
                     type="button" role="tab" aria-controls="logging" aria-selected="false">
                     Logging
                 </button>
@@ -992,7 +992,7 @@
             </li>
         </ul>
         {% endif %}
-        
+
         <div class="tab-content mt-3" id="adminSettingsTabContent">
             <div class="tab-pane fade" id="security" role="tabpanel" aria-labelledby="security-tab">
                 <p class="text-muted">
@@ -1007,7 +1007,7 @@
                             <i class="bi bi-info-circle me-1"></i>Configuration Guide
                         </button>
                     </div>
-                    
+
                     <p class="text-muted">
                         Configure Key Vault settings.
                     </p>
@@ -1024,7 +1024,7 @@
                         </label>
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Store agent and action sensitive information like API keys and secrets securely in Azure Key Vault."></i>
                     </div>
-                    
+
                     <div id="key_vault_settings" {% if not settings.enable_key_vault_secret_storage %}style="display: none;"{% endif %}>
                         <div id="key-vault-warning" class="alert alert-warning mt-2 mb-3">
                             <strong>⚠️ Warning:</strong> Once you enable Key Vault, you should <u>NOT</u> disable it. Disabling Key Vault after enabling <u>WILL</u> cause loss of access to secrets and break application functionality.
@@ -1055,7 +1055,7 @@
 
 
             <div class="tab-pane fade" id="agents" role="tabpanel" aria-labelledby="agents-tab">
-                
+
                 <p class="text-muted">
                     Configure AI agents and actions for enhanced functionality. Agents provide AI-driven task automation while Actions extend functionality with custom tools and integrations.
                 </p>
@@ -1072,7 +1072,7 @@
                         <i class="bi bi-box-arrow-up-right me-1"></i>Open AI Models
                     </button>
                 </div>
-                
+
                 <div class="alert alert-warning mb-3" role="alert">
                     <strong>Note:</strong> All changes to global agents and actions require a restart of the web app to take effect.
                 </div>
@@ -1353,7 +1353,7 @@
                                 </div>
                             </div>
                             <!-- End Agent Feature Flags -->
-                            
+
                         {% endif %}
                         <!-- Orchestration Settings Card -->
                         <div class="d-flex justify-content-between align-items-center mb-3">
@@ -1481,7 +1481,7 @@
                                     </div>
                                 </div>
                             {% endif %}
-                            
+
                             <!-- Core Plugin Toggles -->
                             <div class="card p-3 mb-3" id="core-plugin-toggles">
                                 <h6 class="mb-2">Core Action Toggles</h6>
@@ -1710,7 +1710,7 @@
                 <p class="text-muted">
                     Configure logging settings for monitoring, debugging, and auditing purposes. These settings control various types of logging throughout the application including application insights, debug messages, and file processing events.
                 </p>
-                
+
                 <div class="card p-3 mb-3" id="application-insights-section">
                     <h5>
                         <i class="bi bi-graph-up me-2"></i>Application Insights Logging
@@ -1727,7 +1727,7 @@
                         <strong>Note:</strong> Changing this setting requires an application restart to take effect.
                     </div>
                 </div>
-                
+
                 <div class="card p-3 mb-3" id="debug-logging-section">
                     <h5>
                         <i class="bi bi-bug me-2"></i>Debug Logging
@@ -1740,7 +1740,7 @@
                         </label>
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Toggle to enable or disable debug print statements across the application for troubleshooting and development."></i>
                     </div>
-                    
+
                     <!-- Time-based turnoff controls for Debug Logging -->
                     <div id="debug-time-controls" class="mt-3" style="{% if not settings.enable_debug_logging %}display: none;{% endif %}">
                         <div class="form-check form-switch mb-3">
@@ -1750,7 +1750,7 @@
                             </label>
                             <i class="bi bi-clock ms-2" data-bs-toggle="tooltip" title="Automatically disable debug logging after a specified time period to manage cost and risk."></i>
                         </div>
-                        
+
                         <div id="debug-timer-inputs" class="row g-3" style="{% if not settings.debug_logging_timer_enabled %}display: none;{% endif %}">
                             <div class="col-md-4">
                                 <label for="debug_timer_value" class="form-label">Duration</label>
@@ -1781,12 +1781,12 @@
                             </div>
                         </div>
                     </div>
-                    
+
                     <div class="alert alert-info mt-2" role="alert">
                         <strong>Info:</strong> This controls all DEBUG print statements throughout the application. Useful for development and troubleshooting. Tokens and keys will be collected during this process.
                     </div>
                 </div>
-                
+
                 <div class="card p-3 mb-3" id="file-processing-logs-section">
                     <h5>
                         <i class="bi bi-file-earmark-text me-2"></i>File Process Logging
@@ -1799,7 +1799,7 @@
                         </label>
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Toggle to enable or disable logging of file processing events for debugging and auditing purposes."></i>
                     </div>
-                    
+
                     <!-- Time-based turnoff controls for File Processing Logs -->
                     <div id="file-time-controls" class="mt-3" style="{% if not settings.enable_file_processing_logs %}display: none;{% endif %}">
                         <div class="form-check form-switch mb-3">
@@ -1809,7 +1809,7 @@
                             </label>
                             <i class="bi bi-clock ms-2" data-bs-toggle="tooltip" title="Automatically disable file processing logs after a specified time period to manage cost and risk."></i>
                         </div>
-                        
+
                         <div id="file-timer-inputs" class="row g-3" style="{% if not settings.file_processing_logs_timer_enabled %}display: none;{% endif %}">
                             <div class="col-md-4">
                                 <label for="file_timer_value" class="form-label">Duration</label>
@@ -1842,9 +1842,9 @@
                     </div>
                 </div>
             </div>
-            
+
             <div class="tab-pane fade" id="general" role="tabpanel" aria-labelledby="general-tab">
-                
+
                  <p class="text-muted">
                     Configure general application settings, including the application's title, logo, and landing page text.
                 </p>
@@ -2462,7 +2462,7 @@
                         </div>
                     </div>
                 </div>
-                
+
                 <div class="card p-3 mb-3 latest-feature-card" id="latest-features-guided-tutorials-card">
                     <div class="latest-feature-header">
                         <div class="latest-feature-copy">
@@ -3547,9 +3547,9 @@
                 </div>
             </div>
 
-            
+
             <div class="tab-pane fade" id="ai-models" role="tabpanel" aria-labelledby="ai-models-tab">
-                
+
                 <p class="text-muted">
                     Configure all AI model settings including GPT for text generation, embeddings for semantic search, and image generation capabilities.
                 </p>
@@ -3829,16 +3829,16 @@
                         </div>
                         <div class="mb-3">
                             <div id="embedding_models_list" class="mt-2 mb-3">
-                                
+
                             </div>
                             <small>Save pending changes to settings before clicking Fetch Embedding Models</small><br>
-                            
+
                             <input type="hidden" name="embedding_model_json" id="embedding_model_json" />
 
-                            
+
                             <input type="hidden" id="embedding_model" value="{{ settings.embedding_model.selected[0].deploymentName if settings.embedding_model.selected else '' }}" />
 
-                            
+
                             <button type="button" class="btn btn-secondary" id="fetch_embedding_models_btn">
                                 Fetch Embedding Models
                             </button>
@@ -3987,17 +3987,17 @@
                             </div>
                             <div class="mb-3">
                                 <div id="image_models_list" class="mt-2 mb-3">
-                                    
+
                                 </div>
 
                                 <small>Save pending changes to settings before clicking Fetch Embedding Models</small><br>
-                                
+
                                 <input type="hidden" name="image_gen_model_json" id="image_gen_model_json" />
 
-                                
+
                                 <input type="hidden" id="image_gen_model" value="{{ settings.image_gen_model.selected[0].deploymentName if settings.image_gen_model.selected else '' }}" />
 
-                                
+
                                 <button type="button" class="btn btn-secondary" id="fetch_image_models_btn">
                                     Fetch Image Generation Models
                                 </button>
@@ -5507,13 +5507,13 @@
                         </button>
                     </div>
                     <p class="text-muted mb-1">Configure Front Door URL for authentication and redirect flows.</p>
-                    
+
                     <div class="form-group form-check form-switch mb-3">
-                        <input 
-                            class="form-check-input" 
-                            type="checkbox" 
-                            id="enable_front_door" 
-                            name="enable_front_door" 
+                        <input
+                            class="form-check-input"
+                            type="checkbox"
+                            id="enable_front_door"
+                            name="enable_front_door"
                             {% if settings.enable_front_door %}checked{% endif %}
                         >
                         <label class="form-check-label ms-2" for="enable_front_door">
@@ -5521,11 +5521,11 @@
                         </label>
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enable Azure Front Door integration for global load balancing, SSL termination, and improved performance with custom domain support."></i>
                     </div>
-                    
+
                     <div class="mb-3" id="front-door-url-settings">
                         <label for="front_door_url" class="form-label">Front Door URL</label>
-                        <input type="url" class="form-control" id="front_door_url" name="front_door_url" 
-                               value="{{ settings.front_door_url or '' }}" 
+                        <input type="url" class="form-control" id="front_door_url" name="front_door_url"
+                               value="{{ settings.front_door_url or '' }}"
                                placeholder="https://your-frontdoor.azurefd.net">
                         <small class="form-text text-muted">
                             The base URL of your Front Door or load balancer. The system will automatically generate:
@@ -5963,7 +5963,7 @@
                     Configure workspace settings like personal/group access, multimedia support, metadata, and document classification.
                 </p>
 
-                
+
                 <div class="card mb-3 p-3" id="personal-workspaces-section">
                     <h5>
                         <i class="bi bi-person me-2"></i>Personal Workspaces
@@ -6297,7 +6297,7 @@
                     </div>
                 </div>
 
-               
+
                <div class="card mb-3 p-3" id="group-workspaces-section">
                     <h5>
                         <i class="bi bi-people me-2"></i>Group Workspaces
@@ -6317,10 +6317,10 @@
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create and participate in shared group workspaces for team collaboration, document sharing, and collective knowledge building."></i>
                     </div>
 
-                    
+
                     <div id="create_group_permission_setting" {% if not settings.enable_group_workspaces %}style="display: none;"{% endif %}>
-                        <hr> 
-                        
+                        <hr>
+
                         <!-- Disable Group Creation Setting -->
                         <div class="form-group form-check form-switch mb-3">
                             <input type="checkbox"
@@ -6336,7 +6336,7 @@
                         <p class="text-muted small mb-3">
                             When enabled, no users will be able to create new groups, regardless of app role assignment. This global setting overrides the <strong>Require CreateGroups App Role</strong> setting below.
                         </p>
-                        
+
                         <div class="form-group form-check form-switch mb-2">
                             <input type="checkbox"
                                 class="form-check-input"
@@ -6370,7 +6370,7 @@
                             If enabled, only the group Owner can create, edit, and delete group agents, group actions, and group workflows. Admins and other roles will only be able to view them.
                         </p>
                     </div>
-                    
+
                 </div>
 
                 <div class="card mb-3 p-3" id="public-workspaces-section">
@@ -6393,7 +6393,7 @@
                     </div>
 
                     <div id="create_public_workspace_permission_setting" {% if not settings.enable_public_workspaces %}style="display: none;"{% endif %}>
-                        <hr> 
+                        <hr>
                         <div class="form-group form-check form-switch mb-2">
                             <input type="checkbox"
                                 class="form-check-input"
@@ -6409,7 +6409,7 @@
                             Required app role value: <code>CreatePublicWorkspaces</code>. Assign this role to users or groups in the Enterprise App before enabling the requirement. If disabled, any authenticated user can create public workspaces while public workspaces are enabled.
                         </p>
                     </div>
-                    
+
                 </div>
 
                 <div class="card mb-3 p-3" id="file-sharing-section">
@@ -6485,7 +6485,7 @@
                       </label>
                       <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Automatically extract and index metadata from uploaded files for enhanced search capabilities and content organization."></i>
                     </div>
-                  
+
                     <div id="metadata_extraction_model_settings" class="mb-3"
                          {% if not settings.enable_extract_meta_data %}style="display: none;"{% endif %}>
                                             <label for="metadata_extraction_model" class="form-label">Extraction Model</label>
@@ -6507,7 +6507,7 @@
                     <p class="text-muted">
                         Enable AI-powered vision analysis for images uploaded to chat or workspace. When enabled alongside Document Intelligence OCR, images will receive both text extraction (OCR) and semantic understanding (vision AI).
                     </p>
-                    
+
                     <div class="alert alert-info mb-3">
                         <strong><i class="bi bi-info-circle"></i> How it works:</strong>
                         <ul class="mb-0 mt-2">
@@ -6529,7 +6529,7 @@
                         </label>
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Use GPT-4 Vision or similar models to analyze images for semantic content, objects, and contextual information beyond OCR."></i>
                     </div>
-                  
+
                     <div id="multimodal_vision_model_settings" class="mb-3"
                          {% if not settings.enable_multimodal_vision %}style="display: none;"{% endif %}>
                         <label for="multimodal_vision_model" class="form-label">
@@ -6549,7 +6549,7 @@
                                 {% for m in settings.gpt_model.selected %}
                                     {# Check if model is vision-capable using same logic as JavaScript #}
                                     {% set model_lower = (m.modelName or '').lower() %}
-                                    {% set is_vision = 
+                                    {% set is_vision =
                                         'vision' in model_lower or
                                         'gpt-4o' in model_lower or
                                         'gpt-4.1' in model_lower or
@@ -6570,16 +6570,16 @@
                             {% endif %}
                         </select>
                         <div class="form-text">Select a GPT model with vision capabilities (e.g., gpt-4o, gpt-4-vision, gpt-5, gpt-5-nano, etc.). Only vision-capable models are shown.</div>
-                        
+
                         <button type="button" class="btn btn-secondary mt-3" id="test_multimodal_vision_button">
                             <i class="bi bi-clipboard-check me-1"></i>Test Vision Analysis
                         </button>
                         <div id="test_multimodal_vision_result" class="mt-2"></div>
                     </div>
                 </div>
-                  
 
-                
+
+
                 <div class="card mb-3 p-3" id="document-classification-section">
                     <h5>
                         <i class="bi bi-tags me-2"></i>Document Classification
@@ -6600,7 +6600,7 @@
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to classify uploaded documents with predefined categories for better organization and search filtering."></i>
                     </div>
 
-                    
+
                     <div id="document_classification_settings" {% if not settings.enable_document_classification %}style="display: none;"{% endif %}>
                         <h6>Classification Categories</h6>
                         <p class="text-muted small">Define the labels and corresponding colors for document classification.</p>
@@ -6613,29 +6613,29 @@
                                 </tr>
                             </thead>
                             <tbody id="classification-categories-tbody">
-                                
+
                             </tbody>
                         </table>
                         <button type="button" id="add-classification-btn" class="btn btn-success btn-sm mt-2">
                             <i class="bi bi-plus-circle"></i> Add New Category
                         </button>
-                        
+
                         <input type="hidden" name="document_classification_categories_json" id="document_classification_categories_json">
                     </div>
                 </div>
-                
+
                 <!-- Retention Policy Section -->
                 <div class="card p-3 mb-3" id="retention-policy-section">
                     <h5>
                         <i class="bi bi-hourglass-split me-2"></i>Retention Policy
                     </h5>
                     <p class="text-muted">Automatically delete aged conversations and documents based on configurable retention periods. Users, group owners, and public workspace admins can set their own retention policies.</p>
-                    
+
                     <div class="alert alert-info mb-3" role="alert">
                         <i class="bi bi-info-circle me-2"></i>
                         <strong>How it works:</strong> Enable retention policy for workspace types below. Users/owners can then configure how many days to retain conversations and documents. Items older than the configured period are automatically deleted. Default is "none" (no deletion) until explicitly set by each user/owner.
                     </div>
-                    
+
                     <!-- Enable toggles for different workspace types -->
                     <div class="row g-3 mb-3">
                         <div class="col-md-4">
@@ -6666,12 +6666,12 @@
                             </div>
                         </div>
                     </div>
-                    
+
                     <!-- Default Retention Policy Settings -->
                     <div class="card bg-light p-3 mb-3">
                         <h6 class="mb-3"><i class="bi bi-sliders me-2"></i>Default Retention Policies</h6>
                         <p class="text-muted small mb-3">Set organization-wide default retention periods for each workspace type. Users can override these defaults with their own preferences. Setting a default here means new users/workspaces will start with this retention period.</p>
-                        
+
                         <!-- Personal Workspace Defaults -->
                         <div class="row g-3 mb-3" id="retention_defaults_personal" style="{% if not settings.enable_retention_policy_personal %}display: none;{% endif %}">
                             <div class="col-12">
@@ -6722,7 +6722,7 @@
                                 </select>
                             </div>
                         </div>
-                        
+
                         <!-- Group Workspace Defaults -->
                         <div class="row g-3 mb-3" id="retention_defaults_group" style="{% if not settings.enable_retention_policy_group %}display: none;{% endif %}">
                             <div class="col-12">
@@ -6773,7 +6773,7 @@
                                 </select>
                             </div>
                         </div>
-                        
+
                         <!-- Public Workspace Defaults -->
                         <div class="row g-3" id="retention_defaults_public" style="{% if not settings.enable_retention_policy_public %}display: none;{% endif %}">
                             <div class="col-12">
@@ -6824,7 +6824,7 @@
                                 </select>
                             </div>
                         </div>
-                        
+
                         <!-- Force Push Button -->
                         <div class="row g-3 mt-3">
                             <div class="col-12">
@@ -6838,7 +6838,7 @@
                             </div>
                         </div>
                     </div>
-                    
+
                     <!-- Scheduled execution time -->
                     <div class="mb-3">
                         <label for="retention_policy_execution_hour" class="form-label">Scheduled Execution Time (Hour of Day)</label>
@@ -6851,7 +6851,7 @@
                         </select>
                         <small class="form-text text-muted">Retention policy will run once daily at this hour (UTC timezone).</small>
                     </div>
-                    
+
                     <!-- Status information -->
                     <div class="row g-3 mb-3">
                         <div class="col-md-6">
@@ -6875,7 +6875,7 @@
                             </div>
                         </div>
                     </div>
-                    
+
                     <!-- Manual execution button -->
                     <div class="mt-3">
                         <button type="button" class="btn btn-warning" onclick="showManualExecutionModal()">
@@ -6885,7 +6885,7 @@
                             Trigger retention policy execution immediately for selected workspace types, bypassing the scheduled time.
                         </small>
                     </div>
-                    
+
                     <div class="alert alert-warning mt-3" role="alert">
                         <i class="bi bi-exclamation-triangle me-2"></i>
                         <strong>Important:</strong> Deleted items respect your archiving settings. If conversation archiving is enabled, items will be archived before deletion. Activity logs are created for all deletions.
@@ -6919,15 +6919,15 @@
                         <i class="bi bi-file-earmark-check me-2"></i>User Agreement
                     </h5>
                     <p class="text-muted">
-                        Configure a user agreement that users must accept before uploading files. 
+                        Configure a user agreement that users must accept before uploading files.
                         Supports Markdown formatting.
                     </p>
-                    
+
                     <!-- Enable Toggle -->
                     <div class="form-group form-check form-switch mb-3">
-                        <input type="checkbox" 
-                            class="form-check-input" 
-                            id="enable_user_agreement" 
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="enable_user_agreement"
                             name="enable_user_agreement"
                             {% if settings.enable_user_agreement %}checked{% endif %}>
                         <label class="form-check-label ms-2" for="enable_user_agreement">
@@ -6939,7 +6939,7 @@
                     <!-- User Agreement Settings (shown when enabled) -->
                     <div id="user_agreement_settings" {% if not settings.enable_user_agreement %}style="display: none;"{% endif %}>
                         <hr>
-                        
+
                         <!-- Apply To Checkboxes -->
                         <div class="mb-3">
                             <label class="form-label fw-bold">Apply to <span class="text-danger">*</span></label>
@@ -7019,14 +7019,14 @@
                 </div>
             </div>
 
-            
+
             <div class="tab-pane fade" id="citation" role="tabpanel" aria-labelledby="citation-tab">
-                
+
                  <p class="text-muted">
                     Configure standard and enhanced citations features for your and group workspaces.
                 </p>
 
-                
+
                 <div class="card p-3 mb-3" id="standard-citations-section">
                     <h5>
                         <i class="bi bi-quote me-2"></i>Standard Citations
@@ -7039,18 +7039,18 @@
                     </p>
                 </div>
 
-                
+
                 <div class="card p-3" id="enhanced-citations-section">
                     <h5>
                         <i class="bi bi-star me-2"></i>Enhanced Citations
                     </h5>
                     <p class="text-muted mb-2">
                         Enable Enhanced Citation to store files in a Storage Account,
-                        and show direct references (Preview feature, files are saved to storage, presentation 
+                        and show direct references (Preview feature, files are saved to storage, presentation
                         layer will be available in a future release).
                     </p>
 
-                    
+
                     <div class="form-group form-check form-switch mb-3">
                         <input
                             type="checkbox"
@@ -7065,9 +7065,9 @@
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Store original files in Azure Storage and provide direct file references and previews in citations for improved source tracking."></i>
                     </div>
 
-                    
+
                     <div id="enhanced_citation_settings" style="display: none;">
-                        
+
                         <div class="card mb-3 p-3">
                             <h6><strong>All filetypes</strong></h6>
                             <div class="mb-3">
@@ -7095,7 +7095,7 @@
                                     <button type="button" class="btn btn-outline-secondary" id="toggle_office_conn_str">Show</button>
                                 </div>
                             </div>
-                            
+
                             <div class="mb-3" id="office_docs_storage_url_group" {% if settings.office_docs_authentication_type != "managed_identity" %}style="display:none;"{% endif %}>
                                 <label for="office_docs_storage_account_blob_endpoint" class="form-label">
                                     Storage Account Blob Service Endpoint
@@ -7124,25 +7124,25 @@
                                     min="1" max="1024"
                                     value="{{ settings.tabular_preview_max_blob_size_mb or 200 }}">
                                 <small class="form-text text-muted">
-                                    Maximum blob size (in MB) allowed for tabular file previews (CSV, XLSX). Files larger than this will not be previewed. 
+                                    Maximum blob size (in MB) allowed for tabular file previews (CSV, XLSX). Files larger than this will not be previewed.
                                     Increase for larger files if your compute has sufficient memory, or decrease to protect smaller instances. Default: 200 MB.
                                 </small>
                             </div>
                         </div>
 
-                        
+
                         <!-- <div class="card mb-3 p-3">
                             <h6><strong>Video Files</strong></h6>
                             {% if settings.enable_video_file_support %}
-                                
+
                                 <div class="mb-3">
                                     <label for="video_files_storage_account_url" class="form-label">
                                         Storage Account Connection String
                                     </label>
-                                    
+
                                     <div class="input-group">
                                         <input
-                                            type="password" 
+                                            type="password"
                                             class="form-control"
                                             id="video_files_storage_account_url"
                                             name="video_files_storage_account_url"
@@ -7150,10 +7150,10 @@
                                         >
                                         <button type="button" class="btn btn-outline-secondary" id="toggle_video_conn_str">Show</button>
                                     </div>
-                                    
+
                                 </div>
                             {% else %}
-                                
+
                                 <p class="text-danger mb-1">
                                     Video support is currently disabled in the Workspaces tab.
                                 </p>
@@ -7169,19 +7169,19 @@
                             {% endif %}
                         </div>
 
-                        
+
                         <div class="card mb-3 p-3">
                             <h6><strong>Audio Files</strong></h6>
                             {% if settings.enable_audio_file_support %}
-                                
+
                                 <div class="mb-3">
                                     <label for="audio_files_storage_account_url" class="form-label">
                                         Storage Account Connection String
                                     </label>
-                                    
+
                                     <div class="input-group">
                                         <input
-                                            type="password" 
+                                            type="password"
                                             class="form-control"
                                             id="audio_files_storage_account_url"
                                             name="audio_files_storage_account_url"
@@ -7189,10 +7189,10 @@
                                         >
                                         <button type="button" class="btn btn-outline-secondary" id="toggle_audio_conn_str">Show</button>
                                     </div>
-                                    
+
                                 </div>
                             {% else %}
-                                
+
                                 <p class="text-danger mb-1">
                                     Audio support is currently disabled in the Workspaces tab.
                                 </p>
@@ -7211,9 +7211,9 @@
                 </div>
             </div>
 
-            
+
             <div class="tab-pane fade" id="safety" role="tabpanel" aria-labelledby="safety-tab">
-                
+
                  <p class="text-muted">
                     Configure content safety, archiving, and user feedback settings. If Content Safety is enabled, user
                     messages will be sent to the safety endpoint for analysis. If User Feedback is enabled, users will see
@@ -7238,11 +7238,11 @@
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Filter user messages and AI responses through Azure Content Safety service to detect and block inappropriate content."></i>
                     </div>
 
-                    
+
                     <div id="content_safety_settings"
                          {% if not settings.enable_content_safety %}style="display: none;"{% endif %}>
 
-                        
+
                         <div class="form-group form-check form-switch mb-3 d-flex align-items-center">
                             <input
                                 type="checkbox"
@@ -7257,7 +7257,7 @@
                             <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Route content safety requests through Azure API Management instead of directly to the Content Safety service for centralized monitoring and control."></i>
                         </div>
 
-                        
+
                         <div id="non_apim_content_safety_settings"
                              {% if settings.enable_content_safety_apim %}style="display: none;"{% endif %}>
                             <div class="mb-3">
@@ -7308,7 +7308,7 @@
                             </div>
                         </div>
 
-                        
+
                         <div id="apim_content_safety_settings"
                              {% if not settings.enable_content_safety_apim %}style="display: none;"{% endif %}>
                             <div class="mb-3">
@@ -7353,7 +7353,7 @@
                     </div>
                 </div>
 
-                
+
                 <div class="card p-3 mb-3" id="user-feedback-section">
                     <h5>
                         <i class="bi bi-chat-square-heart me-2"></i>User Feedback
@@ -7373,15 +7373,15 @@
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to provide thumbs up/down feedback on AI responses for quality monitoring and improvement."></i>
                     </div>
                 </div>
-                
-                
+
+
                 <div class="card p-3 mb-3" id="permissions-section">
                     <h5>
                         <i class="bi bi-person-check me-2"></i>Permissions
                     </h5>
                     <p class="text-muted">Control which users can access specific administrative views related to safety and feedback.</p>
 
-                    
+
                     <div class="form-group form-check form-switch mb-2">
                         <input type="checkbox"
                             class="form-check-input"
@@ -7397,7 +7397,7 @@
                         Required app role value: <code>SafetyViolationAdmin</code>. Assign this role to users or groups in the Enterprise App before enabling the requirement. If disabled, any user with the general <code>Admin</code> app role can access the Safety Violations admin page.
                     </p>
 
-                    
+
                     <div class="form-group form-check form-switch mb-2">
                         <input type="checkbox"
                             class="form-check-input"
@@ -7413,9 +7413,9 @@
                         Required app role value: <code>FeedbackAdmin</code>. Assign this role to users or groups in the Enterprise App before enabling the requirement. If disabled, any user with the general <code>Admin</code> app role can access the User Feedback admin page. Requires <strong>Enable User Feedback</strong> to be active.
                     </p>
                 </div>
-                
-                
-                
+
+
+
                 <div class="card p-3 mb-3" id="conversation-archiving-section">
                     <h5>
                         <i class="bi bi-archive me-2"></i>Conversation Archiving
@@ -7440,7 +7440,7 @@
 
 
             <div class="tab-pane fade" id="search-extract" role="tabpanel" aria-labelledby="search-extract-tab">
-                
+
                  <p class="text-muted">
                     Configure Azure AI Search, Document Intelligence, and multimedia support settings.
                 </p>
@@ -7956,7 +7956,7 @@
                     </div>
                 </div>
 
-                
+
                 <div class="card p-3 mb-3" id="azure-ai-search-section">
                     <h5><i class="bi bi-search me-2"></i>Azure AI Search</h5>
                     <p class="text-muted">
@@ -7977,7 +7977,7 @@
                     </div>
 
                     <div>
-                        
+
                         <div id="non_apim_ai_search_settings" {% if settings.enable_ai_search_apim %}style="display: none;"{% endif %}>
                             <div class="mb-3">
                                 <label for="azure_ai_search_endpoint" class="form-label">Search Endpoint</label>
@@ -8023,7 +8023,7 @@
                             </div>
                         </div>
 
-                        
+
                         <div id="apim_ai_search_settings" {% if not settings.enable_ai_search_apim %}style="display: none;"{% endif %}>
                             <div class="mb-3">
                                 <label for="azure_apim_ai_search_endpoint" class="form-label">
@@ -8060,7 +8060,7 @@
                             </div>
                         </div>
 
-                        
+
                         <button
                             type="button"
                             class="btn btn-secondary mt-3"
@@ -8073,7 +8073,7 @@
                     </div>
                 </div>
 
-                
+
                 <div class="card p-3 mb-3" id="document-intelligence-section">
                     <h5><i class="bi bi-file-earmark-text me-2"></i>Document Intelligence</h5>
                     <p class="text-muted">
@@ -8172,7 +8172,7 @@
                     </div>
 
                     <div>
-                        
+
                         <div id="non_apim_document_intelligence_settings" {% if settings.enable_document_intelligence_apim %}style="display: none;"{% endif %}>
                             <div class="mb-3">
                                 <label for="azure_document_intelligence_endpoint" class="form-label">
@@ -8222,7 +8222,7 @@
                             </div>
                         </div>
 
-                        
+
                         <div id="apim_document_intelligence_settings" {% if not settings.enable_document_intelligence_apim %}style="display: none;"{% endif %}>
                             <div class="mb-3">
                                 <label for="azure_apim_document_intelligence_endpoint" class="form-label">
@@ -8259,7 +8259,7 @@
                             </div>
                         </div>
 
-                        
+
                         <button
                             type="button"
                             class="btn btn-secondary mt-3"
@@ -8415,7 +8415,7 @@
                             </label>
                         </div>
                         <p class="text-muted small ms-4 ps-3 mb-2">
-                            Upload video files (MP4, AVI, MOV, etc.) to workspaces where Azure Video Indexer automatically processes them. 
+                            Upload video files (MP4, AVI, MOV, etc.) to workspaces where Azure Video Indexer automatically processes them.
                             Extract spoken content, identify speakers, detect faces, recognize brands, and generate searchable metadata—perfect for meetings, presentations, training videos, and recorded content.
                         </p>
                         <div class="ms-4 ps-3">
@@ -8458,7 +8458,7 @@
                             <i class="bi bi-gear-fill me-2"></i>Azure Video Indexer Configuration
                         </h5>
                         <p class="text-muted small mb-3">Connect to your Azure Video Indexer resource for advanced video processing and content extraction.</p>
-                        
+
                         <div class="alert alert-info">
                             <strong><i class="bi bi-info-circle"></i> Identity overview:</strong>
                             <ul class="mb-0 mt-2">
@@ -8614,7 +8614,7 @@
                                 </label>
                             </div>
                             <p class="text-muted small ms-4 ps-3 mb-0">
-                                Upload audio files (MP3, WAV, M4A, etc.) to workspaces where they're automatically transcribed and indexed. 
+                                Upload audio files (MP3, WAV, M4A, etc.) to workspaces where they're automatically transcribed and indexed.
                                 The AI can then search, analyze, and answer questions about audio content—perfect for meetings, interviews, lectures, and podcasts.
                             </p>
                         </div>
@@ -8634,7 +8634,7 @@
                                 </label>
                             </div>
                             <p class="text-muted small ms-4 ps-3 mb-2">
-                                Talk to your AI instead of typing. Record voice messages up to 90 seconds directly in the chat interface. 
+                                Talk to your AI instead of typing. Record voice messages up to 90 seconds directly in the chat interface.
                                 Azure Speech Service instantly transcribes your speech with high accuracy, supporting multiple languages and accents.
                             </p>
                             <div class="ms-4 ps-3">
@@ -8665,7 +8665,7 @@
                                 </label>
                             </div>
                             <p class="text-muted small ms-4 ps-3 mb-2">
-                                Hear AI responses read aloud in natural, human-like voices powered by Azure's advanced neural Text-to-Speech. 
+                                Hear AI responses read aloud in natural, human-like voices powered by Azure's advanced neural Text-to-Speech.
                                 Each message includes a speaker button—click to listen while multitasking, commuting, or whenever reading isn't convenient.
                             </p>
                             <div class="ms-4 ps-3">
@@ -8888,7 +8888,7 @@
         </div>
         <!-- End of Admin tab content -->
     </form>
-    
+
     <!-- Floating Save Button -->
     <button type="submit" form="admin-settings-form" class="btn btn-secondary floating-save-btn" id="floating-save-btn" disabled>
         <i class="bi bi-floppy"></i> Save Settings
@@ -9108,7 +9108,7 @@
             </div>
         </div>
     </div>
-    
+
     <div>
         <!-- Plugin Modal (moved outside form) -->
         {% include '_plugin_modal.html' %}
@@ -9124,7 +9124,7 @@
 
         <!-- Key Vault Info Modal -->
         {% include '_key_vault_info.html' %}
-        
+
         <!-- Control Center Roles Info Modal -->
         {% include '_control_center_roles_info.html' %}
 
@@ -9146,7 +9146,7 @@
                             <i class="bi bi-lightbulb me-2"></i>
                             <strong>Swagger/OpenAPI provides automatic, interactive API documentation</strong> for all your application endpoints.
                         </div>
-                        
+
                         <h6><i class="bi bi-check-circle-fill text-success me-2"></i>Benefits of Enabling Swagger:</h6>
                         <ul class="mb-4">
                             <li><strong>Interactive Testing:</strong> Test API endpoints directly from the browser interface</li>
@@ -9156,7 +9156,7 @@
                             <li><strong>Integration Support:</strong> Easy API discovery for external integrations</li>
                             <li><strong>Security Visibility:</strong> Clear view of authentication requirements</li>
                         </ul>
-                        
+
                         <h6><i class="bi bi-info-circle-fill text-primary me-2"></i>What You Get:</h6>
                         <ul class="mb-4">
                             <li><code>/swagger</code> - Interactive Swagger UI for testing endpoints</li>
@@ -9165,7 +9165,7 @@
                             <li>Built-in search and filtering capabilities</li>
                             <li>Response schema validation and examples</li>
                         </ul>
-                        
+
                         <h6><i class="bi bi-shield-check-fill text-warning me-2"></i>Security Considerations:</h6>
                         <ul class="mb-3">
                             <li><strong>Authentication Required:</strong> Swagger UI requires admin login</li>
@@ -9173,10 +9173,10 @@
                             <li><strong>Internal Use:</strong> Best used by developers and system administrators</li>
                             <li><strong>Production Ready:</strong> Safe for production environments with proper access controls</li>
                         </ul>
-                        
+
                         <div class="alert alert-warning">
                             <i class="bi bi-exclamation-triangle me-2"></i>
-                            <strong>Recommendation:</strong> Enable in development/testing environments. 
+                            <strong>Recommendation:</strong> Enable in development/testing environments.
                             In production, consider limiting access to admin users only.
                         </div>
                     </div>
@@ -9202,12 +9202,12 @@
                     </div>
                     <div class="modal-body">
                         <p>Select which workspace types to process. The retention policy will execute immediately for the selected scopes, deleting conversations and documents that exceed their configured retention periods.</p>
-                        
+
                         <div class="alert alert-warning">
                             <i class="bi bi-exclamation-triangle me-2"></i>
                             <strong>Warning:</strong> This action will permanently delete items (or archive them if archiving is enabled). This cannot be undone.
                         </div>
-                        
+
                         <div class="mb-3">
                             <label class="form-label fw-bold">Select Workspace Scopes:</label>
                             <div class="form-check">
@@ -9229,14 +9229,14 @@
                                 </label>
                             </div>
                         </div>
-                        
+
                         <div id="execution-status" class="mt-3" style="display: none;">
                             <div class="alert alert-info">
                                 <i class="bi bi-hourglass-split me-2"></i>
                                 <span id="execution-status-text">Processing...</span>
                             </div>
                         </div>
-                        
+
                         <div id="execution-results" class="mt-3" style="display: none;">
                             <h6>Execution Results:</h6>
                             <div id="results-content"></div>
@@ -9264,12 +9264,12 @@
                     </div>
                     <div class="modal-body">
                         <p>Select which workspace types to force push the organization defaults to. This will reset all custom retention policies to use the organization default.</p>
-                        
+
                         <div class="alert alert-info mb-3">
                             <i class="bi bi-info-circle me-2"></i>
                             <strong>Note:</strong> This action will first save any changes you've made to the default retention settings above, then push those defaults to all selected workspaces.
                         </div>
-                        
+
                         <div class="mb-3">
                             <label class="form-label fw-bold">Select Workspace Types:</label>
                             <div class="form-check">
@@ -9291,19 +9291,19 @@
                                 </label>
                             </div>
                         </div>
-                        
+
                         <div class="alert alert-danger">
                             <i class="bi bi-exclamation-circle me-2"></i>
                             <strong>Warning:</strong> This will override any custom retention policies users have set. They will need to reconfigure if they want different settings.
                         </div>
-                        
+
                         <div id="force-push-status" class="mt-3" style="display: none;">
                             <div class="alert alert-info">
                                 <div class="spinner-border spinner-border-sm me-2" role="status"></div>
                                 <span id="force-push-status-text">Processing...</span>
                             </div>
                         </div>
-                        
+
                         <div id="force-push-results" class="mt-3" style="display: none;"></div>
                     </div>
                     <div class="modal-footer">
@@ -9392,7 +9392,7 @@
 {% block scripts %}
 
  <script src="/static/js/simplemde/simplemde.min.js"></script>
- 
+
 <script>
     // Existing SimpleMDE script...
      // We’ll store the SimpleMDE instance globally so we can destroy or read its content
@@ -9529,7 +9529,7 @@
         registeredAt: {{ (settings.release_notifications_registered_at or '')|tojson|safe }},
         updatedAt: {{ (settings.release_notifications_updated_at or '')|tojson|safe }},
         recipientEmail: 'simplechat@microsoft.com',
-        appVersion: {{ config['VERSION']|tojson|safe }}
+        appVersion: {{ config['VERSION']|tojson }}
     };
     window.cosmosThroughputCachedStatus = {{ settings.cosmos_throughput_cached_status|default({}, true)|tojson|safe }};
     if (!window.cosmosThroughputCachedStatus || typeof window.cosmosThroughputCachedStatus !== "object" || Array.isArray(window.cosmosThroughputCachedStatus)) {
@@ -9557,7 +9557,7 @@
         // Handle workspace toggle changes to update requirement status
         const userWorkspaceToggle = document.getElementById('enable_user_workspace');
         const groupWorkspaceToggle = document.getElementById('enable_group_workspaces');
-        
+
         if (userWorkspaceToggle && groupWorkspaceToggle) {
             [userWorkspaceToggle, groupWorkspaceToggle].forEach(toggle => {
                 toggle.addEventListener('change', function() {
@@ -9568,30 +9568,30 @@
                 });
             });
         }
-        
+
         // Handle video support toggle in main form
         const videoSupportToggle = document.getElementById('enable_video_file_support');
         if (videoSupportToggle) {
             videoSupportToggle.addEventListener('change', function() {
                 updateWalkthroughRequirements();
-                
+
                 // Recalculate available steps and refresh navigation
                 const currentStep = getCurrentWalkthroughStep();
                 navigateToWalkthroughStep(currentStep);
             });
         }
-        
+
         // Handle audio support toggle in main form
         const audioSupportToggle = document.getElementById('enable_audio_file_support');
         const speechInputToggle = document.getElementById('enable_speech_to_text_input');
         const ttsToggle = document.getElementById('enable_text_to_speech');
-        
+
         function updateAudioServiceSettings() {
             const audioServiceSettings = document.getElementById('audio_service_settings');
             const audioEnabled = audioSupportToggle?.checked || false;
             const speechInputEnabled = speechInputToggle?.checked || false;
             const ttsEnabled = ttsToggle?.checked || false;
-            
+
             if (audioServiceSettings) {
                 if (audioEnabled || speechInputEnabled || ttsEnabled) {
                     audioServiceSettings.style.display = 'block';
@@ -9599,29 +9599,29 @@
                     audioServiceSettings.style.display = 'none';
                 }
             }
-            
+
             updateWalkthroughRequirements();
         }
-        
+
         if (audioSupportToggle) {
             audioSupportToggle.addEventListener('change', updateAudioServiceSettings);
         }
-        
+
         if (speechInputToggle) {
             speechInputToggle.addEventListener('change', updateAudioServiceSettings);
         }
-        
+
         if (ttsToggle) {
             ttsToggle.addEventListener('change', updateAudioServiceSettings);
         }
-        
+
         // Handle Front Door toggle in main form
         const frontDoorToggle = document.getElementById('enable_front_door');
         const frontDoorUrlSettings = document.getElementById('front-door-url-settings');
         const frontDoorUrlInput = document.getElementById('front_door_url');
         const homeUrlPreview = document.getElementById('home-url-preview');
         const oauthUrlPreview = document.getElementById('oauth-url-preview');
-        
+
         function updateFrontDoorPreviews() {
             const baseUrl = frontDoorUrlInput?.value.trim() || 'https://your-frontdoor.azurefd.net';
             if (homeUrlPreview) {
@@ -9631,7 +9631,7 @@
                 oauthUrlPreview.textContent = `${baseUrl}/getAToken`;
             }
         }
-        
+
         function toggleFrontDoorSettings() {
             if (frontDoorToggle && frontDoorUrlSettings) {
                 if (frontDoorToggle.checked) {
@@ -9642,19 +9642,19 @@
                 }
             }
         }
-        
+
         if (frontDoorToggle) {
             frontDoorToggle.addEventListener('change', toggleFrontDoorSettings);
             // Initialize state on page load
             toggleFrontDoorSettings();
         }
-        
+
         if (frontDoorUrlInput) {
             frontDoorUrlInput.addEventListener('input', updateFrontDoorPreviews);
             // Initialize previews on page load
             updateFrontDoorPreviews();
         }
-        
+
         // Handle walkthrough container events
         const walkthroughContainer = document.getElementById('settings-walkthrough-container');
         if (walkthroughContainer) {
@@ -9668,14 +9668,14 @@
             walkthroughContainer.addEventListener('walkthroughStepChanged', function(e) {
                 const currentStep = e.detail?.step || 1;
                 const totalSteps = document.querySelectorAll('.walkthrough-step').length;
-                
+
                 const prevBtn = document.getElementById('walkthrough-prev-btn');
                 const nextBtn = document.getElementById('walkthrough-next-btn');
                 const finishBtn = document.getElementById('walkthrough-finish-btn');
-                
+
                 // Hide/show previous button based on first step
                 if (prevBtn) prevBtn.style.display = currentStep === 1 ? 'none' : 'inline-block';
-                
+
                 // Show finish button on last step, next button otherwise
                 if (nextBtn && finishBtn) {
                     nextBtn.style.display = currentStep === totalSteps ? 'none' : 'inline-block';
@@ -9683,35 +9683,35 @@
                 }
             });
         }
-        
+
         // Initial update
         updateWalkthroughRequirements();
     });
-    
+
     function updateWalkthroughRequirements() {
         const workspaceEnabled = document.getElementById('enable_user_workspace')?.checked || false;
         const groupsEnabled = document.getElementById('enable_group_workspaces')?.checked || false;
         const workspacesEnabled = workspaceEnabled || groupsEnabled;
-        
+
         // Update embedding requirements
         updateRequirementStatus('embedding', workspacesEnabled);
-        
+
         // Update AI Search requirements
         updateRequirementStatus('ai-search', workspacesEnabled);
-        
+
         // Update Document Intelligence requirements
         updateRequirementStatus('doc-intelligence', workspacesEnabled);
-        
+
         // Update Video support requirements
-        const videoEnabled = document.getElementById('walkthrough-enable-video')?.checked || 
+        const videoEnabled = document.getElementById('walkthrough-enable-video')?.checked ||
                             document.getElementById('enable_video_file_support')?.checked || false;
         updateRequirementStatus('video-support', workspacesEnabled && videoEnabled);
-        
+
         // Update Audio support requirements
-        const audioEnabled = document.getElementById('walkthrough-enable-audio')?.checked || 
+        const audioEnabled = document.getElementById('walkthrough-enable-audio')?.checked ||
                             document.getElementById('enable_audio_file_support')?.checked || false;
         updateRequirementStatus('audio-support', workspacesEnabled && audioEnabled);
-        
+
         // If we're in the walkthrough, update completion status for current step
         const currentStepElem = document.querySelector('.walkthrough-step:not([style*=\'display: none\'])');
         if (currentStepElem) {
@@ -9721,7 +9721,7 @@
             }
         }
     }
-    
+
     function updateRequirementStatus(section, isRequired, isComplete = false) {
         // Update requirement alert
         const requirementAlert = document.getElementById(`${section}-requirement-alert`);
@@ -9737,7 +9737,7 @@
                 requirementAlert.innerHTML = '<strong>Optional:</strong> This configuration is optional.';
             }
         }
-        
+
         // Update badges
         const badges = document.querySelectorAll(`[id$="${section}-badge"], [id*="${section}-"][id$="badge"]`);
         badges.forEach(badge => {
@@ -9761,14 +9761,14 @@
             container.style.display = 'none';
         }
     }
-    
+
     /**
      * Finishes the walkthrough and saves the form
      */
     function finishSetupAndSave() {
         // Hide the walkthrough
         hideWalkthrough();
-        
+
         // Submit the form
         document.getElementById('admin-settings-form').submit();
     }
@@ -9777,7 +9777,7 @@
     function toggleTimeControls(type) {
         const mainToggle = document.getElementById(`enable_${type}_${type === 'debug' ? 'logging' : 'processing_logs'}`);
         const timeControls = document.getElementById(`${type}-time-controls`);
-        
+
         if (timeControls) {
             timeControls.style.display = mainToggle.checked ? 'block' : 'none';
         }
@@ -9786,11 +9786,11 @@
     function toggleTimerInputs(type) {
         const timerToggle = document.getElementById(`enable_${type}_${type === 'debug' ? 'logging' : 'processing_logs'}_timer`);
         const timerInputs = document.getElementById(`${type}-timer-inputs`);
-        
+
         if (timerInputs) {
             timerInputs.style.display = timerToggle.checked ? 'block' : 'none';
         }
-        
+
         // Update the max values based on selected unit
         updateTimerLimits(type);
     }
@@ -9798,11 +9798,11 @@
     function updateTimerLimits(type) {
         const unitSelect = document.getElementById(`${type}_timer_unit`);
         const valueInput = document.getElementById(`${type}_timer_value`);
-        
+
         if (unitSelect && valueInput) {
             const unit = unitSelect.value;
             let max = 1;
-            
+
             switch(unit) {
                 case 'minutes':
                     max = 120;
@@ -9817,7 +9817,7 @@
                     max = 52;
                     break;
             }
-            
+
             valueInput.max = max;
             if (parseInt(valueInput.value) > max) {
                 valueInput.value = max;
@@ -9836,13 +9836,13 @@
             if (unitSelect) {
                 unitSelect.addEventListener('change', () => updateTimerLimits(type));
             }
-            
+
             const valueInput = document.getElementById(`${type}_timer_value`);
             if (valueInput) {
                 valueInput.addEventListener('input', () => updateTimerLimits(type));
             }
         });
-        
+
         // Initialize timer limits
         updateTimerLimits('debug');
         updateTimerLimits('file');
@@ -9864,17 +9864,17 @@
     }
 
     // Retention Policy Functions
-    
+
     // Toggle retention default sections visibility based on enable checkboxes
     function toggleRetentionDefaultsVisibility() {
         const personalEnabled = document.getElementById('enable_retention_policy_personal').checked;
         const groupEnabled = document.getElementById('enable_retention_policy_group').checked;
         const publicEnabled = document.getElementById('enable_retention_policy_public').checked;
-        
+
         const personalDefaults = document.getElementById('retention_defaults_personal');
         const groupDefaults = document.getElementById('retention_defaults_group');
         const publicDefaults = document.getElementById('retention_defaults_public');
-        
+
         if (personalDefaults) {
             personalDefaults.style.display = personalEnabled ? '' : 'none';
         }
@@ -9885,16 +9885,16 @@
             publicDefaults.style.display = publicEnabled ? '' : 'none';
         }
     }
-    
+
     // Attach event listeners to retention policy enable checkboxes
     document.getElementById('enable_retention_policy_personal')?.addEventListener('change', toggleRetentionDefaultsVisibility);
     document.getElementById('enable_retention_policy_group')?.addEventListener('change', toggleRetentionDefaultsVisibility);
     document.getElementById('enable_retention_policy_public')?.addEventListener('change', toggleRetentionDefaultsVisibility);
-    
+
     // Force Push Modal Functions
     function showForcePushModal() {
         const modal = new bootstrap.Modal(document.getElementById('forcePushRetentionModal'));
-        
+
         // Reset modal state
         document.getElementById('force-push-status').style.display = 'none';
         document.getElementById('force-push-results').style.display = 'none';
@@ -9902,45 +9902,45 @@
         document.getElementById('force_push_group').checked = false;
         document.getElementById('force_push_public').checked = false;
         document.getElementById('force-push-btn').disabled = false;
-        
+
         // Reset button visibility
         document.getElementById('force-push-cancel-btn').style.display = '';
         document.getElementById('force-push-btn').style.display = '';
         document.getElementById('force-push-close-btn').style.display = 'none';
-        
+
         modal.show();
     }
-    
+
     function executeForcePush() {
         const personal = document.getElementById('force_push_personal').checked;
         const group = document.getElementById('force_push_group').checked;
         const publicWs = document.getElementById('force_push_public').checked;
-        
+
         const scopes = [];
         if (personal) scopes.push('personal');
         if (group) scopes.push('group');
         if (publicWs) scopes.push('public');
-        
+
         if (scopes.length === 0) {
             alert('Please select at least one workspace type.');
             return;
         }
-        
+
         // Confirm before executing
         if (!confirm(`Are you sure you want to force push defaults to ${scopes.join(', ')} workspaces? This will save the current settings and override all custom retention policies.`)) {
             return;
         }
-        
+
         // Show processing status
         document.getElementById('force-push-status').style.display = 'block';
         document.getElementById('force-push-status-text').textContent = 'Saving settings first...';
         document.getElementById('force-push-results').style.display = 'none';
         document.getElementById('force-push-btn').disabled = true;
-        
+
         // First, save the admin settings form via AJAX
         const form = document.getElementById('admin-settings-form');
         const formData = new FormData(form);
-        
+
         fetch(window.location.pathname, {
             method: 'POST',
             body: formData
@@ -9951,7 +9951,7 @@
             }
             // Settings saved, now execute force push
             document.getElementById('force-push-status-text').textContent = 'Pushing defaults to workspaces...';
-            
+
             return fetch('/api/admin/retention-policy/force-push', {
                 method: 'POST',
                 headers: {
@@ -9964,7 +9964,7 @@
         .then(data => {
             document.getElementById('force-push-status').style.display = 'none';
             document.getElementById('force-push-results').style.display = 'block';
-            
+
             if (data.success) {
                 let resultHtml = `
                     <div class="alert alert-success">
@@ -9975,7 +9975,7 @@
                         <div class="card-body">
                             <h6>Summary:</h6>
                             <ul class="mb-0">`;
-                
+
                 if (data.details) {
                     if (data.details.personal !== undefined) {
                         resultHtml += `<li>Personal workspaces updated: <strong>${data.details.personal}</strong></li>`;
@@ -9987,14 +9987,14 @@
                         resultHtml += `<li>Public workspaces updated: <strong>${data.details.public}</strong></li>`;
                     }
                 }
-                
+
                 resultHtml += `<li>Total items updated: <strong>${data.updated_count || 0}</strong></li>
                             </ul>
                         </div>
                     </div>`;
-                
+
                 document.getElementById('force-push-results').innerHTML = resultHtml;
-                
+
                 // Reset the form dirty state since we just saved
                 if (typeof resetFormDirtyState === 'function') {
                     resetFormDirtyState();
@@ -10013,7 +10013,7 @@
                         <strong>Error:</strong> ${data.error || 'Failed to push defaults'}
                     </div>`;
             }
-            
+
             // Hide Cancel and Force Push buttons, show Close button
             document.getElementById('force-push-cancel-btn').style.display = 'none';
             document.getElementById('force-push-btn').style.display = 'none';
@@ -10027,17 +10027,17 @@
                     <i class="bi bi-x-circle me-2"></i>
                     <strong>Error:</strong> ${error.message}
                 </div>`;
-            
+
             // Hide Cancel and Force Push buttons, show Close button
             document.getElementById('force-push-cancel-btn').style.display = 'none';
             document.getElementById('force-push-btn').style.display = 'none';
             document.getElementById('force-push-close-btn').style.display = '';
         });
     }
-    
+
     function showManualExecutionModal() {
         const modal = new bootstrap.Modal(document.getElementById('manualExecutionModal'));
-        
+
         // Reset modal state
         document.getElementById('execution-status').style.display = 'none';
         document.getElementById('execution-results').style.display = 'none';
@@ -10045,7 +10045,7 @@
         document.getElementById('manual_exec_group').checked = false;
         document.getElementById('manual_exec_public').checked = false;
         document.getElementById('execute-btn').disabled = false;
-        
+
         modal.show();
     }
 
@@ -10053,28 +10053,28 @@
         const personal = document.getElementById('manual_exec_personal').checked;
         const group = document.getElementById('manual_exec_group').checked;
         const publicWs = document.getElementById('manual_exec_public').checked;
-        
+
         const scopes = [];
         if (personal) scopes.push('personal');
         if (group) scopes.push('group');
         if (publicWs) scopes.push('public');
-        
+
         if (scopes.length === 0) {
             alert('Please select at least one workspace scope.');
             return;
         }
-        
+
         // Confirm before executing
         if (!confirm(`Are you sure you want to execute retention policy for ${scopes.join(', ')} workspaces? This will delete aged items according to configured retention periods.`)) {
             return;
         }
-        
+
         // Show processing status
         document.getElementById('execution-status').style.display = 'block';
         document.getElementById('execution-status-text').textContent = 'Processing...';
         document.getElementById('execution-results').style.display = 'none';
         document.getElementById('execute-btn').disabled = true;
-        
+
         // Execute via API
         fetch('/api/admin/retention-policy/execute', {
             method: 'POST',
@@ -10087,15 +10087,15 @@
         .then(data => {
             document.getElementById('execution-status').style.display = 'none';
             document.getElementById('execution-results').style.display = 'block';
-            
+
             if (data.success) {
                 const results = data.results;
                 let html = '<div class="alert alert-success"><i class="bi bi-check-circle me-2"></i><strong>Execution completed successfully!</strong></div>';
-                
+
                 html += '<div class="table-responsive"><table class="table table-sm">';
                 html += '<thead><tr><th>Workspace Type</th><th>Conversations Deleted</th><th>Documents Deleted</th><th>Workspaces/Users Affected</th></tr></thead>';
                 html += '<tbody>';
-                
+
                 if (scopes.includes('personal')) {
                     html += `<tr><td>Personal</td><td>${results.personal.conversations}</td><td>${results.personal.documents}</td><td>${results.personal.users_affected} users</td></tr>`;
                 }
@@ -10105,10 +10105,10 @@
                 if (scopes.includes('public')) {
                     html += `<tr><td>Public</td><td>${results.public.conversations}</td><td>${results.public.documents}</td><td>${results.public.workspaces_affected} workspaces</td></tr>`;
                 }
-                
+
                 html += '</tbody></table></div>';
                 html += '<p class="text-muted small mt-2">Affected users/owners will receive notifications with details of deleted items.</p>';
-                
+
                 document.getElementById('results-content').innerHTML = html;
             } else {
                 document.getElementById('results-content').innerHTML = `
@@ -10118,7 +10118,7 @@
                     </div>
                 `;
             }
-            
+
             document.getElementById('execute-btn').disabled = false;
         })
         .catch(error => {
@@ -10137,11 +10137,11 @@
     // =====================
     // User Agreement Logic
     // =====================
-    
+
     // Toggle visibility of user agreement settings
     const enableUserAgreementToggle = document.getElementById('enable_user_agreement');
     const userAgreementSettingsDiv = document.getElementById('user_agreement_settings');
-    
+
     if (enableUserAgreementToggle && userAgreementSettingsDiv) {
         enableUserAgreementToggle.addEventListener('change', function() {
             userAgreementSettingsDiv.style.display = this.checked ? 'block' : 'none';
@@ -10152,16 +10152,16 @@
     const userAgreementTextarea = document.getElementById('user_agreement_text');
     const userAgreementWordCount = document.getElementById('user_agreement_word_count');
     const userAgreementWordWarning = document.getElementById('user_agreement_word_warning');
-    
+
     function updateUserAgreementWordCount() {
         if (!userAgreementTextarea || !userAgreementWordCount) return;
-        
+
         const text = userAgreementTextarea.value.trim();
         const words = text ? text.split(/\s+/).filter(word => word.length > 0) : [];
         const wordCount = words.length;
-        
+
         userAgreementWordCount.textContent = `${wordCount} / 200 words`;
-        
+
         if (wordCount > 200) {
             userAgreementWordCount.classList.remove('text-muted');
             userAgreementWordCount.classList.add('text-danger');
@@ -10176,7 +10176,7 @@
             }
         }
     }
-    
+
     if (userAgreementTextarea) {
         userAgreementTextarea.addEventListener('input', updateUserAgreementWordCount);
         // Initial count on page load
@@ -10185,17 +10185,17 @@
 
     // Test Preview button for User Agreement
     const testUserAgreementBtn = document.getElementById('test_user_agreement_btn');
-    
+
     if (testUserAgreementBtn) {
         testUserAgreementBtn.addEventListener('click', function() {
             const agreementText = userAgreementTextarea ? userAgreementTextarea.value.trim() : '';
             const allowDaily = document.getElementById('enable_user_agreement_daily');
-            
+
             if (!agreementText) {
                 alert('Please enter agreement text before previewing.');
                 return;
             }
-            
+
             // Render markdown to HTML
             const previewContent = document.getElementById('userAgreementPreviewContent');
             if (previewContent) {
@@ -10211,13 +10211,13 @@
                     previewContent.textContent = agreementText;
                 }
             }
-            
+
             // Show/hide daily acceptance checkbox preview
             const dailyCheckPreview = document.getElementById('userAgreementDailyCheckPreview');
             if (dailyCheckPreview && allowDaily) {
                 dailyCheckPreview.style.display = allowDaily.checked ? 'block' : 'none';
             }
-            
+
             // Show the modal
             const modal = new bootstrap.Modal(document.getElementById('userAgreementPreviewModal'));
             modal.show();

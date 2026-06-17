@@ -1,4 +1,4 @@
-﻿# semantic_kernel_loader.py
+# semantic_kernel_loader.py
 """
 Loader for Semantic Kernel plugins/actions from app settings.
 - Loads plugin/action manifests from settings (CosmosDB)

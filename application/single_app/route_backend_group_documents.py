@@ -365,12 +365,12 @@ def register_route_backend_group_documents(app):
                 )
 
                 future = current_app.extensions['executor'].submit_stored(
-                    parent_document_id, 
-                    process_document_upload_background, 
-                    document_id=parent_document_id, 
-                    group_id=active_group_id, 
-                    user_id=user_id, 
-                    temp_file_path=temp_file_path, 
+                    parent_document_id,
+                    process_document_upload_background,
+                    document_id=parent_document_id,
+                    group_id=active_group_id,
+                    user_id=user_id,
+                    temp_file_path=temp_file_path,
                     original_filename=original_filename
                 )
 
@@ -396,7 +396,7 @@ def register_route_backend_group_documents(app):
             'errors': upload_errors
         }), response_status
 
-        
+
     @app.route('/api/group_documents', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -600,7 +600,7 @@ def register_route_backend_group_documents(app):
             print(f"Error fetching group documents: {e}")
             return jsonify({"error": f"Error fetching documents: {str(e)}"}), 500
 
-        
+
         # --- new: do we have any legacy documents? ---
         legacy_count = 0
         try:
@@ -859,7 +859,7 @@ def register_route_backend_group_documents(app):
             return error_response
 
         data = request.get_json()
-        
+
         # Track which fields were updated
         updated_fields = {}
 
@@ -979,7 +979,7 @@ def register_route_backend_group_documents(app):
             return jsonify({'message': 'Group document metadata updated successfully'}), 200
         except Exception as e:
             return jsonify({'error': str(e)}), 500
-   
+
     @app.route('/api/group_documents/<document_id>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -1051,10 +1051,10 @@ def register_route_backend_group_documents(app):
                 delete_mode=delete_mode,
                 group_id=active_group_id,
             )
-            
+
             # Invalidate group search cache since document was deleted
             invalidate_group_search_cache(active_group_id)
-            
+
             return jsonify({
                 'message': 'Group document deleted successfully',
                 **delete_result,
@@ -1193,7 +1193,7 @@ def register_route_backend_group_documents(app):
             'queued': queued,
             'errors': errors,
         }), status_code
-        
+
     @app.route('/api/group_documents/upgrade_legacy', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -1217,7 +1217,7 @@ def register_route_backend_group_documents(app):
             }), 200
         except Exception as e:
             return jsonify({'error': str(e)}), 500
-            
+
     @app.route('/api/group_documents/<document_id>/shared-groups', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -1249,13 +1249,13 @@ def register_route_backend_group_documents(app):
             document = get_document_metadata(document_id=document_id, user_id=user_id, group_id=active_group_id)
             if not document:
                 return jsonify({'error': 'Document not found'}), 404
-                
+
             if document.get('group_id') != active_group_id:
                 return jsonify({'error': 'Only the owning group can view document sharing'}), 403
-                
+
             # Get the list of shared group IDs
             shared_group_ids = document.get('shared_group_ids', [])
-            
+
             # Get details for each shared group
             shared_groups = []
             for entry in shared_group_ids:
@@ -1278,11 +1278,11 @@ def register_route_backend_group_documents(app):
                         'description': '',
                         'approval_status': status
                     })
-            
+
             return jsonify({'shared_groups': shared_groups}), 200
         except Exception as e:
             return jsonify({'error': f'Error retrieving shared groups: {str(e)}'}), 500
-        
+
     @app.route('/api/group_documents/<document_id>/approve-share-with-group', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -1359,7 +1359,7 @@ def register_route_backend_group_documents(app):
                 )
                 # Invalidate cache for the group that approved
                 invalidate_group_search_cache(active_group_id)
-            
+
             return jsonify({'message': 'Share approved' if updated else 'Already approved'}), 200
         except Exception as e:
             return jsonify({'error': f'Error approving shared document: {str(e)}'}), 500
@@ -1652,24 +1652,24 @@ def register_route_backend_group_documents(app):
         data = request.get_json()
         if not data or 'group_id' not in data:
             return jsonify({'error': 'Missing group_id in request'}), 400
-            
+
         target_group_id = data['group_id']
-        
+
         # Verify target group exists
         target_group = find_group_by_id(target_group_id)
         if not target_group:
             return jsonify({'error': 'Target group not found'}), 404
-            
+
         # Get the document
         try:
             document = get_document_metadata(document_id=document_id, user_id=user_id, group_id=active_group_id)
             if not document:
                 return jsonify({'error': 'Document not found'}), 404
-                
+
             # Check if document belongs to active group
             if document.get('group_id') != active_group_id:
                 return jsonify({'error': 'You can only share documents owned by your active group'}), 403
-                
+
             if target_group_id == active_group_id:
                 return jsonify({'error': 'A group cannot share a document with itself'}), 400
 
@@ -1698,7 +1698,7 @@ def register_route_backend_group_documents(app):
                         'target_group_id': target_group_id,
                     },
                 )
-                
+
                 # Update the document
                 update_document(
                     document_id=document_id,
@@ -1719,11 +1719,11 @@ def register_route_backend_group_documents(app):
                     target_group,
                     user_id,
                 )
-                
+
                 # Invalidate cache for both groups
                 invalidate_group_search_cache(active_group_id)
                 invalidate_group_search_cache(target_group_id)
-                
+
             return jsonify({
                 'message': 'Document shared successfully',
                 'document_id': document_id,
@@ -1731,7 +1731,7 @@ def register_route_backend_group_documents(app):
             }), 200
         except Exception as e:
             return jsonify({'error': f'Error sharing document: {str(e)}'}), 500
-            
+
     @app.route('/api/group_documents/<document_id>/unshare-with-group', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -1762,24 +1762,24 @@ def register_route_backend_group_documents(app):
         data = request.get_json()
         if not data or 'group_id' not in data:
             return jsonify({'error': 'Missing group_id in request'}), 400
-            
+
         target_group_id = data['group_id']
-        
+
         # Get the document
         try:
             document = get_document_metadata(document_id=document_id, user_id=user_id, group_id=active_group_id)
             if not document:
                 return jsonify({'error': 'Document not found'}), 404
-                
+
             # Check if document belongs to active group
             if document.get('group_id') != active_group_id:
                 return jsonify({'error': 'You can only manage sharing for documents owned by your active group'}), 403
-                
+
             # Remove target group from shared_group_ids if present
             shared_group_ids = document.get('shared_group_ids', [])
             if _find_group_share_entry(shared_group_ids, target_group_id):
                 shared_group_ids = _remove_group_share_entries(shared_group_ids, target_group_id)
-                
+
                 # Update the document
                 update_document(
                     document_id=document_id,
@@ -1788,11 +1788,11 @@ def register_route_backend_group_documents(app):
                     shared_group_ids=shared_group_ids
                 )
                 _clear_group_document_share_pending_notifications(document_id, target_group_id)
-                
+
                 # Invalidate cache for both groups
                 invalidate_group_search_cache(active_group_id)
                 invalidate_group_search_cache(target_group_id)
-                
+
             return jsonify({
                 'message': 'Document sharing removed successfully',
                 'document_id': document_id,

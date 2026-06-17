@@ -216,6 +216,7 @@ class SimpleChatPlugin(BasePlugin):
             ),
         )
 
+    # bac-check: ignore - save_personal_workflow validates workflow conversation ownership before persistence.
     @plugin_function_logger("SimpleChatPlugin")
     @kernel_function(description="Create a new personal workflow under the current user's identity. runner_type can be 'model' or 'agent'. trigger_type can be 'manual' or 'interval'.")
     def create_personal_workflow(
@@ -257,6 +258,7 @@ class SimpleChatPlugin(BasePlugin):
             ),
         )
 
+    # bac-check: ignore - create_group_collaboration_conversation_for_current_user validates current-user group role.
     @plugin_function_logger("SimpleChatPlugin")
     @kernel_function(description="Create a new invite-managed group multi-user conversation in a group the current user can access. If group_id is omitted, the active group is used. Add current group members as participants to grant access.")
     def create_group_conversation(
@@ -274,6 +276,7 @@ class SimpleChatPlugin(BasePlugin):
             ),
         )
 
+    # bac-check: ignore - invite_group_conversation_members_for_current_user validates conversation participation.
     @plugin_function_logger("SimpleChatPlugin")
     @kernel_function(description="Invite current group members into an existing invite-managed group multi-user conversation. Provide participant_identifiers as emails, user principal names, or user IDs separated by commas or new lines.")
     def invite_group_conversation_members(
@@ -289,6 +292,7 @@ class SimpleChatPlugin(BasePlugin):
             ),
         )
 
+    # bac-check: ignore - make_group_inactive_for_current_user requires Control Center admin access and resolves group scope.
     @plugin_function_logger("SimpleChatPlugin")
     @kernel_function(description="Mark a group inactive using the current user's Control Center admin permissions. If group_id is omitted, the action's group context or active group is used.")
     def make_group_inactive(
@@ -305,6 +309,7 @@ class SimpleChatPlugin(BasePlugin):
             ),
         )
 
+    # bac-check: ignore - add_conversation_message_for_current_user validates personal ownership or collaboration access.
     @plugin_function_logger("SimpleChatPlugin")
     @kernel_function(description="Add a user-authored message to an existing personal or collaborative conversation the current user can access. Use this after creating a conversation when you need to seed the opening request.")
     def add_conversation_message(
@@ -322,6 +327,7 @@ class SimpleChatPlugin(BasePlugin):
             ),
         )
 
+    # bac-check: ignore - upload_markdown_document_for_current_user validates current-user workspace/group access.
     @plugin_function_logger("SimpleChatPlugin")
     @kernel_function(description="Create and upload a Markdown document into the current personal workspace or current group workspace. Use workspace_scope='current' to save to the workflow's group when available, workspace_scope='personal' for personal documents, or workspace_scope='group' with an optional group_id.")
     def upload_markdown_document(
@@ -342,6 +348,7 @@ class SimpleChatPlugin(BasePlugin):
             ),
         )
 
+    # bac-check: ignore - upload_word_document_for_current_user validates current-user workspace/group access.
     @plugin_function_logger("SimpleChatPlugin")
     @kernel_function(description="Create and upload a Word .docx document into the current personal workspace or current group workspace from markdown-like content. Use workspace_scope='current' to save to the workflow's group when available, workspace_scope='personal' for personal documents, or workspace_scope='group' with an optional group_id.")
     def upload_word_document(
@@ -364,6 +371,7 @@ class SimpleChatPlugin(BasePlugin):
             ),
         )
 
+    # bac-check: ignore - upload_powerpoint_document_for_current_user validates current-user workspace/group access.
     @plugin_function_logger("SimpleChatPlugin")
     @kernel_function(description="Create and upload a PowerPoint .pptx presentation into the current personal workspace or current group workspace from markdown-like content. Use workspace_scope='current' to save to the workflow's group when available, workspace_scope='personal' for personal documents, or workspace_scope='group' with an optional group_id.")
     def upload_powerpoint_document(
@@ -406,6 +414,7 @@ class SimpleChatPlugin(BasePlugin):
         )
 
     @plugin_function_logger("SimpleChatPlugin")
+    # bac-check: ignore - add_group_member_for_current_user validates the current user's group role before mutation.
     @kernel_function(description="Add a user directly to a group as the current user. user_identifier can be an email, user principal name, or user ID. If group_id is omitted, the active group is used.")
     def add_user_to_group(
         self,

@@ -114,20 +114,20 @@ Key configuration sections include:
 For practical operator steps, see [Configure Branding, Home Page, and Support Settings]({{ '/how-to/admin_ui_settings/' | relative_url }}).
 
 ### 2. AI Models
-- **Chat Model**: 
+- **Chat Model**:
   - Configure Azure OpenAI endpoint(s) for chat models
   - Supports Direct endpoint or APIM (API Management)
   - Allows Key or Managed Identity authentication
   - Test connection button
   - Select multiple active deployment(s) - users can choose from available models
   - Multi-model selection for users
-  
+
 - **Embeddings Configuration**:
   - Configure Azure OpenAI endpoint(s) for embedding models
   - Supports Direct/APIM, Key/Managed Identity
   - Test connection
   - Select active deployment
-  
+
 - **Image Generation** *(Optional)*:
   - Enable/disable feature
   - Configure Azure OpenAI DALL-E endpoint
@@ -137,10 +137,10 @@ For practical operator steps, see [Configure Branding, Home Page, and Support Se
 
 ### 3. Workspaces
 - **Personal Workspaces**: Enable/disable "Your Workspace" (personal docs)
-- **Group Workspaces**: 
+- **Group Workspaces**:
   - Enable/disable "Groups" (group docs)
   - Option to enforce `CreateGroups` RBAC role for creating new groups
-- **Public Workspaces**: 
+- **Public Workspaces**:
   - Enable/disable "Public" (public docs)
   - Option to enforce `CreatePublicWorkspaces` RBAC role for creating new public workspaces
 - **File Sharing**:

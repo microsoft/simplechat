@@ -2,7 +2,7 @@
 # test_azd_managed_identity_preflight.py
 """
 Functional test for AZD managed identity RBAC preflight.
-Version: 0.242.058
+Version: 0.242.065
 Implemented in: 0.242.057
 
 This test ensures managed identity deployments fail before provisioning when

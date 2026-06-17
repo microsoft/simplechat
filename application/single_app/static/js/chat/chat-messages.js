@@ -1489,18 +1489,18 @@ updateDocumentActionControls().catch(error => {
  * Unwraps markdown tables that are mistakenly wrapped in code blocks.
  * This fixes the issue where AI responses contain tables in code blocks,
  * preventing them from being rendered as proper HTML tables.
- * 
+ *
  * @param {string} content - The markdown content to process
  * @returns {string} - Content with tables unwrapped from code blocks
  */
 function unwrapTablesFromCodeBlocks(content) {
   // Pattern to match code blocks that contain markdown tables
   const codeBlockTablePattern = /```(?:\w+)?\n((?:[^\n]*\|[^\n]*\n)+(?:\|[-\s|:]+\|\n)?(?:[^\n]*\|[^\n]*\n)*)\n?```/g;
-  
+
   return content.replace(codeBlockTablePattern, (match, tableContent) => {
     // Check if the content inside the code block looks like a markdown table
     const lines = tableContent.trim().split('\n');
-    
+
     // A markdown table should have:
     // 1. At least 2 lines
     // 2. Lines containing pipe characters (|)
@@ -1508,14 +1508,14 @@ function unwrapTablesFromCodeBlocks(content) {
     if (lines.length >= 2) {
       const hasTableStructure = lines.every(line => line.includes('|'));
       const hasSeparatorLine = lines.some(line => /^[\s|:-]+$/.test(line));
-      
+
       // If it looks like a table, unwrap it from the code block
       if (hasTableStructure && (hasSeparatorLine || lines.length >= 3)) {
         console.log('🔧 Unwrapping table from code block:', tableContent.substring(0, 50) + '...');
         return '\n\n' + tableContent.trim() + '\n\n';
       }
     }
-    
+
     // If it doesn't look like a table, keep it as a code block
     return match;
   });
@@ -1525,22 +1525,22 @@ function unwrapTablesFromCodeBlocks(content) {
  * Converts Unicode box-drawing tables to markdown table format.
  * This handles the case where AI agents generate ASCII art tables using
  * Unicode box-drawing characters instead of markdown table syntax.
- * 
+ *
  * @param {string} content - The content containing Unicode tables
  * @returns {string} - Content with Unicode tables converted to markdown
  */
 function convertUnicodeTableToMarkdown(content) {
   // Pattern to match Unicode box-drawing tables
   const unicodeTablePattern = /┌[─┬]+┐\n(?:│[^│\n]*│[^│\n]*│[^\n]*\n)+├[─┼]+┤\n(?:│[^│\n]*│[^│\n]*│[^\n]*\n)+└[─┴]+┘/g;
-  
+
   return content.replace(unicodeTablePattern, (match) => {
     console.log('🔧 Converting Unicode table to markdown format');
-    
+
     try {
       const lines = match.split('\n');
       const dataLines = [];
       let headerLine = null;
-      
+
       // Extract data from Unicode table
       for (const line of lines) {
         if (line.includes('│') && !line.includes('┌') && !line.includes('├') && !line.includes('└')) {
@@ -1548,7 +1548,7 @@ function convertUnicodeTableToMarkdown(content) {
           const cells = line.split('│')
             .filter(cell => cell.trim() !== '')
             .map(cell => cell.trim());
-          
+
           if (cells.length > 0) {
             if (!headerLine) {
               headerLine = cells;
@@ -1558,35 +1558,35 @@ function convertUnicodeTableToMarkdown(content) {
           }
         }
       }
-      
+
       if (headerLine && dataLines.length > 0) {
         // Build markdown table
         let markdownTable = '\n\n';
-        
+
         // Header row
         markdownTable += '| ' + headerLine.join(' | ') + ' |\n';
-        
+
         // Separator row
         markdownTable += '|' + headerLine.map(() => '---').join('|') + '|\n';
-        
+
         // Data rows (limit to first 10 for display)
         const displayRows = dataLines.slice(0, 10);
         for (const row of displayRows) {
           markdownTable += '| ' + row.join(' | ') + ' |\n';
         }
-        
+
         if (dataLines.length > 10) {
           markdownTable += '\n*Showing first 10 of ' + dataLines.length + ' total rows*\n';
         }
-        
+
         markdownTable += '\n';
-        
+
         return markdownTable;
       }
     } catch (error) {
       console.error('Error converting Unicode table:', error);
     }
-    
+
     // If conversion fails, return original content
     return match;
   });
@@ -1596,17 +1596,17 @@ function convertUnicodeTableToMarkdown(content) {
  * Converts pipe-separated values (PSV) in code blocks to markdown table format.
  * This handles cases where AI agents generate tabular data as pipe-separated
  * format inside code blocks instead of proper markdown tables.
- * 
+ *
  * @param {string} content - The content containing PSV code blocks
  * @returns {string} - Content with PSV converted to markdown tables
  */
 function convertPSVCodeBlockToMarkdown(content) {
   // Pattern to match code blocks that contain pipe-separated data
   const psvCodeBlockPattern = /```(?:\w+)?\n([^`]+?)\n```/g;
-  
+
   return content.replace(psvCodeBlockPattern, (match, codeContent) => {
     const lines = codeContent.trim().split('\n');
-    
+
     // Check if this looks like pipe-separated tabular data
     if (lines.length >= 2) {
       const firstLine = lines[0];
@@ -1615,41 +1615,41 @@ function convertPSVCodeBlockToMarkdown(content) {
         const firstLinePipeCount = (firstLine.match(/\|/g) || []).length;
         return pipeCount === firstLinePipeCount && pipeCount > 0;
       });
-      
+
       if (hasConsistentPipes) {
         console.log('🔧 Converting PSV code block to markdown table');
-        
+
         try {
           // Extract header and data rows
           const headerRow = lines[0].split('|').map(cell => cell.trim());
-          const dataRows = lines.slice(1).map(line => 
+          const dataRows = lines.slice(1).map(line =>
             line.split('|').map(cell => cell.trim())
           );
-          
+
           // Build markdown table
           let markdownTable = '\n\n';
           markdownTable += '| ' + headerRow.join(' | ') + ' |\n';
           markdownTable += '|' + headerRow.map(() => '---').join('|') + '|\n';
-          
+
           // Add data rows (limit to first 50 for readability)
           const displayRows = dataRows.slice(0, 50);
           for (const row of displayRows) {
             markdownTable += '| ' + row.join(' | ') + ' |\n';
           }
-          
+
           if (dataRows.length > 50) {
             markdownTable += '\n*Showing first 50 of ' + dataRows.length + ' total rows*\n';
           }
-          
+
           markdownTable += '\n';
-          
+
           return markdownTable;
         } catch (error) {
           console.error('Error converting PSV to markdown:', error);
         }
       }
     }
-    
+
     // If it doesn't look like PSV data, keep as code block
     return match;
   });
@@ -1659,17 +1659,17 @@ function convertPSVCodeBlockToMarkdown(content) {
  * Converts ASCII dash tables to markdown table format.
  * This handles cases where AI agents generate tables using em-dash characters
  * and spaces for table formatting instead of proper markdown tables.
- * 
+ *
  * @param {string} content - The content containing ASCII dash tables
  * @returns {string} - Content with ASCII tables converted to markdown
  */
 function convertASCIIDashTableToMarkdown(content) {
   console.log('🔧 Converting ASCII dash tables to markdown format');
-  
+
   try {
     const lines = content.split('\n');
     const dashLineIndices = [];
-    
+
     // Find all lines that are primarily dash characters (table boundaries)
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
@@ -1677,37 +1677,37 @@ function convertASCIIDashTableToMarkdown(content) {
         dashLineIndices.push(i);
       }
     }
-    
+
     console.log('Found dash line boundaries at:', dashLineIndices);
-    
+
     // Process each complete table (from first dash to last dash in a sequence)
     let processedContent = content;
-    
+
     if (dashLineIndices.length >= 2) {
       // Process tables in reverse order to avoid index shifting issues
       let i = dashLineIndices.length - 1;
       while (i >= 0) {
         // Find the start of this table group
         let tableStart = i;
-        while (tableStart > 0 && 
+        while (tableStart > 0 &&
                dashLineIndices[tableStart] - dashLineIndices[tableStart - 1] <= 10) {
           tableStart--;
         }
-        
+
         const firstDashIdx = dashLineIndices[tableStart];
         const lastDashIdx = dashLineIndices[i];
-        
+
         console.log(`Processing complete ASCII table from line ${firstDashIdx} to ${lastDashIdx}`);
-        
+
         // Extract header and data lines
         const headerLine = lines[firstDashIdx + 1]; // Line immediately after first dash
-        
+
         if (headerLine && headerLine.trim()) {
           // Process header
           const headerCells = headerLine.split(/\s{2,}/)
             .map(cell => cell.trim())
             .filter(cell => cell !== '');
-          
+
           // Process data rows (skip intermediate dash lines)
           const processedDataRows = [];
           for (let lineIdx = firstDashIdx + 2; lineIdx < lastDashIdx; lineIdx++) {
@@ -1716,29 +1716,29 @@ function convertASCIIDashTableToMarkdown(content) {
             if (line.includes('─') && line.replace(/[─\s]/g, '').length === 0) {
               continue;
             }
-            
+
             if (line.trim()) {
               const dataCells = line.split(/\s{2,}/)
                 .map(cell => cell.trim())
                 .filter(cell => cell !== '');
-              
+
               if (dataCells.length > 1) {
                 processedDataRows.push(dataCells);
               }
             }
           }
-          
+
           console.log('Processed header:', headerCells);
           console.log('Processed data rows:', processedDataRows);
-          
+
           if (headerCells.length > 1 && processedDataRows.length > 0) {
             console.log(`✅ Converting ASCII table: ${headerCells.length} columns, ${processedDataRows.length} rows`);
-            
+
             // Build markdown table
             let markdownTable = '\n\n';
             markdownTable += '| ' + headerCells.join(' | ') + ' |\n';
             markdownTable += '|' + headerCells.map(() => '---').join('|') + '|\n';
-            
+
             for (const row of processedDataRows) {
               // Ensure we have the same number of columns as header
               while (row.length < headerCells.length) {
@@ -1749,23 +1749,23 @@ function convertASCIIDashTableToMarkdown(content) {
               markdownTable += '| ' + trimmedRow.join(' | ') + ' |\n';
             }
             markdownTable += '\n';
-            
+
             // Replace the original table section with markdown
             const tableSection = lines.slice(firstDashIdx, lastDashIdx + 1);
             const originalTableText = tableSection.join('\n');
             processedContent = processedContent.replace(originalTableText, markdownTable);
-            
+
             console.log('✅ ASCII table successfully converted to markdown');
           }
         }
-        
+
         // Move to the next table group
         i = tableStart - 1;
       }
     }
-    
+
     return processedContent;
-    
+
   } catch (error) {
     console.error('Error converting ASCII dash table:', error);
     return content;
@@ -1785,17 +1785,17 @@ let followUpAutoSendCancel = null;
 // Function to show/hide send button based on content
 export function updateSendButtonVisibility() {
   if (!sendBtn || !userInput) return;
-  
+
   const hasTextContent = userInput.value.trim().length > 0;
-  
+
   // Check if prompt selection is active and has a selected value
-  const hasPromptSelected = promptSelectionContainer && 
-    promptSelectionContainer.style.display === 'block' && 
-    promptSelect && 
+  const hasPromptSelected = promptSelectionContainer &&
+    promptSelectionContainer.style.display === 'block' &&
+    promptSelect &&
     promptSelect.selectedIndex > 0; // selectedIndex > 0 means not the default option
-  
+
   const shouldShow = hasTextContent || hasPromptSelected;
-  
+
   if (shouldShow) {
     sendBtn.classList.add('show');
     userInput.classList.add('has-content');
@@ -1967,7 +1967,7 @@ function createCitationsHtml(
     agentCitations.forEach((cite, index) => {
       // Agent citation format: { tool_name, function_arguments, function_result, timestamp }
       const displayText = cite.tool_name || `Tool ${index + 1}`;
-      
+
       // Handle function arguments properly - convert object to JSON string
       let toolArgs = "";
       if (cite.function_arguments) {
@@ -1977,7 +1977,7 @@ function createCitationsHtml(
           toolArgs = cite.function_arguments;
         }
       }
-      
+
       // Handle function result properly - convert object to JSON string
       let toolResult = "No result";
       if (cite.function_result) {
@@ -4666,7 +4666,7 @@ export function appendMessage(
     messageClass = "ai-message";
     avatarAltText = "AI Avatar";
     avatarImg = "/static/images/ai-avatar.png";
-    
+
     // Use agent display name if available, otherwise show AI with model
     if (agentDisplayName) {
       senderLabel = escapeHtml(agentDisplayName);
@@ -4694,19 +4694,19 @@ export function appendMessage(
     // --- Footer Content (Copy, Feedback, Citations) ---
     const feedbackHtml = renderFeedbackIcons(messageId, currentConversationId);
     const hiddenTextId = `copy-md-${messageId || Date.now()}`;
-    
+
     const maskState = getMaskStateFromMetadata(fullMessageObject?.metadata);
-    
+
     // TTS button (only for AI messages)
     const ttsButtonHtml = (sender === 'AI' && typeof window.appSettings !== 'undefined' && window.appSettings.enable_text_to_speech) ? `
-            <button class="btn btn-sm btn-link text-muted tts-play-btn" 
+            <button class="btn btn-sm btn-link text-muted tts-play-btn"
                     title="Read this to me"
                     data-message-id="${messageId}"
                     onclick="if(window.chatTTS) window.chatTTS.handleButtonClick('${messageId}')">
                 <i class="bi bi-volume-up"></i>
             </button>
         ` : '';
-    
+
     const copyButtonHtml = `
             <button class="copy-btn btn btn-sm btn-link text-muted" data-hidden-text-id="${hiddenTextId}" title="Copy AI response as Markdown">
                 <i class="bi bi-copy"></i>
@@ -4715,7 +4715,7 @@ export function appendMessage(
           renderedAiContent.copyMarkdown
     )}</textarea>
         `;
-    
+
     const maskButtonHtml = buildMaskControlsHtml(messageId, maskState);
     const exportMenuItemsHtml = renderCompletedAssistantActions ? `
             <li><hr class="dropdown-divider"></li>
@@ -4855,7 +4855,7 @@ export function appendMessage(
     renderSuggestedFollowUpButtons(messageDiv, renderedAiContent.followUpSuggestions);
     hydrateGeneratedAnalysisArtifacts(messageDiv, fullMessageObject);
     attachGeneratedImageProposalResults(messageDiv, fullMessageObject?.generated_image_proposals || []);
-    
+
     // Auto-play TTS if enabled (only for new messages, not when loading history)
     if (isNewMessage && typeof autoplayTTSIfEnabled === 'function') {
       autoplayTTSIfEnabled(messageId, renderedAiContent.previewMarkdown || messageContent);
@@ -4933,9 +4933,9 @@ export function appendMessage(
 
     attachMessageExportActionListeners(messageDiv, 'assistant');
     attachThoughtsToggleListener(messageDiv, messageId, currentConversationId);
-    
+
     attachMaskButtonEventListeners(messageDiv);
-    
+
     const dropdownDeleteBtn = messageDiv.querySelector(".dropdown-delete-btn");
     if (dropdownDeleteBtn) {
       dropdownDeleteBtn.addEventListener("click", (e) => {
@@ -4946,7 +4946,7 @@ export function appendMessage(
         handleDeleteButtonClick(messageDiv, currentMessageId, 'assistant');
       });
     }
-    
+
     const dropdownRetryBtn = messageDiv.querySelector(".dropdown-retry-btn");
     if (dropdownRetryBtn) {
       dropdownRetryBtn.addEventListener("click", (e) => {
@@ -4957,7 +4957,7 @@ export function appendMessage(
         handleRetryButtonClick(messageDiv, currentMessageId, 'assistant');
       });
     }
-    
+
     // Handle dropdown positioning manually - move to chatbox container
     const dropdownToggle = messageDiv.querySelector(".message-actions .dropdown button[data-bs-toggle='dropdown']");
     const dropdownMenu = messageDiv.querySelector(".message-actions .dropdown-menu");
@@ -4968,7 +4968,7 @@ export function appendMessage(
         if (chatbox) {
           dropdownMenu.remove();
           chatbox.appendChild(dropdownMenu);
-          
+
           // Position relative to button
           const rect = dropdownToggle.getBoundingClientRect();
           const chatboxRect = chatbox.getBoundingClientRect();
@@ -4978,7 +4978,7 @@ export function appendMessage(
           dropdownMenu.style.zIndex = '9999';
         }
       });
-      
+
       // Return menu to original position when closed
       dropdownToggle.addEventListener("hidden.bs.dropdown", () => {
         const dropdown = messageDiv.querySelector(".message-actions .dropdown");
@@ -4988,21 +4988,21 @@ export function appendMessage(
         }
       });
     }
-    
+
     const carouselPrevBtn = messageDiv.querySelector(".carousel-prev-btn");
     if (carouselPrevBtn) {
       carouselPrevBtn.addEventListener("click", () => {
         handleCarouselClick(messageId, 'prev');
       });
     }
-    
+
     const carouselNextBtn = messageDiv.querySelector(".carousel-next-btn");
     if (carouselNextBtn) {
       carouselNextBtn.addEventListener("click", () => {
         handleCarouselClick(messageId, 'next');
       });
     }
-    
+
     const copyBtn = messageDiv.querySelector(".copy-btn");
     copyBtn?.addEventListener("click", () => {
       /* ... copy logic ... */
@@ -5032,10 +5032,10 @@ export function appendMessage(
         const targetId = toggleBtn.getAttribute("aria-controls");
         const citationsContainer = messageDiv.querySelector(`#${targetId}`);
         if (!citationsContainer) return;
-        
+
         // Store current scroll position to maintain user's view
         const currentScrollTop = document.getElementById('chat-messages-container')?.scrollTop || window.pageYOffset;
-        
+
         const isExpanded = citationsContainer.style.display !== "none";
         citationsContainer.style.display = isExpanded ? "none" : "block";
         toggleBtn.setAttribute("aria-expanded", !isExpanded);
@@ -5044,7 +5044,7 @@ export function appendMessage(
           ? '<i class="bi bi-journal-text"></i>'
           : '<i class="bi bi-chevron-up"></i>';
         // Note: Removed scrollChatToBottom() to prevent jumping when expanding citations
-        
+
         // Restore scroll position after DOM changes
         setTimeout(() => {
           if (document.getElementById('chat-messages-container')) {
@@ -5065,13 +5065,13 @@ export function appendMessage(
     let isUserUpload = false;
     let hasExtractedText = false;
     let hasVisionAnalysis = false;
-    
+
     // Determine variables based on sender type
     if (sender === "You") {
       messageClass = "user-message";
       senderLabel = "You";
       avatarAltText = "User Avatar";
-      
+
       // Use profile image if available, otherwise use default
       const userProfileImage = window.ProfileImage?.getUserImage();
       if (userProfileImage) {
@@ -5117,7 +5117,7 @@ export function appendMessage(
     } else if (sender === "image") {
       // Make sure this matches the case used in loadMessages/actuallySendMessage
       messageClass = "image-message"; // Use a distinct class if needed, or reuse ai-message
-      
+
       // Use agent display name if available, otherwise show AI with model
       if (agentDisplayName) {
         senderLabel = escapeHtml(agentDisplayName);
@@ -5145,7 +5145,7 @@ export function appendMessage(
 
       avatarImg = isUserUpload ? "/static/images/user-avatar.png" : "/static/images/ai-avatar.png";
       avatarAltText = isUserUpload ? "Uploaded Image" : "Generated Image";
-      
+
       // Validate image URL before creating img tag
       if (messageContent && messageContent !== 'null' && messageContent.trim() !== '') {
         messageContentHtml = `<img src="${messageContent}" alt="${isUserUpload ? 'Uploaded' : 'Generated'} Image" class="generated-image" style="width: 170px; height: 170px; cursor: pointer;" data-image-src="${messageContent}" onload="scrollChatToBottom()" onerror="this.src='/static/images/image-error.png'; this.alt='Failed to load image';" />`;
@@ -5204,7 +5204,7 @@ export function appendMessage(
     if (sender === "You") {
       const metadataContainerId = `metadata-${messageId || Date.now()}`;
       const maskState = getMaskStateFromMetadata(fullMessageObject?.metadata);
-      
+
       messageFooterHtml = `
         <div class="message-footer d-flex justify-content-between align-items-center mt-2">
           <div class="d-flex align-items-center gap-2">
@@ -5268,9 +5268,9 @@ export function appendMessage(
     } else if (sender === "image" || sender === "File") {
       // Image and file messages get mask button on left, metadata button on right side
       const metadataContainerId = `metadata-${messageId || Date.now()}`;
-      
+
       const maskState = getMaskStateFromMetadata(fullMessageObject?.metadata);
-      
+
       // For images with extracted text or vision analysis, add View Text button like citation button
       let imageInfoToggleHtml = '';
       let imageInfoContainerHtml = '';
@@ -5279,7 +5279,7 @@ export function appendMessage(
         imageInfoToggleHtml = `<button class="btn btn-sm btn-link text-muted image-info-btn" data-message-id="${messageId}" title="View extracted text" aria-expanded="false" aria-controls="${infoContainerId}"><i class="bi bi-file-text"></i></button>`;
         imageInfoContainerHtml = `<div id="${infoContainerId}" class="image-info-container mt-2 pt-2 border-top" style="display: none;"><div class="image-info-content">Loading image information...</div></div>`;
       }
-      
+
       messageFooterHtml = `
         <div class="message-footer d-flex justify-content-between align-items-center mt-2">
           <div class="d-flex align-items-center gap-2">
@@ -5349,11 +5349,11 @@ export function appendMessage(
 
     captureMessageMaskingOriginalContent(messageDiv);
 
-    
+
     // Add event listeners for user message buttons
     if (sender === "You") {
       attachUserMessageEventListeners(messageDiv, messageId, messageContent);
-      
+
       // Apply masked state if message has masking
       if (fullMessageObject?.metadata) {
         console.log('Applying masked state for user message:', messageId, fullMessageObject.metadata);
@@ -5377,18 +5377,18 @@ export function appendMessage(
         });
       }
     }
-    
+
     // Add event listener for mask button (image and file messages)
     if (sender === "image" || sender === "File") {
       attachMaskButtonEventListeners(messageDiv);
-      
+
       // Apply masked state if message has masking
       if (fullMessageObject?.metadata) {
         console.log('Applying masked state for image/file message:', messageId, fullMessageObject.metadata);
         applyMaskedState(messageDiv, fullMessageObject.metadata);
       }
     }
-    
+
     // Add event listener for metadata button (image and file messages)
     if (sender === "image" || sender === "File") {
       const metadataBtn = messageDiv.querySelector('.metadata-info-btn');
@@ -5400,13 +5400,13 @@ export function appendMessage(
             metadataContainer.style.display = isVisible ? 'none' : 'block';
             metadataBtn.setAttribute('aria-expanded', !isVisible);
             metadataBtn.title = isVisible ? 'Show metadata' : 'Hide metadata';
-            
+
             // Toggle icon
             const icon = metadataBtn.querySelector('i');
             if (icon) {
               icon.className = isVisible ? 'bi bi-info-circle' : 'bi bi-chevron-up';
             }
-            
+
             // Load metadata if container is empty (first open)
             if (!isVisible && metadataContainer.innerHTML.includes('Loading metadata')) {
               loadMessageMetadataForDisplay(messageId, metadataContainer);
@@ -5414,7 +5414,7 @@ export function appendMessage(
           }
         });
       }
-      
+
       // Add delete button event listener from dropdown
       const dropdownDeleteBtn = messageDiv.querySelector('.dropdown-delete-btn');
       if (dropdownDeleteBtn) {
@@ -5426,7 +5426,7 @@ export function appendMessage(
           handleDeleteButtonClick(messageDiv, currentMessageId, sender === "image" ? 'image' : 'file');
         });
       }
-      
+
       // Handle dropdown positioning manually for image/file messages - move to chatbox
       const dropdownToggle = messageDiv.querySelector(".message-footer .dropdown button[data-bs-toggle='dropdown']");
       const dropdownMenu = messageDiv.querySelector(".message-footer .dropdown-menu");
@@ -5436,7 +5436,7 @@ export function appendMessage(
           if (chatbox) {
             dropdownMenu.remove();
             chatbox.appendChild(dropdownMenu);
-            
+
             const rect = dropdownToggle.getBoundingClientRect();
             const chatboxRect = chatbox.getBoundingClientRect();
             dropdownMenu.style.position = 'absolute';
@@ -5445,7 +5445,7 @@ export function appendMessage(
             dropdownMenu.style.zIndex = '9999';
           }
         });
-        
+
         dropdownToggle.addEventListener("hidden.bs.dropdown", () => {
           const dropdown = messageDiv.querySelector(".message-footer .dropdown");
           if (dropdown && dropdownMenu.parentElement !== dropdown) {
@@ -6215,7 +6215,7 @@ export function actuallySendMessage(finalMessageToSend) {
     );
     return;
   }
-  
+
   // Append user message first with temporary ID
   appendMessage("You", finalMessageToSend, null, tempUserMessageId);
   userInput.value = "";
@@ -6302,7 +6302,7 @@ if (userInput) {
       // If Shift key IS pressed, do nothing - allow the default behavior (inserting a newline)
     }
   });
-  
+
   // Monitor input changes for send button visibility
   userInput.addEventListener("input", () => {
     updateSendButtonVisibility();
@@ -6328,14 +6328,14 @@ updateDocumentActionControls();
 // Helper function to update user message ID after backend response
 export function updateUserMessageId(tempId, realId) {
   console.log(`🔄 Updating message ID: ${tempId} -> ${realId}`);
-  
+
   // Find the message with the temporary ID
   const messageDiv = document.querySelector(`[data-message-id="${tempId}"]`);
   if (messageDiv) {
     // Update the data-message-id attribute
     messageDiv.setAttribute('data-message-id', realId);
     console.log(`✅ Updated messageDiv data-message-id to: ${realId}`);
-    
+
     // Update ALL elements with the temporary ID to ensure consistency
     const elementsToUpdate = [
       messageDiv.querySelector('.copy-user-btn'),
@@ -6343,7 +6343,7 @@ export function updateUserMessageId(tempId, realId) {
       ...messageDiv.querySelectorAll(`[data-message-id="${tempId}"]`),
       ...messageDiv.querySelectorAll(`[aria-controls*="${tempId}"]`)
     ];
-    
+
     let updateCount = 0;
     elementsToUpdate.forEach(element => {
       if (element) {
@@ -6352,7 +6352,7 @@ export function updateUserMessageId(tempId, realId) {
           element.setAttribute('data-message-id', realId);
           updateCount++;
         }
-        
+
         // Update aria-controls attribute for metadata toggles
         if (element.hasAttribute('aria-controls')) {
           const ariaControls = element.getAttribute('aria-controls');
@@ -6364,7 +6364,7 @@ export function updateUserMessageId(tempId, realId) {
         }
       }
     });
-    
+
     // Update metadata container IDs
     const metadataContainer = messageDiv.querySelector(`[id*="${tempId}"]`);
     if (metadataContainer) {
@@ -6374,9 +6374,9 @@ export function updateUserMessageId(tempId, realId) {
       console.log(`✅ Updated metadata container ID: ${oldId} -> ${newId}`);
       updateCount++;
     }
-    
+
     console.log(`✅ Updated ${updateCount} elements with new message ID`);
-    
+
     // Verify the update was successful
     const verifyDiv = document.querySelector(`[data-message-id="${realId}"]`);
     if (verifyDiv) {
@@ -6398,7 +6398,7 @@ export function updateUserMessageId(tempId, realId) {
 function attachUserMessageEventListeners(messageDiv, messageId, messageContent) {
   const copyBtn = messageDiv.querySelector(".copy-user-btn");
   const metadataToggleBtn = messageDiv.querySelector(".metadata-toggle-btn");
-  
+
   if (copyBtn) {
     copyBtn.addEventListener("click", () => {
       navigator.clipboard.writeText(messageContent)
@@ -6416,15 +6416,15 @@ function attachUserMessageEventListeners(messageDiv, messageId, messageContent) 
         });
     });
   }
-  
+
   if (metadataToggleBtn) {
     metadataToggleBtn.addEventListener("click", () => {
       toggleUserMessageMetadata(messageDiv, messageId);
     });
   }
-  
+
   attachMaskButtonEventListeners(messageDiv);
-  
+
   const dropdownDeleteBtn = messageDiv.querySelector(".dropdown-delete-btn");
   if (dropdownDeleteBtn) {
     dropdownDeleteBtn.addEventListener("click", (e) => {
@@ -6436,7 +6436,7 @@ function attachUserMessageEventListeners(messageDiv, messageId, messageContent) 
       handleDeleteButtonClick(messageDiv, currentMessageId, 'user');
     });
   }
-  
+
   const dropdownRetryBtn = messageDiv.querySelector(".dropdown-retry-btn");
   if (dropdownRetryBtn) {
     dropdownRetryBtn.addEventListener("click", (e) => {
@@ -6447,7 +6447,7 @@ function attachUserMessageEventListeners(messageDiv, messageId, messageContent) 
       handleRetryButtonClick(messageDiv, currentMessageId, 'user');
     });
   }
-  
+
   const dropdownEditBtn = messageDiv.querySelector(".dropdown-edit-btn");
   if (dropdownEditBtn) {
     dropdownEditBtn.addEventListener("click", (e) => {
@@ -6465,7 +6465,7 @@ function attachUserMessageEventListeners(messageDiv, messageId, messageContent) 
   }
 
   attachMessageExportActionListeners(messageDiv, 'user');
-  
+
   // Handle dropdown positioning manually for user messages - move to chatbox
   const dropdownToggle = messageDiv.querySelector(".message-footer .dropdown button[data-bs-toggle='dropdown']");
   const dropdownMenu = messageDiv.querySelector(".message-footer .dropdown-menu");
@@ -6475,7 +6475,7 @@ function attachUserMessageEventListeners(messageDiv, messageId, messageContent) 
       if (chatbox) {
         dropdownMenu.remove();
         chatbox.appendChild(dropdownMenu);
-        
+
         const rect = dropdownToggle.getBoundingClientRect();
         const chatboxRect = chatbox.getBoundingClientRect();
         dropdownMenu.style.position = 'absolute';
@@ -6484,7 +6484,7 @@ function attachUserMessageEventListeners(messageDiv, messageId, messageContent) 
         dropdownMenu.style.zIndex = '9999';
       }
     });
-    
+
     dropdownToggle.addEventListener("hidden.bs.dropdown", () => {
       const dropdown = messageDiv.querySelector(".message-footer .dropdown");
       if (dropdown && dropdownMenu.parentElement !== dropdown) {
@@ -6493,14 +6493,14 @@ function attachUserMessageEventListeners(messageDiv, messageId, messageContent) 
       }
     });
   }
-  
+
   const carouselPrevBtn = messageDiv.querySelector(".carousel-prev-btn");
   if (carouselPrevBtn) {
     carouselPrevBtn.addEventListener("click", () => {
       handleCarouselClick(messageId, 'prev');
     });
   }
-  
+
   const carouselNextBtn = messageDiv.querySelector(".carousel-next-btn");
   if (carouselNextBtn) {
     carouselNextBtn.addEventListener("click", () => {
@@ -6565,12 +6565,12 @@ function attachCollaboratorMessageEventListeners(messageDiv, fullMessageObject, 
 // Function to toggle user message metadata drawer
 function toggleUserMessageMetadata(messageDiv, messageId) {
   console.log(`🔀 Toggling metadata for message: ${messageId}`);
-  
+
   // Validate that we're not using a temporary ID
   if (messageId && messageId.startsWith('temp_user_')) {
     console.error(`❌ Metadata toggle called with temporary ID: ${messageId}`);
     console.log(`🔍 Checking if real ID is available in DOM...`);
-    
+
     // Try to find the real ID from the message div
     const actualMessageId = messageDiv.getAttribute('data-message-id');
     if (actualMessageId && actualMessageId !== messageId && !actualMessageId.startsWith('temp_user_')) {
@@ -6580,21 +6580,21 @@ function toggleUserMessageMetadata(messageDiv, messageId) {
       console.error(`❌ No valid real ID found, metadata toggle may fail`);
     }
   }
-  
+
   const toggleBtn = messageDiv.querySelector('.metadata-toggle-btn');
   const targetId = toggleBtn.getAttribute('aria-controls');
   const metadataContainer = messageDiv.querySelector(`#${targetId}`);
-  
+
   if (!metadataContainer) {
     console.error(`❌ Metadata container not found for targetId: ${targetId}`);
     return;
   }
-  
+
   const isExpanded = metadataContainer.style.display !== "none";
-  
+
   // Store current scroll position to maintain user's view
   const currentScrollTop = document.getElementById('chat-messages-container')?.scrollTop || window.pageYOffset;
-  
+
   if (isExpanded) {
     // Hide the metadata
     metadataContainer.style.display = "none";
@@ -6608,17 +6608,17 @@ function toggleUserMessageMetadata(messageDiv, messageId) {
     toggleBtn.setAttribute("aria-expanded", true);
     toggleBtn.title = "Hide metadata";
     toggleBtn.innerHTML = '<i class="bi bi-chevron-up"></i>';
-    
+
     // Load metadata if not already loaded
     if (metadataContainer.innerHTML.includes('Loading metadata...')) {
       console.log(`🔄 Loading metadata content for ${messageId}`);
       loadUserMessageMetadata(messageId, metadataContainer);
     }
-    
+
     console.log(`✅ Metadata shown for ${messageId}`);
     // Note: Removed scrollChatToBottom() to prevent jumping when expanding metadata
   }
-  
+
   // Restore scroll position after DOM changes
   setTimeout(() => {
     if (document.getElementById('chat-messages-container')) {
@@ -6632,19 +6632,19 @@ function toggleUserMessageMetadata(messageDiv, messageId) {
 // Function to load user message metadata into the drawer
 function loadUserMessageMetadata(messageId, container, retryCount = 0) {
   console.log(`🔍 Loading metadata for message ID: ${messageId} (attempt ${retryCount + 1})`);
-  
+
   // Validate message ID to catch temporary IDs early
   if (!messageId || messageId === "null" || messageId === "undefined") {
     console.error(`❌ Invalid message ID: ${messageId}`);
     container.innerHTML = '<div class="text-muted">Message metadata not available.</div>';
     return;
   }
-  
+
   // Check for temporary IDs which indicate a bug
   if (messageId.startsWith('temp_user_')) {
     console.error(`❌ Attempting to load metadata with temporary ID: ${messageId}`);
     console.error(`This indicates the updateUserMessageId function didn't work properly`);
-    
+
     if (retryCount < 2) {
       // Short retry for temp IDs in case the real ID update is still in progress
       console.log(`🔄 Retrying metadata load for temp ID in 100ms (attempt ${retryCount + 1}/3)`);
@@ -6657,12 +6657,12 @@ function loadUserMessageMetadata(messageId, container, retryCount = 0) {
       return;
     }
   }
-  
+
   // Fetch message metadata from the backend
   fetch(`/api/message/${messageId}/metadata`)
     .then(response => {
       console.log(`📡 Metadata API response for ${messageId}: ${response.status}`);
-      
+
       if (!response.ok) {
         if (response.status === 404 && retryCount < 3) {
           // Message might not be fully saved yet, retry with exponential backoff
@@ -6681,19 +6681,19 @@ function loadUserMessageMetadata(messageId, container, retryCount = 0) {
       if (data) {
         console.log(`✅ Successfully loaded metadata for ${messageId}`);
         container.innerHTML = formatMetadataForDrawer(data);
-        
+
         // Attach event listeners to View Text buttons
         const viewTextButtons = container.querySelectorAll('.view-text-btn');
         viewTextButtons.forEach(btn => {
           btn.addEventListener('click', function() {
             const imageId = this.getAttribute('data-image-id');
             const collapseElement = document.getElementById(`${imageId}-info`);
-            
+
             if (collapseElement) {
               const bsCollapse = new bootstrap.Collapse(collapseElement, {
                 toggle: true
               });
-              
+
               // Update button text
               if (collapseElement.classList.contains('show')) {
                 this.innerHTML = '<i class="bi bi-eye me-1"></i>View Text';
@@ -6707,7 +6707,7 @@ function loadUserMessageMetadata(messageId, container, retryCount = 0) {
     })
     .catch(error => {
       console.error(`❌ Error fetching message metadata for ${messageId}:`, error);
-      
+
       if (retryCount >= 3) {
         container.innerHTML = '<div class="text-danger">Failed to load message metadata after multiple attempts.</div>';
       } else {
@@ -6719,7 +6719,7 @@ function loadUserMessageMetadata(messageId, container, retryCount = 0) {
 // Helper function to format metadata for drawer display
 function formatMetadataForDrawer(metadata) {
   let content = '';
-  
+
   // Helper function to create status badge
   function createStatusBadge(status, type = 'status') {
     const isEnabled = status === 'Enabled' || status === true;
@@ -6727,22 +6727,22 @@ function formatMetadataForDrawer(metadata) {
     const text = isEnabled ? 'Enabled' : 'Disabled';
     return `<span class="${badgeClass}">${text}</span>`;
   }
-  
+
   // Helper function to create info badge
   function createInfoBadge(text, variant = 'primary') {
     return `<span class="badge bg-${variant}">${escapeHtml(text)}</span>`;
   }
-  
+
   // Helper function to create classification badge with proper colors
   function createClassificationBadge(classification) {
     if (!classification || classification === 'None') {
       return `<span class="badge bg-secondary">None</span>`;
     }
-    
+
     // Try to find the classification in the global configuration
     const categories = window.classification_categories || [];
     const category = categories.find(cat => cat.label === classification);
-    
+
     if (category && category.color) {
       const bgColor = category.color;
       const useDarkText = isColorLight(bgColor);
@@ -6891,64 +6891,64 @@ function formatMetadataForDrawer(metadata) {
     }
     content += '</div></div>';
   }
-  
+
   // User Information Section
   if (metadata.user_info) {
     content += '<div class="mb-3">';
     content += '<div class="fw-bold mb-2"><i class="bi bi-person me-2"></i>User Information</div>';
     content += '<div class="ms-3 small">';
-    
+
     if (metadata.user_info.display_name) {
       content += `<div class="mb-1"><span class="text-muted">User:</span> <span class="ms-2">${escapeHtml(metadata.user_info.display_name)}</span></div>`;
     }
-    
+
     if (metadata.user_info.email) {
       content += `<div class="mb-1"><span class="text-muted">Email:</span> <span class="ms-2">${escapeHtml(metadata.user_info.email)}</span></div>`;
     }
-    
+
     if (metadata.user_info.username) {
       content += `<div class="mb-1"><span class="text-muted">Username:</span> <span class="ms-2">${escapeHtml(metadata.user_info.username)}</span></div>`;
     }
-    
+
     if (metadata.user_info.timestamp) {
       const date = new Date(metadata.user_info.timestamp);
       content += `<div class="mb-1"><span class="text-muted">Timestamp:</span> <code class="ms-2">${escapeHtml(date.toLocaleString())}</code></div>`;
     }
-    
+
     content += '</div></div>';
   }
-  
+
   // Thread Information Section (priority display)
   if (metadata.thread_info) {
     const ti = metadata.thread_info;
     content += '<div class="mb-3">';
     content += '<div class="fw-bold mb-2"><i class="bi bi-diagram-3 me-2"></i>Thread Information</div>';
     content += '<div class="ms-3 small">';
-    
+
     content += `<div class="mb-1"><span class="text-muted">Thread ID:</span> <code class="ms-2">${escapeHtml(ti.thread_id || 'N/A')}</code></div>`;
-    
+
     content += `<div class="mb-1"><span class="text-muted">Previous Thread:</span> <code class="ms-2">${escapeHtml(ti.previous_thread_id || 'None')}</code></div>`;
-    
-    const activeThreadBadge = ti.active_thread ? 
-      '<span class="badge bg-success">Yes</span>' : 
+
+    const activeThreadBadge = ti.active_thread ?
+      '<span class="badge bg-success">Yes</span>' :
       '<span class="badge bg-secondary">No</span>';
     content += `<div class="mb-1"><span class="text-muted">Active:</span> <span class="ms-2">${activeThreadBadge}</span></div>`;
-    
+
     content += `<div><span class="text-muted">Attempt:</span> <span class="ms-2 badge bg-info">${ti.thread_attempt || 1}</span></div>`;
-    
+
     content += '</div></div>';
   }
-  
+
   // Button States Section
   if (metadata.button_states) {
     content += '<div class="mb-3">';
     content += '<div class="fw-bold mb-2"><i class="bi bi-toggles me-2"></i>Button States</div>';
     content += '<div class="ms-3 small">';
-    
+
     if (metadata.button_states.image_generation !== undefined) {
       content += `<div class="mb-1"><span class="text-muted">Image Generation:</span> <span class="ms-2">${createStatusBadge(metadata.button_states.image_generation)}</span></div>`;
     }
-    
+
     if (metadata.button_states.web_search !== undefined) {
       content += `<div class="mb-1"><span class="text-muted">Web Search:</span> <span class="ms-2">${createStatusBadge(metadata.button_states.web_search)}</span></div>`;
     }
@@ -6960,11 +6960,11 @@ function formatMetadataForDrawer(metadata) {
     if (metadata.button_states.deep_research !== undefined) {
       content += `<div class="mb-1"><span class="text-muted">Deep Research:</span> <span class="ms-2">${createStatusBadge(metadata.button_states.deep_research)}</span></div>`;
     }
-    
+
     if (metadata.button_states.document_search !== undefined) {
       content += `<div class="mb-1"><span class="text-muted">Document Search:</span> <span class="ms-2">${createStatusBadge(metadata.button_states.document_search)}</span></div>`;
     }
-    
+
     content += '</div></div>';
   }
 
@@ -7006,110 +7006,110 @@ function formatMetadataForDrawer(metadata) {
 
     content += '</div></div>';
   }
-  
+
   // Workspace Search Section
   if (metadata.workspace_search) {
     content += '<div class="mb-3">';
     content += '<div class="fw-bold mb-2"><i class="bi bi-folder me-2"></i>Workspace & Document Selection</div>';
     content += '<div class="ms-3 small">';
-    
+
     if (metadata.workspace_search.search_enabled !== undefined) {
       content += `<div class="mb-1"><span class="text-muted">Search Enabled:</span> <span class="ms-2">${createStatusBadge(metadata.workspace_search.search_enabled)}</span></div>`;
     }
-    
+
     if (metadata.workspace_search.document_name) {
       content += `<div class="mb-1"><span class="text-muted">Selected Document:</span> <span class="ms-2">${escapeHtml(metadata.workspace_search.document_name)}</span></div>`;
     } else if (metadata.workspace_search.selected_document_id && metadata.workspace_search.selected_document_id !== 'None' && metadata.workspace_search.selected_document_id !== 'all') {
       content += `<div class="mb-1"><span class="text-muted">Document ID:</span> <span class="ms-2">${escapeHtml(metadata.workspace_search.selected_document_id)}</span></div>`;
     }
-    
+
     if (metadata.workspace_search.document_scope) {
       content += `<div class="mb-1"><span class="text-muted">Search Scope:</span> <span class="ms-2">${createInfoBadge(metadata.workspace_search.document_scope, 'primary')}</span></div>`;
     }
-    
+
     if (metadata.workspace_search.classification && metadata.workspace_search.classification !== 'None') {
       content += `<div class="mb-1"><span class="text-muted">Classification:</span> <span class="ms-2">${createClassificationBadge(metadata.workspace_search.classification)}</span></div>`;
     }
-    
+
     if (metadata.workspace_search.group_name) {
       content += `<div class="mb-1"><span class="text-muted">Group:</span> <span class="ms-2">${escapeHtml(metadata.workspace_search.group_name)}</span></div>`;
     }
-    
+
     content += '</div></div>';
   }
-  
+
   // Prompt Selection Section
   if (metadata.prompt_selection) {
     content += '<div class="mb-3">';
     content += '<div class="fw-bold mb-2"><i class="bi bi-chat-quote me-2"></i>Prompt Selection</div>';
     content += '<div class="ms-3 small">';
-    
+
     if (metadata.prompt_selection.prompt_name) {
       content += `<div class="mb-1"><span class="text-muted">Prompt Name:</span> <span class="ms-2">${createInfoBadge(metadata.prompt_selection.prompt_name, 'success')}</span></div>`;
     }
-    
+
     if (metadata.prompt_selection.selected_prompt_index !== undefined) {
       content += `<div class="mb-1"><span class="text-muted">Prompt Index:</span> <span class="ms-2">${escapeHtml(metadata.prompt_selection.selected_prompt_index)}</span></div>`;
     }
-    
+
     if (metadata.prompt_selection.selected_prompt_text) {
       content += `<div class="mb-1"><span class="text-muted">Content:</span><div class="mt-1 p-2 bg-light rounded small">${escapeHtml(metadata.prompt_selection.selected_prompt_text)}</div></div>`;
     }
-    
+
     content += '</div></div>';
   }
-  
+
   // Agent Selection Section
   if (metadata.agent_selection) {
     content += '<div class="mb-3">';
     content += '<div class="fw-bold mb-2"><i class="bi bi-robot me-2"></i>Agent Selection</div>';
     content += '<div class="ms-3 small">';
-    
+
     if (metadata.agent_selection.agent_display_name) {
       content += `<div class="mb-1"><span class="text-muted">Agent:</span> <span class="ms-2">${createInfoBadge(metadata.agent_selection.agent_display_name, 'success')}</span></div>`;
     } else if (metadata.agent_selection.selected_agent) {
       content += `<div class="mb-1"><span class="text-muted">Selected Agent:</span> <span class="ms-2">${createInfoBadge(metadata.agent_selection.selected_agent, 'success')}</span></div>`;
     }
-    
+
     if (metadata.agent_selection.is_global !== undefined) {
       content += `<div class="mb-1"><span class="text-muted">Global Agent:</span> <span class="ms-2">${createStatusBadge(metadata.agent_selection.is_global)}</span></div>`;
     }
-    
+
     content += '</div></div>';
   }
-  
+
   // Model Selection Section
   if (metadata.model_selection) {
     content += '<div class="mb-3">';
     content += '<div class="fw-bold mb-2"><i class="bi bi-cpu me-2"></i>Model Selection</div>';
     content += '<div class="ms-3 small">';
-    
+
     if (metadata.model_selection.selected_model) {
       content += `<div class="mb-1"><span class="text-muted">Selected Model:</span> <code class="ms-2">${escapeHtml(metadata.model_selection.selected_model)}</code></div>`;
     }
-    
-    if (metadata.model_selection.frontend_requested_model && 
+
+    if (metadata.model_selection.frontend_requested_model &&
         metadata.model_selection.frontend_requested_model !== metadata.model_selection.selected_model) {
       content += `<div class="mb-1"><span class="text-muted">Frontend Model:</span> <code class="ms-2">${escapeHtml(metadata.model_selection.frontend_requested_model)}</code></div>`;
     }
-    
+
     if (metadata.model_selection.reasoning_effort) {
       content += `<div class="mb-1"><span class="text-muted">Reasoning Effort:</span> <code class="ms-2">${escapeHtml(metadata.model_selection.reasoning_effort)}</code></div>`;
     }
-    
+
     if (metadata.model_selection.streaming !== undefined) {
       content += `<div class="mb-1"><span class="text-muted">Streaming:</span> <span class="ms-2">${createStatusBadge(metadata.model_selection.streaming)}</span></div>`;
     }
-    
+
     content += '</div></div>';
   }
-  
+
   // Uploaded Images Section
   if (metadata.uploaded_images && metadata.uploaded_images.length > 0) {
     content += '<div class="mb-3">';
     content += '<div class="fw-bold mb-2"><i class="bi bi-image me-2"></i>Uploaded Image</div>';
     content += '<div class="ms-3 small">';
-    
+
     metadata.uploaded_images.forEach((image, index) => {
       const imageId = `image-${metadata.message_details?.message_id || Date.now()}-${index}`;
       content += `<div class="metadata-item">`;
@@ -7118,22 +7118,22 @@ function formatMetadataForDrawer(metadata) {
       content += `<div class="card-body">`;
       content += `<div class="d-flex justify-content-between align-items-center">`;
       content += `<small class="text-muted">Filename: ${escapeHtml(image.filename || 'Unknown')}</small>`;
-      
+
       // Add View Text button if OCR or vision data exists
       if ((image.ocr_text && image.ocr_text.trim()) || (image.vision_analysis && image.vision_analysis.trim())) {
-        content += `<button class="btn btn-sm btn-outline-primary view-text-btn" 
-                      data-image-id="${imageId}" 
+        content += `<button class="btn btn-sm btn-outline-primary view-text-btn"
+                      data-image-id="${imageId}"
                       title="View extracted text">
                       <i class="bi bi-eye me-1"></i>View Text
                     </button>`;
       }
-      
+
       content += `</div>`; // End d-flex
-      
+
       // Add collapsible drawer for OCR and vision analysis
       if ((image.ocr_text && image.ocr_text.trim()) || (image.vision_analysis && image.vision_analysis.trim())) {
         content += `<div class="collapse mt-2" id="${imageId}-info">`;
-        
+
         if (image.ocr_text && image.ocr_text.trim()) {
           content += `<div class="border-top pt-2 mt-2">`;
           content += `<strong class="text-muted"><i class="bi bi-file-text me-1"></i>Extracted Text (OCR):</strong>`;
@@ -7141,7 +7141,7 @@ function formatMetadataForDrawer(metadata) {
           content += `<pre class="mb-0" style="white-space: pre-wrap; word-wrap: break-word;">${escapeHtml(image.ocr_text)}</pre>`;
           content += `</div></div>`;
         }
-        
+
         if (image.vision_analysis && image.vision_analysis.trim()) {
           content += `<div class="border-top pt-2 mt-2">`;
           content += `<strong class="text-muted"><i class="bi bi-info-circle me-1"></i>AI Vision Analysis:</strong>`;
@@ -7149,32 +7149,32 @@ function formatMetadataForDrawer(metadata) {
           content += `<div>${escapeHtml(image.vision_analysis)}</div>`;
           content += `</div></div>`;
         }
-        
+
         content += `</div>`; // End collapse
       }
-      
+
       content += `</div>`; // End card-body
       content += `</div>`; // End card
       content += `</div>`; // End item wrapper
     });
-    
+
     content += '</div></div>'; // End ms-3 small and mb-3
   }
-  
+
   // Chat Context Section
   if (metadata.chat_context) {
     content += '<div class="mb-3">';
     content += '<div class="fw-bold mb-2"><i class="bi bi-chat-left-text me-2"></i>Chat Context</div>';
     content += '<div class="ms-3 small">';
-    
+
     if (metadata.chat_context.conversation_id) {
       content += `<div class="mb-1"><span class="text-muted">Conversation ID:</span> <code class="ms-2">${escapeHtml(metadata.chat_context.conversation_id)}</code></div>`;
     }
-    
+
     if (metadata.chat_context.chat_type) {
       content += `<div class="mb-1"><span class="text-muted">Chat Type:</span> <span class="ms-2">${createInfoBadge(metadata.chat_context.chat_type, 'primary')}</span></div>`;
     }
-    
+
     // Show context-specific information based on chat type
     if (metadata.chat_context.chat_type === 'group') {
       if (metadata.chat_context.group_name) {
@@ -7188,14 +7188,14 @@ function formatMetadataForDrawer(metadata) {
       }
     }
     // For 'personal' chat type, no additional context needed
-    
+
     content += '</div></div>';
   }
-  
+
   if (!content) {
     content = '<div class="text-muted">No metadata available for this message.</div>';
   }
-  
+
   return `<div class="metadata-content">${content}</div>`;
 }
 
@@ -7283,20 +7283,20 @@ function toggleImageInfo(messageDiv, messageId, fullMessageObject) {
  */
 function toggleMessageMetadata(messageDiv, messageId) {
   const existingDrawer = messageDiv.querySelector('.message-metadata-drawer');
-  
+
   if (existingDrawer) {
     // Drawer exists, remove it
     existingDrawer.remove();
     return;
   }
-  
+
   // Create new drawer
   const drawerDiv = document.createElement('div');
   drawerDiv.className = 'message-metadata-drawer mt-2 p-3 border rounded bg-light';
   drawerDiv.innerHTML = '<div class="spinner-border spinner-border-sm" role="status"><span class="visually-hidden">Loading...</span></div>';
-  
+
   messageDiv.appendChild(drawerDiv);
-  
+
   // Load metadata
   loadMessageMetadataForDisplay(messageId, drawerDiv);
 }
@@ -7357,10 +7357,10 @@ function loadMessageMetadataForDisplay(messageId, container) {
         container.innerHTML = '<p class="text-muted mb-0">No metadata available</p>';
         return;
       }
-      
+
       const metadata = data;
       let html = '<div class="metadata-content">';
-      
+
       // Thread Information (check both locations for backward compatibility)
       const threadInfo = metadata.metadata?.thread_info || {
         thread_id: metadata.thread_id,
@@ -7375,7 +7375,7 @@ function loadMessageMetadataForDisplay(messageId, container) {
       const mentionList = Array.isArray(metadata.metadata?.mentions)
         ? metadata.metadata.mentions
         : [];
-      
+
       if (threadInfo.thread_id) {
         html += '<div class="mb-3">';
         html += '<div class="fw-bold mb-2"><i class="bi bi-diagram-3 me-2"></i>Thread Information</div>';
@@ -7386,7 +7386,7 @@ function loadMessageMetadataForDisplay(messageId, container) {
         html += `<div><span class="text-muted">Attempt:</span> <span class="ms-2 badge bg-info">${threadInfo.thread_attempt || 1}</span></div>`;
         html += '</div></div>';
       }
-      
+
       // Message Details
       html += '<div class="mb-3">';
       html += '<div class="fw-bold mb-2"><i class="bi bi-chat-left-text me-2"></i>Message Details</div>';
@@ -7428,7 +7428,7 @@ function loadMessageMetadataForDisplay(messageId, container) {
         if (collaborationInfo.participant_count !== undefined) html += `<div class="mb-1"><span class="text-muted">Participants:</span> <span class="ms-2 badge bg-secondary">${escapeHtml(collaborationInfo.participant_count)}</span></div>`;
         html += '</div></div>';
       }
-      
+
       // Image/File specific info
       if (metadata.role === 'image') {
         html += '<div class="mb-3">';
@@ -7447,18 +7447,18 @@ function loadMessageMetadataForDisplay(messageId, container) {
         if (metadata.is_table !== undefined) html += `<div class="mb-1"><span class="text-muted">Table Data:</span> <span class="ms-2 badge ${metadata.is_table ? 'bg-success' : 'bg-secondary'}">${metadata.is_table ? 'Yes' : 'No'}</span></div>`;
         html += '</div></div>';
       }
-      
+
       // Generation Details (for assistant, image, and file messages)
       if (metadata.role === 'assistant' || metadata.role === 'image' || metadata.role === 'file') {
         html += '<div class="mb-3">';
         html += '<div class="fw-bold mb-2"><i class="bi bi-cpu me-2"></i>Generation Details</div>';
         html += '<div class="ms-3 small">';
-        
+
         // Model and Agent info (for all types)
         if (metadata.model_deployment_name) html += `<div class="mb-1"><span class="text-muted">Model:</span> <code class="ms-2">${metadata.model_deployment_name}</code></div>`;
         if (metadata.agent_name) html += `<div class="mb-1"><span class="text-muted">Agent:</span> <code class="ms-2">${metadata.agent_name}</code></div>`;
         if (metadata.agent_display_name) html += `<div class="mb-1"><span class="text-muted">Agent Display Name:</span> <span class="ms-2">${escapeHtml(metadata.agent_display_name)}</span></div>`;
-        
+
         // Assistant-specific info
         if (metadata.role === 'assistant') {
           if (metadata.augmented !== undefined) html += `<div class="mb-1"><span class="text-muted">Augmented:</span> <span class="ms-2 badge ${metadata.augmented ? 'bg-success' : 'bg-secondary'}">${metadata.augmented ? 'Yes' : 'No'}</span></div>`;
@@ -7475,7 +7475,7 @@ function loadMessageMetadataForDisplay(messageId, container) {
           if (metadata.web_search_citations && metadata.web_search_citations.length > 0) html += `<div class="mb-1"><span class="text-muted">Web Citations:</span> <span class="ms-2 badge bg-info">${metadata.web_search_citations.length}</span></div>`;
           if (metadata.agent_citations && metadata.agent_citations.length > 0) html += `<div class="mb-1"><span class="text-muted">Agent Citations:</span> <span class="ms-2 badge bg-info">${metadata.agent_citations.length}</span></div>`;
         }
-        
+
         html += '</div></div>';
       }
 
@@ -7492,7 +7492,7 @@ function loadMessageMetadataForDisplay(messageId, container) {
       if (metadata.role === 'assistant' && historyContext) {
         html += renderHistoryContextSection(historyContext);
       }
-      
+
       html += '</div>';
       container.innerHTML = html;
     })
@@ -7576,20 +7576,20 @@ function loadImageInfo(fullMessageObject, container) {
 // Search highlight functions
 export function applySearchHighlight(searchTerm) {
   if (!searchTerm || searchTerm.trim() === '') return;
-  
+
   // Clear any existing highlights first
   clearSearchHighlight();
-  
+
   const chatbox = document.getElementById('chatbox');
   if (!chatbox) return;
-  
+
   // Find all message content elements
   const messageContents = chatbox.querySelectorAll('.message-content, .ai-response');
-  
+
   // Escape special regex characters in search term
   const escapedTerm = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const regex = new RegExp(`(${escapedTerm})`, 'gi');
-  
+
   messageContents.forEach(element => {
     const walker = document.createTreeWalker(
       element,
@@ -7597,7 +7597,7 @@ export function applySearchHighlight(searchTerm) {
       null,
       false
     );
-    
+
     const textNodes = [];
     let node;
     while (node = walker.nextNode()) {
@@ -7605,7 +7605,7 @@ export function applySearchHighlight(searchTerm) {
         textNodes.push(node);
       }
     }
-    
+
     textNodes.forEach(textNode => {
       const text = textNode.nodeValue;
       if (regex.test(text)) {
@@ -7615,7 +7615,7 @@ export function applySearchHighlight(searchTerm) {
       }
     });
   });
-  
+
   // Set timeout to clear highlights after 30 seconds
   if (window.searchHighlight) {
     if (window.searchHighlight.timeoutId) {
@@ -7631,14 +7631,14 @@ export function applySearchHighlight(searchTerm) {
 export function clearSearchHighlight() {
   const chatbox = document.getElementById('chatbox');
   if (!chatbox) return;
-  
+
   // Find all highlight marks
   const highlights = chatbox.querySelectorAll('mark.search-highlight');
   highlights.forEach(mark => {
     const text = document.createTextNode(mark.textContent);
     mark.parentNode.replaceChild(text, mark);
   });
-  
+
   // Clear timeout if exists
   if (window.searchHighlight && window.searchHighlight.timeoutId) {
     clearTimeout(window.searchHighlight.timeoutId);
@@ -7648,26 +7648,26 @@ export function clearSearchHighlight() {
 
 export function scrollToMessageSmooth(messageId) {
   if (!messageId) return;
-  
+
   const chatbox = document.getElementById('chatbox');
   if (!chatbox) return;
-  
+
   // Find message by data-message-id attribute
   const messageElement = chatbox.querySelector(`[data-message-id="${messageId}"]`);
   if (!messageElement) {
     console.warn(`Message with ID ${messageId} not found`);
     return;
   }
-  
+
   // Scroll smoothly to message
   messageElement.scrollIntoView({
     behavior: 'smooth',
     block: 'center'
   });
-  
+
   // Add pulse animation
   messageElement.classList.add('message-pulse');
-  
+
   // Remove pulse after 2 seconds
   setTimeout(() => {
     messageElement.classList.remove('message-pulse');
@@ -8057,7 +8057,7 @@ function handleDeleteButtonClick(messageDiv, messageId, messageType) {
   const isCollaborativeConversation = Boolean(
     conversationId && window.chatCollaboration?.isCollaborationConversation?.(conversationId)
   );
-  
+
   // Store message info for deletion confirmation
   window.pendingMessageDeletion = {
     messageDiv,
@@ -8066,7 +8066,7 @@ function handleDeleteButtonClick(messageDiv, messageId, messageType) {
     conversationId,
     isCollaborativeConversation,
   };
-  
+
   // Show appropriate confirmation modal
   if (messageType === 'user' && !isCollaborativeConversation) {
     // User message - offer thread deletion option
@@ -8107,7 +8107,7 @@ function executeMessageDeletion(deleteThread = false) {
     console.error('No pending message deletion');
     return;
   }
-  
+
   const {
     messageDiv,
     messageId,
@@ -8119,12 +8119,12 @@ function executeMessageDeletion(deleteThread = false) {
   const deleteEndpoint = isCollaborativeConversation && conversationId
     ? `/api/collaboration/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}`
     : `/api/message/${encodeURIComponent(messageId)}`;
-  
+
   console.log(`Executing deletion for message ${messageId}, deleteThread: ${shouldDeleteThread}`);
   console.log(`Message div:`, messageDiv);
   console.log(`Message ID from DOM:`, messageDiv ? messageDiv.getAttribute('data-message-id') : 'N/A');
   console.log(`Delete endpoint:`, deleteEndpoint);
-  
+
   // Call delete API
   fetch(deleteEndpoint, {
     method: 'DELETE',
@@ -8141,7 +8141,7 @@ function executeMessageDeletion(deleteThread = false) {
         const errorMsg = data.error || 'Failed to delete message';
         console.error(`Delete API error (${response.status}):`, errorMsg);
         console.error(`Failed message ID:`, messageId);
-        
+
         // Add specific error message for 404
         if (response.status === 404) {
           throw new Error(`Message not found in database. This may happen if the message was just created and hasn't fully synced yet. Try refreshing the page and deleting again.`);
@@ -8159,7 +8159,7 @@ function executeMessageDeletion(deleteThread = false) {
   })
   .then(data => {
     console.log('Delete API response:', data);
-    
+
     if (data.success) {
       // Remove message(s) from DOM
       const deletedIds = data.deleted_message_ids || [messageId];
@@ -8170,15 +8170,15 @@ function executeMessageDeletion(deleteThread = false) {
           console.log(`Removed message ${id} from DOM`);
         }
       });
-      
+
       // Show success message
       const archiveMsg = data.archived ? ' (archived)' : '';
       const countMsg = deletedIds.length > 1 ? `${deletedIds.length} messages` : 'Message';
       showToast(`${countMsg} deleted successfully${archiveMsg}`, 'success');
-      
+
       // Clean up pending deletion
       delete window.pendingMessageDeletion;
-      
+
       // Optionally reload conversation list to update preview
       if (typeof loadConversations === 'function') {
         loadConversations();
@@ -8189,7 +8189,7 @@ function executeMessageDeletion(deleteThread = false) {
   })
   .catch(error => {
     console.error('Error deleting message:', error);
-    
+
     // If we got a 404, suggest reloading messages
     if (error.message && error.message.includes('not found')) {
       showToast(error.message + ' Click here to reload messages.', 'error', 8000, () => {
@@ -8201,7 +8201,7 @@ function executeMessageDeletion(deleteThread = false) {
     } else {
       showToast(error.message || 'Failed to delete message', 'error');
     }
-    
+
     // Clean up pending deletion
     delete window.pendingMessageDeletion;
   });
