@@ -1547,9 +1547,18 @@ def record_personal_invite_response(conversation_id, user_id, action):
 def invite_personal_collaboration_participants(conversation_id, owner_user_id, participants_to_add):
     conversation_doc = get_collaboration_conversation(conversation_id)
     if not is_explicit_membership_collaboration(conversation_doc):
-        raise PermissionError('Member invites are only supported for invite-managed collaborative conversations')
+        raise LookupError('Conversation not found or access denied')
 
-    actor_user_state = get_collaboration_user_state_or_none(owner_user_id, conversation_id)
+    try:
+        access_context = assert_user_can_view_collaboration_conversation(
+            owner_user_id,
+            conversation_doc,
+            allow_pending=False,
+        )
+    except (LookupError, PermissionError) as exc:
+        raise LookupError('Conversation not found or access denied') from exc
+
+    actor_user_state = access_context.get('user_state') or get_collaboration_user_state_or_none(owner_user_id, conversation_id)
 
     if is_group_collaboration_conversation(conversation_doc):
         group_id = str(((conversation_doc.get('scope') or {}).get('group_id')) or '').strip()

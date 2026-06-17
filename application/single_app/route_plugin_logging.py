@@ -4,7 +4,7 @@ API endpoints for accessing plugin invocation logs and statistics.
 """
 
 from flask import Blueprint, jsonify, request
-from functions_authentication import admin_required, login_required, get_current_user_id
+from functions_authentication import admin_required, login_required, user_required, get_current_user_id
 from functions_appinsights import log_event
 from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
 from swagger_wrapper import swagger_route, get_auth_security
@@ -18,6 +18,7 @@ bpl = Blueprint('plugin_logging', __name__)
     security=get_auth_security()
 )
 @login_required
+@user_required
 def get_plugin_invocations():
     """Get recent plugin invocations for the current user."""
     try:
@@ -65,6 +66,7 @@ def get_plugin_invocations():
     security=get_auth_security()
 )
 @login_required
+@user_required
 def get_plugin_stats():
     """Get plugin usage statistics."""
     try:
@@ -165,6 +167,7 @@ def get_recent_invocations():
     security=get_auth_security()
 )
 @login_required
+@user_required
 def get_plugin_specific_invocations(plugin_name):
     """Get invocations for a specific plugin."""
     try:
@@ -262,6 +265,7 @@ def clear_plugin_logs():
     security=get_auth_security()
 )
 @login_required
+@user_required
 def export_plugin_logs():
     """Export plugin invocation logs for the current user."""
     try:

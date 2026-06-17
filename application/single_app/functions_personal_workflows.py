@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from azure.cosmos import exceptions
 
 from config import (
+    cosmos_conversations_container,
     cosmos_personal_workflow_run_items_container,
     cosmos_personal_workflow_runs_container,
     cosmos_personal_workflows_container,
@@ -44,6 +45,7 @@ WORKFLOW_ALERT_PRIORITIES = {'none', 'low', 'medium', 'high'}
 WORKFLOW_FILE_SYNC_WAIT_MODES = {'complete', 'queued'}
 WORKFLOW_FILE_SYNC_CONTINUE_MODES = {'always', 'changed'}
 WORKFLOW_FILE_SYNC_MAX_SOURCES = 10
+WORKFLOW_CONVERSATION_ACCESS_ERROR = 'Workflow conversation not found or access denied.'
 
 
 def _utc_now():
@@ -75,6 +77,33 @@ def _normalize_bool(value, default=False):
     if isinstance(value, str):
         return value.strip().lower() in {'1', 'true', 'yes', 'on'}
     return bool(value)
+
+
+def _normalize_personal_workflow_conversation_id(user_id, workflow_data, existing_workflow=None):
+    existing_workflow = existing_workflow if isinstance(existing_workflow, dict) else {}
+    conversation_id = _normalize_text(
+        workflow_data.get('conversation_id') or existing_workflow.get('conversation_id'),
+        'Conversation id',
+    )
+    if not conversation_id:
+        return ''
+
+    try:
+        conversation = cosmos_conversations_container.read_item(
+            item=conversation_id,
+            partition_key=conversation_id,
+        )
+    except exceptions.CosmosResourceNotFoundError as exc:
+        raise ValueError(WORKFLOW_CONVERSATION_ACCESS_ERROR) from exc
+
+    if str(conversation.get('chat_type') or '').strip().lower() != 'workflow':
+        raise ValueError(WORKFLOW_CONVERSATION_ACCESS_ERROR)
+    if str(conversation.get('user_id') or '').strip() != str(user_id or '').strip():
+        raise PermissionError(WORKFLOW_CONVERSATION_ACCESS_ERROR)
+    if str(conversation.get('group_id') or '').strip():
+        raise PermissionError(WORKFLOW_CONVERSATION_ACCESS_ERROR)
+
+    return conversation_id
 
 
 def _normalize_schedule(schedule_payload):
@@ -587,9 +616,10 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
         'model_id': model_id,
         'model_provider': model_provider,
         'model_binding_summary': model_binding_summary,
-        'conversation_id': _normalize_text(
-            workflow_data.get('conversation_id') or (existing_workflow or {}).get('conversation_id'),
-            'Conversation id',
+        'conversation_id': _normalize_personal_workflow_conversation_id(
+            user_id,
+            workflow_data,
+            existing_workflow=existing_workflow,
         ),
         'created_at': (existing_workflow or {}).get('created_at') or now_iso,
         'created_by': (existing_workflow or {}).get('created_by') or user_id,

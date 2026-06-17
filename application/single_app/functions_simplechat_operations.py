@@ -153,6 +153,7 @@ SIMPLECHAT_CAPABILITY_DEFINITIONS = [
         "description": "Create a personal collaborative conversation and invite other users.",
     },
 ]
+CONVERSATION_ACCESS_ERROR = "Conversation not found or access denied"
 
 
 def get_default_simplechat_capabilities() -> Dict[str, bool]:
@@ -357,7 +358,7 @@ def add_conversation_message_for_current_user(
 
     if conversation_item is not None:
         if str(conversation_item.get("user_id") or "").strip() != current_user_info["userId"]:
-            raise PermissionError("Conversation not found or not accessible for the current user")
+            raise LookupError(CONVERSATION_ACCESS_ERROR)
 
         message_doc, updated_conversation = _persist_personal_conversation_message(
             conversation_item=conversation_item,
@@ -378,12 +379,15 @@ def add_conversation_message_for_current_user(
     try:
         collaboration_conversation = get_collaboration_conversation(normalized_conversation_id)
     except CosmosResourceNotFoundError as exc:
-        raise LookupError("Conversation was not found") from exc
+        raise LookupError(CONVERSATION_ACCESS_ERROR) from exc
 
-    assert_user_can_participate_in_collaboration_conversation(
-        current_user["user_id"],
-        collaboration_conversation,
-    )
+    try:
+        assert_user_can_participate_in_collaboration_conversation(
+            current_user["user_id"],
+            collaboration_conversation,
+        )
+    except (LookupError, PermissionError) as exc:
+        raise LookupError(CONVERSATION_ACCESS_ERROR) from exc
     message_doc, updated_conversation = persist_collaboration_message(
         collaboration_conversation,
         current_user,
@@ -962,9 +966,12 @@ def invite_group_conversation_members_for_current_user(
     if not normalized_conversation_id:
         raise ValueError("conversation_id is required")
 
-    conversation_doc = get_collaboration_conversation(normalized_conversation_id)
+    try:
+        conversation_doc = get_collaboration_conversation(normalized_conversation_id)
+    except CosmosResourceNotFoundError as exc:
+        raise LookupError(CONVERSATION_ACCESS_ERROR) from exc
     if not is_group_collaboration_conversation(conversation_doc):
-        raise ValueError("conversation_id must reference a group multi-user conversation")
+        raise LookupError(CONVERSATION_ACCESS_ERROR)
 
     participants_to_add = _build_invited_participants(
         creator_user=current_user,
@@ -974,11 +981,14 @@ def invite_group_conversation_members_for_current_user(
     if not participants_to_add:
         raise ValueError("At least one participant identifier is required")
 
-    updated_conversation_doc, invited_state_docs = invite_personal_collaboration_participants(
-        normalized_conversation_id,
-        current_user["user_id"],
-        participants_to_add,
-    )
+    try:
+        updated_conversation_doc, invited_state_docs = invite_personal_collaboration_participants(
+            normalized_conversation_id,
+            current_user["user_id"],
+            participants_to_add,
+        )
+    except (LookupError, PermissionError) as exc:
+        raise LookupError(CONVERSATION_ACCESS_ERROR) from exc
 
     conversation_title = str((updated_conversation_doc or {}).get("title") or "Group Conversation").strip() or "Group Conversation"
     scope = (updated_conversation_doc or {}).get("scope") if isinstance((updated_conversation_doc or {}).get("scope"), dict) else {}

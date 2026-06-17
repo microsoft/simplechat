@@ -14,6 +14,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
+from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from azure.identity import (
     AzureAuthorityHosts,
     ClientSecretCredential,
@@ -111,6 +112,7 @@ DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_ROW_COUNT = 5
 DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_LINE_COUNT = 5
 DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_LINE_LENGTH = 220
 TABULAR_DOCUMENT_EXTENSIONS = {'.csv', '.xls', '.xlsx', '.xlsm'}
+WORKFLOW_CONVERSATION_ACCESS_ERROR = 'Workflow conversation not found or access denied.'
 
 
 def get_workflow_kernel_settings(settings):
@@ -128,6 +130,19 @@ def _get_workflow_scope(workflow):
 
 def _get_workflow_group_id(workflow):
     return str((workflow or {}).get('group_id') or '').strip()
+
+
+def _is_authorized_workflow_conversation(conversation, workflow):
+    if str((conversation or {}).get('chat_type') or '').strip().lower() != 'workflow':
+        return False
+
+    workspace_type = _get_workflow_scope(workflow)
+    if workspace_type == 'group':
+        return str((conversation or {}).get('group_id') or '').strip() == _get_workflow_group_id(workflow)
+
+    if str((conversation or {}).get('group_id') or '').strip():
+        return False
+    return str((conversation or {}).get('user_id') or '').strip() == str((workflow or {}).get('user_id') or '').strip()
 
 
 def _save_workflow_run_record(workflow, run_record):
@@ -3276,18 +3291,15 @@ def _ensure_workflow_conversation(workflow):
         try:
             conversation = cosmos_conversations_container.read_item(item=conversation_id, partition_key=conversation_id)
             cleaned = {key: value for key, value in conversation.items() if not str(key).startswith('_')}
+            if not _is_authorized_workflow_conversation(cleaned, workflow):
+                raise PermissionError(WORKFLOW_CONVERSATION_ACCESS_ERROR)
             needs_update = cleaned.get('title') != title
-            if workspace_type == 'group' and cleaned.get('group_id') != group_id:
-                cleaned['group_id'] = group_id
-                cleaned['workspace_type'] = 'group'
-                cleaned['is_hidden'] = True
-                needs_update = True
             if needs_update:
                 cleaned['title'] = title
                 cleaned['last_updated'] = _utc_now_iso()
                 cosmos_conversations_container.upsert_item(cleaned)
             return cleaned
-        except Exception:
+        except CosmosResourceNotFoundError:
             pass
 
     conversation_id = str(uuid.uuid4())

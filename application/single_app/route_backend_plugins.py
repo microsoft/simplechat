@@ -631,6 +631,7 @@ def _load_existing_plugin_for_sql_test(plugin_context, user_id):
 @bpap.route('/api/user/plugins', methods=['GET'])
 @swagger_route(security=get_auth_security())
 @login_required
+@user_required
 def get_user_plugins():
     user_id = get_current_user_id()
     # Ensure migration is complete (will migrate any remaining legacy data)
@@ -687,6 +688,7 @@ def get_user_plugins():
 @bpap.route('/api/user/plugins', methods=['POST'])
 @swagger_route(security=get_auth_security())
 @login_required
+@user_required
 @enabled_required("allow_user_plugins")
 def set_user_plugins():
     user_id = get_current_user_id()
@@ -820,6 +822,7 @@ def set_user_plugins():
 @bpap.route('/api/user/plugins/<plugin_name>', methods=['DELETE'])
 @swagger_route(security=get_auth_security())
 @login_required
+@user_required
 def delete_user_plugin(plugin_name):
     user_id = get_current_user_id()
     
@@ -1073,6 +1076,7 @@ def delete_group_action_route(action_id):
 @bpap.route('/api/user/plugins/types', methods=['GET'])
 @swagger_route(security=get_auth_security())
 @login_required
+@user_required
 def get_user_plugin_types():
     return get_plugin_types()
 

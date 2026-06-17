@@ -44,7 +44,7 @@ from functions_collaboration import (
     update_personal_collaboration_member_role,
     update_personal_collaboration_title,
 )
-from functions_group import assert_group_role, check_group_status_allows_operation, find_group_by_id
+from functions_group import assert_group_role, check_group_status_allows_operation, find_group_by_id, require_active_group
 from functions_image_messages import decode_image_content, get_complete_image_content, is_blob_backed_image_message, is_external_image_url
 from functions_message_masking import (
     SUPPORTED_MESSAGE_MASK_ACTIONS,
@@ -54,7 +54,7 @@ from functions_message_masking import (
 )
 from functions_notifications import mark_collaboration_message_notifications_read_for_conversation
 from functions_message_artifacts import make_json_serializable
-from functions_settings import get_settings, get_user_settings
+from functions_settings import get_settings
 from swagger_wrapper import swagger_route, get_auth_security
 
 
@@ -481,12 +481,17 @@ def register_route_backend_collaboration(app):
                 group_id = str(data.get('group_id') or '').strip()
                 participants_to_invite = _normalize_participant_payload(data.get('participants', []))
                 if not group_id:
-                    user_settings = get_user_settings(current_user['user_id'])
-                    group_id = str(
-                        ((user_settings or {}).get('settings') or {}).get('activeGroupOid') or ''
-                    ).strip()
-                if not group_id:
-                    return jsonify({'error': 'group_id is required for group collaborative conversations'}), 400
+                    try:
+                        group_id = require_active_group(
+                            current_user['user_id'],
+                            allowed_roles=('Owner', 'Admin', 'DocumentManager', 'User'),
+                        )
+                    except ValueError:
+                        return jsonify({'error': 'group_id is required for group collaborative conversations'}), 400
+                    except LookupError:
+                        return jsonify({'error': 'Group not found'}), 404
+                    except PermissionError:
+                        return jsonify({'error': 'Access denied'}), 403
 
                 group_doc = find_group_by_id(group_id)
                 if not group_doc:

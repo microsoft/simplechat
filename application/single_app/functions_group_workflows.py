@@ -10,6 +10,7 @@ import uuid
 from azure.cosmos import exceptions
 
 from config import (
+    cosmos_conversations_container,
     cosmos_group_workflow_run_items_container,
     cosmos_group_workflow_runs_container,
     cosmos_group_workflows_container,
@@ -46,6 +47,7 @@ from functions_settings import get_settings, normalize_model_endpoints
 
 
 GROUP_WORKFLOW_MEMBER_ROLES = ("Owner", "Admin", "DocumentManager", "User")
+WORKFLOW_CONVERSATION_ACCESS_ERROR = 'Workflow conversation not found or access denied.'
 
 
 def _normalize_group_document_action_config(group_id, workflow_data, existing_workflow=None, allow_empty_file_sync_targets=False):
@@ -61,6 +63,31 @@ def _normalize_group_document_action_config(group_id, workflow_data, existing_wo
     action_config['active_group_ids'] = [group_id]
     action_config['active_public_workspace_id'] = []
     return action_config
+
+
+def _normalize_group_workflow_conversation_id(group_id, workflow_data, existing_workflow=None):
+    existing_workflow = existing_workflow if isinstance(existing_workflow, dict) else {}
+    conversation_id = _normalize_text(
+        workflow_data.get('conversation_id') or existing_workflow.get('conversation_id'),
+        'Conversation id',
+    )
+    if not conversation_id:
+        return ''
+
+    try:
+        conversation = cosmos_conversations_container.read_item(
+            item=conversation_id,
+            partition_key=conversation_id,
+        )
+    except exceptions.CosmosResourceNotFoundError as exc:
+        raise ValueError(WORKFLOW_CONVERSATION_ACCESS_ERROR) from exc
+
+    if str(conversation.get('chat_type') or '').strip().lower() != 'workflow':
+        raise ValueError(WORKFLOW_CONVERSATION_ACCESS_ERROR)
+    if str(conversation.get('group_id') or '').strip() != str(group_id or '').strip():
+        raise PermissionError(WORKFLOW_CONVERSATION_ACCESS_ERROR)
+
+    return conversation_id
 
 
 def _normalize_file_sync_config(actor_user_id, group_id, workflow_data, existing_workflow=None, user_info=None):
@@ -461,9 +488,10 @@ def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
         'model_id': model_id,
         'model_provider': model_provider,
         'model_binding_summary': model_binding_summary,
-        'conversation_id': _normalize_text(
-            workflow_data.get('conversation_id') or (existing_workflow or {}).get('conversation_id'),
-            'Conversation id',
+        'conversation_id': _normalize_group_workflow_conversation_id(
+            group_id,
+            workflow_data,
+            existing_workflow=existing_workflow,
         ),
         'created_at': (existing_workflow or {}).get('created_at') or now_iso,
         'created_by': (existing_workflow or {}).get('created_by') or actor_user_id,

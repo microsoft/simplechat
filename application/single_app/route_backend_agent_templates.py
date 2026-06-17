@@ -1,3 +1,4 @@
+# route_backend_agent_templates.py
 """Backend routes for agent template management."""
 
 from flask import Blueprint, jsonify, request, session
@@ -6,6 +7,7 @@ from swagger_wrapper import swagger_route, get_auth_security
 from functions_authentication import (
     admin_required,
     login_required,
+    user_required,
     get_current_user_info,
 )
 from functions_agent_templates import (
@@ -38,8 +40,9 @@ def _is_admin() -> bool:
 
 
 @bp_agent_templates.route('/api/agent-templates', methods=['GET'])
-@login_required
 @swagger_route(security=get_auth_security())
+@login_required
+@user_required
 def list_public_agent_templates():
     enabled, _, _, _ = _feature_flags()
     if not enabled:
@@ -49,8 +52,9 @@ def list_public_agent_templates():
 
 
 @bp_agent_templates.route('/api/agent-templates', methods=['POST'])
-@login_required
 @swagger_route(security=get_auth_security())
+@login_required
+@user_required
 def submit_agent_template():
     enabled, allow_submissions, require_approval, settings = _feature_flags()
     if not enabled:
@@ -96,9 +100,9 @@ def submit_agent_template():
 
 
 @bp_agent_templates.route('/api/admin/agent-templates', methods=['GET'])
+@swagger_route(security=get_auth_security())
 @login_required
 @admin_required
-@swagger_route(security=get_auth_security())
 def admin_list_agent_templates():
     status = request.args.get('status')
     if status == 'all':
@@ -108,9 +112,9 @@ def admin_list_agent_templates():
 
 
 @bp_agent_templates.route('/api/admin/agent-templates/<template_id>', methods=['GET'])
+@swagger_route(security=get_auth_security())
 @login_required
 @admin_required
-@swagger_route(security=get_auth_security())
 def admin_get_agent_template(template_id):
     template = get_agent_template(template_id)
     if not template:
@@ -119,9 +123,9 @@ def admin_get_agent_template(template_id):
 
 
 @bp_agent_templates.route('/api/admin/agent-templates/<template_id>', methods=['PATCH'])
+@swagger_route(security=get_auth_security())
 @login_required
 @admin_required
-@swagger_route(security=get_auth_security())
 def admin_update_agent_template(template_id):
     payload = request.get_json(silent=True) or {}
     try:
@@ -137,9 +141,9 @@ def admin_update_agent_template(template_id):
 
 
 @bp_agent_templates.route('/api/admin/agent-templates/<template_id>/approve', methods=['POST'])
+@swagger_route(security=get_auth_security())
 @login_required
 @admin_required
-@swagger_route(security=get_auth_security())
 def admin_approve_agent_template(template_id):
     data = request.get_json(silent=True) or {}
     notes = data.get('notes')
@@ -154,9 +158,9 @@ def admin_approve_agent_template(template_id):
 
 
 @bp_agent_templates.route('/api/admin/agent-templates/<template_id>/reject', methods=['POST'])
+@swagger_route(security=get_auth_security())
 @login_required
 @admin_required
-@swagger_route(security=get_auth_security())
 def admin_reject_agent_template(template_id):
     data = request.get_json(silent=True) or {}
     reason = (data.get('reason') or '').strip()
@@ -174,9 +178,9 @@ def admin_reject_agent_template(template_id):
 
 
 @bp_agent_templates.route('/api/admin/agent-templates/<template_id>', methods=['DELETE'])
+@swagger_route(security=get_auth_security())
 @login_required
 @admin_required
-@swagger_route(security=get_auth_security())
 def admin_delete_agent_template(template_id):
     try:
         deleted = delete_agent_template(template_id, actor_info=get_current_user_info())

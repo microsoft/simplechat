@@ -639,6 +639,7 @@ def _maybe_disable_multi_endpoint_migration_notice(settings, preview):
     security=get_auth_security()
 )
 @login_required
+@user_required
 def generate_agent_id():
     """Generate a new GUID for agent creation (user or admin)."""
     return jsonify({'id': str(uuid.uuid4())})
@@ -725,6 +726,7 @@ def draft_agent_instructions():
     security=get_auth_security()
 )
 @login_required
+@user_required
 def get_user_agents():
     settings = get_settings()
     if not settings.get('allow_user_agents', False):
@@ -780,6 +782,7 @@ def get_user_agents():
 @bpa.route('/api/agents/assigned-knowledge/catalog', methods=['GET'])
 @swagger_route(security=get_auth_security())
 @login_required
+@user_required
 def get_assigned_knowledge_catalog_route():
     user_id = get_current_user_id()
     if not user_id:
@@ -822,6 +825,7 @@ def get_assigned_knowledge_catalog_route():
     security=get_auth_security()
 )
 @login_required
+@user_required
 @enabled_required("allow_user_agents")
 def set_user_agents():
     user_id = get_current_user_id()
@@ -906,8 +910,9 @@ def set_user_agents():
 @swagger_route(
     security=get_auth_security()
 )
-@enabled_required("allow_user_agents")
 @login_required
+@user_required
+@enabled_required("allow_user_agents")
 def delete_user_agent(agent_name):
     user_id = get_current_user_id()
     # Get current agents from personal_agents container
@@ -1170,6 +1175,7 @@ def delete_group_agent_route(agent_id):
     security=get_auth_security()
 )
 @login_required
+@user_required
 def set_user_selected_agent():
     user_id = get_current_user_id()
     data = request.json
@@ -1227,6 +1233,7 @@ def set_user_selected_agent():
     security=get_auth_security()
 )
 @login_required
+@user_required
 def get_global_agent_settings_for_users():
     user_id = get_current_user_id()
     return get_global_agent_settings(include_admin_extras=False, user_id=user_id)

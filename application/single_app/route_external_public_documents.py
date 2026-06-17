@@ -378,6 +378,7 @@ def register_route_external_public_documents(app):
 
     @app.route('/external/public_documents/<document_id>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
+    @accesstoken_required
     @enabled_required("enable_public_workspaces")
     def external_delete_public_document(document_id):
         """

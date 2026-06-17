@@ -57,6 +57,9 @@ def test_create_personal_workflow_for_current_user_builds_expected_payload():
     saved_calls = []
     logged_creations = []
 
+    app = Flask(__name__)
+    app.secret_key = 'test-secret'
+
     with PatchSet(
         operations_module,
         {
@@ -82,20 +85,22 @@ def test_create_personal_workflow_for_current_user_builds_expected_payload():
             'log_workflow_creation': lambda **kwargs: logged_creations.append(dict(kwargs)),
         },
     ):
-        result = operations_module.create_personal_workflow_for_current_user(
-            name='Stale Group Review',
-            description='Review groups that may need cleanup',
-            task_prompt='Review group activity and summarize stale groups.',
-            runner_type='agent',
-            trigger_type='interval',
-            selected_agent_name='researcher_agent',
-            selected_agent_is_global=True,
-            alert_priority='medium',
-            is_enabled=False,
-            schedule_value=2,
-            schedule_unit='hours',
-            conversation_id='conversation-123',
-        )
+        with app.test_request_context('/'):
+            session['user'] = {'roles': ['User']}
+            result = operations_module.create_personal_workflow_for_current_user(
+                name='Stale Group Review',
+                description='Review groups that may need cleanup',
+                task_prompt='Review group activity and summarize stale groups.',
+                runner_type='agent',
+                trigger_type='interval',
+                selected_agent_name='researcher_agent',
+                selected_agent_is_global=True,
+                alert_priority='medium',
+                is_enabled=False,
+                schedule_value=2,
+                schedule_unit='hours',
+                conversation_id='conversation-123',
+            )
 
     assert result['workflow']['id'] == 'workflow-123'
     assert len(saved_calls) == 1

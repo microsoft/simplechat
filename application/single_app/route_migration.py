@@ -5,7 +5,7 @@ Migration endpoints for moving data from user settings to personal containers.
 """
 
 from flask import Blueprint, jsonify, request
-from functions_authentication import login_required, get_current_user_id
+from functions_authentication import login_required, user_required, get_current_user_id
 from functions_personal_agents import migrate_agents_from_user_settings, get_personal_agents
 from functions_personal_actions import migrate_actions_from_user_settings, get_personal_actions
 from functions_appinsights import log_event
@@ -19,6 +19,7 @@ bp_migration = Blueprint('migration', __name__)
     security=get_auth_security()
 )
 @login_required
+@user_required
 def migrate_user_agents():
     """Migrate user agents from user settings to personal_agents container."""
     user_id = get_current_user_id()
@@ -49,6 +50,7 @@ def migrate_user_agents():
     security=get_auth_security()
 )
 @login_required
+@user_required
 def migrate_user_actions():
     """Migrate user actions/plugins from user settings to personal_actions container."""
     user_id = get_current_user_id()
@@ -79,6 +81,7 @@ def migrate_user_actions():
     security=get_auth_security()
 )
 @login_required
+@user_required
 def migrate_all_user_data():
     """Migrate both agents and actions from user settings to personal containers."""
     user_id = get_current_user_id()
@@ -135,6 +138,7 @@ def migrate_all_user_data():
     security=get_auth_security()
 )
 @login_required
+@user_required
 def get_migration_status():
     """Check migration status and current data in personal containers."""
     user_id = get_current_user_id()

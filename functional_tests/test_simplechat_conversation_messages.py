@@ -193,7 +193,7 @@ def test_simplechat_plugin_initial_message_seeding_requires_capability():
     with PatchSet(
         plugin_module,
         {
-            'create_personal_conversation_for_current_user': lambda title='New Conversation': created_calls.append(title) or {
+            'create_personal_conversation_for_current_user': lambda title='New Conversation', notify_creation=False: created_calls.append(title) or {
                 'id': 'conversation-seeded-1',
                 'title': title,
                 'chat_type': 'personal_single_user',

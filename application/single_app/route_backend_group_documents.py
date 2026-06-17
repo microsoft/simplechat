@@ -49,6 +49,23 @@ def _get_generated_artifact_actor_name(user_info, fallback_user_id):
     )
 
 
+def _require_active_group_document_context(user_id, allowed_roles, permission_message='Access denied'):
+    try:
+        active_group_id = require_active_group(user_id, allowed_roles=allowed_roles)
+    except ValueError:
+        return None, None, None, (jsonify({'error': 'No active group selected'}), 400)
+    except LookupError:
+        return None, None, None, (jsonify({'error': 'Active group not found'}), 404)
+    except PermissionError:
+        return None, None, None, (jsonify({'error': permission_message}), 403)
+
+    group_doc = find_group_by_id(active_group_id)
+    if not group_doc:
+        return None, None, None, (jsonify({'error': 'Active group not found'}), 404)
+
+    return active_group_id, group_doc, get_user_role_in_group(group_doc, user_id), None
+
+
 def _get_group_document_display_name(document_item):
     return str(
         (document_item or {}).get('title')
@@ -276,24 +293,19 @@ def register_route_backend_group_documents(app):
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
 
-        user_settings = get_user_settings(user_id)
-        active_group_id = user_settings["settings"].get("activeGroupOid")
-        if not active_group_id:
-            return jsonify({'error': 'No active group selected'}), 400
-
-        group_doc = find_group_by_id(group_id=active_group_id)
-        if not group_doc:
-            return jsonify({'error': 'Active group not found'}), 404
+        active_group_id, group_doc, _, error_response = _require_active_group_document_context(
+            user_id,
+            allowed_roles=("Owner", "Admin", "DocumentManager"),
+            permission_message='You do not have permission to upload documents',
+        )
+        if error_response:
+            return error_response
 
         # Check if group status allows uploads
         from functions_group import check_group_status_allows_operation
         allowed, reason = check_group_status_allows_operation(group_doc, 'upload')
         if not allowed:
             return jsonify({'error': reason}), 403
-
-        role = get_user_role_in_group(group_doc, user_id)
-        if role not in ["Owner", "Admin", "DocumentManager"]:
-            return jsonify({'error': 'You do not have permission to upload documents'}), 403
 
         if 'file' not in request.files:
             return jsonify({'error': 'No file part in the request'}), 400
@@ -430,23 +442,13 @@ def register_route_backend_group_documents(app):
                     'file_download_enabled_group_ids': [],
                 }), 200
         else:
-            # Fallback: single active group from user settings
-            user_settings = get_user_settings(user_id)
-            active_group_id = user_settings["settings"].get("activeGroupOid")
-
-            if not active_group_id:
-                return jsonify({'error': 'No active group selected'}), 400
-
-            try:
-                role = assert_group_role(
-                    user_id,
-                    active_group_id,
-                    allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
-                )
-            except LookupError:
-                return jsonify({'error': 'Active group not found'}), 404
-            except PermissionError:
-                return jsonify({'error': 'You are not a member of the active group'}), 403
+            active_group_id, _, role, error_response = _require_active_group_document_context(
+                user_id,
+                allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+                permission_message='You are not a member of the active group',
+            )
+            if error_response:
+                return error_response
 
             validated_group_ids = [active_group_id]
             validated_group_roles[active_group_id] = role
@@ -848,19 +850,13 @@ def register_route_backend_group_documents(app):
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
 
-        user_settings = get_user_settings(user_id)
-        active_group_id = user_settings["settings"].get("activeGroupOid")
-
-        if not active_group_id:
-            return jsonify({'error': 'No active group selected'}), 400
-
-        group_doc = find_group_by_id(active_group_id)
-        if not group_doc:
-            return jsonify({'error': 'Active group not found'}), 404
-
-        role = get_user_role_in_group(group_doc, user_id)
-        if role not in ["Owner", "Admin", "DocumentManager"]:
-            return jsonify({'error': 'You do not have permission to update documents in this group'}), 403
+        active_group_id, _, _, error_response = _require_active_group_document_context(
+            user_id,
+            allowed_roles=("Owner", "Admin", "DocumentManager"),
+            permission_message='You do not have permission to update documents in this group',
+        )
+        if error_response:
+            return error_response
 
         data = request.get_json()
         
@@ -998,15 +994,13 @@ def register_route_backend_group_documents(app):
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
 
-        user_settings = get_user_settings(user_id)
-        active_group_id = user_settings["settings"].get("activeGroupOid")
-
-        if not active_group_id:
-            return jsonify({'error': 'No active group selected'}), 400
-
-        group_doc = find_group_by_id(active_group_id)
-        if not group_doc:
-            return jsonify({'error': 'Active group not found'}), 404
+        active_group_id, group_doc, _, error_response = _require_active_group_document_context(
+            user_id,
+            allowed_roles=("Owner", "Admin", "DocumentManager"),
+            permission_message='You do not have permission to delete documents in this group',
+        )
+        if error_response:
+            return error_response
 
         # Check if group status allows deletions
         from functions_group import check_group_status_allows_operation
@@ -1014,19 +1008,20 @@ def register_route_backend_group_documents(app):
         if not allowed:
             return jsonify({'error': reason}), 403
 
-        role = get_user_role_in_group(group_doc, user_id)
-        if role not in ["Owner", "Admin", "DocumentManager"]:
-            return jsonify({'error': 'You do not have permission to delete documents in this group'}), 403
-
-        try:
-            document_item = cosmos_group_documents_container.read_item(
-                item=document_id,
-                partition_key=document_id,
-            )
-            if document_item.get('group_id') != active_group_id:
-                return jsonify({'error': 'Shared documents can be removed from this group, not deleted'}), 403
-        except exceptions.CosmosResourceNotFoundError:
-            return jsonify({'error': 'Document not found'}), 404
+        owned_document_matches = list(cosmos_group_documents_container.query_items(
+            query=(
+                'SELECT TOP 1 * FROM c '
+                'WHERE c.id = @document_id AND c.group_id = @group_id '
+                'ORDER BY c.version DESC'
+            ),
+            parameters=[
+                {'name': '@document_id', 'value': document_id},
+                {'name': '@group_id', 'value': active_group_id},
+            ],
+            enable_cross_partition_query=True,
+        ))
+        if not owned_document_matches:
+            return jsonify({'error': 'Document not found or access denied'}), 404
 
         delete_mode = request.args.get('delete_mode', 'all_versions')
         if delete_mode not in {'all_versions', 'current_only'}:
@@ -1085,19 +1080,13 @@ def register_route_backend_group_documents(app):
         if not settings.get('enable_extract_meta_data'):
             return jsonify({'error': 'Metadata extraction not enabled'}), 403
 
-        user_settings = get_user_settings(user_id)
-        active_group_id = user_settings["settings"].get("activeGroupOid")
-
-        if not active_group_id:
-            return jsonify({'error': 'No active group selected'}), 400
-
-        group_doc = find_group_by_id(active_group_id)
-        if not group_doc:
-            return jsonify({'error': 'Active group not found'}), 404
-
-        role = get_user_role_in_group(group_doc, user_id)
-        if role not in ["Owner", "Admin", "DocumentManager"]:
-            return jsonify({'error': 'You do not have permission to extract metadata for this group document'}), 403
+        active_group_id, _, _, error_response = _require_active_group_document_context(
+            user_id,
+            allowed_roles=("Owner", "Admin", "DocumentManager"),
+            permission_message='You do not have permission to extract metadata for this group document',
+        )
+        if error_response:
+            return error_response
 
         # Queue the group metadata extraction task
         future = current_app.extensions['executor'].submit_stored(
@@ -1212,18 +1201,13 @@ def register_route_backend_group_documents(app):
     @enabled_required("enable_group_workspaces")
     def api_upgrade_legacy_group_documents():
         user_id = get_current_user_id()
-        settings = get_user_settings(user_id)
-        active_group_id = settings["settings"].get("activeGroupOid")
-        if not active_group_id:
-            return jsonify({'error':'No active group selected'}), 400
-
-        group_doc = find_group_by_id(active_group_id)
-        if not group_doc:
-            return jsonify({'error':'Active group not found'}), 404
-
-        role = get_user_role_in_group(group_doc, user_id)
-        if role not in ["Owner","Admin","DocumentManager"]:
-            return jsonify({'error':'Insufficient permissions'}), 403
+        active_group_id, _, _, error_response = _require_active_group_document_context(
+            user_id,
+            allowed_roles=("Owner", "Admin", "DocumentManager"),
+            permission_message='Insufficient permissions',
+        )
+        if error_response:
+            return error_response
         # returns how many docs were updated
         try:
             # your existing function, but pass group_id
@@ -1915,9 +1899,10 @@ def register_route_backend_group_documents(app):
         if group_ids_param:
             group_ids = [gid.strip() for gid in group_ids_param.split(',') if gid.strip()]
         else:
-            user_settings = get_user_settings(user_id)
-            active_group_id = user_settings["settings"].get("activeGroupOid")
-            group_ids = [active_group_id] if active_group_id else []
+            try:
+                group_ids = [require_active_group(user_id)]
+            except (ValueError, LookupError, PermissionError):
+                group_ids = []
 
         from functions_documents import get_workspace_tags
 
@@ -1959,18 +1944,13 @@ def register_route_backend_group_documents(app):
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
 
-        user_settings = get_user_settings(user_id)
-        active_group_id = user_settings["settings"].get("activeGroupOid")
-        if not active_group_id:
-            return jsonify({'error': 'No active group selected'}), 400
-
-        group_doc = find_group_by_id(group_id=active_group_id)
-        if not group_doc:
-            return jsonify({'error': 'Active group not found'}), 404
-
-        role = get_user_role_in_group(group_doc, user_id)
-        if role not in ["Owner", "Admin", "DocumentManager"]:
-            return jsonify({'error': 'You do not have permission to manage tags'}), 403
+        active_group_id, group_doc, _, error_response = _require_active_group_document_context(
+            user_id,
+            allowed_roles=("Owner", "Admin", "DocumentManager"),
+            permission_message='You do not have permission to manage tags',
+        )
+        if error_response:
+            return error_response
 
         data = request.get_json()
         tag_name = data.get('tag_name')
@@ -2035,18 +2015,13 @@ def register_route_backend_group_documents(app):
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
 
-        user_settings = get_user_settings(user_id)
-        active_group_id = user_settings["settings"].get("activeGroupOid")
-        if not active_group_id:
-            return jsonify({'error': 'No active group selected'}), 400
-
-        group_doc = find_group_by_id(group_id=active_group_id)
-        if not group_doc:
-            return jsonify({'error': 'Active group not found'}), 404
-
-        role = get_user_role_in_group(group_doc, user_id)
-        if role not in ["Owner", "Admin", "DocumentManager"]:
-            return jsonify({'error': 'You do not have permission to manage tags'}), 403
+        active_group_id, _, _, error_response = _require_active_group_document_context(
+            user_id,
+            allowed_roles=("Owner", "Admin", "DocumentManager"),
+            permission_message='You do not have permission to manage tags',
+        )
+        if error_response:
+            return error_response
 
         data = request.get_json()
         document_ids = data.get('document_ids', [])
@@ -2162,18 +2137,13 @@ def register_route_backend_group_documents(app):
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
 
-        user_settings = get_user_settings(user_id)
-        active_group_id = user_settings["settings"].get("activeGroupOid")
-        if not active_group_id:
-            return jsonify({'error': 'No active group selected'}), 400
-
-        group_doc = find_group_by_id(group_id=active_group_id)
-        if not group_doc:
-            return jsonify({'error': 'Active group not found'}), 404
-
-        role = get_user_role_in_group(group_doc, user_id)
-        if role not in ["Owner", "Admin", "DocumentManager"]:
-            return jsonify({'error': 'You do not have permission to manage tags'}), 403
+        active_group_id, group_doc, _, error_response = _require_active_group_document_context(
+            user_id,
+            allowed_roles=("Owner", "Admin", "DocumentManager"),
+            permission_message='You do not have permission to manage tags',
+        )
+        if error_response:
+            return error_response
 
         data = request.get_json()
         new_name = data.get('new_name')
@@ -2282,18 +2252,13 @@ def register_route_backend_group_documents(app):
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
 
-        user_settings = get_user_settings(user_id)
-        active_group_id = user_settings["settings"].get("activeGroupOid")
-        if not active_group_id:
-            return jsonify({'error': 'No active group selected'}), 400
-
-        group_doc = find_group_by_id(group_id=active_group_id)
-        if not group_doc:
-            return jsonify({'error': 'Active group not found'}), 404
-
-        role = get_user_role_in_group(group_doc, user_id)
-        if role not in ["Owner", "Admin", "DocumentManager"]:
-            return jsonify({'error': 'You do not have permission to manage tags'}), 403
+        active_group_id, group_doc, _, error_response = _require_active_group_document_context(
+            user_id,
+            allowed_roles=("Owner", "Admin", "DocumentManager"),
+            permission_message='You do not have permission to manage tags',
+        )
+        if error_response:
+            return error_response
 
         from functions_documents import normalize_tag, update_document, propagate_tags_to_chunks
 
