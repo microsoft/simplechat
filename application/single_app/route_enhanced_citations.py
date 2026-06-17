@@ -10,9 +10,11 @@ import requests
 import mimetypes
 import io
 import uuid
+from urllib.parse import quote
 import pandas
 import fitz
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
+from werkzeug.utils import secure_filename
 
 from functions_authentication import login_required, user_required, get_current_user_id, get_current_user_info
 from functions_appinsights import log_event
@@ -163,6 +165,23 @@ def _resolve_generated_artifact_file_name(message_item):
         return f"{normalized_base_name}{output_extension}"
 
     return normalized_file_name
+
+
+def _normalize_response_file_name(file_name, fallback='download'):
+    normalized_file_name = str(file_name or fallback).replace('\\', '/').split('/')[-1].strip()
+    normalized_file_name = normalized_file_name.replace('\r', '').replace('\n', '')
+    if not normalized_file_name:
+        normalized_file_name = fallback
+
+    ascii_file_name = secure_filename(normalized_file_name) or secure_filename(str(fallback)) or 'download'
+    return normalized_file_name, ascii_file_name
+
+
+def _build_content_disposition(disposition, file_name, fallback='download'):
+    normalized_disposition = 'attachment' if disposition == 'attachment' else 'inline'
+    normalized_file_name, ascii_file_name = _normalize_response_file_name(file_name, fallback=fallback)
+    encoded_file_name = quote(normalized_file_name, safe='')
+    return f'{normalized_disposition}; filename="{ascii_file_name}"; filename*=UTF-8\'\'{encoded_file_name}'
 
 
 def _log_enhanced_citations_debug(message, **details):
@@ -489,7 +508,7 @@ def register_enhanced_citations_routes(app):
                 content_type=content_type,
                 headers={
                     'Content-Length': str(len(content)),
-                    'Content-Disposition': f'attachment; filename="{filename}"',
+                    'Content-Disposition': _build_content_disposition('attachment', filename),
                     'Cache-Control': 'private, max-age=300',
                 }
             )
@@ -1225,7 +1244,7 @@ def serve_enhanced_citation_content(raw_doc, content_type=None, force_download=F
             headers={
                 'Content-Length': str(len(content)),
                 'Cache-Control': 'private, max-age=300',  # Cache for 5 minutes
-                'Content-Disposition': f'{disposition}; filename="{raw_doc["file_name"]}"',
+                'Content-Disposition': _build_content_disposition(disposition, raw_doc.get('file_name')),
                 'Accept-Ranges': 'bytes'  # Support range requests for video/audio
             }
         )
@@ -1381,7 +1400,7 @@ def serve_enhanced_citation_pdf_content(raw_doc, page_number, show_all=False):
             headers = {
                 'Content-Length': str(len(extracted_content)),
                 'Cache-Control': 'private, max-age=300',  # Cache for 5 minutes
-                'Content-Disposition': f'inline; filename="{raw_doc["file_name"]}"',
+                'Content-Disposition': _build_content_disposition('inline', raw_doc.get('file_name')),
                 'X-Sub-PDF-Page': str(new_page_number),  # Custom header with page info
                 'Accept-Ranges': 'bytes'
             }

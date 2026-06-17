@@ -1,12 +1,51 @@
 # route_external_public_documents.py:
 
+import logging
+
 from config import *
 from functions_authentication import *
 from functions_settings import *
 from functions_public_workspaces import *
 from functions_documents import *
+from functions_appinsights import log_event
+from functions_activity_logging import log_document_metadata_update_transaction
 from swagger_wrapper import swagger_route, get_auth_security
 from flask import current_app
+
+
+PUBLIC_WORKSPACE_EXTERNAL_READER_ROLES = ("Owner", "Admin", "DocumentManager", "User")
+PUBLIC_WORKSPACE_EXTERNAL_MANAGER_ROLES = ("Owner", "Admin", "DocumentManager")
+
+
+def _get_external_request_value(field_name):
+    return str(request.values.get(field_name) or '').strip()
+
+
+def _require_external_public_workspace_context(allowed_roles, operation_type=None):
+    user_id = _get_external_request_value('user_id')
+    active_workspace_id = _get_external_request_value('active_workspace_id')
+
+    if not user_id:
+        return None, None, None, None, (jsonify({'error': 'user_id is required'}), 400)
+
+    if not active_workspace_id:
+        return None, None, None, None, (jsonify({'error': 'active_workspace_id is required'}), 400)
+
+    workspace_doc = find_public_workspace_by_id(active_workspace_id)
+    if not workspace_doc:
+        return None, None, None, None, (jsonify({'error': 'Public workspace not found'}), 404)
+
+    role = get_user_role_in_public_workspace(workspace_doc, user_id)
+    allowed_role_names = {allowed_role.lower() for allowed_role in allowed_roles}
+    if not role or role.lower() not in allowed_role_names:
+        return None, None, None, None, (jsonify({'error': 'Access denied'}), 403)
+
+    if operation_type:
+        operation_allowed, reason = check_public_workspace_status_allows_operation(workspace_doc, operation_type)
+        if not operation_allowed:
+            return None, None, None, None, (jsonify({'error': reason}), 403)
+
+    return user_id, active_workspace_id, workspace_doc, role, None
 
 def register_route_external_public_documents(app):
     """
@@ -24,12 +63,24 @@ def register_route_external_public_documents(app):
         Upload one or more documents to the currently active public workspace.
         Mirrors logic from api_user_upload_document but scoped to public context.
         """
+        user_id, active_workspace_id, _workspace_doc, _role, error_response = _require_external_public_workspace_context(
+            PUBLIC_WORKSPACE_EXTERNAL_MANAGER_ROLES,
+            operation_type='upload',
+        )
+        if error_response:
+            return error_response
 
-        print("Entered external_upload_public_document")
-
-        user_id = request.form.get('user_id')
-        active_workspace_id = request.form.get('active_workspace_id')
         classification = request.form.get('classification')
+
+        log_event(
+            '[ExternalPublicDocuments] Authorized external public document upload request.',
+            extra={
+                'user_id': user_id,
+                'public_workspace_id': active_workspace_id,
+                'classification': classification,
+            },
+            debug_only=True,
+        )
 
         if 'file' not in request.files:
             return jsonify({'error': 'No file part in the request'}), 400
@@ -126,8 +177,12 @@ def register_route_external_public_documents(app):
         Return a paginated, filtered list of documents for the user's *active* public.
         Mirrors logic of api_get_user_documents.
         """
-        user_id = request.args.get('user_id')
-        active_workspace_id = request.args.get('active_workspace_id')
+        user_id, active_workspace_id, _workspace_doc, _role, error_response = _require_external_public_workspace_context(
+            PUBLIC_WORKSPACE_EXTERNAL_READER_ROLES,
+            operation_type='view',
+        )
+        if error_response:
+            return error_response
 
         # --- 1) Read pagination and filter parameters ---
         page = request.args.get('page', default=1, type=int)
@@ -140,6 +195,7 @@ def register_route_external_public_documents(app):
 
         if page < 1: page = 1
         if page_size < 1: page_size = 10
+        legacy_count = 0
 
         # --- 2) Build dynamic WHERE clause and parameters ---
         query_conditions = ["c.public_workspace_id = @public_workspace_id"]
@@ -198,7 +254,11 @@ def register_route_external_public_documents(app):
             total_count = len(current_docs)
             docs = current_docs[offset:offset + page_size]
         except Exception as e:
-            print(f"Error fetching public documents: {e}")
+            log_event(
+                '[ExternalPublicDocuments] Error fetching public documents.',
+                extra={'public_workspace_id': active_workspace_id, 'error': str(e)},
+                level=logging.ERROR,
+            )
             return jsonify({"error": f"Error fetching documents: {str(e)}"}), 500
 
         
@@ -219,7 +279,11 @@ def register_route_external_public_documents(app):
             )
             legacy_count = legacy_docs[0] if legacy_docs else 0
         except Exception as e:
-            print(f"Error executing legacy query: {e}")
+            log_event(
+                '[ExternalPublicDocuments] Error executing public legacy document query.',
+                extra={'public_workspace_id': active_workspace_id, 'error': str(e)},
+                level=logging.ERROR,
+            )
 
         # --- 5) Return results ---
         return jsonify({
@@ -240,14 +304,12 @@ def register_route_external_public_documents(app):
         Return metadata for a specific public document, validating public workspace membership.
         Mirrors logic of api_get_user_document.
         """
-        user_id = request.args.get('user_id')
-        active_workspace_id = request.args.get('active_workspace_id')
-
-        if not user_id:
-            return jsonify({'error': 'user_id not defined'}), 401
-
-        if not active_workspace_id:
-            return jsonify({'error': 'active_workspace_id not defined'}), 401
+        user_id, active_workspace_id, _workspace_doc, _role, error_response = _require_external_public_workspace_context(
+            PUBLIC_WORKSPACE_EXTERNAL_READER_ROLES,
+            operation_type='view',
+        )
+        if error_response:
+            return error_response
 
         return get_document(user_id=user_id, document_id=document_id, public_workspace_id=active_workspace_id)
 
@@ -259,17 +321,14 @@ def register_route_external_public_documents(app):
         """
         Update metadata fields for a public document. Mirrors logic from api_patch_user_document.
         """
-        user_id = request.args.get('user_id')
-        active_workspace_id = request.args.get('active_workspace_id')
+        user_id, active_workspace_id, _workspace_doc, _role, error_response = _require_external_public_workspace_context(
+            PUBLIC_WORKSPACE_EXTERNAL_MANAGER_ROLES,
+            operation_type='upload',
+        )
+        if error_response:
+            return error_response
 
-        if not active_workspace_id:
-            return jsonify({'error': 'No active public workspace selected'}), 400
-
-        public_doc = find_public_workspace_by_id(active_workspace_id)
-        if not public_doc:
-            return jsonify({'error': 'Active public workspace not found'}), 404
-
-        data = request.get_json()
+        data = request.get_json(silent=True) or {}
         
         # Track which fields were updated
         updated_fields = {}
@@ -346,8 +405,6 @@ def register_route_external_public_documents(app):
 
             # Log the metadata update transaction if any fields were updated
             if updated_fields:
-                from functions_documents import get_document
-                from functions_activity_logging import log_document_metadata_update_transaction
                 doc_response = get_document(user_id, document_id, public_workspace_id=active_workspace_id)
                 doc = None
                 if isinstance(doc_response, tuple):
@@ -385,8 +442,12 @@ def register_route_external_public_documents(app):
         Delete a public document and its associated chunks.
         Mirrors api_delete_user_document with public context and permissions.
         """
-        user_id = request.args.get('user_id')
-        active_workspace_id = request.args.get('active_workspace_id')
+        user_id, active_workspace_id, _workspace_doc, _role, error_response = _require_external_public_workspace_context(
+            PUBLIC_WORKSPACE_EXTERNAL_MANAGER_ROLES,
+            operation_type='delete',
+        )
+        if error_response:
+            return error_response
         delete_mode = request.args.get('delete_mode', 'all_versions')
 
         if delete_mode not in {'all_versions', 'current_only'}:
@@ -416,8 +477,20 @@ def register_route_external_public_documents(app):
         POST /external/public_documents/<document_id>/extract_metadata
         Queues a background job to extract metadata for a public document.
         """
-        user_id = request.form.get('user_id')
-        active_workspace_id = request.form.get('active_workspace_id')
+        user_id, active_workspace_id, _workspace_doc, _role, error_response = _require_external_public_workspace_context(
+            PUBLIC_WORKSPACE_EXTERNAL_MANAGER_ROLES,
+            operation_type='upload',
+        )
+        if error_response:
+            return error_response
+
+        doc_response, status_code = get_document(
+            user_id=user_id,
+            document_id=document_id,
+            public_workspace_id=active_workspace_id,
+        )
+        if status_code != 200:
+            return doc_response, status_code
 
         # Queue the public metadata extraction task
         future = current_app.extensions['executor'].submit_stored(
@@ -438,8 +511,12 @@ def register_route_external_public_documents(app):
     @accesstoken_required
     @enabled_required("enable_public_workspaces")
     def external_upgrade_legacy_public_documents():
-        user_id = request.form.get('user_id')
-        active_workspace_id = request.form.get('active_workspace_id')
+        user_id, active_workspace_id, _workspace_doc, _role, error_response = _require_external_public_workspace_context(
+            PUBLIC_WORKSPACE_EXTERNAL_MANAGER_ROLES,
+            operation_type='upload',
+        )
+        if error_response:
+            return error_response
 
         # returns how many docs were updated
         try:

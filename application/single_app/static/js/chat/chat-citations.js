@@ -2,7 +2,7 @@
 
 import { showToast } from "./chat-toast.js";
 import { showLoadingIndicator, hideLoadingIndicator } from "./chat-loading-indicator.js";
-import { addTargetBlankToExternalLinks, toBoolean } from "./chat-utils.js";
+import { addTargetBlankToExternalLinks, sanitizeHttpUrl, toBoolean } from "./chat-utils.js";
 import { fetchFileContent } from "./chat-input-actions.js";
 // --- NEW IMPORT ---
 import { getDocumentMetadata } from './chat-documents.js';
@@ -14,12 +14,19 @@ const AGENT_CITATION_PREVIEW_ROWS = 3;
 const AGENT_CITATION_EXPANDED_ROWS = 25;
 let activeAgentCitationState = null;
 
-function escapeAttribute(value) {
-  return String(value)
-    .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+function serializeSafeElement(element) {
+  const container = document.createElement('div');
+  container.appendChild(element);
+  return container.innerHTML;
+}
+
+function buildSafeExternalLinkHtml(url, label) {
+  const link = document.createElement('a');
+  link.href = url;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  link.textContent = label;
+  return serializeSafeElement(link);
 }
 
 export function parseDocIdAndPage(citationId) {
@@ -38,11 +45,14 @@ export function parseCitations(message) {
   const citationRegex = /\(Source:\s*([^,]+),\s*(Page(?:s)?|Sheet(?:s)?|Location):\s*([^)]+)\)\s*((?:\[#.*?\]\s*)+)/gi;
 
   let result = message.replace(citationRegex, (whole, filename, locationLabel, locations, bracketSection) => {
-    let filenameHtml;
-    if (/^https?:\/\/.+/i.test(filename.trim())) {
-      filenameHtml = `<a href="${filename.trim()}" target="_blank" rel="noopener noreferrer">${filename.trim()}</a>`;
-    } else {
-      filenameHtml = filename.trim();
+    const trimmedFilename = filename.trim();
+    const safeFilenameText = escapeHtml(trimmedFilename);
+    let filenameHtml = safeFilenameText;
+    if (/^https?:\/\/.+/i.test(trimmedFilename)) {
+      const safeFilenameUrl = sanitizeHttpUrl(trimmedFilename);
+      if (safeFilenameUrl) {
+        filenameHtml = buildSafeExternalLinkHtml(safeFilenameUrl, trimmedFilename);
+      }
     }
 
     const bracketMatches = bracketSection.match(/\[#.*?\]/g) || [];
@@ -110,11 +120,11 @@ export function parseCitations(message) {
         const ref = pageToRefMap[singleNum];
         return buildAnchorIfExists(token, ref);
       }
-      return token;
+      return escapeHtml(token);
     });
 
     const linkedPagesText = linkedTokens.join(', ');
-    return `(Source: ${filenameHtml}, ${locationLabel}: ${linkedPagesText})`;
+    return `(Source: ${filenameHtml}, ${escapeHtml(locationLabel)}: ${linkedPagesText})`;
   });
 
   // Cleanup pass: strip any remaining [#guid...] bracket groups that the main regex didn't match.
@@ -129,13 +139,24 @@ export function parseCitations(message) {
 
 export function buildAnchorIfExists(pageStr, citationId, sheetName = null) {
   // ... (keep existing implementation)
+  const safePageText = escapeHtml(pageStr);
    if (!citationId) {
-    return pageStr;
+    return safePageText;
   }
   // Ensure citationId doesn't have a leading # if passed accidentally
-  const cleanCitationId = citationId.startsWith('#') ? citationId.slice(1) : citationId;
-  const sheetNameAttribute = sheetName ? ` data-sheet-name="${escapeAttribute(sheetName)}"` : '';
-  return `<a href="#" class="citation-link" data-citation-id="${cleanCitationId}"${sheetNameAttribute} target="_blank" rel="noopener noreferrer">${pageStr}</a>`;
+  const normalizedCitationId = String(citationId || '');
+  const cleanCitationId = normalizedCitationId.startsWith('#') ? normalizedCitationId.slice(1) : normalizedCitationId;
+  const link = document.createElement('a');
+  link.href = '#';
+  link.className = 'citation-link';
+  link.dataset.citationId = cleanCitationId;
+  if (sheetName) {
+    link.dataset.sheetName = String(sheetName);
+  }
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  link.textContent = String(pageStr ?? '');
+  return serializeSafeElement(link);
 }
 
 // --- MODIFIED: fetchCitedText handles errors more gracefully ---
@@ -777,6 +798,7 @@ export function showPdfModal(docId, pageNumber, citationId) {
     pdfModal.id = "pdf-modal";
     pdfModal.classList.add("modal", "fade");
     pdfModal.tabIndex = -1;
+    // xss-check: ignore - static modal shell; runtime values are assigned through DOM properties below.
     pdfModal.innerHTML = `
       <div class="modal-dialog modal-dialog-scrollable modal-xl modal-fullscreen-sm-down">
         <div class="modal-content">
