@@ -1773,6 +1773,18 @@ function setPublicDownloadStatus(messageHtml, clearAfterMs = 0) {
   }
 }
 
+function setPublicDownloadSettingsVisibility(isAvailable) {
+  const settingsSection = document.getElementById('public-file-download-settings-section');
+  if (!settingsSection) {
+    return;
+  }
+
+  settingsSection.classList.toggle('d-none', !isAvailable);
+  if (!isAvailable) {
+    setPublicDownloadStatus('');
+  }
+}
+
 async function loadPublicDownloadSettings(workspaceData = null) {
   const disableDownloadsInput = document.getElementById('public-disable-file-downloads');
   if (!disableDownloadsInput) {
@@ -1789,9 +1801,17 @@ async function loadPublicDownloadSettings(workspaceData = null) {
       workspace = await response.json();
     }
 
+    const downloadsAdminEnabled = Boolean(workspace.file_downloads_admin_enabled);
+    setPublicDownloadSettingsVisibility(downloadsAdminEnabled);
+    if (!downloadsAdminEnabled) {
+      disableDownloadsInput.checked = false;
+      return;
+    }
+
     disableDownloadsInput.checked = Boolean(workspace.disable_file_downloads);
   } catch (error) {
     console.error('Error loading public workspace download settings:', error);
+    setPublicDownloadSettingsVisibility(false);
     setPublicDownloadStatus(`<span class="text-danger"><i class="bi bi-exclamation-circle-fill"></i> ${error.message}</span>`);
   }
 }
@@ -1799,6 +1819,10 @@ async function loadPublicDownloadSettings(workspaceData = null) {
 async function savePublicDownloadSettings() {
   const disableDownloadsInput = document.getElementById('public-disable-file-downloads');
   if (!disableDownloadsInput) {
+    return;
+  }
+  const settingsSection = document.getElementById('public-file-download-settings-section');
+  if (settingsSection && settingsSection.classList.contains('d-none')) {
     return;
   }
 

@@ -1,18 +1,20 @@
 # test_manage_public_workspace_page_load.py
 """
 UI test for manage public workspace page load.
-Version: 0.241.177
+Version: 0.242.057
 Implemented in: 0.241.125
 
 This test ensures the manage public workspace page loads without JavaScript
 parse errors, keeps the hero branding UI interactive, and preserves the pending
 request actions after initialization. Updated in 0.241.176 to validate the
-custom hero color swatch.
+custom hero color swatch. Updated in 0.242.057 to verify local file download
+settings stay hidden until administrators enable public workspace downloads.
 """
 
 import base64
 import json
 import os
+import re
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -89,6 +91,7 @@ def test_manage_public_workspace_loads_without_script_parse_errors(playwright):
                     "logoVersion": 7,
                     "userRole": "Owner",
                     "isMember": True,
+                    "file_downloads_admin_enabled": False,
                 },
             )
             return
@@ -190,6 +193,9 @@ def test_manage_public_workspace_loads_without_script_parse_errors(playwright):
         expect(page.locator("#pendingRequestsTable tbody")).not_to_contain_text("Requester User")
         assert request_actions == ["reject"], (
             "Expected the pending request reject action to be wired after page initialization."
+        )
+        expect(page.locator("#public-file-download-settings-section")).to_have_class(
+            re.compile(r"\bd-none\b")
         )
         assert page_errors == [], f"Expected no page errors while loading the manage page. Saw: {page_errors}"
     finally:

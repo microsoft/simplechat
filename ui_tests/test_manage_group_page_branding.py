@@ -1,13 +1,14 @@
 # test_manage_group_page_branding.py
 """
 UI test for group manage page branding.
-Version: 0.241.177
+Version: 0.242.057
 Implemented in: 0.241.125
 
 This test ensures the manage group page renders the branded hero metadata and
 logo without client-side errors when the group branding payload is present.
 Updated in 0.241.176 to validate the custom hero color swatch updates the
-preview and saved color payload.
+preview and saved color payload. Updated in 0.242.057 to verify local file
+download settings stay hidden until administrators enable group downloads.
 """
 
 import base64
@@ -80,6 +81,7 @@ def test_manage_group_page_renders_branding_without_page_errors(playwright):
                     "admins": [],
                     "documentManagers": [],
                     "userIds": ["owner-1"],
+                    "file_downloads_admin_enabled": False,
                 },
             ),
         )
@@ -127,6 +129,9 @@ def test_manage_group_page_renders_branding_without_page_errors(playwright):
         )
         assert custom_hero_color == "#8844cc", (
             f"Expected custom group hero color, saw {custom_hero_color!r}."
+        )
+        expect(page.locator("#group-file-download-settings-section")).to_have_class(
+            re.compile(r"\bd-none\b")
         )
         assert page_errors == [], f"Expected no page errors while loading the manage group page. Saw: {page_errors}"
     finally:

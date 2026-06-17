@@ -23,6 +23,11 @@ from functions_workspace_branding import (
     normalize_workspace_hero_color,
     prepare_workspace_logo_image_for_storage,
 )
+from functions_settings import (
+    get_settings,
+    is_group_workspace_file_download_admin_enabled,
+    is_group_workspace_file_download_enabled,
+)
 from swagger_wrapper import swagger_route, get_auth_security
 
 def register_route_backend_groups(app):
@@ -215,6 +220,15 @@ def register_route_backend_groups(app):
         )
         response_doc.update(get_workspace_logo_metadata(group_doc))
         response_doc["disable_file_downloads"] = bool(group_doc.get("disable_file_downloads", False))
+        app_settings = get_settings()
+        response_doc["file_downloads_admin_enabled"] = is_group_workspace_file_download_admin_enabled(
+            app_settings,
+            group_doc,
+        )
+        response_doc["file_downloads_enabled"] = is_group_workspace_file_download_enabled(
+            app_settings,
+            group_doc,
+        )
         response_doc.pop("logoBase64", None)
 
         return jsonify(response_doc), 200
@@ -238,6 +252,11 @@ def register_route_backend_groups(app):
         group_doc = find_group_by_id(group_id)
         if not group_doc:
             return jsonify({"error": "Group not found"}), 404
+
+        if not is_group_workspace_file_download_admin_enabled(get_settings(), group_doc):
+            return jsonify({
+                "error": "File downloads have not been enabled for this group by an administrator"
+            }), 403
 
         data = request.get_json(silent=True) or {}
         group_doc["disable_file_downloads"] = bool(data.get("disable_file_downloads", False))

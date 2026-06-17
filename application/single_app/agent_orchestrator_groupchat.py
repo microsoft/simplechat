@@ -1,3 +1,4 @@
+# agent_orchestrator_groupchat.py
 # Copyright (c) Microsoft. All rights reserved.
 
 from typing import Any, Callable, Awaitable, Optional
@@ -59,13 +60,25 @@ class OrchestratorAgent(GroupChatOrchestration):
         await self.streaming_agent_response_callback(message, is_final)
 
 
+    def _build_message_log_metadata(self, message):
+        content = getattr(message, "content", None)
+        content_text = str(content or "")
+        return {
+            "agent_name": getattr(message, "name", None),
+            "role": str(getattr(message, "role", None) or ""),
+            "content_length": len(content_text),
+            "metadata_keys": sorted(str(key) for key in getattr(message, "metadata", {}) or {}),
+        }
+
+
     def log_message_to_agent(self, agent, message):
         """Log every message queued to an agent."""
+        message_text = str(message or "")
         log_event(
             "Queueing message for agent",
             extra={
                 "agent_name": getattr(agent, "name", None),
-                "message": str(message),
+                "message_length": len(message_text),
             },
             level=logging.INFO,
         )
@@ -91,30 +104,28 @@ class OrchestratorAgent(GroupChatOrchestration):
         try:
             if not isinstance(message, ChatMessageContent):
                 log_event(
-                    f"[AgentResponseCallback][ERROR] Received non-ChatMessageContent: {type(message)} | {message}",
-                    extra={"raw_message": repr(message)},
+                    f"[AgentResponseCallback][ERROR] Received non-ChatMessageContent: {type(message)}",
+                    extra={"message_type": type(message).__name__},
                     level=logging.ERROR,
                     exceptionTraceback=True,
                 )
-                self._logger.error(f"[AgentResponseCallback][ERROR] Non-ChatMessageContent received: {type(message)} | {message}")
+                self._logger.error(f"[AgentResponseCallback][ERROR] Non-ChatMessageContent received: {type(message)}")
                 return
             # Log every message received from an agent (response)
             log_event(
-                f"[AgentResponseCallback] Agent response received {message}",
-                extra={
-                    "agent_name": getattr(message, "name", None),
-                    "content": getattr(message, "content", None),
-                    "role": getattr(message, "role", None),
-                    "metadata": getattr(message, "metadata", None),
-                },
+                "[AgentResponseCallback] Agent response received",
+                extra=self._build_message_log_metadata(message),
                 level=logging.INFO,
             )
             # Optionally, also log to the orchestrator logger
-            self._logger.info(f"[AgentResponseCallback] {getattr(message, 'name', None)}: {getattr(message, 'content', None)}")
+            self._logger.info(
+                f"[AgentResponseCallback] {getattr(message, 'name', None)} "
+                f"content_length={len(str(getattr(message, 'content', '') or ''))}"
+            )
         except Exception as e:
             log_event(
                 f"[AgentResponseCallback][EXCEPTION] Exception in agent_response_callback: {e}",
-                extra={"raw_message": repr(message)},
+                extra={"message_type": type(message).__name__},
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
@@ -136,8 +147,8 @@ class OrchestratorAgent(GroupChatOrchestration):
         """
         if is_final:
             log_event(
-                f"[StreamingAgentResponseCallback] **{message.name}**\n{message.content}",
-                extra={"agent_name": message.name, "content": message.content},
+                "[StreamingAgentResponseCallback] Final agent stream response received",
+                extra=self._build_message_log_metadata(message),
                 level=logging.INFO,
             )
         # Only call the user-provided callback if it exists and is not this method

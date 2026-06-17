@@ -12,7 +12,7 @@ from semantic_kernel_loader import initialize_semantic_kernel
 from semantic_kernel_plugins.plugin_invocation_thoughts import (
     register_plugin_invocation_thought_callback,
 )
-from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
+from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger, sanitize_plugin_invocation_value
 from semantic_kernel_plugins.chart_plugin import ChartPlugin
 from foundry_agent_runtime import FoundryAgentInvocationError, FoundryAgentUserAuthenticationRequired, execute_foundry_agent, resolve_authority
 from model_endpoint_clients import (
@@ -1563,23 +1563,27 @@ def _build_plugin_invocation_agent_citation(invocation):
         else:
             timestamp_str = str(invocation_timestamp)
 
+    sanitized_parameters = sanitize_plugin_invocation_value(getattr(invocation, 'parameters', None))
+    sanitized_result = sanitize_plugin_invocation_value(getattr(invocation, 'result', None))
+    sanitized_error = sanitize_plugin_invocation_value(getattr(invocation, 'error_message', None))
+
     tool_name = build_agent_citation_tool_label(
         getattr(invocation, 'plugin_name', None),
         getattr(invocation, 'function_name', None),
-        getattr(invocation, 'parameters', None),
-        getattr(invocation, 'result', None),
+        sanitized_parameters,
+        sanitized_result,
     )
 
     return {
         'tool_name': tool_name,
         'function_name': getattr(invocation, 'function_name', None),
         'plugin_name': getattr(invocation, 'plugin_name', None),
-        'function_arguments': make_json_serializable(getattr(invocation, 'parameters', None)),
-        'function_result': make_json_serializable(getattr(invocation, 'result', None)),
+        'function_arguments': make_json_serializable(sanitized_parameters),
+        'function_result': make_json_serializable(sanitized_result),
         'duration_ms': getattr(invocation, 'duration_ms', None),
         'timestamp': timestamp_str,
         'success': getattr(invocation, 'success', None),
-        'error_message': make_json_serializable(getattr(invocation, 'error_message', None)),
+        'error_message': make_json_serializable(sanitized_error),
         'user_id': getattr(invocation, 'user_id', None),
     }
 

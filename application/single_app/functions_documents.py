@@ -1178,7 +1178,7 @@ def get_document_metadata(document_id, user_id, group_id=None, public_workspace_
     add_file_task_to_file_processing_log(
         document_id=document_id, 
         user_id=public_workspace_id if is_public_workspace else (group_id if is_group else user_id),
-        content=f"Query is {query}, parameters are {parameters}."
+        content=f"Document metadata lookup started with {len(parameters)} query parameters."
     )
     try:
         document_items = list(
@@ -1191,7 +1191,7 @@ def get_document_metadata(document_id, user_id, group_id=None, public_workspace_
         add_file_task_to_file_processing_log(
             document_id=document_id,
             user_id=public_workspace_id if is_public_workspace else (group_id if is_group else user_id),
-            content=f"Document metadata retrieved: {document_items}."
+            content=f"Document metadata lookup returned {len(document_items)} item(s)."
         )
         return _normalize_document_enhanced_citations(document_items[0]) if document_items else None
 
@@ -2484,7 +2484,11 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
         add_file_task_to_file_processing_log(
             document_id=document_id, 
             user_id=public_workspace_id if is_public_workspace else (group_id if is_group else user_id), 
-            content=f"Saving chunk, cosmos_container:{cosmos_container}, page_text_content:{page_text_content}, page_number:{page_number}, file_name:{file_name}, user_id:{user_id}, document_id:{document_id}, group_id:{group_id}, public_workspace_id:{public_workspace_id}"
+            content=(
+                f"Saving chunk page_number:{page_number}, file_name:{file_name}, "
+                f"text_length:{len(page_text_content or '')}, document_id:{document_id}, "
+                f"group_scope:{bool(group_id)}, public_workspace_scope:{bool(public_workspace_id)}"
+            )
         )
 
         if is_public_workspace:
@@ -4306,7 +4310,7 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
             add_file_task_to_file_processing_log(
                 document_id=document_id, 
                 user_id=group_id if is_group else user_id,
-                content=f"Processing Hybrid search for document {document_id} using json dump of metadata {json.dumps(meta_data)}"
+                content=f"Processing Hybrid search for document {document_id} using {len(meta_data or {})} metadata fields."
             )
 
             args = {
@@ -4806,12 +4810,9 @@ Format your response as JSON with these keys:
             }
         
         # Additional debugging for empty string case
-        print(f"[VISION_ANALYSIS_V2] ⚡ Content length: {len(content)}, repr: {repr(content[:200])}")
+        print(f"[VISION_ANALYSIS_V2] Content length: {len(content)}")
         debug_print(f"[VISION_ANALYSIS] Raw response received:")
         debug_print(f"  Length: {len(content)} characters")
-        debug_print(f"  Content repr: {repr(content)}")
-        debug_print(f"  First 500 chars: {content[:500]}...")
-        debug_print(f"  Last 100 chars: ...{content[-100:] if len(content) > 100 else content}")
         
         # Check if response looks like JSON
         is_json_like = content.strip().startswith('{') or content.strip().startswith('[')

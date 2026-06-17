@@ -1,3 +1,4 @@
+# agent_orchestrator_magnetic.py
 # Magentic Orchestrator Agent custom implementation. At the time of writing, it only accepts a single ChatMessageContent which can result in a loss of context to the LLM.
 # Copyright (c) Microsoft. All rights reserved.
 
@@ -71,6 +72,15 @@ class OrchestratorAgent(MagenticOrchestration):
             for agent in self.members
         ] 
 
+    def _build_message_log_metadata(self, message):
+        content = getattr(message, "content", None)
+        content_text = str(content or "")
+        return {
+            "agent_name": getattr(message, "name", None),
+            "content_length": len(content_text),
+            "message_type": type(message).__name__,
+        }
+
     async def select_next_agent(self, context: MagenticContext) -> str:
         """
         Select the next agent to speak. Uses custom router if provided, else falls back to default.
@@ -101,7 +111,10 @@ class OrchestratorAgent(MagenticOrchestration):
             # Fallback: try to get a string representation of context
             summary = str(context)
         self.scratchpad['reflection_summary'] = summary
-        self._logger.info(f"[OrchestratorAgentEvent] Reflection summary updated: {summary}")
+        self._logger.info(
+            f"[OrchestratorAgentEvent] Reflection summary updated "
+            f"content_length={len(str(summary or ''))}"
+        )
 
     def log_agent_event(self, event: str, **kwargs):
         """Log orchestration-level events."""
@@ -110,8 +123,8 @@ class OrchestratorAgent(MagenticOrchestration):
     def agent_response_callback(self, message: ChatMessageContent) -> None:
         """Observer function to print the messages from the agents."""
         log_event(
-            f"**{message.name}**\n{message.content}",
-            extra={"agent_name": message.name, "content": message.content},
+            "[MagenticAgentResponseCallback] Agent response received",
+            extra=self._build_message_log_metadata(message),
             level=logging.INFO,
         )
         super().agent_response_callback(message)
@@ -121,8 +134,11 @@ class OrchestratorAgent(MagenticOrchestration):
         Observer function to handle streaming responses from agents.
         """
         log_event(
-            f"**{message.name}** (streaming)\n{message.content}",
-            extra={"agent_name": message.name, "content": message.content},
+            "[MagenticStreamingAgentResponseCallback] Agent stream response received",
+            extra={
+                **self._build_message_log_metadata(message),
+                "is_final": bool(is_final),
+            },
             level=logging.INFO,
         )
         # If a callback was provided at construction, call it (await if coroutine)

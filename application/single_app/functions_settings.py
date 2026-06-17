@@ -326,23 +326,20 @@ def is_personal_workspace_file_download_enabled(settings):
     return bool((settings or {}).get('allow_personal_workspace_file_downloads', False))
 
 
-def is_group_workspace_file_download_enabled(settings, group_doc_or_id):
-    """Return True when admins and group owners allow downloads for a group workspace."""
+def _get_workspace_policy_target_id(workspace_doc_or_id):
+    if isinstance(workspace_doc_or_id, dict):
+        return str(workspace_doc_or_id.get('id') or '').strip()
+    return str(workspace_doc_or_id or '').strip()
+
+
+def is_group_workspace_file_download_admin_enabled(settings, group_doc_or_id):
+    """Return True when admins have enabled file downloads for a group workspace."""
     source_settings = settings or {}
     if not source_settings.get('allow_group_workspace_file_downloads', False):
         return False
 
-    group_id = ''
-    group_doc = {}
-    if isinstance(group_doc_or_id, dict):
-        group_doc = group_doc_or_id
-        group_id = str(group_doc.get('id') or '').strip()
-    else:
-        group_id = str(group_doc_or_id or '').strip()
-
+    group_id = _get_workspace_policy_target_id(group_doc_or_id)
     if not group_id:
-        return False
-    if bool(group_doc.get('disable_file_downloads', False)):
         return False
     if source_settings.get('require_group_assignment_for_file_downloads', False):
         allowed_group_ids = normalize_file_download_allowed_group_ids(
@@ -352,29 +349,48 @@ def is_group_workspace_file_download_enabled(settings, group_doc_or_id):
     return True
 
 
-def is_public_workspace_file_download_enabled(settings, workspace_doc_or_id):
-    """Return True when admins and workspace owners allow downloads for a public workspace."""
+def is_group_workspace_file_download_enabled(settings, group_doc_or_id):
+    """Return True when admins and group owners allow downloads for a group workspace."""
+    source_settings = settings or {}
+    if not is_group_workspace_file_download_admin_enabled(source_settings, group_doc_or_id):
+        return False
+
+    group_doc = {}
+    if isinstance(group_doc_or_id, dict):
+        group_doc = group_doc_or_id
+    if bool(group_doc.get('disable_file_downloads', False)):
+        return False
+    return True
+
+
+def is_public_workspace_file_download_admin_enabled(settings, workspace_doc_or_id):
+    """Return True when admins have enabled file downloads for a public workspace."""
     source_settings = settings or {}
     if not source_settings.get('allow_public_workspace_file_downloads', False):
         return False
 
-    workspace_id = ''
-    workspace_doc = {}
-    if isinstance(workspace_doc_or_id, dict):
-        workspace_doc = workspace_doc_or_id
-        workspace_id = str(workspace_doc.get('id') or '').strip()
-    else:
-        workspace_id = str(workspace_doc_or_id or '').strip()
-
+    workspace_id = _get_workspace_policy_target_id(workspace_doc_or_id)
     if not workspace_id:
-        return False
-    if bool(workspace_doc.get('disable_file_downloads', False)):
         return False
     if source_settings.get('require_public_workspace_assignment_for_file_downloads', False):
         allowed_workspace_ids = normalize_file_download_allowed_public_workspace_ids(
             source_settings.get('file_download_allowed_public_workspace_ids')
         )
         return workspace_id in allowed_workspace_ids
+    return True
+
+
+def is_public_workspace_file_download_enabled(settings, workspace_doc_or_id):
+    """Return True when admins and workspace owners allow downloads for a public workspace."""
+    source_settings = settings or {}
+    if not is_public_workspace_file_download_admin_enabled(source_settings, workspace_doc_or_id):
+        return False
+
+    workspace_doc = {}
+    if isinstance(workspace_doc_or_id, dict):
+        workspace_doc = workspace_doc_or_id
+    if bool(workspace_doc.get('disable_file_downloads', False)):
+        return False
     return True
 
 

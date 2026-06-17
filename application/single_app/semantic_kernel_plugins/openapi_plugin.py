@@ -51,11 +51,113 @@ import yaml
 import json
 import time
 import logging
+import re
 from typing import Dict, Any, List, Optional, Union
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from semantic_kernel_plugins.base_plugin import BasePlugin
 from semantic_kernel.functions import kernel_function
 from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
 from functions_debug import debug_print
+
+
+OPENAPI_REDACTED_VALUE = "***REDACTED***"
+OPENAPI_SENSITIVE_KEY_NAMES = {
+    "apikey",
+    "api_key",
+    "authorization",
+    "bearer",
+    "clientsecret",
+    "client_secret",
+    "connectionstring",
+    "connection_string",
+    "key",
+    "password",
+    "secret",
+    "subscriptionkey",
+    "subscription_key",
+    "token",
+}
+OPENAPI_SENSITIVE_KEY_FRAGMENTS = (
+    "accesstoken",
+    "accountkey",
+    "apikey",
+    "authorization",
+    "clientsecret",
+    "connectionstring",
+    "credential",
+    "password",
+    "privatekey",
+    "secret",
+    "sharedaccesssignature",
+    "subscriptionkey",
+)
+OPENAPI_SECRET_ASSIGNMENT_RE = re.compile(
+    r"(?i)\b(api[-_]?key|access[-_]?token|client[-_]?secret|connection[-_]?string|password|secret|subscription[-_]?key|token)=([^&\s,;]+)"
+)
+OPENAPI_AUTHORIZATION_VALUE_RE = re.compile(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+")
+
+
+def _normalize_openapi_sensitive_key(key: Any) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(key or "").strip().lower())
+
+
+def _is_openapi_sensitive_key(key: Any) -> bool:
+    normalized_key = _normalize_openapi_sensitive_key(key)
+    if not normalized_key:
+        return False
+    if normalized_key in OPENAPI_SENSITIVE_KEY_NAMES:
+        return True
+    return any(fragment in normalized_key for fragment in OPENAPI_SENSITIVE_KEY_FRAGMENTS)
+
+
+def _redact_openapi_url(url_value: Any) -> str:
+    raw_url = str(url_value or "")
+    try:
+        parts = urlsplit(raw_url)
+    except ValueError:
+        return _redact_openapi_string(raw_url)
+
+    if not parts.scheme or not parts.netloc:
+        return _redact_openapi_string(raw_url)
+
+    netloc = parts.netloc
+    if "@" in netloc:
+        netloc = f"{OPENAPI_REDACTED_VALUE}@{netloc.rsplit('@', 1)[1]}"
+
+    query_pairs = parse_qsl(parts.query, keep_blank_values=True)
+    if query_pairs:
+        query_pairs = [
+            (key, OPENAPI_REDACTED_VALUE if _is_openapi_sensitive_key(key) else value)
+            for key, value in query_pairs
+        ]
+
+    return urlunsplit((parts.scheme, netloc, parts.path, urlencode(query_pairs, doseq=True, safe="*"), parts.fragment))
+
+
+def _redact_openapi_string(value: str) -> str:
+    redacted = OPENAPI_SECRET_ASSIGNMENT_RE.sub(
+        lambda match: f"{match.group(1)}={OPENAPI_REDACTED_VALUE}",
+        str(value or ""),
+    )
+    return OPENAPI_AUTHORIZATION_VALUE_RE.sub(
+        lambda match: f"{match.group(1)} {OPENAPI_REDACTED_VALUE}",
+        redacted,
+    )
+
+
+def _redact_openapi_value(value: Any) -> Any:
+    if value is None or isinstance(value, (int, float, bool)):
+        return value
+    if isinstance(value, str):
+        return _redact_openapi_string(_redact_openapi_url(value))
+    if isinstance(value, dict):
+        return {
+            str(key): OPENAPI_REDACTED_VALUE if _is_openapi_sensitive_key(key) else _redact_openapi_value(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple, set)):
+        return [_redact_openapi_value(item) for item in value]
+    return _redact_openapi_string(str(value))
 
 class OpenApiPlugin(BasePlugin):
     def __init__(self, 
@@ -706,7 +808,7 @@ class OpenApiPlugin(BasePlugin):
         
         # Log the function call
         logging.info(f"[OpenAPI Plugin] Calling operation: {operation_id} ({method.upper()} {path})")
-        logging.info(f"[OpenAPI Plugin] Parameters: {kwargs}")
+        logging.info(f"[OpenAPI Plugin] Parameters: {_redact_openapi_value(kwargs)}")
         logging.info(f"[OpenAPI Plugin] Base URL: {self.base_url}")
         
         # Track function call for citations
@@ -724,21 +826,21 @@ class OpenApiPlugin(BasePlugin):
             parameters = self._resolve_ref(raw_parameters)
             
             debug_print(f"===== STARTING {operation_id} CALL =====")
-            debug_print(f"Received kwargs: {kwargs}")
+            debug_print(f"Received kwargs: {_redact_openapi_value(kwargs)}")
             
             # Extract parameters from nested kwargs if present
             if 'kwargs' in kwargs and isinstance(kwargs['kwargs'], dict):
                 # Merge nested kwargs into top level
                 nested_kwargs = kwargs.pop('kwargs')
                 kwargs.update(nested_kwargs)
-                debug_print(f"Extracted nested kwargs, now have: {kwargs}")
+                debug_print(f"Extracted nested kwargs, now have: {_redact_openapi_value(kwargs)}")
             
             debug_print(f"Operation has {len(parameters)} parameters: {[p.get('name') for p in parameters]}")
             debug_print(f"Base URL: {self.base_url}")
             debug_print(f"Path: {path}")
             
             logging.info(f"[OpenAPI Plugin] Processing parameters for {operation_id}")
-            logging.info(f"[OpenAPI Plugin] Received kwargs: {kwargs}")
+            logging.info(f"[OpenAPI Plugin] Received kwargs: {_redact_openapi_value(kwargs)}")
             logging.info(f"[OpenAPI Plugin] Operation parameters: {[p.get('name') for p in parameters]}")
             
             # Check for missing required parameters and add automatic parameter mapping
@@ -762,16 +864,16 @@ class OpenApiPlugin(BasePlugin):
                     # Check all possible name variations
                     if snake_case_name in kwargs:
                         kwargs[param_name] = kwargs[snake_case_name]
-                        debug_print(f"Mapped {snake_case_name} -> {param_name}: {kwargs[snake_case_name]}")
-                        logging.info(f"[OpenAPI Plugin] Mapped {snake_case_name} -> {param_name}: {kwargs[snake_case_name]}")
+                        debug_print(f"Mapped {snake_case_name} -> {param_name}: {_redact_openapi_value(kwargs[snake_case_name])}")
+                        logging.info(f"[OpenAPI Plugin] Mapped {snake_case_name} -> {param_name}: {_redact_openapi_value(kwargs[snake_case_name])}")
                     elif camel_case_name in kwargs:
                         kwargs[param_name] = kwargs[camel_case_name]
-                        debug_print(f"Mapped {camel_case_name} -> {param_name}: {kwargs[camel_case_name]}")
-                        logging.info(f"[OpenAPI Plugin] Mapped {camel_case_name} -> {param_name}: {kwargs[camel_case_name]}")
+                        debug_print(f"Mapped {camel_case_name} -> {param_name}: {_redact_openapi_value(kwargs[camel_case_name])}")
+                        logging.info(f"[OpenAPI Plugin] Mapped {camel_case_name} -> {param_name}: {_redact_openapi_value(kwargs[camel_case_name])}")
                     elif pascal_case_name in kwargs:
                         kwargs[param_name] = kwargs[pascal_case_name]
-                        debug_print(f"Mapped {pascal_case_name} -> {param_name}: {kwargs[pascal_case_name]}")
-                        logging.info(f"[OpenAPI Plugin] Mapped {pascal_case_name} -> {param_name}: {kwargs[pascal_case_name]}")
+                        debug_print(f"Mapped {pascal_case_name} -> {param_name}: {_redact_openapi_value(kwargs[pascal_case_name])}")
+                        logging.info(f"[OpenAPI Plugin] Mapped {pascal_case_name} -> {param_name}: {_redact_openapi_value(kwargs[pascal_case_name])}")
                     else:
                         # Try additional common variations
                         variations = self._get_name_variations(param_name)
@@ -779,8 +881,8 @@ class OpenApiPlugin(BasePlugin):
                         for variation in variations:
                             if variation in kwargs:
                                 kwargs[param_name] = kwargs[variation]
-                                debug_print(f"Mapped {variation} -> {param_name}: {kwargs[variation]}")
-                                logging.info(f"[OpenAPI Plugin] Mapped {variation} -> {param_name}: {kwargs[variation]}")
+                                debug_print(f"Mapped {variation} -> {param_name}: {_redact_openapi_value(kwargs[variation])}")
+                                logging.info(f"[OpenAPI Plugin] Mapped {variation} -> {param_name}: {_redact_openapi_value(kwargs[variation])}")
                                 mapped = True
                                 break
                         
@@ -793,7 +895,7 @@ class OpenApiPlugin(BasePlugin):
                     else:
                         debug_print(f"Param '{param_name}' is optional and not provided (OK)")
             
-            debug_print(f"After preprocessing, kwargs now: {kwargs}")
+            debug_print(f"After preprocessing, kwargs now: {_redact_openapi_value(kwargs)}")
             
             for param in parameters:
                 param_name = param.get("name")
@@ -808,8 +910,8 @@ class OpenApiPlugin(BasePlugin):
                 # Check for exact match first
                 if param_name in kwargs:
                     param_value = kwargs[param_name]
-                    debug_print(f"Found exact match for '{param_name}': {param_value}")
-                    logging.info(f"[OpenAPI Plugin] Found exact match for {param_name}: {param_value}")
+                    debug_print(f"Found exact match for '{param_name}': {_redact_openapi_value(param_value)}")
+                    logging.info(f"[OpenAPI Plugin] Found exact match for {param_name}: {_redact_openapi_value(param_value)}")
                 else:
                     # Try universal name transformations
                     variations = self._get_name_variations(param_name)
@@ -819,8 +921,8 @@ class OpenApiPlugin(BasePlugin):
                     for variation in variations:
                         if variation in kwargs:
                             param_value = kwargs[variation]
-                            debug_print(f"Found variation match '{variation}' -> '{param_name}': {param_value}")
-                            logging.info(f"[OpenAPI Plugin] Found variation match {variation} -> {param_name}: {param_value}")
+                            debug_print(f"Found variation match '{variation}' -> '{param_name}': {_redact_openapi_value(param_value)}")
+                            logging.info(f"[OpenAPI Plugin] Found variation match {variation} -> {param_name}: {_redact_openapi_value(param_value)}")
                             break
                     
                     if param_value is None and param_required:
@@ -835,8 +937,8 @@ class OpenApiPlugin(BasePlugin):
                         if final_path is not None and param_name is not None:
                             final_path = final_path.replace(f"{{{param_name}}}", str(param_value))
                             path_params[param_name] = param_value
-                            debug_print(f"Set path parameter '{param_name}'={param_value}")
-                            logging.info(f"[OpenAPI Plugin] Set path parameter {param_name}={param_value}")
+                            debug_print(f"Set path parameter '{param_name}'={_redact_openapi_value(param_value)}")
+                            logging.info(f"[OpenAPI Plugin] Set path parameter {param_name}={_redact_openapi_value(param_value)}")
                         else:
                             debug_print(f"SAFETY CHECK: final_path={final_path}, param_name={param_name}")
                             logging.warning(f"[OpenAPI Plugin] Safety check failed: final_path={final_path}, param_name={param_name}")
@@ -844,8 +946,8 @@ class OpenApiPlugin(BasePlugin):
                         # Add to query parameters - add safety check for param_name
                         if param_name is not None:
                             query_params[param_name] = param_value
-                            debug_print(f"Set query parameter '{param_name}'={param_value}")
-                            logging.info(f"[OpenAPI Plugin] Set query parameter {param_name}={param_value}")
+                            debug_print(f"Set query parameter '{param_name}'={_redact_openapi_value(param_value)}")
+                            logging.info(f"[OpenAPI Plugin] Set query parameter {param_name}={_redact_openapi_value(param_value)}")
                         else:
                             debug_print(f"SAFETY CHECK: param_name is None for query parameter")
                             logging.warning(f"[OpenAPI Plugin] Safety check failed: param_name is None for query parameter")
@@ -861,16 +963,16 @@ class OpenApiPlugin(BasePlugin):
                 logging.warning("[OpenAPI Plugin] final_path was None, using empty string")
             
             full_url = f"{self.base_url}{final_path}"
-            debug_print(f"Base URL + path: {full_url}")
-            debug_print(f"Query params before auth: {query_params}")
-            logging.info(f"[OpenAPI Plugin] Final URL: {full_url}")
+            debug_print(f"Base URL + path: {_redact_openapi_url(full_url)}")
+            debug_print(f"Query params before auth: {_redact_openapi_value(query_params)}")
+            logging.info(f"[OpenAPI Plugin] Final URL: {_redact_openapi_url(full_url)}")
             
             # Set up headers
             headers = {"Accept": "application/json", "User-Agent": "SimpleChat-OpenAPI-Plugin/1.0"}
-            debug_print(f"Initial headers: {headers}")
+            debug_print(f"Initial headers: {_redact_openapi_value(headers)}")
             
             # Add authentication if configured
-            debug_print(f"Auth config: {self.auth}")
+            debug_print(f"Auth config: {_redact_openapi_value(self.auth)}")
             if self.auth:
                 auth_type = self.auth.get("type", "none")
                 debug_print(f"Auth type: {auth_type}")
@@ -879,7 +981,7 @@ class OpenApiPlugin(BasePlugin):
                     key_name = self.auth.get("name", "X-API-Key")
                     key_value = self.auth.get("value", "")
                     
-                    debug_print(f"API key auth - location: {key_location}, name: {key_name}, value: {key_value[:10]}...")
+                    debug_print(f"API key auth - location: {key_location}, name: {key_name}, value: {OPENAPI_REDACTED_VALUE}")
                     
                     if key_location == "header":
                         headers[key_name] = key_value
@@ -890,7 +992,7 @@ class OpenApiPlugin(BasePlugin):
                 elif auth_type == "key":
                     # Handle simplified "key" auth type - auto-detect from OpenAPI spec
                     api_key = self.auth.get("key", "")
-                    debug_print(f"Key auth - api_key: {api_key[:10]}...")
+                    debug_print(f"Key auth - api_key: {OPENAPI_REDACTED_VALUE}")
                     
                     # Check OpenAPI spec for security schemes (OpenAPI 3.0+) or securityDefinitions (OpenAPI 2.0/Swagger)
                     security_schemes = None
@@ -911,14 +1013,14 @@ class OpenApiPlugin(BasePlugin):
                             if scheme.get("type") == "apiKey" and scheme.get("in") == "query":
                                 key_name = scheme.get("name", "api_key")
                                 query_params[key_name] = api_key
-                                debug_print(f"Added query parameter auth from '{scheme_name}': {key_name}={api_key[:10]}...")
+                                debug_print(f"Added query parameter auth from '{scheme_name}': {key_name}={OPENAPI_REDACTED_VALUE}")
                                 logging.info(f"[OpenAPI Plugin] Using query parameter auth: {key_name}")
                                 auth_applied = True
                                 break
                             elif scheme.get("type") == "apiKey" and scheme.get("in") == "header":
                                 key_name = scheme.get("name", "x-api-key")
                                 headers[key_name] = api_key
-                                debug_print(f"Added header auth from '{scheme_name}': {key_name}={api_key[:10]}...")
+                                debug_print(f"Added header auth from '{scheme_name}': {key_name}={OPENAPI_REDACTED_VALUE}")
                                 logging.info(f"[OpenAPI Plugin] Using header auth: {key_name}")
                                 auth_applied = True
                                 break
@@ -929,7 +1031,7 @@ class OpenApiPlugin(BasePlugin):
                             if api_key and not any(k in query_params for k in ["api-key", "api_key", "apikey"]) and not any(k.lower() in [h.lower() for h in headers.keys()] for k in ["x-api-key", "api-key"]):
                                 # Default to query parameter with underscore
                                 query_params["api_key"] = api_key
-                                debug_print(f"Using fallback query parameter auth: api_key={api_key[:10]}...")
+                                debug_print(f"Using fallback query parameter auth: api_key={OPENAPI_REDACTED_VALUE}")
                                 logging.info(f"[OpenAPI Plugin] Using fallback query parameter auth: api_key")
                     else:
                         debug_print(f"No security schemes found in OpenAPI spec")
@@ -937,12 +1039,12 @@ class OpenApiPlugin(BasePlugin):
                         if api_key and not any(k in query_params for k in ["api-key", "api_key", "apikey"]) and not any(k.lower() in [h.lower() for h in headers.keys()] for k in ["x-api-key", "api-key"]):
                             # Default to query parameter with underscore
                             query_params["api_key"] = api_key
-                            debug_print(f"Using fallback query parameter auth: api_key={api_key[:10]}...")
+                            debug_print(f"Using fallback query parameter auth: api_key={OPENAPI_REDACTED_VALUE}")
                             logging.info(f"[OpenAPI Plugin] Using fallback query parameter auth: api_key")
                 elif auth_type == "bearer":
                     token = self.auth.get("token", "")
                     headers["Authorization"] = f"Bearer {token}"
-                    debug_print(f"Added bearer auth: {token[:10]}...")
+                    debug_print(f"Added bearer auth: {OPENAPI_REDACTED_VALUE}")
                 elif auth_type == "basic":
                     import base64
                     username = self.auth.get("username", "")
@@ -957,45 +1059,45 @@ class OpenApiPlugin(BasePlugin):
             else:
                 debug_print(f"No authentication configured")
             
-            debug_print(f"Final query params: {query_params}")
-            debug_print(f"Final headers: {headers}")
+            debug_print(f"Final query params: {_redact_openapi_value(query_params)}")
+            debug_print(f"Final headers: {_redact_openapi_value(headers)}")
             
             # Make the HTTP request
             debug_print(f"About to make {method.upper()} request")
-            debug_print(f"URL: {full_url}")
-            debug_print(f"Headers: {headers}")
-            debug_print(f"Query params: {query_params}")
-            logging.info(f"[OpenAPI Plugin] Making {method.upper()} request to {full_url}")
-            logging.info(f"[OpenAPI Plugin] Headers: {headers}")
-            logging.info(f"[OpenAPI Plugin] Query params: {query_params}")
+            debug_print(f"URL: {_redact_openapi_url(full_url)}")
+            debug_print(f"Headers: {_redact_openapi_value(headers)}")
+            debug_print(f"Query params: {_redact_openapi_value(query_params)}")
+            logging.info(f"[OpenAPI Plugin] Making {method.upper()} request to {_redact_openapi_url(full_url)}")
+            logging.info(f"[OpenAPI Plugin] Headers: {_redact_openapi_value(headers)}")
+            logging.info(f"[OpenAPI Plugin] Query params: {_redact_openapi_value(query_params)}")
             
             if method.lower() == 'get':
                 response = requests.get(full_url, headers=headers, params=query_params, timeout=30)
                 # Log the actual URL that was requested
-                debug_print(f"Actual GET request URL: {response.url}")
+                debug_print(f"Actual GET request URL: {_redact_openapi_url(response.url)}")
                 debug_print(f"Response status: {response.status_code}")
-                logging.info(f"[OpenAPI Plugin] Actual GET request URL: {response.url}")
+                logging.info(f"[OpenAPI Plugin] Actual GET request URL: {_redact_openapi_url(response.url)}")
             elif method.lower() == 'post':
                 response = requests.post(full_url, headers=headers, params=query_params, json=kwargs, timeout=30)
-                logging.info(f"[OpenAPI Plugin] Actual POST request URL: {response.url}")
+                logging.info(f"[OpenAPI Plugin] Actual POST request URL: {_redact_openapi_url(response.url)}")
             elif method.lower() == 'put':
                 response = requests.put(full_url, headers=headers, params=query_params, json=kwargs, timeout=30)
-                logging.info(f"[OpenAPI Plugin] Actual PUT request URL: {response.url}")
+                logging.info(f"[OpenAPI Plugin] Actual PUT request URL: {_redact_openapi_url(response.url)}")
             elif method.lower() == 'delete':
                 response = requests.delete(full_url, headers=headers, params=query_params, timeout=30)
-                logging.info(f"[OpenAPI Plugin] Actual DELETE request URL: {response.url}")
+                logging.info(f"[OpenAPI Plugin] Actual DELETE request URL: {_redact_openapi_url(response.url)}")
             elif method.lower() == 'patch':
                 response = requests.patch(full_url, headers=headers, params=query_params, json=kwargs, timeout=30)
-                logging.info(f"[OpenAPI Plugin] Actual PATCH request URL: {response.url}")
+                logging.info(f"[OpenAPI Plugin] Actual PATCH request URL: {_redact_openapi_url(response.url)}")
             else:
                 # Default to GET for unknown methods
                 response = requests.get(full_url, headers=headers, params=query_params, timeout=30)
-                logging.info(f"[OpenAPI Plugin] Actual GET request URL: {response.url}")
+                logging.info(f"[OpenAPI Plugin] Actual GET request URL: {_redact_openapi_url(response.url)}")
             
             debug_print(f"Response status: {response.status_code}")
-            debug_print(f"Response headers: {dict(response.headers)}")
+            debug_print(f"Response headers: {_redact_openapi_value(dict(response.headers))}")
             logging.info(f"[OpenAPI Plugin] Response status: {response.status_code}")
-            logging.info(f"[OpenAPI Plugin] Response headers: {dict(response.headers)}")
+            logging.info(f"[OpenAPI Plugin] Response headers: {_redact_openapi_value(dict(response.headers))}")
             
             # Check if request was successful
             if response.status_code == 200:
@@ -1048,9 +1150,9 @@ class OpenApiPlugin(BasePlugin):
                     
                     logging.info(f"[OpenAPI Plugin] Successfully called {operation_id} - JSON response received")
                     if isinstance(result, dict) and len(result) < 10:
-                        logging.info(f"[OpenAPI Plugin] Response preview: {result}")
+                        logging.info(f"[OpenAPI Plugin] Response preview: {_redact_openapi_value(result)}")
                     elif isinstance(result, list) and len(result) < 5:
-                        logging.info(f"[OpenAPI Plugin] Response preview (list): {result}")
+                        logging.info(f"[OpenAPI Plugin] Response preview (list): {_redact_openapi_value(result)}")
                     else:
                         logging.info(f"[OpenAPI Plugin] Response type: {type(result)}, length: {len(result) if hasattr(result, '__len__') else 'unknown'}")
                     
@@ -1064,12 +1166,12 @@ class OpenApiPlugin(BasePlugin):
                     logging.error(f"[OpenAPI Plugin] {error_msg}")
                     
                     # Return raw text as fallback
-                    raw_text = response.text
+                    raw_text = _redact_openapi_string(response.text)
                     debug_print(f"Returning raw text: {raw_text[:200]}...")
                     return {"error": "JSON parse error", "raw_response": raw_text}
             else:
                 debug_print(f"ERROR - Status {response.status_code}")
-                error_response = response.text
+                error_response = _redact_openapi_string(response.text)
                 debug_print(f"Error response: {error_response}")
                 
                 # Create error result
@@ -1077,7 +1179,7 @@ class OpenApiPlugin(BasePlugin):
                     "error": f"HTTP {response.status_code}",
                     "status_code": response.status_code,
                     "response": error_response,
-                    "url": response.url,
+                    "url": _redact_openapi_url(response.url),
                     "method": method.upper(),
                     "operation_id": operation_id
                 }
@@ -1088,23 +1190,25 @@ class OpenApiPlugin(BasePlugin):
                 return error_result
                 
         except requests.exceptions.RequestException as req_error:
-            debug_print(f"Request exception: {req_error}")
-            logging.error(f"[OpenAPI Plugin] Request error for {operation_id}: {req_error}")
+            redacted_request_error = _redact_openapi_string(str(req_error))
+            debug_print(f"Request exception: {redacted_request_error}")
+            logging.error(f"[OpenAPI Plugin] Request error for {operation_id}: {redacted_request_error}")
             error_result = {
-                "error": f"Request failed: {str(req_error)}",
+                "error": f"Request failed: {redacted_request_error}",
                 "operation_id": operation_id,
                 "path": path,
                 "method": method.upper(),
-                "parameters": kwargs,
-                "base_url": self.base_url,
-                "url": full_url if 'full_url' in locals() else "unknown",
+                "parameters": _redact_openapi_value(kwargs),
+                "base_url": _redact_openapi_url(self.base_url),
+                "url": _redact_openapi_url(full_url) if 'full_url' in locals() else "unknown",
             }
             return error_result
         except Exception as e:
-            debug_print(f"General exception: {e}")
-            logging.error(f"[OpenAPI Plugin] Unexpected error in {operation_id}: {e}")
+            redacted_error = _redact_openapi_string(str(e))
+            debug_print(f"General exception: {redacted_error}")
+            logging.error(f"[OpenAPI Plugin] Unexpected error in {operation_id}: {redacted_error}")
             error_result = {
-                "error": f"Unexpected error: {str(e)}",
+                "error": f"Unexpected error: {redacted_error}",
                 "operation_id": operation_id,
                 "exception_type": type(e).__name__
             }
@@ -1115,48 +1219,50 @@ class OpenApiPlugin(BasePlugin):
         duration = time.time() - call_start
         
         # Extract key information from the result for better citation display
-        result_summary = str(result)
-        if isinstance(result, dict):
-            if 'error' in result:
-                result_summary = f"Error: {result['error']}"
-            elif 'response' in result:
-                response_data = result['response']
+        safe_parameters = _redact_openapi_value(parameters)
+        safe_result = _redact_openapi_value(result)
+        result_summary = str(safe_result)
+        if isinstance(safe_result, dict):
+            if 'error' in safe_result:
+                result_summary = f"Error: {safe_result['error']}"
+            elif 'response' in safe_result:
+                response_data = safe_result['response']
                 if isinstance(response_data, str) and len(response_data) > 100:
                     result_summary = f"Response ({len(response_data)} chars): {response_data[:100]}..."
                 else:
                     result_summary = f"Response: {response_data}"
-            elif 'status_code' in result:
-                result_summary = f"HTTP {result['status_code']}: {str(result)[:200]}..."
+            elif 'status_code' in safe_result:
+                result_summary = f"HTTP {safe_result['status_code']}: {str(safe_result)[:200]}..."
         
         # Format parameters for better display
         params_summary = ""
-        if parameters:
+        if safe_parameters:
             param_parts = []
-            for key, value in parameters.items():
+            for key, value in safe_parameters.items():
                 if isinstance(value, str) and len(value) > 50:
                     param_parts.append(f"{key}: {value[:50]}...")
                 else:
                     param_parts.append(f"{key}: {value}")
             params_summary = ", ".join(param_parts[:3])  # Limit to first 3 params
-            if len(parameters) > 3:
-                params_summary += f" (and {len(parameters) - 3} more)"
+            if len(safe_parameters) > 3:
+                params_summary += f" (and {len(safe_parameters) - 3} more)"
         
         call_data = {
             "name": f"OpenAPI.{operation_id}",
-            "arguments": parameters,
-            "result": result,
+            "arguments": safe_parameters,
+            "result": safe_result,
             "start_time": call_start,
             "end_time": time.time(),
-            "url": url,
+            "url": _redact_openapi_url(url),
             # Enhanced display information
             "operation_id": operation_id,
             "duration_ms": round(duration * 1000, 2),
             "result_summary": result_summary[:300],  # Truncate for display
             "params_summary": params_summary,
-            "base_url": self.base_url
+            "base_url": _redact_openapi_url(self.base_url)
         }
         self.function_calls.append(call_data)
-        logging.info(f"[OpenAPI Plugin] Tracked function call: {operation_id} ({duration:.3f}s) -> {url}")
+        logging.info(f"[OpenAPI Plugin] Tracked function call: {operation_id} ({duration:.3f}s) -> {_redact_openapi_url(url)}")
 
     @plugin_function_logger("OpenApiPlugin")
     @kernel_function(

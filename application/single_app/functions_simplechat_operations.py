@@ -59,7 +59,7 @@ from functions_group import (
 )
 from functions_notifications import create_notification
 from functions_personal_workflows import save_personal_workflow
-from functions_settings import get_settings, get_user_settings, is_user_workflows_enabled_for_user
+from functions_settings import get_settings, is_user_workflows_enabled_for_user
 from utils_cache import invalidate_group_search_cache, invalidate_personal_search_cache
 
 
@@ -1877,8 +1877,10 @@ def _resolve_group_doc_for_current_user(
     _require_group_workspaces_enabled()
     resolved_group_id = str(group_id or default_group_id or "").strip()
     if not resolved_group_id:
-        user_settings = get_user_settings(current_user_id) or {}
-        resolved_group_id = str(((user_settings.get("settings") or {}).get("activeGroupOid") or "")).strip()
+        resolved_group_id = require_active_group(
+            current_user_id,
+            allowed_roles=allowed_roles,
+        )
 
     if not resolved_group_id:
         raise ValueError(missing_group_message)

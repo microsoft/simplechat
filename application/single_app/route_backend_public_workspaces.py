@@ -4,7 +4,11 @@ from config import *
 from functions_authentication import *
 from functions_prompts import count_public_prompts_for_workspace
 from functions_public_workspaces import *
-from functions_settings import get_settings, is_public_workspace_file_download_enabled
+from functions_settings import (
+    get_settings,
+    is_public_workspace_file_download_admin_enabled,
+    is_public_workspace_file_download_enabled,
+)
 from functions_notifications import create_notification
 from swagger_wrapper import swagger_route, get_auth_security
 from functions_debug import debug_print
@@ -192,6 +196,7 @@ def register_route_backend_public_workspaces(app):
                 "userRole": role,
                 "status": ws.get("status", "active"),
                 "disable_file_downloads": bool(ws.get("disable_file_downloads", False)),
+                "file_downloads_admin_enabled": is_public_workspace_file_download_admin_enabled(app_settings, ws),
                 "file_downloads_enabled": is_public_workspace_file_download_enabled(app_settings, ws),
                 "isActive": (ws["id"] == active_id)
             })
@@ -243,7 +248,14 @@ def register_route_backend_public_workspaces(app):
 
         role = get_user_role_in_public_workspace(ws, user_id)
         if role:
-            return jsonify(build_public_workspace_member_payload(ws, user_id)), 200
+            app_settings = get_settings()
+            payload = build_public_workspace_member_payload(ws, user_id)
+            payload["file_downloads_admin_enabled"] = is_public_workspace_file_download_admin_enabled(
+                app_settings,
+                ws,
+            )
+            payload["file_downloads_enabled"] = is_public_workspace_file_download_enabled(app_settings, ws)
+            return jsonify(payload), 200
 
         return jsonify(build_public_workspace_public_summary(ws)), 200
 
@@ -263,6 +275,11 @@ def register_route_backend_public_workspaces(app):
         role = get_user_role_in_public_workspace(ws, user_id)
         if role not in ["Owner", "Admin"]:
             return jsonify({"error": "Only workspace owners and admins can update download settings"}), 403
+
+        if not is_public_workspace_file_download_admin_enabled(get_settings(), ws):
+            return jsonify({
+                "error": "File downloads have not been enabled for this public workspace by an administrator"
+            }), 403
 
         data = request.get_json(silent=True) or {}
         ws["disable_file_downloads"] = bool(data.get("disable_file_downloads", False))

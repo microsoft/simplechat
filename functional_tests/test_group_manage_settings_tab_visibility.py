@@ -1,12 +1,14 @@
 # test_group_manage_settings_tab_visibility.py
 """
 Functional test for group manage settings tab visibility.
-Version: 0.241.204
+Version: 0.242.058
 Implemented in: 0.241.204
 
 This test ensures the group manage Settings pane is unhidden for group owners
 and admins, and that group/public download settings PATCH responses match the
-frontend success contract.
+frontend success contract. Updated in 0.242.057 to ensure local file download
+disable settings are hidden unless administrators enable downloads for the
+specific group or public workspace.
 """
 
 import re
@@ -16,8 +18,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = REPO_ROOT / "application" / "single_app"
-CURRENT_VERSION = "0.241.204"
-FIX_DOC = REPO_ROOT / "docs" / "explanation" / "fixes" / "GROUP_MANAGE_SETTINGS_TAB_VISIBILITY_FIX.md"
+CURRENT_VERSION = "0.242.058"
+FIX_DOC = REPO_ROOT / "docs" / "explanation" / "fixes" / "GROUP_PUBLIC_WORKSPACE_DOWNLOAD_SETTINGS_VISIBILITY_FIX.md"
 
 
 def read_text(path: Path) -> str:
@@ -76,7 +78,7 @@ def test_group_manage_settings_pane_unhides_for_admin_roles() -> None:
 
 
 def test_download_settings_patch_responses_match_frontend_contract() -> None:
-    """Verify download settings PATCH APIs return the success flag used by JS."""
+    """Verify download settings PATCH APIs return success only when admin-enabled."""
     group_routes = read_text(APP_ROOT / "route_backend_groups.py")
     public_routes = read_text(APP_ROOT / "route_backend_public_workspaces.py")
     group_script = read_text(APP_ROOT / "static" / "js" / "group" / "manage_group.js")
@@ -93,6 +95,7 @@ def test_download_settings_patch_responses_match_frontend_contract() -> None:
         [
             '@app.route("/api/groups/<group_id>/download-settings", methods=["PATCH"])',
             'assert_group_role(user_id, group_id, allowed_roles=("Owner", "Admin"))',
+            'if not is_group_workspace_file_download_admin_enabled(get_settings(), group_doc):',
             '"success": True,',
             '"disable_file_downloads": group_doc["disable_file_downloads"],',
         ],
@@ -102,10 +105,77 @@ def test_download_settings_patch_responses_match_frontend_contract() -> None:
         public_routes,
         [
             '@app.route("/api/public_workspaces/<ws_id>/download-settings", methods=["PATCH"])',
+            'if not is_public_workspace_file_download_admin_enabled(get_settings(), ws):',
             '"success": True,',
             '"disable_file_downloads": ws["disable_file_downloads"],',
         ],
         "application/single_app/route_backend_public_workspaces.py",
+    )
+
+
+def test_download_settings_visibility_is_admin_gated() -> None:
+    """Verify local disable controls stay hidden until admin downloads apply."""
+    settings_helpers = read_text(APP_ROOT / "functions_settings.py")
+    group_routes = read_text(APP_ROOT / "route_backend_groups.py")
+    public_routes = read_text(APP_ROOT / "route_backend_public_workspaces.py")
+    group_template = read_text(APP_ROOT / "templates" / "manage_group.html")
+    public_template = read_text(APP_ROOT / "templates" / "manage_public_workspace.html")
+    group_script = read_text(APP_ROOT / "static" / "js" / "group" / "manage_group.js")
+    public_script = read_text(APP_ROOT / "static" / "js" / "public" / "manage_public_workspace.js")
+
+    for token in [
+        "def is_group_workspace_file_download_admin_enabled(settings, group_doc_or_id):",
+        "def is_public_workspace_file_download_admin_enabled(settings, workspace_doc_or_id):",
+        "if source_settings.get('require_group_assignment_for_file_downloads', False):",
+        "if source_settings.get('require_public_workspace_assignment_for_file_downloads', False):",
+    ]:
+        require_token(settings_helpers, token, "application/single_app/functions_settings.py")
+
+    require_token(
+        group_routes,
+        'response_doc["file_downloads_admin_enabled"] = is_group_workspace_file_download_admin_enabled(',
+        "application/single_app/route_backend_groups.py",
+    )
+    require_token(
+        public_routes,
+        'payload["file_downloads_admin_enabled"] = is_public_workspace_file_download_admin_enabled(',
+        "application/single_app/route_backend_public_workspaces.py",
+    )
+    require_token(
+        group_template,
+        '<div class="section-card d-none" id="group-file-download-settings-section">',
+        "application/single_app/templates/manage_group.html",
+    )
+    require_token(
+        public_template,
+        '<div class="section-card d-none" id="public-file-download-settings-section">',
+        "application/single_app/templates/manage_public_workspace.html",
+    )
+    require_ordered_tokens(
+        group_script,
+        [
+            "function setGroupDownloadSettingsVisibility(isAvailable) {",
+            "settingsSection.classList.toggle('d-none', !isAvailable);",
+            "const downloadsAdminEnabled = Boolean(group.file_downloads_admin_enabled);",
+            "setGroupDownloadSettingsVisibility(downloadsAdminEnabled);",
+            "if (!downloadsAdminEnabled) {",
+            "disableDownloadsInput.checked = false;",
+            "return;",
+        ],
+        "application/single_app/static/js/group/manage_group.js",
+    )
+    require_ordered_tokens(
+        public_script,
+        [
+            "function setPublicDownloadSettingsVisibility(isAvailable) {",
+            "settingsSection.classList.toggle('d-none', !isAvailable);",
+            "const downloadsAdminEnabled = Boolean(workspace.file_downloads_admin_enabled);",
+            "setPublicDownloadSettingsVisibility(downloadsAdminEnabled);",
+            "if (!downloadsAdminEnabled) {",
+            "disableDownloadsInput.checked = false;",
+            "return;",
+        ],
+        "application/single_app/static/js/public/manage_public_workspace.js",
     )
 
 
@@ -115,8 +185,9 @@ def test_fix_documentation_and_version_are_in_sync() -> None:
     assert FIX_DOC.exists(), f"Expected fix documentation at {FIX_DOC}"
 
     fix_doc = read_text(FIX_DOC)
-    require_token(fix_doc, "Fixed/Implemented in version: **0.241.204**", str(FIX_DOC))
+    require_token(fix_doc, "Fixed/Implemented in version: **0.242.057**", str(FIX_DOC))
     require_token(fix_doc, "application/single_app/static/js/group/manage_group.js", str(FIX_DOC))
+    require_token(fix_doc, "application/single_app/static/js/public/manage_public_workspace.js", str(FIX_DOC))
     require_token(fix_doc, "functional_tests/test_group_manage_settings_tab_visibility.py", str(FIX_DOC))
     require_token(fix_doc, "application/single_app/config.py", str(FIX_DOC))
 
@@ -125,6 +196,7 @@ if __name__ == "__main__":
     tests = [
         test_group_manage_settings_pane_unhides_for_admin_roles,
         test_download_settings_patch_responses_match_frontend_contract,
+        test_download_settings_visibility_is_admin_gated,
         test_fix_documentation_and_version_are_in_sync,
     ]
     failures = []

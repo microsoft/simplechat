@@ -11,14 +11,144 @@ import time
 import logging
 import functools
 import inspect
+import re
 import threading
 import uuid
 from typing import Any, Dict, List, Optional, Callable
 from datetime import datetime
 from dataclasses import dataclass, asdict
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from functions_appinsights import log_event, get_appinsights_logger
 from functions_authentication import get_current_user_id
 from functions_debug import debug_print
+
+
+REDACTED_INVOCATION_VALUE = "***REDACTED***"
+MAX_SAFE_INVOCATION_STRING_LENGTH = 20000
+SENSITIVE_KEY_NAMES = {
+    "apikey",
+    "api_key",
+    "authorization",
+    "bearer",
+    "clientsecret",
+    "client_secret",
+    "connectionstring",
+    "connection_string",
+    "cookie",
+    "key",
+    "password",
+    "sas",
+    "secret",
+    "setcookie",
+    "subscriptionkey",
+    "subscription_key",
+    "token",
+}
+SENSITIVE_KEY_FRAGMENTS = (
+    "accesstoken",
+    "accountkey",
+    "apikey",
+    "authorization",
+    "clientsecret",
+    "connectionstring",
+    "credential",
+    "password",
+    "privatekey",
+    "secret",
+    "sharedaccesssignature",
+    "subscriptionkey",
+)
+SECRET_ASSIGNMENT_RE = re.compile(
+    r"(?i)\b(api[-_]?key|access[-_]?token|client[-_]?secret|connection[-_]?string|password|secret|subscription[-_]?key|token)=([^&\s,;]+)"
+)
+AUTHORIZATION_VALUE_RE = re.compile(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+")
+
+
+def _normalize_sensitive_key(key: Any) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(key or "").strip().lower())
+
+
+def _is_sensitive_key(key: Any) -> bool:
+    normalized_key = _normalize_sensitive_key(key)
+    if not normalized_key:
+        return False
+    if normalized_key in SENSITIVE_KEY_NAMES:
+        return True
+    return any(fragment in normalized_key for fragment in SENSITIVE_KEY_FRAGMENTS)
+
+
+def _redact_url(value: str) -> str:
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        return value
+
+    if not parts.scheme or not parts.netloc:
+        return value
+
+    netloc = parts.netloc
+    if "@" in netloc:
+        netloc = f"{REDACTED_INVOCATION_VALUE}@{netloc.rsplit('@', 1)[1]}"
+
+    query_pairs = parse_qsl(parts.query, keep_blank_values=True)
+    if query_pairs:
+        query_pairs = [
+            (key, REDACTED_INVOCATION_VALUE if _is_sensitive_key(key) else item)
+            for key, item in query_pairs
+        ]
+
+    return urlunsplit((parts.scheme, netloc, parts.path, urlencode(query_pairs, doseq=True, safe="*"), parts.fragment))
+
+
+def _sanitize_invocation_string(value: str, max_string_length: Optional[int]) -> str:
+    sanitized = _redact_url(value)
+    sanitized = SECRET_ASSIGNMENT_RE.sub(lambda match: f"{match.group(1)}={REDACTED_INVOCATION_VALUE}", sanitized)
+    sanitized = AUTHORIZATION_VALUE_RE.sub(lambda match: f"{match.group(1)} {REDACTED_INVOCATION_VALUE}", sanitized)
+    if max_string_length and len(sanitized) > max_string_length:
+        return f"{sanitized[:max_string_length]}... [truncated]"
+    return sanitized
+
+
+def sanitize_plugin_invocation_value(
+    value: Any,
+    max_string_length: Optional[int] = MAX_SAFE_INVOCATION_STRING_LENGTH,
+    _depth: int = 0,
+) -> Any:
+    """Return a browser/model-safe copy of plugin invocation parameters or results."""
+    if _depth > 8:
+        return "[truncated: nested value too deep]"
+
+    if value is None or isinstance(value, (int, float, bool)):
+        return value
+
+    if isinstance(value, str):
+        return _sanitize_invocation_string(value, max_string_length)
+
+    if isinstance(value, dict):
+        sanitized = {}
+        for key, item in value.items():
+            key_text = str(key)
+            if _is_sensitive_key(key_text):
+                sanitized[key_text] = REDACTED_INVOCATION_VALUE
+            else:
+                sanitized[key_text] = sanitize_plugin_invocation_value(
+                    item,
+                    max_string_length=max_string_length,
+                    _depth=_depth + 1,
+                )
+        return sanitized
+
+    if isinstance(value, (list, tuple, set)):
+        return [
+            sanitize_plugin_invocation_value(
+                item,
+                max_string_length=max_string_length,
+                _depth=_depth + 1,
+            )
+            for item in value
+        ]
+
+    return _sanitize_invocation_string(str(value), max_string_length)
 
 
 @dataclass
@@ -35,6 +165,12 @@ class PluginInvocationStart:
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for logging."""
         return asdict(self)
+
+    def to_safe_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary with secret-bearing values redacted for browser/model use."""
+        payload = self.to_dict()
+        payload["parameters"] = sanitize_plugin_invocation_value(payload.get("parameters"))
+        return payload
 
 
 @dataclass
@@ -57,10 +193,18 @@ class PluginInvocation:
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for logging."""
         return asdict(self)
+
+    def to_safe_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary with secret-bearing values redacted for browser/model use."""
+        payload = self.to_dict()
+        payload["parameters"] = sanitize_plugin_invocation_value(payload.get("parameters"))
+        payload["result"] = sanitize_plugin_invocation_value(payload.get("result"))
+        payload["error_message"] = sanitize_plugin_invocation_value(payload.get("error_message"))
+        return payload
     
     def to_json(self) -> str:
-        """Convert to JSON string for logging."""
-        return json.dumps(self.to_dict(), default=str, indent=2)
+        """Convert to JSON string with secret-bearing values redacted."""
+        return json.dumps(self.to_safe_dict(), default=str, indent=2)
 
 
 def _compact_plugin_log_value(value: Any, max_length: int = 160) -> Any:
@@ -89,17 +233,42 @@ def _compact_plugin_log_value(value: Any, max_length: int = 160) -> Any:
     return str(value)
 
 
+def _summarize_plugin_parameter_value(value: Any) -> Dict[str, Any]:
+    """Return low-sensitivity shape metadata for plugin function parameters."""
+    if value is None:
+        return {"type": "None"}
+    if isinstance(value, (str, bytes, list, tuple, set, dict)):
+        return {"type": type(value).__name__, "length": len(value)}
+    return {"type": type(value).__name__}
+
+
+def _summarize_plugin_result_preview(value: Any) -> str:
+    """Return a low-sensitivity result preview without copying tool response content."""
+    if value is None:
+        return "<None>"
+    if isinstance(value, dict):
+        keys = sorted(str(key) for key in value.keys())[:10]
+        remaining = max(0, len(value) - len(keys))
+        suffix = f", remaining_keys={remaining}" if remaining else ""
+        return f"<dict> keys={keys}{suffix}"
+    if isinstance(value, (list, tuple, set)):
+        return f"<{type(value).__name__}> length={len(value)}"
+    if isinstance(value, str):
+        return f"<str> length={len(value)}"
+    return f"<{type(value).__name__}>"
+
+
 def _build_plugin_result_logging_payload(plugin_name: str, function_name: str, result: Any) -> tuple:
     """Build preview and structured summary payloads for plugin invocation logs."""
-    result_str = str(result)
-    result_preview = result_str[:200] + "..." if len(result_str) > 200 else result_str
+    safe_result = sanitize_plugin_invocation_value(result, max_string_length=500)
+    result_preview = _summarize_plugin_result_preview(safe_result)
     result_summary = None
 
-    if plugin_name != 'TabularProcessingPlugin' or result is None:
+    if plugin_name != 'TabularProcessingPlugin' or safe_result is None:
         return result_preview, result_summary
 
     try:
-        result_payload = json.loads(result) if isinstance(result, str) else result
+        result_payload = json.loads(safe_result) if isinstance(safe_result, str) else safe_result
     except Exception:
         return result_preview, result_summary
 
@@ -139,7 +308,6 @@ def _build_plugin_result_logging_payload(plugin_name: str, function_name: str, r
         'relationship_type',
         'source_cohort_size',
         'matched_target_row_count',
-        'result',
         'error',
     )
     for key_name in key_names:
@@ -147,8 +315,7 @@ def _build_plugin_result_logging_payload(plugin_name: str, function_name: str, r
             summary[key_name] = _compact_plugin_log_value(result_payload.get(key_name))
 
     if isinstance(result_payload.get('values'), list):
-        summary['values_sample'] = _compact_plugin_log_value(result_payload['values'][:5])
-        summary['values_sample_limited'] = len(result_payload['values']) > 5
+        summary['values_count'] = len(result_payload['values'])
 
     if isinstance(result_payload.get('data'), list):
         summary['data_sample_count'] = min(len(result_payload['data']), 5)
@@ -215,9 +382,12 @@ class PluginInvocationLogger:
             
             if invocation.parameters:
                 log_data["parameter_count"] = len(invocation.parameters)
-                # Sanitize parameters for logging
+                safe_parameters = sanitize_plugin_invocation_value(
+                    invocation.parameters,
+                    max_string_length=100,
+                )
                 sanitized_params = {}
-                for key, value in invocation.parameters.items():
+                for key, value in safe_parameters.items():
                     if isinstance(value, str) and len(value) > 100:
                         sanitized_params[key] = f"{value[:100]}... [truncated]"
                     else:
@@ -226,10 +396,14 @@ class PluginInvocationLogger:
             
             if invocation.success:
                 if invocation.result:
+                    safe_result = sanitize_plugin_invocation_value(
+                        invocation.result,
+                        max_string_length=500,
+                    )
                     result_preview, result_summary = _build_plugin_result_logging_payload(
                         invocation.plugin_name,
                         invocation.function_name,
-                        invocation.result,
+                        safe_result,
                     )
                     log_data["result_preview"] = result_preview
                     if result_summary:
@@ -240,7 +414,7 @@ class PluginInvocationLogger:
                          extra=log_data, 
                          level=logging.INFO)
             else:
-                log_data["error_message"] = invocation.error_message
+                log_data["error_message"] = sanitize_plugin_invocation_value(invocation.error_message)
                 log_event(f"Plugin function execution failed", 
                          extra=log_data, 
                          level=logging.ERROR)
@@ -263,13 +437,17 @@ class PluginInvocationLogger:
                 "timestamp": invocation.timestamp,
                 "parameter_count": len(invocation.parameters) if invocation.parameters else 0,
                 "result_type": type(invocation.result).__name__ if invocation.result is not None else "None",
-                "error_message": invocation.error_message
+                "error_message": sanitize_plugin_invocation_value(invocation.error_message)
             }
             
             # Add sanitized parameters (truncate large values)
             if invocation.parameters:
+                safe_parameters = sanitize_plugin_invocation_value(
+                    invocation.parameters,
+                    max_string_length=200,
+                )
                 sanitized_params = {}
-                for key, value in invocation.parameters.items():
+                for key, value in safe_parameters.items():
                     if isinstance(value, str) and len(value) > 200:
                         sanitized_params[key] = f"{value[:200]}... [truncated]"
                     elif isinstance(value, (dict, list)):
@@ -280,12 +458,16 @@ class PluginInvocationLogger:
             
             # Add sanitized result
             if invocation.result is not None:
+                safe_result = sanitize_plugin_invocation_value(
+                    invocation.result,
+                    max_string_length=500,
+                )
                 result_preview, result_summary = _build_plugin_result_logging_payload(
                     invocation.plugin_name,
                     invocation.function_name,
-                    invocation.result,
+                    safe_result,
                 )
-                if len(str(invocation.result)) > 500:
+                if len(str(safe_result)) > 500:
                     log_data["result_preview"] = f"{result_preview[:500]}... [truncated]"
                 else:
                     log_data["result_preview"] = result_preview
@@ -310,9 +492,13 @@ class PluginInvocationLogger:
                     f"executed successfully in {invocation.duration_ms:.2f}ms"
                 )
             else:
+                safe_error_message = sanitize_plugin_invocation_value(
+                    invocation.error_message,
+                    max_string_length=500,
+                )
                 self.logger.error(
                     f"[Plugin] {invocation.plugin_name}.{invocation.function_name} "
-                    f"failed after {invocation.duration_ms:.2f}ms: {invocation.error_message}"
+                    f"failed after {invocation.duration_ms:.2f}ms: {safe_error_message}"
                 )
         except Exception as e:
             self.logger.error(f"Failed to log plugin invocation to standard logging: {e}")
@@ -589,14 +775,19 @@ def plugin_function_logger(plugin_name: str):
             )
 
         def _log_parameters(function_name: str, parameters: Dict[str, Any]):
-            param_str = ", ".join([f"{k}={v}" for k, v in parameters.items()]) if parameters else "no parameters"
+            parameter_names = sorted(str(key) for key in parameters.keys()) if parameters else []
+            parameter_shapes = {
+                str(key): _summarize_plugin_parameter_value(value)
+                for key, value in parameters.items()
+            } if parameters else {}
             log_event(
                 f"[Plugin Function Logger] Function parameters",
                 extra={
                     "plugin_name": plugin_name,
                     "function_name": function_name,
-                    "parameters": parameters,
-                    "param_string": param_str
+                    "parameter_count": len(parameter_names),
+                    "parameter_names": parameter_names,
+                    "parameter_shapes": parameter_shapes
                 },
                 level=logging.DEBUG
             )
@@ -627,7 +818,7 @@ def plugin_function_logger(plugin_name: str):
                     "plugin_name": plugin_name,
                     "function_name": function_name,
                     "duration_ms": duration_ms,
-                    "error_message": str(error),
+                    "error_message": sanitize_plugin_invocation_value(str(error), max_string_length=500),
                     "full_function_name": f"{plugin_name}.{function_name}"
                 },
                 level=logging.ERROR

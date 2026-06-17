@@ -101,7 +101,7 @@ from functions_source_review import (
 )
 from functions_thoughts import ThoughtTracker
 from semantic_kernel_loader import load_user_semantic_kernel
-from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
+from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger, sanitize_plugin_invocation_value
 from semantic_kernel_plugins.plugin_invocation_thoughts import register_plugin_invocation_thought_callback
 
 
@@ -1515,22 +1515,25 @@ def _build_agent_citations_from_plugin_invocations(plugin_invocations):
     detailed_citations = []
 
     for invocation in plugin_invocations or []:
+        sanitized_parameters = sanitize_plugin_invocation_value(invocation.parameters)
+        sanitized_result = sanitize_plugin_invocation_value(invocation.result)
+        sanitized_error = sanitize_plugin_invocation_value(invocation.error_message)
         tool_name = build_agent_citation_tool_label(
             invocation.plugin_name,
             invocation.function_name,
-            invocation.parameters,
-            invocation.result,
+            sanitized_parameters,
+            sanitized_result,
         )
         detailed_citations.append({
             'tool_name': tool_name,
             'function_name': invocation.function_name,
             'plugin_name': invocation.plugin_name,
-            'function_arguments': make_json_serializable(invocation.parameters),
-            'function_result': make_json_serializable(invocation.result),
+            'function_arguments': make_json_serializable(sanitized_parameters),
+            'function_result': make_json_serializable(sanitized_result),
             'duration_ms': invocation.duration_ms,
             'timestamp': _normalize_invocation_timestamp(invocation.timestamp),
             'success': invocation.success,
-            'error_message': make_json_serializable(invocation.error_message),
+            'error_message': make_json_serializable(sanitized_error),
             'user_id': invocation.user_id,
         })
 

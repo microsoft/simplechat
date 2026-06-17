@@ -459,7 +459,7 @@ class LoggedPluginLoader:
     def get_recent_invocations(self, limit: int = 50) -> List[Dict[str, Any]]:
         """Get recent plugin invocations."""
         invocations = self.plugin_logger.get_recent_invocations(limit)
-        return [inv.to_dict() for inv in invocations]
+        return [inv.to_safe_dict() for inv in invocations]
 
     def _wrap_openapi_plugin_functions(self, plugin_instance):
         """

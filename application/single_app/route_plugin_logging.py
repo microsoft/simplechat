@@ -34,7 +34,7 @@ def get_plugin_invocations():
         
         # Convert to dictionaries for JSON response
         response_data = {
-            "invocations": [inv.to_dict() for inv in invocations],
+            "invocations": [inv.to_safe_dict() for inv in invocations],
             "total_count": len(invocations),
             "user_id": user_id
         }
@@ -136,7 +136,7 @@ def get_recent_invocations():
         recent_invocations = plugin_logger.get_recent_invocations(limit)
         
         response_data = {
-            "invocations": [inv.to_dict() for inv in recent_invocations],
+            "invocations": [inv.to_safe_dict() for inv in recent_invocations],
             "total_count": len(recent_invocations)
         }
         
@@ -186,7 +186,7 @@ def get_plugin_specific_invocations(plugin_name):
         
         response_data = {
             "plugin_name": plugin_name,
-            "invocations": [inv.to_dict() for inv in plugin_invocations],
+            "invocations": [inv.to_safe_dict() for inv in plugin_invocations],
             "total_count": len(plugin_invocations),
             "user_id": user_id
         }
@@ -280,7 +280,7 @@ def export_plugin_logs():
             "export_timestamp": plugin_logger.invocations[-1].timestamp if plugin_logger.invocations else None,
             "user_id": user_id,
             "total_invocations": len(user_invocations),
-            "invocations": [inv.to_dict() for inv in user_invocations]
+            "invocations": [inv.to_safe_dict() for inv in user_invocations]
         }
         
         log_event(

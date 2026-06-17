@@ -36,7 +36,7 @@ The following variables will be used within this document:
 
 Before deploying, ensure you have:
 
-1. **Azure Subscription** with Owner or Contributor permissions
+1. **Azure Subscription** with Owner or Contributor permissions. Managed identity deployments also require permission to create role assignments and custom role definitions at the target scopes.
 2. **Azure CLI** (version 2.50.0 or later)
   Install: https://learn.microsoft.com/cli/azure/install-azure-cli
 3. **Azure Developer CLI (azd)** (version 1.5.0 or later)
@@ -300,6 +300,8 @@ During `azd up`, the predeploy hook now builds the application image in Azure Co
 
 `imageName` defaults to `simplechat:latest`. Most deployments can accept that default without entering a custom value.
 
+When `authenticationType` is `managed_identity`, the AZD preprovision hook validates that the current Azure identity can create the role assignments and custom role definitions needed by the deployment. If the identity does not have Owner, Role Based Access Control Administrator, or an equivalent custom role at the target scopes, deployment stops before provisioning continues. You can rerun with an identity that has the required permissions, ask an Azure administrator to complete the RBAC setup, or switch the AZD environment to key-based authentication with `azd env set AUTHENTICATION_TYPE key` if that security model is acceptable.
+
 `openAIDeploymentType` controls the default Azure OpenAI model deployment type used when this deployment creates the GPT and embedding model deployments for you. In Azure Commercial, choose `Standard`, `DatazoneStandard`, or `GlobalStandard` based on your quota and regional availability. In Azure Government, choose `Standard`.
 
 If you provide custom `gptModels` or `embeddingModels` arrays, or if you reuse an existing Azure OpenAI endpoint, those explicit settings take precedence over `openAIDeploymentType`.
@@ -468,13 +470,16 @@ The deployment automatically handles the following endpoint differences:
 A: Initial deployment typically takes 15-40 minutes depending on options selected. Subsequent deployments are faster.
 
 **Q: What Azure permissions do I need?**
-A: You need Owner or Contributor role on the target subscription, plus ability to create Entra ID app registrations (or work with your Entra admin).
+A: Key-based deployments generally need Owner or Contributor on the target subscription, plus ability to create Entra ID app registrations (or work with your Entra admin). Managed identity deployments also need permission to create role assignments and custom role definitions at the target scopes, such as Owner, Role Based Access Control Administrator, or an equivalent custom role.
 
 **Q: Can I deploy to an existing resource group?**
 A: No, the deployment creates a new resource group named `<appName>-<environment>-rg`.
 
 **Q: What is the default authentication type?**
 A: You can choose between `key` (API keys stored in Key Vault) or `managed_identity` (recommended for production).
+
+**Q: Why does managed identity deployment stop before provisioning?**
+A: Managed identity deployment must create RBAC role assignments for the App Service identity and related resources. If the signed-in Azure identity cannot perform `Microsoft.Authorization/roleAssignments/write` and `Microsoft.Authorization/roleDefinitions/write` at the target scopes, the preprovision hook fails fast instead of letting deployment appear successful while runtime access is broken. Use Owner, Role Based Access Control Administrator, or an equivalent custom role, then rerun `azd up`. To continue with key-based authentication instead, run `azd env set AUTHENTICATION_TYPE key` and rerun the deployment.
 
 **Q: What capacity defaults does the deployer use?**
 A: The Bicep and AZD path defaults to Azure AI Search Standard S1 with standard Semantic Ranker and Cosmos DB provisioned autoscale throughput on each SimpleChat container. These defaults avoid the limited free semantic query quota, avoid the 25-container limit for shared-throughput databases, and make document search and ingestion more reliable after first deployment.

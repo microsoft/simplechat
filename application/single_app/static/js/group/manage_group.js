@@ -1938,6 +1938,18 @@ function setGroupDownloadStatus(messageHtml, clearAfterMs = 0) {
   }
 }
 
+function setGroupDownloadSettingsVisibility(isAvailable) {
+  const settingsSection = document.getElementById('group-file-download-settings-section');
+  if (!settingsSection) {
+    return;
+  }
+
+  settingsSection.classList.toggle('d-none', !isAvailable);
+  if (!isAvailable) {
+    setGroupDownloadStatus('');
+  }
+}
+
 async function loadGroupDownloadSettings(groupData = null) {
   const disableDownloadsInput = document.getElementById('group-disable-file-downloads');
   if (!disableDownloadsInput) {
@@ -1954,9 +1966,17 @@ async function loadGroupDownloadSettings(groupData = null) {
       group = await response.json();
     }
 
+    const downloadsAdminEnabled = Boolean(group.file_downloads_admin_enabled);
+    setGroupDownloadSettingsVisibility(downloadsAdminEnabled);
+    if (!downloadsAdminEnabled) {
+      disableDownloadsInput.checked = false;
+      return;
+    }
+
     disableDownloadsInput.checked = Boolean(group.disable_file_downloads);
   } catch (error) {
     console.error('Error loading group download settings:', error);
+    setGroupDownloadSettingsVisibility(false);
     setGroupDownloadStatus(`<span class="text-danger"><i class="bi bi-exclamation-circle-fill"></i> ${error.message}</span>`);
   }
 }
@@ -1964,6 +1984,10 @@ async function loadGroupDownloadSettings(groupData = null) {
 async function saveGroupDownloadSettings() {
   const disableDownloadsInput = document.getElementById('group-disable-file-downloads');
   if (!disableDownloadsInput) {
+    return;
+  }
+  const settingsSection = document.getElementById('group-file-download-settings-section');
+  if (settingsSection && settingsSection.classList.contains('d-none')) {
     return;
   }
 
