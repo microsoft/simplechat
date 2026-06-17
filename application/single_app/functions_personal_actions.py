@@ -23,6 +23,20 @@ from config import cosmos_personal_actions_container
 import logging
 from functions_governance import ensure_governance_access
 
+
+def get_governed_personal_actions(user_id, return_type=SecretReturnType.TRIGGER):
+    """
+    Fetch personal actions only after the current user passes governance checks.
+
+    Args:
+        user_id (str): The user's unique identifier
+
+    Returns:
+        list: List of action/plugin dictionaries
+    """
+    ensure_governance_access('governance_user_actions', user_id)
+    return get_personal_actions(user_id, return_type=return_type)
+
 def get_personal_actions(user_id, return_type=SecretReturnType.TRIGGER):
     """
     Fetch all personal actions/plugins for a user.
@@ -218,6 +232,7 @@ def delete_personal_action(user_id, action_id):
         bool: True if deleted, False if not found
     """
     try:
+        ensure_governance_access('governance_user_actions', user_id)
         # Try to find the action first to get the correct ID
         action = get_personal_action(user_id, action_id, return_type=SecretReturnType.NAME)
         if not action:

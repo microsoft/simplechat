@@ -15,6 +15,7 @@ AGENTS_PAGE_DEFAULTS = {
     'hero_primary_color': '#0f172a',
     'hero_secondary_color': '#1e293b',
     'disclaimer_markdown': '',
+    'show_instructions_in_details': True,
 }
 HEX_COLOR_PATTERN = re.compile(r'^#[0-9a-fA-F]{6}$')
 
@@ -61,6 +62,10 @@ def build_agents_page_config(settings):
             '',
             3000,
         ),
+        'show_instructions_in_details': bool(safe_settings.get(
+            'agents_page_show_instructions_in_details',
+            AGENTS_PAGE_DEFAULTS['show_instructions_in_details'],
+        )),
     }
 
 

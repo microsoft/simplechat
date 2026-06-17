@@ -24,7 +24,7 @@
     <section id="agents-page-disclaimer" class="agents-page-disclaimer rendered-markdown d-none" aria-label="Agents page guidance"></section>
     <script type="application/json" id="agents-page-disclaimer-markdown">{{ agents_page_config.disclaimer_markdown | tojson }}</script>
 
-    <section class="agents-directory" aria-label="Agent directory" data-allow-personal-create="{{ 'true' if settings.allow_user_agents else 'false' }}" data-allow-group-create="{{ 'true' if settings.allow_group_agents and settings.enable_group_workspaces else 'false' }}">
+    <section class="agents-directory" aria-label="Agent directory" data-allow-personal-create="{{ 'true' if settings.allow_user_agents else 'false' }}" data-allow-group-create="{{ 'true' if settings.allow_group_agents and settings.enable_group_workspaces else 'false' }}" data-show-instructions-in-details="{{ 'true' if agents_page_config.show_instructions_in_details else 'false' }}">
         <nav class="agents-tabs" aria-label="Agent categories">
             <button type="button" class="agents-tab active" data-agent-tab="popular">Popular</button>
             <button type="button" class="agents-tab d-none" data-agent-tab="search">Search Results</button>

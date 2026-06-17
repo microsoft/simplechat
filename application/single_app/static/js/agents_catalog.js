@@ -479,6 +479,10 @@ function hideAlert() {
     alertBox.textContent = '';
 }
 
+function shouldShowInstructionsInDetails() {
+    return directory?.dataset.showInstructionsInDetails !== 'false';
+}
+
 function renderAgentsPageDisclaimer() {
     if (!disclaimerContainer || !disclaimerMarkdownScript) {
         return;
@@ -516,6 +520,7 @@ function openAgentDetails(agent) {
     };
     openViewModal(detailAgent, 'agent', {
         onChat: () => chatWithAgent(agent),
+        showInstructions: shouldShowInstructionsInDetails(),
     });
 }
 

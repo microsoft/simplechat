@@ -63,6 +63,17 @@ AGENT_INSTRUCTION_FIELD_LIMIT = 6000
 AGENT_INSTRUCTION_OUTPUT_TOKEN_LIMIT = 1400
 
 
+def _redact_catalog_agent_instructions(catalog):
+    redacted_catalog = []
+    for agent in catalog or []:
+        if not isinstance(agent, dict):
+            continue
+        agent_copy = dict(agent)
+        agent_copy.pop('instructions', None)
+        redacted_catalog.append(agent_copy)
+    return redacted_catalog
+
+
 def _normalize_agent_instruction_draft_input(value, max_length=AGENT_INSTRUCTION_FIELD_LIMIT):
     """Normalize user-provided instruction draft context before sending it to the model."""
     normalized_value = re.sub(r'\s+', ' ', str(value or '')).strip()
@@ -1305,9 +1316,12 @@ def get_agents_catalog():
     user_id = get_current_user_id()
     include_usage = str(request.args.get('include_usage') or '').strip().lower() in ('1', 'true', 'yes')
     try:
-        catalog = build_accessible_agent_catalog(user_id, settings=get_settings())
+        settings = get_settings()
+        catalog = build_accessible_agent_catalog(user_id, settings=settings)
         if include_usage:
             catalog = apply_agent_usage_counts(catalog)
+        if not settings.get('agents_page_show_instructions_in_details', True):
+            catalog = _redact_catalog_agent_instructions(catalog)
         return jsonify({'agents': catalog}), 200
     except Exception as exc:
         log_event(
@@ -1331,9 +1345,13 @@ def get_popular_agents_catalog():
         limit = 3
     usage_window = str(request.args.get('usage_window') or request.args.get('window') or '30_days').strip().lower()
     try:
-        catalog = build_accessible_agent_catalog(user_id, settings=get_settings())
+        settings = get_settings()
+        catalog = build_accessible_agent_catalog(user_id, settings=settings)
         catalog = apply_agent_usage_counts(catalog)
-        return jsonify({'agents': get_popular_agents(catalog, limit=limit, usage_window=usage_window)}), 200
+        popular_agents = get_popular_agents(catalog, limit=limit, usage_window=usage_window)
+        if not settings.get('agents_page_show_instructions_in_details', True):
+            popular_agents = _redact_catalog_agent_instructions(popular_agents)
+        return jsonify({'agents': popular_agents}), 200
     except Exception as exc:
         log_event(
             '[AgentsCatalog] Failed to load popular agents.',

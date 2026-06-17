@@ -80,18 +80,6 @@ def register_route_frontend_group_workspaces(app):
             filter_governed_model_endpoints(user_id, settings.get("model_endpoints", []), "governance_global_endpoints")
         )
 
-        # Build allowed extensions string
-        allowed_extensions = [
-            "txt", "pdf", "doc", "docm", "docx", "xlsx", "xls", "xlsm","csv", "pptx", "html",
-            "jpg", "jpeg", "png", "bmp", "tiff", "tif", "heif", "md", "json",
-            "xml", "yaml", "yml", "log"
-        ]
-        if enable_video_file_support in [True, 'True', 'true']:
-            allowed_extensions += ["mp4", "mov", "avi", "wmv", "mkv", "webm"]
-        if enable_audio_file_support in [True, 'True', 'true']:
-            allowed_extensions += ["mp3", "wav", "ogg", "aac", "flac", "m4a"]
-        allowed_extensions_str = "Allowed: " + ", ".join(allowed_extensions)
-
         return render_template(
             'group_workspaces.html', 
             settings=public_settings, 

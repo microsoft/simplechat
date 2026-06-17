@@ -776,7 +776,7 @@ def _passes_policy(policy: Dict[str, Any], user_id: str, group_ids: Set[str]) ->
     allowed_groups = set(_normalize_str_list(policy.get("allowed_groups", [])))
 
     if not allowed_users and not allowed_groups:
-        return True
+        return False
 
     normalized_user_id = str(user_id or "").strip()
     if normalized_user_id and normalized_user_id in allowed_users:

@@ -1227,6 +1227,13 @@
                                 <textarea class="form-control" id="agents_page_disclaimer_markdown" name="agents_page_disclaimer_markdown" rows="4" maxlength="3000" placeholder="Need a new agent? Contact ai-support@example.com.">{{ settings.agents_page_disclaimer_markdown | default('') }}</textarea>
                                 <div class="form-text">Shown below the Agents page hero. Use this for contact details, request guidance, or governance reminders.</div>
                             </div>
+                            <div class="col-12">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="agents_page_show_instructions_in_details" name="agents_page_show_instructions_in_details" {% if settings.agents_page_show_instructions_in_details | default(true) %}checked{% endif %} />
+                                    <label class="form-check-label" for="agents_page_show_instructions_in_details">Show agent instructions in Agents page details</label>
+                                </div>
+                                <div class="form-text">When disabled, the Agents tab details popup hides instructions and the catalog API response omits them.</div>
+                            </div>
                         </div>
                     </div>
                 <div class="mb-3">

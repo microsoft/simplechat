@@ -5762,6 +5762,85 @@ def process_doc(document_id, user_id, temp_file_path, original_filename, enable_
 
     return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
+def process_msg(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
+    """Processes Outlook .msg files into searchable plain-text chunks."""
+    is_group = group_id is not None
+    is_public_workspace = public_workspace_id is not None
+
+    update_callback(status="Processing Outlook MSG file...")
+    total_chunks_saved = 0
+    total_embedding_tokens = 0
+    embedding_model_name = None
+    chunk_config = get_chunk_size_config(get_settings())
+    target_words_per_chunk = max(1, int(chunk_config.get('msg', {}).get('value', 400)))
+
+    if enable_enhanced_citations:
+        args = {
+            "temp_file_path": temp_file_path,
+            "user_id": user_id,
+            "document_id": document_id,
+            "blob_filename": original_filename,
+            "update_callback": update_callback
+        }
+
+        if is_public_workspace:
+            args["public_workspace_id"] = public_workspace_id
+        elif is_group:
+            args["group_id"] = group_id
+
+        upload_to_blob(**args)
+
+    try:
+        try:
+            text_content = extract_outlook_msg_text(temp_file_path)
+        except Exception as e:
+            raise Exception(f"Error extracting text from {original_filename}: {e}")
+
+        words = text_content.split()
+        if not words:
+            raise Exception(f"No text content found in {original_filename}")
+
+        final_chunks = []
+        for i in range(0, len(words), target_words_per_chunk):
+            chunk_words = words[i:i + target_words_per_chunk]
+            chunk_text = " ".join(chunk_words)
+            final_chunks.append(chunk_text)
+
+        num_chunks = len(final_chunks)
+        update_callback(number_of_pages=num_chunks)
+
+        for idx, chunk_content in enumerate(final_chunks, start=1):
+            if chunk_content.strip():
+                update_callback(
+                    current_file_chunk=idx,
+                    status=f"Saving chunk {idx}/{num_chunks}..."
+                )
+                args = {
+                    "page_text_content": chunk_content,
+                    "page_number": idx,
+                    "file_name": original_filename,
+                    "user_id": user_id,
+                    "document_id": document_id
+                }
+
+                if is_public_workspace:
+                    args["public_workspace_id"] = public_workspace_id
+                elif is_group:
+                    args["group_id"] = group_id
+
+                token_usage = save_chunks(**args)
+                total_chunks_saved += 1
+
+                if token_usage:
+                    total_embedding_tokens += token_usage.get('total_tokens', 0)
+                    if not embedding_model_name:
+                        embedding_model_name = token_usage.get('model_deployment_name')
+
+    except Exception as e:
+        raise Exception(f"Failed processing Outlook MSG file {original_filename}: {e}")
+
+    return total_chunks_saved, total_embedding_tokens, embedding_model_name
+
 def process_html(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None, auto_extract_metadata=True):
     """Processes HTML files."""
     is_group = group_id is not None
@@ -8191,6 +8270,7 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
     video_extensions = tuple('.' + ext for ext in VIDEO_EXTENSIONS)
     audio_extensions = tuple('.' + ext for ext in AUDIO_EXTENSIONS)
     visio_extensions = tuple('.' + ext for ext in VISIO_EXTENSIONS)
+    email_extensions = tuple('.' + ext for ext in EMAIL_EXTENSIONS)
 
     # --- Define update_document callback wrapper ---
     # This makes it easier to pass the update function to helpers without repeating args
@@ -8314,6 +8394,12 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
                 total_chunks_saved = result
         elif file_ext in visio_extensions:
             result = process_visio(**{k: v for k, v in processor_args_without_auto_metadata.items() if k != "file_ext"})
+            if isinstance(result, tuple) and len(result) == 3:
+                total_chunks_saved, total_embedding_tokens, embedding_model_name = result
+            else:
+                total_chunks_saved = result
+        elif file_ext in email_extensions:
+            result = process_msg(**{k: v for k, v in processor_args_without_auto_metadata.items() if k != "file_ext"})
             if isinstance(result, tuple) and len(result) == 3:
                 total_chunks_saved, total_embedding_tokens, embedding_model_name = result
             else:

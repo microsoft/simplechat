@@ -1,8 +1,8 @@
 # test_agents_catalog_details_modal.py
 """
 UI test for the Agents catalog details modal.
-Version: 0.241.231
-Implemented in: 0.241.225
+Version: 0.242.061
+Implemented in: 0.242.061
 
 This test ensures the Agents tab uses the shared workspace-style details modal,
 opens details from the row/card surface, supports Popular time-window filters,
@@ -147,6 +147,22 @@ def test_agents_catalog_details_modal_renders_markdown(playwright):
         expect(markdown_heading).to_have_text("Operating Guide")
         expect(modal.locator(".rendered-markdown strong")).to_have_text("markdown")
         expect(modal.locator(".rendered-markdown")).not_to_contain_text("# Operating Guide")
+
+        page.evaluate("""
+            () => {
+                const directory = document.querySelector('.agents-directory');
+                if (directory) {
+                    directory.dataset.showInstructionsInDetails = 'false';
+                }
+            }
+        """)
+        page.keyboard.press("Escape")
+        expect(modal).not_to_be_visible()
+        agent_row.click()
+        expect(modal).to_be_visible()
+        expect(modal).to_contain_text("Basic Information")
+        expect(modal).not_to_contain_text("Instructions")
+        expect(modal.locator(".rendered-markdown")).to_have_count(0)
 
         assert not page_errors, f"Unexpected Agents catalog page errors: {page_errors}"
     finally:

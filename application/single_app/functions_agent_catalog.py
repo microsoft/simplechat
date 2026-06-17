@@ -14,7 +14,7 @@ from functions_group import get_group_model_endpoints, get_user_groups
 from functions_group_actions import get_group_actions
 from functions_group_agents import get_group_agents
 from functions_keyvault import SecretReturnType
-from functions_personal_actions import get_personal_actions
+from functions_personal_actions import get_governed_personal_actions
 from functions_personal_agents import ensure_migration_complete, get_personal_agents
 from functions_settings import get_settings, get_user_settings, normalize_model_endpoints
 
@@ -182,7 +182,10 @@ def _build_action_label_map(
     action_labels: Dict[str, str] = {}
     _add_action_labels(action_labels, get_global_actions(return_type=SecretReturnType.NAME))
     if settings.get("allow_user_plugins", False):
-        _add_action_labels(action_labels, get_personal_actions(user_id, return_type=SecretReturnType.NAME))
+        try:
+            _add_action_labels(action_labels, get_governed_personal_actions(user_id, return_type=SecretReturnType.NAME))
+        except PermissionError:
+            pass
     if settings.get("enable_group_workspaces", False) and settings.get("allow_group_plugins", False):
         for group_doc in user_groups:
             group_id = group_doc.get("id")

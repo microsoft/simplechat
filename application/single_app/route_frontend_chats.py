@@ -46,6 +46,7 @@ CHAT_WORKSPACE_UPLOAD_EXTENSIONS = (
     DOCUMENT_EXTENSIONS
     | IMAGE_EXTENSIONS
     | TABULAR_EXTENSIONS
+    | EMAIL_EXTENSIONS
     | {'doc', 'docm', 'html', 'txt', 'md', 'json', 'xml', 'yaml', 'yml', 'log'}
 )
 
@@ -1297,6 +1298,11 @@ def register_route_frontend_chats(app):
                 # Use OLE parsing for legacy .doc files and docx2txt for .docm files
                 try:
                     extracted_content = extract_word_text(temp_file_path, f'.{file_ext_nodot}')
+                except Exception as e:
+                    return jsonify({'error': f'Error extracting text from {filename}: {e}'}), 500
+            elif file_ext_nodot == 'msg':
+                try:
+                    extracted_content = extract_outlook_msg_text(temp_file_path)
                 except Exception as e:
                     return jsonify({'error': f'Error extracting text from {filename}: {e}'}), 500
             elif file_ext_nodot == 'txt':

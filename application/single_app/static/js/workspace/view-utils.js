@@ -207,7 +207,9 @@ export function openViewModal(item, type, callbacks = {}) {
 
     if (type === "agent") {
         titleEl.textContent = "Agent Details";
-        bodyEl.innerHTML = buildAgentViewHtml(item);
+        bodyEl.innerHTML = buildAgentViewHtml(item, {
+            showInstructions: callbacks.showInstructions !== false,
+        });
         hydrateAgentViewIcons(bodyEl, item);
     } else if (type === "prompt") {
         titleEl.textContent = "Prompt Details";
@@ -450,16 +452,14 @@ ${usageHtml}${actionsHtml}${tagsHtml}
         </div>`;
 }
 
-function buildAgentViewHtml(agent) {
+function buildAgentViewHtml(agent, options = {}) {
     const displayName = escapeHtml(agent.display_name || agent.displayName || agent.name || "");
     const name = escapeHtml(agent.name || "");
     const description = escapeHtml(agent.description || "No description available.");
     const model = escapeHtml(getAgentModelLabel(agent));
     const agentType = escapeHtml(formatAgentType(agent));
-    const rawInstructions = String(agent.instructions || "No instructions defined.");
-    const renderedInstructions = (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined')
-        ? DOMPurify.sanitize(marked.parse(rawInstructions))
-        : escapeHtml(rawInstructions);
+    const showInstructions = options.showInstructions !== false;
+    const instructionsHtml = showInstructions ? buildAgentInstructionsHtml(agent) : "";
     const scopeBadge = getAgentScopeBadgeHtml(agent);
 
     return `
@@ -510,6 +510,16 @@ function buildAgentViewHtml(agent) {
             </div>
         </div>
         ${buildAgentCapabilitiesHtml(agent)}
+        ${instructionsHtml}`;
+}
+
+function buildAgentInstructionsHtml(agent) {
+    const rawInstructions = String(agent.instructions || "No instructions defined.");
+    const renderedInstructions = (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined')
+        ? DOMPurify.sanitize(marked.parse(rawInstructions))
+        : escapeHtml(rawInstructions);
+
+    return `
         <div class="card mb-3 border-0 shadow-sm">
             <div class="card-header text-white py-2" style="background: linear-gradient(135deg, #28a745 0%, #1e7e34 100%);">
                 <i class="bi bi-file-text me-2"></i><strong>Instructions</strong>

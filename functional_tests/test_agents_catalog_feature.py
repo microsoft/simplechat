@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for the Agents catalog page and agent icon/tag metadata.
-Version: 0.241.231
-Implemented in: 0.241.218
+Version: 0.242.063
+Implemented in: 0.242.061; updated in 0.242.063
 
 This test ensures the global Agents page, shared catalog APIs, safe agent
 metadata, and chat handoff contract are present and regression-resistant.
@@ -35,7 +35,7 @@ def assert_not_contains(text, unexpected, label):
 
 
 def test_agent_payload_tags_and_icon_normalization():
-    from functions_agent_payload import sanitize_agent_payload
+    sanitize_agent_payload = importlib.import_module("functions_agent_payload").sanitize_agent_payload
 
     sanitized = sanitize_agent_payload({
         "id": "agent-1",
@@ -173,6 +173,7 @@ def test_agents_page_admin_customization_settings():
         "agents_page_hero_primary_color",
         "agents_page_hero_secondary_color",
         "agents_page_disclaimer_markdown",
+        "agents_page_show_instructions_in_details",
     ]:
         assert_contains(settings_defaults, field_name, f"default {field_name}")
         assert_contains(admin_route, field_name, f"admin save {field_name}")
@@ -182,6 +183,7 @@ def test_agents_page_admin_customization_settings():
     assert_contains(admin_route, "normalize_agents_page_color_mode", "admin color mode validation")
     assert_contains(admin_template, "Agents Page Customization", "admin customization section title")
     assert_contains(admin_template, "Markdown supported", "admin disclaimer markdown helper")
+    assert_contains(admin_template, "Show agent instructions in Agents page details", "admin instruction visibility toggle")
 
 
 def test_chat_agent_metadata_and_avatar_handoff():
@@ -246,6 +248,9 @@ def test_model_icon_contract():
 
 def test_agents_catalog_resolves_model_and_action_labels():
     catalog_helper = read_repo_file("application/single_app/functions_agent_catalog.py")
+    catalog_route = read_repo_file("application/single_app/route_backend_agents.py")
+    catalog_template = read_repo_file("application/single_app/templates/agents.html")
+    catalog_script = read_repo_file("application/single_app/static/js/agents_catalog.js")
     view_utils = read_repo_file("application/single_app/static/js/workspace/view-utils.js")
 
     assert_contains(catalog_helper, "_build_model_label_map", "catalog model label map")
@@ -255,11 +260,44 @@ def test_agents_catalog_resolves_model_and_action_labels():
     assert_contains(catalog_helper, "usage_count_all_time", "all-time usage count serialization")
     assert_contains(catalog_helper, "usage_count_30_days", "last-30-days usage count serialization")
     assert_contains(catalog_helper, "usage_window", "popular usage-window ranking")
+    assert_contains(catalog_route, "_redact_catalog_agent_instructions", "catalog instruction redaction helper")
+    assert_contains(catalog_route, "agents_page_show_instructions_in_details", "catalog instruction visibility setting")
+    assert_contains(catalog_template, "data-show-instructions-in-details", "catalog instruction visibility flag")
+    assert_contains(catalog_script, "showInstructions: shouldShowInstructionsInDetails()", "catalog modal instruction visibility option")
+    assert_contains(view_utils, "callbacks.showInstructions !== false", "shared modal defaults to showing instructions")
     assert_contains(view_utils, "agent.action_labels", "details use resolved action labels")
     assert_contains(view_utils, "agent.model_label", "details use resolved model label")
     assert_contains(view_utils, "Times Used All Time", "details all-time usage label")
     assert_contains(view_utils, "Times Used Last 30 Days", "details recent usage label")
     assert_contains(view_utils, "marked.parse(rawInstructions)", "details render instructions markdown")
+
+
+def test_agents_catalog_omits_instructions_when_admin_disabled():
+    backend_route = read_repo_file("application/single_app/route_backend_agents.py")
+    catalog_script = read_repo_file("application/single_app/static/js/agents_catalog.js")
+    view_utils = read_repo_file("application/single_app/static/js/workspace/view-utils.js")
+
+    assert_contains(
+        backend_route,
+        "agent_copy.pop('instructions', None)",
+        "catalog response instruction removal",
+    )
+    assert_contains(
+        backend_route,
+        "if not settings.get('agents_page_show_instructions_in_details', True):",
+        "admin-disabled instruction redaction gate",
+    )
+    assert_contains(
+        backend_route,
+        "popular_agents = _redact_catalog_agent_instructions(popular_agents)",
+        "popular catalog instruction redaction",
+    )
+    assert_contains(
+        catalog_script,
+        "directory?.dataset.showInstructionsInDetails !== 'false'",
+        "Agents tab defaults instructions visible unless disabled",
+    )
+    assert_contains(view_utils, "const instructionsHtml = showInstructions ?", "conditional instructions section")
 
 
 def test_agent_catalog_usage_windows_rank_independently():
@@ -273,7 +311,10 @@ def test_agent_catalog_usage_windows_rank_independently():
         "functions_group_actions": {"get_group_actions": lambda *args, **kwargs: []},
         "functions_group_agents": {"get_group_agents": lambda *args, **kwargs: []},
         "functions_keyvault": {"SecretReturnType": SimpleNamespace(NAME="name")},
-        "functions_personal_actions": {"get_personal_actions": lambda *args, **kwargs: []},
+        "functions_personal_actions": {
+            "get_governed_personal_actions": lambda *args, **kwargs: [],
+            "get_personal_actions": lambda *args, **kwargs: [],
+        },
         "functions_personal_agents": {"ensure_migration_complete": lambda *args, **kwargs: None, "get_personal_agents": lambda *args, **kwargs: []},
         "functions_settings": {
             "get_settings": lambda *args, **kwargs: {},
@@ -353,6 +394,7 @@ def run_tests():
         test_agent_modal_icon_picker_and_upload_contract,
         test_model_icon_contract,
         test_agents_catalog_resolves_model_and_action_labels,
+        test_agents_catalog_omits_instructions_when_admin_disabled,
         test_agent_catalog_usage_windows_rank_independently,
     ]
     results = []

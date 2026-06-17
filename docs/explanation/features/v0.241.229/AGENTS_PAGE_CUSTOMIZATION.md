@@ -1,11 +1,12 @@
 # Agents Page Customization
 
-Documentation Version: 0.241.229
+Documentation Version: 0.242.061
 Version Implemented: 0.241.229
-Related Config Update: `application/single_app/config.py` -> `VERSION = "0.241.229"`
+Updated in: 0.242.061
+Related Config Update: `application/single_app/config.py` -> `VERSION = "0.242.061"`
 
 ## Overview
-Admins can customize the public Agents page hero from the AI and Agents admin settings tab. The feature controls the hero title, subtitle, single-color or two-tone hero background, and an optional markdown guidance message shown below the hero.
+Admins can customize the public Agents page hero from the AI and Agents admin settings tab. The feature controls the hero title, subtitle, single-color or two-tone hero background, an optional markdown guidance message shown below the hero, and whether agent instructions are visible in the Agents page details popup.
 
 ## Purpose
 The Agents page often needs organization-specific language. Admins can now explain how users should request new agents, provide contact details, or add governance notes without editing templates.
@@ -32,6 +33,7 @@ The Agents page often needs organization-specific language. Admins can now expla
 - `agents_page_hero_primary_color`: Valid `#RRGGBB` primary hero color.
 - `agents_page_hero_secondary_color`: Valid `#RRGGBB` secondary color for two-tone hero mode.
 - `agents_page_disclaimer_markdown`: Optional markdown guidance text shown below the hero.
+- `agents_page_show_instructions_in_details`: Shows agent instructions in the Agents page details popup when enabled. When disabled, the Agents catalog API omits the `instructions` field for that page.
 
 ### File Structure
 - `application/single_app/functions_settings.py`
@@ -45,12 +47,12 @@ The Agents page often needs organization-specific language. Admins can now expla
 ## Usage Instructions
 1. Open Admin Settings.
 2. Go to the AI and Agents tab.
-3. Use Agents Page Customization to set the title, subtitle, hero color mode, hero colors, and optional guidance text.
+3. Use Agents Page Customization to set the title, subtitle, hero color mode, hero colors, optional guidance text, and details popup instruction visibility.
 4. Save settings.
 5. Open `/agents` to review the customized page.
 
 ## Testing and Validation
-- Functional coverage: `functional_tests/test_agents_catalog_feature.py` validates defaults, admin controls, persistence wiring, sanitized disclaimer rendering, and the public route handoff.
+- Functional coverage: `functional_tests/test_agents_catalog_feature.py` validates defaults, admin controls, persistence wiring, sanitized disclaimer rendering, instruction visibility redaction, and the public route handoff.
 - JavaScript syntax checks cover `static/js/agents_catalog.js`.
 - Python parse checks cover the changed route/config/test files.
 

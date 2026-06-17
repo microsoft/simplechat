@@ -21,6 +21,7 @@ mimetypes.add_type('font/woff', '.woff')
 mimetypes.add_type('font/woff2', '.woff2')
 mimetypes.add_type('font/ttf', '.ttf')
 mimetypes.add_type('font/otf', '.otf')
+mimetypes.add_type('application/vnd.ms-outlook', '.msg')
 import openpyxl
 import xlrd
 import traceback
@@ -94,7 +95,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.242.060"
+VERSION = "0.242.063"
 
 SESSION_COOKIE_SAMESITE = os.getenv('SESSION_COOKIE_SAMESITE', 'Lax')
 SESSION_COOKIE_HTTPONLY = os.getenv('SESSION_COOKIE_HTTPONLY', 'true').lower() != 'false'
@@ -144,6 +145,7 @@ BASE_ALLOWED_EXTENSIONS = {'txt', 'doc', 'docm', 'html', 'md', 'json', 'xml', 'y
 DOCUMENT_EXTENSIONS = {'pdf', 'docx', 'pptx', 'ppt'}
 TABULAR_EXTENSIONS = {'csv', 'xlsx', 'xls', 'xlsm'}
 VISIO_EXTENSIONS = {'vsdx'}
+EMAIL_EXTENSIONS = {'msg'}
 
 # Updates to image, video, audio, or Visio extensions should also be made in static/js/chat/chat-enhanced-citations.js if the new file types can be natively rendered in the browser.
 IMAGE_EXTENSIONS = {'jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif', 'heif', 'heic'}
@@ -171,6 +173,7 @@ def get_allowed_extensions(enable_video=False, enable_audio=False):
     extensions.update(IMAGE_EXTENSIONS)
     extensions.update(TABULAR_EXTENSIONS)
     extensions.update(VISIO_EXTENSIONS)
+    extensions.update(EMAIL_EXTENSIONS)
 
     if enable_video:
         extensions.update(VIDEO_EXTENSIONS)

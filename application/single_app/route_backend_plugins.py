@@ -634,6 +634,11 @@ def _load_existing_plugin_for_sql_test(plugin_context, user_id):
 @user_required
 def get_user_plugins():
     user_id = get_current_user_id()
+    try:
+        ensure_governance_access('governance_user_actions', user_id)
+    except PermissionError as exc:
+        return jsonify({'error': str(exc)}), 403
+
     # Ensure migration is complete (will migrate any remaining legacy data)
     ensure_migration_complete(user_id)
     
@@ -825,6 +830,10 @@ def set_user_plugins():
 @user_required
 def delete_user_plugin(plugin_name):
     user_id = get_current_user_id()
+    try:
+        ensure_governance_access('governance_user_actions', user_id)
+    except PermissionError as exc:
+        return jsonify({'error': str(exc)}), 403
     
     # Try to delete from personal_actions container
     deleted = delete_personal_action(user_id, plugin_name)

@@ -2,12 +2,13 @@
 """
 UI test for chat file upload access control.
 
-Version: 0.241.110
-Implemented in: 0.241.110
+Version: 0.242.063
+Implemented in: 0.241.110; expanded in: 0.242.063
 
 This test ensures the chat toolbar renders the file upload controls only when
 the current user's effective chat upload setting allows new uploads and exposes
-that same setting to browser-side upload guards.
+that same setting to browser-side upload guards. It also verifies the browser
+file picker advertises Outlook MSG upload support.
 """
 
 import os
@@ -49,6 +50,10 @@ def test_chat_file_upload_toolbar_matches_effective_setting():
             if upload_enabled:
                 expect(upload_button).to_be_visible()
                 expect(upload_input).to_have_count(1)
+                accept_value = upload_input.get_attribute("accept") or ""
+                upload_title = upload_button.get_attribute("title") or ""
+                assert ".msg" in {item.strip() for item in accept_value.split(",")}
+                assert "msg" in upload_title.lower()
             else:
                 expect(upload_button).to_have_count(0)
                 expect(upload_input).to_have_count(0)

@@ -147,11 +147,14 @@ function uniquePrincipalList(values) {
     return Array.from(new Set((Array.isArray(values) ? values : []).map((value) => String(value || '').trim()).filter((value) => value)));
 }
 
-function buildAllowListSummary(users, groups) {
+function buildAllowListSummary(users, groups, allowAll = false) {
     const usersCount = Array.isArray(users) ? users.length : 0;
     const groupsCount = Array.isArray(groups) ? groups.length : 0;
+    if (allowAll) {
+        return 'All users and groups allowed';
+    }
     if (usersCount === 0 && groupsCount === 0) {
-        return 'No explicit users or groups configured';
+        return 'No users or groups allowed';
     }
     return `${usersCount} user${usersCount === 1 ? '' : 's'}, ${groupsCount} group${groupsCount === 1 ? '' : 's'}`;
 }
@@ -414,7 +417,7 @@ function updateFeatureAllowListSummary(row) {
 
     const users = splitPrincipalList(usersInput.value);
     const groups = splitPrincipalList(groupsInput.value);
-    summaryEl.textContent = buildAllowListSummary(users, groups);
+    summaryEl.textContent = buildAllowListSummary(users, groups, getGovernanceFeatureAllowAllInput(row)?.checked);
 }
 
 function updateItemAllowListSummary() {
@@ -425,7 +428,11 @@ function updateItemAllowListSummary() {
         return;
     }
 
-    summaryInput.value = buildAllowListSummary(splitPrincipalList(usersInput.value), splitPrincipalList(groupsInput.value));
+    summaryInput.value = buildAllowListSummary(
+        splitPrincipalList(usersInput.value),
+        splitPrincipalList(groupsInput.value),
+        getItemAllowAllInput()?.checked,
+    );
 }
 
 function applyFeatureAllowAllUiState(row) {
@@ -629,7 +636,19 @@ function syncGovernanceFeatureToggleVisibility() {
         if (!wrapper) {
             return;
         }
-        wrapper.classList.toggle('d-none', !isGovernanceFeatureApplicable(featureKey));
+
+        const isApplicable = isGovernanceFeatureApplicable(featureKey);
+        const isLocked = featureToggle.dataset.governanceLocked === 'true';
+        wrapper.classList.remove('d-none');
+        wrapper.classList.toggle('text-body-secondary', !isApplicable);
+        if (!isLocked) {
+            featureToggle.disabled = !isApplicable;
+        }
+        if (isApplicable) {
+            wrapper.removeAttribute('title');
+        } else {
+            wrapper.title = 'Enable the matching primary feature before governance can be enforced for this scope.';
+        }
     });
 }
 
@@ -674,7 +693,7 @@ function buildFeaturePolicyRow(policy) {
 
     const usersSummary = document.createElement('div');
     usersSummary.className = 'small text-body-secondary governance-allowlist-summary';
-    usersSummary.textContent = buildAllowListSummary(policy.allowed_users, policy.allowed_groups);
+    usersSummary.textContent = buildAllowListSummary(policy.allowed_users, policy.allowed_groups, allowAll.checked);
     usersCell.appendChild(usersSummary);
 
     const usersEditButton = document.createElement('button');
@@ -1282,7 +1301,7 @@ function ensureGovernanceItemPolicyEditorModal() {
 
                             <div class="mt-3">
                                 <label class="form-label" for="governance-item-allowlist-summary">Allowed Principals</label>
-                                <input type="text" class="form-control" id="governance-item-allowlist-summary" placeholder="No explicit users or groups configured" readonly>
+                                <input type="text" class="form-control" id="governance-item-allowlist-summary" placeholder="No users or groups allowed" readonly>
                             </div>
 
                             <div class="mt-3 pt-3 border-top d-none" id="governance-item-allowed-principals-controls">
@@ -3283,6 +3302,11 @@ function wireGovernanceHandlers() {
             window.setTimeout(() => {
                 const target = document.getElementById(targetId);
                 const wrapper = target?.closest('.form-check');
+                if (target instanceof HTMLInputElement && target.disabled && target.dataset.governanceLocked !== 'true') {
+                    wrapper?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    setGovernanceStatus('Enable the matching primary feature before configuring governance for it.', 'warning');
+                    return;
+                }
                 if (wrapper?.classList.contains('d-none')) {
                     setGovernanceStatus('Enable the matching primary feature before configuring governance for it.', 'warning');
                     return;

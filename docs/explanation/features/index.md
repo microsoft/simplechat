@@ -24,6 +24,7 @@ category: Version History
 
 ## Chat Upload Features
 
+- [Outlook MSG File Ingestion](v0.242.063/MSG_FILE_INGESTION.md)
 - [Chat Upload Personal Workspace Handoff](CHAT_UPLOAD_PERSONAL_WORKSPACE_HANDOFF.md)
 
 ## Workspace Branding Features

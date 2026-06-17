@@ -7,6 +7,8 @@ category: Version History
 ---
 
 - [CSRF State-Changing Route Guard Fix](CSRF_STATE_CHANGING_ROUTE_GUARD_FIX.md)
+- [Governance Personal Actions Enforcement Fix](GOVERNANCE_PERSONAL_ACTIONS_ENFORCEMENT_FIX.md)
+- [Governance Scope Toggle Visibility Fix](GOVERNANCE_SCOPE_TOGGLE_VISIBILITY_FIX.md)
 - [Settings Secrets Exposure Hardening Fix](SETTINGS_SECRETS_EXPOSURE_HARDENING_FIX.md)
 - [File Upload and Document Ingestion Security Audit Fix](FILE_UPLOAD_DOCUMENT_INGESTION_SECURITY_AUDIT_FIX.md)
 - [External Browser Asset CSP Allowlist Fix](EXTERNAL_BROWSER_ASSET_CSP_ALLOWLIST_FIX.md)

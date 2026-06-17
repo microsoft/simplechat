@@ -67,7 +67,10 @@ from functions_global_agents import get_global_agents
 from functions_group_agents import get_group_agent, get_group_agents
 from functions_group_actions import get_group_actions
 from functions_group import assert_group_role, get_group_model_endpoints, require_active_group
-from functions_personal_actions import get_personal_actions, ensure_migration_complete as ensure_actions_migration_complete
+from functions_personal_actions import (
+    get_governed_personal_actions,
+    ensure_migration_complete as ensure_actions_migration_complete,
+)
 from functions_personal_agents import get_personal_agents, ensure_migration_complete as ensure_agents_migration_complete
 from functions_agent_payload import can_agent_use_default_multi_endpoint_model
 from functions_workspace_identities import (
@@ -1179,6 +1182,14 @@ def initialize_semantic_kernel(user_id: str=None, redis_client=None):
     )
     debug_print(f"[SK Loader] Semantic Kernel Agent and Plugins loading completed.")
 
+def _get_governed_personal_plugin_manifests(user_id, return_type=SecretReturnType.NAME):
+    try:
+        return get_governed_personal_actions(user_id, return_type=return_type)
+    except PermissionError as exc:
+        debug_print(f"[SK Loader] Personal action governance denied plugin load for user {user_id}: {exc}")
+        return []
+
+
 def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="global", user_id=None, group_id=None, agent_other_settings=None):
     """
     Load specific plugins by name for an agent with enhanced logging.
@@ -1214,7 +1225,7 @@ def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="glob
                     debug_print(f"[SK Loader] Merged global plugins for group mode. Total manifests: {len(all_plugin_manifests)}")
         elif mode_label == "per-user":
             if user_id:
-                all_plugin_manifests = get_personal_actions(user_id, return_type=SecretReturnType.NAME)
+                all_plugin_manifests = _get_governed_personal_plugin_manifests(user_id, return_type=SecretReturnType.NAME)
                 if merge_global:
                     global_plugins = get_global_actions(return_type=SecretReturnType.NAME)
                     for g in global_plugins:
@@ -1318,7 +1329,7 @@ def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="glob
                     all_plugin_manifests = []
             elif mode_label == "per-user":
                 if user_id:
-                    all_plugin_manifests = get_personal_actions(user_id, return_type=SecretReturnType.NAME)
+                    all_plugin_manifests = _get_governed_personal_plugin_manifests(user_id, return_type=SecretReturnType.NAME)
                     if merge_global:
                         global_plugins = get_global_actions(return_type=SecretReturnType.NAME)
                         for g in global_plugins:
@@ -2627,7 +2638,7 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
         level=logging.INFO)
     # Ensure migration is complete (will migrate any remaining legacy data)
     ensure_actions_migration_complete(user_id)
-    plugin_manifests = get_personal_actions(user_id, return_type=SecretReturnType.NAME)
+    plugin_manifests = _get_governed_personal_plugin_manifests(user_id, return_type=SecretReturnType.NAME)
         
     # PATCH: Merge global plugins if enabled
     if merge_global:

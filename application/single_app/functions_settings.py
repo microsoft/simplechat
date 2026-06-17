@@ -694,6 +694,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'agents_page_hero_primary_color': '#0f172a',
         'agents_page_hero_secondary_color': '#1e293b',
         'agents_page_disclaimer_markdown': '',
+        'agents_page_show_instructions_in_details': True,
         'allow_group_plugins': False,
         'id': 'app_settings',
         # Control Center settings
@@ -952,6 +953,7 @@ def get_settings(use_cosmos=False, include_source=False):
             'doc': {'value': 400, 'unit': 'words'},
             'docm': {'value': 400, 'unit': 'words'},
             'docx': {'value': WORD_CHUNK_SIZE, 'unit': 'words'},
+            'msg': {'value': 400, 'unit': 'words'},
             'html': {'value': 1200, 'unit': 'words'},
             'md': {'value': 1200, 'unit': 'words'},
             'xml': {'value': 4000, 'unit': 'characters'},
@@ -1296,6 +1298,7 @@ def get_chunk_size_defaults():
         'doc': {'value': 400, 'unit': 'words'},
         'docm': {'value': 400, 'unit': 'words'},
         'docx': {'value': WORD_CHUNK_SIZE, 'unit': 'words'},
+        'msg': {'value': 400, 'unit': 'words'},
         'html': {'value': 1200, 'unit': 'words'},
         'md': {'value': 1200, 'unit': 'words'},
         'xml': {'value': 4000, 'unit': 'characters'},
