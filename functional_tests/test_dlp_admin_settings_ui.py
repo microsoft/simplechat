@@ -51,6 +51,7 @@ UNSUPPORTED_ADMIN_CONTROL_IDS = [
 PRESIDIO_ENDPOINT_CONTROL_IDS = [
     "dlp_presidio_endpoint_settings",
     "dlp_presidio_analyzer_endpoint",
+    "dlp_presidio_allowed_private_hosts",
     "dlp_presidio_auth_header_name",
     "dlp_presidio_auth_secret_env_var",
     "dlp_presidio_timeout_seconds",
@@ -157,6 +158,7 @@ def test_presidio_endpoint_controls_are_rendered_without_secret_value_field():
         assert f'id="{control_id}"' in source, f"Missing Presidio endpoint control: {control_id}"
 
     assert 'name="dlp_presidio_analyzer_endpoint"' in source
+    assert 'name="dlp_presidio_allowed_private_hosts"' in source
     assert 'name="dlp_presidio_auth_header_name"' in source
     assert 'name="dlp_presidio_auth_secret_env_var"' in source
     assert 'name="dlp_presidio_timeout_seconds"' in source
@@ -164,7 +166,8 @@ def test_presidio_endpoint_controls_are_rendered_without_secret_value_field():
     assert 'name="dlp_presidio_language"' in source
     assert 'name="dlp_presidio_entities"' in source
     assert 'name="dlp_presidio_auth_secret"' not in source
-    assert "production endpoints should be private, authenticated, and https" in source.lower()
+    assert "public https endpoints are allowed by default" in source.lower()
+    assert "private hosts must be listed explicitly" in source.lower()
 
 
 def test_admin_js_uses_d_none_for_dlp_toggles():

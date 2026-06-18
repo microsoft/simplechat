@@ -21,13 +21,16 @@ Configure these values in Admin Settings > Data Loss Prevention:
 
 - Default Engine: `External Presidio Analyzer endpoint`
 - Analyzer Endpoint: `https://<internal-presidio-host>/analyze`
+- Allowed Private Hosts: `<internal-presidio-host>`
 - Auth Header: `X-DLP-API-Key`
 - Secret Env Var: `PRESIDIO_DLP_API_KEY`
 - Timeout Seconds: `5`
 - Score Threshold: `0.5`
 - Entities: `CREDIT_CARD, EMAIL_ADDRESS, PHONE_NUMBER, US_SSN`
 
-SimpleChat stores only the environment variable name in its admin settings, such as `PRESIDIO_DLP_API_KEY`. The API key value itself must live in the SimpleChat App Service application settings or in a Key Vault reference used by that App Service setting. Do not paste raw API key values into SimpleChat admin settings or Cosmos-backed configuration.
+SimpleChat stores only the environment variable name in its admin settings, such as `PRESIDIO_DLP_API_KEY`. The API key value itself must live in the SimpleChat App Service application settings or in a Key Vault reference used by that App Service setting. Do not paste raw API key values into SimpleChat admin settings or Cosmos-backed configuration. Secret environment variable names are intentionally limited to blank, `PRESIDIO_DLP_API_KEY`, or names beginning with `DLP_PRESIDIO_`.
+
+Endpoint URLs must use strict URL hygiene. Do not include usernames, passwords, fragments, or credential-like query parameters such as `key`, `api_key`, `secret`, `token`, `password`, `connection`, or `sig`. Public HTTPS endpoints are accepted after these checks. Private, loopback, link-local, or internal-style hosts must also appear in `Allowed Private Hosts` as comma- or newline-separated hostnames or IP addresses. SimpleChat disables HTTP redirects when calling the analyzer and treats redirect responses as analyzer errors.
 
 ## Local Docker Smoke Test
 
@@ -42,6 +45,7 @@ Configure SimpleChat for a smoke test:
 ```text
 Default Engine: External Presidio Analyzer endpoint
 Analyzer Endpoint: http://localhost:5002/analyze
+Allowed Private Hosts: localhost
 Auth Header: X-DLP-API-Key
 Secret Env Var: PRESIDIO_DLP_API_KEY
 Score Threshold: 0.5
@@ -54,19 +58,19 @@ Test with harmless synthetic content such as `a@example.com`. In `redact` mode, 
 
 ## Separate Azure App Service
 
-Deploy the Presidio Analyzer-compatible container as a separate Linux Web App for Containers. Restrict ingress with private endpoints, virtual network integration, and access restrictions so only the SimpleChat environment can reach it. If the analyzer endpoint is reachable beyond localhost, place an API-key-validating proxy or wrapper in front of it and configure SimpleChat to send the configured auth header.
+Deploy the Presidio Analyzer-compatible container as a separate Linux Web App for Containers. Restrict ingress with private endpoints, virtual network integration, and access restrictions so only the SimpleChat environment can reach it. Add the analyzer hostname or private IP to SimpleChat's `Allowed Private Hosts` setting. If the analyzer endpoint is reachable beyond localhost, place an API-key-validating proxy or wrapper in front of it and configure SimpleChat to send the configured auth header.
 
 Use this shape when you want independent deployment and operational ownership for the analyzer while still running on App Service. Store the API key value as a SimpleChat App Service setting named by the SimpleChat admin setting, for example `PRESIDIO_DLP_API_KEY`, preferably backed by a Key Vault reference.
 
 ## App Service Sidecar
 
-For deployments using App Service sidecar support, run the analyzer as a sidecar container next to SimpleChat and configure SimpleChat to call the sidecar endpoint over the local or private container network. This keeps Presidio dependencies out of the SimpleChat image while scaling the analyzer with the SimpleChat App Service instance count.
+For deployments using App Service sidecar support, run the analyzer as a sidecar container next to SimpleChat and configure SimpleChat to call the sidecar endpoint over the local or private container network. Add the sidecar hostname, loopback host, or private IP to `Allowed Private Hosts`. This keeps Presidio dependencies out of the SimpleChat image while scaling the analyzer with the SimpleChat App Service instance count.
 
 Even with a sidecar, avoid raw text logging and keep the analyzer endpoint unreachable from the public internet. If the sidecar is fronted by a local wrapper, validate the `X-DLP-API-Key` or equivalent header there.
 
 ## Azure Container Apps
 
-For independent scaling, deploy the analyzer as an internal Azure Container Apps service. Configure SimpleChat to reach the internal ingress URL over private networking and require the API key header at the Container Apps ingress, gateway, or wrapper service.
+For independent scaling, deploy the analyzer as an internal Azure Container Apps service. Configure SimpleChat to reach the internal ingress URL over private networking, add that internal host to `Allowed Private Hosts`, and require the API key header at the Container Apps ingress, gateway, or wrapper service.
 
 This shape works well when analyzer CPU or model requirements scale differently from SimpleChat. Store the API key value in the SimpleChat App Service setting or Key Vault reference named by SimpleChat's `Secret Env Var` setting, not in the SimpleChat admin configuration.
 

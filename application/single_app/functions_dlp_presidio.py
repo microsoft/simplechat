@@ -2,8 +2,10 @@
 
 """HTTP adapter for Presidio-compatible Analyzer endpoints."""
 
+import ipaddress
 import os
-from urllib.parse import urlparse
+import re
+from urllib.parse import parse_qsl, urlparse
 
 import requests
 
@@ -12,6 +14,28 @@ DEFAULT_PRESIDIO_TIMEOUT_SECONDS = 5
 DEFAULT_PRESIDIO_LANGUAGE = "en"
 DEFAULT_PRESIDIO_SCORE_THRESHOLD = 0.5
 DEFAULT_PRESIDIO_AUTH_HEADER_NAME = "X-DLP-API-Key"
+DEFAULT_PRESIDIO_AUTH_SECRET_ENV_VAR = "PRESIDIO_DLP_API_KEY"
+PRESIDIO_AUTH_SECRET_ENV_VAR_PREFIX = "DLP_PRESIDIO_"
+PRESIDIO_CREDENTIAL_QUERY_NAMES = {
+    "key",
+    "api_key",
+    "apikey",
+    "secret",
+    "token",
+    "password",
+    "connection",
+    "sig",
+}
+PRESIDIO_PRIVATE_HOST_SUFFIXES = (
+    ".internal",
+    ".local",
+    ".localdomain",
+    ".lan",
+    ".home",
+    ".corp",
+)
+PRESIDIO_LOCAL_HOSTS = {"localhost"}
+PRESIDIO_SECRET_ENV_VAR_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]*$")
 
 
 class PresidioEndpointConfigurationError(ValueError):
@@ -22,7 +46,83 @@ class PresidioEndpointRequestError(RuntimeError):
     """Raised when the Presidio endpoint cannot return a usable analyzer result."""
 
 
-def validate_presidio_endpoint_url(endpoint_url):
+def _normalize_host_identifier(host):
+    normalized = str(host or "").strip().lower().strip(".")
+    if normalized.startswith("[") and "]" in normalized:
+        normalized = normalized[1:normalized.index("]")]
+    if "://" in normalized:
+        normalized = (urlparse(normalized).hostname or "").strip().lower().strip(".")
+    return normalized
+
+
+def normalize_presidio_allowed_private_hosts(value):
+    """Normalize the admin allowlist for private Presidio endpoint hosts."""
+    if isinstance(value, (list, tuple, set)):
+        raw_items = value
+    else:
+        raw_items = re.split(r"[\n,]+", str(value or ""))
+
+    normalized_hosts = []
+    seen_hosts = set()
+    for item in raw_items:
+        host = _normalize_host_identifier(item)
+        if not host or host in seen_hosts:
+            continue
+        normalized_hosts.append(host)
+        seen_hosts.add(host)
+    return ", ".join(normalized_hosts)
+
+
+def _get_allowed_private_hosts(allowed_private_hosts):
+    normalized_allowlist = normalize_presidio_allowed_private_hosts(allowed_private_hosts)
+    if not normalized_allowlist:
+        return set()
+    return {
+        item.strip()
+        for item in normalized_allowlist.split(",")
+        if item.strip()
+    }
+
+
+def _is_private_presidio_host(host):
+    normalized_host = _normalize_host_identifier(host)
+    if not normalized_host:
+        return True
+    if normalized_host in PRESIDIO_LOCAL_HOSTS or normalized_host.endswith(".localhost"):
+        return True
+    try:
+        ip_address = ipaddress.ip_address(normalized_host)
+        return not ip_address.is_global
+    except ValueError:
+        return normalized_host.endswith(PRESIDIO_PRIVATE_HOST_SUFFIXES)
+
+
+def _is_loopback_presidio_host(host):
+    normalized_host = _normalize_host_identifier(host)
+    if normalized_host in PRESIDIO_LOCAL_HOSTS or normalized_host.endswith(".localhost"):
+        return True
+    try:
+        return ipaddress.ip_address(normalized_host).is_loopback
+    except ValueError:
+        return False
+
+
+def normalize_presidio_secret_env_var_name(secret_env_var):
+    """Return an allowed Presidio secret env var name, or blank when invalid."""
+    normalized = str(secret_env_var or "").strip()
+    if not normalized:
+        return ""
+    if normalized == DEFAULT_PRESIDIO_AUTH_SECRET_ENV_VAR:
+        return normalized
+    if (
+        normalized.startswith(PRESIDIO_AUTH_SECRET_ENV_VAR_PREFIX)
+        and PRESIDIO_SECRET_ENV_VAR_PATTERN.fullmatch(normalized)
+    ):
+        return normalized
+    return ""
+
+
+def validate_presidio_endpoint_url(endpoint_url, allowed_private_hosts=None):
     """Validate and normalize a Presidio Analyzer endpoint URL."""
     normalized = str(endpoint_url or "").strip()
     if not normalized:
@@ -32,9 +132,23 @@ def validate_presidio_endpoint_url(endpoint_url):
     host = (parsed.hostname or "").lower()
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise PresidioEndpointConfigurationError("Presidio analyzer endpoint must be an absolute HTTP(S) URL.")
+    if parsed.username or parsed.password or "@" in parsed.netloc:
+        raise PresidioEndpointConfigurationError("Presidio analyzer endpoint URL must not include userinfo.")
+    if parsed.fragment:
+        raise PresidioEndpointConfigurationError("Presidio analyzer endpoint URL must not include a fragment.")
+    for query_name, _ in parse_qsl(parsed.query, keep_blank_values=True):
+        if query_name.strip().lower() in PRESIDIO_CREDENTIAL_QUERY_NAMES:
+            raise PresidioEndpointConfigurationError(
+                "Presidio analyzer endpoint URL must not include credential-like query parameters."
+            )
 
-    local_hosts = {"localhost", "127.0.0.1", "::1"}
-    if parsed.scheme == "http" and host not in local_hosts:
+    host_is_private = _is_private_presidio_host(host)
+    allowed_hosts = _get_allowed_private_hosts(allowed_private_hosts)
+    if host_is_private and _normalize_host_identifier(host) not in allowed_hosts:
+        raise PresidioEndpointConfigurationError(
+            "Private Presidio analyzer endpoint hosts must be listed in the private host allowlist."
+        )
+    if parsed.scheme == "http" and not _is_loopback_presidio_host(host):
         raise PresidioEndpointConfigurationError("Presidio analyzer endpoint must use HTTPS unless it is localhost.")
 
     return normalized
@@ -65,7 +179,9 @@ def _get_entities(settings):
 
 def _get_auth_headers(settings):
     header_name = str((settings or {}).get("dlp_presidio_auth_header_name") or DEFAULT_PRESIDIO_AUTH_HEADER_NAME).strip()
-    secret_env_var = str((settings or {}).get("dlp_presidio_auth_secret_env_var") or "").strip()
+    secret_env_var = normalize_presidio_secret_env_var_name(
+        (settings or {}).get("dlp_presidio_auth_secret_env_var") or ""
+    )
     if not header_name or not secret_env_var:
         return {}
 
@@ -94,7 +210,10 @@ def _normalize_result_item(item):
 def analyze_with_presidio_endpoint(text, settings):
     """Call a configured Presidio Analyzer endpoint and return recognizer results."""
     settings = settings or {}
-    endpoint_url = validate_presidio_endpoint_url(settings.get("dlp_presidio_analyzer_endpoint"))
+    endpoint_url = validate_presidio_endpoint_url(
+        settings.get("dlp_presidio_analyzer_endpoint"),
+        settings.get("dlp_presidio_allowed_private_hosts"),
+    )
     timeout_seconds = max(
         1,
         min(30, _safe_int(settings.get("dlp_presidio_timeout_seconds"), DEFAULT_PRESIDIO_TIMEOUT_SECONDS)),
@@ -117,9 +236,20 @@ def analyze_with_presidio_endpoint(text, settings):
 
     request_error_type = None
     try:
-        response = requests.post(endpoint_url, json=payload, headers=headers, timeout=timeout_seconds)
-        response.raise_for_status()
-        body = response.json()
+        response = requests.post(
+            endpoint_url,
+            json=payload,
+            headers=headers,
+            timeout=timeout_seconds,
+            allow_redirects=False,
+        )
+        status_code = getattr(response, "status_code", None)
+        if isinstance(status_code, int) and 300 <= status_code < 400:
+            request_error_type = "RedirectResponse"
+            body = None
+        else:
+            response.raise_for_status()
+            body = response.json()
     except Exception as exc:
         request_error_type = type(exc).__name__
 

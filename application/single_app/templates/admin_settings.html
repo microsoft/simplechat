@@ -7403,14 +7403,21 @@
                         <div class="border-top pt-3 mt-3 {% if settings.dlp_default_engine != 'presidio_endpoint' %}d-none{% endif %}" id="dlp_presidio_endpoint_settings">
                             <h6 class="mb-2">Presidio Analyzer Endpoint</h6>
                             <div class="alert alert-warning py-2 mb-3" role="alert">
-                                Production endpoints should be private, authenticated, and HTTPS. HTTP is allowed only for localhost smoke tests.
+                                Public HTTPS endpoints are allowed by default after URL hygiene checks. Private hosts must be listed explicitly before SimpleChat will call them.
                             </div>
                             <div class="row g-3">
                                 <div class="col-md-6">
                                     <label for="dlp_presidio_analyzer_endpoint" class="form-label">Analyzer Endpoint</label>
                                     <input type="url" class="form-control" id="dlp_presidio_analyzer_endpoint" name="dlp_presidio_analyzer_endpoint" value="{{ settings.dlp_presidio_analyzer_endpoint or '' }}" placeholder="https://presidio.internal/analyze">
-                                    <div class="form-text">Use the Presidio Analyzer REST URL that SimpleChat can reach server-side.</div>
+                                    <div class="form-text">Do not include credentials, fragments, or API keys in the URL.</div>
                                 </div>
+                                <div class="col-md-6">
+                                    <label for="dlp_presidio_allowed_private_hosts" class="form-label">Allowed Private Hosts</label>
+                                    <textarea class="form-control" id="dlp_presidio_allowed_private_hosts" name="dlp_presidio_allowed_private_hosts" rows="2" placeholder="presidio.internal, 10.1.2.3">{{ settings.dlp_presidio_allowed_private_hosts or '' }}</textarea>
+                                    <div class="form-text">Comma- or newline-separated hostnames/IPs for private, loopback, or link-local Presidio endpoints.</div>
+                                </div>
+                            </div>
+                            <div class="row g-3 mt-1">
                                 <div class="col-md-3">
                                     <label for="dlp_presidio_auth_header_name" class="form-label">Auth Header</label>
                                     <input type="text" class="form-control" id="dlp_presidio_auth_header_name" name="dlp_presidio_auth_header_name" value="{{ settings.dlp_presidio_auth_header_name or 'X-DLP-API-Key' }}">
@@ -7418,10 +7425,8 @@
                                 <div class="col-md-3">
                                     <label for="dlp_presidio_auth_secret_env_var" class="form-label">Secret Env Var</label>
                                     <input type="text" class="form-control" id="dlp_presidio_auth_secret_env_var" name="dlp_presidio_auth_secret_env_var" value="{{ settings.dlp_presidio_auth_secret_env_var or 'PRESIDIO_DLP_API_KEY' }}">
-                                    <div class="form-text">Store the secret value in App Service settings or a Key Vault reference, not in SimpleChat settings.</div>
+                                    <div class="form-text">Use PRESIDIO_DLP_API_KEY or a DLP_PRESIDIO_ env var. Store the value in App Service settings or Key Vault.</div>
                                 </div>
-                            </div>
-                            <div class="row g-3 mt-1">
                                 <div class="col-md-3">
                                     <label for="dlp_presidio_timeout_seconds" class="form-label">Timeout Seconds</label>
                                     <input type="number" min="1" max="30" class="form-control" id="dlp_presidio_timeout_seconds" name="dlp_presidio_timeout_seconds" value="{{ settings.dlp_presidio_timeout_seconds or 5 }}">

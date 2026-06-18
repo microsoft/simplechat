@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Presidio endpoint engine integration.
-Version: 0.242.071
+Version: 0.242.072
 Implemented in: 0.242.071
 
 This test ensures the external Presidio endpoint engine reuses SimpleChat's
@@ -26,6 +26,7 @@ def presidio_settings(mode="redact", fail_closed=True):
         "enable_dlp_control_plane": True,
         "dlp_default_engine": "presidio_endpoint",
         "dlp_presidio_analyzer_endpoint": "https://presidio.internal/analyze",
+        "dlp_presidio_allowed_private_hosts": "presidio.internal",
         "dlp_presidio_timeout_seconds": 3,
         "dlp_presidio_score_threshold": 0.7,
         "dlp_presidio_entities": ["EMAIL_ADDRESS"],

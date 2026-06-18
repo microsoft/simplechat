@@ -6,6 +6,15 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 ### **(v0.242.074)**
 
+#### Bug Fixes
+
+*   **Presidio Endpoint Configuration Hardening**
+    *   Rejects Presidio Analyzer endpoint URLs with userinfo, fragments, credential-like query parameters, or private/link-local/loopback hosts that are not explicitly allowlisted.
+    *   Adds an admin-configurable `Allowed Private Hosts` allowlist for private Presidio deployments and preserves only validated endpoint settings.
+    *   Disables redirects for Presidio analyzer calls and treats redirect responses as scanner errors under the existing fail-open/fail-closed policy.
+    *   Restricts Presidio auth secret environment variable names to blank, `PRESIDIO_DLP_API_KEY`, or the `DLP_PRESIDIO_` namespace.
+    *   (Ref: Presidio endpoint URL validation, Admin Settings DLP controls, Presidio deployment how-to)
+
 #### New Features
 
 *   **External Presidio DLP Endpoint**

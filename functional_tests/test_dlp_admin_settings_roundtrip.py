@@ -207,6 +207,7 @@ def test_presidio_endpoint_settings_are_normalized_without_secret_persistence():
 
     assert "'dlp_default_engine': dlp_default_engine" in route_source
     assert "'dlp_presidio_analyzer_endpoint': dlp_presidio_analyzer_endpoint" in route_source
+    assert "'dlp_presidio_allowed_private_hosts': dlp_presidio_allowed_private_hosts" in route_source
     assert "'dlp_presidio_auth_header_name': dlp_presidio_auth_header_name" in route_source
     assert "'dlp_presidio_auth_secret_env_var': dlp_presidio_auth_secret_env_var" in route_source
     assert "'dlp_presidio_timeout_seconds': dlp_presidio_timeout_seconds" in route_source
@@ -217,6 +218,10 @@ def test_presidio_endpoint_settings_are_normalized_without_secret_persistence():
     assert "item.strip().upper()" in route_source
     assert "if not dlp_presidio_entities:" in route_source
     assert "dlp_presidio_entities = ['CREDIT_CARD', 'EMAIL_ADDRESS', 'PHONE_NUMBER', 'US_SSN']" in route_source
+    assert "validate_presidio_endpoint_url(" in route_source
+    assert "normalize_presidio_allowed_private_hosts(" in route_source
+    assert "normalize_presidio_secret_env_var_name(" in route_source
+    assert "settings.get('dlp_presidio_analyzer_endpoint', '')" in route_source
     assert "'dlp_presidio_auth_secret'" not in route_source
     assert "form_data.get('dlp_presidio_auth_secret'" not in route_source
 
@@ -228,6 +233,7 @@ def test_default_settings_include_presidio_endpoint_controls():
 
     assert "'dlp_default_engine': 'regex'" in settings_source
     assert "'dlp_presidio_analyzer_endpoint': ''" in settings_source
+    assert "'dlp_presidio_allowed_private_hosts': ''" in settings_source
     assert "'dlp_presidio_auth_header_name': 'X-DLP-API-Key'" in settings_source
     assert "'dlp_presidio_auth_secret_env_var': 'PRESIDIO_DLP_API_KEY'" in settings_source
     assert "'dlp_presidio_timeout_seconds': 5" in settings_source

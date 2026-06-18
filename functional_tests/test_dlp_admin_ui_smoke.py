@@ -26,6 +26,7 @@ REQUIRED_CONTROLS = [
     "dlp_default_engine",
     "dlp_presidio_endpoint_settings",
     "dlp_presidio_analyzer_endpoint",
+    "dlp_presidio_allowed_private_hosts",
     "dlp_presidio_auth_header_name",
     "dlp_presidio_auth_secret_env_var",
     "dlp_presidio_timeout_seconds",

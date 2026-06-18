@@ -1073,6 +1073,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'dlp_telemetry_sample_allow_events': False,
         'dlp_review_destination': 'none',
         'dlp_presidio_analyzer_endpoint': '',
+        'dlp_presidio_allowed_private_hosts': '',
         'dlp_presidio_auth_header_name': 'X-DLP-API-Key',
         'dlp_presidio_auth_secret_env_var': 'PRESIDIO_DLP_API_KEY',
         'dlp_presidio_timeout_seconds': 5,

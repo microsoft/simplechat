@@ -26,6 +26,13 @@ from functions_notifications import broadcast_system_notification
 from functions_logging import *
 from functions_document_actions import normalize_document_action_capabilities
 from functions_dlp_rules import get_default_dlp_regex_rules, validate_dlp_regex_rules
+from functions_dlp_presidio import (
+    PresidioEndpointConfigurationError,
+    DEFAULT_PRESIDIO_AUTH_SECRET_ENV_VAR,
+    normalize_presidio_allowed_private_hosts,
+    normalize_presidio_secret_env_var_name,
+    validate_presidio_endpoint_url,
+)
 from swagger_wrapper import swagger_route, get_auth_security
 from datetime import datetime, timedelta, timezone
 from admin_settings_int_utils import safe_int_with_source
@@ -786,18 +793,57 @@ def register_route_frontend_admin_settings(app):
             dlp_default_engine = form_data.get('dlp_default_engine', settings.get('dlp_default_engine', 'regex'))
             if dlp_default_engine not in ('regex', 'presidio_endpoint'):
                 dlp_default_engine = 'regex'
-            dlp_presidio_analyzer_endpoint = form_data.get(
+            dlp_presidio_allowed_private_hosts = normalize_presidio_allowed_private_hosts(
+                form_data.get(
+                    'dlp_presidio_allowed_private_hosts',
+                    settings.get('dlp_presidio_allowed_private_hosts', '')
+                )
+            )
+            submitted_dlp_presidio_analyzer_endpoint = form_data.get(
                 'dlp_presidio_analyzer_endpoint',
                 settings.get('dlp_presidio_analyzer_endpoint', '')
             ).strip()
+            dlp_presidio_analyzer_endpoint = submitted_dlp_presidio_analyzer_endpoint
+            if dlp_presidio_analyzer_endpoint:
+                try:
+                    validate_presidio_endpoint_url(
+                        dlp_presidio_analyzer_endpoint,
+                        dlp_presidio_allowed_private_hosts,
+                    )
+                except PresidioEndpointConfigurationError as exc:
+                    existing_dlp_presidio_analyzer_endpoint = str(
+                        settings.get('dlp_presidio_analyzer_endpoint', '')
+                    ).strip()
+                    dlp_presidio_analyzer_endpoint = ''
+                    if existing_dlp_presidio_analyzer_endpoint:
+                        try:
+                            validate_presidio_endpoint_url(
+                                existing_dlp_presidio_analyzer_endpoint,
+                                dlp_presidio_allowed_private_hosts,
+                            )
+                            dlp_presidio_analyzer_endpoint = existing_dlp_presidio_analyzer_endpoint
+                        except PresidioEndpointConfigurationError:
+                            dlp_presidio_analyzer_endpoint = ''
+                    flash(f"Presidio analyzer endpoint was not saved: {exc}", "warning")
             dlp_presidio_auth_header_name = form_data.get(
                 'dlp_presidio_auth_header_name',
                 settings.get('dlp_presidio_auth_header_name', 'X-DLP-API-Key')
             ).strip() or 'X-DLP-API-Key'
-            dlp_presidio_auth_secret_env_var = form_data.get(
+            submitted_dlp_presidio_auth_secret_env_var = form_data.get(
                 'dlp_presidio_auth_secret_env_var',
-                settings.get('dlp_presidio_auth_secret_env_var', 'PRESIDIO_DLP_API_KEY')
-            ).strip() or 'PRESIDIO_DLP_API_KEY'
+                settings.get('dlp_presidio_auth_secret_env_var', DEFAULT_PRESIDIO_AUTH_SECRET_ENV_VAR)
+            ).strip()
+            dlp_presidio_auth_secret_env_var = normalize_presidio_secret_env_var_name(
+                submitted_dlp_presidio_auth_secret_env_var
+            )
+            if submitted_dlp_presidio_auth_secret_env_var and not dlp_presidio_auth_secret_env_var:
+                dlp_presidio_auth_secret_env_var = normalize_presidio_secret_env_var_name(
+                    settings.get('dlp_presidio_auth_secret_env_var', DEFAULT_PRESIDIO_AUTH_SECRET_ENV_VAR)
+                )
+                flash(
+                    "Presidio auth secret env var was not saved. Use PRESIDIO_DLP_API_KEY or a DLP_PRESIDIO_ name.",
+                    "warning"
+                )
             dlp_presidio_timeout_seconds, _ = safe_int_with_source(
                 form_data.get('dlp_presidio_timeout_seconds'),
                 settings.get('dlp_presidio_timeout_seconds', 5),
@@ -2083,6 +2129,7 @@ def register_route_frontend_admin_settings(app):
                 'dlp_telemetry_sample_allow_events': form_data.get('dlp_telemetry_sample_allow_events') == 'on',
                 'dlp_review_destination': dlp_review_destination,
                 'dlp_presidio_analyzer_endpoint': dlp_presidio_analyzer_endpoint,
+                'dlp_presidio_allowed_private_hosts': dlp_presidio_allowed_private_hosts,
                 'dlp_presidio_auth_header_name': dlp_presidio_auth_header_name,
                 'dlp_presidio_auth_secret_env_var': dlp_presidio_auth_secret_env_var,
                 'dlp_presidio_timeout_seconds': dlp_presidio_timeout_seconds,
