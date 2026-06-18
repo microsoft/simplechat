@@ -6,7 +6,7 @@ menubar: docs_menu
 accent: teal
 eyebrow: "Admin How-To"
 description: "Assign managed identity or service principal access for Azure OpenAI, Foundry (classic), and New Foundry model endpoints in the multi-endpoint modal."
-version: "0.242.069"
+version: "0.242.070"
 keywords:
   - model endpoints
   - multi endpoint
@@ -35,7 +35,7 @@ hero_links:
 
 Use this guide when admins need to configure the shared **Model Endpoint** modal for Azure OpenAI, Foundry (classic), or New Foundry without depending on legacy single-endpoint settings.
 
-Documented for version **0.242.069**.
+Documented for version **0.242.070**.
 
 The multi-endpoint UI also includes a **Setup Guide** button beside endpoint actions and inside the Model Endpoint modal. Use that in-product guidance for quick RBAC reminders, and use this page when you need the full setup sequence.
 

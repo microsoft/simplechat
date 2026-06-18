@@ -2,7 +2,7 @@
 # test_tabular_large_result_pagination.py
 """
 Functional test for tabular SK large-result pagination and output trimming.
-Version: 0.242.069
+Version: 0.242.070
 Implemented in: 0.242.067
 
 This test ensures row-returning tabular processing tools support start_row/max_rows

@@ -2026,6 +2026,14 @@ def _build_agent_selection_metadata(agent_info, assigned_knowledge_filters=None)
     return metadata
 
 
+def _normalize_model_icon_payload(icon_payload):
+    """Return a safe model icon payload for chat message metadata."""
+    try:
+        return normalize_icon_payload(icon_payload, field_name='model_icon') if icon_payload else None
+    except ValueError:
+        return None
+
+
 def _set_authorized_chat_request_context(user_id, conversation_id, scope_context):
     """Persist the canonical request authorization context for downstream plugin checks."""
     authorized_context = {
@@ -10774,6 +10782,7 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
     endpoint = str(connection.get('endpoint') or '').strip()
     api_version = str(connection.get('openai_api_version') or connection.get('api_version') or '').strip()
     runtime_protocol = infer_model_endpoint_protocol(provider, endpoint, deployment)
+    model_icon = _normalize_model_icon_payload(model_cfg.get('icon'))
 
     if requested_provider and requested_provider != provider:
         debug_print(
@@ -10814,6 +10823,7 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         api_version,
         requested_endpoint_id,
         str(model_cfg.get('id') or '').strip(),
+        model_icon,
     )
 
 
@@ -12725,6 +12735,7 @@ def register_route_backend_chats(app):
             gpt_api_version = None
             gpt_endpoint_id = None
             gpt_model_id = None
+            gpt_model_icon = None
             tabular_model_context = None
             enable_gpt_apim = settings.get('enable_gpt_apim', False)
             enable_image_gen_apim = settings.get('enable_image_gen_apim', False)
@@ -12756,6 +12767,7 @@ def register_route_backend_chats(app):
                         gpt_api_version,
                         gpt_endpoint_id,
                         gpt_model_id,
+                        gpt_model_icon,
                     ) = multi_endpoint_config
                 elif enable_gpt_apim:
                     # read raw comma-delimited deployments
@@ -13159,6 +13171,10 @@ def register_route_backend_chats(app):
                 user_metadata['model_selection'] = {
                     'selected_model': gpt_model,
                     'frontend_requested_model': frontend_gpt_model,
+                    'model_endpoint_id': gpt_endpoint_id or data.get('model_endpoint_id'),
+                    'model_id': gpt_model_id or data.get('model_id'),
+                    'model_provider': gpt_provider or data.get('model_provider'),
+                    'model_icon': gpt_model_icon,
                     'reasoning_effort': reasoning_effort if reasoning_effort and reasoning_effort != 'none' else None,
                     'streaming': 'Disabled'
                 }
@@ -15636,6 +15652,7 @@ def register_route_backend_chats(app):
                 'hybridsearch_query': search_query if search_results else None, # Log query when any bounded document retrieval produced results
                 'agent_citations': prepared_agent_citations,
                 'model_deployment_name': actual_model_used,
+                'model_icon': gpt_model_icon,
                 'agent_display_name': agent_display_name,
                 'agent_name': agent_name,
                 'agent_icon': agent_icon,
@@ -15643,6 +15660,15 @@ def register_route_backend_chats(app):
                 'metadata': {
                     'user_info': user_info_for_assistant,  # Track which user created this assistant message
                     'reasoning_effort': reasoning_effort,
+                    'model_selection': {
+                        'selected_model': actual_model_used,
+                        'frontend_requested_model': frontend_gpt_model,
+                        'model_endpoint_id': gpt_endpoint_id,
+                        'model_id': gpt_model_id,
+                        'model_provider': gpt_provider,
+                        'model_icon': gpt_model_icon,
+                        'streaming': 'Disabled',
+                    },
                     'history_context': history_debug_info,
                     'capability_usage': assistant_capability_usage,
                     'agent_runtime': agent_runtime_metadata or None,
@@ -15785,6 +15811,7 @@ def register_route_backend_chats(app):
                 'scope_locked': conversation_item.get('scope_locked'),
                 'locked_contexts': conversation_item.get('locked_contexts', []),
                 'model_deployment_name': actual_model_used,
+                'model_icon': gpt_model_icon,
                 'agent_display_name': agent_display_name,
                 'agent_name': agent_name,
                 'agent_icon': agent_icon,
@@ -16349,6 +16376,7 @@ def register_route_backend_chats(app):
                 gpt_api_version = None
                 gpt_endpoint_id = None
                 gpt_model_id = None
+                gpt_model_icon = None
                 tabular_model_context = None
                 enable_gpt_apim = settings.get('enable_gpt_apim', False)
                 should_use_default_model = (
@@ -16381,6 +16409,7 @@ def register_route_backend_chats(app):
                             gpt_api_version,
                             gpt_endpoint_id,
                             gpt_model_id,
+                            gpt_model_icon,
                         ) = streaming_multi_endpoint_config
                     elif enable_gpt_apim:
                         raw = settings.get('azure_apim_gpt_deployment', '')
@@ -16673,6 +16702,10 @@ def register_route_backend_chats(app):
                 user_metadata['model_selection'] = {
                     'selected_model': gpt_model,
                     'frontend_requested_model': frontend_gpt_model,
+                    'model_endpoint_id': gpt_endpoint_id or data.get('model_endpoint_id'),
+                    'model_id': gpt_model_id or data.get('model_id'),
+                    'model_provider': gpt_provider or data.get('model_provider'),
+                    'model_icon': gpt_model_icon,
                     'reasoning_effort': reasoning_effort if reasoning_effort and reasoning_effort != 'none' else None,
                     'streaming': 'Enabled'
                 }
@@ -18088,6 +18121,7 @@ def register_route_backend_chats(app):
                             'hybridsearch_query': search_query if hybrid_search_enabled and search_results else None,
                             'agent_citations': prepared_agent_citations,
                             'model_deployment_name': final_model_used if use_agent_streaming else gpt_model,
+                            'model_icon': gpt_model_icon,
                             'agent_display_name': agent_display_name_used if use_agent_streaming else None,
                             'agent_name': agent_name_used if use_agent_streaming else None,
                             'agent_icon': agent_icon_used if use_agent_streaming else None,
@@ -18095,6 +18129,15 @@ def register_route_backend_chats(app):
                             'metadata': {
                                 **cancel_metadata,
                                 'reasoning_effort': reasoning_effort,
+                                'model_selection': {
+                                    'selected_model': final_model_used if use_agent_streaming else gpt_model,
+                                    'frontend_requested_model': frontend_gpt_model,
+                                    'model_endpoint_id': gpt_endpoint_id,
+                                    'model_id': gpt_model_id,
+                                    'model_provider': gpt_provider,
+                                    'model_icon': gpt_model_icon,
+                                    'streaming': 'Enabled',
+                                },
                                 'history_context': history_debug_info,
                                 'capability_usage': build_streaming_capability_usage(),
                                 'source_review': compact_source_review_result_for_metadata(source_review_result),
@@ -18138,6 +18181,7 @@ def register_route_backend_chats(app):
                             'web_search_citations': web_search_citations_list,
                             'agent_citations': agent_citations_list,
                             'model_deployment_name': final_model_used if use_agent_streaming else gpt_model,
+                            'model_icon': gpt_model_icon,
                             'agent_display_name': agent_display_name_used if use_agent_streaming else None,
                             'agent_name': agent_name_used if use_agent_streaming else None,
                             'agent_icon': agent_icon_used if use_agent_streaming else None,
@@ -18600,12 +18644,22 @@ def register_route_backend_chats(app):
                         'hybridsearch_query': search_query if search_results else None,
                         'agent_citations': prepared_agent_citations,
                         'model_deployment_name': final_model_used if use_agent_streaming else gpt_model,
+                        'model_icon': gpt_model_icon,
                         'agent_display_name': agent_display_name_used if use_agent_streaming else None,
                         'agent_name': agent_name_used if use_agent_streaming else None,
                         'agent_icon': agent_icon_used if use_agent_streaming else None,
                         'agent_tags': agent_tags_used if use_agent_streaming else [],
                         'metadata': {
                             'reasoning_effort': reasoning_effort,
+                            'model_selection': {
+                                'selected_model': final_model_used if use_agent_streaming else gpt_model,
+                                'frontend_requested_model': frontend_gpt_model,
+                                'model_endpoint_id': gpt_endpoint_id,
+                                'model_id': gpt_model_id,
+                                'model_provider': gpt_provider,
+                                'model_icon': gpt_model_icon,
+                                'streaming': 'Enabled',
+                            },
                             'history_context': history_debug_info,
                             'capability_usage': build_streaming_capability_usage(),
                             'agent_runtime': agent_runtime_metadata or None,
@@ -18691,6 +18745,7 @@ def register_route_backend_chats(app):
                         )
                         if 'metadata' in user_message_doc and 'model_selection' in user_message_doc['metadata']:
                             user_message_doc['metadata']['model_selection']['selected_model'] = final_model_used if use_agent_streaming else gpt_model
+                            user_message_doc['metadata']['model_selection']['model_icon'] = gpt_model_icon
                         if selected_agent_metadata:
                             user_message_doc.setdefault('metadata', {})['agent_selection'] = selected_agent_metadata
                         cosmos_messages_container.upsert_item(user_message_doc)
@@ -18756,6 +18811,7 @@ def register_route_backend_chats(app):
                         'scope_locked': conversation_item.get('scope_locked'),
                         'locked_contexts': conversation_item.get('locked_contexts', []),
                         'model_deployment_name': final_model_used if use_agent_streaming else gpt_model,
+                        'model_icon': gpt_model_icon,
                         'message_id': assistant_message_id,
                         'user_message_id': user_message_id,
                         'augmented': bool(system_messages_for_augmentation),
