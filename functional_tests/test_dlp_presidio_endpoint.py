@@ -95,6 +95,9 @@ def test_validate_presidio_endpoint_rejects_url_secret_persistence_vectors():
         "https://presidio.example.com/analyze?password=abc",
         "https://presidio.example.com/analyze?connection=abc",
         "https://presidio.example.com/analyze?sig=abc",
+        "https://presidio.example.com/analyze?client_secret=abc",
+        "https://presidio.example.com/analyze?access_token=abc",
+        "https://presidio.example.com/analyze?subscription-key=abc",
     ]
 
     for blocked_url in blocked_urls:

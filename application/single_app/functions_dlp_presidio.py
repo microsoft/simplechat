@@ -26,6 +26,14 @@ PRESIDIO_CREDENTIAL_QUERY_NAMES = {
     "connection",
     "sig",
 }
+PRESIDIO_CREDENTIAL_QUERY_WORDS = {
+    "key",
+    "secret",
+    "token",
+    "password",
+    "connection",
+    "sig",
+}
 PRESIDIO_PRIVATE_HOST_SUFFIXES = (
     ".internal",
     ".local",
@@ -122,6 +130,23 @@ def normalize_presidio_secret_env_var_name(secret_env_var):
     return ""
 
 
+def _is_credential_like_query_name(query_name):
+    normalized = str(query_name or "").strip().lower()
+    if not normalized:
+        return False
+    compact_name = re.sub(r"[^a-z0-9]+", "", normalized)
+    query_tokens = {
+        token
+        for token in re.split(r"[^a-z0-9]+", normalized)
+        if token
+    }
+    if normalized in PRESIDIO_CREDENTIAL_QUERY_NAMES or compact_name in PRESIDIO_CREDENTIAL_QUERY_NAMES:
+        return True
+    if query_tokens & PRESIDIO_CREDENTIAL_QUERY_WORDS:
+        return True
+    return any(credential_word in compact_name for credential_word in PRESIDIO_CREDENTIAL_QUERY_WORDS)
+
+
 def validate_presidio_endpoint_url(endpoint_url, allowed_private_hosts=None):
     """Validate and normalize a Presidio Analyzer endpoint URL."""
     normalized = str(endpoint_url or "").strip()
@@ -137,7 +162,7 @@ def validate_presidio_endpoint_url(endpoint_url, allowed_private_hosts=None):
     if parsed.fragment:
         raise PresidioEndpointConfigurationError("Presidio analyzer endpoint URL must not include a fragment.")
     for query_name, _ in parse_qsl(parsed.query, keep_blank_values=True):
-        if query_name.strip().lower() in PRESIDIO_CREDENTIAL_QUERY_NAMES:
+        if _is_credential_like_query_name(query_name):
             raise PresidioEndpointConfigurationError(
                 "Presidio analyzer endpoint URL must not include credential-like query parameters."
             )
