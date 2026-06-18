@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for web-search DLP egress.
-Version: 0.242.069
-Implemented in: 0.242.069
+Version: 0.242.070
+Implemented in: 0.242.070
 
 This test ensures web-search DLP runs after current-message query construction
 and before Foundry web-search execution, blocks sensitive egress, redacts when
@@ -218,6 +218,142 @@ def test_perform_web_search_debug_logging_masks_dlp_queries():
     assert "search_query_length" in perform_source
 
 
+def test_deep_research_planned_queries_are_rechecked_before_web_search():
+    """Deep Research planner output should be DLP-checked before Foundry web search."""
+    print("Testing Deep Research planned query DLP enforcement...")
+    source = read_file_text(ROUTE_FILE)
+    function_source = extract_function_source(source, "perform_research_web_searches")
+
+    recorded = {"planner_user_message": None, "queries": []}
+
+    def fake_build_deep_research_query_plan(**kwargs):
+        recorded["planner_user_message"] = kwargs.get("user_message")
+        return {
+            "queries": [
+                {
+                    "query": f"Find records for employee SSN {RAW_VALUE}",
+                    "reason": "planner included sensitive source text",
+                    "source": "planner",
+                }
+            ]
+        }
+
+    def fake_perform_web_search(**kwargs):
+        recorded["queries"].append(kwargs["web_search_query_text"])
+
+    from functions_dlp import evaluate_web_search_egress
+
+    namespace = {
+        "build_deep_research_query_plan": fake_build_deep_research_query_plan,
+        "perform_web_search": fake_perform_web_search,
+        "evaluate_web_search_egress": evaluate_web_search_egress,
+        "should_emit_dlp_telemetry": lambda *args, **kwargs: False,
+        "log_event": lambda *args, **kwargs: None,
+        "build_dlp_telemetry_properties": lambda *args, **kwargs: {},
+        "WEB_SEARCH_DLP_BLOCKED_STATUS": (
+            "Web search was blocked because the message appears to contain non-public information."
+        ),
+    }
+    exec(compile(function_source, ROUTE_FILE, "exec"), namespace)
+
+    namespace["perform_research_web_searches"](
+        settings={
+            "enable_dlp_control_plane": True,
+            "enable_web_search_dlp": True,
+            "web_search_dlp_mode": "redact",
+            "dlp_default_engine": "regex",
+        },
+        conversation_id="conv-1",
+        user_id="user-1",
+        user_message=f"Search for employee SSN {RAW_VALUE}",
+        user_message_id="msg-1",
+        chat_type="user",
+        document_scope="personal",
+        active_group_id=None,
+        active_public_workspace_id=None,
+        web_search_query_text="Search for employee SSN [REDACTED_US_SSN]",
+        system_messages_for_augmentation=[],
+        agent_citations_list=[],
+        web_search_citations_list=[],
+        deep_research_enabled=True,
+        deep_research_planner_client=object(),
+        deep_research_planner_model="planner",
+    )
+
+    assert RAW_VALUE not in recorded["planner_user_message"]
+    assert recorded["queries"] == ["Find records for employee SSN [REDACTED_US_SSN]"]
+    assert RAW_VALUE not in repr(recorded)
+
+
+def test_deep_research_blocked_planned_queries_do_not_call_web_search():
+    """Deep Research should skip planner queries when the per-query DLP check blocks."""
+    print("Testing Deep Research planned query block enforcement...")
+    source = read_file_text(ROUTE_FILE)
+    function_source = extract_function_source(source, "perform_research_web_searches")
+
+    recorded_queries = []
+    system_messages = []
+
+    def fake_build_deep_research_query_plan(**kwargs):
+        return {
+            "queries": [
+                {
+                    "query": f"Find records for employee SSN {RAW_VALUE}",
+                    "reason": "planner included sensitive source text",
+                    "source": "planner",
+                }
+            ]
+        }
+
+    def fake_perform_web_search(**kwargs):
+        recorded_queries.append(kwargs["web_search_query_text"])
+
+    from functions_dlp import evaluate_web_search_egress
+
+    namespace = {
+        "build_deep_research_query_plan": fake_build_deep_research_query_plan,
+        "perform_web_search": fake_perform_web_search,
+        "evaluate_web_search_egress": evaluate_web_search_egress,
+        "should_emit_dlp_telemetry": lambda *args, **kwargs: False,
+        "log_event": lambda *args, **kwargs: None,
+        "build_dlp_telemetry_properties": lambda *args, **kwargs: {},
+        "WEB_SEARCH_DLP_BLOCKED_STATUS": (
+            "Web search was blocked because the message appears to contain non-public information."
+        ),
+    }
+    exec(compile(function_source, ROUTE_FILE, "exec"), namespace)
+
+    result = namespace["perform_research_web_searches"](
+        settings={
+            "enable_dlp_control_plane": True,
+            "enable_web_search_dlp": True,
+            "web_search_dlp_mode": "block",
+            "dlp_default_engine": "regex",
+        },
+        conversation_id="conv-1",
+        user_id="user-1",
+        user_message="Search for employee SSN [REDACTED_US_SSN]",
+        user_message_id="msg-1",
+        chat_type="user",
+        document_scope="personal",
+        active_group_id=None,
+        active_public_workspace_id=None,
+        web_search_query_text="Search for employee SSN [REDACTED_US_SSN]",
+        system_messages_for_augmentation=system_messages,
+        agent_citations_list=[],
+        web_search_citations_list=[],
+        deep_research_enabled=True,
+        deep_research_planner_client=object(),
+        deep_research_planner_model="planner",
+    )
+
+    assert recorded_queries == []
+    assert result["web_search_runs"] == []
+    assert system_messages == [{"role": "system", "content": namespace["WEB_SEARCH_DLP_BLOCKED_STATUS"]}]
+    assert RAW_VALUE not in repr(result)
+    assert RAW_VALUE not in repr(system_messages)
+
+
 def test_token_usage_extraction_logs_metadata_shape_only():
     """Token usage validation should not log raw provider usage metadata."""
     print("Testing web-search token usage extraction log safety...")
@@ -236,6 +372,8 @@ if __name__ == "__main__":
         test_scanner_error_fails_closed_by_default,
         test_blocked_status_continues_normal_chat_without_foundry_web_search,
         test_perform_web_search_debug_logging_masks_dlp_queries,
+        test_deep_research_planned_queries_are_rechecked_before_web_search,
+        test_deep_research_blocked_planned_queries_do_not_call_web_search,
         test_token_usage_extraction_logs_metadata_shape_only,
     ]
 

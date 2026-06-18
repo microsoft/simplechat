@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for upload DLP ingestion integration.
-Version: 0.242.069
-Implemented in: 0.242.069
+Version: 0.242.070
+Implemented in: 0.242.070
 
 This test ensures upload DLP blocks stop before embeddings/search indexing and
 redacted text is the only text passed into embedding/index payload construction.
@@ -13,6 +13,7 @@ import ast
 import os
 import sys
 import types
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List
 
@@ -58,6 +59,8 @@ def import_functions_documents_for_helper_tests():
         "azure.cognitiveservices.speech": types.ModuleType("azure.cognitiveservices.speech"),
     }
     stub_modules["config"].List = List
+    stub_modules["config"].datetime = datetime
+    stub_modules["config"].timezone = timezone
     stub_modules["functions_settings"].get_settings = lambda: {}
     stub_modules["functions_logging"].add_file_task_to_file_processing_log = lambda **kwargs: None
     stub_modules["functions_logging"].log_event = lambda *args, **kwargs: None
@@ -180,6 +183,90 @@ def test_batch_chunks_use_sanitized_text_for_batch_embeddings_and_indexing():
     assert '"title": title' in batch_source
     assert "texts = [c['page_text_content'] for c in chunks_data]" not in batch_source
     assert "dlp_metadata" in batch_source
+
+
+def test_batch_chunk_vision_text_is_not_reappended_after_dlp_redaction():
+    """save_chunks_batch should index sanitized chunk text without raw vision text."""
+    print("Testing batch chunk vision text DLP redaction before indexing...")
+    functions_documents = import_functions_documents_for_helper_tests()
+
+    uploaded_batches = []
+    embedded_texts = []
+
+    class FakeSearchClient:
+        def upload_documents(self, documents):
+            uploaded_batches.append(documents)
+
+    original_get_settings = functions_documents.get_settings
+    original_get_document_metadata = functions_documents.get_document_metadata
+    original_update_document = getattr(functions_documents, "update_document", None)
+    original_clients = getattr(functions_documents, "CLIENTS", None)
+    original_functions_content = sys.modules.get("functions_content")
+
+    functions_documents.get_settings = lambda: {
+        "enable_dlp_control_plane": True,
+        "enable_upload_dlp": True,
+        "upload_dlp_mode": "redact",
+        "dlp_default_engine": "regex",
+        "dlp_max_scan_chars": 200000,
+    }
+    functions_documents.get_document_metadata = lambda **kwargs: {
+        "version": 1,
+        "authors": ["Author"],
+        "title": "Document",
+        "document_classification": "None",
+        "tags": [],
+        "shared_user_ids": [],
+        "vision_analysis": {
+            "model": "vision-model",
+            "text": f"badge SSN {RAW_VALUE}",
+        },
+    }
+    functions_documents.update_document = lambda **kwargs: None
+    functions_documents.CLIENTS = {"search_client_user": FakeSearchClient()}
+
+    def fake_generate_embeddings_batch(texts):
+        embedded_texts.extend(texts)
+        return [([0.1, 0.2, 0.3], {"total_tokens": 1, "prompt_tokens": 1}) for _ in texts]
+
+    functions_content_stub = types.ModuleType("functions_content")
+    functions_content_stub.generate_embeddings_batch = fake_generate_embeddings_batch
+    sys.modules["functions_content"] = functions_content_stub
+
+    try:
+        functions_documents.save_chunks_batch(
+            [
+                {
+                    "page_text_content": "Safe page content.",
+                    "page_number": 1,
+                    "file_name": "vision.pdf",
+                }
+            ],
+            user_id="user-1",
+            document_id="doc-vision",
+        )
+    finally:
+        functions_documents.get_settings = original_get_settings
+        functions_documents.get_document_metadata = original_get_document_metadata
+        if original_functions_content is None:
+            sys.modules.pop("functions_content", None)
+        else:
+            sys.modules["functions_content"] = original_functions_content
+        if original_update_document is None:
+            delattr(functions_documents, "update_document")
+        else:
+            functions_documents.update_document = original_update_document
+        if original_clients is None:
+            delattr(functions_documents, "CLIENTS")
+        else:
+            functions_documents.CLIENTS = original_clients
+
+    assert uploaded_batches
+    indexed_chunk_text = uploaded_batches[0][0]["chunk_text"]
+    assert RAW_VALUE not in indexed_chunk_text
+    assert RAW_VALUE not in repr(embedded_texts)
+    assert indexed_chunk_text == embedded_texts[0]
+    assert "badge SSN [REDACTED_US_SSN]" in indexed_chunk_text
 
 
 def test_video_chunks_use_sanitized_transcript_and_ocr_text():
@@ -594,6 +681,7 @@ if __name__ == "__main__":
         test_upload_helper_blocks_before_returning_to_ingestion_paths,
         test_single_chunk_uses_sanitized_text_for_embedding_and_indexing,
         test_batch_chunks_use_sanitized_text_for_batch_embeddings_and_indexing,
+        test_batch_chunk_vision_text_is_not_reappended_after_dlp_redaction,
         test_video_chunks_use_sanitized_transcript_and_ocr_text,
         test_video_chunks_preserve_public_workspace_scope,
         test_video_dlp_block_errors_abort_processing,

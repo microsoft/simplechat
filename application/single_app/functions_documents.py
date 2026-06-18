@@ -3026,7 +3026,7 @@ def save_chunks_batch(chunks_data, user_id, document_id, group_id=None, public_w
         embedding, token_usage = embedding_results[idx]
         page_number = chunk_info['page_number']
         file_name = chunk_info['file_name']
-        page_text_content = chunk_info['page_text_content']
+        enhanced_chunk_text = chunk_info['page_text_content']
         dlp_metadata = chunk_info.get('dlp_metadata')
 
         if token_usage:
@@ -3036,7 +3036,6 @@ def save_chunks_batch(chunks_data, user_id, document_id, group_id=None, public_w
                 total_token_usage['model_deployment_name'] = token_usage.get('model_deployment_name')
 
         chunk_id = f"{document_id}_{page_number}"
-        enhanced_chunk_text = page_text_content + vision_text if vision_text else page_text_content
 
         if is_public_workspace:
             chunk_document = {

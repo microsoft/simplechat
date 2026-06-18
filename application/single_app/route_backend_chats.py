@@ -20450,11 +20450,24 @@ def perform_research_web_searches(
     """Run one or more current-message-only web searches for normal or Deep Research mode."""
     web_search_runs = []
     query_plan = {}
+    dlp_context = {
+        "conversation_id": conversation_id,
+        "chat_type": chat_type,
+        "document_scope": document_scope,
+        "workspace_scope": document_scope,
+    }
 
     if deep_research_enabled:
+        planner_user_message = user_message
+        if (
+            settings.get("enable_dlp_control_plane", False)
+            and settings.get("enable_web_search_dlp", False)
+            and str(settings.get("web_search_dlp_mode", "monitor") or "monitor").lower() == "redact"
+        ):
+            planner_user_message = web_search_query_text
         query_plan = build_deep_research_query_plan(
             settings=settings,
-            user_message=user_message,
+            user_message=planner_user_message,
             base_query=web_search_query_text,
             planner_client=deep_research_planner_client,
             planner_model=deep_research_planner_model,
@@ -20484,6 +20497,43 @@ def perform_research_web_searches(
         search_label = None
         if deep_research_enabled:
             search_label = f"Deep Research query {query_index}/{total_queries}"
+        query_dlp_result = evaluate_web_search_egress(
+            query_text,
+            settings=settings,
+            context={
+                **dlp_context,
+                "deep_research_query_index": query_index,
+                "deep_research_query_count": total_queries,
+            },
+        )
+        if should_emit_dlp_telemetry(query_dlp_result, settings):
+            log_event(
+                "[DLP] Web search egress decision",
+                extra=build_dlp_telemetry_properties(
+                    query_dlp_result,
+                    surface="web_search",
+                    context={
+                        **dlp_context,
+                        "deep_research_query_index": query_index,
+                        "deep_research_query_count": total_queries,
+                    },
+                ),
+            )
+        if not query_dlp_result.get("web_search_allowed", True):
+            query_item['query'] = ""
+            if not any(
+                message.get("content") == WEB_SEARCH_DLP_BLOCKED_STATUS
+                for message in system_messages_for_augmentation
+                if isinstance(message, dict)
+            ):
+                system_messages_for_augmentation.append({
+                    "role": "system",
+                    "content": WEB_SEARCH_DLP_BLOCKED_STATUS,
+                })
+            continue
+
+        query_text = query_dlp_result.get("web_search_query_text", query_text)
+        query_item['query'] = query_text
         perform_web_search(
             settings=settings,
             conversation_id=conversation_id,
