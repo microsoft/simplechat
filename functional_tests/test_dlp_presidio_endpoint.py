@@ -113,6 +113,45 @@ def test_validate_presidio_endpoint_rejects_any_private_dns_answer(monkeypatch):
     raise AssertionError("Expected hostname with mixed public/private DNS answers to be rejected.")
 
 
+def test_analyze_with_presidio_endpoint_blocks_dns_rebinding_before_socket_connect(monkeypatch):
+    """The request connection path should re-check DNS answers before opening a socket."""
+    from functions_dlp_presidio import (
+        PresidioEndpointConfigurationError,
+        PresidioEndpointRequestError,
+        analyze_with_presidio_endpoint,
+    )
+
+    dns_calls = []
+    socket_attempts = {"count": 0}
+
+    def fake_getaddrinfo(host, port, *args, **kwargs):
+        assert host == "presidio.example.com"
+        dns_calls.append(host)
+        address = "93.184.216.34" if len(dns_calls) == 1 else "169.254.169.254"
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, port or 443))]
+
+    class BlockingSocket:
+        def __init__(self, *args, **kwargs):
+            socket_attempts["count"] += 1
+            raise AssertionError("Unsafe rebinding address reached socket creation.")
+
+    monkeypatch.setenv("NO_PROXY", "*")
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+    monkeypatch.setattr(socket, "socket", BlockingSocket)
+
+    try:
+        analyze_with_presidio_endpoint(
+            RAW_TEXT,
+            {"dlp_presidio_analyzer_endpoint": "https://presidio.example.com/analyze"},
+        )
+    except (PresidioEndpointConfigurationError, PresidioEndpointRequestError):
+        assert len(dns_calls) >= 2
+        assert socket_attempts["count"] == 0
+        return
+
+    raise AssertionError("Expected rebinding request path to be blocked.")
+
+
 def test_validate_presidio_endpoint_allows_private_dns_answer_for_exact_allowlisted_host(monkeypatch):
     """A private DNS answer should be accepted only for the exact endpoint host in the allowlist."""
     from functions_dlp_presidio import validate_presidio_endpoint_url
@@ -209,7 +248,7 @@ def test_analyze_with_presidio_endpoint_posts_safe_payload_and_auth_header(monke
 
     captured = {}
 
-    def fake_post(url, json=None, headers=None, timeout=None, allow_redirects=None):
+    def fake_post(url, json=None, headers=None, timeout=None, allow_redirects=None, allowed_private_hosts=None):
         captured["url"] = url
         captured["json"] = json
         captured["headers"] = headers
@@ -222,7 +261,7 @@ def test_analyze_with_presidio_endpoint_posts_safe_payload_and_auth_header(monke
         ]
         return response
 
-    monkeypatch.setattr("functions_dlp_presidio.requests.post", fake_post)
+    monkeypatch.setattr("functions_dlp_presidio._post_presidio_endpoint", fake_post)
     monkeypatch.setenv("PRESIDIO_DLP_API_KEY", "unit-test-secret")
     settings = {
         "dlp_presidio_analyzer_endpoint": "https://presidio.internal/analyze",
@@ -258,14 +297,14 @@ def test_analyze_with_presidio_endpoint_omits_auth_header_without_env_secret(mon
 
     captured = {}
 
-    def fake_post(url, json=None, headers=None, timeout=None, allow_redirects=None):
+    def fake_post(url, json=None, headers=None, timeout=None, allow_redirects=None, allowed_private_hosts=None):
         captured["headers"] = headers
         response = Mock()
         response.raise_for_status.return_value = None
         response.json.return_value = []
         return response
 
-    monkeypatch.setattr("functions_dlp_presidio.requests.post", fake_post)
+    monkeypatch.setattr("functions_dlp_presidio._post_presidio_endpoint", fake_post)
     monkeypatch.delenv("PRESIDIO_DLP_API_KEY", raising=False)
     stub_dns_answers(monkeypatch, "presidio.internal", ["10.0.0.5"])
 
@@ -286,10 +325,10 @@ def test_analyze_with_presidio_endpoint_raises_safe_error_without_raw_text(monke
     """Endpoint exceptions should not retain raw scanned text in messages or exception chains."""
     from functions_dlp_presidio import PresidioEndpointRequestError, analyze_with_presidio_endpoint
 
-    def fake_post(url, json=None, headers=None, timeout=None, allow_redirects=None):
+    def fake_post(url, json=None, headers=None, timeout=None, allow_redirects=None, allowed_private_hosts=None):
         raise RuntimeError(f"upstream included {RAW_TEXT}")
 
-    monkeypatch.setattr("functions_dlp_presidio.requests.post", fake_post)
+    monkeypatch.setattr("functions_dlp_presidio._post_presidio_endpoint", fake_post)
     stub_dns_answers(monkeypatch, "presidio.internal", ["10.0.0.5"])
 
     try:
@@ -315,7 +354,7 @@ def test_analyze_with_presidio_endpoint_normalizes_response_items(monkeypatch):
     """Recognizer responses should be filtered and normalized deterministically."""
     from functions_dlp_presidio import analyze_with_presidio_endpoint
 
-    def fake_post(url, json=None, headers=None, timeout=None, allow_redirects=None):
+    def fake_post(url, json=None, headers=None, timeout=None, allow_redirects=None, allowed_private_hosts=None):
         response = Mock()
         response.raise_for_status.return_value = None
         response.json.return_value = [
@@ -326,7 +365,7 @@ def test_analyze_with_presidio_endpoint_normalizes_response_items(monkeypatch):
         ]
         return response
 
-    monkeypatch.setattr("functions_dlp_presidio.requests.post", fake_post)
+    monkeypatch.setattr("functions_dlp_presidio._post_presidio_endpoint", fake_post)
     stub_dns_answers(monkeypatch, "presidio.internal", ["10.0.0.5"])
 
     results = analyze_with_presidio_endpoint(
@@ -349,7 +388,7 @@ def test_analyze_with_presidio_endpoint_treats_redirect_as_endpoint_error(monkey
 
     captured = {"calls": 0}
 
-    def fake_post(url, json=None, headers=None, timeout=None, allow_redirects=None):
+    def fake_post(url, json=None, headers=None, timeout=None, allow_redirects=None, allowed_private_hosts=None):
         captured["calls"] += 1
         captured["allow_redirects"] = allow_redirects
         response = Mock()
@@ -359,7 +398,7 @@ def test_analyze_with_presidio_endpoint_treats_redirect_as_endpoint_error(monkey
         response.json.side_effect = AssertionError("Redirect responses must not be parsed.")
         return response
 
-    monkeypatch.setattr("functions_dlp_presidio.requests.post", fake_post)
+    monkeypatch.setattr("functions_dlp_presidio._post_presidio_endpoint", fake_post)
     stub_dns_answers(monkeypatch, "presidio.example.com", ["93.184.216.34"])
 
     try:

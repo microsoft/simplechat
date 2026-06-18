@@ -9,6 +9,11 @@ import socket
 from urllib.parse import parse_qsl, urlparse
 
 import requests
+from urllib3 import connection as urllib3_connection
+from urllib3 import connectionpool as urllib3_connectionpool
+from urllib3 import poolmanager as urllib3_poolmanager
+from urllib3.util import connection as urllib3_util_connection
+from urllib3.util.timeout import _DEFAULT_TIMEOUT
 
 
 DEFAULT_PRESIDIO_TIMEOUT_SECONDS = 5
@@ -140,6 +145,10 @@ def _resolve_presidio_host_addresses(host, port):
     except socket.gaierror as exc:
         raise PresidioEndpointConfigurationError("Presidio analyzer endpoint host must resolve in DNS.") from exc
 
+    return _extract_presidio_addresses(address_info)
+
+
+def _extract_presidio_addresses(address_info):
     addresses = []
     seen_addresses = set()
     for item in address_info:
@@ -158,9 +167,8 @@ def _resolve_presidio_host_addresses(host, port):
     return addresses
 
 
-def _validate_resolved_presidio_addresses(host, port, allowed_hosts):
+def _validate_presidio_address_list(host, addresses, allowed_hosts):
     normalized_host = _normalize_host_identifier(host)
-    addresses = _resolve_presidio_host_addresses(normalized_host, port)
     if not addresses:
         raise PresidioEndpointConfigurationError("Presidio analyzer endpoint host must resolve to an IP address.")
     if normalized_host in allowed_hosts:
@@ -168,6 +176,135 @@ def _validate_resolved_presidio_addresses(host, port, allowed_hosts):
     if any(not address.is_global for address in addresses):
         raise PresidioEndpointConfigurationError(
             "Private Presidio analyzer endpoint hosts must be listed in the private host allowlist."
+        )
+
+
+def _validate_resolved_presidio_addresses(host, port, allowed_hosts):
+    normalized_host = _normalize_host_identifier(host)
+    addresses = _resolve_presidio_host_addresses(normalized_host, port)
+    _validate_presidio_address_list(normalized_host, addresses, allowed_hosts)
+
+
+def _set_socket_options(sock, socket_options):
+    for option in socket_options or []:
+        sock.setsockopt(*option)
+
+
+def _create_presidio_safe_socket_connection(host, port, timeout, source_address, socket_options, allowed_hosts):
+    connect_host = str(host or "")
+    if connect_host.startswith("["):
+        connect_host = connect_host.strip("[]")
+    connect_host.encode("idna")
+
+    address_info = socket.getaddrinfo(
+        connect_host,
+        port,
+        urllib3_util_connection.allowed_gai_family(),
+        socket.SOCK_STREAM,
+    )
+    _validate_presidio_address_list(connect_host, _extract_presidio_addresses(address_info), allowed_hosts)
+
+    last_error = None
+    for family, socktype, proto, _canonname, sockaddr in address_info:
+        sock = None
+        try:
+            sock = socket.socket(family, socktype, proto)
+            _set_socket_options(sock, socket_options)
+            if timeout is not _DEFAULT_TIMEOUT:
+                sock.settimeout(timeout)
+            if source_address:
+                sock.bind(source_address)
+            sock.connect(sockaddr)
+            last_error = None
+            return sock
+        except OSError as exc:
+            last_error = exc
+            if sock is not None:
+                sock.close()
+
+    if last_error is not None:
+        raise last_error
+    raise OSError("getaddrinfo returns an empty list")
+
+
+class _PresidioSSRFConnectionMixin:
+    presidio_allowed_private_hosts = frozenset()
+
+    def _new_conn(self):
+        try:
+            return _create_presidio_safe_socket_connection(
+                self._dns_host,
+                self.port,
+                self.timeout,
+                self.source_address,
+                self.socket_options,
+                self.presidio_allowed_private_hosts,
+            )
+        except socket.gaierror as exc:
+            raise urllib3_connection.NameResolutionError(self.host, self, exc) from exc
+        except urllib3_connection.SocketTimeout as exc:
+            raise urllib3_connection.ConnectTimeoutError(
+                self,
+                f"Connection to {self.host} timed out. (connect timeout={self.timeout})",
+            ) from exc
+        except OSError as exc:
+            raise urllib3_connection.NewConnectionError(
+                self,
+                f"Failed to establish a new connection: {exc}",
+            ) from exc
+
+
+def _build_presidio_pool_classes(allowed_hosts):
+    class PresidioSSRFHTTPConnection(_PresidioSSRFConnectionMixin, urllib3_connection.HTTPConnection):
+        presidio_allowed_private_hosts = allowed_hosts
+
+    class PresidioSSRFHTTPSConnection(_PresidioSSRFConnectionMixin, urllib3_connection.HTTPSConnection):
+        presidio_allowed_private_hosts = allowed_hosts
+
+    class PresidioSSRFHTTPConnectionPool(urllib3_connectionpool.HTTPConnectionPool):
+        ConnectionCls = PresidioSSRFHTTPConnection
+
+    class PresidioSSRFHTTPSConnectionPool(urllib3_connectionpool.HTTPSConnectionPool):
+        ConnectionCls = PresidioSSRFHTTPSConnection
+
+    return {
+        "http": PresidioSSRFHTTPConnectionPool,
+        "https": PresidioSSRFHTTPSConnectionPool,
+    }
+
+
+class _PresidioSSRFHTTPAdapter(requests.adapters.HTTPAdapter):
+    def __init__(self, allowed_hosts, *args, **kwargs):
+        self._presidio_pool_classes = _build_presidio_pool_classes(frozenset(allowed_hosts))
+        super().__init__(*args, **kwargs)
+
+    def init_poolmanager(self, connections, maxsize, block=False, **pool_kwargs):
+        self.poolmanager = urllib3_poolmanager.PoolManager(
+            num_pools=connections,
+            maxsize=maxsize,
+            block=block,
+            **pool_kwargs,
+        )
+        self.poolmanager.pool_classes_by_scheme = self._presidio_pool_classes
+
+
+def _build_presidio_endpoint_session(allowed_private_hosts):
+    session = requests.Session()
+    session.trust_env = False
+    adapter = _PresidioSSRFHTTPAdapter(_get_allowed_private_hosts(allowed_private_hosts))
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
+
+
+def _post_presidio_endpoint(endpoint_url, json, headers, timeout, allow_redirects, allowed_private_hosts):
+    with _build_presidio_endpoint_session(allowed_private_hosts) as session:
+        return session.post(
+            endpoint_url,
+            json=json,
+            headers=headers,
+            timeout=timeout,
+            allow_redirects=allow_redirects,
         )
 
 
@@ -323,12 +460,13 @@ def analyze_with_presidio_endpoint(text, settings):
 
     request_error_type = None
     try:
-        response = requests.post(
+        response = _post_presidio_endpoint(
             endpoint_url,
             json=payload,
             headers=headers,
             timeout=timeout_seconds,
             allow_redirects=False,
+            allowed_private_hosts=settings.get("dlp_presidio_allowed_private_hosts"),
         )
         status_code = getattr(response, "status_code", None)
         if isinstance(status_code, int) and 300 <= status_code < 400:
