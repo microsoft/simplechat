@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Functional test for the Agents catalog page and agent icon/tag metadata.
-Version: 0.242.066
+Version: 0.242.068
 Implemented in: 0.242.061; updated in 0.242.064; 0.242.065; 0.242.066
 
 This test ensures the global Agents page, shared catalog APIs, safe agent

@@ -2,7 +2,7 @@
 # test_broken_access_control_guardrails_checker.py
 """
 Functional test for Broken Access Control PR guardrail checker.
-Version: 0.242.066
+Version: 0.242.068
 Implemented in: 0.241.022
 
 This test ensures the changed-file BAC checker flags the repo's target
@@ -221,7 +221,7 @@ def test_checker_assets_and_version_are_wired_into_repo() -> None:
     assert ROUTE_AUTH_PROMPT_FILE.exists(), f'Expected route auth audit prompt at {ROUTE_AUTH_PROMPT_FILE}'
     assert FEATURE_DOC.exists(), f'Expected feature document at {FEATURE_DOC}'
     assert FULL_SCAN_FEATURE_DOC.exists(), f'Expected full-scan feature document at {FULL_SCAN_FEATURE_DOC}'
-    assert read_config_version() == '0.242.066'
+    assert read_config_version() == '0.242.068'
 
     workflow_source = read_text(WORKFLOW_FILE)
     assert 'scripts/check_broken_access_control.py' in workflow_source

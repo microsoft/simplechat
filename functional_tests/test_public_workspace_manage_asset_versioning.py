@@ -2,7 +2,7 @@
 # test_public_workspace_manage_asset_versioning.py
 """
 Functional test for public workspace manage asset versioning.
-Version: 0.242.066
+Version: 0.242.068
 Implemented in: 0.242.058
 
 This test ensures the manage public workspace page references its management
@@ -104,7 +104,7 @@ def test_fix_artifacts_are_in_sync():
     print("Testing public workspace manage asset versioning artifact alignment...")
 
     version = read_config_version()
-    assert version == "0.242.066", f"Expected config version 0.242.066, saw {version}."
+    assert version == "0.242.068", f"Expected config version 0.242.068, saw {version}."
     assert FIX_DOC.exists(), f"Expected fix documentation at {FIX_DOC}"
 
     fix_doc_source = read_file_text(FIX_DOC)

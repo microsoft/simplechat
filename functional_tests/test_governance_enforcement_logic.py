@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for governance enforcement logic.
-Version: 0.242.066
+Version: 0.242.068
 Implemented in: 0.241.010; updated in 0.242.022; 0.242.063; 0.242.064; 0.242.065; 0.242.066
 
 This test ensures ensure_governance_access correctly allows and denies access

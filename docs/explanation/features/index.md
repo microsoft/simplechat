@@ -34,6 +34,7 @@ category: Version History
 
 ## Versioned Features
 
+- [Tabular SK Large Result Pagination](v0.242.067/TABULAR_SK_LARGE_RESULT_PAGINATION.md)
 - [Model Endpoint Model Icon Picker](v0.242.060/MODEL_ENDPOINT_MODEL_ICON_PICKER.md)
 - [Deployer Capacity Defaults](v0.241.085/DEPLOYER_CAPACITY_DEFAULTS.md)
 - [Chat Inline Export Action Progress Labels](v0.241.107/CHAT_INLINE_EXPORT_ACTION_PROGRESS.md)

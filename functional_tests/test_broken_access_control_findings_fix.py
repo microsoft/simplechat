@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Broken Access Control audit findings.
-Version: 0.242.066
+Version: 0.242.068
 Implemented in: 0.242.049
 
 This test ensures workflow conversation IDs, SimpleChat plugin conversation
@@ -327,7 +327,7 @@ def test_group_document_delete_uses_scoped_lookup_before_delete():
 def test_version_bumped_for_access_control_fixes():
     """Config version should identify the Broken Access Control fix release."""
     print('Testing fix version...')
-    assert read_config_version() == '0.242.066'
+    assert read_config_version() == '0.242.068'
     print('Fix version verified.')
 
 

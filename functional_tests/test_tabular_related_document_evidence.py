@@ -2,8 +2,8 @@
 # test_tabular_related_document_evidence.py
 """
 Functional test for tabular related-document evidence.
-Version: 0.241.141
-Implemented in: 0.241.140
+Version: 0.242.068
+Implemented in: 0.241.140; updated in 0.242.067
 
 This test ensures that tabular rows can resolve explicit references to related
 workspace documents, summarize that evidence for prompt handoff, and preserve
@@ -28,8 +28,10 @@ TARGET_ASSIGNMENTS = {
     'TABULAR_RELATED_DOCUMENT_MAX_MATCHES_PER_ROW',
     'TABULAR_RELATED_DOCUMENT_MAX_SUMMARY_ROWS',
     'TABULAR_RELATED_DOCUMENT_MAX_EXCERPT_CHARS',
+    'TABULAR_COMPUTED_RESULTS_HANDOFF_MAX_CHARS',
 }
 TARGET_FUNCTIONS = {
+    '_normalize_requested_scope_ids',
     '_normalize_tabular_related_document_text',
     '_normalize_tabular_related_document_basename',
     '_is_tabular_related_document_candidate',

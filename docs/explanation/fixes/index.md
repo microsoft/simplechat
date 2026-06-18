@@ -6,6 +6,7 @@ order: 120
 category: Version History
 ---
 
+- [Tabular SK Python 3.13 Kernel Parameter Fix](v0.242.068/TABULAR_SK_PY313_KERNEL_PARAMETER_FIX.md)
 - [Python 3.12 CI and XSS Guardrail Fix](PYTHON_312_CI_AND_XSS_GUARDRAIL_FIX.md)
 - [PR Readiness Guardrail Cleanup Fix](PR_READINESS_GUARDRAIL_CLEANUP_FIX.md)
 - [CSRF State-Changing Route Guard Fix](CSRF_STATE_CHANGING_ROUTE_GUARD_FIX.md)

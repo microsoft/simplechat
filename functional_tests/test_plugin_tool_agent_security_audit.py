@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for plugin, tool, and agent security audit fixes.
-Version: 0.242.066
+Version: 0.242.068
 Implemented in: 0.242.055
 
 This test ensures plugin invocation records and OpenAPI diagnostics redact
@@ -214,7 +214,7 @@ def test_simplechat_active_group_fallback_uses_authorized_helper():
 
 
 def main():
-    expected_version = '0.242.066'
+    expected_version = '0.242.068'
     actual_version = read_config_version()
     assert actual_version == expected_version, f'Expected version {expected_version}, found {actual_version}'
 

@@ -41,6 +41,7 @@ import app_settings_cache
 import queue
 import re
 import requests
+import time
 import traceback
 from urllib.parse import urlparse
 import threading
@@ -1098,6 +1099,8 @@ TABULAR_STRUCTURED_EXPORT_MAX_RETRY_ATTEMPTS = 2
 TABULAR_RELATED_DOCUMENT_MAX_MATCHES_PER_ROW = 3
 TABULAR_RELATED_DOCUMENT_MAX_SUMMARY_ROWS = 8
 TABULAR_RELATED_DOCUMENT_MAX_EXCERPT_CHARS = 500
+TABULAR_SK_ANALYSIS_MAX_CHARS = 100000
+TABULAR_COMPUTED_RESULTS_HANDOFF_MAX_CHARS = 100000
 TABULAR_GENERATED_OUTPUT_INTERNAL_ROW_FIELDS = {
     '_matched_columns',
     '_matched_values',
@@ -3661,8 +3664,13 @@ def build_tabular_related_document_evidence_summary(invocations):
 def build_tabular_computed_results_system_message(source_label, tabular_analysis, related_document_evidence_summary=''):
     """Build the outer-model handoff message for successful tabular analysis."""
     rendered_analysis = str(tabular_analysis or '').strip()
-    max_handoff_chars = 24000
+    max_handoff_chars = TABULAR_COMPUTED_RESULTS_HANDOFF_MAX_CHARS
     if len(rendered_analysis) > max_handoff_chars:
+        original_length = len(rendered_analysis)
+        log_event(
+            f"[Tabular SK Analysis] Computed results handoff truncated from {original_length} to {max_handoff_chars} chars",
+            level=logging.WARNING,
+        )
         rendered_analysis = (
             rendered_analysis[:max_handoff_chars]
             + "\n[Computed results handoff truncated for prompt budget.]"
@@ -9376,6 +9384,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
             return None
 
         for attempt_number in range(1, 4):
+            attempt_started_at = time.monotonic()
             force_tool_use = attempt_number > 1 or (attempt_number == 1 and analysis_requires_immediate_tool_choice)
             if callable(thought_callback) and attempt_number > 1:
                 await emit_tabular_analysis_lifecycle_thought(
@@ -9494,13 +9503,24 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
 
             if result and result[0].content:
                 analysis = result[0].content.strip()
-                if len(analysis) > 20000:
-                    analysis = analysis[:20000] + "\n[Analysis truncated]"
+                if len(analysis) > TABULAR_SK_ANALYSIS_MAX_CHARS:
+                    original_analysis_length = len(analysis)
+                    log_event(
+                        f"[Tabular SK Analysis] Attempt {attempt_number} analysis text truncated from {original_analysis_length} to {TABULAR_SK_ANALYSIS_MAX_CHARS} chars",
+                        level=logging.WARNING,
+                    )
+                    analysis = analysis[:TABULAR_SK_ANALYSIS_MAX_CHARS] + "\n[Analysis truncated]"
+                attempt_elapsed_ms = int((time.monotonic() - attempt_started_at) * 1000)
 
                 if schema_summary_mode:
                     if successful_schema_summary_invocations:
                         log_event(
                             f"[Tabular SK Analysis] Schema summary complete via {len(successful_schema_summary_invocations)} workbook tool call(s) on attempt {attempt_number}",
+                            extra={
+                                'attempt_number': attempt_number,
+                                'elapsed_ms': attempt_elapsed_ms,
+                                'analysis_length': len(analysis),
+                            },
                             level=logging.INFO,
                         )
                         return analysis
@@ -9601,6 +9621,11 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                         previous_execution_gap_messages = []
                         log_event(
                             f"[Tabular SK Analysis] Analysis complete via {len(successful_analytical_invocations)} analytical tool call(s) on attempt {attempt_number}",
+                            extra={
+                                'attempt_number': attempt_number,
+                                'elapsed_ms': attempt_elapsed_ms,
+                                'analysis_length': len(analysis),
+                            },
                             level=logging.INFO
                         )
                         return analysis

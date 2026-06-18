@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for privacy logging and telemetry audit fixes.
-Version: 0.242.066
+Version: 0.242.068
 Implemented in: 0.242.058
 
 This test ensures logging, telemetry, and document-processing diagnostics redact
@@ -171,7 +171,7 @@ def test_document_processing_logs_avoid_raw_document_text():
 
 
 def main():
-    expected_version = '0.242.066'
+    expected_version = '0.242.068'
     actual_version = read_config_version()
     assert actual_version == expected_version, f'Expected version {expected_version}, found {actual_version}'
 

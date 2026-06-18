@@ -1,7 +1,7 @@
 # test_group_manage_settings_tab_visibility.py
 """
 Functional test for group manage settings tab visibility.
-Version: 0.242.066
+Version: 0.242.068
 Implemented in: 0.241.204
 
 This test ensures the group manage Settings pane is unhidden for group owners
@@ -18,7 +18,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = REPO_ROOT / "application" / "single_app"
-CURRENT_VERSION = "0.242.066"
+CURRENT_VERSION = "0.242.068"
 FIX_DOC = REPO_ROOT / "docs" / "explanation" / "fixes" / "GROUP_PUBLIC_WORKSPACE_DOWNLOAD_SETTINGS_VISIBILITY_FIX.md"
 
 

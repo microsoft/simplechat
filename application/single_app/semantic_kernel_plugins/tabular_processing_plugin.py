@@ -110,6 +110,15 @@ class TabularProcessingPlugin:
     RELATIONSHIP_VALUE_SAMPLE_LIMIT = 500
     RELATIONSHIP_SHARED_VALUE_LIMIT = 5
     SOURCE_VALUE_MATCH_COUNT_LIMIT = 100
+    ROW_OUTPUT_SAFE_CHAR_LIMIT = 50000
+    ROW_OUTPUT_PROTECTED_COLUMNS = (
+        '_sheet',
+        '_matched_columns',
+        '_matched_values',
+        '_matched_on',
+        '_matched_source_values',
+        '_related_document_reference_values',
+    )
 
     def __init__(self):
         self._df_cache = {}  # Per-instance cache: (container, blob_name, sheet_name) -> DataFrame
@@ -515,6 +524,204 @@ class TabularProcessingPlugin:
 
         return None
 
+    def _parse_row_page_arguments(self, start_row=None, max_rows=None, default_max_rows=100) -> tuple:
+        """Normalize row pagination arguments for tool-call row payloads."""
+        try:
+            normalized_start_row = int(start_row or 0)
+        except (TypeError, ValueError):
+            normalized_start_row = 0
+
+        try:
+            normalized_max_rows = int(max_rows or default_max_rows)
+        except (TypeError, ValueError):
+            normalized_max_rows = int(default_max_rows)
+
+        return max(0, normalized_start_row), max(1, normalized_max_rows)
+
+    def _get_protected_row_output_columns(self, columns, additional_protected_columns=None) -> list:
+        """Return protected metadata columns that should survive projection and trimming."""
+        protected_column_names = {
+            str(column_name)
+            for column_name in self.ROW_OUTPUT_PROTECTED_COLUMNS
+        }
+        protected_column_names.update(
+            str(column_name)
+            for column_name in (additional_protected_columns or [])
+            if str(column_name or '').strip()
+        )
+
+        return [
+            column_name for column_name in columns
+            if str(column_name) in protected_column_names
+        ]
+
+    def _build_row_output_records(self, row_frame, selected_columns):
+        """Build JSON-ready row records and preserve hidden document references."""
+        selected_column_names = [
+            column_name for column_name in selected_columns
+            if column_name in row_frame.columns
+        ]
+        output_records = []
+
+        for _, row in row_frame.iterrows():
+            row_payload = {
+                str(column_name): row.get(column_name)
+                for column_name in selected_column_names
+            }
+            related_document_reference_values = self._build_related_document_reference_values(
+                row,
+                excluded_columns=selected_column_names,
+            )
+            if related_document_reference_values:
+                existing_reference_values = row_payload.get('_related_document_reference_values')
+                if isinstance(existing_reference_values, dict):
+                    merged_reference_values = dict(existing_reference_values)
+                    merged_reference_values.update(related_document_reference_values)
+                    row_payload['_related_document_reference_values'] = merged_reference_values
+                else:
+                    row_payload['_related_document_reference_values'] = related_document_reference_values
+            output_records.append(row_payload)
+
+        return output_records
+
+    def _estimate_row_output_chars(self, row_records) -> int:
+        """Estimate serialized JSON character size for a row payload."""
+        return len(json.dumps(row_records, default=str))
+
+    def _select_auto_trimmed_columns(self, row_frame, protected_columns, max_chars):
+        """Drop heavy non-protected columns until the row payload fits the safe budget."""
+        selected_columns = list(row_frame.columns)
+        protected_column_set = {str(column_name) for column_name in protected_columns}
+        excluded_columns = []
+
+        if not selected_columns:
+            return selected_columns, excluded_columns
+
+        row_records = self._build_row_output_records(row_frame, selected_columns)
+        if self._estimate_row_output_chars(row_records) <= max_chars:
+            return selected_columns, excluded_columns
+
+        sample_size = min(20, len(row_frame)) or 1
+        sample_frame = row_frame.head(sample_size)
+        column_average_lengths = {
+            column_name: sample_frame[column_name].astype(str).str.len().mean()
+            for column_name in selected_columns
+        }
+        removable_columns = [
+            column_name for column_name in selected_columns
+            if str(column_name) not in protected_column_set
+        ]
+
+        for column_to_drop in sorted(
+            removable_columns,
+            key=lambda column_name: column_average_lengths.get(column_name, 0),
+            reverse=True,
+        ):
+            if len(selected_columns) <= len(protected_columns) + 1:
+                break
+            selected_columns.remove(column_to_drop)
+            excluded_columns.append(str(column_to_drop))
+
+            row_records = self._build_row_output_records(row_frame, selected_columns)
+            if self._estimate_row_output_chars(row_records) <= max_chars:
+                break
+
+        return selected_columns, excluded_columns
+
+    def _build_tabular_row_page_payload(
+        self,
+        rows,
+        total_row_count,
+        start_row=0,
+        max_rows=100,
+        return_columns=None,
+        protected_columns=None,
+        max_chars=None,
+    ) -> dict:
+        """Shape row data with pagination, projection, and safe output trimming."""
+        normalized_start_row, normalized_max_rows = self._parse_row_page_arguments(start_row, max_rows)
+        safe_max_chars = int(max_chars or self.ROW_OUTPUT_SAFE_CHAR_LIMIT)
+        requested_return_columns = self._parse_optional_column_list_argument(return_columns)
+        return_columns_requested = return_columns is not None and str(return_columns).strip().casefold() not in {'', '*', 'all', 'all_columns', 'all columns'}
+        row_frame = pandas.DataFrame(list(rows or []))
+        total_count = max(0, int(total_row_count or 0))
+
+        if row_frame.empty:
+            return {
+                'start_row': normalized_start_row,
+                'page_size': normalized_max_rows,
+                'returned_rows': 0,
+                'has_more': False,
+                'next_start_row': None,
+                'data': [],
+            }
+
+        protected_output_columns = self._get_protected_row_output_columns(
+            list(row_frame.columns),
+            additional_protected_columns=protected_columns,
+        )
+        resolved_return_columns = [
+            column_name for column_name in (requested_return_columns or [])
+            if column_name in row_frame.columns
+        ]
+
+        if resolved_return_columns:
+            selected_columns = list(resolved_return_columns)
+            for protected_column in protected_output_columns:
+                if protected_column not in selected_columns:
+                    selected_columns.append(protected_column)
+            auto_excluded_columns = []
+        else:
+            selected_columns, auto_excluded_columns = self._select_auto_trimmed_columns(
+                row_frame,
+                protected_output_columns,
+                safe_max_chars,
+            )
+
+        working_frame = row_frame
+        row_records = self._build_row_output_records(working_frame, selected_columns)
+        row_trimmed_for_budget = False
+
+        while len(row_records) > 1 and self._estimate_row_output_chars(row_records) > safe_max_chars:
+            current_size = self._estimate_row_output_chars(row_records)
+            estimated_target_rows = max(1, int(len(row_records) * safe_max_chars / max(current_size, 1)))
+            if estimated_target_rows >= len(row_records):
+                estimated_target_rows = len(row_records) - 1
+            working_frame = working_frame.head(estimated_target_rows)
+            row_records = self._build_row_output_records(working_frame, selected_columns)
+            row_trimmed_for_budget = True
+
+        returned_row_count = len(row_records)
+        next_start_row = normalized_start_row + returned_row_count
+        has_more = next_start_row < total_count
+        payload = {
+            'start_row': normalized_start_row,
+            'page_size': normalized_max_rows,
+            'returned_rows': returned_row_count,
+            'has_more': has_more,
+            'next_start_row': next_start_row if has_more else None,
+            'data': row_records,
+        }
+
+        if return_columns_requested:
+            payload['return_columns'] = resolved_return_columns
+        if auto_excluded_columns:
+            payload['auto_excluded_columns'] = auto_excluded_columns
+            payload['output_trimmed'] = True
+            payload['note'] = (
+                f"Columns {auto_excluded_columns!r} were automatically excluded because the row payload "
+                "would exceed the safe output size. Use return_columns to request specific columns, "
+                "or use start_row/max_rows pagination to retrieve smaller pages."
+            )
+        if row_trimmed_for_budget:
+            payload['output_trimmed'] = True
+            payload['note'] = (
+                f"Result page was automatically reduced to {returned_row_count} row(s) to stay within "
+                "the safe output size. Use next_start_row with start_row to continue paging."
+            )
+
+        return payload
+
     def _filter_rows_across_sheets(
         self,
         container_name: str,
@@ -528,6 +735,8 @@ class TabularProcessingPlugin:
         additional_filter_value=None,
         normalize_match: bool = False,
         max_rows: int = 100,
+        start_row: int = 0,
+        return_columns=None,
     ) -> Optional[str]:
         """Search for matching rows across all sheets that contain the requested column.
 
@@ -546,6 +755,9 @@ class TabularProcessingPlugin:
         sheets_searched = []
         sheets_matched = []
         total_matches = 0
+        applied_filters = []
+        skip_remaining = max(0, int(start_row or 0))
+        requested_max_rows = max(1, int(max_rows or 100))
 
         for sheet in available_sheets:
             df = self._read_tabular_blob_to_dataframe(
@@ -559,7 +771,7 @@ class TabularProcessingPlugin:
                 continue
 
             try:
-                filtered_df, applied_filters = self._apply_optional_dataframe_filters(
+                filtered_df, sheet_filters = self._apply_optional_dataframe_filters(
                     df,
                     filter_column=column,
                     filter_operator=operator_str,
@@ -573,6 +785,7 @@ class TabularProcessingPlugin:
                 continue
 
             sheets_searched.append(sheet)
+            applied_filters = applied_filters or sheet_filters
 
             sheet_matches = len(filtered_df)
             if sheet_matches == 0:
@@ -580,12 +793,19 @@ class TabularProcessingPlugin:
 
             sheets_matched.append(sheet)
             total_matches += sheet_matches
-            remaining_capacity = max(0, max_rows - len(combined_results))
+            if skip_remaining >= sheet_matches:
+                skip_remaining -= sheet_matches
+                continue
+
+            remaining_capacity = max(0, requested_max_rows - len(combined_results))
             if remaining_capacity > 0:
-                filtered = filtered_df.head(remaining_capacity)
+                filtered = filtered_df.iloc[skip_remaining:skip_remaining + remaining_capacity]
+                skip_remaining = 0
                 for row in filtered.to_dict(orient='records'):
                     row['_sheet'] = sheet
                     combined_results.append(row)
+            else:
+                skip_remaining = 0
 
         if not sheets_searched:
             return None
@@ -598,16 +818,25 @@ class TabularProcessingPlugin:
             level=logging.INFO,
         )
 
-        return json.dumps({
+        row_page_payload = self._build_tabular_row_page_payload(
+            combined_results,
+            total_matches,
+            start_row=start_row,
+            max_rows=max_rows,
+            return_columns=return_columns,
+            protected_columns=['_sheet'],
+        )
+
+        response_payload = {
             "filename": filename,
             "selected_sheet": "ALL (cross-sheet search)",
             "sheets_searched": sheets_searched,
             "sheets_matched": sheets_matched,
             "filter_applied": applied_filters,
             "total_matches": total_matches,
-            "returned_rows": len(combined_results),
-            "data": combined_results,
-        }, indent=2, default=str)
+        }
+        response_payload.update(row_page_payload)
+        return json.dumps(response_payload, indent=2, default=str)
 
     def _search_rows_across_sheets(
         self,
@@ -627,6 +856,7 @@ class TabularProcessingPlugin:
         additional_filter_value=None,
         normalize_match: bool = False,
         max_rows: int = 100,
+        start_row: int = 0,
     ) -> Optional[str]:
         """Search rows across worksheets when the relevant text column is unknown or broad."""
         workbook_metadata = self._get_workbook_metadata(container_name, blob_name)
@@ -648,6 +878,8 @@ class TabularProcessingPlugin:
         seen_searched_columns = set()
         matched_columns = []
         seen_matched_columns = set()
+        skip_remaining = max(0, int(start_row or 0))
+        requested_max_rows = max(1, int(max_rows or 100))
 
         for sheet in available_sheets:
             df = self._read_tabular_blob_to_dataframe(
@@ -678,11 +910,8 @@ class TabularProcessingPlugin:
                     'selected_sheet': 'ALL (cross-sheet search)',
                 }, indent=2, default=str)
 
-            remaining_capacity = max(0, max_rows - len(combined_results))
-            if remaining_capacity <= 0:
-                break
-
             try:
+                remaining_capacity = max(0, requested_max_rows - len(combined_results))
                 search_result = self._search_dataframe_rows(
                     filtered_df,
                     search_value=search_value,
@@ -690,6 +919,7 @@ class TabularProcessingPlugin:
                     search_operator=search_operator,
                     return_columns=requested_return_columns,
                     normalize_match=normalize_match,
+                    start_row=skip_remaining,
                     max_rows=remaining_capacity,
                 )
             except KeyError:
@@ -714,6 +944,11 @@ class TabularProcessingPlugin:
             total_matches += sheet_match_count
             if sheet_match_count > 0:
                 sheets_matched.append(sheet)
+
+            if skip_remaining >= sheet_match_count:
+                skip_remaining -= sheet_match_count
+            else:
+                skip_remaining = 0
 
             for column_name in search_result['matched_columns']:
                 lowered_name = str(column_name).lower()
@@ -744,7 +979,16 @@ class TabularProcessingPlugin:
             level=logging.INFO,
         )
 
-        return json.dumps({
+        row_page_payload = self._build_tabular_row_page_payload(
+            combined_results,
+            total_matches,
+            start_row=start_row,
+            max_rows=max_rows,
+            return_columns=requested_return_columns,
+            protected_columns=['_sheet', '_matched_columns', '_matched_values', '_related_document_reference_values'],
+        )
+
+        response_payload = {
             'filename': filename,
             'selected_sheet': 'ALL (cross-sheet search)',
             'search_value': search_value,
@@ -757,9 +1001,9 @@ class TabularProcessingPlugin:
             'filter_applied': applied_filters,
             'normalize_match': normalize_match,
             'total_matches': total_matches,
-            'returned_rows': len(combined_results),
-            'data': combined_results,
-        }, indent=2, default=str)
+        }
+        response_payload.update(row_page_payload)
+        return json.dumps(response_payload, indent=2, default=str)
 
     def _lookup_value_across_sheets(
         self,
@@ -772,6 +1016,7 @@ class TabularProcessingPlugin:
         match_operator: str = "equals",
         normalize_match: bool = False,
         max_rows: int = 25,
+        start_row: int = 0,
     ) -> Optional[str]:
         """Look up matching rows across all sheets that contain the lookup column.
 
@@ -792,6 +1037,8 @@ class TabularProcessingPlugin:
         total_matches = 0
         operator = (match_operator or 'equals').strip().lower()
         normalized_lookup_value = str(lookup_value_str)
+        skip_remaining = max(0, int(start_row or 0))
+        requested_max_rows = max(1, int(max_rows or 25))
 
         for sheet in available_sheets:
             df = self._read_tabular_blob_to_dataframe(
@@ -826,9 +1073,14 @@ class TabularProcessingPlugin:
 
             sheets_matched.append(sheet)
             total_matches += sheet_matches
-            remaining_capacity = max(0, max_rows - len(combined_results))
+            if skip_remaining >= sheet_matches:
+                skip_remaining -= sheet_matches
+                continue
+
+            remaining_capacity = max(0, requested_max_rows - len(combined_results))
             if remaining_capacity > 0:
-                matched_df = df[mask].head(remaining_capacity)
+                matched_df = df[mask].iloc[skip_remaining:skip_remaining + remaining_capacity]
+                skip_remaining = 0
                 if target_column and target_column in df.columns:
                     for _, row in matched_df.iterrows():
                         combined_results.append({
@@ -841,6 +1093,8 @@ class TabularProcessingPlugin:
                     for row in matched_df.to_dict(orient='records'):
                         row['_sheet'] = sheet
                         combined_results.append(row)
+            else:
+                skip_remaining = 0
 
         if not sheets_searched:
             return None
@@ -853,15 +1107,23 @@ class TabularProcessingPlugin:
             level=logging.INFO,
         )
 
-        return json.dumps({
+        row_page_payload = self._build_tabular_row_page_payload(
+            combined_results,
+            total_matches,
+            start_row=start_row,
+            max_rows=max_rows,
+            protected_columns=['_sheet'],
+        )
+
+        response_payload = {
             "filename": filename,
             "selected_sheet": "ALL (cross-sheet search)",
             "sheets_searched": sheets_searched,
             "sheets_matched": sheets_matched,
             "total_matches": total_matches,
-            "returned_rows": len(combined_results),
-            "data": combined_results,
-        }, indent=2, default=str)
+        }
+        response_payload.update(row_page_payload)
+        return json.dumps(response_payload, indent=2, default=str)
 
     def _query_tabular_data_across_sheets(
         self,
@@ -870,6 +1132,8 @@ class TabularProcessingPlugin:
         filename: str,
         query_expression: str,
         max_rows: int = 100,
+        start_row: int = 0,
+        return_columns=None,
     ) -> Optional[str]:
         """Execute a pandas query expression across all sheets of a multi-sheet workbook.
 
@@ -889,6 +1153,8 @@ class TabularProcessingPlugin:
         sheets_matched = []
         total_matches = 0
         query_errors = []
+        skip_remaining = max(0, int(start_row or 0))
+        requested_max_rows = max(1, int(max_rows or 100))
 
         for sheet in available_sheets:
             df = self._read_tabular_blob_to_dataframe(
@@ -918,11 +1184,18 @@ class TabularProcessingPlugin:
 
             sheets_matched.append(sheet)
             total_matches += sheet_matches
-            remaining_capacity = max(0, max_rows - len(combined_results))
+            if skip_remaining >= sheet_matches:
+                skip_remaining -= sheet_matches
+                continue
+
+            remaining_capacity = max(0, requested_max_rows - len(combined_results))
             if remaining_capacity > 0:
-                for row in result_df.head(remaining_capacity).to_dict(orient='records'):
+                for row in result_df.iloc[skip_remaining:skip_remaining + remaining_capacity].to_dict(orient='records'):
                     row['_sheet'] = sheet
                     combined_results.append(row)
+                skip_remaining = 0
+            else:
+                skip_remaining = 0
 
         if not sheets_searched:
             if query_errors:
@@ -958,15 +1231,24 @@ class TabularProcessingPlugin:
             level=logging.INFO,
         )
 
-        return json.dumps({
+        row_page_payload = self._build_tabular_row_page_payload(
+            combined_results,
+            total_matches,
+            start_row=start_row,
+            max_rows=max_rows,
+            return_columns=return_columns,
+            protected_columns=['_sheet'],
+        )
+
+        response_payload = {
             "filename": filename,
             "selected_sheet": "ALL (cross-sheet search)",
             "sheets_searched": sheets_searched,
             "sheets_matched": sheets_matched,
             "total_matches": total_matches,
-            "returned_rows": len(combined_results),
-            "data": combined_results,
-        }, indent=2, default=str)
+        }
+        response_payload.update(row_page_payload)
+        return json.dumps(response_payload, indent=2, default=str)
 
     def _count_rows_across_sheets(
         self,
@@ -1222,6 +1504,8 @@ class TabularProcessingPlugin:
         target_alias_column: Optional[str] = None,
         normalize_match: bool = True,
         max_rows: int = 100,
+        start_row: int = 0,
+        return_columns=None,
     ) -> dict:
         """Evaluate a semi-join between a source cohort and a target fact worksheet."""
         source_sheet, workbook_metadata = self._resolve_sheet_selection(
@@ -1447,7 +1731,17 @@ class TabularProcessingPlugin:
         source_value_match_count_limit = self.SOURCE_VALUE_MATCH_COUNT_LIMIT
 
         matched_target_row_count = len(matched_target_rows)
-        return {
+        start, limit = self._parse_row_page_arguments(start_row, max_rows)
+        paged_matched_target_rows = matched_target_rows[start:start + limit]
+        row_page_payload = self._build_tabular_row_page_payload(
+            paged_matched_target_rows,
+            matched_target_row_count,
+            start_row=start,
+            max_rows=limit,
+            return_columns=return_columns,
+            protected_columns=['_matched_on', '_matched_source_values', '_related_document_reference_values'],
+        )
+        response_payload = {
             'filename': filename,
             'selected_sheet': target_sheet if workbook_metadata.get('is_workbook') else None,
             'relationship_type': 'set_membership',
@@ -1470,10 +1764,10 @@ class TabularProcessingPlugin:
             'source_value_match_counts': source_value_match_counts[:source_value_match_count_limit],
             'target_rows_scanned': len(filtered_target_df),
             'matched_target_row_count': matched_target_row_count,
-            'returned_rows': min(matched_target_row_count, max_rows),
-            'rows_limited': matched_target_row_count > max_rows,
-            'data': matched_target_rows[:max_rows],
+            'rows_limited': row_page_payload.get('has_more', False),
         }
+        response_payload.update(row_page_payload)
+        return response_payload
 
     def _format_datetime_column_label(self, value) -> str:
         """Render date-like Excel header labels into stable analysis-friendly strings."""
@@ -1901,6 +2195,7 @@ class TabularProcessingPlugin:
         search_operator: str = 'contains',
         return_columns=None,
         normalize_match: bool = False,
+        start_row: int = 0,
         max_rows: int = 100,
     ) -> dict:
         """Search one or more columns in a DataFrame and return row-context results."""
@@ -1939,7 +2234,15 @@ class TabularProcessingPlugin:
         seen_matched_columns = set()
         result_rows = []
 
-        for row_index, row in matched_df.head(int(max_rows)).iterrows():
+        normalized_start_row, normalized_max_rows = self._parse_row_page_arguments(start_row, max_rows)
+        try:
+            if int(max_rows or 0) <= 0:
+                normalized_max_rows = 0
+        except (TypeError, ValueError):
+            pass
+
+        paged_matched_df = matched_df.iloc[normalized_start_row:normalized_start_row + normalized_max_rows]
+        for row_index, row in paged_matched_df.iterrows():
             row_matched_columns = []
             for column_name in resolved_search_columns:
                 if not bool(column_masks[column_name].loc[row_index]):
@@ -1979,6 +2282,10 @@ class TabularProcessingPlugin:
             'return_columns': resolved_return_columns or None,
             'total_matches': len(matched_df),
             'returned_rows': len(result_rows),
+            'start_row': normalized_start_row,
+            'page_size': normalized_max_rows,
+            'has_more': normalized_start_row + len(result_rows) < len(matched_df),
+            'next_start_row': normalized_start_row + len(result_rows) if normalized_start_row + len(result_rows) < len(matched_df) else None,
             'data': result_rows,
         }
 
@@ -3091,8 +3398,8 @@ class TabularProcessingPlugin:
         self,
         user_id: Annotated[str, "The user ID (from Scope ID in Conversation Metadata)"],
         conversation_id: Annotated[str, "The conversation ID (from Conversation Metadata)"],
-        group_id: Annotated[Optional[str], "Group ID (for group workspace documents)"] = None,
-        public_workspace_id: Annotated[Optional[str], "Public workspace ID (for public workspace documents)"] = None,
+        group_id: Annotated[str, "Group ID (for group workspace documents)"] = None,
+        public_workspace_id: Annotated[str, "Public workspace ID (for public workspace documents)"] = None,
     ) -> Annotated[str, "JSON list of available tabular files"]:
         """List all tabular files available for the user across all accessible containers."""
         try:
@@ -3226,11 +3533,11 @@ class TabularProcessingPlugin:
         user_id: Annotated[str, "The user ID (from Scope ID in Conversation Metadata)"],
         conversation_id: Annotated[str, "The conversation ID (from Conversation Metadata)"],
         filename: Annotated[str, "The filename of the tabular file"],
-        sheet_name: Annotated[Optional[str], "Optional worksheet name for Excel files. When omitted on multi-sheet workbooks, the response returns workbook-level sheet schemas."] = None,
-        sheet_index: Annotated[Optional[str], "Optional zero-based worksheet index for Excel files. Ignored when sheet_name is provided."] = None,
+        sheet_name: Annotated[str, "Optional worksheet name for Excel files. When omitted on multi-sheet workbooks, the response returns workbook-level sheet schemas."] = None,
+        sheet_index: Annotated[str, "Optional zero-based worksheet index for Excel files. Ignored when sheet_name is provided."] = None,
         source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
-        group_id: Annotated[Optional[str], "Group ID (for group workspace documents)"] = None,
-        public_workspace_id: Annotated[Optional[str], "Public workspace ID (for public workspace documents)"] = None,
+        group_id: Annotated[str, "Group ID (for group workspace documents)"] = None,
+        public_workspace_id: Annotated[str, "Public workspace ID (for public workspace documents)"] = None,
     ) -> Annotated[str, "JSON summary of the tabular file"]:
         """Get schema and preview of a tabular file."""
         def _sync_work():
@@ -3294,12 +3601,13 @@ class TabularProcessingPlugin:
         target_column: Annotated[str, "The target column containing the desired value, such as Nov-25"],
         match_operator: Annotated[str, "Match operator: equals, contains, startswith, endswith"] = "equals",
         normalize_match: Annotated[str, "Whether to normalize string/entity matching for text comparisons (true/false)"] = "false",
-        sheet_name: Annotated[Optional[str], "Optional worksheet name for Excel files. Required for analytical calls on multi-sheet workbooks unless sheet_index is provided."] = None,
-        sheet_index: Annotated[Optional[str], "Optional zero-based worksheet index for Excel files. Ignored when sheet_name is provided."] = None,
+        sheet_name: Annotated[str, "Optional worksheet name for Excel files. Required for analytical calls on multi-sheet workbooks unless sheet_index is provided."] = None,
+        sheet_index: Annotated[str, "Optional zero-based worksheet index for Excel files. Ignored when sheet_name is provided."] = None,
         source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
+        start_row: Annotated[str, "Zero-based row offset for pagination. Use next_start_row from a previous result to continue."] = "0",
         max_rows: Annotated[str, "Maximum matching rows to return"] = "25",
-        group_id: Annotated[Optional[str], "Group ID (for group workspace documents)"] = None,
-        public_workspace_id: Annotated[Optional[str], "Public workspace ID (for public workspace documents)"] = None,
+        group_id: Annotated[str, "Group ID (for group workspace documents)"] = None,
+        public_workspace_id: Annotated[str, "Public workspace ID (for public workspace documents)"] = None,
     ) -> Annotated[str, "JSON result containing matching rows and target-column values"]:
         """Look up values from a target column for matching rows."""
         def _sync_work():
@@ -3319,6 +3627,7 @@ class TabularProcessingPlugin:
                         match_operator=match_operator,
                         normalize_match=normalize_match_flag,
                         max_rows=int(max_rows),
+                        start_row=int(start_row),
                     )
                     if cross_sheet_result is not None:
                         return cross_sheet_result
@@ -3377,8 +3686,9 @@ class TabularProcessingPlugin:
                 except ValueError:
                     return json.dumps({"error": f"Unsupported match_operator: {match_operator}"})
 
-                limit = int(max_rows)
-                matches = df[mask].head(limit)
+                start, limit = self._parse_row_page_arguments(start_row, max_rows, default_max_rows=25)
+                matched_df = df[mask]
+                matches = matched_df.iloc[start:start + limit]
                 response = {
                     "filename": filename,
                     "selected_sheet": selected_sheet if workbook_metadata.get('is_workbook') else None,
@@ -3387,10 +3697,14 @@ class TabularProcessingPlugin:
                     "target_column": target_column,
                     "match_operator": operator,
                     "normalize_match": normalize_match_flag,
-                    "total_matches": int(mask.sum()),
-                    "returned_rows": len(matches),
-                    "data": matches.to_dict(orient='records'),
+                    "total_matches": len(matched_df),
                 }
+                response.update(self._build_tabular_row_page_payload(
+                    matches.to_dict(orient='records'),
+                    len(matched_df),
+                    start_row=start,
+                    max_rows=limit,
+                ))
 
                 if len(matches) == 1:
                     response["value"] = matches.iloc[0][target_column]
@@ -3415,23 +3729,23 @@ class TabularProcessingPlugin:
         conversation_id: Annotated[str, "The conversation ID (from Conversation Metadata)"],
         filename: Annotated[str, "The filename of the tabular file"],
         column: Annotated[str, "The column from which to return distinct values"],
-        query_expression: Annotated[Optional[str], "Optional pandas DataFrame.query() expression to apply before collecting distinct values"] = None,
-        filter_column: Annotated[Optional[str], "Optional column to filter on before collecting distinct values"] = None,
+        query_expression: Annotated[str, "Optional pandas DataFrame.query() expression to apply before collecting distinct values"] = None,
+        filter_column: Annotated[str, "Optional column to filter on before collecting distinct values"] = None,
         filter_operator: Annotated[str, "Optional filter operator when filter_column is provided"] = "equals",
-        filter_value: Annotated[Optional[str], "Optional filter value when filter_column is provided"] = None,
-        additional_filter_column: Annotated[Optional[str], "Optional second column to filter on before collecting distinct values"] = None,
+        filter_value: Annotated[str, "Optional filter value when filter_column is provided"] = None,
+        additional_filter_column: Annotated[str, "Optional second column to filter on before collecting distinct values"] = None,
         additional_filter_operator: Annotated[str, "Optional filter operator when additional_filter_column is provided"] = "equals",
-        additional_filter_value: Annotated[Optional[str], "Optional filter value when additional_filter_column is provided"] = None,
-        extract_mode: Annotated[Optional[str], "Optional embedded extraction mode: 'url' or 'regex'"] = None,
-        extract_pattern: Annotated[Optional[str], "Optional regex pattern when extract_mode is 'regex'"] = None,
-        url_path_segments: Annotated[Optional[str], "Optional number of URL path segments to keep when extract_mode is 'url'"] = None,
+        additional_filter_value: Annotated[str, "Optional filter value when additional_filter_column is provided"] = None,
+        extract_mode: Annotated[str, "Optional embedded extraction mode: 'url' or 'regex'"] = None,
+        extract_pattern: Annotated[str, "Optional regex pattern when extract_mode is 'regex'"] = None,
+        url_path_segments: Annotated[str, "Optional number of URL path segments to keep when extract_mode is 'url'"] = None,
         normalize_match: Annotated[str, "Whether to normalize string/entity matching and deduplication (true/false)"] = "true",
-        sheet_name: Annotated[Optional[str], "Optional worksheet name for Excel files. When omitted, the plugin may perform a cross-sheet distinct-value search."] = None,
-        sheet_index: Annotated[Optional[str], "Optional zero-based worksheet index for Excel files. Ignored when sheet_name is provided."] = None,
+        sheet_name: Annotated[str, "Optional worksheet name for Excel files. When omitted, the plugin may perform a cross-sheet distinct-value search."] = None,
+        sheet_index: Annotated[str, "Optional zero-based worksheet index for Excel files. Ignored when sheet_name is provided."] = None,
         source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
         max_values: Annotated[str, "Maximum distinct values to return"] = "100",
-        group_id: Annotated[Optional[str], "Group ID (for group workspace documents)"] = None,
-        public_workspace_id: Annotated[Optional[str], "Public workspace ID (for public workspace documents)"] = None,
+        group_id: Annotated[str, "Group ID (for group workspace documents)"] = None,
+        public_workspace_id: Annotated[str, "Public workspace ID (for public workspace documents)"] = None,
     ) -> Annotated[str, "JSON result containing deterministic distinct values and counts"]:
         """Return deterministic distinct values from a worksheet or across worksheets."""
         def _sync_work():
@@ -3587,19 +3901,19 @@ class TabularProcessingPlugin:
         user_id: Annotated[str, "The user ID (from Scope ID in Conversation Metadata)"],
         conversation_id: Annotated[str, "The conversation ID (from Conversation Metadata)"],
         filename: Annotated[str, "The filename of the tabular file"],
-        query_expression: Annotated[Optional[str], "Optional pandas DataFrame.query() expression to apply before counting rows"] = None,
-        filter_column: Annotated[Optional[str], "Optional column to filter on before counting rows"] = None,
+        query_expression: Annotated[str, "Optional pandas DataFrame.query() expression to apply before counting rows"] = None,
+        filter_column: Annotated[str, "Optional column to filter on before counting rows"] = None,
         filter_operator: Annotated[str, "Optional filter operator when filter_column is provided"] = "equals",
-        filter_value: Annotated[Optional[str], "Optional filter value when filter_column is provided"] = None,
-        additional_filter_column: Annotated[Optional[str], "Optional second column to filter on before counting rows"] = None,
+        filter_value: Annotated[str, "Optional filter value when filter_column is provided"] = None,
+        additional_filter_column: Annotated[str, "Optional second column to filter on before counting rows"] = None,
         additional_filter_operator: Annotated[str, "Optional filter operator when additional_filter_column is provided"] = "equals",
-        additional_filter_value: Annotated[Optional[str], "Optional filter value when additional_filter_column is provided"] = None,
+        additional_filter_value: Annotated[str, "Optional filter value when additional_filter_column is provided"] = None,
         normalize_match: Annotated[str, "Whether to normalize string/entity matching for text comparisons (true/false)"] = "false",
-        sheet_name: Annotated[Optional[str], "Optional worksheet name for Excel files. When omitted, the plugin may perform a cross-sheet row count."] = None,
-        sheet_index: Annotated[Optional[str], "Optional zero-based worksheet index for Excel files. Ignored when sheet_name is provided."] = None,
+        sheet_name: Annotated[str, "Optional worksheet name for Excel files. When omitted, the plugin may perform a cross-sheet row count."] = None,
+        sheet_index: Annotated[str, "Optional zero-based worksheet index for Excel files. Ignored when sheet_name is provided."] = None,
         source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
-        group_id: Annotated[Optional[str], "Group ID (for group workspace documents)"] = None,
-        public_workspace_id: Annotated[Optional[str], "Public workspace ID (for public workspace documents)"] = None,
+        group_id: Annotated[str, "Group ID (for group workspace documents)"] = None,
+        public_workspace_id: Annotated[str, "Public workspace ID (for public workspace documents)"] = None,
     ) -> Annotated[str, "JSON result containing a deterministic row count"]:
         """Count rows deterministically after optional filters or queries."""
         def _sync_work():
@@ -3709,11 +4023,11 @@ class TabularProcessingPlugin:
         filename: Annotated[str, "The filename of the tabular file"],
         column: Annotated[str, "The column name to aggregate"],
         operation: Annotated[str, "Aggregation: sum, mean, count, min, max, median, std, nunique, value_counts"],
-        sheet_name: Annotated[Optional[str], "Optional worksheet name for Excel files. Required for analytical calls on multi-sheet workbooks unless sheet_index is provided."] = None,
-        sheet_index: Annotated[Optional[str], "Optional zero-based worksheet index for Excel files. Ignored when sheet_name is provided."] = None,
+        sheet_name: Annotated[str, "Optional worksheet name for Excel files. Required for analytical calls on multi-sheet workbooks unless sheet_index is provided."] = None,
+        sheet_index: Annotated[str, "Optional zero-based worksheet index for Excel files. Ignored when sheet_name is provided."] = None,
         source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
-        group_id: Annotated[Optional[str], "Group ID (for group workspace documents)"] = None,
-        public_workspace_id: Annotated[Optional[str], "Public workspace ID (for public workspace documents)"] = None,
+        group_id: Annotated[str, "Group ID (for group workspace documents)"] = None,
+        public_workspace_id: Annotated[str, "Public workspace ID (for public workspace documents)"] = None,
     ) -> Annotated[str, "JSON result of the aggregation"]:
         """Execute an aggregation operation on a column."""
         def _sync_work():
@@ -3803,21 +4117,24 @@ class TabularProcessingPlugin:
         column: Annotated[str, "The column to filter on"],
         operator: Annotated[str, "Operator: ==, !=, >, <, >=, <=, contains, startswith, endswith"],
         value: Annotated[str, "The value to compare against"],
-        additional_filter_column: Annotated[Optional[str], "Optional second column to filter on"] = None,
+        additional_filter_column: Annotated[str, "Optional second column to filter on"] = None,
         additional_filter_operator: Annotated[str, "Optional filter operator when additional_filter_column is provided"] = "equals",
-        additional_filter_value: Annotated[Optional[str], "Optional filter value when additional_filter_column is provided"] = None,
+        additional_filter_value: Annotated[str, "Optional filter value when additional_filter_column is provided"] = None,
         normalize_match: Annotated[str, "Whether to normalize string/entity matching for text comparisons (true/false)"] = "false",
-        sheet_name: Annotated[Optional[str], "Optional worksheet name for Excel files. Required for analytical calls on multi-sheet workbooks unless sheet_index is provided."] = None,
-        sheet_index: Annotated[Optional[str], "Optional zero-based worksheet index for Excel files. Ignored when sheet_name is provided."] = None,
+        sheet_name: Annotated[str, "Optional worksheet name for Excel files. Required for analytical calls on multi-sheet workbooks unless sheet_index is provided."] = None,
+        sheet_index: Annotated[str, "Optional zero-based worksheet index for Excel files. Ignored when sheet_name is provided."] = None,
         source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
-        max_rows: Annotated[str, "Maximum rows to return"] = "100",
-        group_id: Annotated[Optional[str], "Group ID (for group workspace documents)"] = None,
-        public_workspace_id: Annotated[Optional[str], "Public workspace ID (for public workspace documents)"] = None,
+        return_columns: Annotated[str, "Optional comma-separated columns to include in each result row. Omit to return all columns."] = None,
+        start_row: Annotated[str, "Zero-based row offset for pagination. Use next_start_row from a previous result to continue."] = "0",
+        max_rows: Annotated[str, "Maximum rows to return per page"] = "100",
+        group_id: Annotated[str, "Group ID (for group workspace documents)"] = None,
+        public_workspace_id: Annotated[str, "Public workspace ID (for public workspace documents)"] = None,
     ) -> Annotated[str, "JSON list of matching rows"]:
         """Filter rows based on a condition."""
         def _sync_work():
             try:
                 normalize_match_flag = self._parse_boolean_argument(normalize_match, default=False)
+                parsed_return_columns = self._parse_optional_column_list_argument(return_columns)
                 container, blob_path = self._resolve_blob_location_with_fallback(
                     user_id, conversation_id, filename, source,
                     group_id=group_id, public_workspace_id=public_workspace_id
@@ -3838,6 +4155,8 @@ class TabularProcessingPlugin:
                         additional_filter_value=additional_filter_value,
                         normalize_match=normalize_match_flag,
                         max_rows=int(max_rows),
+                        start_row=int(start_row),
+                        return_columns=parsed_return_columns,
                     )
                     if cross_sheet_result is not None:
                         return cross_sheet_result
@@ -3898,17 +4217,23 @@ class TabularProcessingPlugin:
                 except ValueError as filter_error:
                     return json.dumps({"error": str(filter_error)})
 
-                limit = int(max_rows)
-                filtered = filtered_df.head(limit)
-                return json.dumps({
+                start, limit = self._parse_row_page_arguments(start_row, max_rows)
+                filtered = filtered_df.iloc[start:start + limit]
+                response_payload = {
                     "filename": filename,
                     "selected_sheet": selected_sheet if workbook_metadata.get('is_workbook') else None,
                     "filter_applied": applied_filters,
                     "normalize_match": normalize_match_flag,
                     "total_matches": len(filtered_df),
-                    "returned_rows": len(filtered),
-                    "data": filtered.to_dict(orient='records')
-                }, indent=2, default=str)
+                }
+                response_payload.update(self._build_tabular_row_page_payload(
+                    filtered.to_dict(orient='records'),
+                    len(filtered_df),
+                    start_row=start,
+                    max_rows=limit,
+                    return_columns=parsed_return_columns,
+                ))
+                return json.dumps(response_payload, indent=2, default=str)
             except Exception as e:
                 log_event(f"[TabularProcessingPlugin] Error filtering rows: {e}", level=logging.WARNING)
                 return json.dumps({"error": str(e)})
@@ -3928,23 +4253,24 @@ class TabularProcessingPlugin:
         conversation_id: Annotated[str, "The conversation ID (from Conversation Metadata)"],
         filename: Annotated[str, "The filename of the tabular file"],
         search_value: Annotated[str, "The text or value to search for"],
-        search_columns: Annotated[Optional[str], "Optional comma-separated columns to search. Omit to search all columns."] = None,
+        search_columns: Annotated[str, "Optional comma-separated columns to search. Omit to search all columns."] = None,
         search_operator: Annotated[str, "Search operator: equals, contains, startswith, endswith"] = "contains",
-        return_columns: Annotated[Optional[str], "Optional comma-separated columns to include in each result row. Omit to return the full row."] = None,
-        query_expression: Annotated[Optional[str], "Optional pandas DataFrame.query() expression to apply before searching"] = None,
-        filter_column: Annotated[Optional[str], "Optional first column filter to narrow the search cohort"] = None,
+        return_columns: Annotated[str, "Optional comma-separated columns to include in each result row. Omit to return the full row."] = None,
+        query_expression: Annotated[str, "Optional pandas DataFrame.query() expression to apply before searching"] = None,
+        filter_column: Annotated[str, "Optional first column filter to narrow the search cohort"] = None,
         filter_operator: Annotated[str, "Optional filter operator when filter_column is provided"] = "equals",
-        filter_value: Annotated[Optional[str], "Optional filter value when filter_column is provided"] = None,
-        additional_filter_column: Annotated[Optional[str], "Optional second column filter to narrow the search cohort"] = None,
+        filter_value: Annotated[str, "Optional filter value when filter_column is provided"] = None,
+        additional_filter_column: Annotated[str, "Optional second column filter to narrow the search cohort"] = None,
         additional_filter_operator: Annotated[str, "Optional filter operator when additional_filter_column is provided"] = "equals",
-        additional_filter_value: Annotated[Optional[str], "Optional filter value when additional_filter_column is provided"] = None,
+        additional_filter_value: Annotated[str, "Optional filter value when additional_filter_column is provided"] = None,
         normalize_match: Annotated[str, "Whether to normalize string/entity matching for text comparisons (true/false)"] = "false",
-        sheet_name: Annotated[Optional[str], "Optional worksheet name for Excel files. When omitted, the plugin may perform a cross-sheet search."] = None,
-        sheet_index: Annotated[Optional[str], "Optional zero-based worksheet index for Excel files. Ignored when sheet_name is provided."] = None,
+        sheet_name: Annotated[str, "Optional worksheet name for Excel files. When omitted, the plugin may perform a cross-sheet search."] = None,
+        sheet_index: Annotated[str, "Optional zero-based worksheet index for Excel files. Ignored when sheet_name is provided."] = None,
         source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
-        max_rows: Annotated[str, "Maximum matching rows to return"] = "100",
-        group_id: Annotated[Optional[str], "Group ID (for group workspace documents)"] = None,
-        public_workspace_id: Annotated[Optional[str], "Public workspace ID (for public workspace documents)"] = None,
+        start_row: Annotated[str, "Zero-based row offset for pagination. Use next_start_row from a previous result to continue."] = "0",
+        max_rows: Annotated[str, "Maximum matching rows to return per page"] = "100",
+        group_id: Annotated[str, "Group ID (for group workspace documents)"] = None,
+        public_workspace_id: Annotated[str, "Public workspace ID (for public workspace documents)"] = None,
     ) -> Annotated[str, "JSON result containing matching rows, matched columns, and search metadata"]:
         """Search rows across one or more columns while preserving row context."""
         def _sync_work():
@@ -3977,6 +4303,7 @@ class TabularProcessingPlugin:
                         additional_filter_value=additional_filter_value,
                         normalize_match=normalize_match_flag,
                         max_rows=int(max_rows),
+                        start_row=int(start_row),
                     )
                     if cross_sheet_result is not None:
                         return cross_sheet_result
@@ -4046,6 +4373,7 @@ class TabularProcessingPlugin:
                         search_operator=search_operator,
                         return_columns=parsed_return_columns,
                         normalize_match=normalize_match_flag,
+                        start_row=int(start_row),
                         max_rows=int(max_rows),
                     )
                 except KeyError as missing_column_error:
@@ -4090,6 +4418,10 @@ class TabularProcessingPlugin:
                     'normalize_match': normalize_match_flag,
                     'total_matches': search_result['total_matches'],
                     'returned_rows': search_result['returned_rows'],
+                    'start_row': search_result['start_row'],
+                    'page_size': search_result['page_size'],
+                    'has_more': search_result['has_more'],
+                    'next_start_row': search_result['next_start_row'],
                     'data': search_result['data'],
                 }, indent=2, default=str)
             except Exception as e:
@@ -4113,16 +4445,19 @@ class TabularProcessingPlugin:
         conversation_id: Annotated[str, "The conversation ID (from Conversation Metadata)"],
         filename: Annotated[str, "The filename of the tabular file"],
         query_expression: Annotated[str, "Pandas query expression (e.g. 'Age > 30 and State == \"CA\"')"],
-        sheet_name: Annotated[Optional[str], "Optional worksheet name for Excel files. Required for analytical calls on multi-sheet workbooks unless sheet_index is provided."] = None,
-        sheet_index: Annotated[Optional[str], "Optional zero-based worksheet index for Excel files. Ignored when sheet_name is provided."] = None,
+        sheet_name: Annotated[str, "Optional worksheet name for Excel files. Required for analytical calls on multi-sheet workbooks unless sheet_index is provided."] = None,
+        sheet_index: Annotated[str, "Optional zero-based worksheet index for Excel files. Ignored when sheet_name is provided."] = None,
         source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
-        max_rows: Annotated[str, "Maximum rows to return"] = "100",
-        group_id: Annotated[Optional[str], "Group ID (for group workspace documents)"] = None,
-        public_workspace_id: Annotated[Optional[str], "Public workspace ID (for public workspace documents)"] = None,
+        return_columns: Annotated[str, "Optional comma-separated columns to include in each result row. Omit to return all columns."] = None,
+        start_row: Annotated[str, "Zero-based row offset for pagination. Use next_start_row from a previous result to continue."] = "0",
+        max_rows: Annotated[str, "Maximum rows to return per page"] = "100",
+        group_id: Annotated[str, "Group ID (for group workspace documents)"] = None,
+        public_workspace_id: Annotated[str, "Public workspace ID (for public workspace documents)"] = None,
     ) -> Annotated[str, "JSON result of the query"]:
         """Execute a pandas query expression against a tabular file."""
         def _sync_work():
             try:
+                parsed_return_columns = self._parse_optional_column_list_argument(return_columns)
                 container, blob_path = self._resolve_blob_location_with_fallback(
                     user_id, conversation_id, filename, source,
                     group_id=group_id, public_workspace_id=public_workspace_id
@@ -4134,6 +4469,8 @@ class TabularProcessingPlugin:
                     cross_sheet_result = self._query_tabular_data_across_sheets(
                         container, blob_path, filename, query_expression,
                         max_rows=int(max_rows),
+                        start_row=int(start_row),
+                        return_columns=parsed_return_columns,
                     )
                     if cross_sheet_result is not None:
                         return cross_sheet_result
@@ -4157,16 +4494,23 @@ class TabularProcessingPlugin:
                     query_expression=query_expression,
                     normalize_match=False,
                 )
-                limit = int(max_rows)
-                return json.dumps({
+                start, limit = self._parse_row_page_arguments(start_row, max_rows)
+                sliced_result_df = result_df.iloc[start:start + limit]
+                response_payload = {
                     "filename": filename,
                     "selected_sheet": selected_sheet if workbook_metadata.get('is_workbook') else None,
                     "query_expression": query_expression,
                     "query_expression_fallback": used_reviewer_style_fallback,
                     "total_matches": len(result_df),
-                    "returned_rows": min(len(result_df), limit),
-                    "data": result_df.head(limit).to_dict(orient='records')
-                }, indent=2, default=str)
+                }
+                response_payload.update(self._build_tabular_row_page_payload(
+                    sliced_result_df.to_dict(orient='records'),
+                    len(result_df),
+                    start_row=start,
+                    max_rows=limit,
+                    return_columns=parsed_return_columns,
+                ))
+                return json.dumps(response_payload, indent=2, default=str)
             except Exception as e:
                 log_event(f"[TabularProcessingPlugin] Error querying data: {e}", level=logging.WARNING)
                 return json.dumps({"error": f"Query error: {str(e)}. Ensure column names and values are correct."})
@@ -4189,23 +4533,25 @@ class TabularProcessingPlugin:
         source_value_column: Annotated[str, "Column on the source worksheet that contains the canonical cohort values"],
         target_sheet_name: Annotated[str, "Worksheet containing the fact rows to filter"],
         target_match_column: Annotated[str, "Column on the target worksheet that should match the source cohort values"],
-        source_query_expression: Annotated[Optional[str], "Optional pandas DataFrame.query() expression to narrow the source cohort"] = None,
-        source_filter_column: Annotated[Optional[str], "Optional source-sheet filter column"] = None,
+        source_query_expression: Annotated[str, "Optional pandas DataFrame.query() expression to narrow the source cohort"] = None,
+        source_filter_column: Annotated[str, "Optional source-sheet filter column"] = None,
         source_filter_operator: Annotated[str, "Optional source-sheet filter operator"] = "equals",
-        source_filter_value: Annotated[Optional[str], "Optional source-sheet filter value"] = None,
-        target_query_expression: Annotated[Optional[str], "Optional pandas DataFrame.query() expression to narrow target rows before matching"] = None,
-        target_filter_column: Annotated[Optional[str], "Optional target-sheet filter column"] = None,
+        source_filter_value: Annotated[str, "Optional source-sheet filter value"] = None,
+        target_query_expression: Annotated[str, "Optional pandas DataFrame.query() expression to narrow target rows before matching"] = None,
+        target_filter_column: Annotated[str, "Optional target-sheet filter column"] = None,
         target_filter_operator: Annotated[str, "Optional target-sheet filter operator"] = "equals",
-        target_filter_value: Annotated[Optional[str], "Optional target-sheet filter value"] = None,
-        source_alias_column: Annotated[Optional[str], "Optional alternate or alias source column used for normalized matching"] = None,
-        target_alias_column: Annotated[Optional[str], "Optional alternate or alias target column used for normalized matching"] = None,
+        target_filter_value: Annotated[str, "Optional target-sheet filter value"] = None,
+        source_alias_column: Annotated[str, "Optional alternate or alias source column used for normalized matching"] = None,
+        target_alias_column: Annotated[str, "Optional alternate or alias target column used for normalized matching"] = None,
         normalize_match: Annotated[str, "Whether to normalize entity-style text matching across worksheets (true/false)"] = "true",
-        source_sheet_index: Annotated[Optional[str], "Optional zero-based source worksheet index if sheet name is not used"] = None,
-        target_sheet_index: Annotated[Optional[str], "Optional zero-based target worksheet index if sheet name is not used"] = None,
+        source_sheet_index: Annotated[str, "Optional zero-based source worksheet index if sheet name is not used"] = None,
+        target_sheet_index: Annotated[str, "Optional zero-based target worksheet index if sheet name is not used"] = None,
         source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
-        max_rows: Annotated[str, "Maximum related target rows to return"] = "100",
-        group_id: Annotated[Optional[str], "Group ID (for group workspace documents)"] = None,
-        public_workspace_id: Annotated[Optional[str], "Public workspace ID (for public workspace documents)"] = None,
+        return_columns: Annotated[str, "Optional comma-separated target-row columns to include. Omit to return all target-row columns."] = None,
+        start_row: Annotated[str, "Zero-based target-row offset for pagination. Use next_start_row from a previous result to continue."] = "0",
+        max_rows: Annotated[str, "Maximum related target rows to return per page"] = "100",
+        group_id: Annotated[str, "Group ID (for group workspace documents)"] = None,
+        public_workspace_id: Annotated[str, "Public workspace ID (for public workspace documents)"] = None,
     ) -> Annotated[str, "JSON result containing explainable set-membership filtering output"]:
         """Filter target rows by membership in a source-sheet cohort."""
         def _sync_work():
@@ -4237,6 +4583,8 @@ class TabularProcessingPlugin:
                     target_alias_column=target_alias_column,
                     normalize_match=normalize_match_flag,
                     max_rows=int(max_rows),
+                    start_row=int(start_row),
+                    return_columns=return_columns,
                 )
                 return json.dumps(result_payload, indent=2, default=str)
             except Exception as e:
@@ -4262,22 +4610,22 @@ class TabularProcessingPlugin:
         source_value_column: Annotated[str, "Column on the source worksheet that contains the canonical cohort values"],
         target_sheet_name: Annotated[str, "Worksheet containing the fact rows to count"],
         target_match_column: Annotated[str, "Column on the target worksheet that should match the source cohort values"],
-        source_query_expression: Annotated[Optional[str], "Optional pandas DataFrame.query() expression to narrow the source cohort"] = None,
-        source_filter_column: Annotated[Optional[str], "Optional source-sheet filter column"] = None,
+        source_query_expression: Annotated[str, "Optional pandas DataFrame.query() expression to narrow the source cohort"] = None,
+        source_filter_column: Annotated[str, "Optional source-sheet filter column"] = None,
         source_filter_operator: Annotated[str, "Optional source-sheet filter operator"] = "equals",
-        source_filter_value: Annotated[Optional[str], "Optional source-sheet filter value"] = None,
-        target_query_expression: Annotated[Optional[str], "Optional pandas DataFrame.query() expression to narrow target rows before matching"] = None,
-        target_filter_column: Annotated[Optional[str], "Optional target-sheet filter column"] = None,
+        source_filter_value: Annotated[str, "Optional source-sheet filter value"] = None,
+        target_query_expression: Annotated[str, "Optional pandas DataFrame.query() expression to narrow target rows before matching"] = None,
+        target_filter_column: Annotated[str, "Optional target-sheet filter column"] = None,
         target_filter_operator: Annotated[str, "Optional target-sheet filter operator"] = "equals",
-        target_filter_value: Annotated[Optional[str], "Optional target-sheet filter value"] = None,
-        source_alias_column: Annotated[Optional[str], "Optional alternate or alias source column used for normalized matching"] = None,
-        target_alias_column: Annotated[Optional[str], "Optional alternate or alias target column used for normalized matching"] = None,
+        target_filter_value: Annotated[str, "Optional target-sheet filter value"] = None,
+        source_alias_column: Annotated[str, "Optional alternate or alias source column used for normalized matching"] = None,
+        target_alias_column: Annotated[str, "Optional alternate or alias target column used for normalized matching"] = None,
         normalize_match: Annotated[str, "Whether to normalize entity-style text matching across worksheets (true/false)"] = "true",
-        source_sheet_index: Annotated[Optional[str], "Optional zero-based source worksheet index if sheet name is not used"] = None,
-        target_sheet_index: Annotated[Optional[str], "Optional zero-based target worksheet index if sheet name is not used"] = None,
+        source_sheet_index: Annotated[str, "Optional zero-based source worksheet index if sheet name is not used"] = None,
+        target_sheet_index: Annotated[str, "Optional zero-based target worksheet index if sheet name is not used"] = None,
         source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
-        group_id: Annotated[Optional[str], "Group ID (for group workspace documents)"] = None,
-        public_workspace_id: Annotated[Optional[str], "Public workspace ID (for public workspace documents)"] = None,
+        group_id: Annotated[str, "Group ID (for group workspace documents)"] = None,
+        public_workspace_id: Annotated[str, "Public workspace ID (for public workspace documents)"] = None,
     ) -> Annotated[str, "JSON result containing an explainable relational row count"]:
         """Count target rows by membership in a source-sheet cohort."""
         def _sync_work():
@@ -4340,13 +4688,13 @@ class TabularProcessingPlugin:
         group_by_column: Annotated[str, "The column to group by"],
         aggregate_column: Annotated[str, "The column to aggregate"],
         operation: Annotated[str, "Aggregation operation: sum, mean, count, min, max, median, std"],
-        sheet_name: Annotated[Optional[str], "Optional worksheet name for Excel files. Required for analytical calls on multi-sheet workbooks unless sheet_index is provided."] = None,
-        sheet_index: Annotated[Optional[str], "Optional zero-based worksheet index for Excel files. Ignored when sheet_name is provided."] = None,
+        sheet_name: Annotated[str, "Optional worksheet name for Excel files. Required for analytical calls on multi-sheet workbooks unless sheet_index is provided."] = None,
+        sheet_index: Annotated[str, "Optional zero-based worksheet index for Excel files. Ignored when sheet_name is provided."] = None,
         source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
         top_n: Annotated[str, "How many top groups to return in descending or ascending order"] = "10",
         sort_descending: Annotated[str, "Whether top_results should be sorted descending (true/false)"] = "true",
-        group_id: Annotated[Optional[str], "Group ID (for group workspace documents)"] = None,
-        public_workspace_id: Annotated[Optional[str], "Public workspace ID (for public workspace documents)"] = None,
+        group_id: Annotated[str, "Group ID (for group workspace documents)"] = None,
+        public_workspace_id: Annotated[str, "Public workspace ID (for public workspace documents)"] = None,
     ) -> Annotated[str, "JSON result of the group-by aggregation"]:
         """Group by one column and aggregate another."""
         def _sync_work():
@@ -4438,16 +4786,16 @@ class TabularProcessingPlugin:
         filename: Annotated[str, "The filename of the tabular file"],
         datetime_column: Annotated[str, "The datetime-like column to extract a component from"],
         datetime_component: Annotated[str, "Component: year, month, month_name, day, date, hour, minute, day_name, weekday_number, quarter, or week"],
-        aggregate_column: Annotated[Optional[str], "The numeric column to aggregate. Leave empty and use operation='count' to count rows."] = "",
+        aggregate_column: Annotated[str, "The numeric column to aggregate. Leave empty and use operation='count' to count rows."] = "",
         operation: Annotated[str, "Aggregation operation: count, sum, mean, min, max, median, std"] = "count",
-        sheet_name: Annotated[Optional[str], "Optional worksheet name for Excel files. Required for analytical calls on multi-sheet workbooks unless sheet_index is provided."] = None,
-        sheet_index: Annotated[Optional[str], "Optional zero-based worksheet index for Excel files. Ignored when sheet_name is provided."] = None,
+        sheet_name: Annotated[str, "Optional worksheet name for Excel files. Required for analytical calls on multi-sheet workbooks unless sheet_index is provided."] = None,
+        sheet_index: Annotated[str, "Optional zero-based worksheet index for Excel files. Ignored when sheet_name is provided."] = None,
         source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
-        filter_expression: Annotated[Optional[str], "Optional pandas query filter applied before grouping"] = "",
+        filter_expression: Annotated[str, "Optional pandas query filter applied before grouping"] = "",
         top_n: Annotated[str, "How many top groups to return in descending order"] = "10",
         sort_descending: Annotated[str, "Whether top_results should be sorted descending (true/false)"] = "true",
-        group_id: Annotated[Optional[str], "Group ID (for group workspace documents)"] = None,
-        public_workspace_id: Annotated[Optional[str], "Public workspace ID (for public workspace documents)"] = None,
+        group_id: Annotated[str, "Group ID (for group workspace documents)"] = None,
+        public_workspace_id: Annotated[str, "Public workspace ID (for public workspace documents)"] = None,
     ) -> Annotated[str, "JSON result of the datetime component grouping analysis"]:
         """Group data by a datetime component and aggregate a metric."""
         def _sync_work():

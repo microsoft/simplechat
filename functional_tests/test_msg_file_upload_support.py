@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Outlook MSG file upload support.
-Version: 0.242.066
+Version: 0.242.068
 Implemented in: 0.242.063
 
 This test ensures Outlook .msg files are accepted for workspace and chat uploads,
@@ -28,7 +28,7 @@ CHAT_ROUTE_PATH = SINGLE_APP_DIR / "route_frontend_chats.py"
 GROUP_ROUTE_PATH = SINGLE_APP_DIR / "route_frontend_group_workspaces.py"
 CHAT_TEMPLATE_PATH = SINGLE_APP_DIR / "templates" / "chats.html"
 FEATURE_DOC_PATH = ROOT_DIR / "docs" / "explanation" / "features" / "v0.242.063" / "MSG_FILE_INGESTION.md"
-EXPECTED_CONFIG_VERSION = "0.242.066"
+EXPECTED_CONFIG_VERSION = "0.242.068"
 EXPECTED_FEATURE_VERSION = "0.242.063"
 
 
