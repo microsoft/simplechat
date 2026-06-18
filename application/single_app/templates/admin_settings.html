@@ -7403,7 +7403,7 @@
                         <div class="border-top pt-3 mt-3 {% if settings.dlp_default_engine != 'presidio_endpoint' %}d-none{% endif %}" id="dlp_presidio_endpoint_settings">
                             <h6 class="mb-2">Presidio Analyzer Endpoint</h6>
                             <div class="alert alert-warning py-2 mb-3" role="alert">
-                                Public HTTPS endpoints are allowed by default after URL hygiene checks. Private hosts must be listed explicitly before SimpleChat will call them.
+                                Use a private Presidio endpoint with an env-backed API key in production. Localhost endpoints may run without auth for local testing only.
                             </div>
                             <div class="row g-3">
                                 <div class="col-md-6">
@@ -7421,6 +7421,7 @@
                                 <div class="col-md-3">
                                     <label for="dlp_presidio_auth_header_name" class="form-label">Auth Header</label>
                                     <input type="text" class="form-control" id="dlp_presidio_auth_header_name" name="dlp_presidio_auth_header_name" value="{{ settings.dlp_presidio_auth_header_name or 'X-DLP-API-Key' }}">
+                                    <div class="form-text">Use a custom auth header such as X-DLP-API-Key; connection and content headers are rejected.</div>
                                 </div>
                                 <div class="col-md-3">
                                     <label for="dlp_presidio_auth_secret_env_var" class="form-label">Secret Env Var</label>

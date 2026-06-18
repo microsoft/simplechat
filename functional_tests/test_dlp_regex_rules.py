@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for configurable DLP regex rules.
-Version: 0.242.074
+Version: 0.242.075
 Implemented in: 0.242.073
 
 This test ensures DLP regex rules are admin-configurable, validated,

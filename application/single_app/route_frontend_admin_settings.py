@@ -29,6 +29,7 @@ from functions_dlp_rules import get_default_dlp_regex_rules, validate_dlp_regex_
 from functions_dlp_presidio import (
     PresidioEndpointConfigurationError,
     DEFAULT_PRESIDIO_AUTH_SECRET_ENV_VAR,
+    normalize_presidio_auth_header_name,
     normalize_presidio_allowed_private_hosts,
     normalize_presidio_secret_env_var_name,
     validate_presidio_endpoint_url,
@@ -825,10 +826,21 @@ def register_route_frontend_admin_settings(app):
                         except PresidioEndpointConfigurationError:
                             dlp_presidio_analyzer_endpoint = ''
                     flash(f"Presidio analyzer endpoint was not saved: {exc}", "warning")
-            dlp_presidio_auth_header_name = form_data.get(
+            submitted_dlp_presidio_auth_header_name = form_data.get(
                 'dlp_presidio_auth_header_name',
                 settings.get('dlp_presidio_auth_header_name', 'X-DLP-API-Key')
-            ).strip() or 'X-DLP-API-Key'
+            ).strip()
+            dlp_presidio_auth_header_name = normalize_presidio_auth_header_name(
+                submitted_dlp_presidio_auth_header_name
+            )
+            if not dlp_presidio_auth_header_name:
+                dlp_presidio_auth_header_name = normalize_presidio_auth_header_name(
+                    settings.get('dlp_presidio_auth_header_name', 'X-DLP-API-Key')
+                ) or 'X-DLP-API-Key'
+                flash(
+                    "Presidio auth header was not saved. Use a valid custom header such as X-DLP-API-Key.",
+                    "warning"
+                )
             submitted_dlp_presidio_auth_secret_env_var = form_data.get(
                 'dlp_presidio_auth_secret_env_var',
                 settings.get('dlp_presidio_auth_secret_env_var', DEFAULT_PRESIDIO_AUTH_SECRET_ENV_VAR)

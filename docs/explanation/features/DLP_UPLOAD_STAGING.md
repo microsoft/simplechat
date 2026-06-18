@@ -2,7 +2,7 @@
 
 ## Overview
 
-Version: 0.242.074
+Version: 0.242.075
 
 Dependencies: shared DLP core, configurable regex DLP rules, optional external Presidio Analyzer-compatible endpoint, document processing pipeline, Azure AI Search, Azure OpenAI embeddings.
 
@@ -54,7 +54,7 @@ Administrators can select an external Presidio Analyzer-compatible endpoint as t
 
 This is Option C for Presidio integration: Presidio runs outside SimpleChat. The SimpleChat application image has no embedded Presidio dependency, model package, or analyzer runtime. Regex DLP remains available as the default and fallback path.
 
-Production deployments should keep the analyzer private and authenticated. Use a private network path plus an API key header or equivalent service boundary, and never expose a public unauthenticated Presidio Analyzer endpoint. SimpleChat stores only the configured secret environment variable name, such as `PRESIDIO_DLP_API_KEY`; the API key value belongs in App Service settings or a Key Vault reference.
+Production deployments should keep the analyzer private and authenticated. Use a private network path plus an API key header or equivalent service boundary, and never expose a public unauthenticated Presidio Analyzer endpoint. SimpleChat permits unauthenticated Presidio calls only for localhost development endpoints; any non-loopback endpoint requires the configured secret environment variable to resolve before raw upload text or metadata is sent. SimpleChat stores only the configured secret environment variable name, such as `PRESIDIO_DLP_API_KEY`; the API key value belongs in App Service settings or a Key Vault reference. Custom auth header names are validated and reserved HTTP headers such as `Host`, `Content-Type`, and `Connection` are rejected.
 
 The analyzer receives raw extracted text before redaction. SimpleChat, proxies, wrappers, analyzer containers, and platform diagnostics must not log raw request bodies, response bodies, chunk text, OCR text, vision text, metadata values, matched values, or analyzer explanations. Stored DLP metadata and telemetry remain counts-only.
 

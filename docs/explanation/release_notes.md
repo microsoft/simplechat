@@ -1,12 +1,18 @@
 <!-- BEGIN release_notes.md BLOCK -->
 
-This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.242.074, and the per-version entries continue immediately after it.
+This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.242.075, and the per-version entries continue immediately after it.
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
-### **(v0.242.074)**
+### **(v0.242.075)**
 
 #### Bug Fixes
+
+*   **Presidio Endpoint Authentication Guardrails**
+    *   Requires non-loopback Presidio Analyzer endpoints to resolve the configured env-backed auth secret before SimpleChat sends raw scan text.
+    *   Keeps unauthenticated Presidio calls limited to localhost development endpoints.
+    *   Validates custom Presidio auth header names and rejects reserved HTTP headers such as `Host`, `Content-Type`, and `Connection`.
+    *   (Ref: Presidio endpoint auth headers, DLP admin settings, Presidio deployment guidance)
 
 *   **Presidio Endpoint Runtime Safety Hardening**
     *   Rejects Presidio Analyzer hostnames whose DNS answers include loopback, link-local, private, or otherwise non-global addresses unless the exact endpoint host is explicitly allowlisted.

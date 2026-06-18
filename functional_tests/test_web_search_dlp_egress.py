@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for web-search DLP egress.
-Version: 0.242.074
+Version: 0.242.075
 Implemented in: 0.242.073
 
 This test ensures web-search DLP runs after current-message query construction

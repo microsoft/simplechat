@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Presidio endpoint engine integration.
-Version: 0.242.074
+Version: 0.242.075
 Implemented in: 0.242.071
 
 This test ensures the external Presidio endpoint engine reuses SimpleChat's

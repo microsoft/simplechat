@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for external Presidio endpoint DLP adapter.
-Version: 0.242.074
+Version: 0.242.075
 Implemented in: 0.242.071
 
 This test ensures SimpleChat can call a configured Presidio-compatible analyzer
@@ -136,13 +136,17 @@ def test_analyze_with_presidio_endpoint_blocks_dns_rebinding_before_socket_conne
             raise AssertionError("Unsafe rebinding address reached socket creation.")
 
     monkeypatch.setenv("NO_PROXY", "*")
+    monkeypatch.setenv("PRESIDIO_DLP_API_KEY", "unit-test-secret")
     monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
     monkeypatch.setattr(socket, "socket", BlockingSocket)
 
     try:
         analyze_with_presidio_endpoint(
             RAW_TEXT,
-            {"dlp_presidio_analyzer_endpoint": "https://presidio.example.com/analyze"},
+            {
+                "dlp_presidio_analyzer_endpoint": "https://presidio.example.com/analyze",
+                "dlp_presidio_auth_secret_env_var": "PRESIDIO_DLP_API_KEY",
+            },
         )
     except (PresidioEndpointConfigurationError, PresidioEndpointRequestError):
         assert len(dns_calls) >= 2
@@ -291,8 +295,8 @@ def test_analyze_with_presidio_endpoint_posts_safe_payload_and_auth_header(monke
     assert captured["allow_redirects"] is False
 
 
-def test_analyze_with_presidio_endpoint_omits_auth_header_without_env_secret(monkeypatch):
-    """Raw API keys should come only from the configured environment variable."""
+def test_analyze_with_presidio_endpoint_allows_localhost_without_env_secret(monkeypatch):
+    """Local development endpoints may omit auth, but only on loopback hosts."""
     from functions_dlp_presidio import analyze_with_presidio_endpoint
 
     captured = {}
@@ -306,19 +310,54 @@ def test_analyze_with_presidio_endpoint_omits_auth_header_without_env_secret(mon
 
     monkeypatch.setattr("functions_dlp_presidio._post_presidio_endpoint", fake_post)
     monkeypatch.delenv("PRESIDIO_DLP_API_KEY", raising=False)
-    stub_dns_answers(monkeypatch, "presidio.internal", ["10.0.0.5"])
+    stub_dns_answers(monkeypatch, "localhost", ["127.0.0.1"])
 
     analyze_with_presidio_endpoint(
         RAW_TEXT,
         {
-            "dlp_presidio_analyzer_endpoint": "https://presidio.internal/analyze",
-            "dlp_presidio_allowed_private_hosts": "presidio.internal",
+            "dlp_presidio_analyzer_endpoint": "http://localhost:5002/analyze",
+            "dlp_presidio_allowed_private_hosts": "localhost",
             "dlp_presidio_auth_header_name": "X-DLP-API-Key",
             "dlp_presidio_auth_secret_env_var": "PRESIDIO_DLP_API_KEY",
         },
     )
 
     assert "X-DLP-API-Key" not in captured["headers"]
+
+
+def test_analyze_with_presidio_endpoint_requires_auth_secret_for_nonlocal_endpoint(monkeypatch):
+    """Non-loopback endpoints should not receive raw text without env-backed auth."""
+    from functions_dlp_presidio import PresidioEndpointConfigurationError, analyze_with_presidio_endpoint
+
+    called = {"post": False}
+
+    def fake_post(url, json=None, headers=None, timeout=None, allow_redirects=None, allowed_private_hosts=None):
+        called["post"] = True
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = []
+        return response
+
+    monkeypatch.setattr("functions_dlp_presidio._post_presidio_endpoint", fake_post)
+    monkeypatch.delenv("PRESIDIO_DLP_API_KEY", raising=False)
+    stub_dns_answers(monkeypatch, "presidio.internal", ["10.0.0.5"])
+
+    try:
+        analyze_with_presidio_endpoint(
+            RAW_TEXT,
+            {
+                "dlp_presidio_analyzer_endpoint": "https://presidio.internal/analyze",
+                "dlp_presidio_allowed_private_hosts": "presidio.internal",
+                "dlp_presidio_auth_header_name": "X-DLP-API-Key",
+                "dlp_presidio_auth_secret_env_var": "PRESIDIO_DLP_API_KEY",
+            },
+        )
+    except PresidioEndpointConfigurationError as exc:
+        assert "auth secret" in str(exc).lower()
+        assert called["post"] is False
+        return
+
+    raise AssertionError("Expected missing non-local auth secret to block the request.")
 
 
 def test_analyze_with_presidio_endpoint_raises_safe_error_without_raw_text(monkeypatch):
@@ -329,6 +368,7 @@ def test_analyze_with_presidio_endpoint_raises_safe_error_without_raw_text(monke
         raise RuntimeError(f"upstream included {RAW_TEXT}")
 
     monkeypatch.setattr("functions_dlp_presidio._post_presidio_endpoint", fake_post)
+    monkeypatch.setenv("PRESIDIO_DLP_API_KEY", "unit-test-secret")
     stub_dns_answers(monkeypatch, "presidio.internal", ["10.0.0.5"])
 
     try:
@@ -337,6 +377,7 @@ def test_analyze_with_presidio_endpoint_raises_safe_error_without_raw_text(monke
             {
                 "dlp_presidio_analyzer_endpoint": "https://presidio.internal/analyze",
                 "dlp_presidio_allowed_private_hosts": "presidio.internal",
+                "dlp_presidio_auth_secret_env_var": "PRESIDIO_DLP_API_KEY",
             },
         )
     except PresidioEndpointRequestError as exc:
@@ -366,6 +407,7 @@ def test_analyze_with_presidio_endpoint_normalizes_response_items(monkeypatch):
         return response
 
     monkeypatch.setattr("functions_dlp_presidio._post_presidio_endpoint", fake_post)
+    monkeypatch.setenv("PRESIDIO_DLP_API_KEY", "unit-test-secret")
     stub_dns_answers(monkeypatch, "presidio.internal", ["10.0.0.5"])
 
     results = analyze_with_presidio_endpoint(
@@ -373,6 +415,7 @@ def test_analyze_with_presidio_endpoint_normalizes_response_items(monkeypatch):
         {
             "dlp_presidio_analyzer_endpoint": "https://presidio.internal/analyze",
             "dlp_presidio_allowed_private_hosts": "presidio.internal",
+            "dlp_presidio_auth_secret_env_var": "PRESIDIO_DLP_API_KEY",
         },
     )
 
@@ -399,12 +442,16 @@ def test_analyze_with_presidio_endpoint_treats_redirect_as_endpoint_error(monkey
         return response
 
     monkeypatch.setattr("functions_dlp_presidio._post_presidio_endpoint", fake_post)
+    monkeypatch.setenv("PRESIDIO_DLP_API_KEY", "unit-test-secret")
     stub_dns_answers(monkeypatch, "presidio.example.com", ["93.184.216.34"])
 
     try:
         analyze_with_presidio_endpoint(
             RAW_TEXT,
-            {"dlp_presidio_analyzer_endpoint": "https://presidio.example.com/analyze"},
+            {
+                "dlp_presidio_analyzer_endpoint": "https://presidio.example.com/analyze",
+                "dlp_presidio_auth_secret_env_var": "PRESIDIO_DLP_API_KEY",
+            },
         )
     except PresidioEndpointRequestError as exc:
         assert "redirect" in str(exc).lower()
@@ -447,3 +494,42 @@ def test_presidio_auth_secret_env_var_name_validation(monkeypatch):
             "dlp_presidio_auth_secret_env_var": "DLP_PRESIDIO_TOKEN",
         }
     ) == {"X-DLP-API-Key": "prefixed-secret"}
+
+
+def test_presidio_auth_header_name_validation(monkeypatch):
+    """Auth header names should reject reserved HTTP headers and malformed names."""
+    from functions_dlp_presidio import (
+        PresidioEndpointConfigurationError,
+        _get_auth_headers,
+        normalize_presidio_auth_header_name,
+    )
+
+    monkeypatch.setenv("PRESIDIO_DLP_API_KEY", "presidio-secret")
+
+    assert normalize_presidio_auth_header_name("") == "X-DLP-API-Key"
+    assert normalize_presidio_auth_header_name("X-DLP-API-Key") == "X-DLP-API-Key"
+    assert normalize_presidio_auth_header_name("Authorization") == "Authorization"
+    assert normalize_presidio_auth_header_name("Content-Type") == ""
+    assert normalize_presidio_auth_header_name("Host") == ""
+    assert normalize_presidio_auth_header_name("Connection") == ""
+    assert normalize_presidio_auth_header_name("Bad Header") == ""
+    assert normalize_presidio_auth_header_name("X-DLP-API-Key\r\nX-Injected") == ""
+    assert _get_auth_headers(
+        {
+            "dlp_presidio_auth_header_name": "Authorization",
+            "dlp_presidio_auth_secret_env_var": "PRESIDIO_DLP_API_KEY",
+        }
+    ) == {"Authorization": "presidio-secret"}
+
+    try:
+        _get_auth_headers(
+            {
+                "dlp_presidio_auth_header_name": "Content-Type",
+                "dlp_presidio_auth_secret_env_var": "PRESIDIO_DLP_API_KEY",
+            }
+        )
+    except PresidioEndpointConfigurationError as exc:
+        assert "header" in str(exc).lower()
+        return
+
+    raise AssertionError("Expected reserved auth header name to be rejected.")

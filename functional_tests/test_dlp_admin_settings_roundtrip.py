@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for DLP admin settings roundtrip.
-Version: 0.242.074
+Version: 0.242.075
 Implemented in: 0.242.073
 
 This test ensures DLP admin settings are normalized, persisted, and rendered
@@ -237,6 +237,7 @@ def test_presidio_endpoint_settings_are_normalized_without_secret_persistence():
     assert "dlp_presidio_entities = ['CREDIT_CARD', 'EMAIL_ADDRESS', 'PHONE_NUMBER', 'US_SSN']" in route_source
     assert "validate_presidio_endpoint_url(" in route_source
     assert "normalize_presidio_allowed_private_hosts(" in route_source
+    assert "normalize_presidio_auth_header_name(" in route_source
     assert "normalize_presidio_secret_env_var_name(" in route_source
     assert "settings.get('dlp_presidio_analyzer_endpoint', '')" in route_source
     assert "'dlp_presidio_auth_secret'" not in route_source

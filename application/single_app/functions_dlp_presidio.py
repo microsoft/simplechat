@@ -22,6 +22,23 @@ DEFAULT_PRESIDIO_SCORE_THRESHOLD = 0.5
 DEFAULT_PRESIDIO_AUTH_HEADER_NAME = "X-DLP-API-Key"
 DEFAULT_PRESIDIO_AUTH_SECRET_ENV_VAR = "PRESIDIO_DLP_API_KEY"
 PRESIDIO_AUTH_SECRET_ENV_VAR_PREFIX = "DLP_PRESIDIO_"
+PRESIDIO_AUTH_HEADER_NAME_PATTERN = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
+PRESIDIO_RESERVED_AUTH_HEADERS = {
+    "connection",
+    "content-length",
+    "content-type",
+    "cookie",
+    "expect",
+    "host",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "set-cookie",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+}
 PRESIDIO_CREDENTIAL_QUERY_NAMES = {
     "key",
     "api_key",
@@ -323,6 +340,18 @@ def normalize_presidio_secret_env_var_name(secret_env_var):
     return ""
 
 
+def normalize_presidio_auth_header_name(header_name):
+    """Return an allowed Presidio auth header name, or blank when invalid."""
+    normalized = str(header_name or "").strip()
+    if not normalized:
+        return DEFAULT_PRESIDIO_AUTH_HEADER_NAME
+    if not PRESIDIO_AUTH_HEADER_NAME_PATTERN.fullmatch(normalized):
+        return ""
+    if normalized.lower() in PRESIDIO_RESERVED_AUTH_HEADERS:
+        return ""
+    return normalized
+
+
 def _is_credential_like_query_name(query_name):
     normalized = str(query_name or "").strip().lower()
     if not normalized:
@@ -401,16 +430,29 @@ def _get_entities(settings):
     return [str(item).strip().upper() for item in entities if str(item).strip()]
 
 
-def _get_auth_headers(settings):
-    header_name = str((settings or {}).get("dlp_presidio_auth_header_name") or DEFAULT_PRESIDIO_AUTH_HEADER_NAME).strip()
-    secret_env_var = normalize_presidio_secret_env_var_name(
-        (settings or {}).get("dlp_presidio_auth_secret_env_var") or ""
+def _get_auth_headers(settings, require_secret=False):
+    header_name = normalize_presidio_auth_header_name(
+        (settings or {}).get("dlp_presidio_auth_header_name") or DEFAULT_PRESIDIO_AUTH_HEADER_NAME
     )
-    if not header_name or not secret_env_var:
+    if not header_name:
+        raise PresidioEndpointConfigurationError("Presidio auth header name is not allowed.")
+
+    secret_env_var = normalize_presidio_secret_env_var_name(
+        (settings or {}).get("dlp_presidio_auth_secret_env_var") or DEFAULT_PRESIDIO_AUTH_SECRET_ENV_VAR
+    )
+    if not secret_env_var:
+        if require_secret:
+            raise PresidioEndpointConfigurationError(
+                "Presidio analyzer endpoints outside localhost require an auth secret env var."
+            )
         return {}
 
     secret_value = os.getenv(secret_env_var, "")
     if not secret_value:
+        if require_secret:
+            raise PresidioEndpointConfigurationError(
+                "Presidio analyzer endpoints outside localhost require the configured auth secret env var to be set."
+            )
         return {}
     return {header_name: secret_value}
 
@@ -438,6 +480,8 @@ def analyze_with_presidio_endpoint(text, settings):
         settings.get("dlp_presidio_analyzer_endpoint"),
         settings.get("dlp_presidio_allowed_private_hosts"),
     )
+    endpoint_host = urlparse(endpoint_url).hostname or ""
+    require_auth_secret = not _is_loopback_presidio_host(endpoint_host)
     timeout_seconds = max(
         1,
         min(30, _safe_int(settings.get("dlp_presidio_timeout_seconds"), DEFAULT_PRESIDIO_TIMEOUT_SECONDS)),
@@ -455,7 +499,7 @@ def analyze_with_presidio_endpoint(text, settings):
     }
     headers = {
         "Content-Type": "application/json",
-        **_get_auth_headers(settings),
+        **_get_auth_headers(settings, require_secret=require_auth_secret),
     }
 
     request_error_type = None

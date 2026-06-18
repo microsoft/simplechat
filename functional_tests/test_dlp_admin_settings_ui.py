@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for DLP admin settings UI.
-Version: 0.242.074
+Version: 0.242.075
 Implemented in: 0.242.073
 
 This test ensures shared and web-search DLP defaults exist, admin settings
@@ -166,8 +166,9 @@ def test_presidio_endpoint_controls_are_rendered_without_secret_value_field():
     assert 'name="dlp_presidio_language"' in source
     assert 'name="dlp_presidio_entities"' in source
     assert 'name="dlp_presidio_auth_secret"' not in source
-    assert "public https endpoints are allowed by default" in source.lower()
-    assert "private hosts must be listed explicitly" in source.lower()
+    assert "private presidio endpoint with an env-backed api key" in source.lower()
+    assert "localhost endpoints may run without auth for local testing only" in source.lower()
+    assert "connection and content headers are rejected" in source.lower()
 
 
 def test_admin_js_uses_d_none_for_dlp_toggles():

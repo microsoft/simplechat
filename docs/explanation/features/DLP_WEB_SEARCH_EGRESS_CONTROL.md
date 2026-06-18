@@ -2,7 +2,7 @@
 
 ## Overview
 
-Version: 0.242.074
+Version: 0.242.075
 
 Dependencies: Flask chat routes, configurable regex DLP rules, optional external Presidio Analyzer-compatible endpoint, and Azure AI Foundry web-search agent configuration.
 
@@ -77,7 +77,7 @@ Administrators can select an external Presidio Analyzer-compatible endpoint as t
 
 This is Option C for Presidio integration: the analyzer is external to SimpleChat. SimpleChat keeps no embedded Presidio dependency, model package, or analyzer runtime in the app image. Regex DLP remains available as the default and fallback path.
 
-Production deployments should keep the analyzer endpoint private and authenticated. Use a private network path plus an API key header or equivalent service boundary, and never expose a public unauthenticated Presidio Analyzer endpoint. SimpleChat stores only the configured secret environment variable name, such as `PRESIDIO_DLP_API_KEY`; the API key value belongs in App Service settings or a Key Vault reference.
+Production deployments should keep the analyzer endpoint private and authenticated. Use a private network path plus an API key header or equivalent service boundary, and never expose a public unauthenticated Presidio Analyzer endpoint. SimpleChat permits unauthenticated Presidio calls only for localhost development endpoints; any non-loopback endpoint requires the configured secret environment variable to resolve before raw text is sent. SimpleChat stores only the configured secret environment variable name, such as `PRESIDIO_DLP_API_KEY`; the API key value belongs in App Service settings or a Key Vault reference. Custom auth header names are validated and reserved HTTP headers such as `Host`, `Content-Type`, and `Connection` are rejected.
 
 Because the analyzer receives raw text before redaction, SimpleChat, proxies, wrappers, and analyzer infrastructure must not log raw request bodies, response bodies, snippets, matched values, or analyzer explanations. Safe telemetry remains limited to entity types, counts, actions, engines, modes, and scanner status.
 
