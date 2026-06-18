@@ -16,6 +16,11 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 #### Bug Fixes
 
+*   **DLP Egress Bypass Closure**
+    *   Applies DLP checks to Deep Research planned web-search queries immediately before outbound search.
+    *   Prevents batch upload indexing from reintroducing raw vision text after DLP redaction.
+    *   (Ref: Deep Research web-search DLP, upload DLP indexing redaction)
+
 *   **Upload DLP Enforcement Edge Cases**
     *   Treats fail-on-match, fail-closed scanner errors, and truncated scans as enforced upload DLP paths when deciding whether content may be indexed or retained for enhanced citations.
     *   Sanitizes selected upload metadata before prompts, Search payloads, Cosmos updates, and logs while preserving counts-only DLP telemetry summaries.

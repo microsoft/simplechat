@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for DLP admin UI smoke.
-Version: 0.242.069
-Implemented in: 0.242.069
+Version: 0.242.073
+Implemented in: 0.242.073
 
 This test ensures the DLP admin settings card can be extracted into collapsed
 and expanded previews for local visual review.

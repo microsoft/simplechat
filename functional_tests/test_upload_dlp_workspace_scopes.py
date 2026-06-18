@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for upload DLP workspace scope coverage.
-Version: 0.242.069
-Implemented in: 0.242.069
+Version: 0.242.073
+Implemented in: 0.242.073
 
 This test ensures personal, group, public, and external public upload routes
 continue using the shared document processing path protected by upload DLP.

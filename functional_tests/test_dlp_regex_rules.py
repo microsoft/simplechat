@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for configurable DLP regex rules.
-Version: 0.242.069
-Implemented in: 0.241.017
+Version: 0.242.073
+Implemented in: 0.242.073
 
 This test ensures DLP regex rules are admin-configurable, validated,
 confidence-shaped, timeout-bounded, and safe to report without raw matched values.

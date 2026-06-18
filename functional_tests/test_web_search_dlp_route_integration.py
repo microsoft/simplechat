@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for web-search DLP route integration.
-Version: 0.242.069
-Implemented in: 0.242.069
+Version: 0.242.073
+Implemented in: 0.242.073
 
 This test ensures chat routes evaluate DLP before Foundry web search, suppress
 Foundry calls on block, and send only the redacted query on redact.

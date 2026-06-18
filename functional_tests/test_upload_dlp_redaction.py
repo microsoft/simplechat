@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for upload DLP redaction.
-Version: 0.242.069
-Implemented in: 0.242.069
+Version: 0.242.073
+Implemented in: 0.242.073
 
 This test ensures upload DLP redacts chunk text before embeddings and Azure AI
 Search indexing, hardens raw chunk logs, stores counts-only metadata, and emits

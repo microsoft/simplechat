@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for DLP admin settings roundtrip.
-Version: 0.242.069
-Implemented in: 0.242.069
+Version: 0.242.073
+Implemented in: 0.242.073
 
 This test ensures DLP admin settings are normalized, persisted, and rendered
 through the admin settings POST contract without requiring live Azure services.

@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for DLP review event safety.
-Version: 0.242.069
-Implemented in: 0.242.069
+Version: 0.242.073
+Implemented in: 0.242.073
 
 This test ensures DLP review routing defaults to disabled and any optional
 review event summary uses distinct DLP policy typing with counts-only payloads.

@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for DLP control plane core behavior.
-Version: 0.242.069
-Implemented in: 0.242.069
+Version: 0.242.073
+Implemented in: 0.242.073
 
 This test ensures the shared DLP core supports disabled, regex, Luhn-validated
 credit-card, counts-only metadata, ReDoS-resistant scanning, and optional

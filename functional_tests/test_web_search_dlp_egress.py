@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for web-search DLP egress.
-Version: 0.242.070
-Implemented in: 0.242.070
+Version: 0.242.073
+Implemented in: 0.242.073
 
 This test ensures web-search DLP runs after current-message query construction
 and before Foundry web-search execution, blocks sensitive egress, redacts when

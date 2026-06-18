@@ -2,7 +2,7 @@
 
 ## Overview
 
-Version: 0.242.069
+Version: 0.242.073
 
 Dependencies: Flask chat routes, configurable regex DLP rules, and Azure AI Foundry web-search agent configuration.
 

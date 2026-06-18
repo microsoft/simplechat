@@ -2,7 +2,7 @@
 
 ## Overview
 
-Version: 0.242.069
+Version: 0.242.073
 
 Dependencies: shared DLP core, configurable regex DLP rules, document processing pipeline, Azure AI Search, Azure OpenAI embeddings.
 
