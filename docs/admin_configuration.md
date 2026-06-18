@@ -246,7 +246,7 @@ Use this section when you need to configure an area, validate it, and know what 
 
 ![Annotated AI model controls](./images/admin-settings/ai-models.png)
 
-1. Open **AI Models** and add the chat model endpoint configuration: direct Azure OpenAI or APIM endpoint, authentication type, deployment names, and any default model choices.
+1. Open **AI Models** and add the chat model endpoint configuration: direct Azure OpenAI, Foundry (classic), New Foundry, or APIM endpoint, authentication type, deployment names, and any default model choices. For managed identity or service principal RBAC setup, see [Configure Model Endpoint Identity]({{ '/how-to/model_endpoint_identity_setup/' | relative_url }}).
 2. Configure **Embeddings** before enabling retrieval-backed workspace features, then use the connection test to verify the endpoint and authentication path.
 3. Enable **Processing Thoughts** and **Image Generation** only for deployments where users should see reasoning traces or generate images, then save and confirm the model selector appears in chat.
 
@@ -363,6 +363,7 @@ The Admin Settings page supports two navigation layouts:
 - **APIM vs Direct**: When using Azure API Management (APIM), you'll need to manually specify model names as automatic model fetching is not available
 - **Managed Identity**: When using Managed Identity authentication, ensure your Service Principal has the appropriate roles assigned:
   - **Azure OpenAI**: Cognitive Services OpenAI User role
+  - **Model Endpoints**: Azure OpenAI multi-endpoint discovery also needs Reader on the Azure OpenAI resource. Foundry (classic) and New Foundry endpoints need Foundry User, or Azure AI User where older role names are still shown, on the target project or backing Foundry resource. See [Configure Model Endpoint Identity]({{ '/how-to/model_endpoint_identity_setup/' | relative_url }}).
   - **Speech Service**: Start with `Cognitive Services Speech User`; add `Cognitive Services Speech Contributor` if transcription operations still require it. Managed identity also requires the custom-domain Speech endpoint, and text-to-speech needs the Speech Resource ID.
   - **Video Indexer**: Grant the App Service system-assigned managed identity `Contributor` on the Video Indexer resource. If Azure asks for a user-assigned managed identity during Video Indexer resource creation, that identity is for the Video Indexer resource itself, not for Simple Chat runtime calls.
 - **Dependencies**: The walkthrough will alert you if required services aren't configured when you enable dependent features (e.g., workspaces require embeddings, AI Search, and Document Intelligence)

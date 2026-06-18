@@ -23,8 +23,8 @@ How-to guides assume you already know what area of the product you are working i
     <article class="latest-release-card">
         <div class="latest-release-card-icon"><i class="bi bi-person-badge"></i></div>
         <h2>Identity and security</h2>
-        <p>Use the managed identity and Azure Speech guides when you want to replace stored secrets or handle service-specific authentication correctly.</p>
-        <p><a href="{{ '/how-to/use_managed_identity/' | relative_url }}">Managed identity</a> · <a href="{{ '/how-to/azure_speech_managed_identity_manul_setup/' | relative_url }}">Azure Speech setup</a></p>
+        <p>Use the model endpoint, managed identity, and Azure Speech guides when you want to replace stored secrets or handle service-specific authentication correctly.</p>
+        <p><a href="{{ '/how-to/model_endpoint_identity_setup/' | relative_url }}">Model endpoint identity</a> · <a href="{{ '/how-to/use_managed_identity/' | relative_url }}">Managed identity</a> · <a href="{{ '/how-to/azure_speech_managed_identity_manul_setup/' | relative_url }}">Azure Speech setup</a></p>
     </article>
     <article class="latest-release-card">
         <div class="latest-release-card-icon"><i class="bi bi-palette"></i></div>
