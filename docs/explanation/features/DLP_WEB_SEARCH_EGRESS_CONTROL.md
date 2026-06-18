@@ -2,7 +2,7 @@
 
 ## Overview
 
-Version: 0.242.073
+Version: 0.242.074
 
 Dependencies: Flask chat routes, configurable regex DLP rules, optional external Presidio Analyzer-compatible endpoint, and Azure AI Foundry web-search agent configuration.
 

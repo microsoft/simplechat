@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for external Presidio endpoint DLP adapter.
-Version: 0.242.073
+Version: 0.242.074
 Implemented in: 0.242.071
 
 This test ensures SimpleChat can call a configured Presidio-compatible analyzer

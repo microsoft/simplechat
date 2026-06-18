@@ -2,7 +2,7 @@
 
 ## Overview
 
-Version: 0.242.073
+Version: 0.242.074
 
 Dependencies: shared DLP core, configurable regex DLP rules, optional external Presidio Analyzer-compatible endpoint, document processing pipeline, Azure AI Search, Azure OpenAI embeddings.
 
