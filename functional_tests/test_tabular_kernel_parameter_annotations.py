@@ -2,7 +2,7 @@
 # test_tabular_kernel_parameter_annotations.py
 """
 Functional test for tabular SK Python 3.13 kernel parameter annotations.
-Version: 0.242.068
+Version: 0.242.069
 Implemented in: 0.242.068
 
 This test ensures public Semantic Kernel tabular tool parameters avoid
@@ -90,7 +90,7 @@ def test_kernel_function_parameters_do_not_use_optional_str_annotations():
                     violations.append(f'{node.name}.{argument.arg}')
 
         assert not violations, f'Kernel function parameters cannot use Annotated[Optional[str], ...]: {violations}'
-        assert read_config_version() == '0.242.068'
+        assert read_config_version() == '0.242.069'
 
         print('✅ Tabular kernel parameter annotations passed')
         return True

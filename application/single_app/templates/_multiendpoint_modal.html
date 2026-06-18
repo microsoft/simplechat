@@ -4,10 +4,27 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title" id="modelEndpointModalLabel">Model Endpoint</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                <div class="d-flex align-items-center gap-2">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#model-endpoint-inline-guidance" aria-expanded="false" aria-controls="model-endpoint-inline-guidance" data-testid="model-endpoint-inline-guidance-toggle">
+                        <i class="bi bi-question-circle me-1"></i>Setup Guide
+                    </button>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
             </div>
             <div class="modal-body">
                 <input type="hidden" id="model-endpoint-id" />
+
+                <div class="collapse" id="model-endpoint-inline-guidance">
+                    <div class="alert alert-info mb-3" role="region" aria-label="Model endpoint setup guidance">
+                        <h6 class="alert-heading mb-2"><i class="bi bi-info-circle me-2"></i>Identity setup by provider</h6>
+                        <ul class="mb-0 ps-3">
+                            <li><strong>Azure OpenAI</strong>: assign <code>Reader</code> plus <code>Cognitive Services OpenAI User</code> on the Azure OpenAI resource when using managed identity or service principal model discovery.</li>
+                            <li><strong>Foundry (classic)</strong>: assign <code>Foundry User</code>, or <code>Azure AI User</code> where older role names still appear, on the target Foundry project or backing resource.</li>
+                            <li><strong>New Foundry</strong>: use the same Foundry project access as classic Foundry, then select the New Foundry provider and the project endpoint in this modal.</li>
+                            <li><strong>API Key</strong>: use for inference-only endpoints or APIM paths. Model and Foundry project discovery requires managed identity or service principal RBAC.</li>
+                        </ul>
+                    </div>
+                </div>
 
                 <div class="row g-3">
                     <div class="col-md-6">
@@ -144,6 +161,96 @@
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                 <button type="button" class="btn btn-primary" id="model-endpoint-save-btn">Save Endpoint</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Model Endpoint Identity Guide Modal -->
+<div class="modal fade" id="modelEndpointIdentityGuideModal" tabindex="-1" aria-labelledby="modelEndpointIdentityGuideModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="modelEndpointIdentityGuideModalLabel">Model Endpoint Setup Guide</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info" role="alert">
+                    Configure the identity before using <strong>Fetch Models</strong>, Foundry agent import, or New Foundry application discovery. API keys are still available for inference-only endpoints, but they do not replace Entra ID/RBAC for model discovery.
+                </div>
+
+                <h6>Provider selection</h6>
+                <div class="table-responsive mb-3">
+                    <table class="table table-sm table-bordered align-middle">
+                        <thead>
+                            <tr>
+                                <th>Provider</th>
+                                <th>Use for</th>
+                                <th>Endpoint value</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><strong>Azure OpenAI</strong></td>
+                                <td>Direct Azure OpenAI resource endpoints and Azure OpenAI-compatible APIM paths.</td>
+                                <td>Use the Azure OpenAI resource endpoint, such as <code>https://resource.openai.azure.com/</code>.</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Foundry (classic)</strong></td>
+                                <td>Classic Foundry project model deployments and classic Foundry agent import.</td>
+                                <td>Use the Foundry project endpoint. If the URL does not include <code>/api/projects/project-name</code>, fill <strong>Foundry Project Name</strong>.</td>
+                            </tr>
+                            <tr>
+                                <td><strong>New Foundry</strong></td>
+                                <td>Application-based Foundry runtime, New Foundry agents, and project model deployments.</td>
+                                <td>Use the New Foundry project endpoint and keep <strong>OpenAI API Version</strong> at endpoint default <code>v1</code> unless the deployment requires another supported version.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <h6>Roles to assign</h6>
+                <div class="table-responsive mb-3">
+                    <table class="table table-sm table-bordered align-middle">
+                        <thead>
+                            <tr>
+                                <th>Scenario</th>
+                                <th>Assign to</th>
+                                <th>Role and scope</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>Azure OpenAI with <strong>Fetch Models</strong></td>
+                                <td>The App Service managed identity, user-assigned managed identity, or service principal enterprise application.</td>
+                                <td><code>Reader</code> plus <code>Cognitive Services OpenAI User</code> on the Azure OpenAI resource.</td>
+                            </tr>
+                            <tr>
+                                <td>Azure OpenAI with manually entered model rows</td>
+                                <td>The same runtime identity or service principal.</td>
+                                <td><code>Cognitive Services OpenAI User</code> on the Azure OpenAI resource.</td>
+                            </tr>
+                            <tr>
+                                <td>Foundry (classic) and New Foundry discovery or invocation</td>
+                                <td>The same runtime identity or service principal.</td>
+                                <td><code>Foundry User</code> on the Foundry project or backing resource. In Azure Government or clouds still showing older names, use <code>Azure AI User</code>.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <h6>Configuration flow</h6>
+                <ol class="mb-0">
+                    <li>Assign the role on the correct Azure OpenAI or Foundry resource first.</li>
+                    <li>Select the matching provider in the endpoint modal.</li>
+                    <li>Choose <strong>Managed Identity</strong> or <strong>Service Principal</strong>, then fill the visible identity fields.</li>
+                    <li>For Azure OpenAI discovery, enter subscription ID and resource group.</li>
+                    <li>For Foundry providers, enter the project endpoint and project name when the endpoint does not include it.</li>
+                    <li>Use <strong>Fetch Models</strong> and <strong>Test Model</strong> before saving the endpoint.</li>
+                </ol>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
             </div>
         </div>
     </div>

@@ -1356,9 +1356,14 @@
             <div id="model-endpoints-wrapper" class="{% if not settings.enable_multi_model_endpoints %}d-none{% endif %}">
               <div class="d-flex justify-content-between align-items-center mb-2">
                 <h6 class="mb-0">Your Endpoints</h6>
-                <button type="button" class="btn btn-sm btn-outline-primary" id="add-model-endpoint-btn">
-                  <i class="bi bi-plus-circle me-1"></i>Add Endpoint
-                </button>
+                <div class="d-flex flex-wrap gap-2">
+                  <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#modelEndpointIdentityGuideModal" data-testid="model-endpoint-identity-guide-open">
+                    <i class="bi bi-question-circle me-1"></i>Setup Guide
+                  </button>
+                  <button type="button" class="btn btn-sm btn-outline-primary" id="add-model-endpoint-btn">
+                    <i class="bi bi-plus-circle me-1"></i>Add Endpoint
+                  </button>
+                </div>
               </div>
               <div class="table-responsive">
                 <table class="table table-sm table-bordered">

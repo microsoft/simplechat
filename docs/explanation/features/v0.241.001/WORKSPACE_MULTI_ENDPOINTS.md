@@ -5,6 +5,8 @@ Workspace multi-endpoint management extends the admin multi-endpoint system to p
 
 **Implemented in version: 0.236.045**
 
+**Updated in version: 0.242.069**
+
 ## Dependencies
 - Global model endpoints configured in admin settings
 - Workspace endpoint storage in user settings and group documents
@@ -42,7 +44,7 @@ Workspace multi-endpoint management extends the admin multi-endpoint system to p
 2. Users open Personal Workspace or Group Workspace and add endpoints under the new Workspace/Group Model Endpoints card.
 3. In the agent modal, select a model from the combined endpoint list.
 
-For Azure OpenAI, Foundry (classic), or New Foundry managed identity and service principal setup, see [Configure Model Endpoint Identity]({{ '/how-to/model_endpoint_identity_setup/' | relative_url }}). The same RBAC guidance applies to global, personal, and group-scoped endpoints.
+Use the **Setup Guide** button in the endpoint table or Model Endpoint modal for in-product RBAC reminders. For Azure OpenAI, Foundry (classic), or New Foundry managed identity and service principal setup, see [Configure Model Endpoint Identity]({{ '/how-to/model_endpoint_identity_setup/' | relative_url }}). The same RBAC guidance applies to global, personal, and group-scoped endpoints.
 
 ### Foundry Agent Import
 1. Select an Azure AI Foundry endpoint in the Foundry section of the agent modal.
