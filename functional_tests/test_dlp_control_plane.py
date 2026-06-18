@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for DLP control plane core behavior.
-Version: 0.242.073
+Version: 0.242.074
 Implemented in: 0.242.073
 
 This test ensures the shared DLP core supports disabled, regex, Luhn-validated

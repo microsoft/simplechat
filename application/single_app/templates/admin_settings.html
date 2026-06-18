@@ -7430,7 +7430,11 @@
                                     <label for="dlp_presidio_score_threshold" class="form-label">Score Threshold</label>
                                     <input type="number" min="0" max="1" step="0.05" class="form-control" id="dlp_presidio_score_threshold" name="dlp_presidio_score_threshold" value="{{ settings.dlp_presidio_score_threshold or 0.5 }}">
                                 </div>
-                                <div class="col-md-6">
+                                <div class="col-md-2">
+                                    <label for="dlp_presidio_language" class="form-label">Language</label>
+                                    <input type="text" class="form-control" id="dlp_presidio_language" name="dlp_presidio_language" value="{{ settings.dlp_presidio_language or 'en' }}">
+                                </div>
+                                <div class="col-md-4">
                                     <label for="dlp_presidio_entities" class="form-label">Entities</label>
                                     <input type="text" class="form-control" id="dlp_presidio_entities" name="dlp_presidio_entities" value="{{ (settings.dlp_presidio_entities or ['CREDIT_CARD', 'EMAIL_ADDRESS', 'PHONE_NUMBER', 'US_SSN']) | join(', ') }}">
                                     <div class="form-text">Comma-separated Presidio entity names such as CREDIT_CARD, EMAIL_ADDRESS, PHONE_NUMBER, US_SSN, PERSON, LOCATION.</div>

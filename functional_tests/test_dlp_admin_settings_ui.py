@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for DLP admin settings UI.
-Version: 0.242.073
+Version: 0.242.074
 Implemented in: 0.242.073
 
 This test ensures shared and web-search DLP defaults exist, admin settings
@@ -55,6 +55,7 @@ PRESIDIO_ENDPOINT_CONTROL_IDS = [
     "dlp_presidio_auth_secret_env_var",
     "dlp_presidio_timeout_seconds",
     "dlp_presidio_score_threshold",
+    "dlp_presidio_language",
     "dlp_presidio_entities",
 ]
 
@@ -160,6 +161,7 @@ def test_presidio_endpoint_controls_are_rendered_without_secret_value_field():
     assert 'name="dlp_presidio_auth_secret_env_var"' in source
     assert 'name="dlp_presidio_timeout_seconds"' in source
     assert 'name="dlp_presidio_score_threshold"' in source
+    assert 'name="dlp_presidio_language"' in source
     assert 'name="dlp_presidio_entities"' in source
     assert 'name="dlp_presidio_auth_secret"' not in source
     assert "production endpoints should be private, authenticated, and https" in source.lower()

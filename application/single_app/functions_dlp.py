@@ -89,7 +89,7 @@ def _apply_regex_engine(text, settings=None, surface="generic"):
 
 def _apply_presidio_endpoint_engine(text, settings=None, surface="generic"):
     recognizer_results = analyze_with_presidio_endpoint(text, settings or {})
-    normalized = normalize_presidio_results(
+    normalized = normalize_external_analyzer_results(
         text,
         recognizer_results,
         mode=_normalize_mode(settings or {}, surface),

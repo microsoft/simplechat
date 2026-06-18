@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for DLP admin UI smoke.
-Version: 0.242.073
+Version: 0.242.074
 Implemented in: 0.242.073
 
 This test ensures the DLP admin settings card can be extracted into collapsed
@@ -30,6 +30,7 @@ REQUIRED_CONTROLS = [
     "dlp_presidio_auth_secret_env_var",
     "dlp_presidio_timeout_seconds",
     "dlp_presidio_score_threshold",
+    "dlp_presidio_language",
     "dlp_presidio_entities",
     "dlp_regex_rules_json",
     "dlp_max_scan_chars",

@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for upload DLP ingestion integration.
-Version: 0.242.073
+Version: 0.242.074
 Implemented in: 0.242.073
 
 This test ensures upload DLP blocks stop before embeddings/search indexing and
