@@ -1723,7 +1723,7 @@ def process_video_document(
         debug_print(f"[VIDEO INDEXER] Authentication successful, token length: {len(token) if token else 0}")
     except Exception as e:
         debug_print(f"[VIDEO INDEXER] Authentication failed: {_sanitize_video_indexer_log_value(e)}")
-        print("[VIDEO] AUTH ERROR", flush=True)
+        log_event("[VIDEO] AUTH ERROR", level=logging.ERROR)
         update_callback(status="VIDEO: auth failed")
         return 0
 
@@ -1894,15 +1894,19 @@ def process_video_document(
     debug_print(f"[VIDEO INDEXER] Video duration: {video_duration} ({video_duration_seconds} seconds)")
 
     debug_print(f"[VIDEO INDEXER] Insights keys available: {list(insights.keys())}")
-    print(f"[VIDEO] Available insight types: {', '.join(list(insights.keys())[:15])}...", flush=True)
+    log_event(
+        f"[VIDEO] Available insight types: {', '.join(list(insights.keys())[:15])}...",
+        level=logging.INFO,
+    )
 
-    print(f"[VIDEO] Insight counts:", flush=True)
+    insight_counts = {}
     for key in insights.keys():
         value = insights.get(key, [])
         if isinstance(value, list):
-            print(f"  {key}: {len(value)} items", flush=True)
+            insight_counts[key] = len(value)
 
-    print("[VIDEO] Insight count logging complete", flush=True)
+    log_event("[VIDEO] Insight counts", extra={"insight_counts": insight_counts}, level=logging.INFO)
+    log_event("[VIDEO] Insight count logging complete", level=logging.INFO)
 
     transcript = insights.get("transcript", [])
     ocr_blocks = insights.get("ocr", [])
@@ -2814,7 +2818,10 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
             #update_document(document_id=document_id, user_id=user_id, status=status)
             embedding, token_usage = generate_embedding(sanitized_chunk_text)
         except Exception as e:
-            print(f"Error generating embedding for page {page_number} of document {document_id}: {e}")
+            log_event(
+                f"Error generating embedding for page {page_number} of document {document_id}: {e}",
+                level=logging.ERROR,
+            )
             raise
 
         if is_public_workspace:
@@ -4582,7 +4589,10 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
                     user_id=group_id if is_group else user_id,
                     content=f"Blocked document metadata for document {document_id}, summary: {blocked_metadata_summary}, reasons: {block_reasons}"
                 )
-                print(f"Blocked document metadata for document {document_id}. Reasons: {block_reasons}")
+                log_event(
+                    f"Blocked document metadata for document {document_id}. Reasons: {block_reasons}",
+                    level=logging.WARNING,
+                )
                 return None
 
         except Exception as e:
