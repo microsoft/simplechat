@@ -49,9 +49,6 @@ PERSISTED_DLP_FIELDS = {
 
 
 UNSUPPORTED_DLP_FORM_FIELDS = [
-    "dlp_presidio_use_service",
-    "dlp_presidio_endpoint",
-    "dlp_presidio_score_threshold",
     "dlp_scanner_timeout_seconds",
     "dlp_review_include_redacted_preview",
     "web_search_dlp_track_review_events",
@@ -145,8 +142,6 @@ def test_admin_dlp_controls_only_expose_supported_regex_engine():
     assert 'name="dlp_regex_rules_json"' in template
     assert "web_search_dlp_block_on_internal_phrases" not in template
     assert "Detect internal phrases" not in template
-    assert 'value="presidio_service"' not in template
-    assert 'value="presidio_embedded"' not in template
     assert_no_retired_structured_redaction_control(template, str(ADMIN_TEMPLATE))
 
     for field_name in UNSUPPORTED_DLP_FORM_FIELDS:

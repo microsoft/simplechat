@@ -40,10 +40,6 @@ REQUIRED_KEYS = [
 
 
 UNSUPPORTED_ADMIN_CONTROL_IDS = [
-    "dlp_presidio_use_service",
-    "dlp_presidio_service_settings",
-    "dlp_presidio_endpoint",
-    "dlp_presidio_score_threshold",
     "dlp_scanner_timeout_seconds",
     "dlp_review_include_redacted_preview",
     "web_search_dlp_track_review_events",
@@ -52,9 +48,6 @@ UNSUPPORTED_ADMIN_CONTROL_IDS = [
 
 
 RETIRED_DLP_SETTING_KEYS = [
-    "dlp_presidio_use_service",
-    "dlp_presidio_endpoint",
-    "dlp_presidio_score_threshold",
     "dlp_scanner_timeout_seconds",
     "dlp_review_include_redacted_preview",
     "web_search_dlp_track_review_events",
@@ -134,8 +127,6 @@ def test_admin_template_exposes_dlp_controls():
     for unsupported_id in UNSUPPORTED_ADMIN_CONTROL_IDS:
         assert unsupported_id not in source, f"Unsupported DLP control is still visible: {unsupported_id}"
 
-    assert 'value="presidio_service"' not in source
-    assert 'value="presidio_embedded"' not in source
     assert_no_retired_structured_redaction_control(source, ADMIN_TEMPLATE_FILE)
 
 

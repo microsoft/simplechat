@@ -6,8 +6,8 @@ Version: 0.242.073
 Implemented in: 0.242.073
 
 This test ensures the shared DLP core supports disabled, regex, Luhn-validated
-credit-card, counts-only metadata, ReDoS-resistant scanning, and optional
-external analyzer normalization without persisting raw matched values.
+credit-card, counts-only metadata, and ReDoS-resistant scanning without
+persisting raw matched values.
 """
 
 import os
@@ -171,28 +171,6 @@ def test_enforced_truncation_blocks_before_scanner_error_fail_open():
     assert "tail" not in repr(result)
 
 
-def test_external_analyzer_shape_normalizes_counts_without_raw_values():
-    """Optional external analyzer results should normalize into the shared shape."""
-    print("Testing external analyzer adapter normalization...")
-    from functions_dlp import normalize_external_analyzer_results
-
-    normalized = normalize_external_analyzer_results(
-        text=f"Alice Example has SSN {RAW_SSN}.",
-        recognizer_results=[
-            {"entity_type": "PERSON", "start": 0, "end": 13, "score": 0.88},
-            {"entity_type": "US_SSN", "start": 22, "end": 33, "score": 0.99},
-        ],
-        mode="redact",
-        engine="external_analyzer",
-    )
-
-    assert normalized["decision"] == "redact"
-    assert normalized["match_counts"] == {"PERSON": 1, "US_SSN": 1}
-    assert "[REDACTED_PERSON]" in normalized["redacted_text"]
-    assert "[REDACTED_US_SSN]" in normalized["redacted_text"]
-    assert_no_raw_values(normalized)
-
-
 if __name__ == "__main__":
     tests = [
         test_disabled_dlp_allows_original_text,
@@ -201,7 +179,6 @@ if __name__ == "__main__":
         test_regex_scan_is_bounded_on_long_non_matching_input,
         test_enforced_dlp_blocks_when_text_exceeds_scan_limit,
         test_enforced_truncation_blocks_before_scanner_error_fail_open,
-        test_external_analyzer_shape_normalizes_counts_without_raw_values,
     ]
 
     try:

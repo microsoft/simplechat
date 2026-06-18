@@ -75,7 +75,7 @@ def test_scanner_error_telemetry_is_safe():
 
     result = {
         "enabled": True,
-        "engine": "presidio_service",
+        "engine": "regex",
         "mode": "block",
         "decision": "block",
         "scanner_status": "error",

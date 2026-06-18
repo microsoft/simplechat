@@ -2,7 +2,6 @@
 
 import hashlib
 import logging
-from collections import OrderedDict
 
 from functions_dlp_rules import get_effective_dlp_regex_rules, scan_text_with_dlp_regex_rules
 
@@ -95,51 +94,6 @@ def _decision_from_counts(match_counts, mode):
     if mode == "redact":
         return "redact"
     return "monitor"
-
-
-def normalize_external_analyzer_results(text, recognizer_results, mode="redact", engine="external_analyzer"):
-    """Normalize external analyzer entity offsets into the shared counts-only result."""
-    source_text = str(text or "")
-    sorted_results = sorted(
-        [
-            item for item in (recognizer_results or [])
-            if isinstance(item, dict) and item.get("entity_type") and item.get("start") is not None and item.get("end") is not None
-        ],
-        key=lambda item: int(item.get("start")),
-    )
-    match_counts = OrderedDict()
-    redacted_parts = []
-    cursor = 0
-
-    for item in sorted_results:
-        start = max(0, min(len(source_text), int(item.get("start"))))
-        end = max(start, min(len(source_text), int(item.get("end"))))
-        entity_type = str(item.get("entity_type"))
-        if start < cursor:
-            continue
-        redacted_parts.append(source_text[cursor:start])
-        redacted_parts.append(f"[REDACTED_{entity_type}]")
-        cursor = end
-        match_counts[entity_type] = match_counts.get(entity_type, 0) + 1
-
-    redacted_parts.append(source_text[cursor:])
-    redacted_text = "".join(redacted_parts)
-    counts = dict(match_counts)
-    decision = _decision_from_counts(counts, mode)
-
-    return {
-        "enabled": True,
-        "engine": engine,
-        "mode": mode,
-        "decision": decision,
-        "text": redacted_text if counts else source_text,
-        "redacted_text": redacted_text if counts else source_text,
-        "total_replacements": sum(counts.values()),
-        "match_counts": counts,
-        "matches": [{"entity_type": key, "count": value} for key, value in counts.items()],
-        "metadata": {"adapter": "external_analyzer"},
-        "scanner_status": "ok",
-    }
 
 
 def evaluate_dlp_text(text, settings=None, context=None, surface="generic"):
