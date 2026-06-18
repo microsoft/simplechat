@@ -1,8 +1,28 @@
 <!-- BEGIN release_notes.md BLOCK -->
 
-This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.242.066, and the per-version entries continue immediately after it.
+This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.242.068, and the per-version entries continue immediately after it.
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
+
+### **(v0.242.068)**
+
+#### New Features
+
+*   **Tabular SK Large Result Pagination**
+    *   Added continuation metadata for row-returning tabular Semantic Kernel tools, including `start_row`, `page_size`, `has_more`, and `next_start_row`.
+    *   Added safe row payload trimming for oversized tool results, while preserving explicit `return_columns` projection and protected row metadata used for sheet context, matched values, and row-linked document evidence.
+    *   Raised tabular computed-results handoff guardrails to 100K characters with warning logs when truncation is still required.
+    *   Inspired by and adapted from PR #894 by @vivche.
+    *   (Ref: tabular SK pagination, `return_columns`, large-result handoff, `tabular_processing_plugin.py`, `route_backend_chats.py`)
+
+#### Bug Fixes
+
+*   **Tabular SK Python 3.13 Kernel Parameter Compatibility**
+    *   Updated public tabular `@kernel_function` parameters to avoid `Annotated[Optional[str], ...]` so Semantic Kernel argument parsing works on both Python 3.12 and Python 3.13.
+    *   Added a guardrail test that fails if optional string annotations are reintroduced on public tabular tool parameters.
+    *   Preserved current Development model-context routing instead of reintroducing older endpoint-specific route wiring.
+    *   Inspired by and adapted from PR #892 by @vivche.
+    *   (Ref: Python 3.13, Semantic Kernel tool parsing, tabular SK parameters, `test_tabular_kernel_parameter_annotations.py`)
 
 ### **(v0.242.066)**
 
