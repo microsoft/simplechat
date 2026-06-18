@@ -95,8 +95,8 @@ def test_expanded_dlp_admin_preview_contains_expected_controls():
     assert '<div class="d-none" id="upload_dlp_mode_settings">' not in expanded_html
 
 
-def test_dlp_admin_preview_does_not_expose_raw_secret_values():
-    """Preview files should include controls, not populated secrets or raw detector matches."""
+def test_dlp_admin_preview_does_not_expose_raw_sensitive_values():
+    """Preview files should include controls, not populated credentials or raw detector matches."""
     print("Testing DLP admin preview safety...")
     module = load_preview_module()
 
@@ -120,7 +120,7 @@ if __name__ == "__main__":
     tests = [
         test_dlp_admin_preview_extractor_writes_collapsed_and_expanded_files,
         test_expanded_dlp_admin_preview_contains_expected_controls,
-        test_dlp_admin_preview_does_not_expose_raw_secret_values,
+        test_dlp_admin_preview_does_not_expose_raw_sensitive_values,
     ]
 
     try:

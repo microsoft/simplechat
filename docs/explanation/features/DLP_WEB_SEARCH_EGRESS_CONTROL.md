@@ -109,7 +109,7 @@ Telemetry retention follows the configured Application Insights workspace. This 
 
 ## Limitations
 
-Regex DLP is intentionally lightweight. It is useful for structured identifiers such as SSNs, Luhn-valid credit card numbers, and administrator-defined exact-format identifiers, but it is weaker for names, addresses, contextual PII, international identifiers, secrets, and noisy prose.
+Regex DLP is intentionally lightweight. It is useful for structured identifiers such as SSNs, Luhn-valid credit card numbers, and administrator-defined exact-format identifiers, but it is weaker for names, addresses, contextual PII, international identifiers, credential strings, and noisy prose.
 
 The app-level control cannot inspect Bing's internal grounding query after Foundry receives the request. It reduces egress risk by preventing or redacting sensitive text before the app sends the web-search message to the Foundry agent.
 

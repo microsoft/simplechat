@@ -7,7 +7,7 @@ Implemented in: 0.242.069
 
 This test ensures the shared DLP core supports disabled, regex, Luhn-validated
 credit-card, counts-only metadata, ReDoS-resistant scanning, and optional
-Presidio service normalization without persisting raw matched values.
+external analyzer normalization without persisting raw matched values.
 """
 
 import os
@@ -171,19 +171,19 @@ def test_enforced_truncation_blocks_before_scanner_error_fail_open():
     assert "tail" not in repr(result)
 
 
-def test_presidio_service_shape_normalizes_counts_without_raw_values():
-    """Optional Presidio service results should normalize into the shared shape."""
-    print("Testing Presidio service adapter normalization...")
-    from functions_dlp import normalize_presidio_results
+def test_external_analyzer_shape_normalizes_counts_without_raw_values():
+    """Optional external analyzer results should normalize into the shared shape."""
+    print("Testing external analyzer adapter normalization...")
+    from functions_dlp import normalize_external_analyzer_results
 
-    normalized = normalize_presidio_results(
+    normalized = normalize_external_analyzer_results(
         text=f"Alice Example has SSN {RAW_SSN}.",
         recognizer_results=[
             {"entity_type": "PERSON", "start": 0, "end": 13, "score": 0.88},
             {"entity_type": "US_SSN", "start": 22, "end": 33, "score": 0.99},
         ],
         mode="redact",
-        engine="presidio_service",
+        engine="external_analyzer",
     )
 
     assert normalized["decision"] == "redact"
@@ -201,7 +201,7 @@ if __name__ == "__main__":
         test_regex_scan_is_bounded_on_long_non_matching_input,
         test_enforced_dlp_blocks_when_text_exceeds_scan_limit,
         test_enforced_truncation_blocks_before_scanner_error_fail_open,
-        test_presidio_service_shape_normalizes_counts_without_raw_values,
+        test_external_analyzer_shape_normalizes_counts_without_raw_values,
     ]
 
     try:

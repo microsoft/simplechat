@@ -465,17 +465,17 @@ def test_video_indexer_request_errors_redact_access_token():
 
     query_error = (
         "403 Client Error: Forbidden for url: "
-        "https://video.example/Index?accessToken=secret-token&other=value"
+        "https://video.example/Index?accessToken=opaque-token&other=value"
     )
-    dict_error = "{'accessToken': 'secret-token', 'name': 'example.mp4'}"
+    dict_error = "{'accessToken': 'opaque-token', 'name': 'example.mp4'}"
 
     redacted_query = functions_documents._sanitize_video_indexer_log_value(query_error)
     redacted_dict = functions_documents._sanitize_video_indexer_log_value(dict_error)
 
-    assert "secret-token" not in redacted_query
+    assert "opaque-token" not in redacted_query
     assert "accessToken=[REDACTED]" in redacted_query
     assert "other=value" in redacted_query
-    assert "secret-token" not in redacted_dict
+    assert "opaque-token" not in redacted_dict
     assert "[REDACTED]" in redacted_dict
     assert "Authentication failed: {str(e)}" not in video_source
     assert "AUTH ERROR: {e}" not in video_source
@@ -496,17 +496,17 @@ def test_video_indexer_auth_errors_redact_access_token():
     source = FUNCTIONS_AUTHENTICATION.read_text(encoding="utf-8")
     auth_source = extract_function_source(source, "get_video_indexer_managed_identity_token")
 
-    response_body = '{"accessToken":"secret-token","expiresIn":"3600"}'
+    response_body = '{"accessToken":"opaque-token","expiresIn":"3600"}'
     query_error = (
         "400 Client Error: Bad Request for url: "
-        "https://management.example/generateAccessToken?accessToken=secret-token"
+        "https://management.example/generateAccessToken?accessToken=opaque-token"
     )
 
     redacted_body = functions_authentication._sanitize_video_indexer_auth_log_value(response_body)
     redacted_query = functions_authentication._sanitize_video_indexer_auth_log_value(query_error)
 
-    assert "secret-token" not in redacted_body
-    assert "secret-token" not in redacted_query
+    assert "opaque-token" not in redacted_body
+    assert "opaque-token" not in redacted_query
     assert "[REDACTED]" in redacted_body
     assert "accessToken=[REDACTED]" in redacted_query
     assert "ARM API response text: {resp.text}" not in auth_source

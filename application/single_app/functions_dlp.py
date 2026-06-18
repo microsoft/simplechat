@@ -97,8 +97,8 @@ def _decision_from_counts(match_counts, mode):
     return "monitor"
 
 
-def normalize_presidio_results(text, recognizer_results, mode="redact", engine="presidio_service"):
-    """Normalize Presidio-style entity offsets into the shared counts-only result."""
+def normalize_external_analyzer_results(text, recognizer_results, mode="redact", engine="external_analyzer"):
+    """Normalize external analyzer entity offsets into the shared counts-only result."""
     source_text = str(text or "")
     sorted_results = sorted(
         [
@@ -137,7 +137,7 @@ def normalize_presidio_results(text, recognizer_results, mode="redact", engine="
         "total_replacements": sum(counts.values()),
         "match_counts": counts,
         "matches": [{"entity_type": key, "count": value} for key, value in counts.items()],
-        "metadata": {"adapter": "presidio"},
+        "metadata": {"adapter": "external_analyzer"},
         "scanner_status": "ok",
     }
 
