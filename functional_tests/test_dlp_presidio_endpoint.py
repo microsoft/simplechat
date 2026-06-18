@@ -3,7 +3,7 @@
 """
 Functional test for external Presidio endpoint DLP adapter.
 Version: 0.242.075
-Implemented in: 0.242.071
+Implemented in: 0.242.075
 
 This test ensures SimpleChat can call a configured Presidio-compatible analyzer
 endpoint without embedding Presidio packages or leaking raw scanned text.
@@ -533,3 +533,9 @@ def test_presidio_auth_header_name_validation(monkeypatch):
         return
 
     raise AssertionError("Expected reserved auth header name to be rejected.")
+
+
+if __name__ == "__main__":
+    import pytest
+
+    sys.exit(pytest.main([__file__]))

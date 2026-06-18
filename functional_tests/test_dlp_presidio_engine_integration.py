@@ -3,7 +3,7 @@
 """
 Functional test for Presidio endpoint engine integration.
 Version: 0.242.075
-Implemented in: 0.242.071
+Implemented in: 0.242.075
 
 This test ensures the external Presidio endpoint engine reuses SimpleChat's
 existing DLP decision, redaction, and fail-closed behavior.
@@ -153,3 +153,9 @@ def test_external_analyzer_normalizes_empty_and_too_long_entity_labels():
     assert normalized["match_counts"] == {"UNKNOWN_ENTITY": 2}
     assert normalized["matches"] == [{"entity_type": "UNKNOWN_ENTITY", "count": 2}]
     assert long_label not in repr(normalized)
+
+
+if __name__ == "__main__":
+    import pytest
+
+    sys.exit(pytest.main([__file__]))
