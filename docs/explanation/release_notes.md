@@ -1,8 +1,24 @@
 <!-- BEGIN release_notes.md BLOCK -->
 
-This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.242.068, and the per-version entries continue immediately after it.
+This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.242.070, and the per-version entries continue immediately after it.
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
+
+### **(v0.242.070)**
+
+#### New Features
+
+*   **Model Endpoint Setup Guidance**
+    *   Added in-product **Setup Guide** buttons beside global, personal, and group model endpoint actions, plus inline setup guidance inside the shared Model Endpoint modal.
+    *   Guidance covers Azure OpenAI, Foundry (classic), and New Foundry provider selection, managed identity and service principal RBAC, and API-key inference-only limitations.
+    *   (Ref: model endpoint modal, Admin Settings model endpoints, workspace endpoints, Foundry RBAC setup)
+
+#### Bug Fixes
+
+*   **Chat Model Icon Avatars**
+    *   Fixed saved model endpoint icons and uploaded model images not appearing on model-only assistant responses in chat.
+    *   Model icon metadata now flows through multi-endpoint model resolution, streaming and non-streaming response metadata, and assistant avatar rendering while preserving agent icon priority for agent responses.
+    *   (Ref: chat assistant avatars, model endpoint icons, `route_backend_chats.py`, `chat-messages.js`)
 
 ### **(v0.242.068)**
 
