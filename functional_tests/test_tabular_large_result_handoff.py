@@ -2,7 +2,7 @@
 # test_tabular_large_result_handoff.py
 """
 Functional test for tabular computed-results handoff size handling.
-Version: 0.242.070
+Version: 0.242.071
 Implemented in: 0.242.067
 
 This test ensures the tabular SK analysis handoff preserves computed results

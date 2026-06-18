@@ -2,7 +2,7 @@
 # test_tabular_related_document_evidence.py
 """
 Functional test for tabular related-document evidence.
-Version: 0.242.070
+Version: 0.242.071
 Implemented in: 0.241.140; updated in 0.242.067
 
 This test ensures that tabular rows can resolve explicit references to related

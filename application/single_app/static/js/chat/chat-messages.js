@@ -2364,6 +2364,16 @@ function resolveAssistantModelIcon(fullMessageObject = null) {
     || findModelIconFromChatOptions(fullMessageObject);
 }
 
+function hasAssistantAgentIdentity(fullMessageObject = null) {
+  return Boolean(
+    String(fullMessageObject?.agent_display_name || '').trim()
+    || String(fullMessageObject?.agent_name || '').trim()
+    || String(fullMessageObject?.metadata?.agent_selection?.agent_display_name || '').trim()
+    || String(fullMessageObject?.metadata?.agent_selection?.selected_agent || '').trim()
+    || String(fullMessageObject?.metadata?.agent_selection?.agent_id || '').trim()
+  );
+}
+
 function sanitizeAvatarImageSrc(value) {
   const normalizedValue = String(value || '').trim();
   if (!normalizedValue) {
@@ -2388,7 +2398,7 @@ function createAssistantAvatarHtml(fullMessageObject, senderLabel, defaultAvatar
   const agentIconPayload = normalizeAssistantAgentIcon(
     fullMessageObject?.agent_icon || fullMessageObject?.metadata?.agent_selection?.agent_icon
   );
-  const iconPayload = agentIconPayload || resolveAssistantModelIcon(fullMessageObject);
+  const iconPayload = agentIconPayload || (hasAssistantAgentIdentity(fullMessageObject) ? null : resolveAssistantModelIcon(fullMessageObject));
   const avatarClass = agentIconPayload ? 'agent-avatar' : 'model-avatar';
   const altText = `${stripHtmlTags(senderLabel || 'AI').replace(/\s+/g, ' ').trim() || 'AI'} Avatar`;
 

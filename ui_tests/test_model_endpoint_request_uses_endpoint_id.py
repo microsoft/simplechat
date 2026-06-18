@@ -1,7 +1,7 @@
 # test_model_endpoint_request_uses_endpoint_id.py
 """
 UI test for model endpoint request identity wiring.
-Version: 0.242.070
+Version: 0.242.071
 Implemented in: 0.241.179
 
 This test ensures the admin multi-endpoint modal exposes the supported

@@ -2,12 +2,12 @@
 #!/usr/bin/env python3
 """
 Functional test for chat model icon avatars.
-Version: 0.242.070
+Version: 0.242.071
 Implemented in: 0.242.070
 
 This test ensures saved model endpoint icons flow into chat assistant message
 metadata and the chat renderer can use them as model avatars when no agent icon
-is present.
+is present, without replacing agent avatars on agent responses.
 """
 
 from pathlib import Path
@@ -41,7 +41,7 @@ def test_backend_resolves_and_persists_model_icon_metadata() -> None:
     assert source.count("'model_icon': gpt_model_icon") >= 6
     assert "'model_endpoint_id': gpt_endpoint_id or data.get('model_endpoint_id')" in source
     assert "'model_id': gpt_model_id or data.get('model_id')" in source
-    assert read_config_version() == "0.242.070"
+    assert read_config_version() == "0.242.071"
 
 
 def test_frontend_uses_model_icon_for_assistant_avatar() -> None:
@@ -51,6 +51,8 @@ def test_frontend_uses_model_icon_for_assistant_avatar() -> None:
     assert "function resolveAssistantModelIcon" in source
     assert "fullMessageObject?.metadata?.model_selection?.model_icon" in source
     assert "findModelIconFromChatOptions" in source
+    assert "function hasAssistantAgentIdentity" in source
+    assert "hasAssistantAgentIdentity(fullMessageObject) ? null : resolveAssistantModelIcon(fullMessageObject)" in source
     assert "window.chatModelOptions" in source
     assert "model_icon: modelIcon" in source
     assert "model_icon: Object.keys(parsedIcon).length" in source
