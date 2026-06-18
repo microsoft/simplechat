@@ -8,6 +8,12 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 #### Bug Fixes
 
+*   **Presidio Endpoint Runtime Safety Hardening**
+    *   Rejects Presidio Analyzer hostnames whose DNS answers include loopback, link-local, private, or otherwise non-global addresses unless the exact endpoint host is explicitly allowlisted.
+    *   Normalizes untrusted Presidio entity labels to safe uppercase identifiers before redaction output, match counts, match summaries, and telemetry are built.
+    *   Strips Presidio endpoint and private-host settings from non-admin settings sanitization output.
+    *   (Ref: Presidio endpoint DNS validation, DLP entity label normalization, user settings sanitization)
+
 *   **Presidio Endpoint Configuration Hardening**
     *   Rejects Presidio Analyzer endpoint URLs with userinfo, fragments, credential-like query parameters, or private/link-local/loopback hosts that are not explicitly allowlisted.
     *   Adds an admin-configurable `Allowed Private Hosts` allowlist for private Presidio deployments and preserves only validated endpoint settings.

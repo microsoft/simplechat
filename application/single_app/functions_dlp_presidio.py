@@ -5,6 +5,7 @@
 import ipaddress
 import os
 import re
+import socket
 from urllib.parse import parse_qsl, urlparse
 
 import requests
@@ -115,6 +116,61 @@ def _is_loopback_presidio_host(host):
         return False
 
 
+def _is_ip_literal(host):
+    try:
+        ipaddress.ip_address(_normalize_host_identifier(host))
+        return True
+    except ValueError:
+        return False
+
+
+def _resolve_presidio_host_addresses(host, port):
+    normalized_host = _normalize_host_identifier(host)
+    if not normalized_host:
+        return []
+    if _is_ip_literal(normalized_host):
+        return [ipaddress.ip_address(normalized_host)]
+
+    try:
+        address_info = socket.getaddrinfo(
+            normalized_host,
+            port,
+            type=socket.SOCK_STREAM,
+        )
+    except socket.gaierror as exc:
+        raise PresidioEndpointConfigurationError("Presidio analyzer endpoint host must resolve in DNS.") from exc
+
+    addresses = []
+    seen_addresses = set()
+    for item in address_info:
+        sockaddr = item[4] if len(item) > 4 else None
+        if not sockaddr:
+            continue
+        raw_address = str(sockaddr[0]).split("%", 1)[0]
+        try:
+            address = ipaddress.ip_address(raw_address)
+        except ValueError:
+            continue
+        if address in seen_addresses:
+            continue
+        addresses.append(address)
+        seen_addresses.add(address)
+    return addresses
+
+
+def _validate_resolved_presidio_addresses(host, port, allowed_hosts):
+    normalized_host = _normalize_host_identifier(host)
+    addresses = _resolve_presidio_host_addresses(normalized_host, port)
+    if not addresses:
+        raise PresidioEndpointConfigurationError("Presidio analyzer endpoint host must resolve to an IP address.")
+    if normalized_host in allowed_hosts:
+        return
+    if any(not address.is_global for address in addresses):
+        raise PresidioEndpointConfigurationError(
+            "Private Presidio analyzer endpoint hosts must be listed in the private host allowlist."
+        )
+
+
 def normalize_presidio_secret_env_var_name(secret_env_var):
     """Return an allowed Presidio secret env var name, or blank when invalid."""
     normalized = str(secret_env_var or "").strip()
@@ -155,6 +211,7 @@ def validate_presidio_endpoint_url(endpoint_url, allowed_private_hosts=None):
 
     parsed = urlparse(normalized)
     host = (parsed.hostname or "").lower()
+    normalized_host = _normalize_host_identifier(host)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise PresidioEndpointConfigurationError("Presidio analyzer endpoint must be an absolute HTTP(S) URL.")
     if parsed.username or parsed.password or "@" in parsed.netloc:
@@ -169,12 +226,17 @@ def validate_presidio_endpoint_url(endpoint_url, allowed_private_hosts=None):
 
     host_is_private = _is_private_presidio_host(host)
     allowed_hosts = _get_allowed_private_hosts(allowed_private_hosts)
-    if host_is_private and _normalize_host_identifier(host) not in allowed_hosts:
+    if host_is_private and normalized_host not in allowed_hosts:
         raise PresidioEndpointConfigurationError(
             "Private Presidio analyzer endpoint hosts must be listed in the private host allowlist."
         )
     if parsed.scheme == "http" and not _is_loopback_presidio_host(host):
         raise PresidioEndpointConfigurationError("Presidio analyzer endpoint must use HTTPS unless it is localhost.")
+    _validate_resolved_presidio_addresses(
+        host,
+        parsed.port or (443 if parsed.scheme == "https" else 80),
+        allowed_hosts,
+    )
 
     return normalized
 
@@ -219,11 +281,11 @@ def _get_auth_headers(settings):
 def _normalize_result_item(item):
     if not isinstance(item, dict):
         return None
-    if not item.get("entity_type") or item.get("start") is None or item.get("end") is None:
+    if "entity_type" not in item or item.get("start") is None or item.get("end") is None:
         return None
     try:
         return {
-            "entity_type": str(item.get("entity_type")),
+            "entity_type": str(item.get("entity_type") or ""),
             "start": int(item.get("start")),
             "end": int(item.get("end")),
             "score": float(item.get("score", 0.0)),

@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Presidio endpoint engine integration.
-Version: 0.242.072
+Version: 0.242.073
 Implemented in: 0.242.071
 
 This test ensures the external Presidio endpoint engine reuses SimpleChat's
@@ -107,3 +107,49 @@ def test_presidio_endpoint_scanner_error_fails_closed_without_raw_text(monkeypat
     assert result["redacted_text"] == ""
     assert result["scanner_status"] == "error"
     assert RAW_TEXT not in repr(result)
+
+
+def test_presidio_endpoint_sanitizes_untrusted_entity_labels(monkeypatch):
+    """Remote entity labels must not be copied into redaction output or count keys."""
+    import functions_dlp
+
+    malicious_label = "EMAIL_ADDRESS_a@example.com"
+    monkeypatch.setattr(
+        functions_dlp,
+        "analyze_with_presidio_endpoint",
+        lambda text, settings: [{"entity_type": malicious_label, "start": 11, "end": 24, "score": 0.92}],
+    )
+
+    result = functions_dlp.evaluate_dlp_text(
+        RAW_TEXT,
+        settings=presidio_settings("redact"),
+        surface="web_search",
+    )
+    telemetry = functions_dlp.build_dlp_telemetry_properties(result, "web_search")
+
+    assert result["redacted_text"] == "Contact me [REDACTED_UNKNOWN_ENTITY]"
+    assert result["match_counts"] == {"UNKNOWN_ENTITY": 1}
+    assert result["matches"] == [{"entity_type": "UNKNOWN_ENTITY", "count": 1}]
+    assert telemetry["dlp_entity_counts"] == {"UNKNOWN_ENTITY": 1}
+    assert malicious_label not in repr(result)
+    assert "a@example.com" not in repr(result)
+    assert malicious_label not in repr(telemetry)
+    assert "a@example.com" not in repr(telemetry)
+
+
+def test_external_analyzer_normalizes_empty_and_too_long_entity_labels():
+    """Invalid external analyzer labels should collapse to a fixed safe entity name."""
+    import functions_dlp
+
+    long_label = "A" * 65
+    results = [
+        {"entity_type": "", "start": 0, "end": 7},
+        {"entity_type": long_label, "start": 11, "end": 24},
+    ]
+
+    normalized = functions_dlp.normalize_external_analyzer_results(RAW_TEXT, results, mode="redact")
+
+    assert normalized["redacted_text"] == "[REDACTED_UNKNOWN_ENTITY] me [REDACTED_UNKNOWN_ENTITY]"
+    assert normalized["match_counts"] == {"UNKNOWN_ENTITY": 2}
+    assert normalized["matches"] == [{"entity_type": "UNKNOWN_ENTITY", "count": 2}]
+    assert long_label not in repr(normalized)

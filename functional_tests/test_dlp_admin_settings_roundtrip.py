@@ -11,11 +11,13 @@ through the admin settings POST contract without requiring live Azure services.
 
 import os
 import sys
+import ast
 from pathlib import Path
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP_DIR = os.path.join(ROOT_DIR, "application", "single_app")
+sys.path.insert(0, APP_DIR)
 ADMIN_ROUTE_FILE = os.path.join(APP_DIR, "route_frontend_admin_settings.py")
 ADMIN_TEMPLATE_FILE = os.path.join(APP_DIR, "templates", "admin_settings.html")
 FUNCTIONS_SETTINGS_FILE = os.path.join(APP_DIR, "functions_settings.py")
@@ -65,6 +67,21 @@ UNSUPPORTED_DLP_FORM_FIELDS = [
 def read_file_text(path):
     with open(path, "r", encoding="utf-8") as file_handle:
         return file_handle.read()
+
+
+def load_sanitize_settings_for_user():
+    """Load the sanitizer function without importing optional app dependencies."""
+    source = read_file_text(FUNCTIONS_SETTINGS_FILE)
+    tree = ast.parse(source, filename=FUNCTIONS_SETTINGS_FILE)
+    function_node = next(
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "sanitize_settings_for_user"
+    )
+    module = ast.Module(body=[function_node], type_ignores=[])
+    ast.fix_missing_locations(module)
+    namespace = {}
+    exec(compile(module, FUNCTIONS_SETTINGS_FILE, "exec"), namespace)
+    return namespace["sanitize_settings_for_user"]
 
 
 def assert_no_retired_structured_redaction_control(source, source_name):
@@ -243,6 +260,34 @@ def test_default_settings_include_presidio_endpoint_controls():
     assert "'dlp_presidio_auth_secret'" not in settings_source
 
 
+def test_user_settings_sanitization_strips_presidio_endpoint_controls():
+    """Non-admin settings rendering should not expose Presidio endpoints or private host topology."""
+    print("Testing Presidio endpoint user settings sanitization...")
+    sanitize_settings_for_user = load_sanitize_settings_for_user()
+
+    sanitized = sanitize_settings_for_user(
+        {
+            "enable_dlp_control_plane": True,
+            "dlp_default_engine": "presidio_endpoint",
+            "dlp_presidio_analyzer_endpoint": "https://presidio.internal/analyze",
+            "dlp_presidio_allowed_private_hosts": "presidio.internal, 10.0.0.5",
+            "dlp_presidio_auth_header_name": "X-DLP-API-Key",
+            "dlp_presidio_auth_secret_env_var": "PRESIDIO_DLP_API_KEY",
+            "nested": {
+                "dlp_presidio_analyzer_endpoint": "https://nested-presidio.internal/analyze",
+                "safe": "visible",
+            },
+        }
+    )
+
+    assert "dlp_presidio_analyzer_endpoint" not in sanitized
+    assert "dlp_presidio_allowed_private_hosts" not in sanitized
+    assert "dlp_presidio_auth_header_name" not in sanitized
+    assert "dlp_presidio_auth_secret_env_var" not in sanitized
+    assert "dlp_presidio_analyzer_endpoint" not in sanitized["nested"]
+    assert sanitized["nested"]["safe"] == "visible"
+
+
 if __name__ == "__main__":
     tests = [
         test_dlp_admin_post_normalizes_untrusted_form_values,
@@ -255,6 +300,7 @@ if __name__ == "__main__":
         test_admin_settings_rejects_invalid_dlp_regex_rules_before_update,
         test_presidio_endpoint_settings_are_normalized_without_secret_persistence,
         test_default_settings_include_presidio_endpoint_controls,
+        test_user_settings_sanitization_strips_presidio_endpoint_controls,
     ]
 
     try:

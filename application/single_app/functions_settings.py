@@ -2303,12 +2303,20 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
         return full_settings
 
     sensitive_terms = ("key", "secret", "password", "connection", "base64", "storage_account_url")
+    sensitive_setting_names = {
+        "dlp_presidio_analyzer_endpoint",
+        "dlp_presidio_allowed_private_hosts",
+        "dlp_presidio_auth_header_name",
+        "dlp_presidio_auth_secret_env_var",
+    }
     sanitized = {}
 
     for k, v in full_settings.items():
         if k == 'support_feedback_recipient_email':
             continue
         if k == 'agents_page_promoted_popular_agents':
+            continue
+        if k in sensitive_setting_names:
             continue
         if any(term in k.lower() for term in sensitive_terms):
             continue

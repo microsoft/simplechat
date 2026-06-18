@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for external Presidio endpoint DLP adapter.
-Version: 0.242.072
+Version: 0.242.073
 Implemented in: 0.242.071
 
 This test ensures SimpleChat can call a configured Presidio-compatible analyzer
@@ -10,6 +10,7 @@ endpoint without embedding Presidio packages or leaking raw scanned text.
 """
 
 import os
+import socket
 import sys
 from unittest.mock import Mock
 
@@ -21,9 +22,31 @@ sys.path.insert(0, APP_DIR)
 RAW_TEXT = "Contact me a@example.com"
 
 
-def test_validate_presidio_endpoint_allows_https_and_localhost():
+def stub_dns_answers(monkeypatch, expected_host, addresses=None):
+    """Return deterministic DNS answers for endpoint validation tests."""
+    host_answers = expected_host if isinstance(expected_host, dict) else {expected_host: addresses}
+
+    def fake_getaddrinfo(host, port, *args, **kwargs):
+        assert host in host_answers
+        return [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, port or 443))
+            for address in host_answers[host]
+        ]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+
+
+def test_validate_presidio_endpoint_allows_https_and_localhost(monkeypatch):
     """Public HTTPS and explicitly allowlisted local HTTP endpoint URLs should be accepted."""
     from functions_dlp_presidio import validate_presidio_endpoint_url
+
+    stub_dns_answers(
+        monkeypatch,
+        {
+            "presidio.example.com": ["93.184.216.34"],
+            "localhost": ["127.0.0.1"],
+        },
+    )
 
     assert validate_presidio_endpoint_url("https://presidio.example.com/analyze") == "https://presidio.example.com/analyze"
     assert (
@@ -58,6 +81,51 @@ def test_validate_presidio_endpoint_rejects_private_hosts_without_allowlist():
             continue
 
         raise AssertionError(f"Expected private endpoint to be rejected: {blocked_url}")
+
+
+def test_validate_presidio_endpoint_rejects_public_hostname_resolving_to_private_ip(monkeypatch):
+    """Public-looking hostnames should be rejected when DNS resolves to non-global addresses."""
+    from functions_dlp_presidio import PresidioEndpointConfigurationError, validate_presidio_endpoint_url
+
+    stub_dns_answers(monkeypatch, "presidio.example.com", ["169.254.169.254"])
+
+    try:
+        validate_presidio_endpoint_url("https://presidio.example.com/analyze")
+    except PresidioEndpointConfigurationError as exc:
+        assert "allowlist" in str(exc).lower()
+        return
+
+    raise AssertionError("Expected DNS-resolved metadata endpoint address to be rejected.")
+
+
+def test_validate_presidio_endpoint_rejects_any_private_dns_answer(monkeypatch):
+    """Any non-global DNS answer should fail unless the endpoint host is explicitly allowlisted."""
+    from functions_dlp_presidio import PresidioEndpointConfigurationError, validate_presidio_endpoint_url
+
+    stub_dns_answers(monkeypatch, "presidio.example.com", ["93.184.216.34", "10.0.0.5"])
+
+    try:
+        validate_presidio_endpoint_url("https://presidio.example.com/analyze")
+    except PresidioEndpointConfigurationError as exc:
+        assert "allowlist" in str(exc).lower()
+        return
+
+    raise AssertionError("Expected hostname with mixed public/private DNS answers to be rejected.")
+
+
+def test_validate_presidio_endpoint_allows_private_dns_answer_for_exact_allowlisted_host(monkeypatch):
+    """A private DNS answer should be accepted only for the exact endpoint host in the allowlist."""
+    from functions_dlp_presidio import validate_presidio_endpoint_url
+
+    stub_dns_answers(monkeypatch, "presidio.example.com", ["10.0.0.5"])
+
+    assert (
+        validate_presidio_endpoint_url(
+            "https://presidio.example.com/analyze",
+            "presidio.example.com",
+        )
+        == "https://presidio.example.com/analyze"
+    )
 
 
 def test_validate_presidio_endpoint_allows_private_hosts_with_explicit_allowlist():
@@ -167,6 +235,7 @@ def test_analyze_with_presidio_endpoint_posts_safe_payload_and_auth_header(monke
         "dlp_presidio_timeout_seconds": 3,
     }
 
+    stub_dns_answers(monkeypatch, "presidio.internal", ["10.0.0.5"])
     results = analyze_with_presidio_endpoint(RAW_TEXT, settings)
 
     assert results == [{"entity_type": "EMAIL_ADDRESS", "start": 11, "end": 24, "score": 0.91}]
@@ -198,6 +267,7 @@ def test_analyze_with_presidio_endpoint_omits_auth_header_without_env_secret(mon
 
     monkeypatch.setattr("functions_dlp_presidio.requests.post", fake_post)
     monkeypatch.delenv("PRESIDIO_DLP_API_KEY", raising=False)
+    stub_dns_answers(monkeypatch, "presidio.internal", ["10.0.0.5"])
 
     analyze_with_presidio_endpoint(
         RAW_TEXT,
@@ -220,6 +290,7 @@ def test_analyze_with_presidio_endpoint_raises_safe_error_without_raw_text(monke
         raise RuntimeError(f"upstream included {RAW_TEXT}")
 
     monkeypatch.setattr("functions_dlp_presidio.requests.post", fake_post)
+    stub_dns_answers(monkeypatch, "presidio.internal", ["10.0.0.5"])
 
     try:
         analyze_with_presidio_endpoint(
@@ -256,6 +327,7 @@ def test_analyze_with_presidio_endpoint_normalizes_response_items(monkeypatch):
         return response
 
     monkeypatch.setattr("functions_dlp_presidio.requests.post", fake_post)
+    stub_dns_answers(monkeypatch, "presidio.internal", ["10.0.0.5"])
 
     results = analyze_with_presidio_endpoint(
         RAW_TEXT,
@@ -265,7 +337,10 @@ def test_analyze_with_presidio_endpoint_normalizes_response_items(monkeypatch):
         },
     )
 
-    assert results == [{"entity_type": "EMAIL_ADDRESS", "start": 11, "end": 24, "score": 0.91}]
+    assert results == [
+        {"entity_type": "EMAIL_ADDRESS", "start": 11, "end": 24, "score": 0.91},
+        {"entity_type": "", "start": 1, "end": 2, "score": 0.4},
+    ]
 
 
 def test_analyze_with_presidio_endpoint_treats_redirect_as_endpoint_error(monkeypatch):
@@ -285,6 +360,7 @@ def test_analyze_with_presidio_endpoint_treats_redirect_as_endpoint_error(monkey
         return response
 
     monkeypatch.setattr("functions_dlp_presidio.requests.post", fake_post)
+    stub_dns_answers(monkeypatch, "presidio.example.com", ["93.184.216.34"])
 
     try:
         analyze_with_presidio_endpoint(
