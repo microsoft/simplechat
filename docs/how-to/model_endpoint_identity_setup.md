@@ -6,7 +6,7 @@ menubar: docs_menu
 accent: teal
 eyebrow: "Admin How-To"
 description: "Assign managed identity or service principal access for Azure OpenAI, Foundry (classic), and New Foundry model endpoints in the multi-endpoint modal."
-version: "0.242.071"
+version: "0.250.006"
 keywords:
   - model endpoints
   - multi endpoint
@@ -35,7 +35,7 @@ hero_links:
 
 Use this guide when admins need to configure the shared **Model Endpoint** modal for Azure OpenAI, Foundry (classic), or New Foundry without depending on legacy single-endpoint settings.
 
-Documented for version **0.242.071**.
+Documented for version **0.250.006**.
 
 The multi-endpoint UI also includes a **Setup Guide** button beside endpoint actions and inside the Model Endpoint modal. Use that in-product guidance for quick RBAC reminders, and use this page when you need the full setup sequence.
 
@@ -79,6 +79,7 @@ The multi-endpoint UI also includes a **Setup Guide** button beside endpoint act
 - Decide whether the endpoint is global, personal, or group scoped. The identity and RBAC requirements are the same, but the endpoint is saved in a different scope.
 - If you use a service principal, create the Entra app registration first and keep the tenant ID, client ID, and client secret ready.
 - If you use a user-assigned managed identity, attach it to the App Service and copy the managed identity **Client ID** for the modal.
+- Plan separate model endpoints when provider families need different project settings, authentication, or manual deployment rows. For Foundry project model inference, Simple Chat normalizes calls to `/openai/v1`, so keep **OpenAI API Version** at endpoint default `v1`.
 
 ## Choose The Provider
 
@@ -91,6 +92,23 @@ The modal provider decides which discovery API and token scope Simple Chat uses.
 | `New Foundry` | Application-based Foundry runtime, New Foundry agents, and OpenAI-compatible project model deployments | The same Foundry project endpoint shape used by the New Foundry project | The Foundry project when the portal exposes project-scoped access, otherwise the backing Foundry resource/account |
 
 For APIM, choose the provider that matches the backend service and select API key authentication when APIM expects a subscription key or other shared key. API key authentication can run inference, but it cannot use **Fetch Models** for Azure OpenAI ARM discovery or Foundry project discovery.
+
+## Choose API Versions
+
+The modal has two version fields, and they are intentionally separate.
+
+| Field | What it controls | Recommended starting point |
+|-------|------------------|----------------------------|
+| **Project API Version** | Foundry project discovery calls such as deployment listing, agent listing, and workflow listing. | Keep `v1` unless your Foundry project documentation says otherwise. |
+| **OpenAI API Version** | Inference calls for OpenAI-compatible Foundry project model deployments. Simple Chat normalizes Foundry project endpoints to `/openai/v1`. | Keep `Endpoint default (v1)` for New Foundry project model endpoints. The `/v1` path does not allow an `api-version` query, including dated preview values. |
+
+If one deployed model family works and another fails with API-version or unsupported-operation errors, create a separate endpoint for the failing family so you can isolate its project endpoint, authentication, deployment rows, and test results. For the normalized `/openai/v1` inference path, keep **OpenAI API Version** at endpoint default `v1`.
+
+Claude deployments are detected from the deployment name or Anthropic endpoint path and use the Anthropic messages protocol at runtime. The endpoint still stores an OpenAI API Version for the other model rows on that endpoint, so keep Claude with compatible rows or use a separate endpoint when the configuration becomes confusing.
+
+Live validation against Foundry-hosted model families showed that basic chat-completions calls work for DeepSeek, Grok, and Llama, but reasoning-effort support and memory context tolerance are model-specific. Simple Chat only sends reasoning effort to known OpenAI reasoning families such as GPT-5 and o-series models. For Foundry-hosted non-OpenAI chat-completions models, Simple Chat folds saved memory values into the latest user message as plain background notes instead of injecting memory system messages. This preserves memory context while avoiding provider-side content-filter blocks observed with system-style memory prompts.
+
+The same endpoint runtime helpers are used for chat streaming, workflow execution, metadata extraction, endpoint test calls, and Semantic Kernel-backed tabular or agent services. This keeps provider selection, authentication, OpenAI-compatible `/openai/v1` normalization, and Anthropic routing consistent across Simple Chat features.
 
 ## Understand Discovery Versus Inference
 
@@ -181,7 +199,7 @@ Use **Foundry (classic)** when the target is an existing classic Foundry project
 3. Set **Provider** to **Foundry (classic)**.
 4. Enter the Foundry project endpoint. If the endpoint already contains `/api/projects/<project>`, the modal can infer the project name. Otherwise, fill **Foundry Project Name**.
 5. Keep **Project API Version** at `v1` unless your Foundry project specifically requires another supported value.
-6. Choose the **OpenAI API Version** required by the model endpoint. For most OpenAI-compatible Foundry project endpoints, `Endpoint default (v1)` is the right starting point.
+6. Keep **OpenAI API Version** at **Endpoint default (v1)** for Foundry project model inference. Simple Chat normalizes these calls to `/openai/v1`, and that path rejects `api-version` query values.
 7. Select **Managed Identity** or **Service Principal** and fill the identity fields.
 8. For Azure Government, set **Management Cloud** to **Azure Government**. For a custom cloud, set **Management Cloud** to **Custom**, then enter the custom authority and Foundry scope.
 9. Select **Fetch Models** to verify project deployment discovery.
@@ -196,13 +214,13 @@ Use **New Foundry** for the application-based Foundry runtime and New Foundry ag
 3. Set **Provider** to **New Foundry**.
 4. Enter the New Foundry project endpoint. If the URL does not include `/api/projects/<project>`, fill **Foundry Project Name**.
 5. Keep **Project API Version** at `v1` unless your Foundry project requires a different supported value.
-6. Keep **OpenAI API Version** at **Endpoint default (v1)** for OpenAI-compatible project model inference unless the deployment requires a dated preview. Claude deployments are detected from the model name and use the Anthropic messages protocol.
+6. Keep **OpenAI API Version** at **Endpoint default (v1)** for New Foundry project model inference. Simple Chat normalizes these calls to `/openai/v1`, and that path rejects `api-version` query values. Claude deployments are detected from the model name and use the Anthropic messages protocol.
 7. Select **Managed Identity** or **Service Principal** and fill the identity fields.
 8. Set **Management Cloud** for public, Azure Government, or custom cloud. Custom cloud requires both **Custom Authority** and **Foundry Scope**.
 9. Select **Fetch Models** and test a deployment.
 10. When creating New Foundry agents, use the saved endpoint in the agent modal so application discovery and runtime calls use the same identity and project settings.
 
-API keys are not a replacement for Foundry RBAC when users need New Foundry agent discovery, Foundry Workflow discovery, or chat-selectable Foundry agent invocation.
+API keys are not a replacement for Foundry RBAC when users need New Foundry agent discovery, Foundry Workflow discovery, or chat-selectable Foundry agent invocation. For API-key-only model inference, **Fetch Models** is unavailable; add each deployment row manually and test it before saving.
 
 ## Validate The Setup
 
@@ -219,6 +237,9 @@ API keys are not a replacement for Foundry RBAC when users need New Foundry agen
 | Azure OpenAI **Fetch Models** fails | The identity can call inference but cannot read ARM deployment metadata. | Add `Reader` on the Azure OpenAI resource or correct parent scope, and confirm subscription ID, resource group, and endpoint resource name match. |
 | Azure OpenAI **Test Model** fails with authorization errors | Missing data-plane role. | Add `Cognitive Services OpenAI User` on the Azure OpenAI resource. |
 | Foundry **Fetch Models** fails | Wrong provider, wrong project endpoint, missing project name, wrong cloud authority/scope, or missing Foundry RBAC. | Confirm provider is Foundry (classic) or New Foundry, verify the project endpoint, then assign `Foundry User` or `Azure AI User` to the modal identity. |
+| Grok, Meta/Llama, DeepSeek, or another non-OpenAI provider fails with `api-version query parameter is not allowed when using /v1 path` | A dated preview or other query-style **OpenAI API Version** is being applied to the normalized `/openai/v1` inference path. | Keep **OpenAI API Version** at `Endpoint default (v1)`, save the endpoint, then run **Test Model** again. |
+| DeepSeek, Grok, Llama, or another non-OpenAI family returns empty content or content-filter errors only from Simple Chat | The request may include model-family-specific parameters such as `reasoning_effort`. | Use the current Simple Chat version, which sends reasoning effort only to known OpenAI reasoning families, then test the model again. |
+| DeepSeek, Grok, Llama, or another non-OpenAI family works in direct probes but fails only in the app | App-added memory system messages may trigger provider-side content filters. | Use the current Simple Chat version, which folds saved memory values into the latest user message as plain background notes for non-OpenAI Foundry models. |
 | Service principal cannot authenticate | Tenant ID, client ID, or secret is incorrect, expired, or saved against the wrong endpoint. | Rotate the secret, update the endpoint, and confirm the enterprise application has the role assignment. |
 | User-assigned managed identity is ignored | The client ID is missing or the identity is not attached to the App Service. | Attach the identity to the App Service and enter the managed identity client ID, not the object ID. |
 | API key endpoint cannot fetch models | API key mode is inference-only for discovery paths. | Add model rows manually, or switch to managed identity/service principal and assign RBAC. |

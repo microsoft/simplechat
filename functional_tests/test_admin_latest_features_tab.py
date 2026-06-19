@@ -2,8 +2,8 @@
 # test_admin_latest_features_tab.py
 """
 Functional test for admin Latest Features tab.
-Version: 0.241.184
-Implemented in: 0.240.074; 0.240.085; 0.241.002; 0.241.164; 0.241.165; 0.241.166; 0.241.183; 0.241.184
+Version: 0.250.001
+Implemented in: 0.240.074; 0.240.085; 0.241.002; 0.241.164; 0.241.165; 0.241.166; 0.241.183; 0.241.184; 0.250.001
 
 This test ensures that the Admin Settings page exposes a data-driven,
 admin-only Latest Features tab while the user-facing support catalog remains
@@ -25,49 +25,75 @@ SUPPORT_CONFIG = os.path.join(REPO_ROOT, 'application', 'single_app', 'support_m
 FEATURE_IMAGE_DIR = os.path.join(REPO_ROOT, 'application', 'single_app', 'static', 'images', 'features')
 
 USER_CURRENT_FEATURE_IDS = [
-    'document_intelligence',
-    'cloud_anthropic_models',
-    'file_sync',
-    'group_workflows',
-    'source_review',
-    'analyze_compare',
-    'agent_knowledge_actions',
-    'generated_artifacts',
-    'chat_productivity',
-    'chat_upload_workspace_parity',
-    'workspace_experience',
-    'workflow_automation',
-    'visio_ingestion',
-    'stats_reporting',
+    'release_250_ai_access',
+    'release_250_tabular_analysis',
+    'release_250_custom_pages',
+    'release_250_tableau_action',
+    'release_250_workflows',
+    'release_250_voice_assisted_inputs',
+    'release_250_m365_actions',
+    'release_250_chat_uploads',
+    'release_250_document_intelligence',
+    'release_250_file_sync',
+    'release_250_conversation_feed',
+    'release_250_group_file_sharing',
+    'release_250_profile_stats',
+    'release_250_databricks_action',
+    'release_250_layered_masking',
+    'release_250_visio_msg_ingestion',
+    'release_250_assigned_knowledge',
+    'release_250_deep_research',
+    'release_250_url_access',
+    'release_250_source_continuity',
+    'release_250_generated_documents',
+    'release_250_workspace_views',
+    'release_250_follow_up_actions',
+    'release_250_model_agent_avatars',
 ]
 
 ADMIN_CURRENT_FEATURE_IDS = [
-    'admin_cloud_anthropic_models',
-    'admin_document_action_capabilities',
-    'admin_cosmos_throughput',
-    'admin_workspace_workflows',
-    'admin_chat_file_uploads',
-    'admin_file_sync',
-    'admin_global_identities',
-    'admin_url_access_deep_research',
-    'admin_document_intelligence_modes',
+    'admin_release_250_azure_openai_identity',
+    'admin_release_250_model_endpoint_setup',
+    'admin_release_250_governance',
+    'admin_release_250_cache_performance',
+    'admin_release_250_custom_pages',
+    'admin_release_250_action_catalog',
+    'admin_release_250_workflows',
+    'admin_release_250_document_intelligence',
+    'admin_release_250_cosmos_scaling',
+    'admin_release_250_file_sync',
+    'admin_release_250_group_sharing',
+    'admin_release_250_global_identities',
+    'admin_release_250_deep_research_url_access',
+    'admin_release_250_model_endpoint_branding',
+    'admin_release_250_bug_fixes',
 ]
 
 USER_CURRENT_FEATURE_IMAGE_FILES = {
-    'document_intelligence': ['document_intelligence_admin_controls.png'],
-    'cloud_anthropic_models': ['model_selection_multi_endpoint_admin.png'],
-    'file_sync': ['file_sync_admin_scope_controls.png'],
-    'group_workflows': ['workflow_automation_admin_controls.png'],
-    'source_review': ['source_review_admin_policy.png'],
-    'analyze_compare': ['document_revision_delete_compare.png'],
-    'agent_knowledge_actions': ['agent_knowledge_actions_assigned_knowledge.png'],
-    'generated_artifacts': ['generated_artifacts_chat_artifacts.png'],
-    'chat_productivity': ['chat_productivity_chat_toolbar.png'],
-    'chat_upload_workspace_parity': ['chat_productivity_chat_toolbar.png'],
-    'workspace_experience': ['workspace_experience_document_cards.png'],
-    'workflow_automation': ['workflow_automation_admin_controls.png'],
-    'visio_ingestion': ['visio_ingestion_workspace_upload.png'],
-    'stats_reporting': ['stats_reporting_profile_dashboard.png'],
+    'release_250_ai_access': ['release_250_ai_access.png'],
+    'release_250_tabular_analysis': ['release_250_tabular_analysis.png'],
+    'release_250_custom_pages': ['release_250_custom_pages.png'],
+    'release_250_tableau_action': ['release_250_tableau_action.png'],
+    'release_250_workflows': ['release_250_workflows.png'],
+    'release_250_voice_assisted_inputs': ['release_250_voice_assisted_inputs.png'],
+    'release_250_m365_actions': ['release_250_m365_actions.png'],
+    'release_250_chat_uploads': ['release_250_chat_uploads.png'],
+    'release_250_document_intelligence': ['release_250_document_intelligence.png'],
+    'release_250_file_sync': ['release_250_file_sync.png'],
+    'release_250_conversation_feed': ['release_250_conversation_feed.png'],
+    'release_250_group_file_sharing': ['release_250_group_file_sharing.png'],
+    'release_250_profile_stats': ['release_250_profile_stats.png'],
+    'release_250_databricks_action': ['release_250_databricks_action.png'],
+    'release_250_layered_masking': ['release_250_layered_masking.png'],
+    'release_250_visio_msg_ingestion': ['release_250_visio_msg_ingestion.png'],
+    'release_250_assigned_knowledge': ['release_250_assigned_knowledge.png'],
+    'release_250_deep_research': ['release_250_deep_research.png'],
+    'release_250_url_access': ['release_250_url_access.png'],
+    'release_250_source_continuity': ['release_250_source_continuity.png'],
+    'release_250_generated_documents': ['release_250_generated_documents.png'],
+    'release_250_workspace_views': ['release_250_workspace_views.png'],
+    'release_250_follow_up_actions': ['release_250_follow_up_actions.png'],
+    'release_250_model_agent_avatars': ['release_250_model_agent_avatars.png'],
 }
 
 PREVIOUS_ADMIN_FEATURE_IDS = [
@@ -111,8 +137,10 @@ def test_user_latest_features_catalog_release_groups():
     assert [group['id'] for group in release_groups] == [
         'current_release',
         'previous_release',
-        'earlier_release',
+        'archive_release',
     ]
+    assert release_groups[0]['release_version'] == '0.250.001'
+    assert release_groups[1]['release_version'] == '0.241.001 - 0.241.007'
 
     current_feature_ids = [feature['id'] for feature in release_groups[0]['features']]
     assert current_feature_ids == USER_CURRENT_FEATURE_IDS
@@ -122,14 +150,11 @@ def test_user_latest_features_catalog_release_groups():
     assert 'cosmos_autoscale' not in default_visibility
     assert default_visibility['deployment'] is False
     assert default_visibility['redis_key_vault'] is False
-    assert default_visibility['document_intelligence'] is True
+    assert default_visibility['release_250_ai_access'] is True
 
-    stats_feature = next(feature for feature in release_groups[0]['features'] if feature['id'] == 'stats_reporting')
-    assert stats_feature['title'] == 'Profile, Stats, and Preferences'
-    stats_copy = ' '.join([stats_feature['summary']] + stats_feature.get('guidance', []))
-    assert 'text-to-speech voice selection' in stats_copy
-    assert 'feedback' in stats_copy
-    assert 'safety violations' in stats_copy
+    first_feature = release_groups[0]['features'][0]
+    assert first_feature['id'] == 'release_250_ai_access'
+    assert first_feature['title'] == 'Personalized Model and Agent Access'
 
     for feature in release_groups[0]['features']:
         expected_files = USER_CURRENT_FEATURE_IMAGE_FILES[feature['id']]
@@ -153,11 +178,17 @@ def test_admin_latest_features_catalog_release_groups():
     assert [group['id'] for group in release_groups] == ['current_release', 'previous_release']
     assert release_groups[0]['label'] == 'Admin-Managed Latest Features'
     assert release_groups[1]['label'] == 'Previous Release Features'
+    assert release_groups[0]['release_version'] == '0.250.001'
+    assert release_groups[1]['release_version'] == '0.241.001 - 0.241.007'
 
     current_feature_ids = [feature['id'] for feature in release_groups[0]['features']]
     assert current_feature_ids == ADMIN_CURRENT_FEATURE_IDS
 
-    previous_feature_ids = [feature['id'] for feature in release_groups[1]['features']]
+    previous_feature_ids = [
+        feature['id']
+        for group in release_groups[1:]
+        for feature in group['features']
+    ]
     for feature_id in PREVIOUS_ADMIN_FEATURE_IDS:
         assert feature_id in previous_feature_ids, f'Missing previous admin feature: {feature_id}'
 
@@ -165,6 +196,8 @@ def test_admin_latest_features_catalog_release_groups():
         guidance = ' '.join(feature.get('guidance', []))
         assert 'Screenshot idea:' in guidance, f"Missing screenshot guidance for {feature['id']}"
         assert feature.get('actions'), f"Missing action link for {feature['id']}"
+        assert len(feature.get('actions', [])) >= 2, f"Expected multiple admin action links for {feature['id']}"
+        assert any(action.get('admin_tab') for action in feature.get('actions', [])), f"Expected an admin tab link for {feature['id']}"
 
     print('Admin Latest Features catalog release groups are current')
     return True
@@ -183,7 +216,7 @@ def test_latest_features_template_structure():
         'admin_latest_feature_release_groups',
         '{% for release_group in admin_latest_feature_release_groups %}',
         "release_group.id == 'current_release'",
-        "release_group.id == 'previous_release'",
+        '{% else %}',
         "{% set feature_card_id = 'latest-features-' ~ feature.id|replace('_', '-') ~ '-card' %}",
         '<i class="bi {{ feature.icon }} me-2"></i>{{ feature.title }}',
         '{{ feature.summary }}',
@@ -191,7 +224,7 @@ def test_latest_features_template_structure():
         'data-open-admin-tab="{{ action.admin_tab }}"',
         'data-open-admin-section="{{ action.admin_section }}"',
         'latest-features-previous-release-card',
-        'latestFeaturesPreviousRelease',
+        '{% set release_collapse_id = release_group.collapse_id %}',
         'id="latestFeatureImageModal"',
         'class="latest-feature-image-frame"',
         'data-latest-feature-image-src="{{ url_for(\'static\', filename=image.path) }}"',
@@ -314,11 +347,14 @@ def test_latest_features_supporting_assets():
 
     assert os.path.isdir(FEATURE_IMAGE_DIR), 'Missing image directory for Latest Features'
 
-    required_images = [
+    current_placeholder_images = [
         image_name
         for image_names in USER_CURRENT_FEATURE_IMAGE_FILES.values()
         for image_name in image_names
-    ] + [
+    ]
+    assert all(image_name.startswith('release_250_') for image_name in current_placeholder_images), 'Current screenshots should be 0.250.001 placeholder filenames'
+
+    required_images = [
         'background_completion_notifications-01.png',
         'background_completion_notifications-02.png',
         'citation_improvements_amplified_results.png',

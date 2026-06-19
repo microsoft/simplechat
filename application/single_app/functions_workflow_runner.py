@@ -79,13 +79,9 @@ from functions_message_artifacts import (
     make_json_serializable,
 )
 from model_endpoint_clients import (
-    MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
     MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
-    MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
-    build_anthropic_chat_client,
-    build_openai_style_chat_client,
-    infer_model_endpoint_protocol,
 )
+from functions_model_endpoint_runtime import build_model_endpoint_sync_chat_client
 from functions_notifications import create_workflow_priority_notification
 from functions_personal_workflows import save_personal_workflow_run, save_personal_workflow_run_item
 from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
@@ -3613,61 +3609,20 @@ def _build_multi_endpoint_client(user_id, endpoint_id, model_id, settings, group
     api_version = connection.get('api_version') or connection.get('openai_api_version') or settings.get('azure_openai_gpt_api_version')
     endpoint = connection.get('endpoint')
     auth_type = str(auth.get('type') or 'api_key').strip().lower()
-    runtime_protocol = infer_model_endpoint_protocol(provider, endpoint, deployment_name)
-
-    if auth_type in ('key', 'api_key'):
-        api_key = auth.get('api_key')
-        if not api_key:
-            raise ValueError('Selected model endpoint is missing an API key.')
-        if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC:
-            client = build_anthropic_chat_client(endpoint=endpoint, api_key=api_key)
-        elif runtime_protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
-            client = build_openai_style_chat_client(api_key, endpoint, api_version)
-        else:
-            client = AzureOpenAI(
-                azure_endpoint=endpoint,
-                api_key=api_key,
-                api_version=api_version,
-            )
-    else:
-        auth_settings = {
-            'type': auth_type,
-            'tenant_id': auth.get('tenant_id'),
-            'client_id': auth.get('client_id'),
-            'client_secret': auth.get('client_secret'),
-            'managed_identity_client_id': auth.get('managed_identity_client_id'),
-            'management_cloud': auth.get('management_cloud') or settings.get('management_cloud') or 'public',
-            'custom_authority': auth.get('custom_authority') or settings.get('custom_authority') or '',
-            'foundry_scope': auth.get('foundry_scope') or '',
-        }
-        if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC:
-            bearer_token = _build_bearer_token(
-                auth_settings,
-                provider=provider,
-                endpoint=endpoint,
-                runtime_protocol=runtime_protocol,
-            )
-            client = build_anthropic_chat_client(endpoint=endpoint, bearer_token=bearer_token)
-        elif runtime_protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
-            bearer_token = _build_bearer_token(
-                auth_settings,
-                provider=provider,
-                endpoint=endpoint,
-                runtime_protocol=runtime_protocol,
-            )
-            client = build_openai_style_chat_client(bearer_token, endpoint, api_version)
-        else:
-            token_provider = _build_token_provider(
-                auth_settings,
-                provider=provider,
-                endpoint=endpoint,
-                runtime_protocol=runtime_protocol,
-            )
-            client = AzureOpenAI(
-                azure_endpoint=endpoint,
-                azure_ad_token_provider=token_provider,
-                api_version=api_version,
-            )
+    auth_settings = {
+        **auth,
+        'type': auth_type,
+        'management_cloud': auth.get('management_cloud') or settings.get('management_cloud') or 'public',
+        'custom_authority': auth.get('custom_authority') or settings.get('custom_authority') or '',
+        'foundry_scope': auth.get('foundry_scope') or '',
+    }
+    client, _ = build_model_endpoint_sync_chat_client(
+        auth_settings,
+        provider,
+        endpoint,
+        api_version,
+        deployment_name=deployment_name,
+    )
 
     return client, deployment_name, provider
 

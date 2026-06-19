@@ -259,6 +259,27 @@ def register_route_backend_models(app):
             subscription_id=subscription_id
         )
 
+    def get_aoai_account_name(endpoint):
+        endpoint_host = (endpoint or "").strip().replace("https://", "").replace("http://", "").split("/")[0]
+        return endpoint_host.split(".")[0].strip()
+
+    def get_management_cloud_for_environment():
+        if AZURE_ENVIRONMENT == "usgovernment":
+            return "government"
+        if AZURE_ENVIRONMENT == "custom":
+            return "custom"
+        return "public"
+
+    def build_legacy_aoai_discovery_auth_settings():
+        return {
+            "type": "service_principal",
+            "management_cloud": get_management_cloud_for_environment(),
+            "custom_authority": authority if AZURE_ENVIRONMENT == "custom" else "",
+            "tenant_id": TENANT_ID,
+            "client_id": CLIENT_ID,
+            "client_secret": MICROSOFT_PROVIDER_AUTHENTICATION_SECRET,
+        }
+
     def build_inference_client(endpoint, api_version, auth_settings, provider="aoai", deployment_name=""):
         auth_type = (auth_settings.get("type") or "managed_identity").lower()
         runtime_protocol = infer_model_endpoint_protocol(provider, endpoint, deployment_name)
@@ -531,29 +552,16 @@ def register_route_backend_models(app):
         subscription_id = settings.get('azure_openai_gpt_subscription_id', '')
         resource_group = settings.get('azure_openai_gpt_resource_group', '')
         endpoint = settings.get('azure_openai_gpt_endpoint', '')
-        account_name = endpoint.split('.')[0].replace("https://", "")
+        account_name = get_aoai_account_name(endpoint)
         configured_models = _get_configured_models(settings, 'gpt_model')
 
         if _is_foundry_project_endpoint(endpoint) or not subscription_id or not resource_group or not account_name:
             return jsonify({"models": configured_models}), 200
 
-        if AZURE_ENVIRONMENT == "usgovernment" or AZURE_ENVIRONMENT == "custom":
-            
-            credential = ClientSecretCredential(TENANT_ID, CLIENT_ID, MICROSOFT_PROVIDER_AUTHENTICATION_SECRET, authority=authority)
-
-            client = CognitiveServicesManagementClient(
-                credential=credential,
-                subscription_id=subscription_id,
-                base_url=resource_manager,
-                credential_scopes=credential_scopes
-            )
-        else:
-            credential = ClientSecretCredential(TENANT_ID, CLIENT_ID, MICROSOFT_PROVIDER_AUTHENTICATION_SECRET)
-
-            client = CognitiveServicesManagementClient(
-                credential=credential,
-                subscription_id=subscription_id
-            )
+        client = build_cognitive_services_client(
+            subscription_id,
+            build_legacy_aoai_discovery_auth_settings()
+        )
 
         models = []
         try:
@@ -600,29 +608,16 @@ def register_route_backend_models(app):
         subscription_id = settings.get('azure_openai_embedding_subscription_id', '')
         resource_group = settings.get('azure_openai_embedding_resource_group', '')
         endpoint = settings.get('azure_openai_embedding_endpoint', '')
-        account_name = endpoint.split('.')[0].replace("https://", "")
+        account_name = get_aoai_account_name(endpoint)
         configured_models = _get_configured_models(settings, 'embedding_model')
 
         if _is_foundry_project_endpoint(endpoint) or not subscription_id or not resource_group or not account_name:
             return jsonify({"models": configured_models}), 200
 
-        if AZURE_ENVIRONMENT == "usgovernment" or AZURE_ENVIRONMENT == "custom":
-            
-            credential = ClientSecretCredential(TENANT_ID, CLIENT_ID, MICROSOFT_PROVIDER_AUTHENTICATION_SECRET, authority=authority)
-
-            client = CognitiveServicesManagementClient(
-                credential=credential,
-                subscription_id=subscription_id,
-                base_url=resource_manager,
-                credential_scopes=credential_scopes
-            )
-        else:
-            credential = ClientSecretCredential(TENANT_ID, CLIENT_ID, MICROSOFT_PROVIDER_AUTHENTICATION_SECRET)
-
-            client = CognitiveServicesManagementClient(
-                credential=credential,
-                subscription_id=subscription_id
-            )
+        client = build_cognitive_services_client(
+            subscription_id,
+            build_legacy_aoai_discovery_auth_settings()
+        )
 
         models = []
         try:
@@ -666,28 +661,16 @@ def register_route_backend_models(app):
 
         subscription_id = settings.get('azure_openai_image_gen_subscription_id', '')
         resource_group = settings.get('azure_openai_image_gen_resource_group', '')
-        account_name = settings.get('azure_openai_image_gen_endpoint', '').split('.')[0].replace("https://", "")
+        endpoint = settings.get('azure_openai_image_gen_endpoint', '')
+        account_name = get_aoai_account_name(endpoint)
 
         if not subscription_id or not resource_group or not account_name:
             return jsonify({"error": "Azure Image Model subscription/RG/endpoint not configured"}), 400
 
-        if AZURE_ENVIRONMENT == "usgovernment" or AZURE_ENVIRONMENT == "custom":
-            
-            credential = ClientSecretCredential(TENANT_ID, CLIENT_ID, MICROSOFT_PROVIDER_AUTHENTICATION_SECRET, authority=authority)
-
-            client = CognitiveServicesManagementClient(
-                credential=credential,
-                subscription_id=subscription_id,
-                base_url=resource_manager,
-                credential_scopes=credential_scopes
-            )
-        else:
-            credential = ClientSecretCredential(TENANT_ID, CLIENT_ID, MICROSOFT_PROVIDER_AUTHENTICATION_SECRET)
-
-            client = CognitiveServicesManagementClient(
-                credential=credential,
-                subscription_id=subscription_id
-            )
+        client = build_cognitive_services_client(
+            subscription_id,
+            build_legacy_aoai_discovery_auth_settings()
+        )
 
         models = []
         try:

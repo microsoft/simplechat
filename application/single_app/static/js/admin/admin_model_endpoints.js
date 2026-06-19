@@ -375,7 +375,7 @@ function formatProviderLabel(provider) {
 }
 
 function getDefaultOpenAiApiVersion(provider) {
-    return provider === "new_foundry" ? DEFAULT_FOUNDRY_OPENAI_API_VERSION : DEFAULT_AOAI_OPENAI_API_VERSION;
+    return isFoundryProvider(provider) ? DEFAULT_FOUNDRY_OPENAI_API_VERSION : DEFAULT_AOAI_OPENAI_API_VERSION;
 }
 
 function syncOpenAiApiVersionForProvider() {
@@ -385,7 +385,7 @@ function syncOpenAiApiVersionForProvider() {
 
     const provider = endpointProviderSelect?.value || "aoai";
     const currentValue = getSelectedVersionValue(endpointOpenAiApiVersionInput, endpointOpenAiApiVersionCustomInput, "");
-    if (provider === "new_foundry") {
+    if (isFoundryProvider(provider)) {
         if (!currentValue || currentValue === DEFAULT_AOAI_OPENAI_API_VERSION) {
             setSelectedVersionValue(
                 endpointOpenAiApiVersionInput,

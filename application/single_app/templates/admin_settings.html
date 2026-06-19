@@ -2388,6 +2388,172 @@
                     This tab is intentionally curated. It groups related improvements together and mirrors a small number of high-impact settings so admins can enable them from the same overview.
                 </div>
 
+                {% for release_group in admin_latest_feature_release_groups %}
+                {% if release_group.id == 'current_release' %}
+                <div class="d-flex flex-column flex-lg-row align-items-lg-center justify-content-between gap-2 mb-3">
+                    <div>
+                        <h5 class="mb-1">{{ release_group.label }}</h5>
+                        <p class="text-muted mb-0">{{ release_group.description }}</p>
+                    </div>
+                    {% if release_group.release_version %}
+                    <span class="badge bg-primary-subtle text-primary border border-primary-subtle">v{{ release_group.release_version }}</span>
+                    {% endif %}
+                </div>
+
+                {% for feature in release_group.features %}
+                {% set feature_card_id = 'latest-features-' ~ feature.id|replace('_', '-') ~ '-card' %}
+                {% set feature_collapse_id = feature_card_id ~ '-details' %}
+                <div class="card p-3 mb-3 latest-feature-card" id="{{ feature_card_id }}">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1"><i class="bi {{ feature.icon }} me-2"></i>{{ feature.title }}</h5>
+                            <p class="text-muted mb-0">{{ feature.summary }}</p>
+                        </div>
+                        <a href="#{{ feature_collapse_id }}" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="{{ feature_collapse_id }}">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="{{ feature_collapse_id }}">
+                        <div class="card card-body">
+                            {% if feature.details %}
+                            <p class="mb-2">{{ feature.details }}</p>
+                            {% endif %}
+                            {% if feature.why %}
+                            <div class="alert alert-secondary mb-3" role="alert">{{ feature.why }}</div>
+                            {% endif %}
+                            {% if feature.guidance %}
+                            <h6 class="mb-2">Screenshot and rollout notes</h6>
+                            <ul class="mb-3">
+                                {% for tip in feature.guidance %}
+                                <li>{{ tip }}</li>
+                                {% endfor %}
+                            </ul>
+                            {% endif %}
+                            {% if feature.images %}
+                            <div class="latest-feature-gallery mb-3">
+                                {% for image in feature.images %}
+                                <button
+                                    type="button"
+                                    class="latest-feature-thumbnail-trigger"
+                                    data-latest-feature-image-src="{{ url_for('static', filename=image.path) }}"
+                                    data-latest-feature-image-title="{{ image.title }}"
+                                    data-latest-feature-image-caption="{{ image.caption }}"
+                                >
+                                    <div class="latest-feature-thumbnail-card h-100">
+                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename=image.path) }}" alt="{{ image.alt }}">
+                                        <div class="latest-feature-thumbnail-body">
+                                            <div class="latest-feature-thumbnail-title">{{ image.label }}</div>
+                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                </button>
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                            {% if feature.actions %}
+                            <div class="d-flex flex-wrap gap-2">
+                                {% for action in feature.actions %}
+                                <a
+                                    class="btn btn-outline-primary btn-sm"
+                                    href="{% if action.href %}{{ action.href }}{% else %}{{ url_for(action.endpoint) }}{% if action.fragment %}#{{ action.fragment }}{% endif %}{% endif %}"
+                                    {% if action.is_external %}target="_blank" rel="noopener noreferrer"{% endif %}
+                                    {% if action.admin_tab %}data-open-admin-tab="{{ action.admin_tab }}"{% endif %}
+                                    {% if action.admin_section %}data-open-admin-section="{{ action.admin_section }}"{% endif %}
+                                >
+                                    <i class="bi {{ action.icon }} me-1"></i>{{ action.label }}
+                                </a>
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+                {% else %}
+                {% set release_card_id = 'latest-features-' ~ release_group.id|replace('_', '-') ~ '-card' %}
+                {% set release_collapse_id = release_group.collapse_id %}
+                <div class="card p-3 mb-3 latest-feature-card" id="{{ release_card_id }}">
+                    <div class="latest-feature-header">
+                        <div class="latest-feature-copy">
+                            <h5 class="mb-1"><i class="bi bi-clock-history me-2"></i>{{ release_group.label }}</h5>
+                            <p class="text-muted mb-0">{{ release_group.description }}</p>
+                        </div>
+                        <a href="#{{ release_collapse_id }}" class="fw-bold latest-feature-toggle" data-bs-toggle="collapse" aria-expanded="false" aria-controls="{{ release_collapse_id }}">
+                            Show Details
+                        </a>
+                    </div>
+                    <div class="collapse mt-3" id="{{ release_collapse_id }}">
+                        <div class="card card-body">
+                            {% if release_group.release_version %}
+                            <div class="alert alert-secondary mb-3" role="alert">
+                                These were the headline admin-facing items in the earlier v{{ release_group.release_version }} release set.
+                            </div>
+                            {% endif %}
+                            <div class="row g-3">
+                                {% for feature in release_group.features %}
+                                <div class="col-xl-6">
+                                    <div class="border rounded p-3 h-100 bg-body-tertiary">
+                                        <div class="d-flex flex-column gap-3 h-100">
+                                            <div>
+                                                <h6 class="mb-1"><i class="bi {{ feature.icon }} me-2"></i>{{ feature.title }}</h6>
+                                                <p class="text-muted small mb-0">{{ feature.summary }}</p>
+                                            </div>
+                                            <p class="small mb-0">{{ feature.details }}</p>
+                                            {% if feature.guidance %}
+                                            <ul class="small mb-0">
+                                                {% for tip in feature.guidance %}
+                                                <li>{{ tip }}</li>
+                                                {% endfor %}
+                                            </ul>
+                                            {% endif %}
+                                            {% if feature.images %}
+                                            <div class="latest-feature-gallery">
+                                                {% for image in feature.images %}
+                                                <button
+                                                    type="button"
+                                                    class="latest-feature-thumbnail-trigger"
+                                                    data-latest-feature-image-src="{{ url_for('static', filename=image.path) }}"
+                                                    data-latest-feature-image-title="{{ image.title }}"
+                                                    data-latest-feature-image-caption="{{ image.caption }}"
+                                                >
+                                                    <div class="latest-feature-thumbnail-card h-100">
+                                                        <img class="latest-feature-thumbnail-image" src="{{ url_for('static', filename=image.path) }}" alt="{{ image.alt }}">
+                                                        <div class="latest-feature-thumbnail-body">
+                                                            <div class="latest-feature-thumbnail-title">{{ image.label }}</div>
+                                                            <div class="latest-feature-thumbnail-meta">Click to enlarge</div>
+                                                        </div>
+                                                    </div>
+                                                </button>
+                                                {% endfor %}
+                                            </div>
+                                            {% endif %}
+                                            {% if feature.actions %}
+                                            <div class="d-flex flex-wrap gap-2 mt-auto pt-2">
+                                                {% for action in feature.actions %}
+                                                <a
+                                                    class="btn btn-outline-primary btn-sm"
+                                                    href="{% if action.href %}{{ action.href }}{% else %}{{ url_for(action.endpoint) }}{% if action.fragment %}#{{ action.fragment }}{% endif %}{% endif %}"
+                                                    {% if action.is_external %}target="_blank" rel="noopener noreferrer"{% endif %}
+                                                    {% if action.admin_tab %}data-open-admin-tab="{{ action.admin_tab }}"{% endif %}
+                                                    {% if action.admin_section %}data-open-admin-section="{{ action.admin_section }}"{% endif %}
+                                                >
+                                                    <i class="bi {{ action.icon }} me-1"></i>{{ action.label }}
+                                                </a>
+                                                {% endfor %}
+                                            </div>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+                {% endfor %}
+
+                {% if false %}
                 <div class="card p-3 mb-3 latest-feature-card" id="latest-features-release-notifications-card">
                     <div class="latest-feature-header">
                         <div class="latest-feature-copy">
@@ -3463,6 +3629,7 @@
                 </div>
                 {% endif %}
                 {% endfor %}
+                {% endif %}
             </div>
 
             <div class="tab-pane fade" id="custom-pages" role="tabpanel" aria-labelledby="custom-pages-tab">
@@ -3770,6 +3937,9 @@
                     <p class="text-muted small">
                         Configure your embeddings settings. These are used for semantic search, knowledge-base lookups, etc.
                     </p>
+                    <button type="button" class="btn btn-sm btn-outline-secondary mb-3 align-self-start" data-bs-toggle="modal" data-bs-target="#legacyModelDiscoveryIdentityGuideModal">
+                        <i class="bi bi-question-circle me-1"></i>Setup Guide
+                    </button>
 
                 <div class="form-group form-check form-switch mb-3 d-flex align-items-center">
                     <input type="checkbox" class="form-check-input me-2" id="enable_embedding_apim"
@@ -3915,6 +4085,9 @@
                     <p class="text-muted small">
                         Configure image generation settings. Enable/disable, set endpoints, and choose a model.
                     </p>
+                    <button type="button" class="btn btn-sm btn-outline-secondary mb-3 align-self-start" data-bs-toggle="modal" data-bs-target="#legacyModelDiscoveryIdentityGuideModal">
+                        <i class="bi bi-question-circle me-1"></i>Setup Guide
+                    </button>
 
                 <div class="form-group form-check form-switch mb-3">
                     <input type="checkbox" class="form-check-input" id="enable_image_generation"
@@ -3995,7 +4168,7 @@
 
                                 </div>
 
-                                <small>Save pending changes to settings before clicking Fetch Embedding Models</small><br>
+                                <small>Save pending changes to settings before clicking Fetch Image Generation Models</small><br>
 
                                 <input type="hidden" name="image_gen_model_json" id="image_gen_model_json" />
 
@@ -4069,6 +4242,81 @@
                 <div id="test_image_result" class="mt-2"></div>
                 </div>
 
+                <div class="modal fade" id="legacyModelDiscoveryIdentityGuideModal" tabindex="-1" aria-labelledby="legacyModelDiscoveryIdentityGuideModalLabel" aria-hidden="true">
+                    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="legacyModelDiscoveryIdentityGuideModalLabel">Azure OpenAI Model Setup Guide</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="alert alert-info" role="alert">
+                                    <strong>Fetch Models</strong> lists deployments through the Azure management plane. <strong>Test Connection</strong>, chat generation, file uploads, embedding generation, and image generation call the Azure OpenAI data plane. These paths can use different credentials and require different roles.
+                                </div>
+
+                                <h6>Credential purpose</h6>
+                                <div class="table-responsive mb-3">
+                                    <table class="table table-sm table-bordered align-middle">
+                                        <thead>
+                                            <tr>
+                                                <th>Action</th>
+                                                <th>Plane</th>
+                                                <th>Credential used</th>
+                                                <th>Role or secret</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr>
+                                                <td>Legacy GPT, embedding, or image <strong>Fetch Models</strong></td>
+                                                <td>Management plane</td>
+                                                <td>The SimpleChat app registration or service principal, such as the <code>-ar</code> Entra application created for the deployment.</td>
+                                                <td><code>Cognitive Services User</code> on the Azure OpenAI resource, or an equivalent role that can read deployments.</td>
+                                            </tr>
+                                            <tr>
+                                                <td>Global endpoint modal <strong>Fetch Models</strong></td>
+                                                <td>Management plane</td>
+                                                <td>The endpoint modal identity selected for discovery, such as managed identity or service principal.</td>
+                                                <td><code>Cognitive Services User</code> on the Azure OpenAI resource, or an equivalent role that can read deployments.</td>
+                                            </tr>
+                                            <tr>
+                                                <td>GPT, embedding, or image generation with Key authentication selected</td>
+                                                <td>Data plane</td>
+                                                <td>The Azure OpenAI key saved in this settings section.</td>
+                                                <td>Azure OpenAI resource key from <strong>Keys and Endpoint</strong>.</td>
+                                            </tr>
+                                            <tr>
+                                                <td>GPT, embedding, or image generation with Managed Identity selected</td>
+                                                <td>Data plane</td>
+                                                <td>The App Service managed identity, such as the <code>-app</code> managed identity.</td>
+                                                <td><code>Cognitive Services OpenAI User</code> on the Azure OpenAI resource.</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                <h6>Where to get values</h6>
+                                <ol class="mb-3">
+                                    <li>Open the Azure OpenAI resource in the Azure portal.</li>
+                                    <li>Copy the endpoint from <strong>Resource Management</strong> &gt; <strong>Keys and Endpoint</strong>.</li>
+                                    <li>If using Key authentication for runtime calls, copy <strong>Key 1</strong> or <strong>Key 2</strong> from the same page.</li>
+                                    <li>Copy the subscription ID and resource group from the resource <strong>Overview</strong> page. These are required for <strong>Fetch Models</strong>.</li>
+                                    <li>If using APIM, use the APIM endpoint, deployment path or name, API version, and APIM subscription key instead of the direct Azure OpenAI key.</li>
+                                </ol>
+
+                                <h6>Recommended setup</h6>
+                                <ul class="mb-0">
+                                    <li>For key-backed legacy GPT, embeddings, or image generation, grant the SimpleChat service principal the management-plane role so admins can fetch model deployments, then store the Azure OpenAI key for data-plane generation.</li>
+                                    <li>For managed identity runtime, grant the App Service managed identity <code>Cognitive Services OpenAI User</code> for data-plane generation. If the same managed identity should also fetch deployments, grant it the management-plane discovery role too.</li>
+                                    <li>Fetch only discovers deployment names and model metadata. It does not prove that embedding or image generation inference will succeed; use <strong>Test Embedding Connection</strong> or <strong>Test Image Connection</strong> after selecting a deployment.</li>
+                                </ul>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 {% include '_multiendpoint_modal.html' %}
 
                 <!-- Legacy AI Models Modal -->
@@ -4088,6 +4336,9 @@
                                     <p class="text-muted small">
                                         Configure your Chat Model settings. These are used for generating AI text responses.
                                     </p>
+                                    <button type="button" class="btn btn-sm btn-outline-secondary mb-3 align-self-start" data-bs-toggle="modal" data-bs-target="#legacyModelDiscoveryIdentityGuideModal">
+                                        <i class="bi bi-question-circle me-1"></i>Setup Guide
+                                    </button>
 
                                 <div class="form-group form-check form-switch mb-3 d-flex align-items-center">
                                     <input type="checkbox" class="form-check-input me-2" id="enable_gpt_apim" name="enable_gpt_apim" {%
@@ -4154,7 +4405,7 @@
 
                                             </div>
 
-                                            <small>Save pending changes to settings before clicking Fetch Embedding Models</small><br>
+                                            <small>Save pending changes to settings before clicking Fetch Models</small><br>
 
                                             <input type="hidden" name="gpt_model_json" id="gpt_model_json" />
 

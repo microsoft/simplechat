@@ -8,6 +8,7 @@ from jsonschema import validate, ValidationError, Draft7Validator, Draft6Validat
 from functions_blob_storage_operations import BLOB_STORAGE_PLUGIN_TYPE, derive_blob_endpoint_from_connection_string
 from functions_chart_operations import CHART_DEFAULT_ENDPOINT
 from functions_databricks_operations import DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE, DATABRICKS_PLUGIN_TYPE
+from functions_snowflake_operations import SNOWFLAKE_DEFAULT_ENDPOINT, SNOWFLAKE_PLUGIN_TYPE
 
 SCHEMA_DIR = os.path.join(os.path.dirname(__file__), 'static', 'json', 'schemas')
 PLUGIN_ENDPOINT_DEFAULTS = {
@@ -18,6 +19,7 @@ PLUGIN_ENDPOINT_DEFAULTS = {
     'simplechat': 'simplechat://internal',
     'search': 'internal://document-search',
     'document_search': 'internal://document-search',
+    SNOWFLAKE_PLUGIN_TYPE: SNOWFLAKE_DEFAULT_ENDPOINT,
 }
 
 PLUGIN_STORAGE_MANAGED_FIELDS = {

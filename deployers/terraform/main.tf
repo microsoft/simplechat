@@ -574,9 +574,9 @@ resource "azurerm_service_plan" "asp" {
   resource_group_name = azurerm_resource_group.rg.name
   os_type             = "Linux" # Script uses --is-linux
   sku_name            = "P1v3"  # Premium V3 tier.
-  # ["B1" "B2" "B3" "S1" "S2" "S3" "P1v2" "P2v2" "P3v2" "P0v3" "P1v3" "P2v3" "P3v3" 
-  # "P1mv3" "P2mv3" "P3mv3" "P4mv3" "P5mv3" "Y1" "EP1" "EP2" "EP3" "FC1" "F1" 
-  # "I1" "I2" "I3" "I1v2" "I2v2" "I3v2" "I4v2" "I5v2" "I6v2" "I1mv2" "I2mv2" 
+  # ["B1" "B2" "B3" "S1" "S2" "S3" "P1v2" "P2v2" "P3v2" "P0v3" "P1v3" "P2v3" "P3v3"
+  # "P1mv3" "P2mv3" "P3mv3" "P4mv3" "P5mv3" "Y1" "EP1" "EP2" "EP3" "FC1" "F1"
+  # "I1" "I2" "I3" "I1v2" "I2v2" "I3v2" "I4v2" "I5v2" "I6v2" "I1mv2" "I2mv2"
   # "I3mv2" "I4mv2" "I5mv2" "D1" "SHARED" "WS1" "WS2" "WS3"]
   tags = local.common_tags
 }
@@ -755,7 +755,7 @@ resource "azuread_application_api_access" "api_permissions" {
 }
 
 ##################################################################
-# **** Not working in Azure Government **** 
+# **** Not working in Azure Government ****
 # Grant admin consent - this is a manual step in the script for sovereign clouds.
 # "azuread_application" "app_registration"
 # "azuread_service_principal" "app_registration_sp"
@@ -1032,6 +1032,14 @@ resource "azurerm_role_assignment" "app_reg_sp_openai_contributor" {
   count                = local.enable_openai_rbac_assignments ? 1 : 0
   scope                = var.param_use_existing_openai_instance ? data.azurerm_cognitive_account.existing_openai[0].id : azurerm_cognitive_account.openai[0].id
   role_definition_name = "Cognitive Services OpenAI Contributor"
+  principal_id         = azuread_service_principal.app_registration_sp.object_id
+}
+
+# Cognitive Services User on OpenAI for app registration deployment discovery
+resource "azurerm_role_assignment" "app_reg_sp_openai_management_user" {
+  count                = local.enable_openai_rbac_assignments ? 1 : 0
+  scope                = var.param_use_existing_openai_instance ? data.azurerm_cognitive_account.existing_openai[0].id : azurerm_cognitive_account.openai[0].id
+  role_definition_name = "Cognitive Services User"
   principal_id         = azuread_service_principal.app_registration_sp.object_id
 }
 

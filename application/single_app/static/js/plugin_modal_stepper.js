@@ -10,10 +10,16 @@ const SQL_ACTION_IDENTITY_AUTH_TYPES = ['connection_string', 'managed_identity',
 const OPENAPI_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'bearer_token', 'username_password'];
 const MCP_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'bearer_token', 'managed_identity', 'username_password'];
 const DATABRICKS_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'bearer_token', 'managed_identity'];
+const SNOWFLAKE_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'bearer_token', 'username_password'];
 const TABLEAU_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'username_password'];
 const BLOB_STORAGE_PLUGIN_TYPE = 'blob_storage';
 const DATABRICKS_PLUGIN_TYPE = 'databricks';
 const DATABRICKS_DEFAULT_CLOUD = 'azure_commercial';
+const SNOWFLAKE_PLUGIN_TYPE = 'snowflake';
+const SNOWFLAKE_DEFAULT_ENDPOINT = 'snowflake://query';
+const SNOWFLAKE_AUTH_METHOD_PASSWORD = 'password';
+const SNOWFLAKE_AUTH_METHOD_KEY_PAIR = 'key_pair';
+const SNOWFLAKE_AUTH_METHOD_OAUTH = 'oauth';
 const TABLEAU_PLUGIN_TYPE = 'tableau';
 const TABLEAU_AUTH_METHOD_PAT = 'personal_access_token';
 const TABLEAU_AUTH_METHOD_USERNAME_PASSWORD = 'username_password';
@@ -421,6 +427,9 @@ export class PluginModalStepper {
     if (kind === 'databricks') {
       return this.actionIdentities.filter(identity => DATABRICKS_ACTION_IDENTITY_AUTH_TYPES.includes(this.getIdentityAuthType(identity)));
     }
+    if (kind === 'snowflake') {
+      return this.actionIdentities.filter(identity => SNOWFLAKE_ACTION_IDENTITY_AUTH_TYPES.includes(this.getIdentityAuthType(identity)));
+    }
     if (kind === 'tableau') {
       return this.actionIdentities.filter(identity => TABLEAU_ACTION_IDENTITY_AUTH_TYPES.includes(this.getIdentityAuthType(identity)));
     }
@@ -431,6 +440,7 @@ export class PluginModalStepper {
     this.populateActionIdentitySelector('openapi', 'plugin-auth-identity-select', 'openapi-action-identity-group', 'plugin-auth-identity-status');
     this.populateActionIdentitySelector('mcp', 'mcp-identity-select', 'mcp-action-identity-group', 'mcp-identity-status');
     this.populateActionIdentitySelector('databricks', 'databricks-identity-select', 'databricks-action-identity-group', 'databricks-identity-status');
+    this.populateActionIdentitySelector('snowflake', 'snowflake-identity-select', 'snowflake-action-identity-group', 'snowflake-identity-status');
     this.populateActionIdentitySelector('tableau', 'tableau-identity-select', 'tableau-action-identity-group', 'tableau-identity-status');
     this.populateActionIdentitySelector('generic', 'plugin-auth-identity-select-generic', 'generic-action-identity-group', 'plugin-auth-identity-status-generic');
     this.populateActionIdentitySelector('sql', 'sql-identity-select', 'sql-action-identity-group', 'sql-identity-status');
@@ -492,6 +502,7 @@ export class PluginModalStepper {
       openapi: 'plugin-auth-identity-select',
       mcp: 'mcp-identity-select',
       databricks: 'databricks-identity-select',
+      snowflake: 'snowflake-identity-select',
       tableau: 'tableau-identity-select',
       generic: 'plugin-auth-identity-select-generic',
       sql: 'sql-identity-select'
@@ -508,6 +519,7 @@ export class PluginModalStepper {
       openapi: 'plugin-auth-identity-select',
       mcp: 'mcp-identity-select',
       databricks: 'databricks-identity-select',
+      snowflake: 'snowflake-identity-select',
       tableau: 'tableau-identity-select',
       generic: 'plugin-auth-identity-select-generic',
       sql: 'sql-identity-select'
@@ -545,7 +557,7 @@ export class PluginModalStepper {
 
     const authSelect = document.getElementById(kind === 'openapi'
       ? 'plugin-auth-type'
-      : (kind === 'mcp' ? 'mcp-auth-method' : (kind === 'databricks' ? 'databricks-auth-method' : (kind === 'tableau' ? 'tableau-auth-method' : 'plugin-auth-type-generic'))));
+      : (kind === 'mcp' ? 'mcp-auth-method' : (kind === 'databricks' ? 'databricks-auth-method' : (kind === 'snowflake' ? 'snowflake-auth-method' : (kind === 'tableau' ? 'tableau-auth-method' : 'plugin-auth-type-generic')))));
     if (authSelect) {
       authSelect.disabled = !!selectedIdentity;
     }
@@ -555,6 +567,8 @@ export class PluginModalStepper {
       this.toggleMcpAuthFields();
     } else if (kind === 'databricks') {
       this.toggleDatabricksAuthFields();
+    } else if (kind === 'snowflake') {
+      this.toggleSnowflakeAuthFields();
     } else if (kind === 'tableau') {
       this.toggleTableauAuthFields();
     } else {
@@ -581,6 +595,8 @@ export class PluginModalStepper {
     document.getElementById('mcp-discover-tools-btn').addEventListener('click', () => this.discoverMcpTools());
     document.getElementById('databricks-auth-method').addEventListener('change', () => this.toggleDatabricksAuthFields());
     document.getElementById('databricks-identity-select').addEventListener('change', () => this.handleActionIdentityChange('databricks'));
+    document.getElementById('snowflake-auth-method').addEventListener('change', () => this.toggleSnowflakeAuthFields());
+    document.getElementById('snowflake-identity-select').addEventListener('change', () => this.handleActionIdentityChange('snowflake'));
     document.getElementById('tableau-auth-method').addEventListener('change', () => this.toggleTableauAuthFields());
     document.getElementById('tableau-identity-select').addEventListener('change', () => this.handleActionIdentityChange('tableau'));
     document.getElementById('plugin-auth-identity-select-generic').addEventListener('change', () => this.handleActionIdentityChange('generic'));
@@ -1004,6 +1020,10 @@ export class PluginModalStepper {
 
   isDatabricksType(type = this.selectedType) {
     return !!(type && [DATABRICKS_PLUGIN_TYPE, 'databricks_table'].includes(type.toLowerCase()));
+  }
+
+  isSnowflakeType(type = this.selectedType) {
+    return !!(type && type.toLowerCase() === SNOWFLAKE_PLUGIN_TYPE);
   }
 
   isTableauType(type = this.selectedType) {
@@ -1863,6 +1883,138 @@ export class PluginModalStepper {
     };
   }
 
+  normalizeSnowflakeAccount(account = '') {
+    return String(account || '')
+      .trim()
+      .replace(/^https?:\/\//i, '')
+      .replace(/\.snowflakecomputing\.com.*$/i, '')
+      .replace(/\/+$/, '');
+  }
+
+  getSnowflakeIdentityAuthMethod(identity) {
+    const authType = this.getIdentityAuthType(identity);
+    if (authType === 'api_key') {
+      return SNOWFLAKE_AUTH_METHOD_KEY_PAIR;
+    }
+    if (authType === 'bearer_token') {
+      return SNOWFLAKE_AUTH_METHOD_OAUTH;
+    }
+    return SNOWFLAKE_AUTH_METHOD_PASSWORD;
+  }
+
+  toggleSnowflakeAuthFields() {
+    const selectedIdentity = this.getSelectedActionIdentity('snowflake');
+    const authMethodSelect = document.getElementById('snowflake-auth-method');
+    const groups = {
+      password: document.getElementById('snowflake-password-group'),
+      privateKey: document.getElementById('snowflake-private-key-group'),
+      oauth: document.getElementById('snowflake-oauth-token-group')
+    };
+
+    if (authMethodSelect) {
+      authMethodSelect.disabled = Boolean(selectedIdentity);
+    }
+
+    Object.values(groups).forEach(group => {
+      if (group) {
+        group.classList.add('d-none');
+      }
+    });
+
+    if (selectedIdentity) {
+      return;
+    }
+
+    const authMethod = authMethodSelect?.value || SNOWFLAKE_AUTH_METHOD_PASSWORD;
+    if (authMethod === SNOWFLAKE_AUTH_METHOD_PASSWORD) {
+      groups.password?.classList.remove('d-none');
+    } else if (authMethod === SNOWFLAKE_AUTH_METHOD_KEY_PAIR) {
+      groups.privateKey?.classList.remove('d-none');
+    } else if (authMethod === SNOWFLAKE_AUTH_METHOD_OAUTH) {
+      groups.oauth?.classList.remove('d-none');
+    }
+  }
+
+  populateSnowflakeForm(plugin) {
+    const additionalFields = plugin.additionalFields || plugin.additional_fields || {};
+    const auth = plugin.auth || {};
+
+    document.getElementById('snowflake-account').value = this.normalizeSnowflakeAccount(additionalFields.account || '');
+    document.getElementById('snowflake-user').value = additionalFields.user || auth.identity || '';
+    document.getElementById('snowflake-warehouse').value = additionalFields.warehouse || '';
+    document.getElementById('snowflake-database').value = additionalFields.database || '';
+    document.getElementById('snowflake-schema').value = additionalFields.schema || '';
+    document.getElementById('snowflake-role').value = additionalFields.role || '';
+    document.getElementById('snowflake-max-rows').value = additionalFields.max_rows || 1000;
+    document.getElementById('snowflake-timeout').value = additionalFields.timeout || 30;
+    document.getElementById('snowflake-login-timeout').value = additionalFields.login_timeout || 30;
+
+    let authMethod = additionalFields.auth_method || SNOWFLAKE_AUTH_METHOD_PASSWORD;
+    if (auth.type === 'username_password') {
+      authMethod = SNOWFLAKE_AUTH_METHOD_PASSWORD;
+      document.getElementById('snowflake-password').value = auth.key || '';
+    } else if (auth.type === 'key' && authMethod === SNOWFLAKE_AUTH_METHOD_KEY_PAIR) {
+      document.getElementById('snowflake-private-key').value = auth.key || '';
+      document.getElementById('snowflake-private-key-passphrase').value = additionalFields.private_key_passphrase || '';
+    } else if (auth.type === 'key' && authMethod === SNOWFLAKE_AUTH_METHOD_OAUTH) {
+      document.getElementById('snowflake-oauth-token').value = auth.key || '';
+    }
+
+    document.getElementById('snowflake-auth-method').value = authMethod;
+    this.setSelectedActionIdentity('snowflake', plugin.identity_id || '');
+    this.handleActionIdentityChange('snowflake');
+  }
+
+  getSnowflakeConfiguration() {
+    const account = this.normalizeSnowflakeAccount(document.getElementById('snowflake-account')?.value || '');
+    const snowflakeUser = document.getElementById('snowflake-user')?.value.trim() || '';
+    const selectedIdentity = this.getSelectedActionIdentity('snowflake');
+    const authMethod = document.getElementById('snowflake-auth-method')?.value || SNOWFLAKE_AUTH_METHOD_PASSWORD;
+    const additionalFields = {
+      account,
+      user: snowflakeUser,
+      auth_method: selectedIdentity ? this.getSnowflakeIdentityAuthMethod(selectedIdentity) : authMethod,
+      warehouse: document.getElementById('snowflake-warehouse')?.value.trim() || '',
+      database: document.getElementById('snowflake-database')?.value.trim() || '',
+      schema: document.getElementById('snowflake-schema')?.value.trim() || '',
+      role: document.getElementById('snowflake-role')?.value.trim() || '',
+      read_only: true,
+      max_rows: parseInt(document.getElementById('snowflake-max-rows')?.value, 10) || 1000,
+      timeout: parseInt(document.getElementById('snowflake-timeout')?.value, 10) || 30,
+      login_timeout: parseInt(document.getElementById('snowflake-login-timeout')?.value, 10) || 30
+    };
+    const auth = {};
+    let identityId = '';
+
+    if (selectedIdentity) {
+      identityId = selectedIdentity.id || selectedIdentity.identity_id || '';
+      auth.type = 'identity';
+      auth.identity = identityId;
+      additionalFields.identity_auth_type = this.getIdentityAuthType(selectedIdentity);
+    } else if (authMethod === SNOWFLAKE_AUTH_METHOD_PASSWORD) {
+      auth.type = 'username_password';
+      auth.identity = snowflakeUser;
+      auth.key = document.getElementById('snowflake-password')?.value.trim() || '';
+    } else if (authMethod === SNOWFLAKE_AUTH_METHOD_KEY_PAIR) {
+      auth.type = 'key';
+      auth.key = document.getElementById('snowflake-private-key')?.value.trim() || '';
+      const passphrase = document.getElementById('snowflake-private-key-passphrase')?.value.trim() || '';
+      if (passphrase) {
+        additionalFields.private_key_passphrase = passphrase;
+      }
+    } else if (authMethod === SNOWFLAKE_AUTH_METHOD_OAUTH) {
+      auth.type = 'key';
+      auth.key = document.getElementById('snowflake-oauth-token')?.value.trim() || '';
+    }
+
+    return {
+      endpoint: SNOWFLAKE_DEFAULT_ENDPOINT,
+      auth,
+      additionalFields,
+      identityId
+    };
+  }
+
   normalizeTableauServerUrl(serverUrl = '') {
     const value = String(serverUrl || '').trim().replace(/\/+$/, '');
     if (!value) {
@@ -2384,7 +2536,7 @@ export class PluginModalStepper {
   }
 
   isStructuredConfigType(type = this.selectedType) {
-    return this.isSqlType(type) || this.isCosmosType(type) || this.isDocumentSearchType(type) || this.isBlobStorageType(type) || this.isDatabricksType(type) || this.isTableauType(type) || this.isMcpType(type) || this.isSimpleChatType(type) || this.isMsGraphType(type) || this.isAzureMapsType(type) || this.isChartType(type);
+    return this.isSqlType(type) || this.isCosmosType(type) || this.isDocumentSearchType(type) || this.isBlobStorageType(type) || this.isDatabricksType(type) || this.isSnowflakeType(type) || this.isTableauType(type) || this.isMcpType(type) || this.isSimpleChatType(type) || this.isMsGraphType(type) || this.isAzureMapsType(type) || this.isChartType(type);
   }
 
   showConfigSectionForType() {
@@ -2396,6 +2548,7 @@ export class PluginModalStepper {
       documentSearch: document.getElementById('document-search-config-section'),
       blobStorage: document.getElementById('blob-storage-config-section'),
       databricks: document.getElementById('databricks-config-section'),
+      snowflake: document.getElementById('snowflake-config-section'),
       tableau: document.getElementById('tableau-config-section'),
       simpleChat: document.getElementById('simplechat-config-section'),
       msGraph: document.getElementById('msgraph-config-section'),
@@ -2430,6 +2583,9 @@ export class PluginModalStepper {
     } else if (this.isDatabricksType()) {
       showOnly('databricks');
       this.toggleDatabricksAuthFields();
+    } else if (this.isSnowflakeType()) {
+      showOnly('snowflake');
+      this.toggleSnowflakeAuthFields();
     } else if (this.isTableauType()) {
       showOnly('tableau');
       this.toggleTableauAuthFields();
@@ -2480,6 +2636,7 @@ export class PluginModalStepper {
         const isDocumentSearchType = this.isDocumentSearchType();
         const isBlobStorageType = this.isBlobStorageType();
         const isDatabricksType = this.isDatabricksType();
+        const isSnowflakeType = this.isSnowflakeType();
         const isTableauType = this.isTableauType();
         const isMcpType = this.isMcpType();
         const isAzureMapsType = this.isAzureMapsType();
@@ -2497,6 +2654,8 @@ export class PluginModalStepper {
           titleEl.textContent = 'Blob Storage Configuration';
         } else if (isDatabricksType) {
           titleEl.textContent = 'Databricks Configuration';
+        } else if (isSnowflakeType) {
+          titleEl.textContent = 'Snowflake Configuration';
         } else if (isTableauType) {
           titleEl.textContent = 'Tableau Configuration';
         } else if (isMcpType) {
@@ -2687,6 +2846,7 @@ export class PluginModalStepper {
         const documentSearchSection = document.getElementById('document-search-config-section');
         const blobStorageSection = document.getElementById('blob-storage-config-section');
         const databricksSection = document.getElementById('databricks-config-section');
+        const snowflakeSection = document.getElementById('snowflake-config-section');
         const tableauSection = document.getElementById('tableau-config-section');
         const mcpSection = document.getElementById('mcp-config-section');
         const simpleChatSection = document.getElementById('simplechat-config-section');
@@ -2699,6 +2859,7 @@ export class PluginModalStepper {
         const isDocumentSearchVisible = !documentSearchSection.classList.contains('d-none');
         const isBlobStorageVisible = !blobStorageSection.classList.contains('d-none');
         const isDatabricksVisible = !databricksSection.classList.contains('d-none');
+        const isSnowflakeVisible = !snowflakeSection.classList.contains('d-none');
         const isTableauVisible = !tableauSection.classList.contains('d-none');
         const isMcpVisible = !mcpSection.classList.contains('d-none');
         const isSimpleChatVisible = !simpleChatSection.classList.contains('d-none');
@@ -2922,6 +3083,56 @@ export class PluginModalStepper {
           }
           if (Number.isNaN(waitTimeout) || waitTimeout < 1 || waitTimeout > 50) {
             this.showError('Databricks wait timeout must be between 1 and 50 seconds.');
+            return false;
+          }
+        } else if (isSnowflakeVisible) {
+          const account = this.normalizeSnowflakeAccount(document.getElementById('snowflake-account').value);
+          const snowflakeUser = document.getElementById('snowflake-user').value.trim();
+          const warehouse = document.getElementById('snowflake-warehouse').value.trim();
+          const authMethod = document.getElementById('snowflake-auth-method').value;
+          const selectedIdentity = this.getSelectedActionIdentity('snowflake');
+          const maxRows = parseInt(document.getElementById('snowflake-max-rows').value, 10);
+          const timeout = parseInt(document.getElementById('snowflake-timeout').value, 10);
+          const loginTimeout = parseInt(document.getElementById('snowflake-login-timeout').value, 10);
+
+          if (!account) {
+            this.showError('Snowflake account identifier is required.');
+            return false;
+          }
+          if (!warehouse) {
+            this.showError('Snowflake warehouse is required.');
+            return false;
+          }
+          if (!snowflakeUser && (!selectedIdentity || this.getIdentityAuthType(selectedIdentity) !== 'username_password')) {
+            this.showError('Snowflake user is required for key-pair and OAuth authentication.');
+            return false;
+          }
+          if (![SNOWFLAKE_AUTH_METHOD_PASSWORD, SNOWFLAKE_AUTH_METHOD_KEY_PAIR, SNOWFLAKE_AUTH_METHOD_OAUTH].includes(authMethod)) {
+            this.showError('Select a supported Snowflake authentication method.');
+            return false;
+          }
+          if (!selectedIdentity && authMethod === SNOWFLAKE_AUTH_METHOD_PASSWORD && !document.getElementById('snowflake-password').value.trim()) {
+            this.showError('Snowflake password is required for password authentication.');
+            return false;
+          }
+          if (!selectedIdentity && authMethod === SNOWFLAKE_AUTH_METHOD_KEY_PAIR && !document.getElementById('snowflake-private-key').value.trim()) {
+            this.showError('Snowflake private key is required for key-pair authentication.');
+            return false;
+          }
+          if (!selectedIdentity && authMethod === SNOWFLAKE_AUTH_METHOD_OAUTH && !document.getElementById('snowflake-oauth-token').value.trim()) {
+            this.showError('Snowflake OAuth token is required for OAuth authentication.');
+            return false;
+          }
+          if (Number.isNaN(maxRows) || maxRows < 1 || maxRows > 10000) {
+            this.showError('Snowflake max rows must be between 1 and 10000.');
+            return false;
+          }
+          if (Number.isNaN(timeout) || timeout < 1 || timeout > 300) {
+            this.showError('Snowflake timeout must be between 1 and 300 seconds.');
+            return false;
+          }
+          if (Number.isNaN(loginTimeout) || loginTimeout < 1 || loginTimeout > 300) {
+            this.showError('Snowflake login timeout must be between 1 and 300 seconds.');
             return false;
           }
         } else if (isTableauVisible) {
@@ -4080,6 +4291,8 @@ export class PluginModalStepper {
       });
     } else if (this.isDatabricksType(plugin.type)) {
       this.populateDatabricksForm(plugin);
+    } else if (this.isSnowflakeType(plugin.type)) {
+      this.populateSnowflakeForm(plugin);
     } else if (this.isTableauType(plugin.type)) {
       this.populateTableauForm(plugin);
     } else if (this.isMcpType(plugin.type)) {
@@ -4136,6 +4349,7 @@ export class PluginModalStepper {
     const documentSearchSection = document.getElementById('document-search-config-section');
     const blobStorageSection = document.getElementById('blob-storage-config-section');
     const databricksSection = document.getElementById('databricks-config-section');
+    const snowflakeSection = document.getElementById('snowflake-config-section');
     const tableauSection = document.getElementById('tableau-config-section');
     const mcpSection = document.getElementById('mcp-config-section');
     const azureMapsSection = document.getElementById('azure-maps-config-section');
@@ -4145,6 +4359,7 @@ export class PluginModalStepper {
     const isDocumentSearchVisible = !documentSearchSection.classList.contains('d-none');
     const isBlobStorageVisible = !blobStorageSection.classList.contains('d-none');
     const isDatabricksVisible = !databricksSection.classList.contains('d-none');
+    const isSnowflakeVisible = !snowflakeSection.classList.contains('d-none');
     const isTableauVisible = !tableauSection.classList.contains('d-none');
     const isMcpVisible = !mcpSection.classList.contains('d-none');
     const isAzureMapsVisible = !azureMapsSection.classList.contains('d-none');
@@ -4396,6 +4611,12 @@ export class PluginModalStepper {
       auth = databricksConfig.auth;
       additionalFields = databricksConfig.additionalFields;
       identityId = databricksConfig.identityId;
+    } else if (isSnowflakeVisible) {
+      const snowflakeConfig = this.getSnowflakeConfiguration();
+      endpoint = snowflakeConfig.endpoint;
+      auth = snowflakeConfig.auth;
+      additionalFields = snowflakeConfig.additionalFields;
+      identityId = snowflakeConfig.identityId;
     } else if (isTableauVisible) {
       const tableauConfig = this.getTableauConfiguration();
       endpoint = tableauConfig.endpoint;
@@ -4522,6 +4743,7 @@ export class PluginModalStepper {
     const isDocumentSearchType = this.isDocumentSearchType();
     const isBlobStorageType = this.isBlobStorageType();
     const isDatabricksType = this.isDatabricksType();
+    const isSnowflakeType = this.isSnowflakeType();
     const isTableauType = this.isTableauType();
     const isMcpType = this.isMcpType();
     const isSimpleChatType = this.isSimpleChatType();
@@ -4558,6 +4780,10 @@ export class PluginModalStepper {
       document.getElementById('summary-plugin-endpoint').textContent = endpoint || '-';
       endpointRow.style.display = '';
       document.getElementById('summary-plugin-database-type').textContent = 'Azure Commercial Databricks SQL Warehouse';
+      databaseTypeRow.style.display = '';
+    } else if (isSnowflakeType) {
+      endpointRow.style.display = 'none';
+      document.getElementById('summary-plugin-database-type').textContent = 'Snowflake data warehouse';
       databaseTypeRow.style.display = '';
     } else if (isTableauType) {
       const endpoint = this.getEndpointValue();
@@ -4609,10 +4835,10 @@ export class PluginModalStepper {
     }
 
     const databaseType = this.getSqlDatabaseType();
-    if (!isSqlType && !isCosmosType && !isDocumentSearchType && !isBlobStorageType && !isDatabricksType && !isTableauType && !isMcpType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType && databaseType) {
+    if (!isSqlType && !isCosmosType && !isDocumentSearchType && !isBlobStorageType && !isDatabricksType && !isSnowflakeType && !isTableauType && !isMcpType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType && databaseType) {
       document.getElementById('summary-plugin-database-type').textContent = databaseType;
       databaseTypeRow.style.display = '';
-    } else if (!isSqlType && !isCosmosType && !isDocumentSearchType && !isBlobStorageType && !isDatabricksType && !isTableauType && !isMcpType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType) {
+    } else if (!isSqlType && !isCosmosType && !isDocumentSearchType && !isBlobStorageType && !isDatabricksType && !isSnowflakeType && !isTableauType && !isMcpType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType) {
       databaseTypeRow.style.display = 'none';
     }
 
@@ -4623,6 +4849,7 @@ export class PluginModalStepper {
     this.populateDocumentSearchSummary();
     this.populateBlobStorageSummary();
     this.populateDatabricksSummary();
+    this.populateSnowflakeSummary();
     this.populateTableauSummary();
     this.populateMcpSummary();
     this.populateSimpleChatSummary();
@@ -4640,6 +4867,7 @@ export class PluginModalStepper {
     const isDocumentSearchType = this.isDocumentSearchType();
     const isBlobStorageType = this.isBlobStorageType();
     const isDatabricksType = this.isDatabricksType();
+    const isSnowflakeType = this.isSnowflakeType();
     const isTableauType = this.isTableauType();
     const isMcpType = this.isMcpType();
     const isSimpleChatType = this.isSimpleChatType();
@@ -4660,6 +4888,8 @@ export class PluginModalStepper {
       return this.deriveBlobStorageEndpointFromConnectionString(connectionString) || this.originalPlugin?.endpoint || '';
     } else if (isDatabricksType) {
       return this.normalizeDatabricksWorkspaceUrl(document.getElementById('databricks-workspace-url')?.value || '');
+    } else if (isSnowflakeType) {
+      return SNOWFLAKE_DEFAULT_ENDPOINT;
     } else if (isTableauType) {
       return this.normalizeTableauServerUrl(document.getElementById('tableau-server-url')?.value || '');
     } else if (isMcpType) {
@@ -4684,6 +4914,7 @@ export class PluginModalStepper {
     const isDocumentSearchType = this.isDocumentSearchType();
     const isBlobStorageType = this.isBlobStorageType();
     const isDatabricksType = this.isDatabricksType();
+    const isSnowflakeType = this.isSnowflakeType();
     const isTableauType = this.isTableauType();
     const isMcpType = this.isMcpType();
     const isSimpleChatType = this.isSimpleChatType();
@@ -4709,6 +4940,11 @@ export class PluginModalStepper {
         return 'Reusable Identity';
       }
       return this.formatAuthType(document.getElementById('databricks-auth-method')?.value || 'pat');
+    } else if (isSnowflakeType) {
+      if (this.getSelectedActionIdentity('snowflake')) {
+        return 'Reusable Identity';
+      }
+      return this.formatAuthType(document.getElementById('snowflake-auth-method')?.value || SNOWFLAKE_AUTH_METHOD_PASSWORD);
     } else if (isTableauType) {
       if (this.getSelectedActionIdentity('tableau')) {
         return 'Reusable Identity';
@@ -4755,7 +4991,10 @@ export class PluginModalStepper {
       'pat': 'Personal Access Token',
       'personal_access_token': 'Personal Access Token',
       'bearer': 'Bearer Token',
-      'service_principal': 'Service Principal'
+      'service_principal': 'Service Principal',
+      'password': 'Password',
+      'key_pair': 'Key Pair',
+      'oauth': 'OAuth Token'
     };
     return authTypeMap[authType] || authType;
   }
@@ -4944,6 +5183,39 @@ export class PluginModalStepper {
     document.getElementById('summary-databricks-timeout').textContent = `${document.getElementById('databricks-timeout')?.value || '30'} seconds`;
     document.getElementById('summary-databricks-wait-timeout').textContent = `${document.getElementById('databricks-wait-timeout')?.value || '30'} seconds`;
     databricksSection.classList.remove('d-none');
+  }
+
+  populateSnowflakeSummary() {
+    const snowflakeSection = document.getElementById('summary-snowflake-section');
+    if (!snowflakeSection) {
+      return;
+    }
+
+    if (!this.isSnowflakeType()) {
+      snowflakeSection.classList.add('d-none');
+      return;
+    }
+
+    const database = document.getElementById('snowflake-database')?.value.trim() || '';
+    const schema = document.getElementById('snowflake-schema')?.value.trim() || '';
+    const namespace = [database, schema].filter(Boolean).join('.') || 'No default database/schema';
+    const selectedIdentity = this.getSelectedActionIdentity('snowflake');
+    const authMethod = selectedIdentity
+      ? this.getSnowflakeIdentityAuthMethod(selectedIdentity)
+      : (document.getElementById('snowflake-auth-method')?.value || SNOWFLAKE_AUTH_METHOD_PASSWORD);
+
+    document.getElementById('summary-snowflake-account').textContent = this.normalizeSnowflakeAccount(document.getElementById('snowflake-account')?.value || '') || '-';
+    document.getElementById('summary-snowflake-user').textContent = document.getElementById('snowflake-user')?.value.trim() || (selectedIdentity ? 'From reusable identity' : '-');
+    document.getElementById('summary-snowflake-auth-method').textContent = selectedIdentity
+      ? `Reusable Identity (${this.formatAuthType(authMethod)})`
+      : this.formatAuthType(authMethod);
+    document.getElementById('summary-snowflake-warehouse').textContent = document.getElementById('snowflake-warehouse')?.value.trim() || '-';
+    document.getElementById('summary-snowflake-namespace').textContent = namespace;
+    document.getElementById('summary-snowflake-role').textContent = document.getElementById('snowflake-role')?.value.trim() || 'Default role';
+    document.getElementById('summary-snowflake-max-rows').textContent = document.getElementById('snowflake-max-rows')?.value.trim() || '1000';
+    document.getElementById('summary-snowflake-timeout').textContent = `${document.getElementById('snowflake-timeout')?.value || '30'} seconds`;
+    document.getElementById('summary-snowflake-login-timeout').textContent = `${document.getElementById('snowflake-login-timeout')?.value || '30'} seconds`;
+    snowflakeSection.classList.remove('d-none');
   }
 
   populateTableauSummary() {

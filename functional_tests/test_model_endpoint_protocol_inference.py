@@ -2,18 +2,20 @@
 #!/usr/bin/env python3
 """
 Functional test for model endpoint protocol inference.
-Version: 0.241.186
-Implemented in: 0.241.179
+Version: 0.250.006
+Implemented in: 0.241.179; updated in 0.250.006
 
 This test ensures that Foundry model endpoint runtime calls infer Claude as
 Anthropic messages, OpenAI-compatible Foundry endpoints as /openai/v1, and
 legacy Azure OpenAI endpoints as Azure OpenAI without making network calls. It
-also verifies the Semantic Kernel agent adapter can build Claude request
+also verifies dated preview API versions are preserved for OpenAI-compatible
+Foundry requests and the Semantic Kernel agent adapter can build Claude request
 payloads without using the Azure OpenAI connector.
 """
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,8 +28,10 @@ from model_endpoint_clients import (  # noqa: E402
     MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
     AnthropicChatCompletionClient,
     AnthropicSemanticKernelChatCompletion,
+    extract_chat_completion_response_text,
     infer_model_endpoint_protocol,
     normalize_anthropic_messages_url,
+    normalize_chat_completion_text,
     normalize_openai_style_base_url,
     resolve_openai_style_request_api_version,
 )
@@ -114,12 +118,35 @@ def test_model_endpoint_protocol_inference():
     assert_equal(
         resolve_openai_style_request_api_version("2024-05-01-preview"),
         "",
-        "Legacy Azure API versions should be ignored for OpenAI-compatible calls",
+        "OpenAI-compatible /v1 calls should not add dated api-version query strings",
+    )
+    assert_equal(
+        resolve_openai_style_request_api_version("2025-11-15-preview"),
+        "",
+        "Provider-specific dated preview values should be omitted for /v1 calls",
     )
     assert_equal(
         resolve_openai_style_request_api_version("preview"),
-        "preview",
-        "Preview should remain available for endpoints that explicitly support it",
+        "",
+        "Preview should be omitted for OpenAI-compatible /v1 calls",
+    )
+    assert_equal(
+        normalize_chat_completion_text([{"type": "text", "text": "Hello"}, {"content": " world"}]),
+        "Hello world",
+        "Structured OpenAI-compatible message content should normalize to text",
+    )
+    assert_equal(
+        extract_chat_completion_response_text(
+            SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content=[{"type": "text", "text": "Recovered"}])
+                    )
+                ]
+            )
+        ),
+        "Recovered",
+        "Non-streaming fallback should extract structured response text",
     )
 
     client = AnthropicChatCompletionClient(endpoint=project_endpoint, api_key="test-key")

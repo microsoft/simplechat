@@ -18,6 +18,14 @@ from functions_databricks_operations import (
     DATABRICKS_PLUGIN_TYPE,
     normalize_databricks_additional_fields,
 )
+from functions_snowflake_operations import (
+    SNOWFLAKE_AUTH_METHOD_KEY_PAIR,
+    SNOWFLAKE_AUTH_METHOD_OAUTH,
+    SNOWFLAKE_AUTH_METHOD_PASSWORD,
+    SNOWFLAKE_DEFAULT_ENDPOINT,
+    SNOWFLAKE_PLUGIN_TYPE,
+    normalize_snowflake_additional_fields,
+)
 from functions_tableau_operations import (
     TABLEAU_AUTH_METHOD_PAT,
     TABLEAU_AUTH_METHOD_USERNAME_PASSWORD,
@@ -135,6 +143,39 @@ class PluginHealthChecker:
             if auth_type == 'servicePrincipal':
                 if not auth.get('identity') or not auth.get('key') or not auth.get('tenantId'):
                     errors.append("Databricks service principal auth requires auth.identity, auth.key, and auth.tenantId")
+
+        elif plugin_type == SNOWFLAKE_PLUGIN_TYPE:
+            auth = manifest.get('auth', {}) if isinstance(manifest.get('auth'), dict) else {}
+            auth_type = str(auth.get('type') or 'username_password').strip()
+            identity_id = str(manifest.get('identity_id') or '').strip()
+            additional_fields = normalize_snowflake_additional_fields(
+                manifest.get('additionalFields', {}),
+                auth_type=auth_type,
+            )
+            endpoint = str(manifest.get('endpoint') or SNOWFLAKE_DEFAULT_ENDPOINT).strip()
+            auth_method = additional_fields.get('auth_method')
+            snowflake_user = additional_fields.get('user') or auth.get('identity')
+
+            if endpoint != SNOWFLAKE_DEFAULT_ENDPOINT:
+                errors.append(f"Snowflake plugin requires endpoint='{SNOWFLAKE_DEFAULT_ENDPOINT}'")
+            if not additional_fields.get('account'):
+                errors.append("Snowflake plugin requires additionalFields.account")
+            if not additional_fields.get('warehouse'):
+                errors.append("Snowflake plugin requires additionalFields.warehouse")
+            if auth_type not in {'key', 'identity', 'username_password'}:
+                errors.append("Snowflake plugin supports auth.type values 'key', 'identity', or 'username_password'")
+            if auth_type == 'identity' and not auth.get('identity') and not identity_id:
+                errors.append("Snowflake reusable identity auth requires auth.identity or identity_id")
+            if auth_method == SNOWFLAKE_AUTH_METHOD_PASSWORD:
+                if auth_type == 'username_password' and (not snowflake_user or not auth.get('key')):
+                    errors.append("Snowflake password auth requires a user and password")
+            elif auth_method in {SNOWFLAKE_AUTH_METHOD_KEY_PAIR, SNOWFLAKE_AUTH_METHOD_OAUTH}:
+                if not snowflake_user:
+                    errors.append("Snowflake key-pair and OAuth auth require additionalFields.user")
+                if auth_type == 'key' and not auth.get('key'):
+                    errors.append("Snowflake key-pair and OAuth auth require auth.key")
+            else:
+                errors.append("Snowflake plugin requires additionalFields.auth_method to be password, key_pair, or oauth")
 
         elif plugin_type == TABLEAU_PLUGIN_TYPE:
             auth = manifest.get('auth', {}) if isinstance(manifest.get('auth'), dict) else {}

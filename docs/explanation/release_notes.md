@@ -1,29 +1,22 @@
 <!-- BEGIN release_notes.md BLOCK -->
 
-This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.242.071, and the per-version entries continue immediately after it.
+This page tracks notable Simple Chat releases and organizes the detailed change log by version. The timeline below provides a quick visual overview of the current release progression through v0.250.006, and the per-version entries continue immediately after it.
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
-### **(v0.242.071)**
+### **(v0.250.001)**
 
 #### New Features
+
+*   **Azure OpenAI Identity Setup Guidance**
+    *   Added admin setup guidance explaining which identity is used for legacy Azure OpenAI model discovery and which identity or key is used for runtime GPT, embedding, and image generation calls.
+    *   Clarifies that `Fetch Models` uses Azure Resource Manager deployment listing while chat generation, embeddings, file-upload embedding generation, and image generation use the Azure OpenAI data plane.
+    *   (Ref: Azure OpenAI setup guide, Admin Settings model guidance, `AZURE_OPENAI_IDENTITY_SETUP_GUIDE.md`)
 
 *   **Model Endpoint Setup Guidance**
     *   Added in-product **Setup Guide** buttons beside global, personal, and group model endpoint actions, plus inline setup guidance inside the shared Model Endpoint modal.
     *   Guidance covers Azure OpenAI, Foundry (classic), and New Foundry provider selection, managed identity and service principal RBAC, and API-key inference-only limitations.
     *   (Ref: model endpoint modal, Admin Settings model endpoints, workspace endpoints, Foundry RBAC setup)
-
-#### Bug Fixes
-
-*   **Chat Model Icon Avatars**
-    *   Fixed saved model endpoint icons and uploaded model images not appearing on model-only assistant responses in chat.
-    *   Model icon metadata now flows through multi-endpoint model resolution, streaming and non-streaming response metadata, and assistant avatar rendering for model-only responses.
-    *   Preserved agent avatar priority so agent responses never fall through to the model icon when an agent identity is present.
-    *   (Ref: chat assistant avatars, model endpoint icons, `route_backend_chats.py`, `chat-messages.js`)
-
-### **(v0.242.068)**
-
-#### New Features
 
 *   **Tabular SK Large Result Pagination**
     *   Added continuation metadata for row-returning tabular Semantic Kernel tools, including `start_row`, `page_size`, `has_more`, and `next_start_row`.
@@ -32,63 +25,20 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Inspired by and adapted from PR #894 by @vivche.
     *   (Ref: tabular SK pagination, `return_columns`, large-result handoff, `tabular_processing_plugin.py`, `route_backend_chats.py`)
 
-#### Bug Fixes
-
-*   **Tabular SK Python 3.13 Kernel Parameter Compatibility**
-    *   Updated public tabular `@kernel_function` parameters to avoid `Annotated[Optional[str], ...]` so Semantic Kernel argument parsing works on both Python 3.12 and Python 3.13.
-    *   Added a guardrail test that fails if optional string annotations are reintroduced on public tabular tool parameters.
-    *   Preserved current Development model-context routing instead of reintroducing older endpoint-specific route wiring.
-    *   Inspired by and adapted from PR #892 by @vivche.
-    *   (Ref: Python 3.13, Semantic Kernel tool parsing, tabular SK parameters, `test_tabular_kernel_parameter_annotations.py`)
-
-### **(v0.242.066)**
-
-#### Bug Fixes
-
-*   **Python 3.12 CI and XSS Guardrail Fix**
-    *   Updated GitHub workflow Python setup from 3.11 to 3.12 to match the supported SimpleChat runtime and prevent valid Python 3.12 f-string syntax from failing CI parse checks.
-    *   Reworked changed Admin Settings, group workspace delete modal, and profile hero rendering paths to satisfy the XSS sink guardrail without broad suppressions.
-    *   (Ref: Python 3.12 CI, XSS sink validation, Admin Settings bootstrap data, group workspace delete modal, profile hero image)
-
-### **(v0.242.065)**
-
-#### Bug Fixes
-
-*   **PR Readiness Guardrail Cleanup**
-    *   Fixed pull-request validation blockers by removing trailing whitespace, dropping an unnecessary `|safe` filter from JSON-rendered Admin Settings version data, removing a UTF-8 BOM from the Semantic Kernel loader, and documenting reviewed plugin authorization boundaries for the BAC guardrail.
-    *   Keeps the beta branch aligned with SimpleChat PR hygiene, XSS, route, and broken-access-control validation before draft PR creation.
-    *   (Ref: PR readiness, `check_xss_sinks.py`, `check_broken_access_control.py`, Semantic Kernel plugins)
-
-### **(v0.242.045)**
-
-#### New Features
-
 *   **Beta Feature Integration with Development Governance**
     *   Prepared the beta feature branch for integration with the latest `Development` governance, custom pages, and user settings cache changes.
     *   Preserved beta capabilities for agent catalog customization, file sync, workflows, workspace identities, Data Management, and chat/workspace productivity while applying Development governance gates where required.
     *   (Ref: Development merge resolution, governance integration, PR readiness)
-
-### **(v0.242.044)**
-
-#### New Features
 
 *   **User Settings Cache Optimization**
     *   Added request-scoped memoization for full user settings reads and a lightweight user UI settings cache that works with Redis-enabled and no-Redis deployments.
     *   Shared page scripts now reuse injected UI preferences for dark mode and navigation layout before falling back to the full user settings API.
     *   (Ref: user settings cache, user UI settings cache, `functions_settings.py`, `app_settings_cache.py`, `dark-mode.js`, `sidebar.js`)
 
-### **(v0.242.033)**
-
-#### New Features
-
 *   **Custom Pages**
     *   Added administrator-managed custom pages with static HTML/CSS/JS assets, optional Python-backed page extensions, and authenticated host routes for publishing internal experiences inside SimpleChat.
     *   Added Admin Settings controls, navigation wiring, example page templates, documentation, and functional coverage for disabled-by-default fail-closed behavior.
     *   (Ref: custom pages, Admin Settings Custom Pages tab, `route_custom_pages.py`, `functions_custom_pages.py`)
-
-### **(v0.242.022)**
-
-#### New Features
 
 *   **Governance Controls for Endpoints, Agents, and Actions**
     *   Added in-app governance policies that let administrators control access to personal, group, and global endpoints, agents, and actions.
@@ -106,60 +56,21 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Optional merge or rebase from `Development` is supported only when requested, with conflicts resolved interactively by the agent after explaining each side of the conflict.
     *   (Ref: `.github/prompts/prepare-for-pull-request.prompt.md`, PR readiness workflow, Development branch validation)
 
-#### Bug Fixes
-
-*   **Governance Admin Rendering XSS Hardening**
-    *   Reworked changed admin governance, model endpoint, agent, and plugin table rendering paths so untrusted names, descriptions, IDs, and labels are populated with DOM APIs and `textContent` instead of interpolated HTML attributes.
-    *   Added narrow reviewed XSS guardrail suppressions only for static Bootstrap modal shells that do not interpolate untrusted values.
-    *   (Ref: governance admin UI, model endpoint table, plugin table rendering, XSS sink validation)
-
-### **(v0.241.210)**
-
-#### New Features
-
 *   **Tableau Action**
     *   Added a first-class, read-only Tableau action powered by `tableauserverclient` for discovering Tableau Server and Tableau Cloud projects, workbooks, views, datasources, and workbook details.
     *   Added a dedicated Tableau action configuration workflow with server/site fields, PAT and username/password authentication, reusable workspace identity support, discovery limits, schemas, health validation, and Semantic Kernel loader integration.
     *   (Ref: `tableau_plugin.py`, `tableau_plugin_factory.py`, `functions_tableau_operations.py`, `plugin_modal_stepper.js`, `TABLEAU_ACTION.md`)
 
-### **(v0.241.201)**
-
-#### Bug Fixes
-
-*   **Group Workflow Assignment Cleanup**
-    *   Fixed Admin Settings form bloat caused by malformed nested JSON strings being saved as group workflow assignment IDs.
-    *   Group workflow assignment settings now preserve valid group UUIDs, drop invalid payload fragments, and compact the hidden admin form field before save.
-    *   (Ref: `functions_settings.py`, `admin_settings.js`, `GROUP_WORKFLOW_ASSIGNMENT_CLEANUP_FIX.md`)
-
-### **(v0.241.189)**
-
-#### Bug Fixes
-
-*   **Workflow Activity New-Tab Navigation**
-    *   Fixed workflow `Activity` actions so they no longer navigate the current workspace tab after opening the activity view in a new tab.
-    *   Blocked pop-ups now show a warning toast instead of replacing the workflow list page.
-    *   (Ref: `workspace_workflows.js`, workflow Activity button, `WORKFLOW_ACTIVITY_CURRENT_TAB_NAVIGATION_FIX.md`)
-
-### **(v0.241.182)**
-
-#### New Features
-
+*   **Snowflake Action**
+    *   Added a first-class Snowflake action type for querying Snowflake data warehouses through the Snowflake Python Connector, focused on read-only data retrieval for agent analysis, charts, generated documents, and exports.
+    *   Added tailored action configuration for account, warehouse, default database/schema, role, password/key-pair/OAuth authentication, reusable workspace identities, and query execution limits.
+    *   Added read-only SQL enforcement, automatic result limiting, structured column/row responses, Semantic Kernel loader integration, Key Vault secret handling, governance labels, schemas, feature documentation, and functional coverage.
+    *   (Ref: `SnowflakePlugin`, `SnowflakePluginFactory`, Snowflake action modal, `SNOWFLAKE_ACTION.md`)
+    
 *   **Workflow Per-Document Analysis and Generated Office Exports**
     *   Added a workflow Analyze mode that runs the same prompt against each selected document separately, then combines the per-document replies, coverage, citations, generated artifacts, and alert targets into the workflow result.
     *   Added SimpleChat action tools for generated Word documents and PowerPoint presentations, with group workflow uploads defaulting to the current group workspace while preserving existing group access checks.
     *   (Ref: `functions_document_actions.py`, `functions_workflow_runner.py`, `functions_simplechat_operations.py`, `simplechat_plugin.py`, `WORKFLOW_PER_DOCUMENT_ANALYSIS_AND_EXPORTS.md`)
-
-#### User Interface Enhancements
-
-*   **Workflow Analyze Mode and Conversation Navigation**
-    *   Added a `Run each document separately` switch to personal and group workflow Analyze configuration.
-    *   Workflow history and alert conversation actions now open linked conversations in a new browser tab so users keep their workflow context open.
-    *   Added Word and PowerPoint upload capability toggles to SimpleChat action and agent builders.
-    *   (Ref: `workspace.html`, `group_workspaces.html`, `workspace_workflows.js`, `notifications.js`, `plugin_modal_stepper.js`, `agent_modal_stepper.js`)
-
-### **(v0.241.179)**
-
-#### New Features
 
 *   **Group Workflows**
     *   Added group-scoped workflows with dedicated Cosmos containers for workflow definitions, run history, and per-document run items.
@@ -168,50 +79,16 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Added a Group Workflows tab to group workspaces and updated the shared workflow UI/activity page to support personal and group workflow scopes.
     *   (Ref: `functions_group_workflows.py`, `route_backend_workflows.py`, `functions_workflow_runner.py`, `group_workspaces.html`, `workspace_workflows.js`, `GROUP_WORKFLOWS.md`)
 
-#### User Interface Enhancements
-
-*   **Personal Workflow Labeling**
-    *   Renamed the existing workspace workflow surface to `Personal Workflows` so users can distinguish personal workflows from the new group workflow experience.
-    *   Updated personal workflow navigation, modal headings, primary actions, and documentation to use the new wording without changing existing personal workflow IDs or API contracts.
-    *   (Ref: `workspace.html`, `workspace_workflows.js`, `PERSONAL_WORKFLOWS.md`)
-
-#### Bug Fixes
-
-*   **Group Workflow Activity View Gate**
-    *   Fixed group workflow activity links so the shared `/workflow-activity` page no longer depends on the personal workflow feature flag when opened with `scope=group`.
-    *   Group activity views now use group-specific authorization, including group workspaces enabled, group workflows enabled, group assignment gating, and current group membership validation.
-    *   Personal workflow activity links still use the existing personal workflow and WorkflowUser app-role policy.
-    *   (Ref: `route_frontend_chats.py`, `workflow-activity.js`, `GROUP_WORKFLOW_ACTIVITY_VIEW_GATE_FIX.md`)
-
-### **(v0.241.177)**
-
-#### New Features
-
 *   **Voice-Assisted Form Inputs and Agent Instruction Drafting**
     *   Added speech-to-text microphone controls to supported agent, group, public workspace, document metadata, and tag-name fields when speech input is enabled.
     *   Added an agent Instruction Brief field and Draft Instructions action that sends typed or dictated context to the configured GPT/APIM model, then inserts editable Markdown instructions before save.
     *   Dictated tag names are normalized to lowercase safe tag values, and dictated document keywords are normalized to comma-separated values.
     *   (Ref: `form-voice-input.js`, `agent_modal_stepper.js`, `/api/agents/draft-instructions`, `VOICE_ASSISTED_FORM_INPUTS.md`)
 
-### **(v0.241.176)**
-
-#### New Features
-
 *   **Microsoft Graph Send Mail Action**
     *   Microsoft Graph actions can now create manual drafts, prepare delayed-delivery drafts from 5 to 600 seconds, or send mail automatically from the signed-in user's mailbox.
     *   Added plugin configuration for default delivery mode and delay seconds, with runtime validation and Graph scopes for draft creation, delayed draft submission, and immediate send flows.
     *   (Ref: Microsoft Graph action, `MSGraphPlugin.send_mail`, `plugin_modal_stepper.js`, `MSGRAPH_SEND_MAIL_ACTION.md`)
-
-#### User Interface Enhancements
-
-*   **Custom Workspace Hero Color Swatches**
-    *   Added a custom color swatch to group and public workspace manage pages so workspace owners can choose any valid hero color in addition to the preset palette.
-    *   Saved custom colors now reselect the custom swatch and update the live hero preview before saving.
-    *   (Ref: `manage_group.html`, `manage_public_workspace.html`, `manage_group.js`, `manage_public_workspace.js`, `GROUP_PUBLIC_WORKSPACE_CUSTOM_HERO_COLORS.md`)
-
-### **(v0.241.169)**
-
-#### New Features
 
 *   **Workspace-Backed Chat Upload Replacement**
     *   Eligible chat uploads now use the personal workspace document as the source of truth instead of also running the legacy chat-local extraction and chat blob storage path.
@@ -219,66 +96,16 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Fixed the chat handoff queue helper to use the configured Flask executor extension, preventing orphaned personal workspace rows from remaining at queued 0% when background processing was not submitted.
     *   (Ref: `route_frontend_chats.py`, `route_backend_chats.py`, `functions_documents.py`, `CHAT_UPLOAD_PERSONAL_WORKSPACE_HANDOFF.md`)
 
-### **(v0.241.168)**
-
-#### User Interface Enhancements
-
-*   **Selectable Conversation-Linked Workspace Document Deletion**
-    *   Conversation delete now lists workspace documents created from chat uploads and lets users select one, many, or all documents to delete with the conversation.
-    *   Leaving all documents unchecked keeps them in the personal workspace so they follow the normal document retention policy.
-    *   Bulk conversation delete no longer removes linked workspace documents automatically.
-    *   (Ref: conversation delete modal, `chat-conversations.js`, `route_backend_conversations.py`, `functions_documents.py`)
-
-### **(v0.241.167)**
-
-#### New Features
-
 *   **Chat Upload Personal Workspace Handoff**
     *   Eligible chat uploads now queue a personal workspace document while preserving the existing chat attachment/image message behavior and fallback flow.
     *   Chat-uploaded workspace documents receive the `conversations` tag plus the conversation ID tag, store explicit source metadata, and surface processing progress in the chat message with the same document status fields used by workspace uploads.
     *   Workspace metadata and delete flows now show when a document is linked to a conversation.
     *   (Ref: `route_frontend_chats.py`, `functions_documents.py`, `workspace-documents.js`, `chat-messages.js`, `CHAT_UPLOAD_PERSONAL_WORKSPACE_HANDOFF.md`)
 
-### **(v0.241.166)**
-
-#### New Features
-
 *   **Chat Upload Personal Workspace Handoff Design**
     *   Added a proposed implementation plan for routing eligible chat file uploads into the user's personal workspace while preserving the existing chat attachment experience and fallback flow.
     *   Documented the recommended metadata, conversation tags, delete lifecycle, search/analyze/compare implications, security checks, failure modes, testing plan, and staged rollout for the handoff.
     *   (Ref: `CHAT_UPLOAD_PERSONAL_WORKSPACE_HANDOFF.md`, chat uploads, personal workspace documents, conversation-linked document lifecycle)
-
-#### User Interface Enhancements
-
-*   **Document Intelligence Extraction Terminology**
-    *   Renamed user-facing PDF/image extraction choices from Read/Layout to Standard/Enhanced while preserving the underlying `read` and `layout` settings and API values.
-    *   Added hover text for extraction, citation, and File Sync badges so workspace users can understand Standard, Enhanced, synced, and manually uploaded document states without extra visual clutter.
-    *   (Ref: Admin Settings Search & Extract, personal/group/public workspace document details)
-
-#### Bug Fixes
-
-*   **Tabular Inline Chart Handoff**
-    *   Fixed tabular analysis chart requests so successful grouped CSV/XLSX results now produce SimpleChat inline chart citations instead of relying on the model to emit supported chart syntax.
-    *   Workspace-search and chat-uploaded tabular results now share the same deterministic chart handoff in both streaming and non-streaming responses, preventing unsupported Mermaid chart blocks from appearing when users request charts.
-    *   (Ref: `route_backend_chats.py`, `functions_chart_operations.py`, `test_tabular_inline_chart_handoff.py`, `TABULAR_INLINE_CHART_HANDOFF_FIX.md`)
-
-### **(v0.241.165)**
-
-#### Bug Fixes
-
-*   **Document Intelligence Upload Normalizer Import**
-    *   Fixed Azure Document Intelligence upload processing so the shared extractor resolves the extraction-mode normalizer through the existing settings module import, preventing Read/Layout/Auto uploads from failing with a missing normalizer name while avoiding the startup circular import path.
-    *   (Ref: `functions_content.py`, Document Intelligence extraction mode)
-
-#### User Interface Enhancements
-
-*   **Extraction Badge Placement**
-    *   Removed Read/Layout extraction badges from top-level document rows and cards while preserving them in expanded document details and metadata views.
-    *   (Ref: personal, group, and public workspace document views)
-
-### **(v0.241.163)**
-
-#### New Features
 
 *   **Document Intelligence Auto Mode and PDF Reprocessing**
     *   Added **Auto** extraction for PDFs and images so admins can sample the first PDF pages with Layout and let SimpleChat finish with Read or Layout based on detected tables or selection marks.
@@ -286,29 +113,11 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Added Read/Layout extraction badges plus single-document and bulk PDF reprocess actions in personal, group, and public workspaces. New PDF/image uploads preserve their source blob so PDFs can be reprocessed later when available.
     *   (Ref: `DOCUMENT_INTELLIGENCE_PDF_IMAGE_EXTRACTION_MODE.md`, `functions_documents.py`, Admin Settings Search & Extract, workspace document actions)
 
-### **(v0.241.160)**
-
-#### Bug Fixes
-
-*   **Cosmos Native Autoscale Migration Action**
-    *   Fixed manual-to-autoscale conversions so manual Cosmos throughput offers call the ARM `migrateToAutoscale` action instead of attempting to write `autoscaleSettings.maxThroughput` directly onto a manual offer.
-    *   Preserved the existing `PUT autoscaleSettings.maxThroughput` path for database or container throughput that is already in autoscale mode.
-    *   Expanded the least-privilege Cosmos throughput operator role with the `migrateToAutoscale/action` and operation-result read permissions required for native conversion without Cosmos data-plane access.
-    *   (Ref: `functions_cosmos_throughput.py`, `setPermissions.bicep`, `COSMOS_NATIVE_AUTOSCALE_MIGRATION_ACTION_FIX.md`)
-
-### **(v0.241.159)**
-
-#### New Features
-
 *   **Cosmos Native Autoscale Conversion**
     *   Added global and per-container policy controls that let admins convert dedicated manual Cosmos throughput to native Cosmos autoscale.
     *   Added manual Convert actions for database and container throughput so admins can move eligible manual throughput to autoscale from the Admin Settings Scale tab.
     *   Background throughput automation can now prioritize eligible manual-to-autoscale conversions before utilization-based RU scale decisions, while preserving configured min and max guardrails.
     *   (Ref: `functions_cosmos_throughput.py`, Admin Settings Scale tab, `COSMOS_NATIVE_AUTOSCALE_CONVERSION.md`)
-
-### **(v0.241.158)**
-
-#### New Features
 
 *   **Document Intelligence PDF and Image Extraction Mode**
     *   Added a Search & Extract admin setting that lets administrators choose Read or Layout extraction for PDF and image uploads.
@@ -316,105 +125,11 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   New PDF and image ingestion records `document_intelligence_extraction_mode` metadata so extracted documents identify whether Read or Layout was used.
     *   (Ref: `admin_settings.html`, `functions_content.py`, `functions_documents.py`, `DOCUMENT_INTELLIGENCE_PDF_IMAGE_EXTRACTION_MODE.md`)
 
-### **(v0.241.157)**
-
-#### Bug Fixes
-
-*   **Cosmos Autoscale Background Cadence**
-    *   Updated the Cosmos throughput background scheduler so the check cadence follows the configured Metrics Window instead of a hard-coded five-minute sleep.
-    *   Added background-specific autoscale start, completion, and sleep logs so scheduler runs are distinguishable from manual Admin Settings Refresh requests.
-    *   Clarified Admin Settings copy that background automation refreshes on the Metrics Window cadence while Scale Up/Down intervals remain cooldowns after scaling.
-    *   (Ref: `background_tasks.py`, `functions_cosmos_throughput.py`, Admin Settings Scale tab, `COSMOS_AUTOSCALE_BACKGROUND_CADENCE_FIX.md`)
-
-### **(v0.241.156)**
-
-#### Bug Fixes
-
-*   **Cosmos Container Metrics REST Metadata Parsing**
-    *   Switched Cosmos throughput metric collection from the Azure Monitor Query SDK response model to the raw Azure Monitor Metrics REST response for this feature, because the SDK returned container-split time series without usable metadata names or values.
-    *   Restored per-container RU utilization and request-unit rows by parsing REST `collectionname` and `databasename` metadata from the same metric dimensions shown in Azure Metrics Explorer.
-    *   (Ref: `functions_cosmos_throughput.py`, Azure Monitor Metrics REST, Cosmos `CollectionName` dimensions, `COSMOS_CONTAINER_METRICS_REST_METADATA_FIX.md`)
-
-### **(v0.241.155)**
-
-#### Bug Fixes
-
-*   **Cosmos Container Autoscale Metric Accuracy and Refresh Performance**
-    *   Tightened the Azure Monitor query so container-targeted scaling requests `NormalizedRUConsumption` split by the configured database and `CollectionName`, matching the per-container view available in the Azure portal.
-    *   Container autoscale now explicitly waits for per-container utilization rows instead of treating aggregate account-level utilization as eligible input for individual container scaling.
-    *   Reduced Admin Settings refresh latency by reusing one ARM token and reading per-container throughput settings in a bounded parallel scan instead of serial per-container reads.
-    *   (Ref: `functions_cosmos_throughput.py`, Cosmos throughput Azure Monitor dimensions, ARM container throughput reads, `COSMOS_CONTAINER_THROUGHPUT_REFRESH_PERFORMANCE_FIX.md`)
-
-### **(v0.241.154)**
-
-#### Bug Fixes
-
-*   **Cosmos Container Metric Dimensions**
-    *   Fixed Cosmos throughput status refreshes so Azure Monitor is asked for per-container metric dimensions instead of only aggregate account-level RU metrics.
-    *   Preserved the aggregate RU utilization card through a fallback query when container-dimensional metrics are delayed or unavailable, and added clearer Admin Settings messaging for that aggregate-only state.
-    *   (Ref: `functions_cosmos_throughput.py`, `admin_settings.js`, Cosmos throughput Azure Monitor metrics, `COSMOS_CONTAINER_METRICS_DIMENSION_FIX.md`)
-
-### **(v0.241.153)**
-
-#### New Features
-
 *   **Cosmos Container Policy Enforcement**
     *   Added an Admin Settings option to enforce the global Cosmos throughput automation policy across every dedicated-throughput container.
     *   New containers discovered by Refresh or the background autoscale loop inherit the same global thresholds, intervals, RU step sizes, and guardrails automatically.
     *   Added an Apply Global Policy action in the Containers modal to stage the current global policy onto all currently discovered containers while preserving per-container cooldown timestamps.
     *   (Ref: `functions_cosmos_throughput.py`, `admin_settings.html`, `admin_settings.js`, `COSMOS_CONTAINER_POLICY_ENFORCEMENT.md`)
-
-### **(v0.241.152)**
-
-#### Bug Fixes
-
-*   **Cosmos Throughput Cached Status**
-    *   Fixed the Admin Settings Cosmos throughput card so it renders the last saved database or container-targeted view immediately after server restart instead of requiring a manual Refresh to rediscover containers.
-    *   Manual Refresh and background autoscale checks now persist a compact cached status with capacity scope, throughput summary, metrics, container rows, and timestamps.
-    *   Added copy clarifying that background automation checks throughput about every 5 minutes while enabled, and versioned the Admin Settings JavaScript asset to avoid stale browser-side Cosmos UI logic.
-    *   (Ref: `functions_cosmos_throughput.py`, `admin_settings.html`, `admin_settings.js`, `COSMOS_THROUGHPUT_CACHED_STATUS_FIX.md`)
-
-### **(v0.241.151)**
-
-#### User Interface Enhancements
-
-*   **Cosmos Throughput Table Clarity**
-    *   Simplified the Admin Settings Cosmos throughput container table by removing the redundant Database column and replacing the Configure text action with a compact gear button.
-    *   Added tooltips that distinguish RU Utilization from Request Units, plus a Setup Guide modal with a Run Test action that uses the same status checks as Refresh.
-    *   Preserved unavailable container request-unit metrics as unavailable instead of rendering a misleading zero when Azure Monitor does not return a container metric row.
-    *   (Ref: `admin_settings.html`, `admin_settings.js`, Cosmos throughput container metrics, `COSMOS_THROUGHPUT_TABLE_CLARITY_FIX.md`)
-
-### **(v0.241.150)**
-
-#### Bug Fixes
-
-*   **Container Policy Save Button Activation**
-    *   Fixed the Cosmos throughput container policy modal so saving staged container policies enables the main Admin Settings Save button immediately.
-    *   The modal now uses the standard admin form dirty-state handler instead of setting only the internal modified flag.
-    *   (Ref: `admin_settings.js`, Admin Settings Scale tab, `COSMOS_CONTAINER_POLICY_SAVE_BUTTON_FIX.md`)
-
-### **(v0.241.149)**
-
-#### Bug Fixes
-
-*   **Cosmos Throughput Refresh Logging**
-    *   Added backend start, completion, failure, and phase timing logs for Admin Settings Cosmos throughput refreshes so admins can see whether the request is waiting on token acquisition, ARM throughput reads, container scans, or Azure Monitor metrics.
-    *   Added a refresh correlation ID across route, ARM, container, and metrics logs to make a single Refresh click traceable in console logs and Application Insights.
-    *   (Ref: `functions_cosmos_throughput.py`, `route_backend_settings.py`, Cosmos throughput refresh diagnostics)
-
-### **(v0.241.148)**
-
-#### User Interface Enhancements
-
-*   **Container-Targeted Cosmos Throughput Policies**
-    *   Added a Containers modal to the Admin Settings Scale tab so admins can review every Cosmos container and configure per-container automation settings.
-    *   Each dedicated-throughput container can now have independent min/max RU guardrails, scale-up/down thresholds, RU step sizes, cooldown intervals, and manual scale actions.
-    *   The Cosmos throughput status endpoint now falls back to container-targeted management when database-level throughput settings are absent instead of failing the card with a 404.
-    *   (Ref: `functions_cosmos_throughput.py`, Admin Settings Scale tab, `COSMOS_CONTAINER_THROUGHPUT_FALLBACK_FIX.md`)
-
-### **(v0.241.147)**
-
-#### New Features
 
 *   **Cosmos DB Throughput Autoscale Controls**
     *   Added Cosmos DB RU monitoring to the Admin Settings Scale tab, including database throughput status, recent normalized RU utilization, and per-container request-unit visibility.
@@ -422,19 +137,11 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Added deployment metadata app settings and a custom Cosmos throughput operator role so the app identity can adjust throughput and read metrics without exposing Cosmos data-plane access to agents or user actions.
     *   (Ref: `functions_cosmos_throughput.py`, Admin Settings Scale tab, Cosmos throughput autoscale, `COSMOS_THROUGHPUT_AUTOSCALE.md`)
 
-### **(v0.241.133)**
-
-#### New Features
-
 *   **Workflow File Sync Triggers and Batch Resume**
     *   Added File Sync Before Run controls so workflows can trigger selected personal, group, or public File Sync sources before the workflow prompt executes.
     *   Added Monitor File Sync Changes mode, which checks selected sync sources on the configured interval and only runs the workflow when new or changed files are detected.
     *   Added dynamic Analyze targeting for changed synced documents, per-document workflow run item tracking, and a Resume failed action that reruns failed document items from a previous Analyze workflow run.
     *   (Ref: `functions_personal_workflows.py`, `functions_workflow_runner.py`, `functions_file_sync.py`, `route_backend_workflows.py`, `workspace_workflows.js`, `WORKFLOW_FILE_SYNC_TRIGGERS.md`)
-
-### **(v0.241.129)**
-
-#### New Features
 
 *   **OneDrive File Sync and Source Selection UX**
     *   Added OneDrive as a personal-workspace File Sync source that pulls selected OneDrive files and folders into the existing SimpleChat document processing, chunking, embedding, and Azure AI Search indexing pipeline.
@@ -448,26 +155,11 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Updated Admin Settings and workspace identity UI guidance to clarify that users choose what to sync while admins own tenant cloud-drive connector permissions.
     *   (Ref: `functions_workspace_identities.py`, `functions_file_sync.py`, `workspace-identities.js`, `admin_settings.html`, `WORKSPACE_IDENTITIES.md`)
 
-#### User Interface Enhancements
-
-*   **File Sync Source Configuration Flow**
-    *   Reworked the File Sync source modal around a combined selection, subfolders, and filters section, including selected path summaries and a browse modal for supported providers.
-    *   OneDrive source configuration now presents a global connector identity notice instead of source-local credential fields.
-    *   (Ref: `workspace-file-sync.js`, File Sync source workflow, selected paths)
-
-### **(v0.241.127)**
-
-#### New Features
-
 *   **Azure Files File Sync Source**
     *   Added Azure Files as a first-class File Sync source type so workspaces can sync from Azure Storage file shares using a file service URL, share name, and optional directory path.
     *   Added Azure Files-compatible reusable identity support for managed identity, service principal client secret, and storage connection string authentication while keeping SMB sources on username/password or anonymous authentication.
     *   Updated File Sync source selection, admin source-type visibility controls, synced-document badges, documentation, and regression coverage for the new Azure Files connector.
     *   (Ref: `functions_file_sync.py`, `functions_workspace_identities.py`, `workspace-file-sync.js`, `workspace-identities.js`, `AZURE_FILES_FILE_SYNC.md`, `test_file_sync_azure_files_identity.py`)
-
-### **(v0.241.112)**
-
-#### New Features
 
 *   **Conversation Feed Pagination**
     *   Added a paged conversation feed so chat startup loads pinned conversations, unread conversations, and the first 20 recent conversations instead of pulling every accessible conversation into the browser.
@@ -481,36 +173,17 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Receiving groups now see Approve or Remove actions for shared files, cannot delete the owner group's document, and cannot view the owner group's shared-recipient list.
     *   (Ref: group document sharing approval, `route_backend_group_documents.py`, `route_backend_documents.py`, `functions_notifications.py`, `group_workspaces.html`, `GROUP_FILE_SHARE_APPROVAL_NOTIFICATIONS.md`)
 
-#### User Interface Enhancements
-
-*   **Control Center Group Token Totals**
-    *   Added all-time group token usage totals to the Control Center Group Management table so admins can compare group usage alongside members, status, and document metrics.
-    *   Included the same token total in the group management modal and CSV export for consistent reporting.
-    *   (Ref: Control Center group management, group token usage aggregation, `route_backend_control_center.py`, `control-center.js`, `control_center.html`)
-
-### **(v0.241.111)**
-
-#### New Features
-
 *   **Stats Time Windows and CSV Exports**
     *   Added 7-day, 30-day, 90-day, and custom date windows to personal profile stats, group stats, and public workspace stats so these pages match the Control Center activity-trends experience.
     *   Added CSV export actions for personal, group, and public stats with selectable metric sections and matching predefined or custom export windows.
     *   Centralized stats window parsing and daily bucket generation for consistent labels, chart ranges, and backend filtering across all three stats surfaces.
     *   (Ref: profile stats, group stats, public workspace stats, `functions_stats_windows.py`, `route_frontend_profile.py`, `route_backend_groups.py`, `route_backend_public_workspaces.py`)
 
-### **(v0.241.106)**
-
-#### New Features
-
 *   **Personal Workflow Access Governance**
     *   Added a dedicated Admin Settings Workflow section so personal workflows can be explicitly enabled or disabled.
     *   Added optional `WorkflowUser` Enterprise App role enforcement for workflow UI access, API routes, manual runs, activity views, and SimpleChat workflow creation operations.
     *   Added `WorkflowUser` app role definitions to Azure CLI and Terraform deployer assets, with deployer version tracking updated.
     *   (Ref: workflow access control, `functions_settings.py`, `route_backend_workflows.py`, `route_frontend_admin_settings.py`, `PERSONAL_WORKFLOWS.md`, `WORKFLOW_ACCESS_CONTROL_FIX.md`)
-
-### **(v0.241.104)**
-
-#### New Features
 
 *   **Azure Commercial Databricks Action**
     *   Added a first-class Databricks action type for Azure Commercial workspaces, using the Databricks SQL Statement Execution API rather than an ODBC driver.
@@ -524,39 +197,11 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Restricted stdio MCP transport to admin-managed global actions because it launches server-side commands, while remote transports support streamable HTTP, SSE, and WebSocket.
     *   (Ref: MCP actions, Semantic Kernel MCP connector, `functions_mcp_operations.py`, `mcp_plugin.py`, `mcp_plugin_factory.py`, `route_backend_plugins.py`, `plugin_modal_stepper.js`, `MCP_ACTION_CONFIGURATION.md`)
 
-### **(v0.241.098)**
-
-#### New Features
-
 *   **Layered Message Masking**
     *   Added mask-plus and mask-minus controls so users can add multiple selected-text masks to the same chat message.
     *   Full-message masks now layer independently from selected-text masks, allowing users to remove the full-message mask while preserving prior selected ranges.
     *   Extended masking support to collaborative personal and group conversations, including shared event updates and source-message metadata sync.
     *   (Ref: message masking, collaborative conversations, `functions_message_masking.py`, `route_backend_chats.py`, `route_backend_collaboration.py`, `chat-messages.js`, `chat-collaboration.js`)
-
-### **(v0.241.097)**
-
-#### Bug Fixes
-
-*   **Advanced Conversation Search Matching**
-    *   Fixed the Advanced Search modal so it searches conversation titles and message content across both legacy and collaborative conversation stores.
-    *   Added explicit match modes for partial text, all words, any word, and whole word searches, with partial matching as the default so terms such as `Chase` can match larger tokens like `JPMorganChase`.
-    *   Normalized chat type filters so personal and multi-user conversation types are not silently excluded from advanced search results.
-    *   (Ref: advanced conversation search, chat search modal, `route_backend_conversations.py`, `chat-search-modal.js`, `ADVANCED_CONVERSATION_SEARCH_FIX.md`)
-
-### **(v0.241.092)**
-
-#### User Interface Enhancements
-
-*   **Workspace Identity Modal Workflow**
-    *   Simplified workspace and global identity management around real consumers: File Sync, Actions, and Model Endpoints.
-    *   Replaced the inline identity form with Add, View, and Edit modals that group identity details, used-for selection, and authentication.
-    *   Removed the workspace identity page heading and refresh button so the tab starts with a left-aligned Add Identity action and a focused identity table.
-    *   (Ref: workspace identities, identity modal workflow, `workspace-identities.js`, `functions_workspace_identities.py`)
-
-### **(v0.241.091)**
-
-#### New Features
 
 *   **Workspace and Global Identities**
     *   Promoted reusable identities into first-class personal, group, and public workspace tabs instead of managing them from the File Sync source list.
@@ -564,58 +209,16 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Added a dedicated global identity Cosmos DB container while keeping public workspace identities limited to File Sync usage and excluding File Sync from global identities.
     *   (Ref: workspace identities, global identities, `functions_workspace_identities.py`, `route_backend_workspace_identities.py`, `workspace-identities.js`, `_sidebar_nav.html`)
 
-### **(v0.241.078)**
-
-#### Bug Fixes
-
-*   **Visio Connector and Arc Fidelity**
-    *   Improved Visio citation previews by approximating `RelEllipticalArcTo` geometry as smooth curves instead of straight endpoint segments.
-    *   Removed duplicate fallback center-to-center connection lines when explicit connector geometry is already available, reducing visual clutter through service icons.
-    *   Added bounded supersampling to smooth rendered PNG previews while avoiding external office-suite dependencies.
-    *   Added regression coverage for curved master stencil geometry in the preview parser path.
-    *   (Ref: Visio arc geometry, connector rendering, master stencil preview expansion, `functions_visio.py`, `test_visio_ingestion_preview.py`)
-
-### **(v0.241.077)**
-
-#### Bug Fixes
-
-*   **Visio Path and Master Geometry Rendering**
-    *   Improved the built-in Visio citation preview renderer to draw supported VSDX geometry rows as actual local paths instead of collapsing those shapes to generic rectangles.
-    *   Added preview-only expansion of referenced master stencil geometry so common Azure/service icons render with more recognizable vector structure while indexed Visio chunks stay focused on page content.
-    *   Improved label placement for icon-backed shapes and dashed container labels using the Visio-exported SVG/PDF reference fixtures.
-    *   Added regression coverage to ensure preview master expansion does not pollute default ingestion parsing.
-    *   (Ref: Visio path geometry, master stencil geometry, structural renderer, `functions_visio.py`, `test_visio_ingestion_preview.py`, `architecture.svg`, `architecture.pdf`)
-
-### **(v0.241.076)**
-
-#### Bug Fixes
-
-*   **Visio Preview Runtime Simplification**
-    *   Removed the optional LibreOffice conversion branch from Visio citation previews after confirming Azure Linux `tdnf` does not provide LibreOffice packages in the app builder image.
-    *   Visio previews now consistently use the built-in structural renderer with nested shape coordinates, connector endpoint lines, supported embedded media, and page geometry.
-    *   (Ref: Visio previews, structural renderer, `functions_visio.py`, `VISIO_PREVIEW_FIDELITY_FIX.md`)
-
-### **(v0.241.075)**
-
-#### Bug Fixes
-
-*   **Visio Citation Preview Fidelity**
-    *   Strengthened the built-in Visio renderer so it preserves nested shape coordinates, connector endpoint lines, supported embedded media, and page geometry more accurately.
-    *   (Ref: Visio previews, structural rendering, `functions_visio.py`, `VISIO_PREVIEW_FIDELITY_FIX.md`)
-
-### **(v0.241.074)**
-
-#### New Features
-
 *   **Visio Ingestion and Citation Previews**
     *   Added native `.vsdx` upload support that parses Visio package XML and indexes each diagram page as a structured searchable chunk.
     *   Enhanced citations now render a lightweight PNG preview for the cited Visio page and keep the original `.vsdx` available for download.
     *   Added functional and UI coverage for Visio parsing, preview rendering, and chat citation modal behavior.
     *   (Ref: Visio ingestion, enhanced citations, `functions_visio.py`, `functions_documents.py`, `route_enhanced_citations.py`, `chat-enhanced-citations.js`, `test_visio_ingestion_preview.py`, `VISIO_INGESTION.md`)
 
-### **(v0.241.068)**
-
-#### New Features
+*   **Outlook MSG File Ingestion**
+    *   Added support for Outlook `.msg` files so saved email messages can be uploaded into workspaces and participate in document processing, metadata extraction, chunking, search, and chat grounding.
+    *   Email files now fit the same workspace knowledge workflow as other supported business documents, helping users bring message-based context into conversations without manually copying mail content.
+    *   (Ref: Outlook MSG ingestion, workspace uploads, document processing, `functions_content.py`, `functions_documents.py`)
 
 *   **Assigned Knowledge for Agents**
     *   Added agent-level Assigned Knowledge so agent creators can bind agents to governed workspace sources, documents, and tags.
@@ -623,27 +226,11 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   When an Assigned Knowledge agent is selected in chat, document search is forced on and the workspace, document, and tag controls become read-only while displaying the agent's configured knowledge context.
     *   (Ref: Assigned Knowledge, agent modal Knowledge step, chat document search enforcement, `functions_assigned_knowledge.py`, `route_backend_agents.py`, `route_backend_chats.py`, `agent_modal_stepper.js`, `chat-agents.js`, `chat-documents.js`)
 
-### **(v0.241.067)**
-
-#### New Features
-
 *   **Deep Research Distroless JavaScript Rendering Runtime**
     *   Added Playwright Chromium packaging for the existing Azure Linux distroless app image so Deep Research can optionally render JavaScript-heavy source pages without changing the final container base image.
     *   Added a runtime capability check that verifies Chromium launch support and surfaces the status in Admin Settings before admins rely on rendered-page fallback.
     *   Kept Chromium sandboxing enabled by default, added an explicit `SOURCE_REVIEW_CHROMIUM_NO_SANDBOX` escape hatch for reviewed deployments, and capped rendered fetch concurrency with `SOURCE_REVIEW_JS_RENDER_MAX_CONCURRENCY`.
     *   (Ref: Deep Research JavaScript rendering, distroless container runtime, `Dockerfile`, `requirements.txt`, `functions_source_review.py`, `admin_settings.html`)
-
-#### User Interface Enhancements
-
-*   **Deep Research Allowed-User Management Modal**
-    *   Replaced inline Deep Research user policy controls with a compact **Manage Users** modal that supports directory search, manual user additions, filtering, removal, CSV upload, and example CSV download.
-    *   Removed blocked-user policy controls from Deep Research and switched runtime behavior to allow-only user access; legacy blocked-user settings are ignored and cleared on admin save.
-    *   Deep Research now applies max/enabled defaults when newly enabled while keeping the master feature toggle off by default.
-    *   (Ref: Deep Research access policy, allowed users modal, `admin_settings.html`, `admin_settings.js`, `functions_source_review.py`, `route_frontend_admin_settings.py`)
-
-### **(v0.241.046)**
-
-#### New Features
 
 *   **Source Review Load More Support**
     *   Source Review can now use the optional rendered-page path to click visible Load More, Show More, View More, and related archive controls on source pages before extracting links and evidence.
@@ -651,46 +238,11 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Existing SSRF, redirect, timeout, page-budget, and content-type protections remain enforced.
     *   (Ref: Source Review Load More, `functions_source_review.py`, `admin_settings.html`, `test_source_review_security.py`)
 
-#### User Interface Enhancements
-
-*   **Assistant Follow-Up Prompt Actions**
-    *   Chat responses that include visible next-step options can now render those options as prompt buttons under the assistant message.
-    *   Clicking a prompt action stages the text in the chat input and starts a cancelable send countdown, making suggested next steps easier to continue while keeping the user in control.
-    *   (Ref: chat follow-up actions, `chat-messages.js`, `chats.css`, `test_chat_follow_up_prompt_actions.py`)
-
-### **(v0.241.045)**
-
-#### Bug Fixes
-
-*   **Source Review Citation Seeding and Second-Hop Traversal**
-    *   Source Review now receives the full Foundry web-search citation set, not only URLs that appeared in the web-search answer text, so official sources returned as raw citations can be reviewed directly.
-    *   Added a configurable seed-page budget so initial search-result pages cannot consume the entire Source Review page budget before child source pages are inspected.
-    *   Raised bounded Deep Source Review depth to support one additional hop, allowing flows such as official news archive -> press-release section -> year/detail page while preserving page, redirect, timeout, type, and SSRF limits.
-    *   (Ref: Web Search citations, Deep Source Review, `route_backend_chats.py`, `functions_source_review.py`, `admin_settings.html`, `test_web_search_current_message_only.py`, `test_source_review_deep_traversal.py`)
-
-### **(v0.241.044)**
-
-#### Bug Fixes
-
-*   **Deep Source Review Link Prioritization and Audit Detail**
-    *   Fixed Deep Source Review link extraction so relevant press-release/archive links are scored before link inventory limits are applied, preventing noisy navigation links from crowding out useful source-detail candidates.
-    *   Generic archive traversal now rejects shallow same-domain navigation such as About and Careers pages unless the link has a stronger source/archive signal.
-    *   Source Review audit logs and thought details now expose seed pages, child pages, Deep Source Review usage, planner attempted/used state, planner candidate count, and selected planner URLs.
-    *   (Ref: Deep Source Review, Source Review audit logging, `functions_source_review.py`, `route_backend_chats.py`, `test_source_review_deep_traversal.py`)
-
-### **(v0.241.043)**
-
-#### New Features
-
 *   **Source Review Model-Assisted Link Planning**
     *   Deep Source Review can now ask the selected chat model to rank server-extracted child links before additional source pages are fetched, improving general multi-source research without adding question-specific heuristics.
     *   The planner is bounded to already extracted, policy-approved candidate URLs; invented URLs are ignored and deterministic ordering remains the fallback.
     *   Added admin control for enabling model-assisted link planning and functional coverage for candidate validation and planner-driven ordering.
     *   (Ref: Deep Source Review, Source Review link planning, `functions_source_review.py`, `route_backend_chats.py`, `admin_settings.html`, `test_source_review_deep_traversal.py`)
-
-### **(v0.241.042)**
-
-#### New Features
 
 *   **File Sync for Workspace Documents**
     *   Added an optional SMB-based File Sync capability for personal, group, and public workspaces, with scope-specific enablement, allow/block controls, and Redis readiness gating before sync can be enabled.
@@ -699,26 +251,11 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Added Control Center activity-log support for File Sync events and admin warnings for scale and performance considerations.
     *   (Ref: File Sync, SMB sync sources, workspace Sync tab, `functions_file_sync.py`, `route_backend_file_sync.py`, `workspace-file-sync.js`, `test_file_sync_capability.py`, `FILE_SYNC.md`)
 
-#### Bug Fixes
-
-*   **Deep Source Review Traversal Balance**
-    *   Improved Deep Source Review so seed/archive pages are reviewed before child links consume the remaining page budget, giving multi-source research requests better coverage across official sources.
-    *   Child-link scoring now favors generic release/detail archive patterns and downranks common navigation pages without adding company-specific heuristics.
-    *   (Ref: Deep Source Review, `functions_source_review.py`, `test_source_review_deep_traversal.py`, `SOURCE_REVIEW_DEEP_TRAVERSAL_FIX.md`)
-
-### **(v0.241.041)**
-
-#### New Features
-
 *   **Source Review for Web Evidence**
     *   Added an optional chat **Sources** toggle that reviews source pages from pasted URLs and Web Search citations before the final model response is generated.
     *   Deep Source Review can follow a bounded set of relevant links from source indexes while enforcing SSRF protections, redirect/page-size/time limits, robots.txt handling, and prompt-injection isolation for fetched page text.
     *   Added admin controls for Source Review defaults, page budgets, domain/user allowlists and blocklists, optional JavaScript rendering fallback, and audit logging.
     *   (Ref: Source Review, `functions_source_review.py`, `route_backend_chats.py`, `admin_settings.html`, `chats.html`, `test_source_review_security.py`, `SOURCE_REVIEW.md`)
-
-### **(v0.241.031)**
-
-#### New Features
 
 *   **Conversation Charts and Workflow Tabular Reuse**
     *   Added chart creation as a core conversation ability so users can request inline charts directly in chat while agents and workflows can still use assigned chart actions.
@@ -726,49 +263,11 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Enabled Semantic Kernel auto tool invocation in the model-only fallback path so core conversation tools can be called when chart requests are routed through the kernel.
     *   (Ref: conversation charts, workflow tabular analysis, `semantic_kernel_loader.py`, `route_backend_chats.py`, `functions_tabular_analysis.py`, `functions_workflow_runner.py`, `test_conversation_chart_and_tabular_reuse.py`)
 
-### **(v0.241.029)**
-
-#### User Interface Enhancements
-
-*   **Workspace Document Cards and Folder-Card Views**
-    *   Added public workspace document cards and aligned public workspace view controls with personal and group workspaces: List, Cards, Folders, and Folders + Cards.
-    *   Folder-card views now let users browse folders first and then review matching documents as cards, while card clicks open the document action menu for quick Chat, Edit, Select, and management actions.
-    *   Improved multi-select controls and visible-only select-all behavior across personal, group, and public list, card, folder, and folder-card views.
-    *   (Ref: workspace document cards, public workspace views, `workspace-documents.js`, `workspace-tags.js`, `public_workspace.js`, `workspace-responsive.css`, `workspace.html`, `group_workspaces.html`, `public_workspaces.html`, `test_public_workspace_document_cards_views.py`)
-
-### **(v0.241.025)**
-
-#### User Interface Enhancements
-
-*   **Control Center Management Pagination**
-    *   Added consistent page-size selectors to User Management, Group Management, and Public Workspace Management in Control Center, with 10, 25, 50, 100, and 250 item options.
-    *   Group and public workspace management now use server-driven pagination instead of loading a fixed first page, so admins can navigate larger result sets with accurate filtered totals.
-    *   Added regression coverage and fix documentation for the shared management pagination behavior.
-    *   (Ref: `route_backend_control_center.py`, `control_center.html`, `control-center.js`, `test_control_center_management_pagination.py`, `CONTROL_CENTER_MANAGEMENT_PAGINATION_FIX.md`)
-
-### **(v0.241.023)**
-
-#### New Features
-
 *   **Generated Markdown Artifact Viewer**
     *   Added a `View MD` action beside `Download MD` on generated Markdown artifact cards so users can inspect rendered Markdown directly in Chats before downloading the file.
     *   Reused the citation modal for the rendered view and improved Markdown citation handling so `.md` and `.markdown` citations display as sanitized rendered Markdown instead of raw source text.
     *   Added UI regression coverage for rendered previews, rendered artifact modal content, and unsafe attribute stripping.
     *   (Ref: generated Markdown artifacts, citation modal Markdown rendering, `chat-messages.js`, `chat-citations.js`, `test_chat_generated_tabular_output_card.py`, `GENERATED_ARTIFACT_MARKDOWN_VIEW.md`)
-
-### **(v0.241.142)**
-
-#### Bug Fixes
-
-*   **Authenticated Request Login Activity Tracking**
-    *   Fixed login analytics so passive authenticated browser visits now contribute to login activity even when the user does not explicitly trigger the OAuth callback during that session.
-    *   Added throttled authenticated-request tracking to avoid inflating counts on every page load, while still preserving the explicit `azure_ad` login signal and avoiding an immediate duplicate on the post-login redirect.
-    *   This improves Control Center and profile login visibility for seamless SSO and session-reuse scenarios without changing the user-facing login flow.
-    *   (Ref: authenticated request login activity, `functions_activity_logging.py`, `app.py`, `route_frontend_authentication.py`, `test_authenticated_request_login_activity.py`, `AUTHENTICATED_REQUEST_LOGIN_ACTIVITY_FIX.md`)
-
-### **(v0.241.137)**
-
-#### New Features
 
 *   **Tabular Related Document Evidence**
     *   Added generic row-level related-document resolution for workspace tabular analysis, so when a CSV or workbook row explicitly references a supporting non-tabular file, the tabular path can pull excerpts from that document and use them alongside the computed row results.
@@ -776,17 +275,190 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Added focused regression coverage and versioned feature documentation for the related-document matching, evidence summary, and export prompt wiring.
     *   (Ref: tabular related-document evidence, `route_backend_chats.py`, `functions_search_service.py`, `test_tabular_related_document_evidence.py`, `test_tabular_computed_results_prompt_priority.py`, `test_tabular_generated_output_exports.py`, `TABULAR_RELATED_DOCUMENT_EVIDENCE.md`)
 
-### **(v0.241.127)**
-
-#### New Features
-
 *   **Generated Artifact Workspace Promotion Approval**
     *   Added an `Add to Workspace` action to generated analysis artifact cards in Chats so users can move reusable exports out of the conversation and into workspace documents.
     *   Personal promotions now queue immediately, while group and public promotions create a visible pending workspace file that must be approved before it becomes usable for search and chat.
     *   Group and public workspace document lists now show an `Approve` action for pending generated artifacts, and the requester receives approval workflow notifications as the file moves through review and processing.
     *   (Ref: generated artifact promotion, `route_enhanced_citations.py`, `route_backend_group_documents.py`, `route_backend_public_documents.py`, `chat-messages.js`, `group_workspaces.html`, `public_workspace.js`, `test_generated_artifact_workspace_promotion.py`, `test_chat_generated_tabular_output_card.py`)
 
+*   **Chat Clipboard Paste Uploads**
+    *   Added direct clipboard upload support in Chats so users can paste copied images and browser-exposed files straight into the main chat message box instead of opening the file picker first.
+    *   The pasted upload flow now reuses the existing chat upload pipeline, including automatic conversation creation, upload consent checks, and backend file processing.
+    *   Clipboard files with empty names are normalized before upload so pasted screenshots still reach the existing extension-based processing path.
+    *   (Ref: chat paste uploads, `chat-input-actions.js`, `test_chat_clipboard_paste_upload_support.py`, `test_chat_clipboard_paste_upload_workflow.py`, `CHAT_CLIPBOARD_PASTE_UPLOADS.md`)
+
+*   **Staging Branch UI Test CI/CD**
+    *   Added a protected GitHub Actions workflow for the `Staging` branch that deploys the Azure Developer CLI staging environment, waits for App Service warm-up, and runs live UI smoke coverage before the environment is considered healthy.
+    *   Added a reusable staging bootstrap script for GitHub OIDC app registration, federated credentials, Azure role assignments, GitHub Environment variables, App Service CI authentication settings, and Microsoft Playwright Workspace wiring.
+    *   (Ref: `.github/workflows/staging-azd-ui-tests.yml`, `deployers/Initialize-GitHubActionsStaging.ps1`, `docs/explanation/features/v0.241.014/STAGING_UI_CICD.md`, `test_staging_ui_cicd_workflow.py`)
+
+*   **Microsoft Playwright Workspaces Staging Runner**
+    *   Added Azure-hosted Playwright Workspace support for staging smoke tests, including Node-based Playwright service execution and matching Python smoke coverage for the staging chat experience.
+    *   (Ref: `ui_tests/playwright-workspaces/`, `ui_tests/test_staging_chat_smoke.py`, `PLAYWRIGHT_SERVICE_URL`)
+
+*   **Service Principal Authentication for CI UI Tests**
+    *   Added a disabled-by-default `/ci-auth/session` endpoint so staging UI tests can create a Flask session from a fresh Entra access token minted by the GitHub OIDC service principal.
+    *   (Ref: `functions_authentication.py`, `route_frontend_authentication.py`, `config.py`, `appRegistrationRoles.json`, `SIMPLECHAT_UI_AUTH_RESOURCE`, `ENABLE_CI_BEARER_SESSION_AUTH`)
+
+*   **Profile Sidebar Toggle Style Preference**
+    *   Added a profile navigation preference for large versus compact sidebar hide controls and applied it across full and compact sidebar templates.
+    *   (Ref: `profile.html`, `_sidebar_nav.html`, `_sidebar_short_nav.html`, `sidebar.css`, `route_backend_users.py`, `test_profile_sidebar_toggle_style_preference.py`)
+
 #### Bug Fixes
+
+*   **Azure OpenAI Model Discovery Identity Split**
+    *   Legacy GPT, embedding, and image `Fetch Models` routes now use the configured app registration/service principal management-plane credential for Azure OpenAI deployment discovery instead of implicitly following runtime data-plane managed identity behavior.
+    *   Deployer assets now grant the app registration/service principal `Cognitive Services User` for model discovery while preserving the App Service managed identity `Cognitive Services OpenAI User` role for data-plane inference.
+    *   (Ref: `route_backend_models.py`, deployer OpenAI RBAC, `AZURE_OPENAI_MODEL_DISCOVERY_IDENTITY_FIX.md`)
+
+*   **Chat Model Icon Avatars**
+    *   Fixed saved model endpoint icons and uploaded model images not appearing on model-only assistant responses in chat.
+    *   Model icon metadata now flows through multi-endpoint model resolution, streaming and non-streaming response metadata, and assistant avatar rendering for model-only responses.
+    *   Preserved agent avatar priority so agent responses never fall through to the model icon when an agent identity is present.
+    *   (Ref: chat assistant avatars, model endpoint icons, `route_backend_chats.py`, `chat-messages.js`)
+
+*   **Tabular SK Python 3.13 Kernel Parameter Compatibility**
+    *   Updated public tabular `@kernel_function` parameters to avoid `Annotated[Optional[str], ...]` so Semantic Kernel argument parsing works on both Python 3.12 and Python 3.13.
+    *   Added a guardrail test that fails if optional string annotations are reintroduced on public tabular tool parameters.
+    *   Preserved current Development model-context routing instead of reintroducing older endpoint-specific route wiring.
+    *   Inspired by and adapted from PR #892 by @vivche.
+    *   (Ref: Python 3.13, Semantic Kernel tool parsing, tabular SK parameters, `test_tabular_kernel_parameter_annotations.py`)
+
+*   **Python 3.12 CI and XSS Guardrail Fix**
+    *   Updated GitHub workflow Python setup from 3.11 to 3.12 to match the supported SimpleChat runtime and prevent valid Python 3.12 f-string syntax from failing CI parse checks.
+    *   Reworked changed Admin Settings, group workspace delete modal, and profile hero rendering paths to satisfy the XSS sink guardrail without broad suppressions.
+    *   (Ref: Python 3.12 CI, XSS sink validation, Admin Settings bootstrap data, group workspace delete modal, profile hero image)
+
+*   **PR Readiness Guardrail Cleanup**
+    *   Fixed pull-request validation blockers by removing trailing whitespace, dropping an unnecessary `|safe` filter from JSON-rendered Admin Settings version data, removing a UTF-8 BOM from the Semantic Kernel loader, and documenting reviewed plugin authorization boundaries for the BAC guardrail.
+    *   Keeps the beta branch aligned with SimpleChat PR hygiene, XSS, route, and broken-access-control validation before draft PR creation.
+    *   (Ref: PR readiness, `check_xss_sinks.py`, `check_broken_access_control.py`, Semantic Kernel plugins)
+
+*   **Governance Admin Rendering XSS Hardening**
+    *   Reworked changed admin governance, model endpoint, agent, and plugin table rendering paths so untrusted names, descriptions, IDs, and labels are populated with DOM APIs and `textContent` instead of interpolated HTML attributes.
+    *   Added narrow reviewed XSS guardrail suppressions only for static Bootstrap modal shells that do not interpolate untrusted values.
+    *   (Ref: governance admin UI, model endpoint table, plugin table rendering, XSS sink validation)
+
+*   **Group Workflow Assignment Cleanup**
+    *   Fixed Admin Settings form bloat caused by malformed nested JSON strings being saved as group workflow assignment IDs.
+    *   Group workflow assignment settings now preserve valid group UUIDs, drop invalid payload fragments, and compact the hidden admin form field before save.
+    *   (Ref: `functions_settings.py`, `admin_settings.js`, `GROUP_WORKFLOW_ASSIGNMENT_CLEANUP_FIX.md`)
+
+*   **Workflow Activity New-Tab Navigation**
+    *   Fixed workflow `Activity` actions so they no longer navigate the current workspace tab after opening the activity view in a new tab.
+    *   Blocked pop-ups now show a warning toast instead of replacing the workflow list page.
+    *   (Ref: `workspace_workflows.js`, workflow Activity button, `WORKFLOW_ACTIVITY_CURRENT_TAB_NAVIGATION_FIX.md`)
+
+*   **Group Workflow Activity View Gate**
+    *   Fixed group workflow activity links so the shared `/workflow-activity` page no longer depends on the personal workflow feature flag when opened with `scope=group`.
+    *   Group activity views now use group-specific authorization, including group workspaces enabled, group workflows enabled, group assignment gating, and current group membership validation.
+    *   Personal workflow activity links still use the existing personal workflow and WorkflowUser app-role policy.
+    *   (Ref: `route_frontend_chats.py`, `workflow-activity.js`, `GROUP_WORKFLOW_ACTIVITY_VIEW_GATE_FIX.md`)
+
+*   **Tabular Inline Chart Handoff**
+    *   Fixed tabular analysis chart requests so successful grouped CSV/XLSX results now produce SimpleChat inline chart citations instead of relying on the model to emit supported chart syntax.
+    *   Workspace-search and chat-uploaded tabular results now share the same deterministic chart handoff in both streaming and non-streaming responses, preventing unsupported Mermaid chart blocks from appearing when users request charts.
+    *   (Ref: `route_backend_chats.py`, `functions_chart_operations.py`, `test_tabular_inline_chart_handoff.py`, `TABULAR_INLINE_CHART_HANDOFF_FIX.md`)
+
+*   **Document Intelligence Upload Normalizer Import**
+    *   Fixed Azure Document Intelligence upload processing so the shared extractor resolves the extraction-mode normalizer through the existing settings module import, preventing Read/Layout/Auto uploads from failing with a missing normalizer name while avoiding the startup circular import path.
+    *   (Ref: `functions_content.py`, Document Intelligence extraction mode)
+
+*   **Cosmos Native Autoscale Migration Action**
+    *   Fixed manual-to-autoscale conversions so manual Cosmos throughput offers call the ARM `migrateToAutoscale` action instead of attempting to write `autoscaleSettings.maxThroughput` directly onto a manual offer.
+    *   Preserved the existing `PUT autoscaleSettings.maxThroughput` path for database or container throughput that is already in autoscale mode.
+    *   Expanded the least-privilege Cosmos throughput operator role with the `migrateToAutoscale/action` and operation-result read permissions required for native conversion without Cosmos data-plane access.
+    *   (Ref: `functions_cosmos_throughput.py`, `setPermissions.bicep`, `COSMOS_NATIVE_AUTOSCALE_MIGRATION_ACTION_FIX.md`)
+
+*   **Cosmos Autoscale Background Cadence**
+    *   Updated the Cosmos throughput background scheduler so the check cadence follows the configured Metrics Window instead of a hard-coded five-minute sleep.
+    *   Added background-specific autoscale start, completion, and sleep logs so scheduler runs are distinguishable from manual Admin Settings Refresh requests.
+    *   Clarified Admin Settings copy that background automation refreshes on the Metrics Window cadence while Scale Up/Down intervals remain cooldowns after scaling.
+    *   (Ref: `background_tasks.py`, `functions_cosmos_throughput.py`, Admin Settings Scale tab, `COSMOS_AUTOSCALE_BACKGROUND_CADENCE_FIX.md`)
+
+*   **Cosmos Container Metrics REST Metadata Parsing**
+    *   Switched Cosmos throughput metric collection from the Azure Monitor Query SDK response model to the raw Azure Monitor Metrics REST response for this feature, because the SDK returned container-split time series without usable metadata names or values.
+    *   Restored per-container RU utilization and request-unit rows by parsing REST `collectionname` and `databasename` metadata from the same metric dimensions shown in Azure Metrics Explorer.
+    *   (Ref: `functions_cosmos_throughput.py`, Azure Monitor Metrics REST, Cosmos `CollectionName` dimensions, `COSMOS_CONTAINER_METRICS_REST_METADATA_FIX.md`)
+
+*   **Cosmos Container Autoscale Metric Accuracy and Refresh Performance**
+    *   Tightened the Azure Monitor query so container-targeted scaling requests `NormalizedRUConsumption` split by the configured database and `CollectionName`, matching the per-container view available in the Azure portal.
+    *   Container autoscale now explicitly waits for per-container utilization rows instead of treating aggregate account-level utilization as eligible input for individual container scaling.
+    *   Reduced Admin Settings refresh latency by reusing one ARM token and reading per-container throughput settings in a bounded parallel scan instead of serial per-container reads.
+    *   (Ref: `functions_cosmos_throughput.py`, Cosmos throughput Azure Monitor dimensions, ARM container throughput reads, `COSMOS_CONTAINER_THROUGHPUT_REFRESH_PERFORMANCE_FIX.md`)
+
+*   **Cosmos Container Metric Dimensions**
+    *   Fixed Cosmos throughput status refreshes so Azure Monitor is asked for per-container metric dimensions instead of only aggregate account-level RU metrics.
+    *   Preserved the aggregate RU utilization card through a fallback query when container-dimensional metrics are delayed or unavailable, and added clearer Admin Settings messaging for that aggregate-only state.
+    *   (Ref: `functions_cosmos_throughput.py`, `admin_settings.js`, Cosmos throughput Azure Monitor metrics, `COSMOS_CONTAINER_METRICS_DIMENSION_FIX.md`)
+
+*   **Cosmos Throughput Cached Status**
+    *   Fixed the Admin Settings Cosmos throughput card so it renders the last saved database or container-targeted view immediately after server restart instead of requiring a manual Refresh to rediscover containers.
+    *   Manual Refresh and background autoscale checks now persist a compact cached status with capacity scope, throughput summary, metrics, container rows, and timestamps.
+    *   Added copy clarifying that background automation checks throughput about every 5 minutes while enabled, and versioned the Admin Settings JavaScript asset to avoid stale browser-side Cosmos UI logic.
+    *   (Ref: `functions_cosmos_throughput.py`, `admin_settings.html`, `admin_settings.js`, `COSMOS_THROUGHPUT_CACHED_STATUS_FIX.md`)
+
+*   **Container Policy Save Button Activation**
+    *   Fixed the Cosmos throughput container policy modal so saving staged container policies enables the main Admin Settings Save button immediately.
+    *   The modal now uses the standard admin form dirty-state handler instead of setting only the internal modified flag.
+    *   (Ref: `admin_settings.js`, Admin Settings Scale tab, `COSMOS_CONTAINER_POLICY_SAVE_BUTTON_FIX.md`)
+
+*   **Cosmos Throughput Refresh Logging**
+    *   Added backend start, completion, failure, and phase timing logs for Admin Settings Cosmos throughput refreshes so admins can see whether the request is waiting on token acquisition, ARM throughput reads, container scans, or Azure Monitor metrics.
+    *   Added a refresh correlation ID across route, ARM, container, and metrics logs to make a single Refresh click traceable in console logs and Application Insights.
+    *   (Ref: `functions_cosmos_throughput.py`, `route_backend_settings.py`, Cosmos throughput refresh diagnostics)
+
+*   **Advanced Conversation Search Matching**
+    *   Fixed the Advanced Search modal so it searches conversation titles and message content across both legacy and collaborative conversation stores.
+    *   Added explicit match modes for partial text, all words, any word, and whole word searches, with partial matching as the default so terms such as `Chase` can match larger tokens like `JPMorganChase`.
+    *   Normalized chat type filters so personal and multi-user conversation types are not silently excluded from advanced search results.
+    *   (Ref: advanced conversation search, chat search modal, `route_backend_conversations.py`, `chat-search-modal.js`, `ADVANCED_CONVERSATION_SEARCH_FIX.md`)
+
+*   **Visio Connector and Arc Fidelity**
+    *   Improved Visio citation previews by approximating `RelEllipticalArcTo` geometry as smooth curves instead of straight endpoint segments.
+    *   Removed duplicate fallback center-to-center connection lines when explicit connector geometry is already available, reducing visual clutter through service icons.
+    *   Added bounded supersampling to smooth rendered PNG previews while avoiding external office-suite dependencies.
+    *   Added regression coverage for curved master stencil geometry in the preview parser path.
+    *   (Ref: Visio arc geometry, connector rendering, master stencil preview expansion, `functions_visio.py`, `test_visio_ingestion_preview.py`)
+
+*   **Visio Path and Master Geometry Rendering**
+    *   Improved the built-in Visio citation preview renderer to draw supported VSDX geometry rows as actual local paths instead of collapsing those shapes to generic rectangles.
+    *   Added preview-only expansion of referenced master stencil geometry so common Azure/service icons render with more recognizable vector structure while indexed Visio chunks stay focused on page content.
+    *   Improved label placement for icon-backed shapes and dashed container labels using the Visio-exported SVG/PDF reference fixtures.
+    *   Added regression coverage to ensure preview master expansion does not pollute default ingestion parsing.
+    *   (Ref: Visio path geometry, master stencil geometry, structural renderer, `functions_visio.py`, `test_visio_ingestion_preview.py`, `architecture.svg`, `architecture.pdf`)
+
+*   **Visio Preview Runtime Simplification**
+    *   Removed the optional LibreOffice conversion branch from Visio citation previews after confirming Azure Linux `tdnf` does not provide LibreOffice packages in the app builder image.
+    *   Visio previews now consistently use the built-in structural renderer with nested shape coordinates, connector endpoint lines, supported embedded media, and page geometry.
+    *   (Ref: Visio previews, structural renderer, `functions_visio.py`, `VISIO_PREVIEW_FIDELITY_FIX.md`)
+
+*   **Visio Citation Preview Fidelity**
+    *   Strengthened the built-in Visio renderer so it preserves nested shape coordinates, connector endpoint lines, supported embedded media, and page geometry more accurately.
+    *   (Ref: Visio previews, structural rendering, `functions_visio.py`, `VISIO_PREVIEW_FIDELITY_FIX.md`)
+
+*   **Source Review Citation Seeding and Second-Hop Traversal**
+    *   Source Review now receives the full Foundry web-search citation set, not only URLs that appeared in the web-search answer text, so official sources returned as raw citations can be reviewed directly.
+    *   Added a configurable seed-page budget so initial search-result pages cannot consume the entire Source Review page budget before child source pages are inspected.
+    *   Raised bounded Deep Source Review depth to support one additional hop, allowing flows such as official news archive -> press-release section -> year/detail page while preserving page, redirect, timeout, type, and SSRF limits.
+    *   (Ref: Web Search citations, Deep Source Review, `route_backend_chats.py`, `functions_source_review.py`, `admin_settings.html`, `test_web_search_current_message_only.py`, `test_source_review_deep_traversal.py`)
+
+*   **Deep Source Review Link Prioritization and Audit Detail**
+    *   Fixed Deep Source Review link extraction so relevant press-release/archive links are scored before link inventory limits are applied, preventing noisy navigation links from crowding out useful source-detail candidates.
+    *   Generic archive traversal now rejects shallow same-domain navigation such as About and Careers pages unless the link has a stronger source/archive signal.
+    *   Source Review audit logs and thought details now expose seed pages, child pages, Deep Source Review usage, planner attempted/used state, planner candidate count, and selected planner URLs.
+    *   (Ref: Deep Source Review, Source Review audit logging, `functions_source_review.py`, `route_backend_chats.py`, `test_source_review_deep_traversal.py`)
+
+*   **Deep Source Review Traversal Balance**
+    *   Improved Deep Source Review so seed/archive pages are reviewed before child links consume the remaining page budget, giving multi-source research requests better coverage across official sources.
+    *   Child-link scoring now favors generic release/detail archive patterns and downranks common navigation pages without adding company-specific heuristics.
+    *   (Ref: Deep Source Review, `functions_source_review.py`, `test_source_review_deep_traversal.py`, `SOURCE_REVIEW_DEEP_TRAVERSAL_FIX.md`)
+
+*   **Authenticated Request Login Activity Tracking**
+    *   Fixed login analytics so passive authenticated browser visits now contribute to login activity even when the user does not explicitly trigger the OAuth callback during that session.
+    *   Added throttled authenticated-request tracking to avoid inflating counts on every page load, while still preserving the explicit `azure_ad` login signal and avoiding an immediate duplicate on the post-login redirect.
+    *   This improves Control Center and profile login visibility for seamless SSO and session-reuse scenarios without changing the user-facing login flow.
+    *   (Ref: authenticated request login activity, `functions_activity_logging.py`, `app.py`, `route_frontend_authentication.py`, `test_authenticated_request_login_activity.py`, `AUTHENTICATED_REQUEST_LOGIN_ACTIVITY_FIX.md`)
 
 *   **Safety Violation Remediation Workflow**
     *   Fixed the Safety Violations admin flow so `Warn user` now sends a user notification, `Suspend user` applies the same timed access restriction used by Control Center, and `Block user` applies the same indefinite deny path.
@@ -794,36 +466,16 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The safety review modal and shared approvals page now expose the notification details, suspension restore date, and explicit warn/suspend/block approval labels needed to review and execute those requests cleanly.
     *   (Ref: `route_backend_safety.py`, `route_backend_control_center.py`, `functions_approvals.py`, `functions_safety_remediation.py`, `functions_notifications.py`, `admin_safety_violations.html`, `admin-safety-violations.js`, `approvals.html`, `test_safety_violation_remediation_approvals.py`)
 
-### **(v0.241.125)**
-
-#### Bug Fixes
-
 *   **Group and Public Workspace Hero Color Editing**
     *   Fixed the group and public workspace manage pages so hero color selections now apply to the saved workspace branding instead of leaving those selectors effectively non-functional.
     *   The manage-page hero preview now stays in sync with the selected color, and the saved branding metadata flows back through the workspace APIs for consistent rendering.
     *   (Ref: workspace branding, `manage_group.js`, `manage_public_workspace.js`, `route_backend_groups.py`, `route_backend_public_workspaces.py`)
-
-#### User Interface Enhancements
-
-*   **Workspace Branding Heroes and Shortcuts**
-    *   Added logo upload support for group and public workspace manage pages so owners can brand those spaces with a persistent hero image in addition to the hero color.
-    *   Group and public workspace pages now show the active workspace hero card with the selected color, owner metadata, optional logo, and a direct manage button for the selected workspace.
-    *   Added focused functional and UI regression coverage for the branding metadata, hero rendering, and manage-page flows.
-    *   (Ref: `functions_workspace_branding.py`, `group_workspaces.html`, `public_workspaces.html`, `test_workspace_branding_hero_and_logo.py`, `test_workspace_active_hero_shortcuts.py`, `test_manage_group_page_branding.py`, `test_manage_public_workspace_page_load.py`)
-
-### **(v0.241.122)**
-
-#### Bug Fixes
 
 *   **Chat-Scoped Generated Tabular Exports**
     *   Fixed large tabular JSON and CSV export requests so the generated file now stays attached to the active chat instead of being pushed through the personal workspace document pipeline.
     *   Assistant replies now keep the exhaustive dataset in a downloadable chat artifact with the existing preview card, which makes large structured outputs more reliable while keeping the visible answer concise.
     *   Personal conversation deletion and retention cleanup now remove blob-backed generated chat files when archiving is disabled, closing the lifecycle gap for conversation-scoped exports.
     *   (Ref: generated tabular exports, `route_backend_chats.py`, `functions_simplechat_operations.py`, `route_enhanced_citations.py`, `route_backend_conversations.py`, `functions_retention_policy.py`, `chat-messages.js`)
-
-### **(v0.241.114)**
-
-#### Bug Fixes
 
 *   **Fact Memory Delete Confirmation Layering**
     *   Fixed the profile fact-memory workflow so the delete confirmation now opens above the Manage Fact Memories editor instead of appearing underneath it.
@@ -837,27 +489,11 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Added focused UI regression coverage for the live tabular progress card and kept the adjacent agent-progress behavior covered.
     *   (Ref: tabular analysis streaming, `route_backend_chats.py`, `chat-thoughts.js`, `test_chat_tabular_thought_progress.py`, `test_chat_agent_thought_progress.py`)
 
-### **(v0.241.111)**
-
-#### Bug Fixes
-
 *   **Workspace Search Document Action Gating**
     *   Fixed chat document actions so Review and Compare now only apply while Workspace Search is enabled.
     *   Turning Workspace Search off now ignores any previously selected Review or Compare mode instead of routing the request through document-action validation and showing stale "select documents before starting a review" warnings.
     *   Added a focused UI regression test for the workspace-toggle flow so normal chat sends continue using the standard chat stream when workspace search is disabled.
     *   (Ref: workspace search toggle, `chat-messages.js`, `test_chat_document_action_workspace_toggle.py`)
-
-### **(v0.241.110)**
-
-#### New Features
-
-*   **Chat Clipboard Paste Uploads**
-    *   Added direct clipboard upload support in Chats so users can paste copied images and browser-exposed files straight into the main chat message box instead of opening the file picker first.
-    *   The pasted upload flow now reuses the existing chat upload pipeline, including automatic conversation creation, upload consent checks, and backend file processing.
-    *   Clipboard files with empty names are normalized before upload so pasted screenshots still reach the existing extension-based processing path.
-    *   (Ref: chat paste uploads, `chat-input-actions.js`, `test_chat_clipboard_paste_upload_support.py`, `test_chat_clipboard_paste_upload_workflow.py`, `CHAT_CLIPBOARD_PASTE_UPLOADS.md`)
-
-#### Bug Fixes
 
 *   **Chat File Upload Client Enablement**
     *   Fixed chat file uploads so the effective per-user upload setting is serialized to the browser upload guards.
@@ -870,17 +506,11 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Preserved final processing statuses that indicate whether metadata was extracted, yielded no new information, or completed with a metadata warning.
     *   (Ref: document upload metadata extraction, public workspace media chunks, `functions_documents.py`, `DOCUMENT_AUTO_METADATA_EXTRACTION_FIX.md`)
 
-### **(v0.241.109)**
-
-#### Bug Fixes
-
 *   **Chat Stream Lifecycle Observability**
     *   Improved diagnostics for long-running chat streams so backend status now distinguishes active, detached-but-running, completed, and errored stream states during the replay window.
     *   Added backend lifecycle logging for keepalive, detach, reattach, queue backpressure, and terminal stream outcomes, plus frontend best-effort telemetry for request failures, read failures, premature endings, aborts, and recovery attempts.
     *   Added focused regression coverage and versioned fix documentation for the new stream observability path.
     *   (Ref: `route_backend_chats.py`, `chat-streaming.js`, `test_chat_stream_lifecycle_observability.py`, `CHAT_STREAM_LIFECYCLE_OBSERVABILITY_FIX.md`)
-
-### **(v0.241.022)**
 
 *   **Uploaded File Preview Body XSS Hardening (`f044`)**
     *   Fixed the uploaded-file preview modal so stored file bodies no longer reach the preview pane through raw HTML sinks.
@@ -1022,39 +652,6 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Added focused functional and UI regression coverage for the authorization and escaping paths, plus versioned fix documentation for the full hardening pass.
     *   (Ref: `functions_search.py`, `functions_group.py`, `route_backend_users.py`, `route_backend_group_prompts.py`, `route_backend_control_center.py`, `route_backend_chats.py`, `control-center.js`, `test_security_authorization_hardening.py`, `test_control_center_public_workspace_escaping.py`)
 
-### **(v0.241.008)**
-
-#### New Features
-
-*   **Staging Branch UI Test CI/CD**
-    *   Added a protected GitHub Actions workflow for the `Staging` branch that deploys the Azure Developer CLI staging environment, waits for App Service warm-up, and runs live UI smoke coverage before the environment is considered healthy.
-    *   Added a reusable staging bootstrap script for GitHub OIDC app registration, federated credentials, Azure role assignments, GitHub Environment variables, App Service CI authentication settings, and Microsoft Playwright Workspace wiring.
-    *   (Ref: `.github/workflows/staging-azd-ui-tests.yml`, `deployers/Initialize-GitHubActionsStaging.ps1`, `docs/explanation/features/v0.241.014/STAGING_UI_CICD.md`, `test_staging_ui_cicd_workflow.py`)
-
-*   **Microsoft Playwright Workspaces Staging Runner**
-    *   Added Azure-hosted Playwright Workspace support for staging smoke tests, including Node-based Playwright service execution and matching Python smoke coverage for the staging chat experience.
-    *   (Ref: `ui_tests/playwright-workspaces/`, `ui_tests/test_staging_chat_smoke.py`, `PLAYWRIGHT_SERVICE_URL`)
-
-*   **Service Principal Authentication for CI UI Tests**
-    *   Added a disabled-by-default `/ci-auth/session` endpoint so staging UI tests can create a Flask session from a fresh Entra access token minted by the GitHub OIDC service principal.
-    *   (Ref: `functions_authentication.py`, `route_frontend_authentication.py`, `config.py`, `appRegistrationRoles.json`, `SIMPLECHAT_UI_AUTH_RESOURCE`, `ENABLE_CI_BEARER_SESSION_AUTH`)
-
-*   **Profile Sidebar Toggle Style Preference**
-    *   Added a profile navigation preference for large versus compact sidebar hide controls and applied it across full and compact sidebar templates.
-    *   (Ref: `profile.html`, `_sidebar_nav.html`, `_sidebar_short_nav.html`, `sidebar.css`, `route_backend_users.py`, `test_profile_sidebar_toggle_style_preference.py`)
-
-#### User Interface Enhancements
-
-*   **GitHub Pages Documentation Redesign**
-    *   Redesigned the GitHub Pages documentation shell with fixed top navigation, curated sidebar sections, responsive mobile drawer, documentation search, and a right-side page rail.
-    *   (Ref: `docs/_layouts/default.html`, `docs/_includes/sidebar_nav.html`, `docs/assets/css/main.scss`, `docs/assets/js/main.js`, `docs/index.md`, `ui_tests/test_docs_showcase_pages.py`)
-
-*   **Chat and Sidebar Icon-Only Controls**
-    *   Refined the chat conversation info button and compact sidebar toggle so they render as quiet icon-only controls while preserving accessible focus states.
-    *   (Ref: `chats.html`, `_sidebar_nav.html`, `_sidebar_short_nav.html`, `sidebar.css`, `test_chat_sidebar_toggle_controls.py`)
-
-#### Bug Fixes
-
 *   **SQL ODBC Driver 18 Container Support**
     *   Fixed SQL Server and Azure SQL actions in container deployments by installing Microsoft ODBC Driver 18, copying native driver registration and unixODBC libraries into the distroless runtime, and retrying saved Driver 17 connection strings with Driver 18 only when the failure is a missing-driver error.
     *   (Ref: `Dockerfile`, `sql_odbc_utils.py`, `sql_schema_plugin.py`, `sql_query_plugin.py`, `route_backend_plugins.py`, `test_sql_odbc_driver_18_support.py`)
@@ -1070,6 +667,105 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **Chat Document Dropdown Viewport Fit Fix**
     *   Fixed grounded-search document dropdown placement so long document lists stay inside short and mobile-influenced viewports.
     *   (Ref: `chat-documents.js`, `test_chat_document_dropdown_viewport_fit.py`)
+
+#### User Interface Enhancements
+
+*   **Workflow Analyze Mode and Conversation Navigation**
+    *   Added a `Run each document separately` switch to personal and group workflow Analyze configuration.
+    *   Workflow history and alert conversation actions now open linked conversations in a new browser tab so users keep their workflow context open.
+    *   Added Word and PowerPoint upload capability toggles to SimpleChat action and agent builders.
+    *   (Ref: `workspace.html`, `group_workspaces.html`, `workspace_workflows.js`, `notifications.js`, `plugin_modal_stepper.js`, `agent_modal_stepper.js`)
+
+*   **Personal Workflow Labeling**
+    *   Renamed the existing workspace workflow surface to `Personal Workflows` so users can distinguish personal workflows from the new group workflow experience.
+    *   Updated personal workflow navigation, modal headings, primary actions, and documentation to use the new wording without changing existing personal workflow IDs or API contracts.
+    *   (Ref: `workspace.html`, `workspace_workflows.js`, `PERSONAL_WORKFLOWS.md`)
+
+*   **Custom Workspace Hero Color Swatches**
+    *   Added a custom color swatch to group and public workspace manage pages so workspace owners can choose any valid hero color in addition to the preset palette.
+    *   Saved custom colors now reselect the custom swatch and update the live hero preview before saving.
+    *   (Ref: `manage_group.html`, `manage_public_workspace.html`, `manage_group.js`, `manage_public_workspace.js`, `GROUP_PUBLIC_WORKSPACE_CUSTOM_HERO_COLORS.md`)
+
+*   **Selectable Conversation-Linked Workspace Document Deletion**
+    *   Conversation delete now lists workspace documents created from chat uploads and lets users select one, many, or all documents to delete with the conversation.
+    *   Leaving all documents unchecked keeps them in the personal workspace so they follow the normal document retention policy.
+    *   Bulk conversation delete no longer removes linked workspace documents automatically.
+    *   (Ref: conversation delete modal, `chat-conversations.js`, `route_backend_conversations.py`, `functions_documents.py`)
+
+*   **Document Intelligence Extraction Terminology**
+    *   Renamed user-facing PDF/image extraction choices from Read/Layout to Standard/Enhanced while preserving the underlying `read` and `layout` settings and API values.
+    *   Added hover text for extraction, citation, and File Sync badges so workspace users can understand Standard, Enhanced, synced, and manually uploaded document states without extra visual clutter.
+    *   (Ref: Admin Settings Search & Extract, personal/group/public workspace document details)
+
+*   **Extraction Badge Placement**
+    *   Removed Read/Layout extraction badges from top-level document rows and cards while preserving them in expanded document details and metadata views.
+    *   (Ref: personal, group, and public workspace document views)
+
+*   **Cosmos Throughput Table Clarity**
+    *   Simplified the Admin Settings Cosmos throughput container table by removing the redundant Database column and replacing the Configure text action with a compact gear button.
+    *   Added tooltips that distinguish RU Utilization from Request Units, plus a Setup Guide modal with a Run Test action that uses the same status checks as Refresh.
+    *   Preserved unavailable container request-unit metrics as unavailable instead of rendering a misleading zero when Azure Monitor does not return a container metric row.
+    *   (Ref: `admin_settings.html`, `admin_settings.js`, Cosmos throughput container metrics, `COSMOS_THROUGHPUT_TABLE_CLARITY_FIX.md`)
+
+*   **Container-Targeted Cosmos Throughput Policies**
+    *   Added a Containers modal to the Admin Settings Scale tab so admins can review every Cosmos container and configure per-container automation settings.
+    *   Each dedicated-throughput container can now have independent min/max RU guardrails, scale-up/down thresholds, RU step sizes, cooldown intervals, and manual scale actions.
+    *   The Cosmos throughput status endpoint now falls back to container-targeted management when database-level throughput settings are absent instead of failing the card with a 404.
+    *   (Ref: `functions_cosmos_throughput.py`, Admin Settings Scale tab, `COSMOS_CONTAINER_THROUGHPUT_FALLBACK_FIX.md`)
+
+*   **File Sync Source Configuration Flow**
+    *   Reworked the File Sync source modal around a combined selection, subfolders, and filters section, including selected path summaries and a browse modal for supported providers.
+    *   OneDrive source configuration now presents a global connector identity notice instead of source-local credential fields.
+    *   (Ref: `workspace-file-sync.js`, File Sync source workflow, selected paths)
+
+*   **Control Center Group Token Totals**
+    *   Added all-time group token usage totals to the Control Center Group Management table so admins can compare group usage alongside members, status, and document metrics.
+    *   Included the same token total in the group management modal and CSV export for consistent reporting.
+    *   (Ref: Control Center group management, group token usage aggregation, `route_backend_control_center.py`, `control-center.js`, `control_center.html`)
+
+*   **Workspace Identity Modal Workflow**
+    *   Simplified workspace and global identity management around real consumers: File Sync, Actions, and Model Endpoints.
+    *   Replaced the inline identity form with Add, View, and Edit modals that group identity details, used-for selection, and authentication.
+    *   Removed the workspace identity page heading and refresh button so the tab starts with a left-aligned Add Identity action and a focused identity table.
+    *   (Ref: workspace identities, identity modal workflow, `workspace-identities.js`, `functions_workspace_identities.py`)
+
+*   **Deep Research Allowed-User Management Modal**
+    *   Replaced inline Deep Research user policy controls with a compact **Manage Users** modal that supports directory search, manual user additions, filtering, removal, CSV upload, and example CSV download.
+    *   Removed blocked-user policy controls from Deep Research and switched runtime behavior to allow-only user access; legacy blocked-user settings are ignored and cleared on admin save.
+    *   Deep Research now applies max/enabled defaults when newly enabled while keeping the master feature toggle off by default.
+    *   (Ref: Deep Research access policy, allowed users modal, `admin_settings.html`, `admin_settings.js`, `functions_source_review.py`, `route_frontend_admin_settings.py`)
+
+*   **Assistant Follow-Up Prompt Actions**
+    *   Chat responses that include visible next-step options can now render those options as prompt buttons under the assistant message.
+    *   Clicking a prompt action stages the text in the chat input and starts a cancelable send countdown, making suggested next steps easier to continue while keeping the user in control.
+    *   (Ref: chat follow-up actions, `chat-messages.js`, `chats.css`, `test_chat_follow_up_prompt_actions.py`)
+
+*   **Workspace Document Cards and Folder-Card Views**
+    *   Added public workspace document cards and aligned public workspace view controls with personal and group workspaces: List, Cards, Folders, and Folders + Cards.
+    *   Folder-card views now let users browse folders first and then review matching documents as cards, while card clicks open the document action menu for quick Chat, Edit, Select, and management actions.
+    *   Improved multi-select controls and visible-only select-all behavior across personal, group, and public list, card, folder, and folder-card views.
+    *   (Ref: workspace document cards, public workspace views, `workspace-documents.js`, `workspace-tags.js`, `public_workspace.js`, `workspace-responsive.css`, `workspace.html`, `group_workspaces.html`, `public_workspaces.html`, `test_public_workspace_document_cards_views.py`)
+
+*   **Control Center Management Pagination**
+    *   Added consistent page-size selectors to User Management, Group Management, and Public Workspace Management in Control Center, with 10, 25, 50, 100, and 250 item options.
+    *   Group and public workspace management now use server-driven pagination instead of loading a fixed first page, so admins can navigate larger result sets with accurate filtered totals.
+    *   Added regression coverage and fix documentation for the shared management pagination behavior.
+    *   (Ref: `route_backend_control_center.py`, `control_center.html`, `control-center.js`, `test_control_center_management_pagination.py`, `CONTROL_CENTER_MANAGEMENT_PAGINATION_FIX.md`)
+
+*   **Workspace Branding Heroes and Shortcuts**
+    *   Added logo upload support for group and public workspace manage pages so owners can brand those spaces with a persistent hero image in addition to the hero color.
+    *   Group and public workspace pages now show the active workspace hero card with the selected color, owner metadata, optional logo, and a direct manage button for the selected workspace.
+    *   Added focused functional and UI regression coverage for the branding metadata, hero rendering, and manage-page flows.
+    *   (Ref: `functions_workspace_branding.py`, `group_workspaces.html`, `public_workspaces.html`, `test_workspace_branding_hero_and_logo.py`, `test_workspace_active_hero_shortcuts.py`, `test_manage_group_page_branding.py`, `test_manage_public_workspace_page_load.py`)
+
+*   **GitHub Pages Documentation Redesign**
+    *   Redesigned the GitHub Pages documentation shell with fixed top navigation, curated sidebar sections, responsive mobile drawer, documentation search, and a right-side page rail.
+    *   (Ref: `docs/_layouts/default.html`, `docs/_includes/sidebar_nav.html`, `docs/assets/css/main.scss`, `docs/assets/js/main.js`, `docs/index.md`, `ui_tests/test_docs_showcase_pages.py`)
+
+*   **Chat and Sidebar Icon-Only Controls**
+    *   Refined the chat conversation info button and compact sidebar toggle so they render as quiet icon-only controls while preserving accessible focus states.
+    *   (Ref: `chats.html`, `_sidebar_nav.html`, `_sidebar_short_nav.html`, `sidebar.css`, `test_chat_sidebar_toggle_controls.py`)
+
 
 ### **(v0.241.007)**
 

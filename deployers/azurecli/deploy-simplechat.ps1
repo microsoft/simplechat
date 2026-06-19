@@ -2103,6 +2103,26 @@ if (-not $assignment) {
     Write-Host "RBAC assignment already exists."
 }
 
+$roleName = "Cognitive Services User"
+$assigneeObjectId = $appRegistrationIdentity_SP_AppId
+# Check if the role assignment already exists
+Write-Host "Checking RBAC on Cognitive Services Open AI deployment discovery for [$assigneeObjectId]"
+$assignment = az role assignment list `
+    --assignee $assigneeObjectId `
+    --scope "$resourceId" `
+    --query "[?roleDefinitionName=='$roleName']" `
+    --output json | ConvertFrom-Json
+
+if (-not $assignment) {
+        Write-Host "RBAC assignment not found. Creating..."
+        az role assignment create `
+            --assignee $assigneeObjectId `
+            --role "$roleName" `
+            --scope "$resourceId"
+} else {
+        Write-Host "RBAC assignment already exists."
+}
+
 $assigneeObjectId = $managedIdentity_PrincipalId
 # Check if the role assignment already exists
 Write-Host "Checking RBAC on Cognitive Services Open AI Account [$assigneeObjectId]"

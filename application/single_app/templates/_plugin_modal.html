@@ -299,6 +299,102 @@
             </div>
           </div>
 
+          <div id="snowflake-config-section" class="d-none">
+            <div class="alert alert-info mb-3">
+              <strong>Snowflake action:</strong> Configure one Snowflake warehouse for read-only data retrieval so agents can analyze rows, create charts, and prepare generated outputs.
+            </div>
+
+            <div class="simplechat-config-card mb-3">
+              <div class="config-section-label">
+                <i class="bi bi-snow2 me-2"></i>Account and Warehouse
+              </div>
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <label for="snowflake-account" class="form-label">Account Identifier <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="snowflake-account" placeholder="organization-account" />
+                  <div class="form-text">Use the account identifier without the snowflakecomputing.com suffix.</div>
+                </div>
+                <div class="col-md-6">
+                  <label for="snowflake-warehouse" class="form-label">Warehouse <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="snowflake-warehouse" placeholder="COMPUTE_WH" />
+                </div>
+                <div class="col-md-6">
+                  <label for="snowflake-database" class="form-label">Default Database</label>
+                  <input type="text" class="form-control" id="snowflake-database" placeholder="ANALYTICS" />
+                </div>
+                <div class="col-md-6">
+                  <label for="snowflake-schema" class="form-label">Default Schema</label>
+                  <input type="text" class="form-control" id="snowflake-schema" placeholder="PUBLIC" />
+                </div>
+                <div class="col-md-6">
+                  <label for="snowflake-role" class="form-label">Role</label>
+                  <input type="text" class="form-control" id="snowflake-role" placeholder="ANALYST_ROLE" />
+                </div>
+                <div class="col-md-6">
+                  <label for="snowflake-user" class="form-label">Snowflake User</label>
+                  <input type="text" class="form-control" id="snowflake-user" placeholder="analyst@example.com" />
+                </div>
+              </div>
+            </div>
+
+            <div class="simplechat-config-card mb-3">
+              <div class="config-section-label">
+                <i class="bi bi-shield-lock me-2"></i>Authentication
+              </div>
+              <div class="mb-3 d-none" id="snowflake-action-identity-group">
+                <label for="snowflake-identity-select" class="form-label">Reusable Identity</label>
+                <select class="form-select" id="snowflake-identity-select"></select>
+                <div class="form-text" id="snowflake-identity-status"></div>
+              </div>
+              <div class="mb-3">
+                <label for="snowflake-auth-method" class="form-label">Authentication Method</label>
+                <select class="form-select" id="snowflake-auth-method">
+                  <option value="password">Password</option>
+                  <option value="key_pair">Key Pair</option>
+                  <option value="oauth">OAuth Token</option>
+                </select>
+              </div>
+              <div class="mb-3" id="snowflake-password-group">
+                <label for="snowflake-password" class="form-label">Password <span class="text-danger">*</span></label>
+                <input type="password" class="form-control" id="snowflake-password" placeholder="Snowflake password" autocomplete="new-password" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" />
+              </div>
+              <div class="d-none" id="snowflake-private-key-group">
+                <div class="mb-3">
+                  <label for="snowflake-private-key" class="form-label">Private Key <span class="text-danger">*</span></label>
+                  <textarea class="form-control font-monospace" id="snowflake-private-key" rows="5" placeholder="-----BEGIN PRIVATE KEY-----"></textarea>
+                </div>
+                <div class="mb-3">
+                  <label for="snowflake-private-key-passphrase" class="form-label">Private Key Passphrase</label>
+                  <input type="password" class="form-control" id="snowflake-private-key-passphrase" placeholder="Optional passphrase" autocomplete="new-password" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" />
+                </div>
+              </div>
+              <div class="mb-3 d-none" id="snowflake-oauth-token-group">
+                <label for="snowflake-oauth-token" class="form-label">OAuth Token <span class="text-danger">*</span></label>
+                <input type="password" class="form-control" id="snowflake-oauth-token" placeholder="Snowflake OAuth token" autocomplete="new-password" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" />
+              </div>
+            </div>
+
+            <div class="simplechat-config-card mb-0">
+              <div class="config-section-label">
+                <i class="bi bi-sliders me-2"></i>Execution Limits
+              </div>
+              <div class="row g-3">
+                <div class="col-md-4">
+                  <label for="snowflake-max-rows" class="form-label">Max Rows</label>
+                  <input type="number" class="form-control" id="snowflake-max-rows" value="1000" min="1" max="10000" />
+                </div>
+                <div class="col-md-4">
+                  <label for="snowflake-timeout" class="form-label">Query Timeout (seconds)</label>
+                  <input type="number" class="form-control" id="snowflake-timeout" value="30" min="1" max="300" />
+                </div>
+                <div class="col-md-4">
+                  <label for="snowflake-login-timeout" class="form-label">Login Timeout (seconds)</label>
+                  <input type="number" class="form-control" id="snowflake-login-timeout" value="30" min="1" max="300" />
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div id="tableau-config-section" class="d-none">
             <div class="alert alert-info mb-3">
               <strong>Tableau action:</strong> Configure a Tableau Server or Tableau Cloud site and expose read-only content discovery tools to agents.
@@ -1453,6 +1549,72 @@
                   <div class="d-flex flex-column">
                     <label class="text-muted small mb-1">Wait Timeout</label>
                     <span class="fw-medium" id="summary-databricks-wait-timeout">-</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card mb-3 border-0 shadow-sm d-none" id="summary-snowflake-section">
+            <div class="card-header text-white p-3" style="background: linear-gradient(135deg, #0f766e 0%, #134e4a 100%);">
+              <h6 class="mb-0 fw-bold">
+                <i class="bi bi-snow2 me-2"></i>Snowflake Configuration
+              </h6>
+            </div>
+            <div class="card-body p-3">
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Account</label>
+                    <span class="fw-medium font-monospace" id="summary-snowflake-account">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">User</label>
+                    <span class="fw-medium font-monospace" id="summary-snowflake-user">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Authentication</label>
+                    <span class="fw-medium" id="summary-snowflake-auth-method">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Warehouse</label>
+                    <span class="fw-medium font-monospace" id="summary-snowflake-warehouse">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Default Namespace</label>
+                    <span class="fw-medium font-monospace" id="summary-snowflake-namespace">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Role</label>
+                    <span class="fw-medium font-monospace" id="summary-snowflake-role">-</span>
+                  </div>
+                </div>
+                <div class="col-md-4">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Max Rows</label>
+                    <span class="fw-medium" id="summary-snowflake-max-rows">-</span>
+                  </div>
+                </div>
+                <div class="col-md-4">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Query Timeout</label>
+                    <span class="fw-medium" id="summary-snowflake-timeout">-</span>
+                  </div>
+                </div>
+                <div class="col-md-4">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Login Timeout</label>
+                    <span class="fw-medium" id="summary-snowflake-login-timeout">-</span>
                   </div>
                 </div>
               </div>

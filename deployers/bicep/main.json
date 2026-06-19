@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.44.1.10279",
-      "templateHash": "9646163417237769129"
+      "templateHash": "6458000613813396258"
     }
   },
   "parameters": {
@@ -78,6 +78,34 @@
       "type": "securestring",
       "metadata": {
         "description": "Azure AD Application Client Secret for enterprise authentication.\n- Required if enableEnterpriseApp is true\n- Should be created in Azure AD App Registration and passed via environment variable\n- Will be stored securely in Azure Key Vault during deployment"
+      }
+    },
+    "enableTeamsSso": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Enable Microsoft Teams tab Single Sign-On for SimpleChat.\n- When true, the app enables Teams token exchange and allows App Service requests to reach the app-level authentication flow.\n- Teams app manifest installation and Entra app pre-authorization are still required outside this deployment."
+      }
+    },
+    "teamsFrameAncestors": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Optional Teams frame ancestors for Content Security Policy.\n- Leave blank for built-in Azure commercial or Azure Government Teams defaults.\n- Set explicitly for custom or air-gapped Teams clouds."
+      }
+    },
+    "customTeamsOrigins": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Optional Teams SDK valid origins.\n- Accepts comma, space, or JSON-list formatted origins.\n- Leave blank to reuse the Teams frame ancestors."
+      }
+    },
+    "teamsAppResource": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Optional Teams Application ID URI used by microsoftTeams.authentication.getAuthToken.\n- Example: api://simplechat.contoso.com/<client-id>\n- Leave blank to let the app default to api://<client-id>."
       }
     },
     "authenticationType": {
@@ -362,9 +390,8 @@
       "azd-env-name": "[parameters('azdEnvironmentName')]"
     },
     "tags": "[union(variables('requiredTags'), parameters('specialTags'))]",
-    "isPublicCloud": "[equals(variables('scCloudEnvironment'), 'public')]",
     "isUsGovernmentCloud": "[equals(variables('scCloudEnvironment'), 'usgovernment')]",
-    "acrCloudSuffix": "[if(variables('isPublicCloud'), '.azurecr.io', '.azurecr.us')]",
+    "acrCloudSuffix": "[environment().suffixes.acrLoginServer]",
     "acrName": "[toLower(format('{0}{1}acr', parameters('appName'), parameters('environment')))]",
     "containerRegistry": "[format('{0}{1}', variables('acrName'), variables('acrCloudSuffix'))]",
     "containerImageName": "[format('{0}/{1}', variables('containerRegistry'), parameters('imageName'))]",
@@ -3510,6 +3537,18 @@
           "enterpriseAppClientSecret": {
             "value": "[parameters('enterpriseAppClientSecret')]"
           },
+          "enableTeamsSso": {
+            "value": "[parameters('enableTeamsSso')]"
+          },
+          "teamsFrameAncestors": {
+            "value": "[parameters('teamsFrameAncestors')]"
+          },
+          "customTeamsOrigins": {
+            "value": "[parameters('customTeamsOrigins')]"
+          },
+          "teamsAppResource": {
+            "value": "[parameters('teamsAppResource')]"
+          },
           "authenticationType": {
             "value": "[parameters('authenticationType')]"
           },
@@ -3550,7 +3589,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "9843437005633811271"
+              "templateHash": "12133845290797055906"
             }
           },
           "parameters": {
@@ -3614,6 +3653,22 @@
             },
             "enterpriseAppClientSecret": {
               "type": "securestring",
+              "defaultValue": ""
+            },
+            "enableTeamsSso": {
+              "type": "bool",
+              "defaultValue": false
+            },
+            "teamsFrameAncestors": {
+              "type": "string",
+              "defaultValue": ""
+            },
+            "customTeamsOrigins": {
+              "type": "string",
+              "defaultValue": ""
+            },
+            "teamsAppResource": {
+              "type": "string",
               "defaultValue": ""
             },
             "keyVaultUri": {
@@ -3730,7 +3785,7 @@
                   "alwaysOn": true,
                   "ftpsState": "Disabled",
                   "healthCheckPath": "/external/healthcheck",
-                  "appSettings": "[flatten(createArray(createArray(createObject('name', 'AZURE_ENVIRONMENT', 'value', parameters('azurePlatform')), createObject('name', 'SIMPLECHAT_RUN_BACKGROUND_TASKS', 'value', '1'), createObject('name', 'SCM_DO_BUILD_DURING_DEPLOYMENT', 'value', 'false'), createObject('name', 'AZURE_SUBSCRIPTION_ID', 'value', subscription().subscriptionId), createObject('name', 'AZURE_RESOURCE_GROUP', 'value', resourceGroup().name), createObject('name', 'AZURE_COSMOS_ENDPOINT', 'value', reference('cosmosDb').documentEndpoint), createObject('name', 'AZURE_COSMOS_ACCOUNT_NAME', 'value', parameters('cosmosDbName')), createObject('name', 'AZURE_COSMOS_DATABASE_NAME', 'value', 'SimpleChat'), createObject('name', 'AZURE_COSMOS_AUTHENTICATION_TYPE', 'value', toLower(parameters('authenticationType')))), if(equals(parameters('authenticationType'), 'key'), createArray(createObject('name', 'AZURE_COSMOS_KEY', 'value', listKeys('cosmosDb', '2023-04-15').primaryMasterKey)), createArray()), createArray(createObject('name', 'TENANT_ID', 'value', tenant().tenantId), createObject('name', 'CLIENT_ID', 'value', parameters('enterpriseAppClientId')), createObject('name', 'SECRET_KEY', 'value', if(not(empty(parameters('enterpriseAppClientSecret'))), parameters('enterpriseAppClientSecret'), format('@Microsoft.KeyVault(SecretUri={0}secrets/enterprise-app-client-secret)', parameters('keyVaultUri')))), createObject('name', 'MICROSOFT_PROVIDER_AUTHENTICATION_SECRET', 'value', format('@Microsoft.KeyVault(SecretUri={0}secrets/enterprise-app-client-secret)', parameters('keyVaultUri'))), createObject('name', 'DOCKER_REGISTRY_SERVER_URL', 'value', format('https://{0}{1}', parameters('acrName'), variables('acrDomain')))), if(equals(parameters('authenticationType'), 'key'), createArray(createObject('name', 'DOCKER_REGISTRY_SERVER_USERNAME', 'value', listCredentials('acrService', '2025-04-01').username)), createArray()), if(equals(parameters('authenticationType'), 'key'), createArray(createObject('name', 'DOCKER_REGISTRY_SERVER_PASSWORD', 'value', listCredentials('acrService', '2025-04-01').passwords[0].value)), createArray()), createArray(createObject('name', 'WEBSITE_AUTH_AAD_ALLOWED_TENANTS', 'value', tenant().tenantId), createObject('name', 'AZURE_OPENAI_RESOURCE_NAME', 'value', parameters('openAiServiceName')), createObject('name', 'AZURE_OPENAI_RESOURCE_GROUP_NAME', 'value', parameters('openAiResourceGroupName')), createObject('name', 'AZURE_OPENAI_URL', 'value', parameters('openAiEndpoint')), createObject('name', 'VIDEO_INDEXER_ARM_API_VERSION', 'value', if(equals(parameters('azurePlatform'), 'usgovernment'), '2024-01-01', '2025-04-01')), createObject('name', 'AZURE_SEARCH_SERVICE_NAME', 'value', parameters('searchServiceName'))), if(equals(parameters('authenticationType'), 'key'), createArray(createObject('name', 'AZURE_SEARCH_API_KEY', 'value', listAdminKeys('searchService', '2025-05-01').primaryKey)), createArray()), createArray(createObject('name', 'AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT', 'value', reference('documentIntelligence').endpoint)), if(equals(parameters('authenticationType'), 'key'), createArray(createObject('name', 'AZURE_DOCUMENT_INTELLIGENCE_API_KEY', 'value', listKeys('documentIntelligence', '2025-06-01').key1)), createArray()), createArray(createObject('name', 'APPINSIGHTS_INSTRUMENTATIONKEY', 'value', reference('appInsights').InstrumentationKey), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', reference('appInsights').ConnectionString), createObject('name', 'APPINSIGHTS_PROFILERFEATURE_VERSION', 'value', '1.0.0'), createObject('name', 'APPINSIGHTS_SNAPSHOTFEATURE_VERSION', 'value', '1.0.0'), createObject('name', 'APPLICATIONINSIGHTS_CONFIGURATION_CONTENT', 'value', ''), createObject('name', 'ApplicationInsightsAgent_EXTENSION_VERSION', 'value', '~3'), createObject('name', 'DiagnosticServices_EXTENSION_VERSION', 'value', '~3'), createObject('name', 'InstrumentationEngine_EXTENSION_VERSION', 'value', 'disabled'), createObject('name', 'SnapshotDebugger_EXTENSION_VERSION', 'value', 'disabled'), createObject('name', 'XDT_MicrosoftApplicationInsights_BaseExtensions', 'value', 'disabled'), createObject('name', 'XDT_MicrosoftApplicationInsights_Mode', 'value', 'recommended'), createObject('name', 'XDT_MicrosoftApplicationInsights_PreemptSdk', 'value', 'disabled')), if(equals(parameters('azurePlatform'), 'custom'), createArray(createObject('name', 'CUSTOM_GRAPH_URL_VALUE', 'value', coalesce(parameters('customGraphUrl'), '')), createObject('name', 'CUSTOM_IDENTITY_URL_VALUE', 'value', coalesce(parameters('customIdentityUrl'), '')), createObject('name', 'CUSTOM_RESOURCE_MANAGER_URL_VALUE', 'value', coalesce(parameters('customResourceManagerUrl'), '')), createObject('name', 'CUSTOM_BLOB_STORAGE_URL_VALUE', 'value', coalesce(parameters('customBlobStorageSuffix'), '')), createObject('name', 'CUSTOM_COGNITIVE_SERVICES_URL_VALUE', 'value', coalesce(parameters('customCognitiveServicesScope'), '')), createObject('name', 'CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE', 'value', coalesce(parameters('customSearchResourceUrl'), '')), createObject('name', 'CUSTOM_VIDEO_INDEXER_ENDPOINT', 'value', coalesce(parameters('customVideoIndexerEndpoint'), '')), createObject('name', 'KEY_VAULT_DOMAIN', 'value', environment().suffixes.keyvaultDns), createObject('name', 'CUSTOM_OIDC_METADATA_URL_VALUE', 'value', coalesce(variables('openIdMetadataUrl'), ''))), createArray())))]"
+                  "appSettings": "[flatten(createArray(createArray(createObject('name', 'AZURE_ENVIRONMENT', 'value', parameters('azurePlatform')), createObject('name', 'SIMPLECHAT_RUN_BACKGROUND_TASKS', 'value', '1'), createObject('name', 'SCM_DO_BUILD_DURING_DEPLOYMENT', 'value', 'false'), createObject('name', 'AZURE_SUBSCRIPTION_ID', 'value', subscription().subscriptionId), createObject('name', 'AZURE_RESOURCE_GROUP', 'value', resourceGroup().name), createObject('name', 'AZURE_COSMOS_ENDPOINT', 'value', reference('cosmosDb').documentEndpoint), createObject('name', 'AZURE_COSMOS_ACCOUNT_NAME', 'value', parameters('cosmosDbName')), createObject('name', 'AZURE_COSMOS_DATABASE_NAME', 'value', 'SimpleChat'), createObject('name', 'AZURE_COSMOS_AUTHENTICATION_TYPE', 'value', toLower(parameters('authenticationType')))), if(equals(parameters('authenticationType'), 'key'), createArray(createObject('name', 'AZURE_COSMOS_KEY', 'value', listKeys('cosmosDb', '2023-04-15').primaryMasterKey)), createArray()), createArray(createObject('name', 'TENANT_ID', 'value', tenant().tenantId), createObject('name', 'CLIENT_ID', 'value', parameters('enterpriseAppClientId')), createObject('name', 'SECRET_KEY', 'value', if(not(empty(parameters('enterpriseAppClientSecret'))), parameters('enterpriseAppClientSecret'), format('@Microsoft.KeyVault(SecretUri={0}secrets/enterprise-app-client-secret)', parameters('keyVaultUri')))), createObject('name', 'MICROSOFT_PROVIDER_AUTHENTICATION_SECRET', 'value', format('@Microsoft.KeyVault(SecretUri={0}secrets/enterprise-app-client-secret)', parameters('keyVaultUri'))), createObject('name', 'ENABLE_TEAMS_SSO', 'value', if(parameters('enableTeamsSso'), 'true', 'false'))), if(parameters('enableTeamsSso'), createArray(createObject('name', 'SESSION_COOKIE_SAMESITE', 'value', 'None'), createObject('name', 'SESSION_COOKIE_SECURE', 'value', 'true'), createObject('name', 'TEAMS_SUCCESS_REDIRECT_PATH', 'value', '/chats'), createObject('name', 'TEAMS_FRAME_ANCESTORS', 'value', parameters('teamsFrameAncestors')), createObject('name', 'CUSTOM_TEAMS_ORIGINS', 'value', parameters('customTeamsOrigins')), createObject('name', 'TEAMS_APP_RESOURCE', 'value', parameters('teamsAppResource'))), createArray()), createArray(createObject('name', 'DOCKER_REGISTRY_SERVER_URL', 'value', format('https://{0}{1}', parameters('acrName'), variables('acrDomain')))), if(equals(parameters('authenticationType'), 'key'), createArray(createObject('name', 'DOCKER_REGISTRY_SERVER_USERNAME', 'value', listCredentials('acrService', '2025-04-01').username)), createArray()), if(equals(parameters('authenticationType'), 'key'), createArray(createObject('name', 'DOCKER_REGISTRY_SERVER_PASSWORD', 'value', listCredentials('acrService', '2025-04-01').passwords[0].value)), createArray()), createArray(createObject('name', 'WEBSITE_AUTH_AAD_ALLOWED_TENANTS', 'value', tenant().tenantId), createObject('name', 'AZURE_OPENAI_RESOURCE_NAME', 'value', parameters('openAiServiceName')), createObject('name', 'AZURE_OPENAI_RESOURCE_GROUP_NAME', 'value', parameters('openAiResourceGroupName')), createObject('name', 'AZURE_OPENAI_URL', 'value', parameters('openAiEndpoint')), createObject('name', 'VIDEO_INDEXER_ARM_API_VERSION', 'value', if(equals(parameters('azurePlatform'), 'usgovernment'), '2024-01-01', '2025-04-01')), createObject('name', 'AZURE_SEARCH_SERVICE_NAME', 'value', parameters('searchServiceName'))), if(equals(parameters('authenticationType'), 'key'), createArray(createObject('name', 'AZURE_SEARCH_API_KEY', 'value', listAdminKeys('searchService', '2025-05-01').primaryKey)), createArray()), createArray(createObject('name', 'AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT', 'value', reference('documentIntelligence').endpoint)), if(equals(parameters('authenticationType'), 'key'), createArray(createObject('name', 'AZURE_DOCUMENT_INTELLIGENCE_API_KEY', 'value', listKeys('documentIntelligence', '2025-06-01').key1)), createArray()), createArray(createObject('name', 'APPINSIGHTS_INSTRUMENTATIONKEY', 'value', reference('appInsights').InstrumentationKey), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', reference('appInsights').ConnectionString), createObject('name', 'APPINSIGHTS_PROFILERFEATURE_VERSION', 'value', '1.0.0'), createObject('name', 'APPINSIGHTS_SNAPSHOTFEATURE_VERSION', 'value', '1.0.0'), createObject('name', 'APPLICATIONINSIGHTS_CONFIGURATION_CONTENT', 'value', ''), createObject('name', 'ApplicationInsightsAgent_EXTENSION_VERSION', 'value', '~3'), createObject('name', 'DiagnosticServices_EXTENSION_VERSION', 'value', '~3'), createObject('name', 'InstrumentationEngine_EXTENSION_VERSION', 'value', 'disabled'), createObject('name', 'SnapshotDebugger_EXTENSION_VERSION', 'value', 'disabled'), createObject('name', 'XDT_MicrosoftApplicationInsights_BaseExtensions', 'value', 'disabled'), createObject('name', 'XDT_MicrosoftApplicationInsights_Mode', 'value', 'recommended'), createObject('name', 'XDT_MicrosoftApplicationInsights_PreemptSdk', 'value', 'disabled')), if(equals(parameters('azurePlatform'), 'custom'), createArray(createObject('name', 'CUSTOM_GRAPH_URL_VALUE', 'value', coalesce(parameters('customGraphUrl'), '')), createObject('name', 'CUSTOM_IDENTITY_URL_VALUE', 'value', coalesce(parameters('customIdentityUrl'), '')), createObject('name', 'CUSTOM_RESOURCE_MANAGER_URL_VALUE', 'value', coalesce(parameters('customResourceManagerUrl'), '')), createObject('name', 'CUSTOM_BLOB_STORAGE_URL_VALUE', 'value', coalesce(parameters('customBlobStorageSuffix'), '')), createObject('name', 'CUSTOM_COGNITIVE_SERVICES_URL_VALUE', 'value', coalesce(parameters('customCognitiveServicesScope'), '')), createObject('name', 'CUSTOM_SEARCH_RESOURCE_MANAGER_URL_VALUE', 'value', coalesce(parameters('customSearchResourceUrl'), '')), createObject('name', 'CUSTOM_VIDEO_INDEXER_ENDPOINT', 'value', coalesce(parameters('customVideoIndexerEndpoint'), '')), createObject('name', 'KEY_VAULT_DOMAIN', 'value', environment().suffixes.keyvaultDns), createObject('name', 'CUSTOM_OIDC_METADATA_URL_VALUE', 'value', coalesce(variables('openIdMetadataUrl'), ''))), createArray())))]"
                 },
                 "clientAffinityEnabled": false,
                 "httpsOnly": true
@@ -3784,8 +3839,8 @@
               "name": "[format('{0}/{1}', toLower(format('{0}-{1}-app', parameters('appName'), parameters('environment'))), 'authsettingsV2')]",
               "properties": {
                 "globalValidation": {
-                  "requireAuthentication": true,
-                  "unauthenticatedClientAction": "RedirectToLoginPage",
+                  "requireAuthentication": "[not(parameters('enableTeamsSso'))]",
+                  "unauthenticatedClientAction": "[if(parameters('enableTeamsSso'), 'AllowAnonymous', 'RedirectToLoginPage')]",
                   "redirectToProvider": "azureActiveDirectory"
                 },
                 "identityProviders": {
@@ -5143,7 +5198,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "4674757669909427397"
+              "templateHash": "1771723961606912785"
             }
           },
           "parameters": {
@@ -5324,6 +5379,18 @@
               }
             },
             {
+              "condition": "[and(and(not(equals(parameters('openAIName'), '')), not(variables('useExternalOpenAIResource'))), not(empty(parameters('enterpriseAppServicePrincipalId'))))]",
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName'))]",
+              "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName')), parameters('enterpriseAppServicePrincipalId'), 'enterpriseApp-CognitiveServicesUserRole')]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')]",
+                "principalId": "[parameters('enterpriseAppServicePrincipalId')]",
+                "principalType": "ServicePrincipal"
+              }
+            },
+            {
               "condition": "[equals(parameters('authenticationType'), 'managed_identity')]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
@@ -5483,7 +5550,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.44.1.10279",
-                      "templateHash": "14349488839442424422"
+                      "templateHash": "17218488046755682415"
                     }
                   },
                   "parameters": {
@@ -5533,6 +5600,18 @@
                       "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName')), parameters('enterpriseAppServicePrincipalId'), 'enterpriseApp-CognitiveServicesOpenAIUserRole')]",
                       "properties": {
                         "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd')]",
+                        "principalId": "[parameters('enterpriseAppServicePrincipalId')]",
+                        "principalType": "ServicePrincipal"
+                      }
+                    },
+                    {
+                      "condition": "[not(empty(parameters('enterpriseAppServicePrincipalId')))]",
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName'))]",
+                      "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName')), parameters('enterpriseAppServicePrincipalId'), 'enterpriseApp-CognitiveServicesUserRole')]",
+                      "properties": {
+                        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')]",
                         "principalId": "[parameters('enterpriseAppServicePrincipalId')]",
                         "principalType": "ServicePrincipal"
                       }

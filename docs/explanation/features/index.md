@@ -13,6 +13,7 @@ category: Version History
 
 ## Admin Experience Features
 
+- [Azure OpenAI Identity Setup Guide](v0.250.001/AZURE_OPENAI_IDENTITY_SETUP_GUIDE.md)
 - [AI Voice Conversations Setup Guide](AI_VOICE_CONVERSATIONS_SETUP_GUIDE.md)
 - [Activity Log Auto-Refresh](CONTROL_CENTER_ACTIVITY_LOG_AUTO_REFRESH.md)
 - [Activity Log Layout Presets](ACTIVITY_LOG_LAYOUT_PRESETS.md)
@@ -22,6 +23,7 @@ category: Version History
 - [Action Type Governance](v0.242.064/ACTION_TYPE_GOVERNANCE.md)
 - [Agents Page Customization](v0.241.229/AGENTS_PAGE_CUSTOMIZATION.md)
 - [Microsoft Graph Send Mail Action](MSGRAPH_SEND_MAIL_ACTION.md)
+- [Snowflake Action](v0.250.006/SNOWFLAKE_ACTION.md)
 
 ## Chat Upload Features
 

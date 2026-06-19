@@ -1,0 +1,76 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Snowflake Plugin Additional Settings",
+  "type": "object",
+  "properties": {
+    "account": {
+      "type": "string",
+      "description": "Snowflake account identifier, without the snowflakecomputing.com suffix."
+    },
+    "user": {
+      "type": "string",
+      "description": "Snowflake login/user name. Required for key-pair or OAuth reusable identities."
+    },
+    "auth_method": {
+      "type": "string",
+      "enum": ["password", "key_pair", "oauth"],
+      "default": "password",
+      "description": "Authentication method used by the Snowflake connector."
+    },
+    "warehouse": {
+      "type": "string",
+      "description": "Snowflake warehouse used to execute read-only queries."
+    },
+    "database": {
+      "type": "string",
+      "description": "Optional default Snowflake database."
+    },
+    "schema": {
+      "type": "string",
+      "description": "Optional default Snowflake schema."
+    },
+    "role": {
+      "type": "string",
+      "description": "Optional default Snowflake role."
+    },
+    "private_key_passphrase": {
+      "type": "string",
+      "description": "Optional passphrase for encrypted key-pair private keys."
+    },
+    "read_only": {
+      "type": "boolean",
+      "default": true,
+      "description": "Restrict SQL execution to read-only data retrieval statements."
+    },
+    "max_rows": {
+      "type": "integer",
+      "default": 1000,
+      "minimum": 1,
+      "maximum": 10000,
+      "description": "Maximum rows returned by generated SELECT/WITH queries when no LIMIT is supplied."
+    },
+    "timeout": {
+      "type": "integer",
+      "default": 30,
+      "minimum": 1,
+      "maximum": 300,
+      "description": "Snowflake query/network timeout in seconds."
+    },
+    "login_timeout": {
+      "type": "integer",
+      "default": 30,
+      "minimum": 1,
+      "maximum": 300,
+      "description": "Snowflake login timeout in seconds."
+    },
+    "byte_limit": {
+      "type": "integer",
+      "default": 250000,
+      "minimum": 1000,
+      "maximum": 2000000,
+      "description": "Approximate serialized result size limit before truncating returned rows."
+    }
+  },
+  "required": ["account", "warehouse", "auth_method"],
+  "additionalProperties": true
+}

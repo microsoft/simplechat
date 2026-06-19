@@ -68,6 +68,11 @@ from functions_databricks_operations import (
     DATABRICKS_PLUGIN_TYPE,
     normalize_databricks_additional_fields,
 )
+from functions_snowflake_operations import (
+    SNOWFLAKE_DEFAULT_ENDPOINT,
+    SNOWFLAKE_PLUGIN_TYPE,
+    normalize_snowflake_additional_fields,
+)
 from functions_tableau_operations import (
     TABLEAU_AUTH_METHOD_PAT,
     TABLEAU_AUTH_METHOD_USERNAME_PASSWORD,
@@ -183,6 +188,20 @@ def _apply_plugin_runtime_defaults(plugin_payload):
         elif auth_type == 'identity' and auth.get('identity') == 'managed_identity':
             additional_fields['auth_method'] = 'managed_identity'
         plugin_payload['type'] = DATABRICKS_PLUGIN_TYPE
+        plugin_payload['auth'] = auth
+        plugin_payload['additionalFields'] = additional_fields
+    elif plugin_type == SNOWFLAKE_PLUGIN_TYPE:
+        if not str(plugin_payload.get('endpoint') or '').strip():
+            plugin_payload['endpoint'] = SNOWFLAKE_DEFAULT_ENDPOINT
+        auth = plugin_payload.get('auth') if isinstance(plugin_payload.get('auth'), dict) else {}
+        auth_type = str(auth.get('type') or 'username_password').strip() or 'username_password'
+        auth['type'] = auth_type
+        additional_fields = plugin_payload.get('additionalFields') if isinstance(plugin_payload.get('additionalFields'), dict) else {}
+        additional_fields = normalize_snowflake_additional_fields(additional_fields, auth_type=auth_type)
+        if auth_type == 'username_password':
+            additional_fields['auth_method'] = 'password'
+            if auth.get('identity') and not additional_fields.get('user'):
+                additional_fields['user'] = auth.get('identity')
         plugin_payload['auth'] = auth
         plugin_payload['additionalFields'] = additional_fields
     elif plugin_type == TABLEAU_PLUGIN_TYPE:
@@ -317,6 +336,20 @@ def get_plugin_types(allowed_type_filter=None):
                                     'schema': 'default',
                                 },
                                 'metadata': {'description': 'Example Databricks plugin'},
+                            }
+                        elif 'snowflake' in module_name.lower():
+                            safe_manifest = {
+                                'endpoint': SNOWFLAKE_DEFAULT_ENDPOINT,
+                                'auth': {'type': 'username_password', 'identity': 'analyst', 'key': 'dummy'},
+                                'additionalFields': {
+                                    'account': 'organization-account',
+                                    'user': 'analyst',
+                                    'auth_method': 'password',
+                                    'warehouse': 'COMPUTE_WH',
+                                    'database': 'ANALYTICS',
+                                    'schema': 'PUBLIC',
+                                },
+                                'metadata': {'description': 'Example Snowflake query action'},
                             }
                         elif 'tableau' in module_name.lower():
                             safe_manifest = {

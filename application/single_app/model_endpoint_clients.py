@@ -16,7 +16,6 @@ from semantic_kernel.contents.chat_message_content import ChatMessageContent
 from semantic_kernel.contents.streaming_chat_message_content import StreamingChatMessageContent
 from semantic_kernel.contents.utils.author_role import AuthorRole
 
-from functions_appinsights import log_event
 from functions_debug import debug_print
 
 
@@ -25,6 +24,50 @@ MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE = "openai_style"
 MODEL_ENDPOINT_PROTOCOL_ANTHROPIC = "anthropic"
 
 ANTHROPIC_MODEL_MARKERS = ("claude",)
+OPENAI_REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
+MODEL_CONTEXT_MODE_SYSTEM = "system"
+MODEL_CONTEXT_MODE_FOLD_LATEST_USER = "fold_latest_user"
+
+
+class ModelEndpointBehavior:
+    """Provider/model behavior policy shared by Simple Chat model endpoint callers."""
+
+    def __init__(self, provider: Any = "", deployment_name: Any = ""):
+        self.provider = str(provider or "").strip().lower()
+        self.deployment_name = str(deployment_name or "").strip()
+        self.normalized_deployment_name = self.deployment_name.lower()
+
+    @property
+    def is_foundry_provider(self) -> bool:
+        return self.provider in {"aifoundry", "new_foundry"}
+
+    @property
+    def is_anthropic_model(self) -> bool:
+        return is_anthropic_model(self.deployment_name)
+
+    @property
+    def is_openai_reasoning_model(self) -> bool:
+        return self.normalized_deployment_name.startswith(OPENAI_REASONING_MODEL_PREFIXES)
+
+    @property
+    def is_foundry_non_openai_model(self) -> bool:
+        if not self.is_foundry_provider or not self.normalized_deployment_name:
+            return False
+        if self.normalized_deployment_name.startswith(("gpt", "o1", "o3", "o4")):
+            return False
+        if self.is_anthropic_model:
+            return False
+        return True
+
+    @property
+    def context_mode(self) -> str:
+        return MODEL_CONTEXT_MODE_FOLD_LATEST_USER if self.is_foundry_non_openai_model else MODEL_CONTEXT_MODE_SYSTEM
+
+    def resolve_reasoning_effort(self, reasoning_effort: Any) -> str:
+        normalized_reasoning_effort = str(reasoning_effort or "").strip()
+        if not normalized_reasoning_effort or normalized_reasoning_effort.lower() == "none":
+            return ""
+        return normalized_reasoning_effort if self.is_openai_reasoning_model else ""
 
 
 def normalize_endpoint_text(endpoint: Any) -> str:
@@ -131,19 +174,42 @@ def normalize_anthropic_messages_url(raw_endpoint: Any) -> str:
 
 def resolve_openai_style_request_api_version(raw_api_version: Any) -> str:
     """Return a version query value that is valid for OpenAI-style /openai/v1 requests."""
-    normalized_api_version = str(raw_api_version or "").strip().lower()
-    if normalized_api_version in ("", "v1"):
-        return ""
-    if normalized_api_version in ("preview", "latest"):
-        return normalized_api_version
-
-    log_event(
-        "[ModelEndpoint] Ignoring legacy Azure API version for OpenAI-style /openai/v1 request",
-        extra={"configured_api_version": str(raw_api_version or "")},
-        debug_only=True,
-        category="ModelEndpoint",
-    )
     return ""
+
+
+def normalize_chat_completion_text(content: Any) -> str:
+    """Normalize text content returned by OpenAI-compatible chat responses."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, (list, tuple)):
+        text_parts = []
+        for part in content:
+            if isinstance(part, str):
+                text_parts.append(part)
+                continue
+            if isinstance(part, dict):
+                part_text = part.get("text") or part.get("content") or part.get("value")
+                if isinstance(part_text, str):
+                    text_parts.append(part_text)
+                elif isinstance(part_text, dict) and isinstance(part_text.get("value"), str):
+                    text_parts.append(part_text["value"])
+                continue
+            part_text = getattr(part, "text", None) or getattr(part, "content", None)
+            if isinstance(part_text, str):
+                text_parts.append(part_text)
+        return "".join(text_parts)
+    return str(content)
+
+
+def extract_chat_completion_response_text(response: Any) -> str:
+    """Extract assistant message text from a chat completion response."""
+    choices = getattr(response, "choices", None) or []
+    if not choices:
+        return ""
+    message = getattr(choices[0], "message", None)
+    return normalize_chat_completion_text(getattr(message, "content", None))
 
 
 def build_openai_style_chat_client(token_or_key: str, base_url: str, api_version: Any = ""):

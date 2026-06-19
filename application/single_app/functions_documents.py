@@ -16,6 +16,7 @@ from functions_logging import *
 from functions_authentication import *
 from functions_debug import *
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
+from functions_model_endpoint_runtime import MODEL_ENDPOINT_PROVIDER_ALLOWLIST, build_model_endpoint_sync_chat_client
 import azure.cognitiveservices.speech as speechsdk
 
 def allowed_file(filename, allowed_extensions=None):
@@ -74,38 +75,15 @@ def _resolve_model_endpoint_scope(provider, auth_settings, endpoint=None):
     return "https://ai.azure.com/.default"
 
 
-def _build_model_endpoint_client(auth_settings, provider, endpoint, api_version):
-    auth_settings = auth_settings or {}
-    auth_type = str(auth_settings.get("type") or "managed_identity").lower()
-
-    if auth_type in ("api_key", "key"):
-        api_key = auth_settings.get("api_key")
-        if not api_key:
-            raise ValueError("Selected metadata extraction endpoint is missing an API key.")
-        return AzureOpenAI(
-            api_version=api_version,
-            azure_endpoint=endpoint,
-            api_key=api_key,
-        )
-
-    if auth_type == "service_principal":
-        credential = ClientSecretCredential(
-            tenant_id=auth_settings.get("tenant_id"),
-            client_id=auth_settings.get("client_id"),
-            client_secret=auth_settings.get("client_secret"),
-            authority=_resolve_model_endpoint_authority(auth_settings),
-        )
-    else:
-        managed_identity_client_id = auth_settings.get("managed_identity_client_id") or None
-        credential = DefaultAzureCredential(managed_identity_client_id=managed_identity_client_id)
-
-    scope = _resolve_model_endpoint_scope(provider, auth_settings, endpoint=endpoint)
-    token_provider = get_bearer_token_provider(credential, scope)
-    return AzureOpenAI(
-        api_version=api_version,
-        azure_endpoint=endpoint,
-        azure_ad_token_provider=token_provider,
+def _build_model_endpoint_client(auth_settings, provider, endpoint, api_version, deployment_name):
+    client, _ = build_model_endpoint_sync_chat_client(
+        auth_settings,
+        provider,
+        endpoint,
+        api_version,
+        deployment_name=deployment_name,
     )
+    return client
 
 
 def _resolve_metadata_extraction_client(settings):
@@ -144,12 +122,12 @@ def _resolve_metadata_extraction_client(settings):
         endpoint = str(connection.get("endpoint") or "").strip()
         api_version = str(connection.get("openai_api_version") or connection.get("api_version") or "").strip()
 
-        if provider not in ("aoai", "aifoundry", "new_foundry"):
+        if provider not in MODEL_ENDPOINT_PROVIDER_ALLOWLIST:
             raise ValueError(f"Selected metadata extraction provider '{provider}' is not supported.")
         if not endpoint or not api_version or not deployment:
             raise ValueError("Selected metadata extraction endpoint is missing endpoint, API version, or deployment configuration.")
 
-        return _build_model_endpoint_client(auth_settings, provider, endpoint, api_version), deployment
+        return _build_model_endpoint_client(auth_settings, provider, endpoint, api_version, deployment), deployment
 
     gpt_model = settings.get('metadata_extraction_model')
     if not gpt_model:

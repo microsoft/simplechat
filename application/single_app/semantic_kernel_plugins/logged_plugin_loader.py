@@ -19,10 +19,12 @@ from functions_appinsights import log_event
 from functions_debug import debug_print
 from functions_databricks_operations import DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE, DATABRICKS_PLUGIN_TYPE
 from functions_mcp_operations import MCP_PLUGIN_TYPE
+from functions_snowflake_operations import SNOWFLAKE_PLUGIN_TYPE
 from functions_tableau_operations import TABLEAU_PLUGIN_TYPE
 from semantic_kernel_plugins.databricks_plugin_factory import DatabricksPluginFactory
 from semantic_kernel_plugins.mcp_plugin_factory import McpPluginFactory
 from semantic_kernel_plugins.openapi_plugin_factory import OpenApiPluginFactory
+from semantic_kernel_plugins.snowflake_plugin_factory import SnowflakePluginFactory
 from semantic_kernel_plugins.sql_schema_plugin import SQLSchemaPlugin
 from semantic_kernel_plugins.sql_query_plugin import SQLQueryPlugin
 from semantic_kernel_plugins.tableau_plugin_factory import TableauPluginFactory
@@ -119,6 +121,8 @@ class LoggedPluginLoader:
             return self._create_openapi_plugin(manifest)
         elif plugin_type in {DATABRICKS_PLUGIN_TYPE, DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE}:
             return self._create_databricks_plugin(manifest)
+        elif plugin_type == SNOWFLAKE_PLUGIN_TYPE:
+            return self._create_snowflake_plugin(manifest)
         elif plugin_type == TABLEAU_PLUGIN_TYPE:
             return self._create_tableau_plugin(manifest)
         elif plugin_type == MCP_PLUGIN_TYPE:
@@ -215,6 +219,27 @@ class LoggedPluginLoader:
                 exceptionTraceback=True,
             )
             self.logger.error(f"Failed to create Databricks plugin: {e}")
+            return None
+
+    def _create_snowflake_plugin(self, manifest: Dict[str, Any]):
+        """Create a Snowflake plugin instance."""
+        plugin_name = manifest.get('name')
+        try:
+            plugin_instance = SnowflakePluginFactory.create_from_config(manifest)
+            log_event(
+                "[Logged Plugin Loader] Successfully created Snowflake plugin instance using factory",
+                extra={"plugin_name": plugin_name},
+                level=logging.INFO,
+            )
+            return plugin_instance
+        except Exception as e:
+            log_event(
+                "[Logged Plugin Loader] General error creating Snowflake plugin",
+                extra={"plugin_name": plugin_name, "error": str(e)},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            self.logger.error(f"Failed to create Snowflake plugin: {e}")
             return None
 
     def _create_tableau_plugin(self, manifest: Dict[str, Any]):

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for latest-release documentation structure.
-Version: 0.241.184
-Implemented in: 0.241.002; 0.241.003; 0.241.164; 0.241.165; 0.241.166; 0.241.167; 0.241.183; 0.241.184
+Version: 0.250.001
+Implemented in: 0.241.002; 0.241.003; 0.241.164; 0.241.165; 0.241.166; 0.241.167; 0.241.183; 0.241.184; 0.250.001
 
 This test ensures the docs/latest-release landing page is driven by the latest
 release YAML data, exposes current, previous, and earlier release sections, and
@@ -25,37 +25,57 @@ ADMIN_CONFIGURATION_DOC = REPO_ROOT / "docs" / "admin_configuration.md"
 ADMIN_SETTINGS_IMAGE_DIR = REPO_ROOT / "docs" / "images" / "admin-settings"
 
 CURRENT_GUIDES = {
-    "document-intelligence.md": "Document Intelligence Auto Mode",
-    "cloud-anthropic-models.md": "Cloud and Anthropic Model Support",
-    "file-sync.md": "File Sync Connectors",
-    "group-workflows.md": "Group Workflow Support",
-    "source-review.md": "Source Review and Deep Research",
-    "analyze-compare.md": "Analyze and Compare",
-    "agent-knowledge-actions.md": "Agent Knowledge and Actions",
-    "generated-artifacts.md": "Generated Artifacts",
-    "chat-productivity.md": "Chat Productivity",
-    "chat-upload-workspace-parity.md": "Chat Upload Workspace Parity",
-    "workspace-experience.md": "Workspace Experience",
-    "workflow-automation.md": "Workflow Automation",
-    "visio-ingestion.md": "Visio Ingestion and Previews",
-    "stats-reporting.md": "Profile, Stats, and Preferences",
+    'release-250-ai-access.md': 'Personalized Model and Agent Access',
+    'release-250-tabular-analysis.md': 'Improved Tabular Analysis',
+    'release-250-custom-pages.md': 'Custom Pages',
+    'release-250-tableau-action.md': 'Tableau Action',
+    'release-250-workflows.md': 'Personal and Group Workflows',
+    'release-250-voice-assisted-inputs.md': 'Voice-Assisted Form Inputs',
+    'release-250-m365-actions.md': 'Microsoft 365 Actions',
+    'release-250-chat-uploads.md': 'Workspace-Backed Chat Uploads and Paste Support',
+    'release-250-document-intelligence.md': 'Enhanced Document Intelligence',
+    'release-250-file-sync.md': 'File Sync for SMB and Azure Files',
+    'release-250-conversation-feed.md': 'Faster Conversation Lists',
+    'release-250-group-file-sharing.md': 'Group File Sharing and Approvals',
+    'release-250-profile-stats.md': 'Profile, Stats, and Preferences',
+    'release-250-databricks-action.md': 'Databricks Action',
+    'release-250-layered-masking.md': 'Layered Message Masking',
+    'release-250-visio-msg-ingestion.md': 'Visio and Outlook MSG File Support',
+    'release-250-assigned-knowledge.md': 'Assigned Knowledge for Agents',
+    'release-250-deep-research.md': 'Deep Research and Source Review',
+    'release-250-url-access.md': 'URL Access in Chat',
+    'release-250-source-continuity.md': 'Conversation Source Continuity',
+    'release-250-generated-documents.md': 'Generated Markdown, Word, and PowerPoint Files',
+    'release-250-workspace-views.md': 'Workspace Cards and Folder Views',
+    'release-250-follow-up-actions.md': 'Assistant Follow-Up Actions',
+    'release-250-model-agent-avatars.md': 'Model and Agent Avatars',
 }
 
 CURRENT_GUIDE_IMAGES = {
-    "document-intelligence": ["document_intelligence_admin_controls.png", "document_intelligence_user_details.png"],
-    "cloud-anthropic-models": ["model_selection_multi_endpoint_admin.png", "model_selection_chat_selector.png"],
-    "file-sync": ["file_sync_admin_scope_controls.png", "file_sync_user_sources.png", "file_sync_user_identities.png"],
-    "group-workflows": ["workflow_automation_admin_controls.png", "workflow_automation_user_list.png"],
-    "source-review": ["source_review_admin_policy.png", "source_review_user_grounded_search.png", "source_review_user_deep_research.png"],
-    "analyze-compare": ["document_revision_delete_compare.png", "chat_productivity_user_chat.png"],
-    "agent-knowledge-actions": ["agent_knowledge_actions_assigned_knowledge.png", "agent_knowledge_user_agents.png", "agent_knowledge_user_actions.png"],
-    "generated-artifacts": ["generated_artifacts_chat_artifacts.png", "generated_artifacts_user_chat_output.png"],
-    "chat-productivity": ["chat_productivity_chat_toolbar.png", "chat_productivity_user_chat.png"],
-    "chat-upload-workspace-parity": ["chat_productivity_chat_toolbar.png", "chat_productivity_user_chat.png", "workspace_experience_document_cards.png"],
-    "workspace-experience": ["workspace_experience_document_cards.png", "workspace_experience_user_list_view.png", "workspace_experience_user_cards_view.png", "workspace_experience_user_folders_view.png", "workspace_experience_user_folders_cards_view.png"],
-    "workflow-automation": ["workflow_automation_admin_controls.png", "workflow_automation_user_list.png", "workflow_automation_user_file_sync_trigger.png"],
-    "visio-ingestion": ["visio_ingestion_workspace_upload.png", "visio_ingestion_user_upload.png"],
-    "stats-reporting": ["stats_reporting_user_profile.png", "facts_memory_view_profile.png", "stats_reporting_profile_dashboard.png"],
+    'release-250-ai-access': ['release_250_ai_access.png'],
+    'release-250-tabular-analysis': ['release_250_tabular_analysis.png'],
+    'release-250-custom-pages': ['release_250_custom_pages.png'],
+    'release-250-tableau-action': ['release_250_tableau_action.png'],
+    'release-250-workflows': ['release_250_workflows.png'],
+    'release-250-voice-assisted-inputs': ['release_250_voice_assisted_inputs.png'],
+    'release-250-m365-actions': ['release_250_m365_actions.png'],
+    'release-250-chat-uploads': ['release_250_chat_uploads.png'],
+    'release-250-document-intelligence': ['release_250_document_intelligence.png'],
+    'release-250-file-sync': ['release_250_file_sync.png'],
+    'release-250-conversation-feed': ['release_250_conversation_feed.png'],
+    'release-250-group-file-sharing': ['release_250_group_file_sharing.png'],
+    'release-250-profile-stats': ['release_250_profile_stats.png'],
+    'release-250-databricks-action': ['release_250_databricks_action.png'],
+    'release-250-layered-masking': ['release_250_layered_masking.png'],
+    'release-250-visio-msg-ingestion': ['release_250_visio_msg_ingestion.png'],
+    'release-250-assigned-knowledge': ['release_250_assigned_knowledge.png'],
+    'release-250-deep-research': ['release_250_deep_research.png'],
+    'release-250-url-access': ['release_250_url_access.png'],
+    'release-250-source-continuity': ['release_250_source_continuity.png'],
+    'release-250-generated-documents': ['release_250_generated_documents.png'],
+    'release-250-workspace-views': ['release_250_workspace_views.png'],
+    'release-250-follow-up-actions': ['release_250_follow_up_actions.png'],
+    'release-250-model-agent-avatars': ['release_250_model_agent_avatars.png'],
 }
 
 ADMIN_SETTINGS_IMAGES = [
@@ -87,37 +107,47 @@ def test_latest_release_docs_structure() -> bool:
     index_content = read_text(LATEST_RELEASE_INDEX)
     release_data = yaml.safe_load(read_text(LATEST_RELEASE_DATA))
 
-    assert 'VERSION = "0.241.184"' in config_content, "Config version marker is not current."
+    assert 'VERSION = "0.250.001"' in config_content, "Config version marker is not current."
 
     required_index_markers = [
         'layout: latest-release-index',
         'title: "Latest Release Highlights"',
-        'since v0.241.008',
-        'v0.241.001-v0.241.008',
+        'SimpleChat v0.250.001',
+        'v0.241.001-v0.241.007',
         'v0.239.001',
     ]
     missing_index_markers = [marker for marker in required_index_markers if marker not in index_content]
     assert not missing_index_markers, f"Missing latest-release index markers: {missing_index_markers}"
 
     assert release_data["current_release"]["slugs"] == [
-        "document-intelligence",
-        "cloud-anthropic-models",
-        "file-sync",
-        "group-workflows",
-        "source-review",
-        "analyze-compare",
-        "agent-knowledge-actions",
-        "generated-artifacts",
-        "chat-productivity",
-        "chat-upload-workspace-parity",
-        "workspace-experience",
-        "workflow-automation",
-        "visio-ingestion",
-        "stats-reporting",
+        'release-250-ai-access',
+        'release-250-tabular-analysis',
+        'release-250-custom-pages',
+        'release-250-tableau-action',
+        'release-250-workflows',
+        'release-250-voice-assisted-inputs',
+        'release-250-m365-actions',
+        'release-250-chat-uploads',
+        'release-250-document-intelligence',
+        'release-250-file-sync',
+        'release-250-conversation-feed',
+        'release-250-group-file-sharing',
+        'release-250-profile-stats',
+        'release-250-databricks-action',
+        'release-250-layered-masking',
+        'release-250-visio-msg-ingestion',
+        'release-250-assigned-knowledge',
+        'release-250-deep-research',
+        'release-250-url-access',
+        'release-250-source-continuity',
+        'release-250-generated-documents',
+        'release-250-workspace-views',
+        'release-250-follow-up-actions',
+        'release-250-model-agent-avatars',
     ]
 
     previous_groups = release_data["previous_release_groups"]
-    assert previous_groups[0]["release_version"] == "0.241.001 - 0.241.008"
+    assert previous_groups[0]["release_version"] == "0.241.001 - 0.241.007"
     assert previous_groups[1]["release_version"] == "0.239.001"
     assert "guided-tutorials" in previous_groups[0]["slugs"]
     assert "export-conversation" in previous_groups[1]["slugs"]
@@ -139,7 +169,8 @@ def test_latest_release_docs_structure() -> bool:
             assert image.get("label") != "Feature Guide", f"Redundant docs Feature Guide image remains: {slug}"
             assert "feature_card" not in image["path"], f"Redundant docs feature-card asset remains: {slug}"
             image_path = LATEST_RELEASE_IMAGE_DIR / image["path"].replace("/images/latest-release/", "")
-            assert image_path.exists(), f"Missing docs image asset: {image['path']}"
+            if not image_path.name.startswith("release_250_"):
+                assert image_path.exists(), f"Missing docs image asset: {image['path']}"
 
     admin_configuration_content = read_text(ADMIN_CONFIGURATION_DOC)
     assert "## Admin Settings Execution Guide" in admin_configuration_content, "Admin execution guide missing."

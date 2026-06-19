@@ -1,28 +1,38 @@
 current_release:
-  label: "Current Release Features"
-  description: "These guides map to the feature set currently highlighted in the app for end users."
+  label: "SimpleChat 0.250.001 Latest Features"
+  description: "These guides map to the SimpleChat 0.250.001 feature set currently highlighted in the app for end users."
   badge: "Shared in the app"
   slugs:
-    - document-intelligence
-    - cloud-anthropic-models
-    - file-sync
-    - group-workflows
-    - source-review
-    - analyze-compare
-    - agent-knowledge-actions
-    - generated-artifacts
-    - chat-productivity
-    - chat-upload-workspace-parity
-    - workspace-experience
-    - workflow-automation
-    - visio-ingestion
-    - stats-reporting
+    - release-250-ai-access
+    - release-250-tabular-analysis
+    - release-250-custom-pages
+    - release-250-tableau-action
+    - release-250-workflows
+    - release-250-voice-assisted-inputs
+    - release-250-m365-actions
+    - release-250-chat-uploads
+    - release-250-document-intelligence
+    - release-250-file-sync
+    - release-250-conversation-feed
+    - release-250-group-file-sharing
+    - release-250-profile-stats
+    - release-250-databricks-action
+    - release-250-layered-masking
+    - release-250-visio-msg-ingestion
+    - release-250-assigned-knowledge
+    - release-250-deep-research
+    - release-250-url-access
+    - release-250-source-continuity
+    - release-250-generated-documents
+    - release-250-workspace-views
+    - release-250-follow-up-actions
+    - release-250-model-agent-avatars
 
 previous_release_groups:
   - label: "Previous Release Features"
-    description: "The v0.241.001 through v0.241.008 guides remain available for reference."
+    description: "The v0.241.001 through v0.241.007 guides remain available for reference."
     badge: "Previous release"
-    release_version: "0.241.001 - 0.241.008"
+    release_version: "0.241.001 - 0.241.007"
     slugs:
       - guided-tutorials
       - background-chat
@@ -42,9 +52,9 @@ previous_release_groups:
       - "Guided tutorials, background chat completion, and fact memory helped users onboard faster and carry useful context forward."
       - "GPT selection, citation improvements, document versioning, and tabular analysis made core chat and document workflows more transparent."
       - "Support Menu, Send Feedback, deployment guidance, and Redis/Key Vault setup improved the admin-to-user release communication loop."
-  - label: "Earlier Release Features"
+  - label: "Archive Release Features"
     description: "The v0.239.001 release guides remain available for longer-term archive reference."
-    badge: "Earlier release"
+    badge: "Archive release"
     release_version: "0.239.001"
     slugs:
       - export-conversation
@@ -59,6 +69,438 @@ previous_release_groups:
       - "Citation parsing fixes resolved edge cases where page range references failed to create the right clickable links."
       - "Public workspace activation fixed a 403 path for non-owner users activating a public workspace for chat."
 lookup:
+
+  release-250-ai-access:
+    title: "Personalized Model and Agent Access"
+    description: "Model and agent access can now be assigned to specific users or groups, so different people can see the AI capabilities approved for their work."
+    summary: "Model and agent access can now be assigned to specific users or groups, so different people can see the AI capabilities approved for their work."
+    why: "This matters because teams can make powerful AI tools available to the right people without turning every model or agent on for everyone."
+    icon: "bi-person-check"
+    accent: "blue"
+    url: "/latest-release/release-250-ai-access/"
+    release_label: "0.250.001"
+    image: "/images/latest-release/release_250_ai_access.png"
+    image_alt: "Personalized Model and Agent Access screenshot placeholder"
+    images:
+      - path: "/images/latest-release/release_250_ai_access.png"
+        alt: "Personalized Model and Agent Access screenshot placeholder"
+        title: "Personalized Model and Agent Access"
+        caption: "Screenshot placeholder for Personalized Model and Agent Access."
+        label: "Approved Access"
+
+  release-250-tabular-analysis:
+    title: "Improved Tabular Analysis"
+    description: "Tabular analysis for CSV and Excel files can now page through larger results, preserve sheet context, use related document evidence, and create clearer chart or export outputs."
+    summary: "Tabular analysis for CSV and Excel files can now page through larger results, preserve sheet context, use related document evidence, and create clearer chart or export outputs."
+    why: "This matters because spreadsheet questions often need exact calculations, filtered rows, grouped results, and reusable exports rather than a short text summary."
+    icon: "bi-table"
+    accent: "blue"
+    url: "/latest-release/release-250-tabular-analysis/"
+    release_label: "0.250.001"
+    image: "/images/latest-release/release_250_tabular_analysis.png"
+    image_alt: "Improved Tabular Analysis screenshot placeholder"
+    images:
+      - path: "/images/latest-release/release_250_tabular_analysis.png"
+        alt: "Improved Tabular Analysis screenshot placeholder"
+        title: "Improved Tabular Analysis"
+        caption: "Screenshot placeholder for Improved Tabular Analysis."
+        label: "Tabular Analysis"
+
+  release-250-custom-pages:
+    title: "Custom Pages"
+    description: "Admins can publish trusted internal custom pages, giving users new in-app pages for local guidance, dashboards, forms, or lightweight tools."
+    summary: "Admins can publish trusted internal custom pages, giving users new in-app pages for local guidance, dashboards, forms, or lightweight tools."
+    why: "This matters because teams can tailor SimpleChat to local workflows without sending users to a separate unauthenticated site."
+    icon: "bi-window-plus"
+    accent: "blue"
+    url: "/latest-release/release-250-custom-pages/"
+    release_label: "0.250.001"
+    image: "/images/latest-release/release_250_custom_pages.png"
+    image_alt: "Custom Pages screenshot placeholder"
+    images:
+      - path: "/images/latest-release/release_250_custom_pages.png"
+        alt: "Custom Pages screenshot placeholder"
+        title: "Custom Pages"
+        caption: "Screenshot placeholder for Custom Pages."
+        label: "Custom Pages"
+
+  release-250-tableau-action:
+    title: "Tableau Action"
+    description: "Users with access can ask SimpleChat to discover Tableau projects, workbooks, views, datasources, and workbook details from approved Tableau environments."
+    summary: "Users with access can ask SimpleChat to discover Tableau projects, workbooks, views, datasources, and workbook details from approved Tableau environments."
+    why: "This matters because users can find and reason about Tableau assets without manually switching between systems for every lookup."
+    icon: "bi-bar-chart"
+    accent: "blue"
+    url: "/latest-release/release-250-tableau-action/"
+    release_label: "0.250.001"
+    image: "/images/latest-release/release_250_tableau_action.png"
+    image_alt: "Tableau Action screenshot placeholder"
+    images:
+      - path: "/images/latest-release/release_250_tableau_action.png"
+        alt: "Tableau Action screenshot placeholder"
+        title: "Tableau Action"
+        caption: "Screenshot placeholder for Tableau Action."
+        label: "Tableau"
+
+  release-250-workflows:
+    title: "Personal and Group Workflows"
+    description: "Users can create or run personal and group workflows for repeatable document analysis, File Sync refreshes, per-document runs, and generated Office outputs."
+    summary: "Users can create or run personal and group workflows for repeatable document analysis, File Sync refreshes, per-document runs, and generated Office outputs."
+    why: "This matters because repeatable document work can move from one-off chat prompts into reusable personal or shared group automation."
+    icon: "bi-diagram-3"
+    accent: "blue"
+    url: "/latest-release/release-250-workflows/"
+    release_label: "0.250.001"
+    image: "/images/latest-release/release_250_workflows.png"
+    image_alt: "Personal and Group Workflows screenshot placeholder"
+    images:
+      - path: "/images/latest-release/release_250_workflows.png"
+        alt: "Personal and Group Workflows screenshot placeholder"
+        title: "Personal and Group Workflows"
+        caption: "Screenshot placeholder for Personal and Group Workflows."
+        label: "Workflows"
+
+  release-250-voice-assisted-inputs:
+    title: "Voice-Assisted Form Inputs"
+    description: "Speech-to-text controls now appear in supported agent, group, public workspace, document metadata, tag, and instruction fields when speech input is enabled."
+    summary: "Speech-to-text controls now appear in supported agent, group, public workspace, document metadata, tag, and instruction fields when speech input is enabled."
+    why: "This matters because many setup and metadata fields are easier to draft by voice, especially longer agent instructions or document descriptions."
+    icon: "bi-mic"
+    accent: "blue"
+    url: "/latest-release/release-250-voice-assisted-inputs/"
+    release_label: "0.250.001"
+    image: "/images/latest-release/release_250_voice_assisted_inputs.png"
+    image_alt: "Voice-Assisted Form Inputs screenshot placeholder"
+    images:
+      - path: "/images/latest-release/release_250_voice_assisted_inputs.png"
+        alt: "Voice-Assisted Form Inputs screenshot placeholder"
+        title: "Voice-Assisted Form Inputs"
+        caption: "Screenshot placeholder for Voice-Assisted Form Inputs."
+        label: "Voice Inputs"
+
+  release-250-m365-actions:
+    title: "Microsoft 365 Actions"
+    description: "Microsoft Graph actions expand M365 support so approved users can work with mail, drafts, calendar details, and calendar invites from SimpleChat."
+    summary: "Microsoft Graph actions expand M365 support so approved users can work with mail, drafts, calendar details, and calendar invites from SimpleChat."
+    why: "This matters because common M365 tasks can become part of an agent-assisted workflow instead of requiring manual copying between apps."
+    icon: "bi-envelope-paper"
+    accent: "blue"
+    url: "/latest-release/release-250-m365-actions/"
+    release_label: "0.250.001"
+    image: "/images/latest-release/release_250_m365_actions.png"
+    image_alt: "Microsoft 365 Actions screenshot placeholder"
+    images:
+      - path: "/images/latest-release/release_250_m365_actions.png"
+        alt: "Microsoft 365 Actions screenshot placeholder"
+        title: "Microsoft 365 Actions"
+        caption: "Screenshot placeholder for Microsoft 365 Actions."
+        label: "M365 Actions"
+
+  release-250-chat-uploads:
+    title: "Workspace-Backed Chat Uploads and Paste Support"
+    description: "Chat uploads now behave more like workspace uploads, and users can paste or drag files and images directly into the chat input."
+    summary: "Chat uploads now behave more like workspace uploads, and users can paste or drag files and images directly into the chat input."
+    why: "This matters because users no longer need to decide whether chat or workspace upload is the right path before they start working with a file."
+    icon: "bi-paperclip"
+    accent: "blue"
+    url: "/latest-release/release-250-chat-uploads/"
+    release_label: "0.250.001"
+    image: "/images/latest-release/release_250_chat_uploads.png"
+    image_alt: "Workspace-Backed Chat Uploads and Paste Support screenshot placeholder"
+    images:
+      - path: "/images/latest-release/release_250_chat_uploads.png"
+        alt: "Workspace-Backed Chat Uploads and Paste Support screenshot placeholder"
+        title: "Workspace-Backed Chat Uploads and Paste Support"
+        caption: "Screenshot placeholder for Workspace-Backed Chat Uploads and Paste Support."
+        label: "Chat Uploads"
+
+  release-250-document-intelligence:
+    title: "Enhanced Document Intelligence"
+    description: "Enhanced extraction can capture richer PDF and image structure, including tables, layout, and selection marks, and users can reprocess eligible documents from workspaces."
+    summary: "Enhanced extraction can capture richer PDF and image structure, including tables, layout, and selection marks, and users can reprocess eligible documents from workspaces."
+    why: "This matters because some documents need more than plain text extraction to answer accurately, especially forms, tables, scanned PDFs, and image-heavy files."
+    icon: "bi-file-earmark-richtext"
+    accent: "blue"
+    url: "/latest-release/release-250-document-intelligence/"
+    release_label: "0.250.001"
+    image: "/images/latest-release/release_250_document_intelligence.png"
+    image_alt: "Enhanced Document Intelligence screenshot placeholder"
+    images:
+      - path: "/images/latest-release/release_250_document_intelligence.png"
+        alt: "Enhanced Document Intelligence screenshot placeholder"
+        title: "Enhanced Document Intelligence"
+        caption: "Screenshot placeholder for Enhanced Document Intelligence."
+        label: "Document Extraction"
+
+  release-250-file-sync:
+    title: "File Sync for SMB and Azure Files"
+    description: "File Sync can bring SMB share and Azure Files content into workspaces, with reusable identities and workflow triggers for automated refreshes."
+    summary: "File Sync can bring SMB share and Azure Files content into workspaces, with reusable identities and workflow triggers for automated refreshes."
+    why: "This matters because workspace documents can stay closer to authoritative file shares instead of depending on repeated manual uploads."
+    icon: "bi-arrow-repeat"
+    accent: "blue"
+    url: "/latest-release/release-250-file-sync/"
+    release_label: "0.250.001"
+    image: "/images/latest-release/release_250_file_sync.png"
+    image_alt: "File Sync for SMB and Azure Files screenshot placeholder"
+    images:
+      - path: "/images/latest-release/release_250_file_sync.png"
+        alt: "File Sync for SMB and Azure Files screenshot placeholder"
+        title: "File Sync for SMB and Azure Files"
+        caption: "Screenshot placeholder for File Sync for SMB and Azure Files."
+        label: "File Sync"
+
+  release-250-conversation-feed:
+    title: "Faster Conversation Lists"
+    description: "Conversation lists now load in pages, improving startup performance for users with large chat histories."
+    summary: "Conversation lists now load in pages, improving startup performance for users with large chat histories."
+    why: "This matters because large conversation histories should not slow down everyday chat startup."
+    icon: "bi-chat-left-text"
+    accent: "blue"
+    url: "/latest-release/release-250-conversation-feed/"
+    release_label: "0.250.001"
+    image: "/images/latest-release/release_250_conversation_feed.png"
+    image_alt: "Faster Conversation Lists screenshot placeholder"
+    images:
+      - path: "/images/latest-release/release_250_conversation_feed.png"
+        alt: "Faster Conversation Lists screenshot placeholder"
+        title: "Faster Conversation Lists"
+        caption: "Screenshot placeholder for Faster Conversation Lists."
+        label: "Conversation Feed"
+
+  release-250-group-file-sharing:
+    title: "Group File Sharing and Approvals"
+    description: "Users can share personal or group documents with groups, and receiving groups can approve shared files before they become searchable."
+    summary: "Users can share personal or group documents with groups, and receiving groups can approve shared files before they become searchable."
+    why: "This matters because collaboration often crosses workspace boundaries, but shared documents still need review and clear ownership."
+    icon: "bi-share"
+    accent: "blue"
+    url: "/latest-release/release-250-group-file-sharing/"
+    release_label: "0.250.001"
+    image: "/images/latest-release/release_250_group_file_sharing.png"
+    image_alt: "Group File Sharing and Approvals screenshot placeholder"
+    images:
+      - path: "/images/latest-release/release_250_group_file_sharing.png"
+        alt: "Group File Sharing and Approvals screenshot placeholder"
+        title: "Group File Sharing and Approvals"
+        caption: "Screenshot placeholder for Group File Sharing and Approvals."
+        label: "Group Sharing"
+
+  release-250-profile-stats:
+    title: "Profile, Stats, and Preferences"
+    description: "Profile now brings together stats, groups, public workspaces, feedback, safety items, preferences, and CSV exports in a clearer experience."
+    summary: "Profile now brings together stats, groups, public workspaces, feedback, safety items, preferences, and CSV exports in a clearer experience."
+    why: "This matters because users can understand their own activity and manage everyday preferences without needing an admin to change global settings."
+    icon: "bi-person-lines-fill"
+    accent: "blue"
+    url: "/latest-release/release-250-profile-stats/"
+    release_label: "0.250.001"
+    image: "/images/latest-release/release_250_profile_stats.png"
+    image_alt: "Profile, Stats, and Preferences screenshot placeholder"
+    images:
+      - path: "/images/latest-release/release_250_profile_stats.png"
+        alt: "Profile, Stats, and Preferences screenshot placeholder"
+        title: "Profile, Stats, and Preferences"
+        caption: "Screenshot placeholder for Profile, Stats, and Preferences."
+        label: "Profile"
+
+  release-250-databricks-action:
+    title: "Databricks Action"
+    description: "Users with access can use approved Databricks actions to run governed read-only SQL against Azure Commercial Databricks workspaces."
+    summary: "Users with access can use approved Databricks actions to run governed read-only SQL against Azure Commercial Databricks workspaces."
+    why: "This matters because analytics data can be queried from SimpleChat without giving every user direct database tooling."
+    icon: "bi-database"
+    accent: "blue"
+    url: "/latest-release/release-250-databricks-action/"
+    release_label: "0.250.001"
+    image: "/images/latest-release/release_250_databricks_action.png"
+    image_alt: "Databricks Action screenshot placeholder"
+    images:
+      - path: "/images/latest-release/release_250_databricks_action.png"
+        alt: "Databricks Action screenshot placeholder"
+        title: "Databricks Action"
+        caption: "Screenshot placeholder for Databricks Action."
+        label: "Databricks"
+
+  release-250-layered-masking:
+    title: "Layered Message Masking"
+    description: "Users can now apply multiple selected-text masks to the same message, including shared personal and group conversations."
+    summary: "Users can now apply multiple selected-text masks to the same message, including shared personal and group conversations."
+    why: "This matters because users can hide multiple sensitive ranges in a message without losing control over previous masks."
+    icon: "bi-mask"
+    accent: "blue"
+    url: "/latest-release/release-250-layered-masking/"
+    release_label: "0.250.001"
+    image: "/images/latest-release/release_250_layered_masking.png"
+    image_alt: "Layered Message Masking screenshot placeholder"
+    images:
+      - path: "/images/latest-release/release_250_layered_masking.png"
+        alt: "Layered Message Masking screenshot placeholder"
+        title: "Layered Message Masking"
+        caption: "Screenshot placeholder for Layered Message Masking."
+        label: "Message Masking"
+
+  release-250-visio-msg-ingestion:
+    title: "Visio and Outlook MSG File Support"
+    description: "Users can upload Visio `.vsdx` diagrams and Outlook `.msg` email files so more everyday work artifacts can become searchable knowledge."
+    summary: "Users can upload Visio `.vsdx` diagrams and Outlook `.msg` email files so more everyday work artifacts can become searchable knowledge."
+    why: "This matters because architecture diagrams, process diagrams, and email files often contain important context that should not be trapped outside workspace search."
+    icon: "bi-file-earmark-text"
+    accent: "blue"
+    url: "/latest-release/release-250-visio-msg-ingestion/"
+    release_label: "0.250.001"
+    image: "/images/latest-release/release_250_visio_msg_ingestion.png"
+    image_alt: "Visio and Outlook MSG File Support screenshot placeholder"
+    images:
+      - path: "/images/latest-release/release_250_visio_msg_ingestion.png"
+        alt: "Visio and Outlook MSG File Support screenshot placeholder"
+        title: "Visio and Outlook MSG File Support"
+        caption: "Screenshot placeholder for Visio and Outlook MSG File Support."
+        label: "Visio and MSG"
+
+  release-250-assigned-knowledge:
+    title: "Assigned Knowledge for Agents"
+    description: "Agents can be bound to specific workspace sources, documents, and tags so they answer from the knowledge selected for their role."
+    summary: "Agents can be bound to specific workspace sources, documents, and tags so they answer from the knowledge selected for their role."
+    why: "This matters because specialized agents can stay focused on the knowledge they were designed to use."
+    icon: "bi-diagram-2"
+    accent: "blue"
+    url: "/latest-release/release-250-assigned-knowledge/"
+    release_label: "0.250.001"
+    image: "/images/latest-release/release_250_assigned_knowledge.png"
+    image_alt: "Assigned Knowledge for Agents screenshot placeholder"
+    images:
+      - path: "/images/latest-release/release_250_assigned_knowledge.png"
+        alt: "Assigned Knowledge for Agents screenshot placeholder"
+        title: "Assigned Knowledge for Agents"
+        caption: "Screenshot placeholder for Assigned Knowledge for Agents."
+        label: "Assigned Knowledge"
+
+  release-250-deep-research:
+    title: "Deep Research and Source Review"
+    description: "Deep Research and Source Review can inspect web evidence more deeply with bounded traversal, source citation seeding, load-more support, and optional model-assisted link planning."
+    summary: "Deep Research and Source Review can inspect web evidence more deeply with bounded traversal, source citation seeding, load-more support, and optional model-assisted link planning."
+    why: "This matters because web-grounded answers are more useful when they are based on reviewed source pages instead of snippets alone."
+    icon: "bi-search-heart"
+    accent: "blue"
+    url: "/latest-release/release-250-deep-research/"
+    release_label: "0.250.001"
+    image: "/images/latest-release/release_250_deep_research.png"
+    image_alt: "Deep Research and Source Review screenshot placeholder"
+    images:
+      - path: "/images/latest-release/release_250_deep_research.png"
+        alt: "Deep Research and Source Review screenshot placeholder"
+        title: "Deep Research and Source Review"
+        caption: "Screenshot placeholder for Deep Research and Source Review."
+        label: "Deep Research"
+
+  release-250-url-access:
+    title: "URL Access in Chat"
+    description: "Users can paste URLs into Chat and have SimpleChat treat them as source links or plain text depending on the workflow and admin policy."
+    summary: "Users can paste URLs into Chat and have SimpleChat treat them as source links or plain text depending on the workflow and admin policy."
+    why: "This matters because links are a natural way to bring external context into a chat, but they need bounded, policy-aware handling."
+    icon: "bi-link-45deg"
+    accent: "blue"
+    url: "/latest-release/release-250-url-access/"
+    release_label: "0.250.001"
+    image: "/images/latest-release/release_250_url_access.png"
+    image_alt: "URL Access in Chat screenshot placeholder"
+    images:
+      - path: "/images/latest-release/release_250_url_access.png"
+        alt: "URL Access in Chat screenshot placeholder"
+        title: "URL Access in Chat"
+        caption: "Screenshot placeholder for URL Access in Chat."
+        label: "URL Access"
+
+  release-250-source-continuity:
+    title: "Conversation Source Continuity"
+    description: "Chat can now reuse document and citation context from earlier turns, reducing the need to reselect the same documents throughout a conversation."
+    summary: "Chat can now reuse document and citation context from earlier turns, reducing the need to reselect the same documents throughout a conversation."
+    why: "This matters because multi-turn document conversations should remember the source trail you already built instead of making you start over every prompt."
+    icon: "bi-journal-text"
+    accent: "blue"
+    url: "/latest-release/release-250-source-continuity/"
+    release_label: "0.250.001"
+    image: "/images/latest-release/release_250_source_continuity.png"
+    image_alt: "Conversation Source Continuity screenshot placeholder"
+    images:
+      - path: "/images/latest-release/release_250_source_continuity.png"
+        alt: "Conversation Source Continuity screenshot placeholder"
+        title: "Conversation Source Continuity"
+        caption: "Screenshot placeholder for Conversation Source Continuity."
+        label: "Source Continuity"
+
+  release-250-generated-documents:
+    title: "Generated Markdown, Word, and PowerPoint Files"
+    description: "Agents and workflows can now create reusable Markdown, Word, and PowerPoint outputs that users can inspect, download, or promote into workspaces."
+    summary: "Agents and workflows can now create reusable Markdown, Word, and PowerPoint outputs that users can inspect, download, or promote into workspaces."
+    why: "This matters because important results should become durable files when users need reports, decks, summaries, or workspace knowledge."
+    icon: "bi-file-earmark-arrow-up"
+    accent: "blue"
+    url: "/latest-release/release-250-generated-documents/"
+    release_label: "0.250.001"
+    image: "/images/latest-release/release_250_generated_documents.png"
+    image_alt: "Generated Markdown, Word, and PowerPoint Files screenshot placeholder"
+    images:
+      - path: "/images/latest-release/release_250_generated_documents.png"
+        alt: "Generated Markdown, Word, and PowerPoint Files screenshot placeholder"
+        title: "Generated Markdown, Word, and PowerPoint Files"
+        caption: "Screenshot placeholder for Generated Markdown, Word, and PowerPoint Files."
+        label: "Generated Files"
+
+  release-250-workspace-views:
+    title: "Workspace Cards and Folder Views"
+    description: "Workspace documents can now be browsed in list, card, folder, and folder-plus-card views with improved multi-select and action behavior."
+    summary: "Workspace documents can now be browsed in list, card, folder, and folder-plus-card views with improved multi-select and action behavior."
+    why: "This matters because large workspaces are easier to navigate when users can choose the browsing mode that fits the task."
+    icon: "bi-grid-3x3-gap"
+    accent: "blue"
+    url: "/latest-release/release-250-workspace-views/"
+    release_label: "0.250.001"
+    image: "/images/latest-release/release_250_workspace_views.png"
+    image_alt: "Workspace Cards and Folder Views screenshot placeholder"
+    images:
+      - path: "/images/latest-release/release_250_workspace_views.png"
+        alt: "Workspace Cards and Folder Views screenshot placeholder"
+        title: "Workspace Cards and Folder Views"
+        caption: "Screenshot placeholder for Workspace Cards and Folder Views."
+        label: "Workspace Views"
+
+  release-250-follow-up-actions:
+    title: "Assistant Follow-Up Actions"
+    description: "Assistant responses can now show suggested next-step buttons that stage the prompt and start a cancelable send countdown."
+    summary: "Assistant responses can now show suggested next-step buttons that stage the prompt and start a cancelable send countdown."
+    why: "This matters because useful assistant suggestions become one-click follow-up actions while users stay in control before sending."
+    icon: "bi-arrow-right-circle"
+    accent: "blue"
+    url: "/latest-release/release-250-follow-up-actions/"
+    release_label: "0.250.001"
+    image: "/images/latest-release/release_250_follow_up_actions.png"
+    image_alt: "Assistant Follow-Up Actions screenshot placeholder"
+    images:
+      - path: "/images/latest-release/release_250_follow_up_actions.png"
+        alt: "Assistant Follow-Up Actions screenshot placeholder"
+        title: "Assistant Follow-Up Actions"
+        caption: "Screenshot placeholder for Assistant Follow-Up Actions."
+        label: "Follow-Up Actions"
+
+  release-250-model-agent-avatars:
+    title: "Model and Agent Avatars"
+    description: "Model endpoint icons and uploaded model images now make model-only responses easier to recognize, while agent avatars remain prioritized for agent replies."
+    summary: "Model endpoint icons and uploaded model images now make model-only responses easier to recognize, while agent avatars remain prioritized for agent replies."
+    why: "This matters because visual identity helps users understand whether a response came from a selected model or an agent."
+    icon: "bi-person-square"
+    accent: "blue"
+    url: "/latest-release/release-250-model-agent-avatars/"
+    release_label: "0.250.001"
+    image: "/images/latest-release/release_250_model_agent_avatars.png"
+    image_alt: "Model and Agent Avatars screenshot placeholder"
+    images:
+      - path: "/images/latest-release/release_250_model_agent_avatars.png"
+        alt: "Model and Agent Avatars screenshot placeholder"
+        title: "Model and Agent Avatars"
+        caption: "Screenshot placeholder for Model and Agent Avatars."
+        label: "Avatars"
   document-intelligence:
     title: "Document Intelligence Auto Mode"
     description: "How Read, Layout, and Auto extraction help PDF and image uploads balance speed with richer structure"

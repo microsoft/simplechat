@@ -22,7 +22,8 @@ We have a Community Call every 6 weeks, please register here to receive the meet
 
 
 Previous Recordings
-- Feb 5th, 2026 - [Recording URL](https://www.youtube.com/watch?v=X12waLe1TKM)
+- Dec 11th, 2025 - [Recording URL](https://www.youtube.com/watch?v=X12waLe1TKM)
+- Feb 5th, 2026 - [Recording URL](https://www.youtube.com/watch?v=WOeWTzeXMFU)
 - Mar 19th, 2026 - [Recording URL](https://www.youtube.com/watch?v=EpIVCwGXh1E)
 - April 30th, 2026 - [Recording URL](https://www.youtube.com/watch?v=A2QiGNa6pwM)
 - June 11th, 2026 - [Recording URL](https://www.youtube.com/watch?v=gBcm8g4i3rs)

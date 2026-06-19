@@ -38,6 +38,19 @@ resource openAIenterpriseAppUserRole 'Microsoft.Authorization/roleAssignments@20
   }
 }
 
+resource openAIenterpriseAppCognitiveServicesUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(enterpriseAppServicePrincipalId)) {
+  scope: openAiService
+  name: guid(openAiService.id, enterpriseAppServicePrincipalId, 'enterpriseApp-CognitiveServicesUserRole')
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      'a97b65f3-24c7-4388-baec-2e87135dc908'
+    )
+    principalId: enterpriseAppServicePrincipalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 resource videoIndexerStorageCogServicesContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (videoIndexerName != '' && !empty(videoIndexerPrincipalId) && videoIndexerSupportsOpenAiIntegration) {
   name: guid(openAiService.id, videoIndexerPrincipalId, 'video-indexer-cog-services-contributor')
   scope: openAiService

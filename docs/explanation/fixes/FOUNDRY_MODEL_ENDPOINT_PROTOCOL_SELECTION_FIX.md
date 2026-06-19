@@ -30,7 +30,7 @@ Code changes summary:
 - Routed Claude deployments and `/anthropic/` endpoints through an Anthropic messages adapter that preserves the existing `chat.completions.create` call shape.
 - Routed endpoint-bound Semantic Kernel agents through protocol-aware chat services, including an Anthropic service for Claude-backed local agents.
 - Normalized New Foundry Project endpoints to `/openai/v1` for OpenAI-compatible models and to `/anthropic/v1/messages` for Claude deployments.
-- Ignored legacy dated Azure API versions for OpenAI-compatible `/openai/v1` requests unless the user selects `preview` or `latest`.
+- Preserved OpenAI-compatible `/openai/v1` endpoint behavior by omitting the `api-version` query for this normalized inference path. A later 0.250.003 follow-up confirmed that Foundry project `/v1` model endpoints reject `api-version`, including dated preview values.
 - Updated the endpoint modal to use API-version dropdowns with Custom fields, rename Foundry endpoint input copy to Project Endpoint, and derive the project name from `/api/projects/<project>` URLs.
 - Updated endpoint edit validation so blank API key and client secret fields can reuse stored secrets when the existing endpoint indicates the secret is already saved.
 

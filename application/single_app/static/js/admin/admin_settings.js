@@ -2906,7 +2906,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         event.preventDefault();
-        openAdminSettingsTab(trigger.getAttribute('data-open-admin-tab'));
+        openAdminSettingsTab(
+            trigger.getAttribute('data-open-admin-tab'),
+            trigger.getAttribute('data-open-admin-section') || ''
+        );
     });
 
     window.addEventListener("popstate", activateTabFromHash);
@@ -8455,7 +8458,7 @@ function setupLatestFeatureImageModal() {
     });
 }
 
-function openAdminSettingsTab(targetHash) {
+function openAdminSettingsTab(targetHash, sectionId = '') {
     if (!targetHash) {
         return;
     }
@@ -8463,6 +8466,12 @@ function openAdminSettingsTab(targetHash) {
     const normalizedHash = targetHash.startsWith('#') ? targetHash : `#${targetHash}`;
     history.pushState(null, null, normalizedHash);
     activateTabFromHash();
+
+    if (sectionId) {
+        setTimeout(() => {
+            document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 150);
+    }
 }
 
 window.openAdminSettingsTab = openAdminSettingsTab;

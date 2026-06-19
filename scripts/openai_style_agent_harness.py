@@ -301,16 +301,6 @@ def resolve_openai_style_api_key(auth_settings: Dict[str, Any], base_url: str) -
 
 
 def resolve_openai_style_request_api_version(raw_api_version: str) -> str:
-    normalized_api_version = str(raw_api_version or "").strip().lower()
-    if normalized_api_version in ("", "v1"):
-        return ""
-    if normalized_api_version in ("preview", "latest"):
-        return normalized_api_version
-
-    logging.info(
-        "Ignoring legacy Azure API version for OpenAI-style /openai/v1/ requests: %s",
-        raw_api_version,
-    )
     return ""
 
 

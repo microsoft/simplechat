@@ -61,6 +61,7 @@ export function getTypeIcon(type) {
     if (t.includes("msgraph")) return "bi-microsoft";
     if (t.includes("azure_maps") || t.includes("openlayers")) return "bi-geo-alt";
     if (t.includes("databricks")) return "bi-bricks";
+    if (t.includes("snowflake")) return "bi-snow2";
     if (t.includes("tableau")) return "bi-bar-chart";
     if (t.includes("http") || t.includes("smart_http")) return "bi-cloud-arrow-up";
     if (t.includes("azure_function")) return "bi-lightning";

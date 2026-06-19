@@ -8,6 +8,7 @@ from functions_authentication import *
 from functions_settings import *
 from enum import Enum
 import app_settings_cache
+from functions_snowflake_operations import SNOWFLAKE_PLUGIN_TYPE, SNOWFLAKE_SENSITIVE_ADDITIONAL_FIELDS
 
 try:
     from azure.identity import DefaultAzureCredential
@@ -232,6 +233,20 @@ def _is_sql_sensitive_additional_field(plugin_dict, field_name):
     return _is_sql_plugin(plugin_dict) and field_name in SQL_PLUGIN_SENSITIVE_ADDITIONAL_FIELDS
 
 
+def _is_snowflake_plugin(plugin_dict):
+    """Return True when the plugin manifest is a Snowflake action."""
+    plugin_type = (plugin_dict or {}).get("type", "")
+    return isinstance(plugin_type, str) and plugin_type.lower() == SNOWFLAKE_PLUGIN_TYPE
+
+
+def _is_sensitive_plugin_additional_field(plugin_dict, field_name):
+    """Return True when an action additional field should be treated as a secret."""
+    return (
+        _is_sql_sensitive_additional_field(plugin_dict, field_name)
+        or (_is_snowflake_plugin(plugin_dict) and field_name in SNOWFLAKE_SENSITIVE_ADDITIONAL_FIELDS)
+    )
+
+
 def _store_plugin_secret_reference(updated_plugin, existing_plugin, path, secret_name, scope_value, source, scope):
     """Store or preserve a plugin secret reference for the provided nested path."""
     value = _get_nested_dict_value(updated_plugin, path)
@@ -387,7 +402,7 @@ def redact_plugin_secret_values(plugin_dict, redaction_value=REDACTED_SECRET_VAL
         for key, value in additional_fields.items():
             if not value:
                 continue
-            if key.endswith("__Secret") or _is_sql_sensitive_additional_field(redacted, key):
+            if key.endswith("__Secret") or _is_sensitive_plugin_additional_field(redacted, key):
                 new_additional_fields[key] = redaction_value
         redacted["additionalFields"] = new_additional_fields
 
@@ -800,7 +815,7 @@ def keyvault_plugin_save_helper(plugin_dict, scope_value, scope="global", existi
                 except Exception as e:
                     log_event(f"Failed to store plugin additionalField secret '{k}' in Key Vault: {e}", level=logging.ERROR, exceptionTraceback=True)
                     raise Exception(f"Failed to store plugin additionalField secret '{k}' in Key Vault: {e}")
-            elif _is_sql_sensitive_additional_field(updated, k):
+            elif _is_sensitive_plugin_additional_field(updated, k):
                 addset_source = 'action-addset'
                 akv_key = _build_plugin_additional_field_secret_name(plugin_name, k)
                 try:
@@ -815,11 +830,11 @@ def keyvault_plugin_save_helper(plugin_dict, scope_value, scope="global", existi
                     )
                 except Exception as e:
                     log_event(
-                        f"Failed to store SQL plugin additionalField secret '{k}' in Key Vault: {e}",
+                        f"Failed to store plugin additionalField secret '{k}' in Key Vault: {e}",
                         level=logging.ERROR,
                         exceptionTraceback=True,
                     )
-                    raise Exception(f"Failed to store SQL plugin additionalField secret '{k}' in Key Vault: {e}")
+                    raise Exception(f"Failed to store plugin additionalField secret '{k}' in Key Vault: {e}")
     return updated
 # Helper to retrieve plugin secrets from Key Vault
 def keyvault_plugin_get_helper(plugin_dict, scope_value, scope="global", return_type=SecretReturnType.TRIGGER):
@@ -877,7 +892,7 @@ def keyvault_plugin_get_helper(plugin_dict, scope_value, scope="global", return_
     if isinstance(additional_fields, dict):
         new_additional_fields = dict(additional_fields)
         for k, v in additional_fields.items():
-            if (k.endswith('__Secret') or _is_sql_sensitive_additional_field(updated, k)) and v and validate_secret_name_dynamic(v):
+            if (k.endswith('__Secret') or _is_sensitive_plugin_additional_field(updated, k)) and v and validate_secret_name_dynamic(v):
                 try:
                     is_expected_reference = secret_reference_matches_context(
                         v,
@@ -1116,7 +1131,7 @@ def keyvault_plugin_delete_helper(plugin_dict, scope_value, scope="global"):
     additional_fields = plugin_dict.get('additionalFields', {})
     if isinstance(additional_fields, dict):
         for k, v in additional_fields.items():
-            if (k.endswith('__Secret') or _is_sql_sensitive_additional_field(plugin_dict, k)) and v and validate_secret_name_dynamic(v):
+            if (k.endswith('__Secret') or _is_sensitive_plugin_additional_field(plugin_dict, k)) and v and validate_secret_name_dynamic(v):
                 if not secret_reference_matches_context(
                     v,
                     scope_value=scope_value,

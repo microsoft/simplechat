@@ -21,6 +21,7 @@
                             <li><strong>Azure OpenAI</strong>: assign <code>Reader</code> plus <code>Cognitive Services OpenAI User</code> on the Azure OpenAI resource when using managed identity or service principal model discovery.</li>
                             <li><strong>Foundry (classic)</strong>: assign <code>Foundry User</code>, or <code>Azure AI User</code> where older role names still appear, on the target Foundry project or backing resource.</li>
                             <li><strong>New Foundry</strong>: use the same Foundry project access as classic Foundry, then select the New Foundry provider and the project endpoint in this modal.</li>
+                            <li><strong>Provider setup</strong>: for Foundry project model endpoints, keep OpenAI API Version at endpoint default <code>v1</code>. Use separate endpoints when Grok, Meta/Llama, DeepSeek, OpenAI-compatible, or other model families need different project settings, auth, or manual deployment rows.</li>
                             <li><strong>API Key</strong>: use for inference-only endpoints or APIM paths. Model and Foundry project discovery requires managed identity or service principal RBAC.</li>
                         </ul>
                     </div>
@@ -70,7 +71,7 @@
                             <option value="custom">Custom</option>
                         </select>
                         <input type="text" class="form-control mt-2 d-none" id="model-endpoint-openai-api-version-custom" placeholder="Enter OpenAI API version" />
-                        <div class="form-text">For New Foundry model inference, Endpoint default (v1) is used for OpenAI-compatible models. Claude deployments are detected from the model name and use the Anthropic messages protocol.</div>
+                        <div class="form-text">For Foundry project endpoints, Project API Version controls discovery and usually stays v1. OpenAI API Version controls the normalized /openai/v1 inference client and should stay Endpoint default (v1); the /v1 path does not allow an api-version query. Split model families into separate endpoints when they need different project settings or auth. Claude deployments are detected from the model name and use the Anthropic messages protocol.</div>
                     </div>
                     <div class="col-md-6" id="model-endpoint-project-group">
                         <label for="model-endpoint-project-name" class="form-label">Foundry Project Name</label>
@@ -143,7 +144,7 @@
 
                 <div id="model-endpoint-api-key-note" class="alert alert-info mt-3 d-none">
                     <i class="bi bi-info-circle me-2"></i>
-                    API key authentication is for inference only. Use a managed identity or service principal for model discovery.
+                    API key authentication is for inference only. Use a managed identity or service principal for model discovery, or use Add Model and enter the deployment name manually exactly as it appears in Foundry.
                 </div>
 
                 <div class="d-flex gap-2 mt-4">
@@ -203,7 +204,7 @@
                             <tr>
                                 <td><strong>New Foundry</strong></td>
                                 <td>Application-based Foundry runtime, New Foundry agents, and project model deployments.</td>
-                                <td>Use the New Foundry project endpoint and keep <strong>OpenAI API Version</strong> at endpoint default <code>v1</code> unless the deployment requires another supported version.</td>
+                                <td>Use the New Foundry project endpoint. Set <strong>Project API Version</strong> for discovery, usually <code>v1</code>, and keep <strong>OpenAI API Version</strong> at endpoint default <code>v1</code> for the normalized <code>/openai/v1</code> inference path.</td>
                             </tr>
                         </tbody>
                     </table>
@@ -246,6 +247,7 @@
                     <li>Choose <strong>Managed Identity</strong> or <strong>Service Principal</strong>, then fill the visible identity fields.</li>
                     <li>For Azure OpenAI discovery, enter subscription ID and resource group.</li>
                     <li>For Foundry providers, enter the project endpoint and project name when the endpoint does not include it.</li>
+                    <li>Keep Foundry <strong>Project API Version</strong> separate from <strong>OpenAI API Version</strong>. Create separate endpoints when model families require different inference API versions.</li>
                     <li>Use <strong>Fetch Models</strong> and <strong>Test Model</strong> before saving the endpoint.</li>
                 </ol>
             </div>

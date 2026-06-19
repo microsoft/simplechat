@@ -28,6 +28,7 @@ from swagger_wrapper import swagger_route, get_auth_security
 from datetime import datetime, timedelta, timezone
 from admin_settings_int_utils import safe_int_with_source
 from support_menu_config import (
+    get_admin_latest_feature_release_groups_for_settings,
     get_support_latest_feature_catalog,
     get_support_latest_feature_release_groups,
     get_support_latest_feature_release_groups_for_settings,
@@ -547,6 +548,7 @@ def register_route_frontend_admin_settings(app):
                 support_latest_feature_catalog=get_support_latest_feature_catalog(),
                 support_latest_feature_release_groups=get_support_latest_feature_release_groups(),
                 support_latest_feature_release_groups_preview=get_support_latest_feature_release_groups_for_settings(settings),
+                admin_latest_feature_release_groups=get_admin_latest_feature_release_groups_for_settings(settings),
                 chunk_size_defaults=get_chunk_size_defaults(),
                 chunk_size_settings=settings.get('chunk_size', {}),
                 chunk_size_cap=get_chunk_size_cap(settings),
