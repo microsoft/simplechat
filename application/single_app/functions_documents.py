@@ -5740,7 +5740,7 @@ def process_doc(document_id, user_id, temp_file_path, original_filename, enable_
 
     return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
-def process_msg(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
+def process_msg(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None, auto_extract_metadata=True):
     """Processes Outlook .msg files into searchable plain-text chunks."""
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
@@ -5749,7 +5749,8 @@ def process_msg(document_id, user_id, temp_file_path, original_filename, enable_
     total_chunks_saved = 0
     total_embedding_tokens = 0
     embedding_model_name = None
-    chunk_config = get_chunk_size_config(get_settings())
+    settings = get_settings()
+    chunk_config = get_chunk_size_config(settings)
     target_words_per_chunk = max(1, int(chunk_config.get('msg', {}).get('value', 400)))
 
     if enable_enhanced_citations:
@@ -5816,6 +5817,18 @@ def process_msg(document_id, user_id, temp_file_path, original_filename, enable_
 
     except Exception as e:
         raise Exception(f"Failed processing Outlook MSG file {original_filename}: {e}")
+
+    enable_extract_meta_data = settings.get('enable_extract_meta_data', False)
+    if auto_extract_metadata and enable_extract_meta_data and total_chunks_saved > 0:
+        _run_final_metadata_extraction(
+            document_id,
+            user_id,
+            total_chunks_saved,
+            enable_extract_meta_data,
+            update_callback,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id
+        )
 
     return total_chunks_saved, total_embedding_tokens, embedding_model_name
 

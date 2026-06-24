@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 from semantic_kernel.functions import kernel_function
 from semantic_kernel.functions.kernel_plugin import KernelPlugin
 
+from functions_debug import debug_print
 from functions_mcp_operations import (
     MCP_PLUGIN_TYPE,
     normalize_mcp_additional_fields,
@@ -158,20 +159,36 @@ class McpPlugin(BasePlugin):
     async def invoke_tool(self, tool_name: str, arguments: Optional[dict] = None) -> dict:
         """Invoke an MCP tool through the factory's native MCP connector."""
         try:
+            debug_print(
+                f"[McpPlugin] Invoking MCP tool tool_name={tool_name} "
+                f"transport={self._additional_fields.get('transport')} "
+                f"endpoint_present={bool(str(self.manifest.get('endpoint') or '').strip())} "
+                f"argument_keys={sorted((arguments or {}).keys())}"
+            )
             from semantic_kernel_plugins.mcp_plugin_factory import McpPluginFactory
 
-            return await McpPluginFactory.call_tool_from_config(
+            result = await McpPluginFactory.call_tool_from_config(
                 self.manifest,
                 tool_name,
                 arguments or {},
             )
+            debug_print(
+                f"[McpPlugin] MCP tool completed tool_name={tool_name} "
+                f"success={result.get('success') if isinstance(result, dict) else '<unknown>'}"
+            )
+            return result
         except ValueError as exc:
+            debug_print(f"[McpPlugin] MCP tool validation failed tool_name={tool_name} message={exc}")
             return {
                 "success": False,
                 "error": str(exc),
                 "error_type": "validation",
             }
         except Exception as exc:
+            debug_print(
+                f"[McpPlugin] MCP tool call failed tool_name={tool_name} "
+                f"exception_type={type(exc).__name__} message={exc}"
+            )
             return {
                 "success": False,
                 "error": f"Failed to call MCP tool '{tool_name}'.",

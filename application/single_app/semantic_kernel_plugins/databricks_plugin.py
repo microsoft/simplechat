@@ -14,6 +14,7 @@ from requests import RequestException
 from semantic_kernel.functions import kernel_function
 
 from functions_appinsights import log_event
+from functions_debug import debug_print
 from functions_databricks_operations import (
     DATABRICKS_ALLOWED_READ_STATEMENTS,
     DATABRICKS_AZURE_COMMERCIAL_TOKEN_SCOPE,
@@ -164,6 +165,10 @@ class DatabricksPlugin(BasePlugin):
                 raise ValueError("Databricks service principal auth requires auth.identity, auth.key, and auth.tenantId.")
 
     def _get_access_token(self) -> str:
+        debug_print(
+            f"[DatabricksPlugin] Resolving access token auth_type={self.auth_type} "
+            f"endpoint={self.endpoint} warehouse_id_present={bool(self.warehouse_id)}"
+        )
         if self.auth_type == "key":
             return str(self._auth.get("key") or "")
         if self.auth_type == "servicePrincipal":
@@ -254,11 +259,20 @@ class DatabricksPlugin(BasePlugin):
         if self.schema:
             payload["schema"] = self.schema
 
+        debug_print(
+            f"[DatabricksPlugin] Submitting statement endpoint={self.endpoint} "
+            f"warehouse_id_present={bool(self.warehouse_id)} first_word={self._first_word(statement) if hasattr(self, '_first_word') else ''} "
+            f"statement_length={len(statement)} timeout={self.timeout} wait_timeout={self.wait_timeout}"
+        )
         response = requests.post(
             self._statement_url(),
             headers=self._headers(),
             json=payload,
             timeout=self.timeout,
+        )
+        debug_print(
+            f"[DatabricksPlugin] Statement submit response status={response.status_code} "
+            f"url={self._statement_url()}"
         )
         response.raise_for_status()
         return self._wait_for_statement(response.json())
@@ -274,10 +288,18 @@ class DatabricksPlugin(BasePlugin):
         current_response = statement_response
         while time.time() < deadline:
             time.sleep(1)
+            debug_print(
+                f"[DatabricksPlugin] Polling statement status statement_id={statement_id} "
+                f"current_state={state} timeout={self.timeout}"
+            )
             response = requests.get(
                 self._statement_url(statement_id),
                 headers=self._headers(),
                 timeout=self.timeout,
+            )
+            debug_print(
+                f"[DatabricksPlugin] Statement poll response status={response.status_code} "
+                f"statement_id={statement_id}"
             )
             response.raise_for_status()
             current_response = response.json()
@@ -335,8 +357,19 @@ class DatabricksPlugin(BasePlugin):
         statement = self._apply_result_limit(query)
         try:
             statement_response = self._submit_statement(statement)
-            return self._normalize_statement_response(statement_response, statement)
+            result = self._normalize_statement_response(statement_response, statement)
+            debug_print(
+                f"[DatabricksPlugin] Statement execution completed success={result.get('success')} "
+                f"status={result.get('status')} statement_id={result.get('statement_id')} "
+                f"row_count={result.get('row_count')}"
+            )
+            return result
         except RequestException as exc:
+            response = getattr(exc, "response", None)
+            debug_print(
+                f"[DatabricksPlugin] Databricks request failed endpoint={self.endpoint} "
+                f"status={getattr(response, 'status_code', None)} exception_type={type(exc).__name__} message={exc}"
+            )
             log_event(
                 f"[DatabricksPlugin] Databricks request failed: {exc}",
                 extra={"endpoint": self.endpoint, "plugin_name": self.manifest.get("name")},
@@ -345,6 +378,10 @@ class DatabricksPlugin(BasePlugin):
             )
             return self._error_response("Databricks request failed.", error_type="request", query=statement)
         except Exception as exc:
+            debug_print(
+                f"[DatabricksPlugin] Databricks statement execution failed endpoint={self.endpoint} "
+                f"exception_type={type(exc).__name__} message={exc}"
+            )
             log_event(
                 f"[DatabricksPlugin] Databricks statement execution failed: {exc}",
                 extra={"endpoint": self.endpoint, "plugin_name": self.manifest.get("name")},

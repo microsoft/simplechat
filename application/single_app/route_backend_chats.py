@@ -1993,6 +1993,40 @@ def _has_chat_agent_selection(agent_selection):
     return bool(_get_chat_agent_selection_name(agent_selection))
 
 
+def _is_explicit_external_retrieval_requested(
+    web_search_enabled=False,
+    url_access_enabled=False,
+    source_review_enabled=False,
+    deep_research_enabled=False,
+):
+    """Return true when the current turn explicitly targets non-workspace retrieval."""
+    return bool(
+        web_search_enabled
+        or url_access_enabled
+        or source_review_enabled
+        or deep_research_enabled
+    )
+
+
+def _should_auto_merge_chat_upload_workspace_context(
+    explicit_external_retrieval_requested,
+    hybrid_search_enabled,
+    assigned_knowledge_filters=None,
+    assigned_knowledge_user_context_active=False,
+):
+    """Avoid auto-linking chat uploads into explicit Web, URL Access, or Deep Research turns."""
+    if not explicit_external_retrieval_requested:
+        return True
+    if hybrid_search_enabled:
+        return True
+    if assigned_knowledge_user_context_active:
+        return True
+    return bool(
+        assigned_knowledge_filters
+        and assigned_knowledge_filters.get('has_workspace_knowledge')
+    )
+
+
 def _build_agent_selection_metadata(agent_info, assigned_knowledge_filters=None):
     """Build trusted conversation metadata for a selected chat agent."""
     if not agent_info:
@@ -12663,6 +12697,12 @@ def register_route_backend_chats(app):
             deep_research_requested = bool(source_review_enabled) or bool(deep_research_enabled)
             deep_research_enabled = source_review_allowed_for_user and deep_research_requested
             source_review_enabled = bool(deep_research_enabled or url_access_enabled)
+            explicit_external_retrieval_requested = _is_explicit_external_retrieval_requested(
+                web_search_enabled=web_search_enabled,
+                url_access_enabled=url_access_enabled,
+                source_review_enabled=source_review_enabled,
+                deep_research_enabled=deep_research_enabled,
+            )
 
             history_grounded_search_used = False
             history_only_answerability = None
@@ -12744,6 +12784,13 @@ def register_route_backend_chats(app):
                         deep_research_enabled = True
                 g.assigned_knowledge_context = assigned_knowledge_filters
                 g.assigned_knowledge_user_context_active = assigned_knowledge_user_context_active
+
+            explicit_external_retrieval_requested = _is_explicit_external_retrieval_requested(
+                web_search_enabled=web_search_enabled,
+                url_access_enabled=url_access_enabled,
+                source_review_enabled=source_review_enabled,
+                deep_research_enabled=deep_research_enabled,
+            )
 
             original_hybrid_search_enabled = bool(hybrid_search_enabled)
 
@@ -12908,15 +12955,29 @@ def register_route_backend_chats(app):
             _set_authorized_chat_request_context(user_id, conversation_id, scope_context)
 
             auto_linked_chat_upload_document_ids = []
-            chat_upload_context = _resolve_chat_upload_workspace_context(
-                user_id=user_id,
-                conversation_id=conversation_id,
-                effective_document_scope=effective_document_scope,
-                effective_selected_document_ids=effective_selected_document_ids,
+            auto_merge_chat_upload_workspace_context = _should_auto_merge_chat_upload_workspace_context(
+                explicit_external_retrieval_requested,
+                hybrid_search_enabled,
                 assigned_knowledge_filters=assigned_knowledge_filters,
                 assigned_knowledge_user_context_active=assigned_knowledge_user_context_active,
-                candidate_document_ids=data.get('conversation_task_document_ids'),
             )
+            if auto_merge_chat_upload_workspace_context:
+                chat_upload_context = _resolve_chat_upload_workspace_context(
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    effective_document_scope=effective_document_scope,
+                    effective_selected_document_ids=effective_selected_document_ids,
+                    assigned_knowledge_filters=assigned_knowledge_filters,
+                    assigned_knowledge_user_context_active=assigned_knowledge_user_context_active,
+                    candidate_document_ids=data.get('conversation_task_document_ids'),
+                )
+            else:
+                chat_upload_context = {
+                    'effective_document_scope': effective_document_scope,
+                    'effective_selected_document_ids': list(effective_selected_document_ids or []),
+                    'auto_linked_chat_upload_document_ids': [],
+                    'task_resolution': {},
+                }
             task_resolution = chat_upload_context.get('task_resolution') or {}
             if task_resolution.get('blocked') and task_resolution.get('linked_count'):
                 return jsonify({'error': 'This agent does not allow uploaded task documents for search.'}), 403
@@ -13410,7 +13471,7 @@ def register_route_backend_chats(app):
                 except Exception as ex:
                     debug_print(f"[Content Safety] Unexpected error: {ex}")
 
-            if not original_hybrid_search_enabled:
+            if not original_hybrid_search_enabled and not explicit_external_retrieval_requested:
                 prior_grounded_document_refs = _normalize_prior_grounded_document_refs(conversation_item)
                 if prior_grounded_document_refs:
                     thought_tracker.add_thought(
@@ -14530,6 +14591,7 @@ def register_route_backend_chats(app):
                     gpt_model=gpt_model,
                     user_message_id=user_message_id,
                     fallback_user_message=user_message,
+                    include_assistant_citation_context=not explicit_external_retrieval_requested,
                 )
                 summary_of_older = history_segments['summary_of_older']
                 chat_tabular_files = history_segments['chat_tabular_files']
@@ -14768,6 +14830,7 @@ def register_route_backend_chats(app):
             if should_apply_history_grounding_message(
                 original_hybrid_search_enabled,
                 prior_grounded_document_refs,
+                explicit_external_retrieval_requested,
             ):
                 history_grounding_message = build_history_grounding_system_message()
                 insert_idx = 0
@@ -16280,6 +16343,12 @@ def register_route_backend_chats(app):
                 deep_research_requested = bool(source_review_enabled) or bool(deep_research_enabled)
                 deep_research_enabled = source_review_allowed_for_user and deep_research_requested
                 source_review_enabled = bool(deep_research_enabled or url_access_enabled)
+                explicit_external_retrieval_requested = _is_explicit_external_retrieval_requested(
+                    web_search_enabled=web_search_enabled,
+                    url_access_enabled=url_access_enabled,
+                    source_review_enabled=source_review_enabled,
+                    deep_research_enabled=deep_research_enabled,
+                )
                 original_hybrid_search_enabled = bool(hybrid_search_enabled)
                 history_grounded_search_used = False
                 history_only_answerability = None
@@ -16367,6 +16436,12 @@ def register_route_backend_chats(app):
                         f"public_workspaces={len(effective_active_public_workspace_ids)} | "
                         f"tags={len(tags_filter)}"
                     )
+                explicit_external_retrieval_requested = _is_explicit_external_retrieval_requested(
+                    web_search_enabled=web_search_enabled,
+                    url_access_enabled=url_access_enabled,
+                    source_review_enabled=source_review_enabled,
+                    deep_research_enabled=deep_research_enabled,
+                )
                 debug_print(
                     "[Streaming] Normalized toggles | "
                     f"hybrid_search={hybrid_search_enabled} | "
@@ -16546,15 +16621,29 @@ def register_route_backend_chats(app):
                         return
 
                 auto_linked_chat_upload_document_ids = []
-                chat_upload_context = _resolve_chat_upload_workspace_context(
-                    user_id=user_id,
-                    conversation_id=conversation_id,
-                    effective_document_scope=effective_document_scope,
-                    effective_selected_document_ids=effective_selected_document_ids,
+                auto_merge_chat_upload_workspace_context = _should_auto_merge_chat_upload_workspace_context(
+                    explicit_external_retrieval_requested,
+                    hybrid_search_enabled,
                     assigned_knowledge_filters=assigned_knowledge_filters,
                     assigned_knowledge_user_context_active=assigned_knowledge_user_context_active,
-                    candidate_document_ids=data.get('conversation_task_document_ids'),
                 )
+                if auto_merge_chat_upload_workspace_context:
+                    chat_upload_context = _resolve_chat_upload_workspace_context(
+                        user_id=user_id,
+                        conversation_id=conversation_id,
+                        effective_document_scope=effective_document_scope,
+                        effective_selected_document_ids=effective_selected_document_ids,
+                        assigned_knowledge_filters=assigned_knowledge_filters,
+                        assigned_knowledge_user_context_active=assigned_knowledge_user_context_active,
+                        candidate_document_ids=data.get('conversation_task_document_ids'),
+                    )
+                else:
+                    chat_upload_context = {
+                        'effective_document_scope': effective_document_scope,
+                        'effective_selected_document_ids': list(effective_selected_document_ids or []),
+                        'auto_linked_chat_upload_document_ids': [],
+                        'task_resolution': {},
+                    }
                 task_resolution = chat_upload_context.get('task_resolution') or {}
                 if task_resolution.get('blocked') and task_resolution.get('linked_count'):
                     yield f"data: {json.dumps({'error': 'This agent does not allow uploaded task documents for search.'})}\n\n"
@@ -17015,7 +17104,7 @@ def register_route_backend_chats(app):
                     except Exception as ex:
                         debug_print(f"[Content Safety - Streaming] Unexpected error: {ex}")
 
-                if not original_hybrid_search_enabled:
+                if not original_hybrid_search_enabled and not explicit_external_retrieval_requested:
                     prior_grounded_document_refs = _normalize_prior_grounded_document_refs(conversation_item)
                     if prior_grounded_document_refs:
                         yield emit_thought(
@@ -17787,6 +17876,7 @@ def register_route_backend_chats(app):
                         gpt_model=gpt_model,
                         user_message_id=user_message_id,
                         fallback_user_message=user_message,
+                        include_assistant_citation_context=not explicit_external_retrieval_requested,
                     )
                     summary_of_older = history_segments['summary_of_older']
                     chat_tabular_files = history_segments['chat_tabular_files']
@@ -17984,6 +18074,7 @@ def register_route_backend_chats(app):
                 if should_apply_history_grounding_message(
                     original_hybrid_search_enabled,
                     prior_grounded_document_refs,
+                    explicit_external_retrieval_requested,
                 ):
                     history_grounding_message = build_history_grounding_system_message()
                     insert_idx = 0
@@ -19833,9 +19924,14 @@ def build_history_grounding_system_message():
 def should_apply_history_grounding_message(
     original_hybrid_search_enabled,
     prior_grounded_document_refs,
+    explicit_external_retrieval_requested=False,
 ):
     """Apply bounded grounding only when prior grounded docs exist for this conversation."""
-    return (not bool(original_hybrid_search_enabled)) and bool(prior_grounded_document_refs)
+    return (
+        not bool(original_hybrid_search_enabled)
+        and not bool(explicit_external_retrieval_requested)
+        and bool(prior_grounded_document_refs)
+    )
 
 
 def build_assistant_history_content_with_citations(message, content):
@@ -19980,6 +20076,7 @@ def build_conversation_history_segments(
     gpt_model=None,
     user_message_id=None,
     fallback_user_message="",
+    include_assistant_citation_context=True,
 ):
     """Build shared conversation history segments for chat completions."""
     conversation_history_messages = []
@@ -20031,7 +20128,7 @@ def build_conversation_history_segments(
                 continue
 
             content = message.get('content', '')
-            if role == 'assistant':
+            if role == 'assistant' and include_assistant_citation_context:
                 content = build_assistant_history_content_with_citations(message, content)
             message_texts_older.append(f"{role.upper()}: {content}")
             summarized_message_refs.append(_format_history_message_ref(message))
@@ -20091,7 +20188,7 @@ def build_conversation_history_segments(
             debug_print(f"[MASK] Applied {len(masked_ranges)} masked ranges to message {message.get('id')}")
 
         if role in allowed_roles_in_history:
-            if role == 'assistant':
+            if role == 'assistant' and include_assistant_citation_context:
                 content = build_assistant_history_content_with_citations(message, content)
             conversation_history_messages.append({"role": role, "content": content})
             history_message_source_refs.append(_format_history_message_ref(message))

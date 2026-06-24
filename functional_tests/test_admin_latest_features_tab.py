@@ -2,8 +2,8 @@
 # test_admin_latest_features_tab.py
 """
 Functional test for admin Latest Features tab.
-Version: 0.250.001
-Implemented in: 0.240.074; 0.240.085; 0.241.002; 0.241.164; 0.241.165; 0.241.166; 0.241.183; 0.241.184; 0.250.001
+Version: 0.250.036
+Implemented in: 0.240.074; 0.240.085; 0.241.002; 0.241.164; 0.241.165; 0.241.166; 0.241.183; 0.241.184; 0.250.001; 0.250.026; 0.250.034; 0.250.036
 
 This test ensures that the Admin Settings page exposes a data-driven,
 admin-only Latest Features tab while the user-facing support catalog remains
@@ -26,7 +26,9 @@ FEATURE_IMAGE_DIR = os.path.join(REPO_ROOT, 'application', 'single_app', 'static
 
 USER_CURRENT_FEATURE_IDS = [
     'release_250_ai_access',
+    'release_250_agents_catalog',
     'release_250_tabular_analysis',
+    'release_250_charts',
     'release_250_custom_pages',
     'release_250_tableau_action',
     'release_250_workflows',
@@ -46,6 +48,7 @@ USER_CURRENT_FEATURE_IDS = [
     'release_250_url_access',
     'release_250_source_continuity',
     'release_250_generated_documents',
+    'release_250_multi_inline_image_gen',
     'release_250_workspace_views',
     'release_250_follow_up_actions',
     'release_250_model_agent_avatars',
@@ -58,20 +61,24 @@ ADMIN_CURRENT_FEATURE_IDS = [
     'admin_release_250_cache_performance',
     'admin_release_250_custom_pages',
     'admin_release_250_action_catalog',
+    'admin_release_250_agents_catalog',
     'admin_release_250_workflows',
     'admin_release_250_document_intelligence',
     'admin_release_250_cosmos_scaling',
     'admin_release_250_file_sync',
     'admin_release_250_group_sharing',
     'admin_release_250_global_identities',
-    'admin_release_250_deep_research_url_access',
+    'admin_release_250_deep_research',
+    'admin_release_250_url_access',
     'admin_release_250_model_endpoint_branding',
     'admin_release_250_bug_fixes',
 ]
 
 USER_CURRENT_FEATURE_IMAGE_FILES = {
     'release_250_ai_access': ['release_250_ai_access.png'],
+    'release_250_agents_catalog': ['release_250_agents_catalog.png'],
     'release_250_tabular_analysis': ['release_250_tabular_analysis.png'],
+    'release_250_charts': ['release_250_charts.png'],
     'release_250_custom_pages': ['release_250_custom_pages.png'],
     'release_250_tableau_action': ['release_250_tableau_action.png'],
     'release_250_workflows': ['release_250_workflows.png'],
@@ -91,9 +98,16 @@ USER_CURRENT_FEATURE_IMAGE_FILES = {
     'release_250_url_access': ['release_250_url_access.png'],
     'release_250_source_continuity': ['release_250_source_continuity.png'],
     'release_250_generated_documents': ['release_250_generated_documents.png'],
+    'release_250_multi_inline_image_gen': ['release_250_multi_inline_image_gen.png'],
     'release_250_workspace_views': ['release_250_workspace_views.png'],
     'release_250_follow_up_actions': ['release_250_follow_up_actions.png'],
     'release_250_model_agent_avatars': ['release_250_model_agent_avatars.png'],
+}
+
+ADMIN_CURRENT_FEATURE_IMAGE_FILES = {
+    'admin_release_250_agents_catalog': ['admin_release_250_agents_catalog.png'],
+    'admin_release_250_deep_research': ['admin_release_250_deep_research.png'],
+    'admin_release_250_url_access': ['admin_release_250_url_access.png'],
 }
 
 PREVIOUS_ADMIN_FEATURE_IDS = [
@@ -194,10 +208,19 @@ def test_admin_latest_features_catalog_release_groups():
 
     for feature in release_groups[0]['features']:
         guidance = ' '.join(feature.get('guidance', []))
-        assert 'Screenshot idea:' in guidance, f"Missing screenshot guidance for {feature['id']}"
+        if feature.get('images'):
+            assert 'Screenshot idea:' in guidance, f"Missing screenshot guidance for {feature['id']}"
+        else:
+            assert not feature.get('image'), f"No-media admin feature should not define a primary image: {feature['id']}"
         assert feature.get('actions'), f"Missing action link for {feature['id']}"
         assert len(feature.get('actions', [])) >= 2, f"Expected multiple admin action links for {feature['id']}"
         assert any(action.get('admin_tab') for action in feature.get('actions', [])), f"Expected an admin tab link for {feature['id']}"
+        if feature['id'] in ADMIN_CURRENT_FEATURE_IMAGE_FILES:
+            expected_files = ADMIN_CURRENT_FEATURE_IMAGE_FILES[feature['id']]
+            expected_paths = [f'images/features/{image_name}' for image_name in expected_files]
+            images = feature.get('images', [])
+            assert feature.get('image') == expected_paths[0], f"Primary admin image mismatch for {feature['id']}"
+            assert [image['path'] for image in images] == expected_paths, f"Admin gallery image paths mismatch for {feature['id']}"
 
     print('Admin Latest Features catalog release groups are current')
     return True
@@ -342,7 +365,7 @@ def test_admin_settings_tab_uniqueness():
 
 
 def test_latest_features_supporting_assets():
-    """User-facing current release screenshots referenced by the catalog must exist."""
+    """Current release screenshots referenced by the catalogs must exist."""
     print('Testing supporting assets for Latest Features...')
 
     assert os.path.isdir(FEATURE_IMAGE_DIR), 'Missing image directory for Latest Features'
@@ -352,7 +375,13 @@ def test_latest_features_supporting_assets():
         for image_names in USER_CURRENT_FEATURE_IMAGE_FILES.values()
         for image_name in image_names
     ]
+    current_admin_images = [
+        image_name
+        for image_names in ADMIN_CURRENT_FEATURE_IMAGE_FILES.values()
+        for image_name in image_names
+    ]
     assert all(image_name.startswith('release_250_') for image_name in current_placeholder_images), 'Current screenshots should be 0.250.001 placeholder filenames'
+    assert 'admin_release_250_deep_research_url_access.png' not in current_admin_images, 'Deep Research and URL Access must use separate admin screenshot assets'
 
     required_images = [
         'background_completion_notifications-01.png',
@@ -378,6 +407,8 @@ def test_latest_features_supporting_assets():
         'tabular_analysis_enhanced_citations.png',
         'thoughts_visibility.png',
     ]
+
+    required_images.extend(current_admin_images)
 
     missing_images = [
         image_name

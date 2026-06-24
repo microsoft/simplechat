@@ -1,13 +1,14 @@
 # test_chat_history_grounded_follow_up_fix.py
 """
 Functional test for grounded follow-up chat fallback.
-Version: 0.241.003
-Implemented in: 0.240.054; Updated in: 0.241.003
+Version: 0.250.002
+Implemented in: 0.240.054; Updated in: 0.250.002
 
 This test ensures follow-up turns with workspace search disabled can reuse
 prior grounded document refs, derive bounded fallback search parameters, and
 preserve the no-search grounding contract only for conversations that already
-have grounded document history.
+have grounded document history. It also verifies explicit Web, URL Access, and
+Deep Research turns bypass the history-grounded document fallback.
 """
 
 import ast
@@ -23,14 +24,15 @@ FIX_DOC = os.path.join(
     'docs',
     'explanation',
     'fixes',
-    'v0.241.003',
-    'CHAT_HISTORY_GROUNDED_FOLLOW_UP_FIX.md',
+    'WEB_RESEARCH_EXTERNAL_RETRIEVAL_PRIORITY_FIX.md',
 )
 ROUTE_TARGET_FUNCTIONS = {
     '_normalize_prior_grounded_document_refs',
     'build_prior_grounded_document_search_parameters',
     'build_history_only_assessment_messages',
     'build_history_grounding_system_message',
+    '_is_explicit_external_retrieval_requested',
+    '_should_auto_merge_chat_upload_workspace_context',
     'should_apply_history_grounding_message',
 }
 METADATA_TARGET_FUNCTIONS = {
@@ -270,6 +272,8 @@ def test_history_only_prompt_contract_is_explicit():
     build_assessment_messages = namespace['build_history_only_assessment_messages']
     build_grounding_message = namespace['build_history_grounding_system_message']
     should_apply_grounding_message = namespace['should_apply_history_grounding_message']
+    is_external_retrieval_requested = namespace['_is_explicit_external_retrieval_requested']
+    should_auto_merge_upload_context = namespace['_should_auto_merge_chat_upload_workspace_context']
 
     assessment_messages = build_assessment_messages(
         {
@@ -297,6 +301,22 @@ def test_history_only_prompt_contract_is_explicit():
     assert should_apply_grounding_message(False, None) is False
     assert should_apply_grounding_message(True, [{'document_id': 'doc-1'}]) is False
     assert should_apply_grounding_message(False, [{'document_id': 'doc-1'}]) is True
+    assert should_apply_grounding_message(False, [{'document_id': 'doc-1'}], True) is False
+
+    assert is_external_retrieval_requested(web_search_enabled=True) is True
+    assert is_external_retrieval_requested(url_access_enabled=True) is True
+    assert is_external_retrieval_requested(source_review_enabled=True) is True
+    assert is_external_retrieval_requested(deep_research_enabled=True) is True
+    assert is_external_retrieval_requested() is False
+
+    assert should_auto_merge_upload_context(False, False) is True
+    assert should_auto_merge_upload_context(True, False) is False
+    assert should_auto_merge_upload_context(True, True) is True
+    assert should_auto_merge_upload_context(
+        True,
+        False,
+        assigned_knowledge_filters={'has_workspace_knowledge': True},
+    ) is True
 
     print('✅ History-only prompt contract passed')
     return True
@@ -315,8 +335,12 @@ def test_route_and_metadata_wiring_cover_both_chat_paths():
     assert route_source.count('Conversation context alone was insufficient; searching previously grounded documents') == 2
     assert route_source.count('No prior grounded documents were available; using conversation history only') == 2
     assert route_source.count("'history_grounded_fallback'") == 2
-    assert route_source.count('if not original_hybrid_search_enabled:') == 2
+    assert route_source.count('if not original_hybrid_search_enabled and not explicit_external_retrieval_requested:') == 2
     assert route_source.count('if should_apply_history_grounding_message(') == 2
+    assert route_source.count('explicit_external_retrieval_requested,') >= 4
+    assert route_source.count('_should_auto_merge_chat_upload_workspace_context(') >= 3
+    assert route_source.count('include_assistant_citation_context=not explicit_external_retrieval_requested') == 2
+    assert route_source.count("if role == 'assistant' and include_assistant_citation_context:") == 2
     assert route_source.count('history_grounding_message = build_history_grounding_system_message()') == 2
 
     print('✅ Grounded follow-up wiring passed')
@@ -329,13 +353,14 @@ def test_version_and_fix_documentation_alignment():
 
     fix_doc_content = read_file_text(FIX_DOC)
 
-    assert read_config_version() == '0.241.003'
-    assert 'Fixed/Implemented in version: **0.241.003**' in fix_doc_content
-    assert 'last_grounded_document_refs' in fix_doc_content
-    assert 'previously grounded documents' in fix_doc_content.lower()
-    assert 'new conversations without prior grounded document refs now answer normally' in fix_doc_content.lower()
+    assert read_config_version() == '0.250.002'
+    assert 'Fixed/Implemented in version: **0.250.002**' in fix_doc_content
+    assert 'explicit_external_retrieval_requested' in fix_doc_content
+    assert '_should_auto_merge_chat_upload_workspace_context' in fix_doc_content
+    assert 'history-grounded document fallback' in fix_doc_content.lower()
+    assert 'web, url access, or deep research' in fix_doc_content.lower()
     assert 'application/single_app/route_backend_chats.py' in fix_doc_content
-    assert 'application/single_app/functions_conversation_metadata.py' in fix_doc_content
+    assert 'functional_tests/test_chat_history_grounded_follow_up_fix.py' in fix_doc_content
 
     print('✅ Version and fix documentation alignment passed')
     return True

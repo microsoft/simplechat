@@ -24,6 +24,7 @@ current_release:
     - release-250-url-access
     - release-250-source-continuity
     - release-250-generated-documents
+    - release-250-multi-inline-image-gen
     - release-250-workspace-views
     - release-250-follow-up-actions
     - release-250-model-agent-avatars
@@ -447,6 +448,24 @@ lookup:
         title: "Generated Markdown, Word, and PowerPoint Files"
         caption: "Screenshot placeholder for Generated Markdown, Word, and PowerPoint Files."
         label: "Generated Files"
+
+  release-250-multi-inline-image-gen:
+    title: "Multi Inline Image Generation"
+    description: "Chat can now create multiple inline images from one request, and model responses can propose useful images during an answer for you to approve before generation."
+    summary: "Chat can now create multiple inline images from one request, and model responses can propose useful images during an answer for you to approve before generation."
+    why: "This matters because image creation can become part of the conversation flow without forcing users to send one image request at a time or accept unapproved generated media."
+    icon: "bi-images"
+    accent: "blue"
+    url: "/latest-release/release-250-multi-inline-image-gen/"
+    release_label: "0.250.001"
+    image: "/images/latest-release/release_250_multi_inline_image_gen.png"
+    image_alt: "Multi Inline Image Generation screenshot placeholder"
+    images:
+      - path: "/images/latest-release/release_250_multi_inline_image_gen.png"
+        alt: "Multi Inline Image Generation screenshot placeholder"
+        title: "Create Multiple Inline Images in Chat"
+        caption: "Multi inline image generation lets users request several images at once and approve image ideas that the assistant proposes while generating a response."
+        label: "Inline Images"
 
   release-250-workspace-views:
     title: "Workspace Cards and Folder Views"

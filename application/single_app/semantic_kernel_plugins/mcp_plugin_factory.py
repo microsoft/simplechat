@@ -17,6 +17,7 @@ from functions_mcp_operations import (
     normalize_mcp_additional_fields,
     normalize_mcp_tool_metadata,
 )
+from functions_debug import debug_print
 from semantic_kernel_plugins.mcp_plugin import McpPlugin
 
 
@@ -35,6 +36,7 @@ class McpPluginFactory:
         """Connect to an MCP server and return normalized tool metadata."""
         connector = cls.create_connector(config)
         try:
+            debug_print("[McpPluginFactory] Connecting to MCP server for tool discovery.")
             await connector.connect()
             if not connector.session:
                 raise ValueError("MCP server did not create a session.")
@@ -47,8 +49,11 @@ class McpPluginFactory:
                     "description": getattr(tool, "description", "") or "",
                     "input_schema": cls._coerce_schema(getattr(tool, "inputSchema", None)),
                 })
-            return normalize_mcp_tool_metadata(raw_tools)
+            normalized_tools = normalize_mcp_tool_metadata(raw_tools)
+            debug_print(f"[McpPluginFactory] MCP tool discovery succeeded tool_count={len(normalized_tools)}.")
+            return normalized_tools
         finally:
+            debug_print("[McpPluginFactory] Closing MCP discovery connector.")
             await connector.close()
 
     @classmethod
@@ -56,10 +61,17 @@ class McpPluginFactory:
         """Connect to an MCP server, invoke one tool, and normalize the result."""
         connector = cls.create_connector(config)
         try:
+            debug_print(f"[McpPluginFactory] Connecting to MCP server for tool call tool_name={tool_name}.")
             await connector.connect()
             raw_result = await connector.call_tool(tool_name, **(arguments or {}))
-            return cls._serialize_tool_result(tool_name, raw_result)
+            result = cls._serialize_tool_result(tool_name, raw_result)
+            debug_print(
+                f"[McpPluginFactory] MCP tool call succeeded tool_name={tool_name} "
+                f"success={result.get('success') if isinstance(result, dict) else '<unknown>'}."
+            )
+            return result
         finally:
+            debug_print(f"[McpPluginFactory] Closing MCP tool connector tool_name={tool_name}.")
             await connector.close()
 
     @classmethod
@@ -79,6 +91,10 @@ class McpPluginFactory:
             command = str(additional_fields.get("command") or "").strip()
             if not command:
                 raise ValueError("MCP stdio transport requires a command.")
+            debug_print(
+                f"[McpPluginFactory] Creating MCP stdio connector name={name} "
+                f"command_present={bool(command)} args_count={len(list(additional_fields.get('args') or []))}"
+            )
             return MCPStdioPlugin(
                 name=name,
                 command=command,
@@ -97,6 +113,11 @@ class McpPluginFactory:
         headers = cls._build_headers(manifest)
         timeout = float(additional_fields.get("connect_timeout") or 10)
         sse_read_timeout = float(additional_fields.get("sse_read_timeout") or 300)
+        debug_print(
+            f"[McpPluginFactory] Creating MCP connector name={name} transport={transport} "
+            f"endpoint={endpoint} timeout={timeout} sse_read_timeout={sse_read_timeout} "
+            f"request_timeout={request_timeout} headers_present={bool(headers)}"
+        )
 
         if transport == "sse":
             return MCPSsePlugin(

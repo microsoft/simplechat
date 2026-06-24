@@ -7871,8 +7871,12 @@ function createMaskedContentSpan(range) {
 
 function wrapMaskedRange(messageText, range) {
   const contentLength = messageText.textContent.length;
-  const start = Math.max(0, Math.min(Number(range.start), contentLength));
-  const end = Math.max(0, Math.min(Number(range.end), contentLength));
+  const rawDisplayStart = Number(range.display_start);
+  const rawDisplayEnd = Number(range.display_end);
+  const rawStart = Number.isFinite(rawDisplayStart) ? rawDisplayStart : Number(range.start);
+  const rawEnd = Number.isFinite(rawDisplayEnd) ? rawDisplayEnd : Number(range.end);
+  const start = Math.max(0, Math.min(rawStart, contentLength));
+  const end = Math.max(0, Math.min(rawEnd, contentLength));
   if (!Number.isFinite(start) || !Number.isFinite(end) || start >= end) {
     return;
   }
@@ -8019,6 +8023,9 @@ function buildMaskPayload(messageDiv, action, selectionInfo = null) {
       start: selectionInfo.start,
       end: selectionInfo.end,
       text: selectionInfo.text,
+      display_start: selectionInfo.start,
+      display_end: selectionInfo.end,
+      display_text: selectionInfo.text,
     };
   }
   return payload;

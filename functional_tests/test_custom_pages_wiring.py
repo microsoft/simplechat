@@ -1,8 +1,9 @@
 # test_custom_pages_wiring.py
 """
 Functional test for Custom Pages wiring.
-Version: 0.242.045
+Version: 0.250.025
 Implemented in: 0.242.023
+Updated in: 0.250.025
 
 This test ensures that the Custom Pages feature is wired through settings,
 navigation, admin metadata management, and fail-closed host routes without
@@ -39,7 +40,7 @@ def test_custom_pages_configuration():
     config = read_text("application/single_app/config.py")
     settings = read_text("application/single_app/functions_settings.py")
 
-    assert_contains(config, 'VERSION = "0.242.045"', "version bump")
+    assert_contains(config, 'VERSION = "0.250.025"', "version bump")
     assert_contains(config, 'cosmos_custom_pages_container_name = "custom_pages"', "custom pages container name")
     assert_contains(config, 'cosmos_custom_pages_container = cosmos_database.create_container_if_not_exists', "custom pages container creation")
     assert_contains(settings, "'enable_custom_pages': False", "custom pages disabled default")
@@ -166,6 +167,10 @@ def test_custom_pages_trusted_rendering_boundary():
     helpers = read_text("application/single_app/functions_custom_pages.py")
 
     assert_contains(shell, "xss-check: ignore", "trusted HTML XSS suppression")
+    assert_contains(shell, "custom-page-hero", "rounded custom page hero header")
+    assert_contains(shell, "linear-gradient(135deg, var(--custom-page-hero-color)", "custom page hero gradient")
+    assert_contains(shell, "border-radius: 1rem", "custom page hero rounded corners")
+    assert_contains(shell, "aria-labelledby=\"custom-page-title\"", "custom page hero accessible title reference")
     assert_contains(shell, "deployment-time trusted app-team content", "trusted HTML explanation")
     assert_contains(shell, "{{ custom_page_html | safe }}", "trusted HTML render boundary")
     assert_contains(helpers, "SLUG_PATTERN", "slug validation")

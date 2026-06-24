@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Tableau action plugin configuration.
-Version: 0.241.210
+Version: 0.250.030
 Implemented in: 0.241.210
 
 This test ensures the Tableau action factory, plugin, manifest validation,
@@ -325,7 +325,7 @@ def test_tableau_identity_and_modal_contract():
     assert "toggleTableauAuthFields" in modal_source
     assert "populateTableauSummary" in modal_source
     assert "tableauserverclient==0.40" in requirements_source
-    assert 'VERSION = "0.241.210"' in config_source
+    assert 'VERSION = "0.250.030"' in config_source
 
     print("Tableau identity and modal source contract verified.")
     return True

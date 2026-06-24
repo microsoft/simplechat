@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for latest-release documentation structure.
-Version: 0.250.001
-Implemented in: 0.241.002; 0.241.003; 0.241.164; 0.241.165; 0.241.166; 0.241.167; 0.241.183; 0.241.184; 0.250.001
+Version: 0.250.034
+Implemented in: 0.241.002; 0.241.003; 0.241.164; 0.241.165; 0.241.166; 0.241.167; 0.241.183; 0.241.184; 0.250.001; 0.250.034
 
 This test ensures the docs/latest-release landing page is driven by the latest
 release YAML data, exposes current, previous, and earlier release sections, and
@@ -46,6 +46,7 @@ CURRENT_GUIDES = {
     'release-250-url-access.md': 'URL Access in Chat',
     'release-250-source-continuity.md': 'Conversation Source Continuity',
     'release-250-generated-documents.md': 'Generated Markdown, Word, and PowerPoint Files',
+    'release-250-multi-inline-image-gen.md': 'Multi Inline Image Generation',
     'release-250-workspace-views.md': 'Workspace Cards and Folder Views',
     'release-250-follow-up-actions.md': 'Assistant Follow-Up Actions',
     'release-250-model-agent-avatars.md': 'Model and Agent Avatars',
@@ -73,6 +74,7 @@ CURRENT_GUIDE_IMAGES = {
     'release-250-url-access': ['release_250_url_access.png'],
     'release-250-source-continuity': ['release_250_source_continuity.png'],
     'release-250-generated-documents': ['release_250_generated_documents.png'],
+    'release-250-multi-inline-image-gen': ['release_250_multi_inline_image_gen.png'],
     'release-250-workspace-views': ['release_250_workspace_views.png'],
     'release-250-follow-up-actions': ['release_250_follow_up_actions.png'],
     'release-250-model-agent-avatars': ['release_250_model_agent_avatars.png'],
@@ -107,7 +109,7 @@ def test_latest_release_docs_structure() -> bool:
     index_content = read_text(LATEST_RELEASE_INDEX)
     release_data = yaml.safe_load(read_text(LATEST_RELEASE_DATA))
 
-    assert 'VERSION = "0.250.001"' in config_content, "Config version marker is not current."
+    assert 'VERSION = "0.250.034"' in config_content, "Config version marker is not current."
 
     required_index_markers = [
         'layout: latest-release-index',
@@ -141,6 +143,7 @@ def test_latest_release_docs_structure() -> bool:
         'release-250-url-access',
         'release-250-source-continuity',
         'release-250-generated-documents',
+        'release-250-multi-inline-image-gen',
         'release-250-workspace-views',
         'release-250-follow-up-actions',
         'release-250-model-agent-avatars',

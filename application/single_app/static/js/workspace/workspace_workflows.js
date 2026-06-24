@@ -41,6 +41,10 @@ function buildWorkflowApiUrl(path = "") {
     return normalizedPath ? `${getWorkflowApiBase()}/${normalizedPath.replace(/^\/+/, "")}` : getWorkflowApiBase();
 }
 
+function buildWorkflowDraftUrl() {
+    return "/api/workflows/draft-instructions";
+}
+
 function getWorkflowActiveGroupId() {
     if (typeof workflowWorkspaceConfig.getActiveGroupId === "function") {
         return normalizeText(workflowWorkspaceConfig.getActiveGroupId());
@@ -75,6 +79,9 @@ const workflowSaveBtn = document.getElementById("workflow-save-btn");
 const workflowIdInput = document.getElementById("workflow-id");
 const workflowNameInput = document.getElementById("workflow-name");
 const workflowDescriptionInput = document.getElementById("workflow-description");
+const workflowTaskBriefInput = document.getElementById("workflow-task-brief");
+const workflowDraftInstructionsBtn = document.getElementById("workflow-draft-instructions-btn");
+const workflowDraftInstructionsStatus = document.getElementById("workflow-draft-instructions-status");
 const workflowTaskPromptInput = document.getElementById("workflow-task-prompt");
 const workflowUrlAccessEnabledToggle = document.getElementById("workflow-url-access-enabled");
 const workflowRunnerTypeSelect = document.getElementById("workflow-runner-type");
@@ -2237,6 +2244,12 @@ function resetWorkflowForm() {
     if (workflowDescriptionInput) {
         workflowDescriptionInput.value = "";
     }
+    if (workflowTaskBriefInput) {
+        workflowTaskBriefInput.value = "";
+    }
+    if (workflowDraftInstructionsStatus) {
+        workflowDraftInstructionsStatus.textContent = "";
+    }
     if (workflowTaskPromptInput) {
         workflowTaskPromptInput.value = "";
     }
@@ -2675,6 +2688,74 @@ function buildWorkflowPayload() {
     return payload;
 }
 
+async function draftWorkflowInstructions() {
+    const brief = normalizeText(workflowTaskBriefInput?.value);
+    const name = normalizeText(workflowNameInput?.value);
+    const description = normalizeText(workflowDescriptionInput?.value);
+    const existingInstructions = normalizeText(workflowTaskPromptInput?.value);
+
+    if (workflowWorkspaceConfig.scope === "group" && !getWorkflowActiveGroupId()) {
+        showToast("Select a group before drafting group workflow instructions.", "warning");
+        return;
+    }
+
+    if (!brief && !name && !description && !existingInstructions) {
+        showToast("Add a task brief, workflow name, description, or existing instructions before drafting.", "warning");
+        workflowTaskBriefInput?.focus();
+        return;
+    }
+
+    const originalButtonHtml = workflowDraftInstructionsBtn?.innerHTML || "";
+    if (workflowDraftInstructionsBtn) {
+        workflowDraftInstructionsBtn.disabled = true;
+        workflowDraftInstructionsBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>Drafting';
+    }
+    if (workflowDraftInstructionsStatus) {
+        workflowDraftInstructionsStatus.textContent = "Drafting...";
+    }
+
+    try {
+        const response = await fetch(buildWorkflowDraftUrl(), {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            credentials: "same-origin",
+            body: JSON.stringify({
+                workflow_scope: workflowWorkspaceConfig.scope === "group" ? "group" : "personal",
+                name,
+                description,
+                brief,
+                existing_instructions: existingInstructions,
+            }),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !result.success) {
+            throw new Error(result.error || result.message || "Failed to draft workflow instructions.");
+        }
+
+        if (workflowTaskPromptInput) {
+            workflowTaskPromptInput.value = normalizeText(result.instructions);
+            workflowTaskPromptInput.dispatchEvent(new Event("input", { bubbles: true }));
+            workflowTaskPromptInput.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+        if (workflowDraftInstructionsStatus) {
+            workflowDraftInstructionsStatus.textContent = "Draft inserted.";
+        }
+        showToast("Draft workflow instructions inserted.", "success");
+    } catch (error) {
+        if (workflowDraftInstructionsStatus) {
+            workflowDraftInstructionsStatus.textContent = "";
+        }
+        showToast(escapeHtml(error.message || "Failed to draft workflow instructions."), "danger");
+    } finally {
+        if (workflowDraftInstructionsBtn) {
+            workflowDraftInstructionsBtn.disabled = false;
+            workflowDraftInstructionsBtn.innerHTML = originalButtonHtml;
+        }
+    }
+}
+
 async function saveWorkflow(event) {
     event.preventDefault();
 
@@ -3087,6 +3168,7 @@ function initializeWorkflowEvents() {
     workflowsGridView?.addEventListener("click", handleWorkflowGridClick);
     workflowsGridView?.addEventListener("keydown", handleWorkflowGridKeydown);
     workflowForm?.addEventListener("submit", saveWorkflow);
+    workflowDraftInstructionsBtn?.addEventListener("click", draftWorkflowInstructions);
     workflowDeleteConfirmBtn?.addEventListener("click", deleteWorkflow);
     workflowHistoryBody?.addEventListener("click", (event) => {
         const resumeButton = event.target.closest("button[data-resume-run-id]");

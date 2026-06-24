@@ -2,12 +2,13 @@
 # test_chat_layered_message_masking.py
 """
 Functional test for layered chat message masking.
-Version: 0.241.098
+Version: 0.250.029
 Implemented in: 0.241.098
 
 This test ensures message masking supports additive text ranges, independent
 full-message masks, non-destructive full-message unmasking, and shared
-conversation endpoint wiring.
+conversation endpoint wiring. It also validates rendered Markdown selection
+masking added in 0.250.029.
 """
 
 import sys
@@ -164,6 +165,81 @@ def test_selection_resolution_uses_canonical_content() -> None:
         raise AssertionError("Ambiguous fallback selection should be rejected")
 
 
+def test_rendered_markdown_selection_maps_to_canonical_offsets() -> None:
+    """Validate rendered selections from formatted Markdown still mask stored content."""
+    message_doc = {
+        "id": "message-4",
+        "content": (
+            "You currently have **336 total Office 365 licenses** across three "
+            "procurement pools, with **45 in use** and **291 available**."
+        ),
+        "metadata": {},
+    }
+    rendered_selection = (
+        "You currently have 336 total Office 365 licenses across three "
+        "procurement pools"
+    )
+    apply_message_mask_action(
+        message_doc,
+        "mask_selection",
+        {
+            "start": 0,
+            "end": len(rendered_selection),
+            "text": rendered_selection,
+            "display_start": 0,
+            "display_end": len(rendered_selection),
+            "display_text": rendered_selection,
+        },
+        "user-1",
+        "User One",
+        timestamp="2026-06-24T00:00:00+00:00",
+    )
+
+    masked_range = message_doc["metadata"]["masked_ranges"][0]
+    assert masked_range["start"] == 0
+    assert masked_range["text"].startswith("You currently have **336 total Office 365 licenses**")
+    assert masked_range["display_start"] == 0
+    assert masked_range["display_end"] == len(rendered_selection)
+
+    masked_content_removed = remove_masked_content(message_doc["content"], [masked_range])
+    assert "336 total Office 365 licenses" not in masked_content_removed
+    assert "45 in use" in masked_content_removed
+
+
+def test_rendered_markdown_table_selection_maps_to_canonical_offsets() -> None:
+    """Validate selected rendered table cell text can be masked from Markdown tables."""
+    message_doc = {
+        "id": "message-5",
+        "content": (
+            "| Product | Total Licenses | In Use | Available |\n"
+            "| --- | ---: | ---: | ---: |\n"
+            "| Office 365 | **336** | 45 | 291 |"
+        ),
+        "metadata": {},
+    }
+    apply_message_mask_action(
+        message_doc,
+        "mask_selection",
+        {
+            "start": 0,
+            "end": len("Office 365"),
+            "text": "Office 365",
+            "display_start": 0,
+            "display_end": len("Office 365"),
+            "display_text": "Office 365",
+        },
+        "user-1",
+        "User One",
+        timestamp="2026-06-24T00:00:00+00:00",
+    )
+
+    masked_range = message_doc["metadata"]["masked_ranges"][0]
+    assert masked_range["text"] == "Office 365"
+    assert message_doc["content"][masked_range["start"]:masked_range["end"]] == "Office 365"
+    assert masked_range["display_start"] == 0
+    assert masked_range["display_end"] == len("Office 365")
+
+
 def test_frontend_and_routes_use_layered_masking_contract() -> None:
     """Verify browser controls and Flask routes use layered actions and server identity."""
     chat_messages_source = read_text(CHAT_MESSAGES_JS)
@@ -179,6 +255,8 @@ def test_frontend_and_routes_use_layered_masking_contract() -> None:
             "mask-remove-btn",
             "action = maskState.fullyMasked ? 'unmask_message' : 'clear_all_masks';",
             "const action = selectionInfo ? 'mask_selection' : 'mask_all';",
+            "display_start: selectionInfo.start,",
+            "const rawDisplayStart = Number(range.display_start);",
             "return `/api/collaboration/conversations/${encodeURIComponent(conversationId)}/messages/${encodedMessageId}/mask`;",
             "window.chatMessages = {",
             "applyMaskedState,",
@@ -229,10 +307,11 @@ def test_frontend_and_routes_use_layered_masking_contract() -> None:
 
 def test_documentation_and_version_are_in_sync() -> None:
     """Verify version tracking for layered message masking."""
-    assert read_version() == "0.241.098"
+    assert read_version() == "0.250.029"
     assert FEATURE_DOC.exists(), f"Expected feature documentation at {FEATURE_DOC}"
     feature_doc = read_text(FEATURE_DOC)
     assert "Implemented in version: **0.241.098**" in feature_doc
+    assert "Rendered Markdown selection masking updated in version: **0.250.029**" in feature_doc
     assert "functional_tests/test_chat_layered_message_masking.py" in feature_doc
     assert "ui_tests/test_chat_message_layered_mask_controls.py" in feature_doc
 
@@ -241,6 +320,8 @@ if __name__ == "__main__":
     tests = [
         test_layered_masking_state_machine,
         test_selection_resolution_uses_canonical_content,
+        test_rendered_markdown_selection_maps_to_canonical_offsets,
+        test_rendered_markdown_table_selection_maps_to_canonical_offsets,
         test_frontend_and_routes_use_layered_masking_contract,
         test_documentation_and_version_are_in_sync,
     ]

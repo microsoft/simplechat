@@ -7,8 +7,23 @@ from copy import deepcopy
 _SUPPORT_LATEST_FEATURE_DOCS_SETTING_KEY = 'enable_support_latest_feature_documentation_links'
 
 
-def _latest_feature_card(feature_id, title, icon, summary, details, why, guidance, actions=None, image_label=None, image_title=None, image_caption=None, image_name=None):
-    """Build a latest-feature catalog entry with placeholder screenshot metadata."""
+def _latest_feature_card(feature_id, title, icon, summary, details, why, guidance, actions=None, image_label=None, image_title=None, image_caption=None, image_name=None, include_media=True):
+    """Build a latest-feature catalog entry with optional screenshot metadata."""
+    if not include_media:
+        return {
+            'id': feature_id,
+            'title': title,
+            'icon': icon,
+            'summary': summary,
+            'details': details,
+            'why': why,
+            'guidance': guidance,
+            'actions': actions or [],
+            'image': '',
+            'image_alt': '',
+            'images': [],
+        }
+
     image_file = image_name or f"{feature_id}.png"
     image_path = f"images/features/{image_file}"
     label = image_label or title
@@ -48,6 +63,20 @@ _SUPPORT_LATEST_FEATURE_CATALOG = [
         image_label='Approved Access',
     ),
     _latest_feature_card(
+        'release_250_agents_catalog',
+        'Agents Catalog',
+        'bi-robot',
+        'Users can browse a dedicated agents catalog to find specialized AI partners across popular, personal, group, and enterprise agent collections.',
+        'The Agents Catalog gives users a searchable discovery experience for approved agents. Catalog tabs help users scan popular, personal, group, and enterprise agents, then launch a chat or inspect details from the same page.',
+        'This matters because users can discover the right agent for a task without already knowing its name or workspace source.',
+        ['Open Agents to browse available catalog entries.', 'Use search when you know the topic, skill, workflow, or agent name you need.', 'Review Popular, Personal, Group, and Enterprise tabs to understand which agents are available in each context.'],
+        actions=[{'label': 'Open Agents', 'description': 'Browse the agents catalog.', 'href': '/agents', 'icon': 'bi-robot', 'requires_settings': ['enable_semantic_kernel']}],
+        image_label='Agents Catalog',
+        image_title='Find Your Next AI Partner',
+        image_caption='The Agents Catalog helps users search and browse specialized agents across popular, personal, group, and enterprise collections.',
+        image_name='release_250_agents_catalog.png',
+    ),
+    _latest_feature_card(
         'release_250_tabular_analysis',
         'Improved Tabular Analysis',
         'bi-table',
@@ -57,6 +86,19 @@ _SUPPORT_LATEST_FEATURE_CATALOG = [
         ['Ask questions against CSV, XLSX, XLS, or XLSM files from Chat or workspace search.', 'Use generated charts or downloadable artifacts when the result is too large to fit cleanly in a message.', 'For multi-sheet workbooks, ask with the sheet name when you know which tab matters.'],
         actions=[{'label': 'Open Chat', 'description': 'Ask a question about a spreadsheet from Chat.', 'href': '/chats#chatbox', 'icon': 'bi-chat-dots'}],
         image_label='Tabular Analysis',
+    ),
+    _latest_feature_card(
+        'release_250_charts',
+        'Chart Creation in Chat',
+        'bi-bar-chart-line',
+        'Users can now ask SimpleChat to create charts directly in conversation, whether they are exploring pasted data, tabular files, spreadsheet results, or other structured information.',
+        'Chart creation turns data-focused prompts into visual answers. Ask for a bar chart, line chart, pie chart, or another useful view while working with CSV, Excel, tables, or computed data from the conversation.',
+        'This matters because trends, comparisons, outliers, and summaries are often easier to understand when the assistant can turn the data into a visual in real time.',
+        ['Ask Chat to create a chart from tabular data, spreadsheet results, or structured values in the conversation.', 'Use chart requests when you need to compare categories, show trends over time, summarize proportions, or inspect outliers.', 'Pair chart prompts with uploaded CSV or Excel files when the visualization should be grounded in workspace-backed data.'],
+        actions=[{'label': 'Open Chat', 'description': 'Ask for a chart from data in your conversation.', 'href': '/chats#chatbox', 'icon': 'bi-chat-dots'}],
+        image_label='Chart Creation',
+        image_title='Create Charts from Data in Chat',
+        image_caption='Chart creation helps users visualize pasted values, tabular files, spreadsheet answers, and other structured data directly from the conversation.',
     ),
     _latest_feature_card(
         'release_250_custom_pages',
@@ -268,6 +310,19 @@ _SUPPORT_LATEST_FEATURE_CATALOG = [
         image_label='Generated Files',
     ),
     _latest_feature_card(
+        'release_250_multi_inline_image_gen',
+        'Multi Inline Image Generation',
+        'bi-images',
+        'Chat can now create multiple inline images from one request, and model responses can propose useful images during an answer for you to approve before generation.',
+        'Image generation now supports richer conversational workflows. You can ask for several images in a single prompt, and models can suggest images that would help explain or complete an answer while keeping generation behind an approval step.',
+        'This matters because image creation can become part of the conversation flow without forcing users to send one image request at a time or accept unapproved generated media.',
+        ['Ask Chat to create multiple related images in one request when you need a set of options, variations, or supporting visuals.', 'Review proposed images from assistant responses before approving generation.', 'Use inline image cards to inspect generated images directly in the conversation.'],
+        actions=[{'label': 'Open Chat', 'description': 'Create or approve inline images from Chat.', 'href': '/chats#chatbox', 'icon': 'bi-chat-dots'}],
+        image_label='Inline Images',
+        image_title='Create Multiple Inline Images in Chat',
+        image_caption='Multi inline image generation lets users request several images at once and approve image ideas that the assistant proposes while generating a response.',
+    ),
+    _latest_feature_card(
         'release_250_workspace_views',
         'Workspace Cards and Folder Views',
         'bi-grid-3x3-gap',
@@ -395,6 +450,25 @@ _SUPPORT_ADMIN_LATEST_FEATURE_CURRENT_CATALOG = [
         image_label='Enterprise Actions',
     ),
     _latest_feature_card(
+        'admin_release_250_agents_catalog',
+        'Agents Catalog Administration',
+        'bi-robot',
+        'Admins can customize the Agents page, guide users through approved agent discovery, and promote selected agents into the Popular tab.',
+        'Agents page administration lets admins tune the catalog hero, colors, guidance copy, details visibility, and promoted Popular agents from Admin Settings. Promoted agents remain governed by the same visibility rules, so users only see agents they can already access.',
+        'This matters because agent discovery needs local curation, governance context, and launch guidance before users can confidently pick the right AI partner.',
+        ['Screenshot idea: capture Agents Page Customization with promoted Popular agents selected.', 'Show hero copy, guidance text, details visibility, and promoted tag controls.', 'Call out that promoted agents respect each user\'s existing agent access policy.'],
+        actions=[
+            {'label': 'Open Agents Page Settings', 'description': 'Customize the public Agents page and promoted Popular agents.', 'href': '#agents-page-customization-card', 'admin_tab': '#agents', 'admin_section': 'agents-page-customization-card', 'icon': 'bi-palette'},
+            {'label': 'Open Global Agents', 'description': 'Review enterprise agents that can appear in the catalog.', 'href': '#agents-configuration', 'admin_tab': '#agents', 'admin_section': 'agents-configuration', 'icon': 'bi-robot'},
+            {'label': 'Open Governance', 'description': 'Control who can access agents before they appear in the catalog.', 'href': '#governance', 'admin_tab': '#governance', 'icon': 'bi-shield-check'},
+            {'label': 'Preview Agents', 'description': 'Open the user-facing Agents catalog.', 'href': '/agents', 'icon': 'bi-box-arrow-up-right'},
+        ],
+        image_label='Catalog Admin',
+        image_title='Customize and Promote Agents',
+        image_caption='Agents Catalog administration lets admins customize the Agents page experience and promote selected agents while preserving access governance.',
+        image_name='admin_release_250_agents_catalog.png',
+    ),
+    _latest_feature_card(
         'admin_release_250_workflows',
         'Workflow Administration',
         'bi-diagram-3',
@@ -486,19 +560,34 @@ _SUPPORT_ADMIN_LATEST_FEATURE_CURRENT_CATALOG = [
         image_label='Identities',
     ),
     _latest_feature_card(
-        'admin_release_250_deep_research_url_access',
-        'Deep Research and URL Access Administration',
+        'admin_release_250_deep_research',
+        'Deep Research Administration',
         'bi-search-heart',
-        'Admins can configure URL Access, Source Review, Deep Research, rendered-page support, allowed users, domain policy, and web-source budgets.',
-        'The Search & Extract controls govern how URLs and web evidence are fetched, reviewed, traversed, rendered, and audited before model responses use them.',
-        'This matters because web evidence can be useful only when fetching is bounded, policy-aware, and auditable.',
-        ['Screenshot idea: capture URL Access, Source Review, Deep Research, allowed users, and rendering status.', 'Show page budgets, domain allow/block controls, and robot or content-type protections.', 'Call out that fetched pages are treated as untrusted source evidence.'],
+        'Admins can configure Deep Research budgets, allowed users, rendered-page support, traversal depth, and research ledger artifacts.',
+        'The Deep Research controls govern how search queries, source pages, child links, rendered pages, and audit ledgers are planned and bounded before model responses use web evidence.',
+        'This matters because deeper web review needs explicit limits, user controls, and an auditable source trail.',
+        ['Screenshot idea: capture Deep Research budgets, allowed users, rendering status, and ledger controls.', 'Show page budgets, traversal depth, query planning, and linked-source inspection.', 'Call out that fetched pages are treated as untrusted source evidence.'],
         actions=[
-            {'label': 'Open Search and Extract', 'description': 'Review URL Access and Deep Research controls.', 'href': '#search-extract', 'admin_tab': '#search-extract', 'icon': 'bi-search-heart'},
-            {'label': 'Open URL Access', 'description': 'Jump to URL Access controls and domain policy.', 'href': '#url-access-section', 'admin_tab': '#search-extract', 'admin_section': 'url-access-section', 'icon': 'bi-link-45deg'},
+            {'label': 'Open Search and Extract', 'description': 'Review Search and Extract settings.', 'href': '#search-extract', 'admin_tab': '#search-extract', 'icon': 'bi-search-heart'},
             {'label': 'Open Deep Research', 'description': 'Jump to Deep Research budgets and allowed-user controls.', 'href': '#source-review-section', 'admin_tab': '#search-extract', 'admin_section': 'source-review-section', 'icon': 'bi-search'},
+            {'label': 'Open URL Access', 'description': 'Review shared URL policy used by Deep Research.', 'href': '#url-access-section', 'admin_tab': '#search-extract', 'admin_section': 'url-access-section', 'icon': 'bi-link-45deg'},
         ],
-        image_label='Web Sources',
+        image_label='Deep Research',
+    ),
+    _latest_feature_card(
+        'admin_release_250_url_access',
+        'URL Access Administration',
+        'bi-link-45deg',
+        'Admins can configure URL Access for chat and workflows with role gates, direct URL limits, domain policy, and policy testing.',
+        'The URL Access controls govern how pasted links and workflow prompt URLs are fetched, blocked, tested, and shared with Deep Research source-page review.',
+        'This matters because direct URL fetching needs bounded counts, domain controls, and predictable safety checks before external content enters a chat or workflow.',
+        ['Screenshot idea: capture URL Access enablement, app-role requirement, direct URL limits, and domain policy.', 'Show allowed and blocked domain controls plus the URL Policy Test workflow.', 'Call out that URL Access uses the same server-side URL protections as Deep Research.'],
+        actions=[
+            {'label': 'Open Search and Extract', 'description': 'Review Search and Extract settings.', 'href': '#search-extract', 'admin_tab': '#search-extract', 'icon': 'bi-search-heart'},
+            {'label': 'Open URL Access', 'description': 'Jump to URL Access controls and domain policy.', 'href': '#url-access-section', 'admin_tab': '#search-extract', 'admin_section': 'url-access-section', 'icon': 'bi-link-45deg'},
+            {'label': 'Open Deep Research', 'description': 'Review Deep Research controls that share URL policy.', 'href': '#source-review-section', 'admin_tab': '#search-extract', 'admin_section': 'source-review-section', 'icon': 'bi-search'},
+        ],
+        image_label='URL Access',
     ),
     _latest_feature_card(
         'admin_release_250_model_endpoint_branding',
@@ -522,13 +611,13 @@ _SUPPORT_ADMIN_LATEST_FEATURE_CURRENT_CATALOG = [
         'Admins can review the full 0.250.001 bug-fix list for security hardening, authorization boundaries, dependency refreshes, stream reliability, and deployment stability.',
         'The release notes now group all fixes under 0.250.001 so admins can scan the full bug-fix inventory without navigating every point release.',
         'This matters because the admin-facing value of many fixes is operational trust rather than a new visible control.',
-        ['Screenshot idea: capture the release notes Bug Fixes section or link to it from admin rollout notes.', 'Use this as the pointer for security, deployment, dependency, and reliability fixes.', 'Call out that this card is informational for admins and does not represent a user-facing feature toggle.'],
+        ['Use this as the pointer for security, deployment, dependency, and reliability fixes.', 'Call out that this card is informational for admins and does not represent a user-facing feature toggle.', 'Use the release notes link when admins need the complete fix inventory.'],
         actions=[
             {'label': 'Open Release Notes', 'description': 'Review the full 0.250.001 bug-fix list.', 'href': 'https://microsoft.github.io/simplechat/explanation/release_notes/', 'icon': 'bi-box-arrow-up-right', 'is_external': True},
             {'label': 'Open Security', 'description': 'Review security-related admin settings.', 'href': '#security', 'admin_tab': '#security', 'icon': 'bi-shield-lock'},
             {'label': 'Open Logging', 'description': 'Review logging and diagnostics settings.', 'href': '#logging', 'admin_tab': '#logging', 'icon': 'bi-card-list'},
         ],
-        image_label='Bug Fixes',
+        include_media=False,
     ),
 ]
 

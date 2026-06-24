@@ -2422,7 +2422,7 @@
                             <div class="alert alert-secondary mb-3" role="alert">{{ feature.why }}</div>
                             {% endif %}
                             {% if feature.guidance %}
-                            <h6 class="mb-2">Screenshot and rollout notes</h6>
+                            <h6 class="mb-2">{% if feature.images %}Screenshot and rollout notes{% else %}Rollout notes{% endif %}</h6>
                             <ul class="mb-3">
                                 {% for tip in feature.guidance %}
                                 <li>{{ tip }}</li>

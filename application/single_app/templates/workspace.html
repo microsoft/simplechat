@@ -1447,7 +1447,17 @@
             <input type="text" class="form-control" id="workflow-description" maxlength="240" placeholder="Optional summary for the workflow list." />
           </div>
           <div class="mb-3">
-            <label for="workflow-task-prompt" class="form-label">Task Prompt</label>
+            <label for="workflow-task-brief" class="form-label">Task Brief</label>
+            <textarea class="form-control" id="workflow-task-brief" rows="3" placeholder="Briefly describe what this workflow should accomplish."></textarea>
+            <div class="d-flex align-items-center gap-2 mt-2">
+              <button type="button" class="btn btn-outline-primary btn-sm" id="workflow-draft-instructions-btn">
+                <i class="bi bi-magic me-1" aria-hidden="true"></i>Draft Workflow Instructions
+              </button>
+              <span class="text-muted small" id="workflow-draft-instructions-status" aria-live="polite"></span>
+            </div>
+          </div>
+          <div class="mb-3">
+            <label for="workflow-task-prompt" class="form-label">Workflow Instructions</label>
             <textarea class="form-control" id="workflow-task-prompt" rows="7" placeholder="Describe exactly what this workflow should do each time it runs." required></textarea>
             <div class="form-text">Each run appends this prompt to the workflow conversation as a new user message.</div>
           </div>
@@ -2625,7 +2635,9 @@
   <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-identities.js') }}?v={{ config['VERSION'] }}"></script>
   <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-file-sync.js') }}?v={{ config['VERSION'] }}"></script>
   {% endif %}
+  {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel and settings.allow_user_plugins and workspace_governance.user_actions %}
   <script type="module" src="{{ url_for('static', filename='js/plugin_modal_stepper.js') }}?v={{ config['VERSION'] }}"></script>
+  {% endif %}
   <script src="{{ url_for('static', filename='js/workspace_sidebar_nav.js') }}?v={{ config['VERSION'] }}"></script>
   <script src="{{ url_for('static', filename='js/workspace_section_switcher.js') }}?v={{ config['VERSION'] }}"></script>
   <script type="module" src="{{ url_for('static', filename='js/workspace/workspace-migration.js') }}?v={{ config['VERSION'] }}"></script>

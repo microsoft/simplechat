@@ -1,19 +1,22 @@
 # test_support_latest_features_image_modal.py
 """
 UI test for support latest-features image previews.
-Version: 0.241.166
-Implemented in: 0.240.061; 0.241.002
+Version: 0.250.036
+Implemented in: 0.240.061; 0.241.002; 0.250.034; 0.250.035
 
 This test ensures the user-facing Latest Features page opens a full-size image
 preview modal when a feature thumbnail is clicked and keeps the expanded
 user-facing feature catalog visible with actionable destination links.
+It also verifies the chart-creation feature card and preview image are shown
+so users can discover chart generation from Chat and tabular data workflows.
+The Agents Catalog card is also verified so users can discover the dedicated
+agent browsing experience from Latest Features.
 """
 
 import os
 from pathlib import Path
 
 import pytest
-from playwright.sync_api import expect
 
 
 BASE_URL = os.getenv("SIMPLECHAT_UI_BASE_URL", "").rstrip("/")
@@ -34,67 +37,89 @@ def _get_storage_state_path():
 
 
 @pytest.mark.ui
-def test_support_latest_features_image_modal(playwright):
+def test_support_latest_features_image_modal():
     """Validate that feature thumbnails open the preview modal."""
     _require_base_url()
     storage_state = _get_storage_state_path()
 
-    browser = playwright.chromium.launch()
-    context = browser.new_context(
-        storage_state=storage_state,
-        viewport={"width": 1440, "height": 900},
-    )
-
     try:
-        page = context.new_page()
-        response = page.goto(f"{BASE_URL}/support/latest-features", wait_until="domcontentloaded")
-        assert response is not None, "Expected a navigation response when loading /support/latest-features."
-        if response.status in {401, 403, 404}:
-            pytest.skip("Latest Features page was not available for the configured session.")
+        from playwright.sync_api import expect, sync_playwright
+    except ModuleNotFoundError:
+        pytest.skip("Install Playwright to run this UI test.")
 
-        assert response.ok, f"Expected /support/latest-features to load successfully, got HTTP {response.status}."
-        expect(page.get_by_role("heading", name="Latest Features")).to_be_visible()
-        page_title = page.title()
-        assert page_title.startswith("Latest Features - "), f"Unexpected page title: {page_title}"
-        app_title = page_title.replace("Latest Features - ", "", 1).strip()
-        main_text = page.locator("main").text_content() or ""
-        if app_title != "SimpleChat":
-            assert "SimpleChat" not in main_text, "Visible Latest Features copy should use the configured application title."
-        expect(page.locator(".support-feature-card")).to_have_count(page.locator(".support-feature-card").count())
-        expect(page.locator(".support-feature-callout").first).to_be_visible()
-        expect(page.locator(".support-feature-action-card").first).to_be_visible()
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        context = browser.new_context(
+            storage_state=storage_state,
+            viewport={"width": 1440, "height": 900},
+        )
 
-        previous_release_toggle = page.get_by_role("button", name="Show Previous Release Features")
-        if previous_release_toggle.count() > 0:
-            previous_release_toggle.first.click()
-            expect(page.locator("#supportLatestFeaturesPreviousRelease")).to_be_visible()
-            expect(page.get_by_role("heading", name="Previous Release Features")).to_be_visible()
+        try:
+            page = context.new_page()
+            response = page.goto(f"{BASE_URL}/support/latest-features", wait_until="domcontentloaded")
+            assert response is not None, "Expected a navigation response when loading /support/latest-features."
+            if response.status in {401, 403, 404}:
+                pytest.skip("Latest Features page was not available for the configured session.")
 
-            previous_release_thumbnail = page.locator("#supportLatestFeaturesPreviousRelease .support-feature-thumbnail-trigger").first
-            if previous_release_thumbnail.count() > 0:
-                previous_release_thumbnail.click()
-                modal = page.locator("#latestFeatureImageModal")
-                expect(modal).to_be_visible()
-                expect(page.locator("#latestFeatureImageModalImage")).to_be_visible()
-                page.locator("#latestFeatureImageModal .btn-close").click()
-                expect(modal).not_to_be_visible()
+            assert response.ok, f"Expected /support/latest-features to load successfully, got HTTP {response.status}."
+            expect(page.get_by_role("heading", name="Latest Features")).to_be_visible()
+            page_title = page.title()
+            assert page_title.startswith("Latest Features - "), f"Unexpected page title: {page_title}"
+            app_title = page_title.replace("Latest Features - ", "", 1).strip()
+            main_text = page.locator("main").text_content() or ""
+            if app_title != "SimpleChat":
+                assert "SimpleChat" not in main_text, "Visible Latest Features copy should use the configured application title."
+            expect(page.locator(".support-feature-card")).to_have_count(page.locator(".support-feature-card").count())
+            expect(page.locator(".support-feature-callout").first).to_be_visible()
+            expect(page.locator(".support-feature-action-card").first).to_be_visible()
 
-        earlier_release_toggle = page.get_by_role("button", name="Show Earlier Release Features")
-        if earlier_release_toggle.count() > 0:
-            earlier_release_toggle.first.click()
-            expect(page.locator("#supportLatestFeaturesEarlierRelease")).to_be_visible()
-            expect(page.get_by_role("heading", name="Earlier Release Features")).to_be_visible()
+            chart_heading = page.get_by_role("heading", name="Chart Creation in Chat")
+            chart_card = page.locator(".support-feature-card").filter(has=chart_heading)
+            expect(chart_card).to_be_visible()
+            expect(chart_heading).to_be_visible()
+            expect(chart_card.get_by_text("create charts directly in conversation")).to_be_visible()
+            expect(chart_card.locator("img[src*='release_250_charts.png']")).to_be_visible()
+            expect(chart_card.get_by_role("link", name="Open Chat")).to_be_visible()
 
-        thumbnail_trigger = page.locator(".support-feature-thumbnail-trigger").first
-        if thumbnail_trigger.count() == 0:
-            pytest.skip("No latest-feature images are available in this environment.")
+            agents_heading = page.get_by_role("heading", name="Agents Catalog")
+            agents_card = page.locator(".support-feature-card").filter(has=agents_heading)
+            expect(agents_card).to_be_visible()
+            expect(agents_heading).to_be_visible()
+            expect(agents_card.get_by_text("searchable discovery experience for approved agents")).to_be_visible()
+            expect(agents_card.locator("img[src*='release_250_agents_catalog.png']")).to_be_visible()
+            expect(agents_card.get_by_role("link", name="Open Agents")).to_be_visible()
 
-        thumbnail_trigger.click()
+            previous_release_toggle = page.get_by_role("button", name="Show Previous Release Features")
+            if previous_release_toggle.count() > 0:
+                previous_release_toggle.first.click()
+                expect(page.locator("#supportLatestFeaturesPreviousRelease")).to_be_visible()
+                expect(page.get_by_role("heading", name="Previous Release Features")).to_be_visible()
 
-        modal = page.locator("#latestFeatureImageModal")
-        expect(modal).to_be_visible()
-        expect(page.locator("#latestFeatureImageModalImage")).to_be_visible()
-        expect(page.locator("#latestFeatureImageModalLabel")).not_to_be_empty()
-    finally:
-        context.close()
-        browser.close()
+                previous_release_thumbnail = page.locator("#supportLatestFeaturesPreviousRelease .support-feature-thumbnail-trigger").first
+                if previous_release_thumbnail.count() > 0:
+                    previous_release_thumbnail.click()
+                    modal = page.locator("#latestFeatureImageModal")
+                    expect(modal).to_be_visible()
+                    expect(page.locator("#latestFeatureImageModalImage")).to_be_visible()
+                    page.locator("#latestFeatureImageModal .btn-close").click()
+                    expect(modal).not_to_be_visible()
+
+            earlier_release_toggle = page.get_by_role("button", name="Show Earlier Release Features")
+            if earlier_release_toggle.count() > 0:
+                earlier_release_toggle.first.click()
+                expect(page.locator("#supportLatestFeaturesEarlierRelease")).to_be_visible()
+                expect(page.get_by_role("heading", name="Earlier Release Features")).to_be_visible()
+
+            thumbnail_trigger = page.locator(".support-feature-thumbnail-trigger").first
+            if thumbnail_trigger.count() == 0:
+                pytest.skip("No latest-feature images are available in this environment.")
+
+            thumbnail_trigger.click()
+
+            modal = page.locator("#latestFeatureImageModal")
+            expect(modal).to_be_visible()
+            expect(page.locator("#latestFeatureImageModalImage")).to_be_visible()
+            expect(page.locator("#latestFeatureImageModalLabel")).not_to_be_empty()
+        finally:
+            context.close()
+            browser.close()

@@ -62,13 +62,13 @@ class SQLSchemaPlugin(BasePlugin):
             "has_username": bool(self.username),
             "manifest_keys": list(manifest.keys())
         })
-        print(f"[SQLSchemaPlugin] Initializing - DB Type: {self.database_type}, Auth: {self.auth_type}, Server: {self.server}, Database: {self.database}")
+        debug_print(f"[SQLSchemaPlugin] Initializing - DB Type: {self.database_type}, Auth: {self.auth_type}, Server: {self.server}, Database: {self.database}")
         
         # Validate required configuration
         if not self.connection_string and not (self.server and self.database):
             error_msg = "SQLSchemaPlugin requires either 'connection_string' or 'server' and 'database' in the manifest."
             log_event(f"[SQLSchemaPlugin] Configuration error: {error_msg}", extra={"manifest": manifest})
-            print(f"[SQLSchemaPlugin] ERROR: {error_msg}")
+            debug_print(f"[SQLSchemaPlugin] ERROR: {error_msg}")
             raise ValueError(error_msg)
         
         # Set up database-specific configurations
@@ -76,7 +76,7 @@ class SQLSchemaPlugin(BasePlugin):
         
         # Initialize connection (lazy loading)
         self._connection = None
-        print(f"[SQLSchemaPlugin] Initialization complete")
+        debug_print(f"[SQLSchemaPlugin] Initialization complete")
 
     def _setup_database_config(self):
         """Setup database-specific configurations and import requirements"""
@@ -115,6 +115,12 @@ class SQLSchemaPlugin(BasePlugin):
     def _create_connection(self):
         """Create database connection based on database type"""
         try:
+            debug_print(
+                f"[SQLSchemaPlugin] Creating database connection database_type={self.database_type} "
+                f"auth_type={self.auth_type} server={self.server} database={self.database} "
+                f"driver={self.driver or self.supported_databases.get(self.database_type, {}).get('default_driver')} "
+                f"has_connection_string={bool(self.connection_string)}"
+            )
             if self.database_type == 'sqlserver':
                 import pyodbc
                 if self.connection_string:
@@ -170,8 +176,13 @@ class SQLSchemaPlugin(BasePlugin):
                 return sqlite3.connect(database_path)
                 
         except ImportError as e:
+            debug_print(f"[SQLSchemaPlugin] Database driver import failed database_type={self.database_type} error={e}")
             raise ImportError(f"Required database driver not installed for {self.database_type}: {e}")
         except Exception as e:
+            debug_print(
+                f"[SQLSchemaPlugin] Connection failed database_type={self.database_type} server={self.server} "
+                f"database={self.database} exception_type={type(e).__name__} message={e}"
+            )
             log_event(f"[SQLSchemaPlugin] Connection failed: {e}", extra={"database_type": self.database_type})
             raise
 
@@ -251,7 +262,7 @@ class SQLSchemaPlugin(BasePlugin):
             "include_system_tables": include_system_tables,
             "table_filter": table_filter
         })
-        print(f"[SQLSchemaPlugin] Getting database schema - DB: {self.database}, Include System: {include_system_tables}")
+        debug_print(f"[SQLSchemaPlugin] Getting database schema - DB: {self.database}, Include System: {include_system_tables}")
         
         try:
             conn = self._get_connection()
@@ -270,7 +281,7 @@ class SQLSchemaPlugin(BasePlugin):
             cursor.execute(tables_query)
             tables = cursor.fetchall()
             
-            print(f"[SQLSchemaPlugin] Found {len(tables)} tables")
+            debug_print(f"[SQLSchemaPlugin] Found {len(tables)} tables")
             
             # Get schema for each table
             for table in tables:
@@ -287,9 +298,9 @@ class SQLSchemaPlugin(BasePlugin):
                 try:
                     table_schema = self._get_table_schema_data(cursor, str(table_name), str(schema_name) if schema_name else None)
                     schema_data["tables"][str(table_name)] = table_schema
-                    print(f"[SQLSchemaPlugin] Got schema for table: {qualified_table_name} ({len(table_schema.get('columns', []))} columns)")
+                    debug_print(f"[SQLSchemaPlugin] Got schema for table: {qualified_table_name} ({len(table_schema.get('columns', []))} columns)")
                 except Exception as e:
-                    print(f"[SQLSchemaPlugin] Error getting schema for table {qualified_table_name}: {e}")
+                    debug_print(f"[SQLSchemaPlugin] Error getting schema for table {qualified_table_name}: {e}")
                     log_event(f"[SQLSchemaPlugin] Error getting table schema", extra={
                         "table_name": qualified_table_name,
                         "error": str(e),
@@ -300,9 +311,9 @@ class SQLSchemaPlugin(BasePlugin):
             try:
                 relationships = self._get_relationships_data(cursor)
                 schema_data["relationships"] = relationships
-                print(f"[SQLSchemaPlugin] Found {len(relationships)} relationships")
+                debug_print(f"[SQLSchemaPlugin] Found {len(relationships)} relationships")
             except Exception as e:
-                print(f"[SQLSchemaPlugin] Error getting relationships: {e}")
+                debug_print(f"[SQLSchemaPlugin] Error getting relationships: {e}")
                 
             log_event(f"[SQLSchemaPlugin] get_database_schema completed", extra={
                 "tables_count": len(schema_data["tables"]),
@@ -321,7 +332,7 @@ class SQLSchemaPlugin(BasePlugin):
             
         except Exception as e:
             error_msg = f"Failed to get database schema: {str(e)}"
-            print(f"[SQLSchemaPlugin] ERROR: {error_msg}")
+            debug_print(f"[SQLSchemaPlugin] ERROR: {error_msg}")
             log_event(f"[SQLSchemaPlugin] get_database_schema failed", extra={
                 "error": str(e),
                 "database_type": self.database_type,

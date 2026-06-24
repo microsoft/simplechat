@@ -6440,5 +6440,7 @@ export class PluginModalStepper {
   }
 }
 
-// Create global instance
-window.pluginModalStepper = new PluginModalStepper();
+// Create global instance only on pages that render the shared plugin modal.
+if (document.getElementById('plugin-modal')) {
+  window.pluginModalStepper = new PluginModalStepper();
+}
