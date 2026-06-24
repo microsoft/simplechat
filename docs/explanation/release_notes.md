@@ -66,7 +66,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Added tailored action configuration for account, warehouse, default database/schema, role, password/key-pair/OAuth authentication, reusable workspace identities, and query execution limits.
     *   Added read-only SQL enforcement, automatic result limiting, structured column/row responses, Semantic Kernel loader integration, Key Vault secret handling, governance labels, schemas, feature documentation, and functional coverage.
     *   (Ref: `SnowflakePlugin`, `SnowflakePluginFactory`, Snowflake action modal, `SNOWFLAKE_ACTION.md`)
-    
+
 *   **Workflow Per-Document Analysis and Generated Office Exports**
     *   Added a workflow Analyze mode that runs the same prompt against each selected document separately, then combines the per-document replies, coverage, citations, generated artifacts, and alert targets into the workflow result.
     *   Added SimpleChat action tools for generated Word documents and PowerPoint presentations, with group workflow uploads defaulting to the current group workspace while preserving existing group access checks.
