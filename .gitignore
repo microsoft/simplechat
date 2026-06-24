@@ -49,6 +49,7 @@ nul
 /artifacts/tests
 /artifacts/tmp/*
 /artifacts/tmp
+Demo testing/artifacts/
 scripts/agent.json
 scripts/me.json
 .github/instructions/python-venv-path.instructions.md

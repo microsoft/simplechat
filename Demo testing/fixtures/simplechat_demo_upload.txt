@@ -1,7 +1,0 @@
-SimpleChat demo upload file.
-
-Project name: SimpleChat local Playwright testing demo.
-
-This small fixture is used by the demo end-to-end test to show how a developer
-can upload a file, ask a question about it, and validate that the browser flow
-works against a local SimpleChat instance.
