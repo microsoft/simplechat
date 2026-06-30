@@ -2116,6 +2116,10 @@ def register_route_backend_documents(bp):
                 document_item['shared_user_ids'] = new_shared_user_ids
                 document_item['last_updated'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
                 cosmos_user_documents_container.upsert_item(document_item)
+                sync_document_access_index_for_document_fail_open(
+                    document_item,
+                    operation='document_share_approved',
+                )
                 # Update all chunks with the new shared_user_ids
                 try:
                     chunks = get_all_chunks(document_id, document_item.get('user_id'))

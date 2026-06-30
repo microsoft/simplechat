@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 1 app maintenance framework.
-Version: 0.250.005
+Version: 0.250.010
 Implemented in: 0.250.005
 
 This test ensures the maintenance runner initializes cache version documents
@@ -32,6 +32,17 @@ class FakeCosmosContainer:
     def __init__(self):
         self.items = {}
         self._etag_counter = 0
+        self.container_properties = {
+            "id": "fake-container",
+            "_etag": "container-etag",
+            "indexingPolicy": {
+                "indexingMode": "consistent",
+                "automatic": True,
+                "includedPaths": [{"path": "/*"}],
+                "excludedPaths": [{"path": "/\"_etag\"/?"}],
+                "compositeIndexes": [],
+            },
+        }
 
     def _copy_with_new_etag(self, body):
         self._etag_counter += 1
@@ -43,6 +54,9 @@ class FakeCosmosContainer:
         if item not in self.items:
             raise FakeCosmosError(404, f"Missing item {item}")
         return copy.deepcopy(self.items[item])
+
+    def read(self):
+        return copy.deepcopy(self.container_properties)
 
     def create_item(self, body):
         item_id = body["id"]
@@ -63,19 +77,66 @@ class FakeCosmosContainer:
         self.items[item] = self._copy_with_new_etag(body)
         return copy.deepcopy(self.items[item])
 
+    def delete_item(self, item, partition_key, **kwargs):
+        if item not in self.items:
+            raise FakeCosmosError(404, f"Missing item {item}")
+        del self.items[item]
+
+    def query_items(self, query, parameters=None, enable_cross_partition_query=False, **kwargs):
+        parameter_map = {
+            parameter["name"]: parameter["value"]
+            for parameter in list(parameters or [])
+        }
+        item_type = parameter_map.get("@type")
+        item_status = parameter_map.get("@status")
+        document_metadata_type = parameter_map.get("@document_metadata_type")
+        results = []
+        for item in self.items.values():
+            if item_type is not None and item.get("type") != item_type:
+                continue
+            if item_status is not None and item.get("status") != item_status:
+                continue
+            if document_metadata_type is not None and item.get("type") not in (None, document_metadata_type):
+                continue
+            results.append(copy.deepcopy(item))
+        return results
+
+
+class FakeCosmosDatabase:
+    def replace_container(self, **kwargs):
+        return kwargs
+
 
 def _load_maintenance_module(container, governance_container=None):
     fake_config = types.ModuleType("config")
-    fake_config.VERSION = "0.250.005"
+    fake_config.VERSION = "0.250.010"
     fake_config.cosmos_settings_container = container
     fake_config.cosmos_governance_policies_container = governance_container or container
+    fake_config.cosmos_document_access_index_container = FakeCosmosContainer()
+    fake_config.cosmos_database = FakeCosmosDatabase()
+    for name in [
+        "cosmos_collaboration_messages",
+        "cosmos_conversations",
+        "cosmos_group_documents",
+        "cosmos_messages",
+        "cosmos_public_documents",
+        "cosmos_user_documents",
+    ]:
+        setattr(fake_config, f"{name}_container", container)
+        setattr(fake_config, f"{name}_container_name", name.replace("cosmos_", ""))
     sys.modules["config"] = fake_config
 
     fake_appinsights = types.ModuleType("functions_appinsights")
     fake_appinsights.log_event = lambda *args, **kwargs: None
     sys.modules["functions_appinsights"] = fake_appinsights
 
+    fake_settings = types.ModuleType("functions_settings")
+    fake_settings.get_settings = lambda: {}
+    sys.modules["functions_settings"] = fake_settings
+
     sys.modules.pop("functions_shared_cache", None)
+    sys.modules.pop("functions_cosmos_indexing", None)
+    sys.modules.pop("functions_document_access_index", None)
     sys.modules.pop("functions_app_maintenance", None)
     return importlib.import_module("functions_app_maintenance")
 
@@ -90,6 +151,9 @@ def test_maintenance_initializes_cache_version_documents():
 
     assert result["success"] is True
     assert container.items["app_maintenance_state"]["last_status"] == "succeeded"
+    backfill_step = next(step for step in result["steps"] if step["name"] == "document_access_index_backfill")
+    assert backfill_step["status"] == "succeeded"
+    assert backfill_step["results"]["status"] == "skipped_disabled"
     for version_doc in maintenance.CACHE_VERSION_DOCUMENTS:
         target_container = governance_container if version_doc["container"] == "governance_policies" else container
         item = target_container.items[version_doc["id"]]
@@ -109,6 +173,8 @@ def test_maintenance_status_reports_state_and_versions():
     assert status["success"] is True
     assert status["state"]["last_status"] == "succeeded"
     assert len(status["cache_version_documents"]) == len(maintenance.CACHE_VERSION_DOCUMENTS)
+    assert status["cosmos_indexing_policies"]["mode"] == "report_only"
+    assert status["document_access_index_backfill"]["state"]["status"] == "not_started"
     assert {
         "app_settings_cache_version",
         "governance_cache_version",
@@ -132,6 +198,7 @@ def test_maintenance_settings_are_normalized():
     assert settings["run_on_startup"] is True
     assert settings["check_interval_seconds"] == 60
     assert settings["lease_seconds"] == 60
+    assert settings["run_document_access_index_backfill"] is False
 
 
 if __name__ == "__main__":

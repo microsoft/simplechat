@@ -95,7 +95,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.250.005"
+VERSION = "0.250.010"
 
 SESSION_COOKIE_SAMESITE = os.getenv('SESSION_COOKIE_SAMESITE', 'Lax')
 SESSION_COOKIE_HTTPONLY = os.getenv('SESSION_COOKIE_HTTPONLY', 'true').lower() != 'false'
@@ -514,6 +514,12 @@ cosmos_public_documents_container_name = "public_documents"
 cosmos_public_documents_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_public_documents_container_name,
     partition_key=PartitionKey(path="/id")
+)
+
+cosmos_document_access_index_container_name = "document_access_index"
+cosmos_document_access_index_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_document_access_index_container_name,
+    partition_key=PartitionKey(path="/scope_key")
 )
 
 cosmos_personal_file_sync_sources_container_name = "personal_file_sync_sources"

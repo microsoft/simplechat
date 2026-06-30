@@ -716,7 +716,7 @@ def run_app_maintenance_loop():
                     lease_seconds=maintenance_settings.get('lease_seconds', 300),
                 )
                 if lock_document:
-                    run_app_maintenance_once(triggered_by='background')
+                    run_app_maintenance_once(triggered_by='background', settings=settings)
         except Exception as exc:
             log_event(
                 '[AppMaintenance] Error in maintenance scheduler loop.',

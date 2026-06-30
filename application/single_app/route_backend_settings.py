@@ -197,7 +197,7 @@ def register_route_backend_settings(bp):
     def get_app_maintenance_admin_status():
         """Return the current app maintenance status for admin diagnostics."""
         try:
-            return jsonify(get_app_maintenance_status()), 200
+            return jsonify(get_app_maintenance_status(settings=get_settings())), 200
         except Exception as exc:
             log_event(
                 '[AppMaintenance] Failed to load admin maintenance status.',
@@ -217,7 +217,14 @@ def register_route_backend_settings(bp):
         admin_email = user.get('preferred_username', user.get('email', 'unknown'))
         admin_user_id = get_current_user_id() or 'unknown'
         try:
-            result = run_app_maintenance_once(triggered_by='admin_manual', requested_by=admin_email)
+            payload = request.get_json(silent=True) or {}
+            result = run_app_maintenance_once(
+                triggered_by='admin_manual',
+                requested_by=admin_email,
+                settings=get_settings(),
+                run_document_access_backfill=payload.get('run_document_access_index_backfill'),
+                reset_document_access_backfill=bool(payload.get('reset_document_access_index_backfill', False)),
+            )
         except Exception as exc:
             log_event(
                 '[AppMaintenance] Manual admin maintenance trigger failed.',

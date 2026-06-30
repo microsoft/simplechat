@@ -8,6 +8,10 @@ from io import BytesIO
 from flask import make_response
 from config import *
 from functions_appinsights import log_event
+from functions_document_access_index import (
+    delete_document_access_index_for_document_fail_open,
+    sync_document_access_index_for_document_fail_open,
+)
 from functions_visio import build_visio_page_markdown, parse_vsdx_pages
 from functions_content import *
 from functions_settings import *
@@ -983,6 +987,10 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
 
             if update_existing_document:
                 cosmos_container.upsert_item(existing_document)
+                sync_document_access_index_for_document_fail_open(
+                    existing_document,
+                    operation='document_revision_archived',
+                )
 
         if is_public_workspace:
             document_metadata = {
@@ -1084,6 +1092,10 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
             }
 
         cosmos_container.upsert_item(document_metadata)
+        sync_document_access_index_for_document_fail_open(
+            document_metadata,
+            operation='document_created',
+        )
 
         add_file_task_to_file_processing_log(
             document_id,
@@ -2412,6 +2424,10 @@ def update_document(**kwargs):
         # 5. Upsert the document if changes were made
         if update_occurred:
             cosmos_container.upsert_item(existing_document)
+            sync_document_access_index_for_document_fail_open(
+                existing_document,
+                operation='document_updated',
+            )
 
     except CosmosResourceNotFoundError as e:
         # Error already logged where it was first detected
@@ -3408,6 +3424,10 @@ def delete_document(user_id, document_id, group_id=None, public_workspace_id=Non
             item=document_id,
             partition_key=document_id
         )
+        delete_document_access_index_for_document_fail_open(
+            document_item,
+            operation='document_deleted',
+        )
 
     except CosmosResourceNotFoundError:
         raise Exception("Document not found")
@@ -3481,6 +3501,10 @@ def delete_document_revision(user_id, document_id, delete_mode="all_versions", g
             )
             set_document_chunk_visibility(promoted_document, active=True)
             cosmos_container.upsert_item(promoted_document)
+            sync_document_access_index_for_document_fail_open(
+                promoted_document,
+                operation='document_revision_promoted',
+            )
             promoted_document_id = promoted_document.get('id')
 
     return {
@@ -3720,6 +3744,10 @@ def sync_chat_upload_workspace_document_sharing_for_collaboration(conversation_d
 
         document_item['last_updated'] = current_time
         cosmos_user_documents_container.upsert_item(document_item)
+        sync_document_access_index_for_document_fail_open(
+            document_item,
+            operation='chat_upload_collaboration_share_synced',
+        )
         try:
             set_document_chunk_visibility(
                 document_item,
@@ -4896,6 +4924,10 @@ def upload_to_blob(temp_file_path, user_id, document_id, blob_filename, update_c
             )
             if archived_blob_path:
                 cosmos_container.upsert_item(previous_document)
+                sync_document_access_index_for_document_fail_open(
+                    previous_document,
+                    operation='document_blob_archived',
+                )
 
         blob_service_client = _get_blob_service_client()
 
@@ -4926,6 +4958,10 @@ def upload_to_blob(temp_file_path, user_id, document_id, blob_filename, update_c
         if current_document.get("archived_blob_path") is None:
             current_document["archived_blob_path"] = None
         cosmos_container.upsert_item(current_document)
+        sync_document_access_index_for_document_fail_open(
+            current_document,
+            operation='document_blob_uploaded',
+        )
 
         print(f"Successfully uploaded {blob_filename} to blob storage at {blob_path}")
         return blob_path
@@ -8013,6 +8049,13 @@ def queue_personal_workspace_upload_from_temp_file(
                     item=workspace_document_id,
                     partition_key=workspace_document_id,
                 )
+                delete_document_access_index_for_document_fail_open(
+                    {
+                        'id': workspace_document_id,
+                        'user_id': user_id,
+                    },
+                    operation='queued_personal_document_cleanup',
+                )
             except Exception as cleanup_error:
                 debug_print(f"Failed to clean up queued workspace document metadata: {cleanup_error}")
         if workspace_temp_file_path and os.path.exists(workspace_temp_file_path) and not temp_file_queued:
@@ -8162,6 +8205,13 @@ def queue_group_workspace_upload_from_temp_file(
                 cosmos_group_documents_container.delete_item(
                     item=workspace_document_id,
                     partition_key=workspace_document_id,
+                )
+                delete_document_access_index_for_document_fail_open(
+                    {
+                        'id': workspace_document_id,
+                        'group_id': group_id,
+                    },
+                    operation='queued_group_document_cleanup',
                 )
             except Exception as cleanup_error:
                 debug_print(f"Failed to clean up queued group workspace document metadata: {cleanup_error}")
@@ -8821,6 +8871,10 @@ def share_document_with_user(document_id, owner_user_id, target_user_id):
 
             # Update the document
             cosmos_user_documents_container.upsert_item(document_item)
+            sync_document_access_index_for_document_fail_open(
+                document_item,
+                operation='document_shared_with_user',
+            )
 
             # Update all chunks with the new shared_user_ids
             try:
@@ -8885,6 +8939,10 @@ def unshare_document_from_user(document_id, owner_user_id, target_user_id):
             document_item['last_updated'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
             # Update the document
             cosmos_user_documents_container.upsert_item(document_item)
+            sync_document_access_index_for_document_fail_open(
+                document_item,
+                operation='document_unshared_from_user',
+            )
 
             # Update all chunks with the new shared_user_ids
             try:
@@ -9048,6 +9106,10 @@ def share_document_with_group(document_id, owner_group_id, target_group_id):
 
             # Update the document
             cosmos_group_documents_container.upsert_item(document_item)
+            sync_document_access_index_for_document_fail_open(
+                document_item,
+                operation='document_shared_with_group',
+            )
             return True
 
         return True  # Already shared
@@ -9087,6 +9149,10 @@ def unshare_document_from_group(document_id, owner_group_id, target_group_id):
 
             # Update the document
             cosmos_group_documents_container.upsert_item(document_item)
+            sync_document_access_index_for_document_fail_open(
+                document_item,
+                operation='document_unshared_from_group',
+            )
 
         return True
 
