@@ -712,44 +712,18 @@ def _refresh_app_settings_cache_after_write(settings_payload, context="app_setti
                 level=logging.WARNING
             )
 
-    _update_cache("after_version_bump")
-
-
-def _refresh_app_settings_cache_after_write(settings_payload, context="app_settings_write"):
-    """Update shared/local settings cache around a version bump."""
-    cache_updater = getattr(app_settings_cache, "update_settings_cache", None)
-    version_bumper = getattr(app_settings_cache, "bump_app_settings_cache_version", None)
-
-    def _update_cache(stage):
-        if not callable(cache_updater):
-            return
-        try:
-            cache_updater(copy.deepcopy(settings_payload))
-        except Exception as cache_error:
-            log_event(
-                "App settings cache update failed after settings write.",
-                extra={
-                    "context": context,
-                    "stage": stage,
-                    "error": str(cache_error)
-                },
-                level=logging.WARNING
-            )
-
-    _update_cache("before_version_bump")
-
-    if callable(version_bumper):
-        try:
-            version_bumper()
-        except Exception as version_error:
-            log_event(
-                "App settings cache version bump failed after settings write.",
-                extra={
-                    "context": context,
-                    "error": str(version_error)
-                },
-                level=logging.WARNING
-            )
+    try:
+        from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
+        bump_chat_bootstrap_global_cache_version(reason=f"settings_write:{context}")
+    except Exception as bootstrap_cache_error:
+        log_event(
+            "Chat bootstrap cache invalidation failed after settings write.",
+            extra={
+                "context": context,
+                "error": str(bootstrap_cache_error)
+            },
+            level=logging.WARNING
+        )
 
     _update_cache("after_version_bump")
 
@@ -936,6 +910,9 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_startup_app_maintenance': True,
         'app_maintenance_check_interval_seconds': 3600,
         'app_maintenance_job_lease_seconds': 300,
+        'custom_pages_nav_cache_ttl_seconds': 60,
+        'chat_bootstrap_cache_ttl_seconds': 300,
+        'conversation_cache_ttl_seconds': 120,
 
         # Cosmos DB Throughput Scale Settings
         **get_default_cosmos_throughput_settings(),

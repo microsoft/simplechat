@@ -8,6 +8,7 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 
+from azure.core import MatchConditions
 from config import cosmos_settings_container
 from functions_appinsights import log_event
 
@@ -16,6 +17,7 @@ SHARED_CACHE_ENTRY_DOC_TYPE = 'shared_cache_entry'
 SHARED_CACHE_ENTRY_PREFIX = 'shared_cache_entry:'
 SHARED_CACHE_VERSION_DOC_TYPE = 'cache_version'
 SHARED_CACHE_VERSION_READ_TTL_SECONDS = 15
+SHARED_CACHE_VERSION_BUMP_MAX_RETRIES = 5
 
 _version_cache = {}
 _version_cache_lock = None
@@ -184,16 +186,26 @@ def _get_version_cache_key(container, version_doc_id):
     return f"{id(container)}:{version_doc_id}"
 
 
-def get_shared_cache_version(version_doc_id, default_version=0, container=None):
+def _set_cached_shared_cache_version(container, version_doc_id, version):
+    cache_lock = _get_version_cache_lock()
+    with cache_lock:
+        _version_cache[_get_version_cache_key(container, version_doc_id)] = {
+            'value': version,
+            'expires_at': time.time() + SHARED_CACHE_VERSION_READ_TTL_SECONDS,
+        }
+
+
+def get_shared_cache_version(version_doc_id, default_version=0, container=None, use_local_cache=True):
     """Read a Cosmos-backed shared cache version with a short local TTL."""
     cache_container = container or cosmos_settings_container
     cache_key = _get_version_cache_key(cache_container, version_doc_id)
     now = time.time()
     cache_lock = _get_version_cache_lock()
-    with cache_lock:
-        cached = _version_cache.get(cache_key)
-        if cached and cached.get('expires_at', 0) > now:
-            return _normalize_cache_version(cached.get('value'))
+    if use_local_cache:
+        with cache_lock:
+            cached = _version_cache.get(cache_key)
+            if cached and cached.get('expires_at', 0) > now:
+                return _normalize_cache_version(cached.get('value'))
 
     try:
         doc = cache_container.read_item(item=version_doc_id, partition_key=version_doc_id)
@@ -203,11 +215,8 @@ def get_shared_cache_version(version_doc_id, default_version=0, container=None):
             _log_cache_warning('cosmos_get_shared_cache_version', ex, {'version_doc_id': version_doc_id})
         version = _normalize_cache_version(default_version)
 
-    with cache_lock:
-        _version_cache[cache_key] = {
-            'value': version,
-            'expires_at': now + SHARED_CACHE_VERSION_READ_TTL_SECONDS,
-        }
+    if use_local_cache:
+        _set_cached_shared_cache_version(cache_container, version_doc_id, version)
     return version
 
 
@@ -258,27 +267,49 @@ def ensure_shared_cache_version_doc(version_doc_id, initial_version=0, descripti
 
 
 def bump_shared_cache_version(version_doc_id, description='', container=None):
-    """Increment a Cosmos-backed shared cache version document."""
+    """Increment a Cosmos-backed shared cache version document with optimistic concurrency."""
     cache_container = container or cosmos_settings_container
-    result = ensure_shared_cache_version_doc(version_doc_id, description=description, container=cache_container)
-    current_version = _normalize_cache_version(result.get('version'))
-    next_version = current_version + 1
-    body = {
-        'id': version_doc_id,
-        'type': SHARED_CACHE_VERSION_DOC_TYPE,
-        'description': result.get('description') or description,
-        'version': next_version,
-        'updated_at': _utc_now_iso(),
-    }
-    try:
-        cache_container.upsert_item(body)
-        cache_lock = _get_version_cache_lock()
-        with cache_lock:
-            _version_cache[_get_version_cache_key(cache_container, version_doc_id)] = {
-                'value': next_version,
-                'expires_at': time.time() + SHARED_CACHE_VERSION_READ_TTL_SECONDS,
-            }
-        return next_version
-    except Exception as ex:
-        _log_cache_warning('cosmos_bump_shared_cache_version', ex, {'version_doc_id': version_doc_id})
-        raise
+    ensure_shared_cache_version_doc(version_doc_id, description=description, container=cache_container)
+
+    last_conflict = None
+    for _ in range(SHARED_CACHE_VERSION_BUMP_MAX_RETRIES):
+        try:
+            doc = cache_container.read_item(item=version_doc_id, partition_key=version_doc_id)
+            current_version = _normalize_cache_version(doc.get('version'))
+            next_version = current_version + 1
+            replacement_doc = dict(doc)
+            replacement_doc.update({
+                'id': version_doc_id,
+                'type': SHARED_CACHE_VERSION_DOC_TYPE,
+                'description': doc.get('description') or description,
+                'version': next_version,
+                'updated_at': _utc_now_iso(),
+            })
+            cache_container.replace_item(
+                item=version_doc_id,
+                body=replacement_doc,
+                etag=doc.get('_etag'),
+                match_condition=MatchConditions.IfNotModified,
+            )
+            _set_cached_shared_cache_version(cache_container, version_doc_id, next_version)
+            return next_version
+        except Exception as ex:
+            status_code = getattr(ex, 'status_code', None)
+            if _is_not_found_error(ex):
+                ensure_shared_cache_version_doc(version_doc_id, description=description, container=cache_container)
+                last_conflict = ex
+                continue
+            if status_code in (409, 412):
+                last_conflict = ex
+                continue
+            _log_cache_warning('cosmos_bump_shared_cache_version', ex, {'version_doc_id': version_doc_id})
+            raise
+
+    _log_cache_warning(
+        'cosmos_bump_shared_cache_version_conflict',
+        last_conflict or RuntimeError('Version bump retry limit exceeded.'),
+        {'version_doc_id': version_doc_id, 'max_retries': SHARED_CACHE_VERSION_BUMP_MAX_RETRIES},
+    )
+    if last_conflict:
+        raise last_conflict
+    raise RuntimeError('Shared cache version bump retry limit exceeded.')

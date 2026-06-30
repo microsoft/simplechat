@@ -3,6 +3,9 @@
 
 import importlib.util
 import inspect
+import copy
+import hashlib
+import json
 import logging
 import os
 import re
@@ -14,7 +17,15 @@ from flask import has_app_context, session, url_for
 
 from config import cosmos_custom_pages_container
 from custom_page_extension import CustomPageExtension
+import app_settings_cache
 from functions_appinsights import log_event
+from functions_shared_cache import (
+    bump_shared_cache_version,
+    delete_shared_cache_entry,
+    get_shared_cache_entry,
+    get_shared_cache_version,
+    set_shared_cache_entry,
+)
 
 
 CUSTOM_PAGES_DIR = os.path.join(os.path.dirname(__file__), "custom_pages")
@@ -35,6 +46,63 @@ ASSET_FOLDERS = {
 }
 LIST_FIELDS = ("roles", "css_files", "js_files", "asset_files", "json_files")
 PYTHON_EXTENSION_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
+CUSTOM_PAGES_CACHE_NAMESPACE = "custom_pages"
+CUSTOM_PAGES_CACHE_VERSION_DOC_ID = "custom_pages_cache_version"
+CUSTOM_PAGES_CATALOG_CACHE_KEY = "catalog"
+CUSTOM_PAGES_NAV_CACHE_KEY_PREFIX = "nav"
+CUSTOM_PAGES_CATALOG_CACHE_TTL_SECONDS = 300
+CUSTOM_PAGES_NAV_CACHE_TTL_SECONDS = 60
+
+
+def _get_shared_cache_redis_client():
+    try:
+        return app_settings_cache.get_app_cache_redis_client()
+    except Exception as ex:
+        log_event(
+            "[CustomPages] Redis client lookup failed; using Cosmos cache fallback.",
+            extra={"error": str(ex)},
+            level=logging.WARNING,
+        )
+        return None
+
+
+def _get_custom_pages_cache_version() -> int:
+    return get_shared_cache_version(CUSTOM_PAGES_CACHE_VERSION_DOC_ID, default_version=0)
+
+
+def _stable_hash(payload: Any) -> str:
+    serialized = json.dumps(payload, sort_keys=True, default=str, separators=(",", ":"))
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:16]
+
+
+def invalidate_custom_pages_cache(reason: str = "custom_pages_changed") -> Optional[int]:
+    """Invalidate custom page catalog and navigation caches without failing callers."""
+    try:
+        version = bump_shared_cache_version(
+            CUSTOM_PAGES_CACHE_VERSION_DOC_ID,
+            description="Custom pages catalog and navigation cache version.",
+        )
+    except Exception as ex:
+        version = None
+        log_event(
+            "[CustomPages] Failed to bump custom pages cache version.",
+            extra={"reason": reason, "error": str(ex)},
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+
+    delete_shared_cache_entry(
+        CUSTOM_PAGES_CACHE_NAMESPACE,
+        CUSTOM_PAGES_CATALOG_CACHE_KEY,
+        redis_client=_get_shared_cache_redis_client(),
+    )
+    log_event(
+        "[CustomPages] Custom pages cache invalidated.",
+        extra={"reason": reason, "version": version},
+        level=logging.INFO,
+        debug_only=True,
+    )
+    return version
 
 
 def is_custom_pages_enabled(settings: Optional[Dict[str, Any]] = None) -> bool:
@@ -147,7 +215,7 @@ def list_custom_pages(include_python: bool = True) -> List[Dict[str, Any]]:
     return sorted(pages.values(), key=lambda item: (item.get("nav_order", 100), item.get("nav_label", "").lower()))
 
 
-def list_cosmos_custom_pages() -> List[Dict[str, Any]]:
+def _list_cosmos_custom_pages_source() -> List[Dict[str, Any]]:
     """Return static custom page metadata stored in Cosmos DB."""
     try:
         items = list(cosmos_custom_pages_container.query_items(
@@ -167,7 +235,45 @@ def list_cosmos_custom_pages() -> List[Dict[str, Any]]:
         return []
 
 
-def get_custom_page(slug: str, include_python: bool = True) -> Optional[Dict[str, Any]]:
+def list_cosmos_custom_pages() -> List[Dict[str, Any]]:
+    """Return cached static custom page metadata stored in Cosmos DB."""
+    version = _get_custom_pages_cache_version()
+    redis_client = _get_shared_cache_redis_client()
+    cached = get_shared_cache_entry(
+        CUSTOM_PAGES_CACHE_NAMESPACE,
+        CUSTOM_PAGES_CATALOG_CACHE_KEY,
+        redis_client=redis_client,
+    )
+    if isinstance(cached, dict) and cached.get("version") == version and isinstance(cached.get("pages"), list):
+        log_event(
+            "[CustomPages] Custom page catalog cache hit.",
+            extra={"version": version, "count": len(cached.get("pages") or [])},
+            level=logging.INFO,
+            debug_only=True,
+        )
+        return copy.deepcopy(cached.get("pages") or [])
+
+    pages = _list_cosmos_custom_pages_source()
+    set_shared_cache_entry(
+        CUSTOM_PAGES_CACHE_NAMESPACE,
+        CUSTOM_PAGES_CATALOG_CACHE_KEY,
+        {
+            "version": version,
+            "pages": pages,
+        },
+        ttl_seconds=CUSTOM_PAGES_CATALOG_CACHE_TTL_SECONDS,
+        redis_client=redis_client,
+    )
+    log_event(
+        "[CustomPages] Custom page catalog cache miss.",
+        extra={"version": version, "count": len(pages)},
+        level=logging.INFO,
+        debug_only=True,
+    )
+    return pages
+
+
+def get_custom_page(slug: str, include_python: bool = True, use_cache: bool = True) -> Optional[Dict[str, Any]]:
     """Return a custom page by slug from Cosmos or Python discovery."""
     if not is_safe_slug(slug):
         return None
@@ -177,6 +283,12 @@ def get_custom_page(slug: str, include_python: bool = True) -> Optional[Dict[str
         python_pages = discover_python_custom_pages()
         if normalized_slug in python_pages:
             return python_pages[normalized_slug]
+
+    if use_cache:
+        for page in list_cosmos_custom_pages():
+            if page.get("slug") == normalized_slug:
+                return page
+        return None
 
     try:
         item = cosmos_custom_pages_container.read_item(item=normalized_slug, partition_key=normalized_slug)
@@ -202,12 +314,13 @@ def save_custom_page(metadata: Dict[str, Any], user_id: str = "system") -> Dict[
         raise ValueError("; ".join(errors))
 
     now = datetime.utcnow().isoformat()
-    existing = get_custom_page(page["slug"], include_python=False)
+    existing = get_custom_page(page["slug"], include_python=False, use_cache=False)
     page["created_by"] = existing.get("created_by", user_id) if existing else user_id
     page["created_at"] = existing.get("created_at", now) if existing else now
     page["modified_by"] = user_id
     page["modified_at"] = now
     result = cosmos_custom_pages_container.upsert_item(body=page)
+    invalidate_custom_pages_cache(reason="save_custom_page")
     return normalize_custom_page_metadata(_strip_cosmos_fields(result), source=CUSTOM_PAGE_SOURCE_COSMOS)
 
 
@@ -217,6 +330,7 @@ def delete_custom_page(slug: str) -> bool:
         return False
     try:
         cosmos_custom_pages_container.delete_item(item=slug, partition_key=slug)
+        invalidate_custom_pages_cache(reason="delete_custom_page")
         return True
     except exceptions.CosmosResourceNotFoundError:
         return False
@@ -280,8 +394,8 @@ def discover_python_custom_pages(force_refresh: bool = False) -> Dict[str, Dict[
     return discovered
 
 
-def get_custom_pages_nav(settings: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Return authorized custom page navigation items for the current request."""
+def _build_custom_pages_nav(settings: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Build authorized custom page navigation items for the current request."""
     if not is_custom_pages_enabled(settings):
         return []
 
@@ -307,6 +421,53 @@ def get_custom_pages_nav(settings: Dict[str, Any]) -> List[Dict[str, Any]]:
         })
 
     return sorted(nav_items, key=lambda item: (item.get("order", 100), item.get("label", "").lower()))
+
+
+def get_custom_pages_nav(settings: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Return cached authorized custom page navigation items for the current request."""
+    if not is_custom_pages_enabled(settings):
+        return []
+
+    roles = _current_user_roles()
+    version = _get_custom_pages_cache_version()
+    cache_key = (
+        f"{CUSTOM_PAGES_NAV_CACHE_KEY_PREFIX}:"
+        f"{_stable_hash({'roles': sorted(roles), 'enabled': is_custom_pages_enabled(settings)})}"
+    )
+    redis_client = _get_shared_cache_redis_client()
+    cached = get_shared_cache_entry(
+        CUSTOM_PAGES_CACHE_NAMESPACE,
+        cache_key,
+        redis_client=redis_client,
+    )
+    if isinstance(cached, dict) and cached.get("version") == version and isinstance(cached.get("nav"), list):
+        log_event(
+            "[CustomPages] Custom page navigation cache hit.",
+            extra={"version": version, "nav_count": len(cached.get("nav") or [])},
+            level=logging.INFO,
+            debug_only=True,
+        )
+        return copy.deepcopy(cached.get("nav") or [])
+
+    nav_items = _build_custom_pages_nav(settings)
+    ttl_seconds = int(settings.get("custom_pages_nav_cache_ttl_seconds") or CUSTOM_PAGES_NAV_CACHE_TTL_SECONDS)
+    set_shared_cache_entry(
+        CUSTOM_PAGES_CACHE_NAMESPACE,
+        cache_key,
+        {
+            "version": version,
+            "nav": nav_items,
+        },
+        ttl_seconds=ttl_seconds,
+        redis_client=redis_client,
+    )
+    log_event(
+        "[CustomPages] Custom page navigation cache miss.",
+        extra={"version": version, "nav_count": len(nav_items)},
+        level=logging.INFO,
+        debug_only=True,
+    )
+    return nav_items
 
 
 def is_custom_page_authorized(page: Dict[str, Any], roles: Optional[List[str]] = None) -> bool:

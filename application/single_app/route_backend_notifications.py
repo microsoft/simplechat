@@ -2,6 +2,7 @@
 
 from config import *
 from functions_authentication import *
+from functions_conversation_cache import bump_conversation_cache_version
 from functions_settings import *
 from functions_notifications import *
 from swagger_wrapper import swagger_route, get_auth_security
@@ -120,6 +121,7 @@ def register_route_backend_notifications(bp):
             success = mark_notification_read(notification_id, user_id)
             
             if success:
+                bump_conversation_cache_version(user_id, reason="notification_marked_read")
                 return jsonify({
                     'success': True,
                     'message': 'Notification marked as read'
@@ -150,6 +152,7 @@ def register_route_backend_notifications(bp):
             success = dismiss_notification(notification_id, user_id)
             
             if success:
+                bump_conversation_cache_version(user_id, reason="notification_dismissed")
                 return jsonify({
                     'success': True,
                     'message': 'Notification dismissed'
@@ -178,6 +181,8 @@ def register_route_backend_notifications(bp):
         try:
             user_id = get_current_user_id()
             count = mark_all_read(user_id)
+            if count:
+                bump_conversation_cache_version(user_id, reason="notifications_marked_read")
             
             return jsonify({
                 'success': True,

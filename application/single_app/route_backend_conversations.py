@@ -32,6 +32,14 @@ from functions_conversation_feed import (
 )
 from functions_conversation_metadata import get_conversation_metadata, update_conversation_with_metadata
 from functions_conversation_unread import clear_conversation_unread, normalize_conversation_unread_state
+from functions_conversation_cache import (
+    build_conversation_cache_key,
+    bump_conversation_cache_version,
+    get_cached_conversation_payload,
+    get_conversation_cache_ttl_seconds,
+    invalidate_conversation_cache_for_item,
+    set_cached_conversation_payload,
+)
 from functions_image_messages import decode_image_content, get_complete_image_content, hydrate_image_messages, is_blob_backed_image_message, is_external_image_url
 from functions_notifications import mark_chat_response_notifications_read_for_conversation
 from flask import Response, request, stream_with_context
@@ -40,6 +48,7 @@ from functions_documents import (
     delete_chat_upload_workspace_documents_for_conversation,
     serialize_chat_upload_workspace_documents_for_conversation,
 )
+from functions_group import get_user_groups
 from functions_message_artifacts import (
     build_message_artifact_payload_map,
     filter_assistant_artifact_items,
@@ -105,6 +114,43 @@ SEARCH_CHAT_TYPE_ALIASES = {
     GROUP_MULTI_USER_CHAT_TYPE: {GROUP_MULTI_USER_CHAT_TYPE},
     'public': {'public'},
 }
+
+
+def _build_conversation_cache_access_parameters(user_id):
+    """Return current group-access inputs that affect collaboration feed/search visibility."""
+    try:
+        group_docs = get_user_groups(user_id)
+    except Exception as exc:
+        log_event(
+            f"[ConversationCache] Failed to build group access cache fingerprint for {user_id}: {exc}",
+            level=logging.WARNING,
+            exceptionTraceback=True,
+            debug_only=True,
+        )
+        return None
+
+    groups = []
+    for group_doc in group_docs or []:
+        if not isinstance(group_doc, dict):
+            continue
+        group_id = str(group_doc.get('id') or '').strip()
+        if not group_id:
+            continue
+        groups.append({
+            'id': group_id,
+            'status': str(group_doc.get('status') or 'active'),
+            'updated_at': str(
+                group_doc.get('updated_at')
+                or group_doc.get('last_updated')
+                or group_doc.get('_ts')
+                or ''
+            ),
+        })
+
+    groups.sort(key=lambda group_item: group_item['id'])
+    return {
+        'groups': groups,
+    }
 
 
 def _normalize_workspace_document_delete_ids(raw_document_ids):
@@ -713,6 +759,26 @@ def _authorize_personal_conversation_read(user_id, conversation_id):
     return conversation_item
 
 
+def _invalidate_conversation_cache_after_message_mutation(conversation_id, user_id, reason):
+    """Invalidate conversation caches after message-level changes without failing the caller."""
+    try:
+        conversation_item = cosmos_conversations_container.read_item(
+            item=conversation_id,
+            partition_key=conversation_id,
+        )
+    except Exception as exc:
+        log_event(
+            f"[ConversationCache] Failed to load conversation {conversation_id} for message mutation invalidation: {exc}",
+            level=logging.WARNING,
+            exceptionTraceback=True,
+            debug_only=True,
+        )
+        bump_conversation_cache_version(user_id, reason=reason)
+        return
+
+    invalidate_conversation_cache_for_item(conversation_item, reason=reason)
+
+
 def _authorize_image_conversation_read(user_id, conversation_id):
     """Authorize image reads for either personal or collaborative conversations."""
     try:
@@ -948,12 +1014,27 @@ def register_route_backend_conversations(bp):
         user_id = get_current_user_id()
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
-        query = f"SELECT * FROM c WHERE c.user_id = '{user_id}' ORDER BY c.last_updated DESC"
-        items = list(cosmos_conversations_container.query_items(query=query, enable_cross_partition_query=True))
+        cache_key = build_conversation_cache_key(user_id, "list", parameters={"include_hidden": True})
+        cached_payload = get_cached_conversation_payload(cache_key)
+        if isinstance(cached_payload, dict) and isinstance(cached_payload.get('conversations'), list):
+            return jsonify(cached_payload), 200
+
+        query = "SELECT * FROM c WHERE c.user_id = @user_id ORDER BY c.last_updated DESC"
+        items = list(cosmos_conversations_container.query_items(
+            query=query,
+            parameters=[{'name': '@user_id', 'value': user_id}],
+            enable_cross_partition_query=True,
+        ))
         normalized_items = [normalize_conversation_unread_state(item) for item in items]
-        return jsonify({
+        payload = {
             'conversations': normalized_items
-        }), 200
+        }
+        set_cached_conversation_payload(
+            cache_key,
+            payload,
+            ttl_seconds=get_conversation_cache_ttl_seconds(get_settings()),
+        )
+        return jsonify(payload), 200
 
 
     @bp.route('/api/conversations/feed', methods=['GET'])
@@ -978,6 +1059,26 @@ def register_route_backend_conversations(bp):
             source_offsets = get_conversation_feed_source_offsets(cursor_data) if cursor_is_compatible else {}
             include_priority = not cursor_is_compatible
 
+            access_parameters = _build_conversation_cache_access_parameters(user_id)
+            feed_cache_parameters = {
+                "search_term": search_term,
+                "include_hidden": include_hidden,
+                "page_size": page_size,
+                "cursor": request.args.get('cursor') or "",
+                "include_priority": include_priority,
+                "access": access_parameters,
+            }
+            feed_cache_key = None
+            if access_parameters is not None:
+                feed_cache_key = build_conversation_cache_key(
+                    user_id,
+                    "feed",
+                    parameters=feed_cache_parameters,
+                )
+                cached_feed_payload = get_cached_conversation_payload(feed_cache_key)
+                if isinstance(cached_feed_payload, dict) and isinstance(cached_feed_payload.get('conversations'), list):
+                    return jsonify(cached_feed_payload), 200
+
             feed_payload = _build_conversation_feed(
                 user_id=user_id,
                 page_size=page_size,
@@ -988,6 +1089,12 @@ def register_route_backend_conversations(bp):
             )
             feed_payload['search_term'] = search_term
             feed_payload['include_hidden'] = include_hidden
+            if feed_cache_key:
+                set_cached_conversation_payload(
+                    feed_cache_key,
+                    feed_payload,
+                    ttl_seconds=get_conversation_cache_ttl_seconds(get_settings()),
+                )
             return jsonify(feed_payload), 200
         except Exception as exc:
             log_event(
@@ -1012,6 +1119,7 @@ def register_route_backend_conversations(bp):
             data.get('initial_message') or data.get('message') or data.get('title') or ''
         )
         conversation_item = create_personal_conversation_for_current_user(title=initial_title)
+        bump_conversation_cache_version(user_id, reason="conversation_created")
 
         return jsonify({
             'conversation_id': conversation_item.get('id'),
@@ -1053,6 +1161,7 @@ def register_route_backend_conversations(bp):
 
             # Write back to Cosmos DB
             cosmos_conversations_container.upsert_item(conversation_item)
+            bump_conversation_cache_version(user_id, reason="conversation_title_updated")
 
             return jsonify({
                 'message': 'Conversation updated', 
@@ -1183,6 +1292,7 @@ def register_route_backend_conversations(bp):
                 item=conversation_id,
                 partition_key=conversation_id
             )
+            bump_conversation_cache_version(user_id, reason="conversation_deleted")
             # TODO: Delete any facts that were stored with this conversation.
         except Exception as e:
             return jsonify({
@@ -1289,7 +1399,10 @@ def register_route_backend_conversations(bp):
             except Exception as e:
                 print(f"Error deleting conversation {conversation_id}: {str(e)}")
                 failed_ids.append(conversation_id)
-        
+
+        if success_count:
+            bump_conversation_cache_version(user_id, reason="conversations_bulk_deleted")
+
         return jsonify({
             "success": True,
             "deleted_count": success_count,
@@ -1326,6 +1439,7 @@ def register_route_backend_conversations(bp):
             
             # Update in Cosmos DB
             cosmos_conversations_container.upsert_item(conversation_item)
+            bump_conversation_cache_version(user_id, reason="conversation_pin_toggled")
             
             return jsonify({
                 'success': True,
@@ -1368,6 +1482,7 @@ def register_route_backend_conversations(bp):
             
             # Update in Cosmos DB
             cosmos_conversations_container.upsert_item(conversation_item)
+            bump_conversation_cache_version(user_id, reason="conversation_hide_toggled")
             
             return jsonify({
                 'success': True,
@@ -1430,7 +1545,10 @@ def register_route_backend_conversations(bp):
             except Exception as e:
                 print(f"Error updating conversation {conversation_id}: {str(e)}")
                 failed_ids.append(conversation_id)
-        
+
+        if success_count:
+            bump_conversation_cache_version(user_id, reason="conversations_bulk_pin_updated")
+
         return jsonify({
             "success": True,
             "updated_count": success_count,
@@ -1488,7 +1606,10 @@ def register_route_backend_conversations(bp):
             except Exception as e:
                 print(f"Error updating conversation {conversation_id}: {str(e)}")
                 failed_ids.append(conversation_id)
-        
+
+        if success_count:
+            bump_conversation_cache_version(user_id, reason="conversations_bulk_hide_updated")
+
         return jsonify({
             "success": True,
             "updated_count": success_count,
@@ -1588,6 +1709,7 @@ def register_route_backend_conversations(bp):
 
             conversation_item = clear_conversation_unread(conversation_item)
             cosmos_conversations_container.upsert_item(conversation_item)
+            bump_conversation_cache_version(user_id, reason="conversation_marked_read")
 
             notifications_marked_read = mark_chat_response_notifications_read_for_conversation(
                 user_id,
@@ -1758,6 +1880,7 @@ def register_route_backend_conversations(bp):
                 user_id,
                 new_value,
             )
+            invalidate_conversation_cache_for_item(conversation_item, reason="conversation_scope_lock_updated")
 
             return jsonify({
                 "success": True,
@@ -1844,6 +1967,31 @@ def register_route_backend_conversations(bp):
                     'success': False,
                     'error': 'Search term must be at least 3 characters'
                 }), 400
+
+            access_parameters = _build_conversation_cache_access_parameters(user_id)
+            search_cache_parameters = {
+                'search_term': search_term,
+                'match_mode': match_mode,
+                'date_from': date_from,
+                'date_to': date_to,
+                'chat_types': sorted([str(item) for item in chat_types or []]),
+                'classifications': sorted([str(item) for item in classifications or []]),
+                'has_files': bool(has_files),
+                'has_images': bool(has_images),
+                'page': page,
+                'per_page': per_page,
+                'access': access_parameters,
+            }
+            search_cache_key = None
+            if access_parameters is not None:
+                search_cache_key = build_conversation_cache_key(
+                    user_id,
+                    "search",
+                    parameters=search_cache_parameters,
+                )
+                cached_search_payload = get_cached_conversation_payload(search_cache_key)
+                if isinstance(cached_search_payload, dict) and cached_search_payload.get('success') is True:
+                    return jsonify(cached_search_payload), 200
             
             selected_chat_types = _expand_search_chat_type_filters(chat_types)
 
@@ -2000,14 +2148,21 @@ def register_route_backend_conversations(bp):
             end_idx = start_idx + per_page
             paginated_results = results[start_idx:end_idx]
             
-            return jsonify({
+            payload = {
                 'success': True,
                 'total_results': total_results,
                 'page': page,
                 'total_pages': total_pages,
                 'per_page': per_page,
                 'results': paginated_results
-            }), 200
+            }
+            if search_cache_key:
+                set_cached_conversation_payload(
+                    search_cache_key,
+                    payload,
+                    ttl_seconds=get_conversation_cache_ttl_seconds(get_settings()),
+                )
+            return jsonify(payload), 200
             
         except Exception as e:
             log_event(
@@ -2281,7 +2436,12 @@ def register_route_backend_conversations(bp):
                     cosmos_messages_container.delete_item(msg_id, partition_key=conversation_id)
                 
                 deleted_message_ids.append(msg_id)
-            
+
+            _invalidate_conversation_cache_after_message_mutation(
+                conversation_id,
+                user_id,
+                "message_deleted",
+            )
             return jsonify({
                 'success': True,
                 'deleted_message_ids': deleted_message_ids,
@@ -2454,7 +2614,12 @@ def register_route_backend_conversations(bp):
                 'metadata': new_metadata
             }
             cosmos_messages_container.upsert_item(new_user_message)
-            
+
+            _invalidate_conversation_cache_after_message_mutation(
+                conversation_id,
+                user_id,
+                "message_retry_created",
+            )
             # Build chat request parameters from original message metadata
             chat_request = {
                 'message': user_content,
@@ -2671,7 +2836,12 @@ def register_route_backend_conversations(bp):
                 'metadata': new_metadata
             }
             cosmos_messages_container.upsert_item(new_user_message)
-            
+
+            _invalidate_conversation_cache_after_message_mutation(
+                conversation_id,
+                user_id,
+                "message_edit_created",
+            )
             # Build chat request parameters from original message metadata
             # Keep all original settings (model, reasoning, doc search, etc.)
             chat_request = {
@@ -2833,7 +3003,12 @@ def register_route_backend_conversations(bp):
                 msg_attempt = msg['metadata']['thread_info'].get('thread_attempt', 0)
                 msg['metadata']['thread_info']['active_thread'] = (msg_attempt == target_attempt)
                 cosmos_messages_container.upsert_item(msg)
-            
+
+            _invalidate_conversation_cache_after_message_mutation(
+                conversation_id,
+                user_id,
+                "message_attempt_switched",
+            )
             return jsonify({
                 'success': True,
                 'target_attempt': target_attempt,

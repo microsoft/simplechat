@@ -32,6 +32,7 @@ APP_SETTINGS_CACHE_VERSION = 0
 APP_GOVERNANCE_CACHE_VERSION = 0
 APP_SETTINGS_SHARED_VERSION_CACHE = {'value': 0, 'expires_at': 0}
 APP_GOVERNANCE_SHARED_VERSION_CACHE = {'value': 0, 'expires_at': 0}
+APP_REDIS_CLIENT = None
 APP_SETTINGS_CACHE_KEY = 'APP_SETTINGS_CACHE'
 APP_SETTINGS_CACHE_VERSION_KEY = 'APP_SETTINGS_CACHE_VERSION'
 APP_SETTINGS_CACHE_VERSION_DOC_ID = 'app_settings_cache_version'
@@ -598,8 +599,10 @@ def _assign_fallback_cache_functions(log_event_func=None):
     global get_app_settings_cache_version, bump_app_settings_cache_version
     global get_governance_cache_version, bump_governance_cache_version
     global app_cache_is_using_redis
+    global APP_REDIS_CLIENT
 
     app_cache_is_using_redis = False
+    APP_REDIS_CLIENT = None
     update_settings_cache = lambda new_settings: _update_settings_cache_fallback(
         new_settings,
         log_event_func=log_event_func,
@@ -672,6 +675,11 @@ def _assign_fallback_cache_functions(log_event_func=None):
     )
 
 
+def get_app_cache_redis_client():
+    """Return the configured Redis client for shared cache consumers, when available."""
+    return APP_REDIS_CLIENT if app_cache_is_using_redis else None
+
+
 def configure_app_cache(settings, redis_cache_endpoint=None):
     global _settings, update_settings_cache, get_settings_cache, APP_SETTINGS_CACHE
     global APP_USER_UI_SETTINGS_CACHE, APP_STREAM_SESSION_METADATA, APP_STREAM_SESSION_EVENTS
@@ -683,11 +691,13 @@ def configure_app_cache(settings, redis_cache_endpoint=None):
     global get_app_settings_cache_version, bump_app_settings_cache_version
     global get_governance_cache_version, bump_governance_cache_version
     global app_cache_is_using_redis
+    global APP_REDIS_CLIENT
     # Local import to avoid circular dependency: functions_keyvault imports app_settings_cache.
     from functions_appinsights import log_event
     _settings = settings
     use_redis = _settings.get('enable_redis_cache', False)
     app_cache_is_using_redis = False
+    APP_REDIS_CLIENT = None
 
     if use_redis:
         redis_url = settings.get('redis_url', '').strip()
@@ -731,6 +741,7 @@ def configure_app_cache(settings, redis_cache_endpoint=None):
                     ssl=True
                 )
             app_cache_is_using_redis = True
+            APP_REDIS_CLIENT = redis_client
         except Exception as redis_init_error:
             _log_cache_fallback('redis_initialization', redis_init_error, log_event_func=log_event)
             _assign_fallback_cache_functions(log_event_func=log_event)

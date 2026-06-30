@@ -31,6 +31,13 @@ class FakeCosmosError(Exception):
 class FakeCosmosContainer:
     def __init__(self):
         self.items = {}
+        self._etag_counter = 0
+
+    def _copy_with_new_etag(self, body):
+        self._etag_counter += 1
+        item = copy.deepcopy(body)
+        item["_etag"] = f"etag-{self._etag_counter}"
+        return item
 
     def read_item(self, item, partition_key):
         if item not in self.items:
@@ -41,12 +48,20 @@ class FakeCosmosContainer:
         item_id = body["id"]
         if item_id in self.items:
             raise FakeCosmosError(409, f"Duplicate item {item_id}")
-        self.items[item_id] = copy.deepcopy(body)
-        return copy.deepcopy(body)
+        self.items[item_id] = self._copy_with_new_etag(body)
+        return copy.deepcopy(self.items[item_id])
 
     def upsert_item(self, body):
-        self.items[body["id"]] = copy.deepcopy(body)
-        return copy.deepcopy(body)
+        self.items[body["id"]] = self._copy_with_new_etag(body)
+        return copy.deepcopy(self.items[body["id"]])
+
+    def replace_item(self, item, body, etag=None, match_condition=None, **kwargs):
+        if item not in self.items:
+            raise FakeCosmosError(404, f"Missing item {item}")
+        if etag and self.items[item].get("_etag") != etag:
+            raise FakeCosmosError(412, f"ETag mismatch for item {item}")
+        self.items[item] = self._copy_with_new_etag(body)
+        return copy.deepcopy(self.items[item])
 
     def delete_item(self, item, partition_key, **kwargs):
         if item not in self.items:

@@ -21,6 +21,7 @@ from functions_keyvault import keyvault_agent_save_helper, keyvault_agent_get_he
 from functions_agent_payload import sanitize_agent_payload
 from functions_debug import debug_print
 from functions_governance import ensure_governance_access
+from functions_chat_bootstrap_cache import bump_chat_bootstrap_user_cache_version
 
 def get_personal_agents(user_id):
     """
@@ -216,6 +217,7 @@ def save_personal_agent(user_id, agent_data, actor_user_id=None):
         cleaned_result.setdefault('agent_type', 'local')
         cleaned_result.setdefault('tags', [])
         cleaned_result.setdefault('icon', {})
+        bump_chat_bootstrap_user_cache_version(user_id, reason="personal_agent_saved")
         return cleaned_result
         
     except Exception as e:
@@ -249,6 +251,7 @@ def delete_personal_agent(user_id, agent_id):
             item=agent['id'],
             partition_key=user_id
         )
+        bump_chat_bootstrap_user_cache_version(user_id, reason="personal_agent_deleted")
         return True
     except exceptions.CosmosResourceNotFoundError:
         debug_print(f"Agent {agent_id} not found for user {user_id}")
@@ -333,4 +336,3 @@ def migrate_agents_from_user_settings(user_id):
     except Exception as e:
         debug_print(f"Error during agent migration for user {user_id}: {e}")
         return 0
-
