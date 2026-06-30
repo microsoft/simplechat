@@ -25,6 +25,11 @@ from functions_cosmos_throughput import (
     calculate_cosmos_throughput_autoscale_interval_seconds,
     evaluate_and_apply_cosmos_throughput_scaling,
 )
+from functions_app_maintenance import (
+    APP_MAINTENANCE_LOCK_NAME,
+    get_app_maintenance_settings,
+    run_app_maintenance_once,
+)
 from functions_debug import debug_print
 from functions_data_management import check_due_data_management_jobs_once
 from functions_file_sync import check_due_file_sync_sources_once
@@ -696,6 +701,36 @@ def run_data_management_scheduler_loop():
         time.sleep(60)
 
 
+def run_app_maintenance_loop():
+    """Run idempotent app maintenance tasks under a distributed lock."""
+    while True:
+        lock_document = None
+        sleep_seconds = 3600
+        try:
+            settings = get_settings()
+            maintenance_settings = get_app_maintenance_settings(settings)
+            sleep_seconds = maintenance_settings.get('check_interval_seconds', 3600)
+            if maintenance_settings.get('enabled') and maintenance_settings.get('run_on_startup'):
+                lock_document = acquire_distributed_task_lock(
+                    APP_MAINTENANCE_LOCK_NAME,
+                    lease_seconds=maintenance_settings.get('lease_seconds', 300),
+                )
+                if lock_document:
+                    run_app_maintenance_once(triggered_by='background')
+        except Exception as exc:
+            log_event(
+                '[AppMaintenance] Error in maintenance scheduler loop.',
+                extra={'error': str(exc)},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+        finally:
+            if lock_document:
+                release_distributed_task_lock(lock_document)
+
+        time.sleep(max(int(sleep_seconds or 3600), 60))
+
+
 def start_background_task_threads():
     """Start all background task loops for the current process."""
     task_specs = [
@@ -708,6 +743,7 @@ def start_background_task_threads():
         ('File Sync scheduler background task started.', run_file_sync_scheduler_loop),
         ('Tabular generated-output scheduler background task started.', run_tabular_generated_output_scheduler_loop),
         ('Data Management scheduler background task started.', run_data_management_scheduler_loop),
+        ('App maintenance background task started.', run_app_maintenance_loop),
     ]
 
     started_threads = []

@@ -931,6 +931,12 @@ def get_settings(use_cosmos=False, include_source=False):
         'redis_key': '',
         'redis_auth_type': '',
 
+        # App Maintenance Settings
+        'enable_app_maintenance': True,
+        'enable_startup_app_maintenance': True,
+        'app_maintenance_check_interval_seconds': 3600,
+        'app_maintenance_job_lease_seconds': 300,
+
         # Cosmos DB Throughput Scale Settings
         **get_default_cosmos_throughput_settings(),
 

@@ -24,6 +24,7 @@ from functions_cosmos_throughput import (
     normalize_cosmos_throughput_settings,
     set_database_throughput,
 )
+from functions_app_maintenance import get_app_maintenance_status, run_app_maintenance_once
 from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient
 from swagger_wrapper import swagger_route, get_auth_security
@@ -189,6 +190,71 @@ def auto_fix_index_fields(idx_type: str, user_id: str = 'system', admin_email: s
 
 
 def register_route_backend_settings(bp):
+    @bp.route('/api/admin/settings/app-maintenance/status', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def get_app_maintenance_admin_status():
+        """Return the current app maintenance status for admin diagnostics."""
+        try:
+            return jsonify(get_app_maintenance_status()), 200
+        except Exception as exc:
+            log_event(
+                '[AppMaintenance] Failed to load admin maintenance status.',
+                extra={'error': str(exc)},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to load app maintenance status.'}), 500
+
+    @bp.route('/api/admin/settings/app-maintenance/run', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def run_app_maintenance_admin():
+        """Run app maintenance tasks immediately from the admin settings area."""
+        user = session.get('user', {})
+        admin_email = user.get('preferred_username', user.get('email', 'unknown'))
+        admin_user_id = get_current_user_id() or 'unknown'
+        try:
+            result = run_app_maintenance_once(triggered_by='admin_manual', requested_by=admin_email)
+        except Exception as exc:
+            log_event(
+                '[AppMaintenance] Manual admin maintenance trigger failed.',
+                extra={'admin_email': admin_email, 'error': str(exc)},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to run app maintenance.'}), 500
+
+        if result.get('success'):
+            log_general_admin_action(
+                admin_user_id=admin_user_id,
+                admin_email=admin_email,
+                action='app_maintenance_manual_run',
+                description='Manually ran app maintenance foundation tasks.',
+                additional_context={
+                    'run_id': result.get('run_id'),
+                    'status': result.get('state', {}).get('last_status'),
+                },
+            )
+            return jsonify(result), 200
+
+        log_event(
+            '[AppMaintenance] Manual admin maintenance run failed.',
+            extra={
+                'run_id': result.get('run_id'),
+                'admin_email': admin_email,
+                'error': result.get('error'),
+            },
+            level=logging.ERROR,
+        )
+        return jsonify({
+            'error': 'Failed to run app maintenance.',
+            'run_id': result.get('run_id'),
+            'last_status': result.get('state', {}).get('last_status'),
+        }), 500
+
     @bp.route('/api/admin/settings/check_index_fields', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
