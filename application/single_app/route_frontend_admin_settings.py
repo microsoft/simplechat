@@ -2337,8 +2337,8 @@ def register_route_frontend_admin_settings(bp):
                 # Pass the *just saved* data (or fetch fresh) to ensure consistency
                 updated_settings_for_file = get_settings() # Fetch fresh to be safe
                 if updated_settings_for_file:
-                    ensure_custom_logo_file_exists(app, updated_settings_for_file)
-                    ensure_custom_favicon_file_exists(app, updated_settings_for_file)
+                    ensure_custom_logo_file_exists(current_app, updated_settings_for_file)
+                    ensure_custom_favicon_file_exists(current_app, updated_settings_for_file)
                     initialize_clients(updated_settings_for_file) # Important - reinitialize clients with new settings
                 else:
                     print("ERROR: Could not fetch settings after update to ensure logo/favicon files.")
