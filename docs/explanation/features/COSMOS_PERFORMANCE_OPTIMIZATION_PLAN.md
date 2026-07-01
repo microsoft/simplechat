@@ -7,7 +7,7 @@
 **Implemented in version**: **TBD**
 **Related config.py version update**: No version change is included with this proposal. Implementation should increment `VERSION` in `application/single_app/config.py` when code changes are made.
 **Primary audience**: SimpleChat technical leadership and application developers
-**Primary goal**: Reduce high-volume Azure Cosmos DB reads and repeated cross-partition queries while preserving the current application architecture and existing Azure AI Search indexing model.
+**Primary goal**: Reduce high-voThelume Azure Cosmos DB reads and repeated cross-partition queries while preserving the current application architecture and existing Azure AI Search indexing model.
 
 ## Review Summary
 

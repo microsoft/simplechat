@@ -1669,6 +1669,31 @@ def register_route_frontend_admin_settings(bp):
 
             cosmos_throughput_settings = normalize_cosmos_throughput_settings(cosmos_throughput_candidate_settings)
 
+            document_access_index_backfill_batch_size = min(
+                1000,
+                max(
+                    1,
+                    parse_admin_int(
+                        form_data.get('document_access_index_backfill_batch_size'),
+                        settings.get('document_access_index_backfill_batch_size', 200),
+                        'document_access_index_backfill_batch_size',
+                        200,
+                    ),
+                ),
+            )
+            document_access_index_repair_batch_size = min(
+                500,
+                max(
+                    1,
+                    parse_admin_int(
+                        form_data.get('document_access_index_repair_batch_size'),
+                        settings.get('document_access_index_repair_batch_size', 100),
+                        'document_access_index_repair_batch_size',
+                        100,
+                    ),
+                ),
+            )
+
             # --- Chunk Size Overrides ---
             chunk_size_defaults = get_chunk_size_defaults()
             existing_chunk_sizes = settings.get('chunk_size', {}) if isinstance(settings, dict) else {}
@@ -1827,6 +1852,15 @@ def register_route_frontend_admin_settings(bp):
                 'redis_url': form_data.get('redis_url', '').strip(),
                 'redis_key': admin_secret('redis_key'),
                 'redis_auth_type': form_data.get('redis_auth_type', '').strip(),
+
+                # Document Access Index
+                'enable_document_access_index_container': bool(settings.get('enable_document_access_index_container', True)),
+                'enable_document_access_index_write_through': form_data.get('enable_document_access_index_write_through') == 'on',
+                'enable_document_access_index_reads': bool(settings.get('enable_document_access_index_reads', False)),
+                'enable_document_access_index_shadow_validation': bool(settings.get('enable_document_access_index_shadow_validation', False)),
+                'enable_startup_document_access_index_backfill': form_data.get('enable_startup_document_access_index_backfill') == 'on',
+                'document_access_index_backfill_batch_size': document_access_index_backfill_batch_size,
+                'document_access_index_repair_batch_size': document_access_index_repair_batch_size,
 
                 # Workspaces
                 'enable_user_workspace': form_data.get('enable_user_workspace') == 'on',

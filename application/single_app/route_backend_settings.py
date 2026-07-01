@@ -218,10 +218,14 @@ def register_route_backend_settings(bp):
         admin_user_id = get_current_user_id() or 'unknown'
         try:
             payload = request.get_json(silent=True) or {}
+            apply_indexing_policies = None
+            if 'apply_cosmos_indexing_policies' in payload:
+                apply_indexing_policies = bool(payload.get('apply_cosmos_indexing_policies'))
             result = run_app_maintenance_once(
                 triggered_by='admin_manual',
                 requested_by=admin_email,
                 settings=get_settings(),
+                apply_indexing_policies=apply_indexing_policies,
                 run_document_access_backfill=payload.get('run_document_access_index_backfill'),
                 reset_document_access_backfill=bool(payload.get('reset_document_access_index_backfill', False)),
             )

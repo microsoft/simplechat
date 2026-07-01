@@ -733,6 +733,10 @@ def get_document_access_index_backfill_status(settings=None):
         'state': state,
         'repair_required_count': count_document_access_index_repair_documents(),
         'settings': {
+            'container_enabled': normalized_settings.get('container_enabled'),
+            'write_through_enabled': normalized_settings.get('write_through_enabled'),
+            'reads_enabled': normalized_settings.get('reads_enabled'),
+            'shadow_validation_enabled': normalized_settings.get('shadow_validation_enabled'),
             'startup_backfill_enabled': normalized_settings.get('startup_backfill_enabled'),
             'backfill_batch_size': normalized_settings.get('backfill_batch_size'),
             'repair_batch_size': normalized_settings.get('repair_batch_size'),

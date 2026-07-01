@@ -5295,6 +5295,254 @@
                     </div>
                 </div>
 
+                <div class="card p-3 mb-3" id="document-access-index-section" data-testid="document-access-index-section">
+                    <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+                        <div>
+                            <h5 class="mb-1">
+                                <i class="bi bi-diagram-3 me-2"></i>Cosmos Document Access Index
+                            </h5>
+                            <p class="text-muted mb-0">
+                                Monitor the document access projection used to remove expensive cross-partition document access queries.
+                            </p>
+                        </div>
+                        <div class="d-flex flex-wrap gap-2" role="group" aria-label="Document access index actions">
+                            <button type="button" class="btn btn-outline-secondary btn-sm" id="document-access-index-refresh-btn">
+                                <i class="bi bi-arrow-clockwise me-1" aria-hidden="true"></i>Refresh Status
+                            </button>
+                            <button type="button" class="btn btn-outline-primary btn-sm" id="document-access-index-run-batch-btn">
+                                <i class="bi bi-play-circle me-1" aria-hidden="true"></i>Run One Backfill Batch
+                            </button>
+                            <button type="button" class="btn btn-outline-danger btn-sm" id="document-access-index-reset-btn" data-bs-toggle="modal" data-bs-target="#documentAccessIndexResetModal">
+                                <i class="bi bi-arrow-counterclockwise me-1" aria-hidden="true"></i>Reset Checkpoint
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="alert alert-info small mb-3">
+                        <i class="bi bi-info-circle me-2" aria-hidden="true"></i>
+                        Write-through projection is safe to leave enabled because source document writes fail open if projection updates fail. Backfill runs one saved-size batch at a time. Save Admin Settings before running a batch if you changed the toggles or batch sizes. Read switchover and shadow validation remain future-wave controls.
+                    </div>
+
+                    <div id="document-access-index-message" class="alert alert-info d-none" role="status" aria-live="polite"></div>
+
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Container</div>
+                                <span class="badge text-bg-secondary" id="document-access-index-container-status">Not loaded</span>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Write-through</div>
+                                <span class="badge text-bg-secondary" id="document-access-index-write-through-status">Not loaded</span>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Read Path</div>
+                                <span class="badge text-bg-secondary" id="document-access-index-read-status">Future wave</span>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Shadow Validation</div>
+                                <span class="badge text-bg-secondary" id="document-access-index-shadow-status">Future wave</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="border rounded p-3 mb-3">
+                        <h6 class="mb-3">Safe Controls</h6>
+                        <div class="row g-3 align-items-start">
+                            <div class="col-md-6 col-xl-3">
+                                <div class="form-check form-switch">
+                                    <input
+                                        class="form-check-input"
+                                        type="checkbox"
+                                        id="enable_document_access_index_write_through"
+                                        name="enable_document_access_index_write_through"
+                                        {% if settings.enable_document_access_index_write_through %}checked{% endif %}
+                                    >
+                                    <label class="form-check-label" for="enable_document_access_index_write_through">
+                                        Enable write-through projection
+                                    </label>
+                                </div>
+                                <div class="form-text">Keeps new and changed documents synchronized into the access index.</div>
+                            </div>
+                            <div class="col-md-6 col-xl-3">
+                                <div class="form-check form-switch">
+                                    <input
+                                        class="form-check-input"
+                                        type="checkbox"
+                                        id="enable_startup_document_access_index_backfill"
+                                        name="enable_startup_document_access_index_backfill"
+                                        {% if settings.enable_startup_document_access_index_backfill %}checked{% endif %}
+                                    >
+                                    <label class="form-check-label" for="enable_startup_document_access_index_backfill">
+                                        Enable scheduled backfill
+                                    </label>
+                                </div>
+                                <div class="form-text">Allows app maintenance to run one backfill batch per maintenance pass.</div>
+                            </div>
+                            <div class="col-md-6 col-xl-3">
+                                <label for="document_access_index_backfill_batch_size" class="form-label">Backfill Batch Size</label>
+                                <input
+                                    type="number"
+                                    class="form-control"
+                                    id="document_access_index_backfill_batch_size"
+                                    name="document_access_index_backfill_batch_size"
+                                    min="1"
+                                    max="1000"
+                                    value="{{ settings.document_access_index_backfill_batch_size or 200 }}"
+                                >
+                                <div class="form-text">Documents processed per manual or scheduled batch.</div>
+                            </div>
+                            <div class="col-md-6 col-xl-3">
+                                <label for="document_access_index_repair_batch_size" class="form-label">Repair Batch Size</label>
+                                <input
+                                    type="number"
+                                    class="form-control"
+                                    id="document_access_index_repair_batch_size"
+                                    name="document_access_index_repair_batch_size"
+                                    min="1"
+                                    max="500"
+                                    value="{{ settings.document_access_index_repair_batch_size or 100 }}"
+                                >
+                                <div class="form-text">Fail-open repair records reconciled before each backfill batch.</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="border rounded p-3 mb-3">
+                        <h6 class="mb-3">Future Wave Controls</h6>
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <div class="form-check form-switch">
+                                    <input
+                                        class="form-check-input"
+                                        type="checkbox"
+                                        id="enable_document_access_index_reads_preview"
+                                        {% if settings.enable_document_access_index_reads %}checked{% endif %}
+                                        disabled
+                                    >
+                                    <label class="form-check-label" for="enable_document_access_index_reads_preview">
+                                        Enable document access index reads
+                                        <span class="badge text-bg-secondary ms-1">Wave 5</span>
+                                    </label>
+                                </div>
+                                <div class="form-text">Locked until shadow validation confirms projection parity.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-check form-switch">
+                                    <input
+                                        class="form-check-input"
+                                        type="checkbox"
+                                        id="enable_document_access_index_shadow_validation_preview"
+                                        {% if settings.enable_document_access_index_shadow_validation %}checked{% endif %}
+                                        disabled
+                                    >
+                                    <label class="form-check-label" for="enable_document_access_index_shadow_validation_preview">
+                                        Enable shadow validation
+                                        <span class="badge text-bg-secondary ms-1">Wave 4B</span>
+                                    </label>
+                                </div>
+                                <div class="form-text">Locked until the Wave 4B validation diff tooling is implemented.</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row g-3">
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Backfill State</div>
+                                <span class="badge text-bg-secondary" id="document-access-index-backfill-status">Not loaded</span>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Repair Backlog</div>
+                                <div class="fw-semibold" id="document-access-index-repair-count">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Current Scope</div>
+                                <div class="fw-semibold" id="document-access-index-current-scope">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Completed Scopes</div>
+                                <div class="fw-semibold" id="document-access-index-completed-scopes">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Total Documents Processed</div>
+                                <div class="fw-semibold" id="document-access-index-total-processed">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Total Documents Failed</div>
+                                <div class="fw-semibold" id="document-access-index-total-failed">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Rows Upserted</div>
+                                <div class="fw-semibold" id="document-access-index-total-upserted">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Rows Deleted</div>
+                                <div class="fw-semibold" id="document-access-index-total-deleted">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Last Batch Completed</div>
+                                <div class="fw-semibold text-break" id="document-access-index-last-completed">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Last Error</div>
+                                <div class="fw-semibold text-break" id="document-access-index-last-error">Not loaded</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal fade" id="documentAccessIndexResetModal" tabindex="-1" aria-labelledby="documentAccessIndexResetModalLabel" aria-hidden="true">
+                    <div class="modal-dialog">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="documentAccessIndexResetModalLabel">
+                                    <i class="bi bi-exclamation-triangle me-2"></i>Reset Document Access Backfill
+                                </h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <p>
+                                    Resetting the checkpoint makes the next batch start from the first source scope again. The operation is idempotent, but it may reprocess documents that already have projection rows.
+                                </p>
+                                <p class="mb-0 text-muted small">
+                                    This does not delete source documents or projection rows. It only resets backfill progress and immediately runs one saved-size backfill batch.
+                                </p>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                                <button type="button" class="btn btn-danger" id="document-access-index-reset-confirm-btn">
+                                    Reset and Run Batch
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="card p-3 mb-3" id="cosmos-throughput-section" data-testid="cosmos-throughput-section">
                     <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
                         <div>

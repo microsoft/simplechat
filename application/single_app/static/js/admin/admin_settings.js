@@ -37,6 +37,7 @@ let currentCosmosContainers = [];
 let currentCosmosMetricsWindowMinutes = 0;
 let currentCosmosStatusLoaded = false;
 let currentCosmosContainerSort = { field: 'container_name', direction: 'asc' };
+let documentAccessIndexStatusPollId = null;
 
 const COSMOS_CONTAINER_SORT_FIELDS = new Set([
     'container_name',
@@ -48,6 +49,7 @@ const COSMOS_CONTAINER_SORT_FIELDS = new Set([
 const COSMOS_CONTAINER_TEXT_SORT_FIELDS = new Set(['container_name', 'policy']);
 const COSMOS_THROUGHPUT_SIMPLECHAT_MAX_RU = 10000;
 const COSMOS_THROUGHPUT_PORTAL_MANAGED_MESSAGE = 'Throughput above 10,000 RU/s is monitored only in SimpleChat. Use the Azure portal to change capacity; capacity changes above this level can take 4 to 6 hours.';
+const DOCUMENT_ACCESS_INDEX_STATUS_POLL_INTERVAL_MS = 7500;
 const GROUP_WORKFLOW_ASSIGNMENT_PARSE_DEPTH_LIMIT = 5;
 
 const enableClassificationToggle = document.getElementById('enable_document_classification');
@@ -1566,6 +1568,278 @@ async function convertCosmosThroughputToAutoscale(containerName = '', triggerBut
     }
 }
 
+function setDocumentAccessIndexMessage(message, variant = 'info') {
+    const messageElement = document.getElementById('document-access-index-message');
+    if (!messageElement) {
+        return;
+    }
+
+    messageElement.textContent = message || '';
+    messageElement.className = `alert alert-${variant} small mb-3`;
+    messageElement.classList.toggle('d-none', !message);
+}
+
+function formatDocumentAccessIndexStatus(value) {
+    const normalizedValue = String(value || '').trim();
+    if (!normalizedValue) {
+        return 'Not loaded';
+    }
+
+    return normalizedValue
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, character => character.toUpperCase());
+}
+
+function getDocumentAccessIndexStatusVariant(value) {
+    const normalizedValue = String(value || '').trim().toLowerCase();
+    if (['succeeded', 'skipped_completed', 'completed', 'reconciled'].includes(normalizedValue)) {
+        return 'success';
+    }
+    if (['running', 'in_progress'].includes(normalizedValue)) {
+        return 'primary';
+    }
+    if (['succeeded_with_errors', 'completed_with_errors', 'reconciled_with_errors'].includes(normalizedValue)) {
+        return 'warning';
+    }
+    if (['failed', 'error'].includes(normalizedValue)) {
+        return 'danger';
+    }
+    return 'secondary';
+}
+
+function setDocumentAccessIndexBadge(elementId, value, variant = 'secondary') {
+    const badge = document.getElementById(elementId);
+    if (!badge) {
+        return;
+    }
+
+    const safeVariants = new Set(['primary', 'secondary', 'success', 'danger', 'warning', 'info']);
+    badge.textContent = value || 'Not loaded';
+    badge.className = `badge text-bg-${safeVariants.has(variant) ? variant : 'secondary'}`;
+}
+
+function formatDocumentAccessIndexBoolean(value, enabledText = 'Enabled', disabledText = 'Disabled') {
+    return value ? enabledText : disabledText;
+}
+
+function formatDocumentAccessIndexList(items) {
+    if (!Array.isArray(items) || items.length === 0) {
+        return 'None';
+    }
+
+    return items.map(item => String(item || '').trim()).filter(Boolean).join(', ') || 'None';
+}
+
+function getNormalizedDocumentAccessIndexStatus(status) {
+    return String(status || '').trim().toLowerCase();
+}
+
+function isDocumentAccessIndexBackfillRunning(status) {
+    return getNormalizedDocumentAccessIndexStatus(status) === 'running';
+}
+
+function isDocumentAccessIndexBackfillInProgress(status) {
+    return getNormalizedDocumentAccessIndexStatus(status) === 'in_progress';
+}
+
+function stopDocumentAccessIndexPolling() {
+    if (documentAccessIndexStatusPollId) {
+        window.clearInterval(documentAccessIndexStatusPollId);
+        documentAccessIndexStatusPollId = null;
+    }
+}
+
+function startDocumentAccessIndexPolling() {
+    if (documentAccessIndexStatusPollId) {
+        return;
+    }
+
+    documentAccessIndexStatusPollId = window.setInterval(() => {
+        loadDocumentAccessIndexStatus(null, { showLoading: false });
+    }, DOCUMENT_ACCESS_INDEX_STATUS_POLL_INTERVAL_MS);
+}
+
+function getDocumentAccessIndexBackfillStatusFromRunResult(result) {
+    const backfillStep = Array.isArray(result?.steps)
+        ? result.steps.find(step => step?.name === 'document_access_index_backfill')
+        : null;
+    return backfillStep?.results?.current_status || null;
+}
+
+function renderDocumentAccessIndexStatus(statusPayload) {
+    const backfillStatus = statusPayload?.document_access_index_backfill || statusPayload;
+    const state = backfillStatus?.state || {};
+    const settings = backfillStatus?.settings || {};
+    const statusText = String(state.status || 'not_started');
+
+    setDocumentAccessIndexBadge(
+        'document-access-index-container-status',
+        formatDocumentAccessIndexBoolean(settings.container_enabled, 'Enabled', 'Disabled'),
+        settings.container_enabled ? 'success' : 'secondary'
+    );
+    setDocumentAccessIndexBadge(
+        'document-access-index-write-through-status',
+        formatDocumentAccessIndexBoolean(settings.write_through_enabled, 'Enabled', 'Disabled'),
+        settings.write_through_enabled ? 'success' : 'secondary'
+    );
+    setDocumentAccessIndexBadge(
+        'document-access-index-read-status',
+        settings.reads_enabled ? 'Enabled' : 'Disabled',
+        settings.reads_enabled ? 'warning' : 'secondary'
+    );
+    setDocumentAccessIndexBadge(
+        'document-access-index-shadow-status',
+        settings.shadow_validation_enabled ? 'Enabled' : 'Disabled',
+        settings.shadow_validation_enabled ? 'warning' : 'secondary'
+    );
+    setDocumentAccessIndexBadge(
+        'document-access-index-backfill-status',
+        formatDocumentAccessIndexStatus(statusText),
+        getDocumentAccessIndexStatusVariant(statusText)
+    );
+
+    setElementText('document-access-index-repair-count', formatNumber(backfillStatus?.repair_required_count));
+    setElementText('document-access-index-current-scope', state.current_source_scope || 'None');
+    setElementText('document-access-index-completed-scopes', formatDocumentAccessIndexList(state.completed_source_scopes));
+    setElementText('document-access-index-total-processed', formatNumber(state.total_documents_processed || 0));
+    setElementText('document-access-index-total-failed', formatNumber(state.total_documents_failed || 0));
+    setElementText('document-access-index-total-upserted', formatNumber(state.total_rows_upserted || 0));
+    setElementText('document-access-index-total-deleted', formatNumber(state.total_rows_deleted || 0));
+    setElementText('document-access-index-last-completed', state.last_completed_at || 'Not completed yet');
+    setElementText('document-access-index-last-error', state.last_error || 'None');
+
+    const runButton = document.getElementById('document-access-index-run-batch-btn');
+    const resetButton = document.getElementById('document-access-index-reset-btn');
+    if (runButton) {
+        runButton.disabled = settings.container_enabled === false;
+    }
+    if (resetButton) {
+        resetButton.disabled = settings.container_enabled === false;
+    }
+
+    if (isDocumentAccessIndexBackfillRunning(statusText)) {
+        startDocumentAccessIndexPolling();
+    } else {
+        stopDocumentAccessIndexPolling();
+    }
+}
+
+async function loadDocumentAccessIndexStatus(event = null, options = {}) {
+    const showLoading = options.showLoading !== false;
+    const triggerButton = event?.currentTarget || (showLoading ? document.getElementById('document-access-index-refresh-btn') : null);
+    if (triggerButton) {
+        setButtonBusy(triggerButton, true, 'Loading...');
+    }
+    if (showLoading) {
+        setDocumentAccessIndexMessage('Loading document access index status...', 'info');
+    }
+
+    try {
+        const response = await fetch('/api/admin/settings/app-maintenance/status', {
+            method: 'GET',
+            headers: { 'Accept': 'application/json' },
+            credentials: 'same-origin'
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to load document access index status.');
+        }
+
+        renderDocumentAccessIndexStatus(data);
+        if (showLoading) {
+            setDocumentAccessIndexMessage('Document access index status loaded.', 'success');
+        }
+    } catch (error) {
+        setDocumentAccessIndexMessage(error.message || 'Failed to load document access index status.', 'danger');
+        stopDocumentAccessIndexPolling();
+    } finally {
+        if (triggerButton) {
+            setButtonBusy(triggerButton, false);
+        }
+    }
+}
+
+async function runDocumentAccessIndexBackfillBatch(options = {}) {
+    const reset = Boolean(options.reset);
+    const triggerButton = options.triggerButton || document.getElementById(reset ? 'document-access-index-reset-confirm-btn' : 'document-access-index-run-batch-btn');
+    if (triggerButton) {
+        setButtonBusy(triggerButton, true, reset ? 'Resetting...' : 'Running...');
+    }
+    setDocumentAccessIndexMessage(reset ? 'Resetting backfill checkpoint and running one batch...' : 'Running one document access backfill batch...', 'info');
+
+    try {
+        const response = await fetch('/api/admin/settings/app-maintenance/run', {
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+                apply_cosmos_indexing_policies: false,
+                run_document_access_index_backfill: true,
+                reset_document_access_index_backfill: reset
+            })
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Document access index backfill batch failed.');
+        }
+
+        const currentStatus = getDocumentAccessIndexBackfillStatusFromRunResult(data);
+        if (currentStatus) {
+            renderDocumentAccessIndexStatus(currentStatus);
+        }
+
+        const status = currentStatus?.state?.status || 'completed';
+        const statusVariant = getDocumentAccessIndexStatusVariant(status);
+        if (isDocumentAccessIndexBackfillRunning(status)) {
+            setDocumentAccessIndexMessage('Backfill batch is still running. Status will refresh automatically.', 'info');
+        } else if (isDocumentAccessIndexBackfillInProgress(status)) {
+            setDocumentAccessIndexMessage('Backfill batch completed and more documents remain. Run another batch or leave scheduled backfill enabled to continue during maintenance.', 'info');
+        } else if (statusVariant === 'danger' || statusVariant === 'warning') {
+            setDocumentAccessIndexMessage('Backfill batch completed with errors. Review the repair backlog and last error details.', 'warning');
+        } else {
+            setDocumentAccessIndexMessage('Document access index backfill batch completed.', 'success');
+        }
+        showToast(
+            statusVariant === 'danger' || statusVariant === 'warning'
+                ? 'Document access index backfill batch completed with errors.'
+                : 'Document access index backfill batch completed.',
+            statusVariant === 'danger' ? 'danger' : statusVariant === 'warning' ? 'warning' : 'success'
+        );
+
+        const modalElement = document.getElementById('documentAccessIndexResetModal');
+        if (reset && modalElement) {
+            bootstrap.Modal.getInstance(modalElement)?.hide();
+        }
+    } catch (error) {
+        setDocumentAccessIndexMessage(error.message || 'Document access index backfill batch failed.', 'danger');
+        showToast(error.message || 'Document access index backfill batch failed.', 'danger');
+        stopDocumentAccessIndexPolling();
+    } finally {
+        if (triggerButton) {
+            setButtonBusy(triggerButton, false);
+        }
+    }
+}
+
+function setupDocumentAccessIndexControls() {
+    const section = document.getElementById('document-access-index-section');
+    if (!section) {
+        return;
+    }
+
+    document.getElementById('document-access-index-refresh-btn')?.addEventListener('click', loadDocumentAccessIndexStatus);
+    document.getElementById('document-access-index-run-batch-btn')?.addEventListener('click', event => {
+        runDocumentAccessIndexBackfillBatch({ triggerButton: event.currentTarget });
+    });
+    document.getElementById('document-access-index-reset-confirm-btn')?.addEventListener('click', event => {
+        runDocumentAccessIndexBackfillBatch({ reset: true, triggerButton: event.currentTarget });
+    });
+    loadDocumentAccessIndexStatus(null, { showLoading: false });
+}
+
 function setupCosmosThroughputControls() {
     const section = document.getElementById('cosmos-throughput-section');
     if (!section) {
@@ -2943,6 +3217,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- NEW: Chunk size controls ---
     setupChunkSizeControls();
 
+    setupDocumentAccessIndexControls();
     setupCosmosThroughputControls();
     
     // --- Setup form change tracking ---
