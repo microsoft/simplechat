@@ -10,6 +10,8 @@ After completing a code change (bug fix, new feature, enhancement, or breaking c
 
 **"Would you like me to update the release notes in `docs/explanation/release_notes.md`?"**
 
+When asking this, also ask whether the associated GitHub issue should be updated. If there is no associated issue, ask whether the admin wants to create one using `.github/prompts/create-github-issue.prompt.md`.
+
 ## If the User Confirms Yes
 
 Update the release notes file following these guidelines:

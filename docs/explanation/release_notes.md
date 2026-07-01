@@ -2,7 +2,26 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.006)**
+
+#### New Features
+
+*   **Malicious PR Security Review Workflow**
+    *   Added a static malicious-change review workflow for pull requests into `Development`, with manual dispatch options for custom review ranges and full-file scans.
+    *   Added a reusable security review prompt and focused functional coverage for dependency pinning policy, hidden Unicode detection, suspicious egress markers, and workflow wiring.
+    *   (Ref: malicious PR security review, `.github/workflows/malicious-pr-security-review.yml`, `scripts/check_malicious_pr_security_review.py`)
+
 ### **(v0.250.005)**
+
+#### New Features
+
+*   **Chat Scroll Behavior and 508 Usability**
+    *   Updated chat message rendering so the viewport no longer jumps to the very bottom of long assistant responses when they finish loading while the user is reading near the top.
+    *   Auto-scroll now only occurs when the user is already near the bottom of the conversation, and a floating "scroll to latest message" button appears when new content arrives below the current view.
+    *   This aligns the chat experience more closely with other AI chat tools and reduces unexpected motion for 508 testers and keyboard users.
+    *   (Ref: `chats.html`, `chat-global.js`, `chat-messages.js`)
+
+### **(v0.241.007)**
 
 #### Bug Fixes
 
