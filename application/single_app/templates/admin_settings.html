@@ -7042,16 +7042,71 @@
                         <select class="form-select" id="multimodal_vision_model" name="multimodal_vision_model"
                                 data-prev="{{ settings.multimodal_vision_model or '' }}">
                             <option value="">Select a vision-capable model...</option>
-                            {% if settings.enable_gpt_apim %}
+
+                            {#
+                                Multi-endpoint aware vision model selection.
+                                Preference order:
+                                1. When multi-endpoint is enabled and model_endpoints has entries, use those.
+                                2. Otherwise, fall back to legacy gpt_model.selected / APIM settings.
+                            #}
+
+                            {% set has_multi_endpoints = settings.enable_multi_model_endpoints and settings.model_endpoints %}
+
+                            {% if has_multi_endpoints %}
+                                {# Iterate all enabled endpoints and models, filter to vision-capable #}
+                                {% for endpoint in settings.model_endpoints if endpoint.enabled %}
+                                    {% for m in endpoint.models if m.enabled %}
+                                        {% set model_lower = (m.modelName or m.displayName or '').lower() %}
+                                        {% set is_vision =
+                                            'vision' in model_lower or
+                                            'gpt-4o' in model_lower or
+                                            'gpt-4.1' in model_lower or
+                                            'gpt-4.5' in model_lower or
+                                            '-5' in model_lower or
+                                            model_lower.startswith('o1') or
+                                            model_lower.startswith('o3') or
+                                            'o1-' in model_lower or
+                                            'o3-' in model_lower
+                                        %}
+                                        {% if is_vision %}
+                                            {% set option_value = m.deploymentName %}
+                                            <option value="{{ option_value }}"
+                                                data-endpoint-id="{{ endpoint.id or '' }}"
+                                                data-model-id="{{ m.id or '' }}"
+                                                data-provider="{{ endpoint.provider or '' }}"
+                                                data-model-name="{{ m.modelName or '' }}"
+                                                {% if settings.multimodal_vision_model == option_value %}selected{% endif %}>
+                                                {{ m.displayName or m.deploymentName }} ({{ m.modelName }})
+                                            </option>
+                                        {% endif %}
+                                    {% endfor %}
+                                {% endfor %}
+                            {% elif settings.enable_gpt_apim %}
+                                {# Legacy APIM-based GPT configuration #}
                                 {% for d in (settings.azure_apim_gpt_deployment or '').split(',') if d %}
-                                    <option value="{{ d.strip() }}"
-                                        {% if settings.multimodal_vision_model == d.strip() %}selected{% endif %}>
-                                        {{ d.strip() }}
-                                    </option>
+                                    {% set d_trim = d.strip() %}
+                                    {% set model_lower = d_trim.lower() %}
+                                    {% set is_vision =
+                                        'vision' in model_lower or
+                                        'gpt-4o' in model_lower or
+                                        'gpt-4.1' in model_lower or
+                                        'gpt-4.5' in model_lower or
+                                        '-5' in model_lower or
+                                        model_lower.startswith('o1') or
+                                        model_lower.startswith('o3') or
+                                        'o1-' in model_lower or
+                                        'o3-' in model_lower
+                                    %}
+                                    {% if is_vision %}
+                                        <option value="{{ d_trim }}"
+                                            {% if settings.multimodal_vision_model == d_trim %}selected{% endif %}>
+                                            {{ d_trim }}
+                                        </option>
+                                    {% endif %}
                                 {% endfor %}
                             {% else %}
+                                {# Legacy single-endpoint GPT configuration #}
                                 {% for m in settings.gpt_model.selected %}
-                                    {# Check if model is vision-capable using same logic as JavaScript #}
                                     {% set model_lower = (m.modelName or '').lower() %}
                                     {% set is_vision =
                                         'vision' in model_lower or

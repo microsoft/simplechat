@@ -2,16 +2,24 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
-### **(v0.250.006)**
+### **(v0.250.008)**
 
-#### New Features
+#### Bug Fixes
+
+*   **Multi-Endpoint Vision Test Connection**
+    *   Fixed the Admin Settings Vision Model test button so multi-endpoint models are tested against their configured endpoint instead of always using the legacy GPT endpoint.
+    *   Vision model options now preserve endpoint and model metadata for the test call while keeping the saved deployment-name value compatible with existing settings.
+    *   Removed duplicate backend Vision test connection logic and preserved GPT-5/o-series token handling for Vision test requests.
+    *   (Ref: Vision Model test, multi-endpoint model endpoints, `admin_settings.js`, `admin_settings.html`, `route_backend_settings.py`, `MULTI_ENDPOINT_VISION_TEST_CONNECTION_FIX.md`)
+
+### **(v0.250.007)**
 
 *   **Malicious PR Security Review Workflow**
     *   Added a static malicious-change review workflow for pull requests into `Development`, with manual dispatch options for custom review ranges and full-file scans.
     *   Added a reusable security review prompt and focused functional coverage for dependency pinning policy, hidden Unicode detection, suspicious egress markers, and workflow wiring.
     *   (Ref: malicious PR security review, `.github/workflows/malicious-pr-security-review.yml`, `scripts/check_malicious_pr_security_review.py`)
 
-### **(v0.250.005)**
+### **(v0.250.006)**
 
 #### New Features
 
@@ -21,7 +29,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   This aligns the chat experience more closely with other AI chat tools and reduces unexpected motion for 508 testers and keyboard users.
     *   (Ref: `chats.html`, `chat-global.js`, `chat-messages.js`)
 
-### **(v0.241.007)**
+### **(v0.250.005)**
 
 #### Bug Fixes
 
