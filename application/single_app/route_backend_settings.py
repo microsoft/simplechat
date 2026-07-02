@@ -6,6 +6,10 @@ from functions_authentication import *
 from functions_settings import *
 from functions_web_search_test import run_web_search_connection_test
 from functions_url_access_policy_test import run_url_access_policy_test
+from functions_model_endpoint_runtime import (
+    build_model_endpoint_sync_chat_client,
+    resolve_model_endpoint_from_context,
+)
 from functions_activity_logging import (
     log_admin_feedback_email_submission,
     log_general_admin_action,
@@ -85,6 +89,8 @@ def _resolve_admin_settings_test_secrets(payload):
             'web_search_agent.other_settings.azure_ai_foundry.client_secret',
         )
     elif test_type == 'multimodal_vision':
+        if isinstance(payload.get('multi_endpoint'), dict):
+            return payload
         if payload.get('enable_apim'):
             _resolve_test_payload_secret(payload, ('apim', 'subscription_key'), settings, 'azure_apim_gpt_subscription_key')
         else:
@@ -508,9 +514,6 @@ def register_route_backend_settings(bp):
             
             elif test_type == 'key_vault':
                 return _test_key_vault_connection(data)
-            
-            elif test_type == 'multimodal_vision':
-                return _test_multimodal_vision_connection(data)
 
             else:
                 return jsonify({'error': f'Unknown test_type: {test_type}'}), 400
@@ -983,95 +986,66 @@ def _test_multimodal_vision_connection(payload):
     """Test multi-modal vision analysis with a sample image."""
     enable_apim = payload.get('enable_apim', False)
     vision_model = payload.get('vision_model')
-    
+    vision_model_name = payload.get('model_name') or vision_model
+
     if not vision_model:
         return jsonify({'error': 'No vision model specified'}), 400
-    
+
     # Create a simple test image (1x1 red pixel PNG)
     test_image_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
-    
+
     try:
-        if enable_apim:
-            apim_data = payload.get('apim', {})
-            endpoint = apim_data.get('endpoint')
-            api_version = apim_data.get('api_version')
-            subscription_key = apim_data.get('subscription_key')
-            
-            gpt_client = AzureOpenAI(
-                api_version=api_version,
-                azure_endpoint=endpoint,
-                api_key=subscription_key
+        multi_endpoint_selection = payload.get('multi_endpoint') if isinstance(payload.get('multi_endpoint'), dict) else None
+        if multi_endpoint_selection:
+            settings = get_settings()
+            model_context = {
+                'endpoint_id': str(multi_endpoint_selection.get('endpoint_id') or '').strip(),
+                'model_id': str(multi_endpoint_selection.get('model_id') or '').strip(),
+                'provider': str(multi_endpoint_selection.get('provider') or '').strip(),
+                'model_deployment': str(
+                    multi_endpoint_selection.get('deployment_name')
+                    or vision_model
+                    or ''
+                ).strip(),
+            }
+            resolved_endpoint = resolve_model_endpoint_from_context(settings, model_context)
+            if not resolved_endpoint:
+                return jsonify({'error': 'Selected vision model endpoint could not be resolved from saved settings'}), 400
+
+            resolved_models = resolved_endpoint.get('models', []) or []
+            matched_model = next(
+                (
+                    model for model in resolved_models
+                    if str(model.get('id') or '').strip() == model_context['model_id']
+                ),
+                None,
             )
-        else:
-            direct_data = payload.get('direct', {})
-            endpoint = direct_data.get('endpoint')
-            api_version = direct_data.get('api_version')
-            auth_type = direct_data.get('auth_type', 'key')
-            
-            if auth_type == 'managed_identity':
-                token_provider = get_bearer_token_provider(
-                    DefaultAzureCredential(), 
-                    cognitive_services_scope
+            if not matched_model:
+                matched_model = next(
+                    (
+                        model for model in resolved_models
+                        if str(model.get('deploymentName') or model.get('deployment') or '').strip() == model_context['model_deployment']
+                    ),
+                    None,
                 )
-                gpt_client = AzureOpenAI(
-                    api_version=api_version,
-                    azure_endpoint=endpoint,
-                    azure_ad_token_provider=token_provider
-                )
-            else:
-                api_key = direct_data.get('key')
-                gpt_client = AzureOpenAI(
-                    api_version=api_version,
-                    azure_endpoint=endpoint,
-                    api_key=api_key
-                )
-        
-        # Test vision analysis with simple prompt
-        response = gpt_client.chat.completions.create(
-            model=vision_model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "What color is this image? Just say the color."
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/png;base64,{test_image_base64}"
-                            }
-                        }
-                    ]
-                }
-            ],
-            max_tokens=50
-        )
-        
-        result = response.choices[0].message.content
-        
-        return jsonify({
-            'message': 'Multi-modal vision connection successful',
-            'details': f'Model responded: {result}'
-        }), 200
-        
-    except Exception as e:
-        return jsonify({'error': f'Vision test failed: {str(e)}'}), 500
-    
-def _test_multimodal_vision_connection(payload):
-    """Test multi-modal vision analysis with a sample image."""
-    enable_apim = payload.get('enable_apim', False)
-    vision_model = payload.get('vision_model')
+            if not matched_model:
+                return jsonify({'error': 'Selected vision model could not be resolved from saved settings'}), 400
 
-    if not vision_model:
-        return jsonify({'error': 'No vision model specified'}), 400
-
-    # Create a simple test image (1x1 red pixel PNG)
-    test_image_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
-
-    try:
-        if enable_apim:
+            vision_model = str(
+                matched_model.get('deploymentName')
+                or matched_model.get('deployment')
+                or model_context['model_deployment']
+            ).strip()
+            vision_model_name = str(matched_model.get('modelName') or vision_model).strip()
+            connection = resolved_endpoint.get('connection', {}) or {}
+            gpt_client, _ = build_model_endpoint_sync_chat_client(
+                resolved_endpoint.get('auth', {}) or {},
+                resolved_endpoint.get('provider') or model_context.get('provider') or 'aoai',
+                connection.get('endpoint'),
+                connection.get('openai_api_version') or connection.get('api_version'),
+                deployment_name=vision_model,
+            )
+        elif enable_apim:
             apim_data = payload.get('apim', {})
             endpoint = apim_data.get('endpoint')
             api_version = apim_data.get('api_version')
@@ -1109,6 +1083,7 @@ def _test_multimodal_vision_connection(payload):
         # Determine which token parameter to use based on model type
         # o-series and gpt-5 models require max_completion_tokens instead of max_tokens
         vision_model_lower = vision_model.lower()
+        vision_model_name_lower = vision_model_name.lower()
         api_params = {
             "model": vision_model,
             "messages": [
@@ -1131,7 +1106,14 @@ def _test_multimodal_vision_connection(payload):
         }
         
         # Use max_completion_tokens for o-series and gpt-5 models, max_tokens for others
-        if ('o1' in vision_model_lower or 'o3' in vision_model_lower or 'gpt-5' in vision_model_lower):
+        if (
+            'o1' in vision_model_lower or
+            'o3' in vision_model_lower or
+            'gpt-5' in vision_model_lower or
+            'o1' in vision_model_name_lower or
+            'o3' in vision_model_name_lower or
+            'gpt-5' in vision_model_name_lower
+        ):
             api_params["max_completion_tokens"] = 50
         else:
             api_params["max_tokens"] = 50
