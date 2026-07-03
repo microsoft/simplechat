@@ -51,6 +51,26 @@
     white-space: nowrap;
 }
 
+.workspace-upload-area {
+    min-height: 6.5rem;
+}
+
+.workspace-upload-area .bi-cloud-arrow-up {
+    font-size: 2rem;
+    line-height: 1;
+}
+
+.workspace-upload-supported-types-trigger {
+    position: relative;
+    z-index: 2;
+}
+
+.supported-file-type-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+}
+
 .document-item-card {
     border-color: rgba(15, 23, 42, 0.08);
     cursor: pointer;

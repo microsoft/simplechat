@@ -62,12 +62,12 @@ def register_route_frontend_workspace(bp):
         )
         legacy_count = legacy_docs_from_cosmos[0] if legacy_docs_from_cosmos else 0
         
-        # Get allowed extensions from central function and build allowed extensions string
-        allowed_extensions = sorted(get_allowed_extensions(
-            enable_video=enable_video_file_support in [True, 'True', 'true'],
-            enable_audio=enable_audio_file_support in [True, 'True', 'true']
-        ))
-        allowed_extensions_str = "Allowed: " + ", ".join(allowed_extensions)
+        enable_video_uploads = enable_video_file_support in [True, 'True', 'true']
+        enable_audio_uploads = enable_audio_file_support in [True, 'True', 'true']
+        allowed_extension_categories = get_allowed_extension_categories(
+            enable_video=enable_video_uploads,
+            enable_audio=enable_audio_uploads
+        )
         
         workspace_governance = {
             "user_agents": is_governance_access_allowed("governance_user_agents", user_id),
@@ -128,7 +128,7 @@ def register_route_frontend_workspace(bp):
             enable_audio_file_support=enable_audio_file_support,
             enable_file_sharing=enable_file_sharing,
             legacy_docs_count=legacy_count,
-            allowed_extensions=allowed_extensions_str,
+            allowed_extension_categories=allowed_extension_categories,
             personal_model_endpoints=personal_model_endpoints,
             global_model_endpoints=global_model_endpoints,
             file_sync_enabled=file_sync_enabled,

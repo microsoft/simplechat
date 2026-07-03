@@ -343,6 +343,9 @@ export class AgentModalStepper {
     
     // Set up display name to generated name conversion
     this.setupNameGeneration();
+
+    // Set up shared agent icon picker and image upload controls
+    agentsCommon.initializeIconControls(document);
     
     // Set up model change listener for reasoning effort
     this.setupModelChangeListener();
@@ -2050,6 +2053,11 @@ export class AgentModalStepper {
     if (additionalSettings) additionalSettings.value = '{}';
     if (instructionBrief) instructionBrief.value = '';
     if (draftStatus) draftStatus.textContent = '';
+    const iconImageData = document.getElementById('agent-icon-image-data');
+    const iconImageFile = document.getElementById('agent-icon-image-file');
+    if (iconImageData) iconImageData.value = '';
+    if (iconImageFile) iconImageFile.value = '';
+    agentsCommon.setIconPayload(document, { kind: 'bootstrap', value: 'bi-robot' });
     this.resetAssignedKnowledgeControls();
     
     // Clear any selected actions
