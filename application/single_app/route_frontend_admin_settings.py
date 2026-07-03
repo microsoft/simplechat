@@ -541,6 +541,7 @@ def register_route_frontend_admin_settings(bp):
             user_settings = get_user_settings(user_id)
             settings_for_template = dict(settings)
             settings_for_template['model_endpoints'] = frontend_model_endpoints
+            audio_runtime_capabilities = get_audio_runtime_capabilities()
             source_review_runtime_capabilities = get_source_review_runtime_capabilities()
             settings_for_template['source_review_allow_js_rendering'] = normalize_source_review_js_rendering_enabled(
                 settings_for_template.get('source_review_allow_js_rendering'),
@@ -567,6 +568,7 @@ def register_route_frontend_admin_settings(bp):
                 chunk_size_settings=settings.get('chunk_size', {}),
                 chunk_size_cap=get_chunk_size_cap(settings),
                 chunk_size_effective=get_chunk_size_config(settings),
+                audio_runtime_capabilities=audio_runtime_capabilities,
                 source_review_runtime_capabilities=source_review_runtime_capabilities
                 # You don't need to pass deployments separately if they are added to settings['..._model']['all']
                 # gpt_deployments=gpt_deployments,

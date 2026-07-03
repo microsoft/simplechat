@@ -2,11 +2,13 @@
 """
 UI test for admin multimedia guidance and shared Speech controls.
 
-Version: 0.241.010
+Version: 0.250.010
 Implemented in: 0.241.010
+Updated in: 0.250.010
 
 This test ensures the Search & Extract admin tab exposes the Video Indexer
-cloud selector, the AI Voice setup guide, and the shared Speech managed-identity fields.
+cloud selector, the AI Voice setup guide, shared Speech managed-identity fields,
+and audio runtime support guidance.
 """
 
 import os
@@ -57,6 +59,10 @@ def test_admin_multimedia_guidance(playwright):
 
         expect(page.locator("#video_indexer_cloud")).to_have_count(1)
         expect(page.locator("#video_indexer_endpoint_display")).to_have_count(1)
+        expect(page.locator("#audio_runtime_status")).to_be_visible()
+        expect(page.locator("#audio_runtime_status")).to_contain_text("FFmpeg")
+        expect(page.locator("#audio_supported_extensions")).to_contain_text(".m4a")
+        expect(page.locator("#audio_supported_extensions")).to_contain_text(".opus")
 
         video_toggle = page.locator("#enable_video_file_support")
         if not video_toggle.is_checked():

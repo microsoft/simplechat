@@ -504,7 +504,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
     // Click on area triggers file input
     uploadArea.addEventListener('click', (e) => {
       // Only trigger if not clicking the hidden input itself
-      if (e.target !== fileInput) {
+      if (e.target !== fileInput && !e.target.closest('.workspace-upload-supported-types-trigger')) {
         fileInput.click();
       }
     });

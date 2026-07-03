@@ -1,5 +1,7 @@
 <!-- templates/group_workspaces.html -->
-{% extends "base.html" %} {% block title %} Group Workspace - {{
+{% extends "base.html" %}
+{% from "_supported_file_types_modal.html" import supported_file_types_modal %}
+{% block title %} Group Workspace - {{
 app_settings.app_title }} {% endblock %} {% block head %}
  <link
   rel="stylesheet"
@@ -497,7 +499,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
         {% endif %}
         <option value="prompts-tab-btn">Group Prompts</option>
         {% if settings.allow_group_workflows %}
-          <option value="workflows-tab-btn">Group Workflows</option>
+          <option value="workflows-tab-btn">Workflows</option>
         {% endif %}
         {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
           {% if settings.allow_group_agents %}
@@ -522,6 +524,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
         id="documents-tab-btn"
         data-bs-toggle="tab"
         data-bs-target="#documents-tab"
+        title="Manage shared group files with role-aware upload, metadata filters, tags, bulk actions, extraction changes, and chat grounding."
         type="button"
         role="tab"
         aria-controls="documents-tab"
@@ -537,6 +540,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
         id="sync-tab-btn"
         data-bs-toggle="tab"
         data-bs-target="#sync-tab"
+        title="Configure group-scoped file sources that bring approved files into this workspace and run them through the document processing pipeline."
         type="button"
         role="tab"
         aria-controls="sync-tab"
@@ -553,6 +557,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
         id="identities-tab-btn"
         data-bs-toggle="tab"
         data-bs-target="#identities-tab"
+        title="Manage reusable group authentication profiles for File Sync and Actions so credentials stay scoped and resolved server-side."
         type="button"
         role="tab"
         aria-controls="identities-tab"
@@ -568,6 +573,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
         id="prompts-tab-btn"
         data-bs-toggle="tab"
         data-bs-target="#prompts-tab"
+        title="Create and manage reusable prompts shared within the active group, with role-based editing."
         type="button"
         role="tab"
         aria-controls="prompts-tab"
@@ -583,12 +589,13 @@ app_settings.app_title }} {% endblock %} {% block head %}
         id="workflows-tab-btn"
         data-bs-toggle="tab"
         data-bs-target="#workflows-tab"
+        title="Create repeatable group tasks that run manually, on a schedule, or after File Sync changes using group agents, documents, or models."
         type="button"
         role="tab"
         aria-controls="workflows-tab"
         aria-selected="false"
       >
-        Group Workflows
+        Workflows
       </button>
     </li>
     {% endif %}
@@ -600,6 +607,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
             id="group-agents-tab-btn"
             data-bs-toggle="tab"
             data-bs-target="#group-agents-tab"
+            title="Reusable, specialized AI assistants that combine instructions, approved knowledge, and optional actions. Actions are tasks an agent is allowed to perform."
             type="button"
             role="tab"
             aria-controls="group-agents-tab"
@@ -616,6 +624,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
               id="group-plugins-tab-btn"
               data-bs-toggle="tab"
               data-bs-target="#group-plugins-tab"
+              title="Configure governed group tools that agents can call, such as APIs, databases, or other connected systems."
               type="button"
               role="tab"
               aria-controls="group-plugins-tab"
@@ -633,6 +642,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
             id="group-endpoints-tab-btn"
             data-bs-toggle="tab"
             data-bs-target="#group-endpoints-tab"
+            title="Manage model endpoints available to group agents and workflows alongside admin-managed global endpoints."
             type="button"
             role="tab"
             aria-controls="group-endpoints-tab"
@@ -659,12 +669,14 @@ app_settings.app_title }} {% endblock %} {% block head %}
         <div id="group-legacy-update-prompt-placeholder"></div>
         <!-- Document Upload (visibility controlled by JS based on role) -->
         <div class="mb-3" id="upload-section" style="display: none">
-          <div id="upload-area" class="upload-area text-center p-4 border border-2 border-dashed rounded bg-light" style="cursor:pointer; transition: border-color 0.2s;">
+          <div id="upload-area" class="upload-area workspace-upload-area text-center py-2 px-3 border border-2 border-dashed rounded bg-light" style="cursor:pointer; transition: border-color 0.2s;">
             <input type="file" id="file-input" multiple style="display:none;" />
             <div class="upload-area-content">
-              <i class="bi bi-cloud-arrow-up display-4 text-primary mb-2"></i>
+              <i class="bi bi-cloud-arrow-up text-primary mb-1"></i>
               <div class="fw-bold">Drag & drop files here or <span class="text-primary text-decoration-underline">click to browse</span></div>
-              <div class="small text-muted mt-1">{{ allowed_extensions }}</div>
+              <button type="button" class="btn btn-link btn-sm p-0 mt-1 workspace-upload-supported-types-trigger" data-bs-toggle="modal" data-bs-target="#groupSupportedFileTypesModal">
+                View all supported file types
+              </button>
             </div>
           </div>
           <span id="upload-status" class="ms-2 text-muted small" style="display:none;"></span>
@@ -1485,6 +1497,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
 {% if settings.enable_semantic_kernel and settings.allow_group_custom_endpoints and settings.enable_multi_model_endpoints and workspace_governance.group_endpoints %}
 {% include '_multiendpoint_modal.html' %}
 {% endif %}
+{{ supported_file_types_modal('groupSupportedFileTypesModal', 'Supported file types', allowed_extension_categories) }}
 <!-- Item View Modal (shared by agents & actions grid/list view buttons) -->
 <div class="modal fade" id="item-view-modal" tabindex="-1" aria-labelledby="item-view-modal-title" aria-hidden="true">
   <div class="modal-dialog modal-lg modal-dialog-scrollable">
@@ -3406,7 +3419,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
     // Click on area triggers file input
     uploadArea.addEventListener("click", (e) => {
-      if (e.target !== groupFileInput) {
+      if (e.target !== groupFileInput && !e.target.closest(".workspace-upload-supported-types-trigger")) {
         groupFileInput.click();
       }
     });
