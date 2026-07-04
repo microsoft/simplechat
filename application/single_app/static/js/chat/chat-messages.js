@@ -24,9 +24,25 @@ import { areAgentsEnabled } from './chat-agents.js';
 import { createThoughtsToggleHtml, attachThoughtsToggleListener } from './chat-thoughts.js';
 import { destroyInlineCharts, extractInlineChartBlocks, hydrateInlineCharts, injectInlineChartHtml, restoreInlineChartTokens } from './chat-inline-charts.js';
 import { attachGeneratedImageProposalResults, extractInlineImageProposalBlocks, hydrateInlineImageProposals, injectInlineImageProposalHtml, restoreInlineImageProposalTokens } from './chat-inline-image-proposals.js';
+import { attachImageReferenceMessageControls, ensureSelectedWorkspaceImageReferences, getImageReferenceRequestContext, setImageReferenceWorkspaceContextProvider, userMessageRequestsImageGeneration } from './chat-image-references.js';
 import { renderInlineVideoGalleries } from './chat-inline-videos.js';
 import { renderInlineImageGalleries } from './chat-inline-images.js';
 import { renderInlineAzureMaps } from './chat-inline-maps.js';
+
+setImageReferenceWorkspaceContextProvider(() => {
+  const docSel = document.getElementById('document-select');
+  const selectedDocumentIds = docSel
+    ? Array.from(docSel.selectedOptions).map(option => option.value).filter(Boolean)
+    : [];
+
+  return {
+    selectedDocumentIds,
+    personalDocs,
+    groupDocs,
+    publicDocs,
+    scopes: getEffectiveScopes(),
+  };
+});
 
 // Conditionally import TTS if enabled
 let ttsModule = null;
@@ -5429,6 +5445,7 @@ export function appendMessage(
 
         placeholder.replaceWith(imgEl);
       }
+      attachImageReferenceMessageControls(messageDiv, fullMessageObject, messageContent);
     }
 
     // Highlight code blocks in the messages
@@ -6120,6 +6137,17 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
     actionType: documentActionType,
     conversationId,
   });
+  const imageReferenceWorkspaceContext = {
+    selectedDocumentIds,
+    personalDocs,
+    groupDocs,
+    publicDocs,
+    scopes,
+  };
+  if (imageGenEnabled || userMessageRequestsImageGeneration(finalMessageToSend)) {
+    ensureSelectedWorkspaceImageReferences(imageReferenceWorkspaceContext, { markSaved: true });
+  }
+  const imageReferenceContext = getImageReferenceRequestContext(imageReferenceWorkspaceContext);
 
   const requestPayload = {
     message: finalMessageToSend,
@@ -6151,6 +6179,13 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
     agent_info: agentInfo,
     reasoning_effort: getCurrentReasoningEffort(),
   };
+
+  if (imageReferenceContext.image_references.length > 0) {
+    requestPayload.image_references = imageReferenceContext.image_references;
+    requestPayload.image_reference_target = imageReferenceContext.image_reference_target;
+    requestPayload.active_group_ids = imageReferenceContext.active_group_ids;
+    requestPayload.active_public_workspace_id = imageReferenceContext.active_public_workspace_id || finalPublicWorkspaceId;
+  }
 
   if (documentActionType !== DOCUMENT_ACTION_NONE) {
     requestPayload.document_action = documentAction;

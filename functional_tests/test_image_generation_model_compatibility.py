@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Functional test for image generation model compatibility fix.
-Version: 0.226.103
+Version: 0.250.021
 Implemented in: 0.226.103
 
 This test ensures that both dall-e-3 and gpt-image-1 models work correctly
@@ -12,7 +12,8 @@ import sys
 import os
 # Add parent directory to path for imports
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.append(parent_dir)
+app_dir = os.path.join(parent_dir, 'application', 'single_app')
+sys.path.append(app_dir)
 
 def test_image_generation_api_version():
     """Test that the correct API version is configured for newer image models."""
@@ -20,12 +21,12 @@ def test_image_generation_api_version():
     
     try:
         # Read the functions_settings.py file directly to check API version
-        settings_file = os.path.join(parent_dir, 'functions_settings.py')
+        settings_file = os.path.join(app_dir, 'functions_settings.py')
         with open(settings_file, 'r') as f:
             content = f.read()
         
         # Look for the API version setting
-        expected_version = '2024-12-01-preview'
+        expected_version = '2025-04-01-preview'
         version_line = f"'azure_openai_image_gen_api_version': '{expected_version}'"
         
         if version_line in content:
@@ -168,12 +169,12 @@ def test_version_updated():
     
     try:
         # Read config.py to check version
-        config_path = os.path.join(parent_dir, 'config.py')
+        config_path = os.path.join(app_dir, 'config.py')
         with open(config_path, 'r') as f:
             content = f.read()
         
-        expected_version = "0.226.103"
-        if f"app.config['VERSION'] = \"{expected_version}\"" in content:
+        expected_version = "0.250.021"
+        if f"VERSION = \"{expected_version}\"" in content:
             print(f"✅ Version correctly updated to {expected_version}")
             return True
         else:

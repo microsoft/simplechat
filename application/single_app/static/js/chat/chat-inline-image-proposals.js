@@ -1,5 +1,7 @@
 // chat-inline-image-proposals.js
 
+import { getImageReferenceRequestContext, showImageReferenceTargetOptions } from './chat-image-references.js';
+
 const INLINE_IMAGE_PROPOSAL_LANGUAGE = 'simpleimage';
 const INLINE_IMAGE_PROPOSAL_REGEX = new RegExp(`\`\`\`${INLINE_IMAGE_PROPOSAL_LANGUAGE}\\s*([\\s\\S]*?)\`\`\``, 'gi');
 const INLINE_IMAGE_PROPOSAL_PENDING_REGEX = new RegExp(`\`\`\`${INLINE_IMAGE_PROPOSAL_LANGUAGE}\\b[\\s\\S]*$`, 'i');
@@ -203,6 +205,12 @@ function normalizeGeneratedImageResult(imageResult) {
         image_url: imageUrl,
         message_id: imageResult.message_id || imageMessage.id || '',
         model_deployment_name: imageResult.model_deployment_name || imageMessage.model_deployment_name || '',
+        reference_generation_warning: sanitizeText(
+            imageResult.reference_generation_warning
+            || imageMessage.metadata?.image_reference_generation_warning
+            || '',
+            260,
+        ),
         image_message: {
             ...imageMessage,
             content: imageUrl,
@@ -303,7 +311,11 @@ function renderGeneratedImageResult(container, spec, imageResult) {
     icon.setAttribute('aria-hidden', 'true');
     const titleGroup = createElement('div', 'flex-grow-1 min-w-0');
     const title = createElement('h6', 'mb-1 sc-inline-image-proposal-title', spec.title || 'Generated image');
-    const status = createElement('div', 'small text-muted sc-inline-image-proposal-status-text', 'Image generated.');
+    const status = createElement(
+        'div',
+        'small text-muted sc-inline-image-proposal-status-text',
+        normalizedResult.reference_generation_warning || 'Image generated.',
+    );
     titleGroup.appendChild(title);
     titleGroup.appendChild(status);
     header.appendChild(icon);
@@ -395,6 +407,7 @@ async function runImageProposalGeneration(container) {
     setCardState(container, 'generating', 'Generating image...');
 
     try {
+        const imageReferenceContext = getImageReferenceRequestContext();
         const response = await fetch('/api/chat/image-proposals/generate', {
             method: 'POST',
             headers: {
@@ -407,10 +420,17 @@ async function runImageProposalGeneration(container) {
                     ...spec,
                     prompt,
                 },
+                image_references: imageReferenceContext.image_references,
+                image_reference_target: imageReferenceContext.image_reference_target,
+                active_group_ids: imageReferenceContext.active_group_ids,
+                active_public_workspace_id: imageReferenceContext.active_public_workspace_id,
             }),
         });
         const result = await response.json().catch(() => ({}));
         if (!response.ok) {
+            if (result.requires_image_reference_target) {
+                showImageReferenceTargetOptions(result.target_options || []);
+            }
             throw new Error(result.error || `Image generation failed (${response.status})`);
         }
 

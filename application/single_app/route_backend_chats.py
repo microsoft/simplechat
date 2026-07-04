@@ -109,10 +109,12 @@ from functions_conversation_unread import mark_conversation_unread
 from functions_image_messages import build_image_message_documents, decode_image_content
 from functions_icon_utils import normalize_icon_payload
 from functions_image_generation import (
+    ImageReferenceTargetSelectionRequired,
     build_image_proposal_guidance_message,
     generate_chat_image_message,
     image_generation_is_enabled,
     normalize_image_proposal,
+    resolve_image_reference_target,
     user_request_supports_image_proposals,
 )
 from functions_appinsights import log_event
@@ -664,6 +666,188 @@ def _merge_chat_upload_workspace_context(
         list(context_result.get('effective_selected_document_ids') or []),
         list(context_result.get('auto_linked_chat_upload_document_ids') or []),
     )
+
+
+def _is_workspace_image_document(document_item):
+    file_name = str((document_item or {}).get('file_name') or '').strip().lower()
+    if not file_name or '.' not in file_name:
+        return False
+    extension = file_name.rsplit('.', 1)[-1]
+    return extension in IMAGE_EXTENSIONS
+
+
+def _format_selected_image_vision_context(document_item):
+    file_name = str((document_item or {}).get('file_name') or 'selected image').strip() or 'selected image'
+    vision_analysis = document_item.get('vision_analysis') if isinstance(document_item.get('vision_analysis'), dict) else {}
+    parts = [f"Selected workspace image: {file_name}"]
+
+    if vision_analysis.get('description'):
+        parts.append(f"Description: {vision_analysis.get('description')}")
+    if vision_analysis.get('objects'):
+        objects = vision_analysis.get('objects')
+        if isinstance(objects, list):
+            parts.append(f"Objects detected: {', '.join(str(item) for item in objects)}")
+        else:
+            parts.append(f"Objects detected: {objects}")
+    if vision_analysis.get('text'):
+        parts.append(f"Text visible in image: {vision_analysis.get('text')}")
+    if vision_analysis.get('analysis'):
+        parts.append(f"Contextual analysis: {vision_analysis.get('analysis')}")
+
+    if len(parts) == 1:
+        status = str(document_item.get('status') or '').strip()
+        if status:
+            parts.append(f"Processing status: {status}")
+        parts.append(
+            'No AI vision analysis metadata is available for this selected image yet. '
+            'Do not ask the user to upload it again; explain that the selected image needs processed image description metadata before it can be summarized from workspace context.'
+        )
+
+    return "\n".join(parts)
+
+
+def _resolve_selected_image_document_record(
+    *,
+    user_id,
+    document_id,
+    document_scope,
+    active_group_ids=None,
+    active_public_workspace_ids=None,
+):
+    from functions_documents import get_document_record
+    from functions_group import assert_group_role
+    from functions_public_workspaces import check_public_workspace_status_allows_operation, find_public_workspace_by_id
+
+    normalized_document_id = str(document_id or '').strip()
+    normalized_scope = str(document_scope or 'all').strip().lower() or 'all'
+    if not normalized_document_id or normalized_document_id == 'all':
+        return None, None
+
+    if normalized_scope in {'all', 'personal', 'user'}:
+        document_item = get_document_record(user_id=user_id, document_id=normalized_document_id)
+        if _is_workspace_image_document(document_item):
+            return document_item, 'personal'
+
+    if normalized_scope in {'all', 'group'}:
+        for group_id in active_group_ids or []:
+            normalized_group_id = str(group_id or '').strip()
+            if not normalized_group_id:
+                continue
+            try:
+                assert_group_role(
+                    user_id,
+                    normalized_group_id,
+                    allowed_roles=('Owner', 'Admin', 'DocumentManager', 'User'),
+                )
+                document_item = get_document_record(
+                    user_id=user_id,
+                    document_id=normalized_document_id,
+                    group_id=normalized_group_id,
+                )
+                if _is_workspace_image_document(document_item):
+                    return document_item, 'group'
+            except Exception as exc:
+                debug_print(f"[SelectedImageContext] Skipping group image lookup: {exc}")
+
+    if normalized_scope in {'all', 'public'}:
+        for workspace_id in active_public_workspace_ids or []:
+            normalized_workspace_id = str(workspace_id or '').strip()
+            if not normalized_workspace_id:
+                continue
+            try:
+                workspace_doc = find_public_workspace_by_id(normalized_workspace_id)
+                allowed, reason = check_public_workspace_status_allows_operation(workspace_doc, 'view')
+                if not allowed:
+                    debug_print(f"[SelectedImageContext] Public workspace view denied: {reason}")
+                    continue
+                document_item = get_document_record(
+                    user_id=user_id,
+                    document_id=normalized_document_id,
+                    public_workspace_id=normalized_workspace_id,
+                )
+                if _is_workspace_image_document(document_item):
+                    return document_item, 'public'
+            except Exception as exc:
+                debug_print(f"[SelectedImageContext] Skipping public image lookup: {exc}")
+
+    return None, None
+
+
+def append_selected_image_document_context(
+    *,
+    user_id,
+    selected_document_ids=None,
+    document_scope='all',
+    active_group_ids=None,
+    active_public_workspace_ids=None,
+    system_messages_for_augmentation=None,
+    hybrid_citations_list=None,
+    combined_documents=None,
+):
+    """Add direct context for explicitly selected image documents so Q&A does not depend on search recall."""
+    target_system_messages = system_messages_for_augmentation if isinstance(system_messages_for_augmentation, list) else []
+    target_hybrid_citations = hybrid_citations_list if isinstance(hybrid_citations_list, list) else []
+    target_combined_documents = combined_documents if isinstance(combined_documents, list) else []
+    selected_ids = _normalize_conversation_task_document_ids(selected_document_ids)
+    if not selected_ids:
+        return 0
+
+    existing_citation_ids = {
+        str(citation.get('citation_id') or citation.get('chunk_id') or '').strip()
+        for citation in target_hybrid_citations
+        if isinstance(citation, dict)
+    }
+    contexts = []
+    citations = []
+
+    for document_id in selected_ids:
+        document_item, source_scope = _resolve_selected_image_document_record(
+            user_id=user_id,
+            document_id=document_id,
+            document_scope=document_scope,
+            active_group_ids=active_group_ids,
+            active_public_workspace_ids=active_public_workspace_ids,
+        )
+        if not document_item:
+            continue
+
+        citation_id = f"{document_item.get('id')}_selected_image"
+        if citation_id in existing_citation_ids:
+            continue
+
+        image_context = _format_selected_image_vision_context(document_item)
+        contexts.append(image_context)
+        citation = {
+            'file_name': document_item.get('file_name', 'Unknown'),
+            'document_id': document_item.get('id'),
+            'citation_id': citation_id,
+            'page_number': 'Selected Image',
+            'chunk_id': citation_id,
+            'chunk_sequence': 9996,
+            'score': 0.0,
+            'group_id': document_item.get('group_id'),
+            'public_workspace_id': document_item.get('public_workspace_id'),
+            'version': document_item.get('version', 'N/A'),
+            'classification': document_item.get('document_classification'),
+            'metadata_type': 'selected_image',
+            'metadata_content': image_context,
+            'source_scope': source_scope,
+        }
+        citations.append(citation)
+        existing_citation_ids.add(citation_id)
+
+    if not contexts:
+        return 0
+
+    retrieved_content = "\n\n".join(contexts)
+    target_system_messages.append({
+        'role': 'system',
+        'content': build_search_augmentation_system_prompt(retrieved_content),
+        'documents': citations,
+    })
+    target_hybrid_citations.extend(citations)
+    target_combined_documents.extend(citations)
+    return len(citations)
 
 
 def _build_chat_upload_pending_response_payload(task_resolution):
@@ -4890,9 +5074,9 @@ def build_chart_tool_usage_system_message():
     return build_proactive_chart_guidance_message()
 
 
-def build_image_proposal_system_message():
+def build_image_proposal_system_message(image_reference_count=0):
     """Instruct final generation to emit opt-in image proposal cards."""
-    return build_image_proposal_guidance_message()
+    return build_image_proposal_guidance_message(image_reference_count)
 
 
 def insert_system_message_after_existing_system_messages(conversation_history, system_message_content):
@@ -4941,7 +5125,7 @@ def maybe_append_chart_tool_system_message(conversation_history, user_message, s
     )
 
 
-def maybe_append_image_proposal_system_message(conversation_history, user_message, settings, selected_agent=None):
+def maybe_append_image_proposal_system_message(conversation_history, user_message, settings, selected_agent=None, image_reference_count=0):
     """Add image proposal guidance when image generation is available and useful."""
     del selected_agent
     if not image_generation_is_enabled(settings):
@@ -4952,7 +5136,7 @@ def maybe_append_image_proposal_system_message(conversation_history, user_messag
 
     return insert_system_message_after_existing_system_messages(
         conversation_history,
-        build_image_proposal_system_message(),
+        build_image_proposal_system_message(image_reference_count),
     )
 
 
@@ -12370,7 +12554,7 @@ def register_route_backend_chats(bp):
         try:
             settings = get_settings()
             if not image_generation_is_enabled(settings):
-                return jsonify({'error': 'Image generation is not enabled'}), 403
+                return jsonify({'error': 'Image generation is not enabled. This request is possible, but an administrator needs to enable image generation before it can run.'}), 403
 
             user_id = get_current_user_id()
             if not user_id:
@@ -12387,6 +12571,15 @@ def register_route_backend_chats(bp):
                 proposal_payload = dict(proposal_payload)
                 proposal_payload['prompt'] = data.get('prompt')
             proposal = normalize_image_proposal(proposal_payload)
+            image_references = data.get('image_references') or data.get('imageReferences') or proposal_payload.get('imageReferences') or []
+            image_reference_target = None
+            if image_references:
+                image_reference_target = resolve_image_reference_target(
+                    user_id=user_id,
+                    target_payload=data.get('image_reference_target') or data.get('imageReferenceTarget'),
+                    active_group_ids=data.get('active_group_ids') or data.get('activeGroupIds') or [],
+                    active_public_workspace_id=data.get('active_public_workspace_id') or data.get('activePublicWorkspaceId'),
+                )
 
             source_assistant_message_id = str(
                 data.get('assistant_message_id')
@@ -12415,6 +12608,8 @@ def register_route_backend_chats(bp):
                 proposal=proposal,
                 source_assistant_message_id=source_assistant_message_id or None,
                 store_in_blob=True,
+                image_references=image_references,
+                image_reference_target=image_reference_target,
             )
 
             conversation_item['last_updated'] = datetime.utcnow().isoformat()
@@ -12425,6 +12620,12 @@ def register_route_backend_chats(bp):
             response_metadata = {}
             if isinstance(image_doc_metadata.get('image_proposal'), dict):
                 response_metadata['image_proposal'] = image_doc_metadata['image_proposal']
+            if isinstance(image_doc_metadata.get('image_references'), list):
+                response_metadata['image_references'] = image_doc_metadata['image_references']
+            if image_doc_metadata.get('image_reference_generation_mode'):
+                response_metadata['image_reference_generation_mode'] = image_doc_metadata['image_reference_generation_mode']
+            if image_doc_metadata.get('image_reference_generation_warning'):
+                response_metadata['image_reference_generation_warning'] = image_doc_metadata['image_reference_generation_warning']
             image_result.update({
                 'conversation_title': conversation_item.get('title'),
                 'image_message': {
@@ -12445,6 +12646,12 @@ def register_route_backend_chats(bp):
             return jsonify({'error': 'Conversation or source message not found'}), 404
         except PermissionError as exc:
             return jsonify({'error': str(exc)}), 403
+        except ImageReferenceTargetSelectionRequired as exc:
+            return jsonify({
+                'error': str(exc),
+                'requires_image_reference_target': True,
+                'target_options': exc.target_options,
+            }), 409
         except ValueError as exc:
             return jsonify({'error': str(exc)}), 400
         except Exception as exc:
@@ -12602,6 +12809,7 @@ def register_route_backend_chats(bp):
             hybrid_citations_list = [] # <--- ADD THIS LINE (Initialize hybrid list)
             agent_citations_list = [] # <--- ADD THIS LINE (Initialize agent citations list)
             web_search_citations_list = []
+            combined_documents = []
             source_review_result = {}
             deep_research_result = {}
             deep_research_query_plan = {}
@@ -12996,6 +13204,21 @@ def register_route_backend_chats(bp):
                 selected_document_ids = list(effective_selected_document_ids)
                 selected_document_id = effective_selected_document_id
                 document_scope = effective_document_scope
+
+            selected_image_context_count = append_selected_image_document_context(
+                user_id=user_id,
+                selected_document_ids=effective_selected_document_ids,
+                document_scope=effective_document_scope,
+                active_group_ids=effective_active_group_ids,
+                active_public_workspace_ids=effective_active_public_workspace_ids,
+                system_messages_for_augmentation=system_messages_for_augmentation,
+                hybrid_citations_list=hybrid_citations_list,
+                combined_documents=combined_documents,
+            )
+            if selected_image_context_count:
+                debug_print(
+                    f"[SelectedImageContext] Added {selected_image_context_count} selected image context block(s)."
+                )
 
             # Clear plugin invocations at start of message processing to ensure
             # each message only shows citations for tools executed during that specific interaction
@@ -14104,6 +14327,75 @@ def register_route_backend_chats(bp):
 
             # Image Generation
             if image_gen_enabled:
+                try:
+                    image_references = data.get('image_references') or data.get('imageReferences') or []
+                    image_reference_target = None
+                    if image_references:
+                        image_reference_target = resolve_image_reference_target(
+                            user_id=user_id,
+                            target_payload=data.get('image_reference_target') or data.get('imageReferenceTarget'),
+                            active_group_ids=effective_active_group_ids,
+                            active_public_workspace_id=effective_active_public_workspace_id,
+                        )
+
+                    user_info_for_image, user_thread_id, user_previous_thread_id = _get_user_message_image_context(
+                        conversation_id,
+                        user_message_id,
+                    )
+                    image_result = generate_chat_image_message(
+                        settings=settings,
+                        user_id=user_id,
+                        conversation_id=conversation_id,
+                        prompt=user_message,
+                        user_info=user_info_for_image,
+                        thread_id=user_thread_id,
+                        previous_thread_id=user_previous_thread_id,
+                        store_in_blob=settings.get('enable_enhanced_citations', False),
+                        image_references=image_references,
+                        image_reference_target=image_reference_target,
+                    )
+
+                    conversation_item['last_updated'] = datetime.utcnow().isoformat()
+                    cosmos_conversations_container.upsert_item(conversation_item)
+
+                    return jsonify({
+                        'reply': image_result.get('reply', 'Image loading...'),
+                        'image_url': image_result.get('image_url'),
+                        'conversation_id': conversation_id,
+                        'conversation_title': conversation_item['title'],
+                        'model_deployment_name': image_result.get('model_deployment_name'),
+                        'message_id': image_result.get('message_id'),
+                        'user_message_id': user_message_id,
+                        'image_references': image_result.get('image_references', []),
+                        'workspace_document': image_result.get('workspace_document'),
+                    }), 200
+                except ImageReferenceTargetSelectionRequired as exc:
+                    return jsonify({
+                        'error': str(exc),
+                        'requires_image_reference_target': True,
+                        'target_options': exc.target_options,
+                    }), 409
+                except PermissionError as exc:
+                    return jsonify({'error': str(exc)}), 403
+                except ValueError as exc:
+                    return jsonify({'error': str(exc)}), 400
+                except Exception as exc:
+                    error_message = str(exc)
+                    status_code = 500
+                    if 'safety system' in error_message.lower() or 'moderation_blocked' in error_message:
+                        error_message = "Image generation was blocked by content safety policies. Please try a different prompt that doesn't involve potentially harmful content."
+                        status_code = 400
+                    elif '400' in error_message and 'BadRequestError' in str(type(exc)):
+                        error_message = f'Image generation request was invalid: {error_message}'
+                        status_code = 400
+                    log_event(
+                        f'[ImageGeneration] Direct generation failed: {exc}',
+                        extra={'conversation_id': conversation_id},
+                        level=logging.ERROR,
+                        exceptionTraceback=True,
+                    )
+                    return jsonify({'error': error_message}), status_code
+
                 if enable_image_gen_apim:
                     image_gen_model = settings.get('azure_apim_image_gen_deployment')
                     image_gen_client = AzureOpenAI(
@@ -15078,6 +15370,7 @@ def register_route_backend_chats(bp):
                     user_message,
                     settings,
                     selected_agent,
+                    image_reference_count=len(data.get('image_references') or data.get('imageReferences') or []),
                 )
 
                 agent_message_history = [
@@ -15452,6 +15745,7 @@ def register_route_backend_chats(bp):
                 user_message,
                 settings,
                 selected_agent,
+                image_reference_count=len(data.get('image_references') or data.get('imageReferences') or []),
             )
 
             thought_tracker.add_thought('generation', f"Sending to '{gpt_model}'")
@@ -16255,6 +16549,7 @@ def register_route_backend_chats(bp):
                 hybrid_citations_list = []
                 agent_citations_list = []
                 web_search_citations_list = []
+                combined_documents = []
                 source_review_result = {}
                 deep_research_result = {}
                 deep_research_query_plan = {}
@@ -16664,6 +16959,21 @@ def register_route_backend_chats(bp):
                     selected_document_ids = list(effective_selected_document_ids)
                     selected_document_id = effective_selected_document_id
                     document_scope = effective_document_scope
+
+                selected_image_context_count = append_selected_image_document_context(
+                    user_id=user_id,
+                    selected_document_ids=effective_selected_document_ids,
+                    document_scope=effective_document_scope,
+                    active_group_ids=effective_active_group_ids,
+                    active_public_workspace_ids=effective_active_public_workspace_ids,
+                    system_messages_for_augmentation=system_messages_for_augmentation,
+                    hybrid_citations_list=hybrid_citations_list,
+                    combined_documents=combined_documents,
+                )
+                if selected_image_context_count:
+                    debug_print(
+                        f"[SelectedImageContext] Added {selected_image_context_count} selected image context block(s)."
+                    )
 
                 # Determine chat type
                 actual_chat_type = 'personal_single_user'
@@ -18184,6 +18494,7 @@ def register_route_backend_chats(bp):
                     user_message,
                     settings,
                     selected_agent,
+                    image_reference_count=len(data.get('image_references') or data.get('imageReferences') or []),
                 )
 
                 # Stream the response

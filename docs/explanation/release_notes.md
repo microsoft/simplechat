@@ -2,6 +2,23 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.021)**
+
+#### New Features
+
+*   **Image Reference Generation**
+    *   Added Phase 1 support for using saved chat and workspace images as reference inputs for chat image generation.
+    *   Users can collect existing conversation images or selected workspace images in the chat composer, explicitly save them for generation, and approve inline image proposal cards without relying on the Image toolbar toggle.
+    *   Selected workspace images are automatically used as saved references only when the user explicitly asks to create, generate, draw, design, or render a visual; ordinary questions about selected images remain normal chat/document Q&A.
+    *   Selected image documents now add available vision metadata directly to chat context for normal Q&A prompts such as summarization, avoiding missed context when the query is too generic for search recall.
+    *   Fixed interrupted chat streams when selected-image context was added before the workspace citation list had been initialized.
+    *   Provider `404 Resource not found` failures during reference-image generation now fall back to text-to-image generation using the selected image's vision description, with a visible warning when true reference-image byte input is not supported.
+    *   Reference-image edit calls now use Azure OpenAI image API version `2025-04-01-preview` or later, while preserving older configured versions for text-only image generation.
+    *   Saved reference and generated image workspace documents now use readable filenames, the `conversations` tag, and conversation-link metadata instead of appearing as anonymous GUID files.
+    *   Reference images and generated outputs are saved to the correct personal or group workspace target with metadata linking the conversation, reference source, saved reference document, and generated image.
+    *   Public workspace image references are treated as read-only sources and save generated outputs to the user's personal workspace.
+    *   (Ref: microsoft/simplechat#998, image reference tray, inline image proposals, `functions_image_generation.py`, `route_backend_chats.py`, `chat-image-references.js`, `IMAGE_REFERENCE_GENERATION.md`)
+
 ### **(v0.250.010)**
 
 #### New Features
