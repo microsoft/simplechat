@@ -14,10 +14,13 @@ from functions_cosmos_indexing import (
     run_cosmos_indexing_policy_maintenance,
 )
 from functions_document_access_index import (
+    DOCUMENT_ACCESS_ACTIVE_MAINTENANCE_INTERVAL_SETTING,
     DOCUMENT_ACCESS_BACKFILL_BATCH_SIZE_SETTING,
     DOCUMENT_ACCESS_BACKFILL_ENABLED_SETTING,
     DOCUMENT_ACCESS_REPAIR_BATCH_SIZE_SETTING,
+    get_document_access_index_settings,
     get_document_access_index_backfill_status,
+    is_document_access_index_maintenance_pending,
     run_document_access_index_backfill_maintenance,
 )
 from functions_shared_cache import ensure_shared_cache_version_doc, get_shared_cache_version
@@ -28,6 +31,7 @@ APP_MAINTENANCE_DOC_TYPE = 'app_maintenance_state'
 APP_MAINTENANCE_LOCK_NAME = 'app_maintenance'
 APP_MAINTENANCE_DEFAULT_INTERVAL_SECONDS = 3600
 APP_MAINTENANCE_DEFAULT_LEASE_SECONDS = 300
+APP_MAINTENANCE_DEFAULT_ACTIVE_INTERVAL_SECONDS = 30
 
 CACHE_VERSION_DOCUMENTS = [
     {
@@ -165,9 +169,13 @@ def _record_failed(run_id, started_at, triggered_by, requested_by, error):
 def get_app_maintenance_settings(settings):
     """Normalize maintenance settings from app settings."""
     settings = settings or {}
+    document_access_settings = get_document_access_index_settings(settings)
+    enabled = bool(settings.get('enable_app_maintenance', True))
+    run_on_startup = bool(settings.get('enable_startup_app_maintenance', True))
+    document_access_container_enabled = bool(document_access_settings.get('container_enabled'))
     return {
-        'enabled': bool(settings.get('enable_app_maintenance', True)),
-        'run_on_startup': bool(settings.get('enable_startup_app_maintenance', True)),
+        'enabled': enabled,
+        'run_on_startup': run_on_startup,
         'check_interval_seconds': max(
             int(settings.get(
                 'app_maintenance_check_interval_seconds',
@@ -183,7 +191,17 @@ def get_app_maintenance_settings(settings):
             60,
         ),
         'apply_cosmos_indexing_policies': bool(settings.get(COSMOS_INDEXING_POLICY_APPLY_SETTING, False)),
-        'run_document_access_index_backfill': bool(settings.get(DOCUMENT_ACCESS_BACKFILL_ENABLED_SETTING, False)),
+        'run_document_access_index_backfill': document_access_container_enabled,
+        'document_access_index_auto_maintenance': (
+            enabled and run_on_startup and document_access_container_enabled
+        ),
+        'document_access_index_active_interval_seconds': max(
+            int(settings.get(
+                DOCUMENT_ACCESS_ACTIVE_MAINTENANCE_INTERVAL_SETTING,
+                APP_MAINTENANCE_DEFAULT_ACTIVE_INTERVAL_SECONDS,
+            ) or APP_MAINTENANCE_DEFAULT_ACTIVE_INTERVAL_SECONDS),
+            15,
+        ),
         'document_access_index_backfill_batch_size': max(
             int(settings.get(DOCUMENT_ACCESS_BACKFILL_BATCH_SIZE_SETTING, 200) or 200),
             1,
@@ -193,6 +211,35 @@ def get_app_maintenance_settings(settings):
             1,
         ),
     }
+
+
+def calculate_app_maintenance_sleep_seconds(maintenance_result, maintenance_settings):
+    """Return the next scheduler sleep interval, using a short loop while DAI work remains."""
+    maintenance_settings = maintenance_settings or {}
+    default_sleep_seconds = max(
+        int(maintenance_settings.get('check_interval_seconds') or APP_MAINTENANCE_DEFAULT_INTERVAL_SECONDS),
+        60,
+    )
+    active_sleep_seconds = max(
+        int(
+            maintenance_settings.get('document_access_index_active_interval_seconds')
+            or APP_MAINTENANCE_DEFAULT_ACTIVE_INTERVAL_SECONDS
+        ),
+        15,
+    )
+    if is_document_access_index_maintenance_pending(_extract_document_access_index_step_status(maintenance_result)):
+        return active_sleep_seconds
+    return default_sleep_seconds
+
+
+def _extract_document_access_index_step_status(maintenance_result):
+    if not isinstance(maintenance_result, dict):
+        return None
+    for step in maintenance_result.get('steps') or []:
+        if isinstance(step, dict) and step.get('name') == 'document_access_index_backfill':
+            results = step.get('results') if isinstance(step.get('results'), dict) else {}
+            return results.get('current_status') or results
+    return maintenance_result.get('document_access_index_backfill')
 
 
 def initialize_cache_version_documents():
@@ -237,16 +284,25 @@ def get_app_maintenance_status(settings=None):
         'app_version': VERSION,
     }
     maintenance_settings = get_app_maintenance_settings(settings or {})
+    document_access_index_status = get_document_access_index_backfill_status(settings=settings or {})
+    if isinstance(document_access_index_status.get('maintenance'), dict):
+        document_access_index_status['maintenance'].update({
+            'auto_maintenance_enabled': maintenance_settings.get('document_access_index_auto_maintenance'),
+            'active_interval_seconds': maintenance_settings.get('document_access_index_active_interval_seconds'),
+            'check_interval_seconds': maintenance_settings.get('check_interval_seconds'),
+        })
     return {
         'success': True,
         'state': state,
         'cache_version_documents': get_cache_version_document_status(),
         'cosmos_indexing_policies': get_cosmos_indexing_policy_status(),
-        'document_access_index_backfill': get_document_access_index_backfill_status(settings=settings or {}),
+        'document_access_index_backfill': document_access_index_status,
         'settings': {
             'apply_cosmos_indexing_policies': maintenance_settings.get('apply_cosmos_indexing_policies'),
             'cosmos_indexing_policy_apply_setting': COSMOS_INDEXING_POLICY_APPLY_SETTING,
             'run_document_access_index_backfill': maintenance_settings.get('run_document_access_index_backfill'),
+            'document_access_index_auto_maintenance': maintenance_settings.get('document_access_index_auto_maintenance'),
+            'document_access_index_active_interval_seconds': maintenance_settings.get('document_access_index_active_interval_seconds'),
             'document_access_index_backfill_setting': DOCUMENT_ACCESS_BACKFILL_ENABLED_SETTING,
         },
         'app_version': VERSION,
@@ -307,6 +363,7 @@ def run_app_maintenance_once(
                 'results': document_access_backfill_results,
             },
         ]
+        overall_success = all(step.get('status') == 'succeeded' for step in steps)
         state = _record_completed(run_id, started_at, triggered_by, requested_by, steps)
         log_event(
             '[AppMaintenance] Maintenance run completed.',
@@ -314,14 +371,16 @@ def run_app_maintenance_once(
                 'run_id': run_id,
                 'triggered_by': triggered_by,
                 'duration_ms': state.get('last_duration_ms'),
+                'success': overall_success,
             },
             level=logging.INFO,
         )
         return {
-            'success': True,
+            'success': overall_success,
             'run_id': run_id,
             'state': state,
             'steps': steps,
+            'error': None if overall_success else 'One or more maintenance steps failed.',
         }
     except Exception as ex:
         try:

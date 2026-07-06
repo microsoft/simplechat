@@ -497,6 +497,106 @@ function formatNumber(value) {
     return numericValue.toLocaleString();
 }
 
+function formatRedisStatus(value) {
+    const normalizedValue = String(value || '').trim();
+    if (!normalizedValue) {
+        return 'Not loaded';
+    }
+
+    return normalizedValue
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, character => character.toUpperCase());
+}
+
+function getRedisMonitoringStatusVariant(value) {
+    const normalizedValue = String(value || '').trim().toLowerCase();
+    if (normalizedValue === 'healthy' || normalizedValue === 'active') {
+        return 'success';
+    }
+    if (['degraded', 'not_configured', 'unavailable'].includes(normalizedValue)) {
+        return 'warning';
+    }
+    if (normalizedValue === 'error') {
+        return 'danger';
+    }
+    return 'secondary';
+}
+
+function setRedisMonitoringMessage(message, variant = 'info') {
+    const messageElement = document.getElementById('redis-monitoring-message');
+    if (!messageElement) {
+        return;
+    }
+
+    messageElement.textContent = message || '';
+    messageElement.className = `alert alert-${variant} small mb-3`;
+    messageElement.classList.toggle('d-none', !message);
+}
+
+function setRedisMonitoringBadge(elementId, value, variant = 'secondary') {
+    const badge = document.getElementById(elementId);
+    if (!badge) {
+        return;
+    }
+
+    const safeVariants = new Set(['primary', 'secondary', 'success', 'danger', 'warning', 'info']);
+    badge.textContent = value || 'Not loaded';
+    badge.className = `badge text-bg-${safeVariants.has(variant) ? variant : 'secondary'}`;
+}
+
+function formatRedisMetric(value, unit) {
+    if (value === null || value === undefined || value === '') {
+        return 'Not available';
+    }
+    const numericValue = Number(value);
+    if (Number.isNaN(numericValue)) {
+        return 'Not available';
+    }
+    return `${numericValue.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${unit}`;
+}
+
+function formatRedisPercent(value) {
+    if (value === null || value === undefined || value === '') {
+        return 'Not available';
+    }
+    const numericValue = Number(value);
+    if (Number.isNaN(numericValue)) {
+        return 'Not available';
+    }
+    return `${numericValue.toLocaleString(undefined, { maximumFractionDigits: 2 })}%`;
+}
+
+function formatRedisMemoryUsage(memory) {
+    const usedMemory = memory?.used_memory_human || formatRedisMetric(memory?.used_memory, 'bytes');
+    const maxMemory = memory?.maxmemory_human || formatRedisMetric(memory?.maxmemory, 'bytes');
+    const usagePercent = formatRedisPercent(memory?.usage_percent);
+
+    if (usedMemory === 'Not available') {
+        return 'Not available';
+    }
+    if (maxMemory === 'Not available' || Number(memory?.maxmemory || 0) === 0) {
+        return `${usedMemory} / no maxmemory limit`;
+    }
+    if (usagePercent === 'Not available') {
+        return `${usedMemory} / ${maxMemory}`;
+    }
+    return `${usedMemory} / ${maxMemory} (${usagePercent})`;
+}
+
+function formatRedisRuntime(value) {
+    return value ? 'Active' : 'Inactive';
+}
+
+function setRedisTestResult(resultDiv, message, variant = 'muted') {
+    if (!resultDiv) {
+        return;
+    }
+
+    const safeVariants = new Set(['success', 'danger', 'muted', 'info']);
+    resultDiv.textContent = message || '';
+    resultDiv.className = `mt-2 text-${safeVariants.has(variant) ? variant : 'muted'}`;
+}
+
 function formatRu(value) {
     const formattedValue = formatNumber(value);
     return formattedValue === 'Not available' ? formattedValue : `${formattedValue} RU/s`;
@@ -1568,6 +1668,112 @@ async function convertCosmosThroughputToAutoscale(containerName = '', triggerBut
     }
 }
 
+function renderRedisMonitoringStatus(statusPayload) {
+    const configuration = statusPayload?.configuration || {};
+    const runtime = statusPayload?.runtime || {};
+    const health = statusPayload?.health || {};
+    const memory = statusPayload?.memory || {};
+    const clients = statusPayload?.clients || {};
+    const stats = statusPayload?.stats || {};
+    const keyspace = statusPayload?.keyspace || {};
+    const server = statusPayload?.server || {};
+
+    let configurationText = 'Disabled';
+    let configurationVariant = 'secondary';
+    if (configuration.enabled && configuration.configured) {
+        configurationText = 'Enabled';
+        configurationVariant = 'success';
+    } else if (configuration.enabled) {
+        configurationText = 'Needs host';
+        configurationVariant = 'warning';
+    }
+
+    setRedisMonitoringBadge('redis-monitoring-config-status', configurationText, configurationVariant);
+    setRedisMonitoringBadge(
+        'redis-monitoring-health-status',
+        formatRedisStatus(health.status),
+        getRedisMonitoringStatusVariant(health.status)
+    );
+    setRedisMonitoringBadge(
+        'redis-monitoring-app-cache-status',
+        formatRedisRuntime(runtime.app_cache_using_redis),
+        runtime.app_cache_using_redis ? 'success' : 'secondary'
+    );
+    setRedisMonitoringBadge(
+        'redis-monitoring-session-status',
+        formatRedisRuntime(runtime.session_using_redis),
+        runtime.session_using_redis ? 'success' : 'secondary'
+    );
+
+    setElementText('redis-monitoring-ping-latency', formatRedisMetric(health.ping_latency_ms, 'ms'));
+    setElementText('redis-monitoring-memory-usage', formatRedisMemoryUsage(memory));
+    setElementText(
+        'redis-monitoring-memory-policy',
+        memory.maxmemory_policy ? `Policy: ${memory.maxmemory_policy}` : 'Policy: Not available'
+    );
+    setElementText('redis-monitoring-connected-clients', formatNumber(clients.connected_clients));
+    setElementText('redis-monitoring-ops-per-sec', formatNumber(stats.instantaneous_ops_per_sec));
+    setElementText('redis-monitoring-hit-rate', formatRedisPercent(stats.keyspace_hit_rate_percent));
+    setElementText('redis-monitoring-key-count', formatNumber(keyspace.total_keys));
+    setElementText('redis-monitoring-expired-keys', formatNumber(stats.expired_keys));
+    setElementText('redis-monitoring-evicted-keys', formatNumber(stats.evicted_keys));
+    setElementText('redis-monitoring-fragmentation', formatNumber(memory.mem_fragmentation_ratio));
+    setElementText('redis-monitoring-errors', formatNumber(stats.total_error_replies));
+    setElementText('redis-monitoring-rejected-connections', formatNumber(stats.rejected_connections));
+    setElementText('redis-monitoring-version', server.redis_version || 'Not available');
+    setElementText('redis-monitoring-source', formatRedisStatus(runtime.monitoring_source));
+    setElementText('redis-monitoring-checked-at', statusPayload?.checked_at || 'Not available');
+    setElementText('redis-monitoring-last-error', health.last_error || 'None');
+}
+
+async function loadRedisMonitoringStatus(event = null, options = {}) {
+    const showLoading = options.showLoading !== false;
+    const triggerButton = event?.currentTarget || (showLoading ? document.getElementById('redis-monitoring-refresh-btn') : null);
+    if (triggerButton) {
+        setButtonBusy(triggerButton, true, 'Loading...');
+    }
+    if (showLoading) {
+        setRedisMonitoringMessage('Loading Redis monitoring status...', 'info');
+    }
+
+    try {
+        const response = await fetch('/api/admin/settings/redis-monitoring/status', {
+            method: 'GET',
+            headers: { 'Accept': 'application/json' },
+            credentials: 'same-origin'
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to load Redis monitoring status.');
+        }
+
+        renderRedisMonitoringStatus(data);
+        if (data.health?.status === 'healthy') {
+            setRedisMonitoringMessage('Redis monitoring status loaded.', 'success');
+        } else if (data.health?.last_error) {
+            setRedisMonitoringMessage(data.health.last_error, data.health.status === 'error' ? 'danger' : 'warning');
+        } else if (showLoading) {
+            setRedisMonitoringMessage('Redis monitoring status loaded.', 'info');
+        }
+    } catch (error) {
+        setRedisMonitoringMessage(error.message || 'Failed to load Redis monitoring status.', 'danger');
+    } finally {
+        if (triggerButton) {
+            setButtonBusy(triggerButton, false);
+        }
+    }
+}
+
+function setupRedisMonitoringControls() {
+    const section = document.getElementById('redis-monitoring-section');
+    if (!section) {
+        return;
+    }
+
+    document.getElementById('redis-monitoring-refresh-btn')?.addEventListener('click', loadRedisMonitoringStatus);
+    loadRedisMonitoringStatus(null, { showLoading: false });
+}
+
 function setDocumentAccessIndexMessage(message, variant = 'info') {
     const messageElement = document.getElementById('document-access-index-message');
     if (!messageElement) {
@@ -1592,13 +1798,13 @@ function formatDocumentAccessIndexStatus(value) {
 
 function getDocumentAccessIndexStatusVariant(value) {
     const normalizedValue = String(value || '').trim().toLowerCase();
-    if (['succeeded', 'skipped_completed', 'completed', 'reconciled'].includes(normalizedValue)) {
+    if (['succeeded', 'skipped_completed', 'completed', 'reconciled', 'matched'].includes(normalizedValue)) {
         return 'success';
     }
     if (['running', 'in_progress'].includes(normalizedValue)) {
         return 'primary';
     }
-    if (['succeeded_with_errors', 'completed_with_errors', 'reconciled_with_errors'].includes(normalizedValue)) {
+    if (['succeeded_with_errors', 'completed_with_errors', 'reconciled_with_errors', 'mismatch'].includes(normalizedValue)) {
         return 'warning';
     }
     if (['failed', 'error'].includes(normalizedValue)) {
@@ -1628,6 +1834,109 @@ function formatDocumentAccessIndexList(items) {
     }
 
     return items.map(item => String(item || '').trim()).filter(Boolean).join(', ') || 'None';
+}
+
+function formatDocumentAccessIndexMetric(value, unit) {
+    if (value === null || value === undefined || value === '') {
+        return 'Not available';
+    }
+    const numericValue = Number(value);
+    if (Number.isNaN(numericValue)) {
+        return 'Not available';
+    }
+    return `${numericValue.toLocaleString(undefined, { maximumFractionDigits: 3 })} ${unit}`;
+}
+
+function formatDocumentAccessIndexPercent(value) {
+    if (value === null || value === undefined || value === '') {
+        return 'Not available';
+    }
+    const numericValue = Number(value);
+    if (Number.isNaN(numericValue)) {
+        return 'Not available';
+    }
+    return `${numericValue.toLocaleString(undefined, { maximumFractionDigits: 2 })}%`;
+}
+
+function formatDocumentAccessIndexMetricPair(sourceValue, projectionValue, unit) {
+    const sourceMetric = formatDocumentAccessIndexMetric(sourceValue, unit);
+    const projectionMetric = formatDocumentAccessIndexMetric(projectionValue, unit);
+    if (sourceMetric === 'Not available' || projectionMetric === 'Not available') {
+        return 'Not available';
+    }
+    return `${sourceMetric} / ${projectionMetric}`;
+}
+
+function formatDocumentAccessIndexSavings(value, unit, positiveLabel, negativeLabel) {
+    if (value === null || value === undefined || value === '') {
+        return 'Not available';
+    }
+    const numericValue = Number(value);
+    if (Number.isNaN(numericValue)) {
+        return 'Not available';
+    }
+    if (Math.abs(numericValue) < 0.001) {
+        return `0 ${unit} difference`;
+    }
+    const label = numericValue > 0 ? positiveLabel : negativeLabel;
+    return `${formatDocumentAccessIndexMetric(Math.abs(numericValue), unit)} ${label}`;
+}
+
+function getDocumentAccessIndexRollingWindow(shadowValidation, windowKey) {
+    const windows = shadowValidation?.rolling_metrics?.windows || {};
+    return windows[windowKey] || {};
+}
+
+function getDocumentAccessIndexReadWindow(readMetrics, windowKey) {
+    const windows = readMetrics?.windows || {};
+    return windows[windowKey] || {};
+}
+
+function getDocumentAccessIndexCacheWindow(cacheMetrics, windowKey) {
+    const windows = cacheMetrics?.windows || {};
+    return windows[windowKey] || {};
+}
+
+function formatDocumentAccessIndexSampleSummary(windowMetrics) {
+    if (!windowMetrics || Number(windowMetrics.sample_count || 0) === 0) {
+        return 'No samples';
+    }
+
+    const sampleCount = formatNumber(windowMetrics.sample_count || 0);
+    const matchedCount = formatNumber(windowMetrics.matched_count || 0);
+    const mismatchCount = formatNumber(windowMetrics.mismatch_count || 0);
+    const errorCount = formatNumber(windowMetrics.error_count || 0);
+    const comparableCount = formatNumber(windowMetrics.comparable_sample_count || 0);
+    return `${sampleCount} samples (${comparableCount} comparable, ${matchedCount} matched, ${mismatchCount} mismatch, ${errorCount} error)`;
+}
+
+function formatDocumentAccessIndexReadSample(sample) {
+    if (!sample) {
+        return 'No samples';
+    }
+    const status = formatDocumentAccessIndexStatus(sample.status || 'unknown');
+    const operation = formatDocumentAccessIndexStatus(sample.operation || 'read');
+    const scope = sample.source_scope ? ` / ${sample.source_scope}` : '';
+    return `${status} (${operation}${scope})`;
+}
+
+function formatDocumentAccessIndexCacheEvent(sample) {
+    if (!sample) {
+        return 'No cache events';
+    }
+    const eventType = formatDocumentAccessIndexStatus(sample.event_type || 'unknown');
+    const operation = formatDocumentAccessIndexStatus(sample.operation || 'cache');
+    const reason = sample.reason ? ` / ${formatDocumentAccessIndexStatus(sample.reason)}` : '';
+    return `${eventType} (${operation}${reason})`;
+}
+
+function formatDocumentAccessIndexLatencyWindow(windowMetrics) {
+    const averageLatency = formatDocumentAccessIndexMetric(windowMetrics?.elapsed_ms_avg, 'ms');
+    const p95Latency = formatDocumentAccessIndexMetric(windowMetrics?.elapsed_ms_p95, 'ms');
+    if (averageLatency === 'Not available' && p95Latency === 'Not available') {
+        return 'Not available';
+    }
+    return `${averageLatency} / ${p95Latency}`;
 }
 
 function getNormalizedDocumentAccessIndexStatus(status) {
@@ -1670,6 +1979,10 @@ function renderDocumentAccessIndexStatus(statusPayload) {
     const backfillStatus = statusPayload?.document_access_index_backfill || statusPayload;
     const state = backfillStatus?.state || {};
     const settings = backfillStatus?.settings || {};
+    const shadowValidation = backfillStatus?.shadow_validation || {};
+    const maintenance = backfillStatus?.maintenance || {};
+    const readMetrics = backfillStatus?.read_metrics || {};
+    const cacheMetrics = backfillStatus?.cache_metrics || {};
     const statusText = String(state.status || 'not_started');
 
     setDocumentAccessIndexBadge(
@@ -1685,7 +1998,12 @@ function renderDocumentAccessIndexStatus(statusPayload) {
     setDocumentAccessIndexBadge(
         'document-access-index-read-status',
         settings.reads_enabled ? 'Enabled' : 'Disabled',
-        settings.reads_enabled ? 'warning' : 'secondary'
+        settings.reads_enabled ? 'success' : 'secondary'
+    );
+    setDocumentAccessIndexBadge(
+        'document-access-index-cache-status',
+        settings.cache_enabled ? `Enabled / ${formatDocumentAccessIndexMetric(settings.cache_ttl_seconds, 'sec')}` : 'Disabled',
+        settings.cache_enabled ? 'success' : 'secondary'
     );
     setDocumentAccessIndexBadge(
         'document-access-index-shadow-status',
@@ -1697,8 +2015,129 @@ function renderDocumentAccessIndexStatus(statusPayload) {
         formatDocumentAccessIndexStatus(statusText),
         getDocumentAccessIndexStatusVariant(statusText)
     );
+    setDocumentAccessIndexBadge(
+        'document-access-index-maintenance-mode',
+        maintenance.auto_maintenance_enabled ? 'Automatic' : 'Disabled',
+        maintenance.auto_maintenance_enabled ? 'success' : 'secondary'
+    );
 
     setElementText('document-access-index-repair-count', formatNumber(backfillStatus?.repair_required_count));
+    setElementText(
+        'document-access-index-maintenance-next-action',
+        formatDocumentAccessIndexStatus(maintenance.next_action || 'monitor')
+    );
+    setElementText(
+        'document-access-index-maintenance-more-work',
+        maintenance.has_more_work ? 'Yes' : 'No'
+    );
+    setElementText(
+        'document-access-index-maintenance-active-interval',
+        formatDocumentAccessIndexMetric(maintenance.active_interval_seconds, 'sec')
+    );
+    const read15m = getDocumentAccessIndexReadWindow(readMetrics, '15m');
+    const cache15m = getDocumentAccessIndexCacheWindow(cacheMetrics, '15m');
+    setElementText('document-access-index-read-15m-attempts', formatNumber(read15m.sample_count || 0));
+    setElementText(
+        'document-access-index-cache-15m-hit-rate',
+        formatDocumentAccessIndexPercent(cache15m.hit_rate_percent)
+    );
+    setElementText(
+        'document-access-index-cache-15m-hits-misses',
+        `${formatNumber(cache15m.hit_count || 0)} / ${formatNumber(cache15m.miss_count || 0)}`
+    );
+    setElementText(
+        'document-access-index-cache-15m-bypasses-errors',
+        `${formatNumber(cache15m.bypass_count || 0)} / ${formatNumber(cache15m.error_count || 0)}`
+    );
+    setElementText(
+        'document-access-index-cache-15m-invalidations',
+        formatNumber(cache15m.invalidation_count || 0)
+    );
+    setElementText('document-access-index-read-15m-served', formatNumber(read15m.served_from_index_count || 0));
+    setElementText('document-access-index-read-15m-fallbacks', formatNumber(read15m.source_fallback_count || 0));
+    setElementText(
+        'document-access-index-read-15m-fallback-rate',
+        formatDocumentAccessIndexPercent(read15m.fallback_rate_percent)
+    );
+    setElementText(
+        'document-access-index-read-15m-ru',
+        formatDocumentAccessIndexMetric(read15m.request_charge, 'RU')
+    );
+    setElementText(
+        'document-access-index-read-15m-latency',
+        formatDocumentAccessIndexLatencyWindow(read15m)
+    );
+    setElementText(
+        'document-access-index-read-last-fallback',
+        formatDocumentAccessIndexReadSample(readMetrics.last_fallback_sample)
+    );
+    setElementText(
+        'document-access-index-read-last-sample',
+        formatDocumentAccessIndexReadSample(readMetrics.last_sample)
+    );
+    setElementText(
+        'document-access-index-cache-last-event',
+        formatDocumentAccessIndexCacheEvent(cacheMetrics.last_event)
+    );
+    setDocumentAccessIndexBadge(
+        'document-access-index-shadow-last-status',
+        formatDocumentAccessIndexStatus(shadowValidation.status || 'not_run'),
+        getDocumentAccessIndexStatusVariant(shadowValidation.status || 'not_run')
+    );
+    setElementText(
+        'document-access-index-shadow-mismatches',
+        `${formatNumber(shadowValidation.missing_count || 0)} missing / ${formatNumber(shadowValidation.extra_count || 0)} extra`
+    );
+    setElementText(
+        'document-access-index-shadow-ru-comparison',
+        formatDocumentAccessIndexMetricPair(shadowValidation.source_query_ru, shadowValidation.validation_index_ru, 'RU')
+    );
+    setElementText(
+        'document-access-index-shadow-validation-ru',
+        formatDocumentAccessIndexMetric(shadowValidation.validation_index_ru, 'RU')
+    );
+    setElementText(
+        'document-access-index-shadow-candidate-ru',
+        formatDocumentAccessIndexMetric(shadowValidation.candidate_read_ru, 'RU')
+    );
+    setElementText(
+        'document-access-index-shadow-wave5-ru-savings',
+        formatDocumentAccessIndexSavings(shadowValidation.estimated_wave5_ru_savings, 'RU', 'less', 'more')
+    );
+    setElementText(
+        'document-access-index-shadow-ms-comparison',
+        formatDocumentAccessIndexMetricPair(shadowValidation.source_query_ms, shadowValidation.candidate_read_ms, 'ms')
+    );
+    setElementText(
+        'document-access-index-shadow-ms-savings',
+        formatDocumentAccessIndexSavings(shadowValidation.estimated_wave5_ms_savings, 'ms', 'faster', 'slower')
+    );
+    const rolling5m = getDocumentAccessIndexRollingWindow(shadowValidation, '5m');
+    const rolling15m = getDocumentAccessIndexRollingWindow(shadowValidation, '15m');
+    setElementText(
+        'document-access-index-rolling-5m-ru-comparison',
+        formatDocumentAccessIndexMetricPair(rolling5m.source_query_ru, rolling5m.candidate_read_ru, 'RU')
+    );
+    setElementText(
+        'document-access-index-rolling-5m-wave5-ru-savings',
+        formatDocumentAccessIndexSavings(rolling5m.estimated_wave5_ru_savings, 'RU', 'less', 'more')
+    );
+    setElementText(
+        'document-access-index-rolling-15m-ru-comparison',
+        formatDocumentAccessIndexMetricPair(rolling15m.source_query_ru, rolling15m.candidate_read_ru, 'RU')
+    );
+    setElementText(
+        'document-access-index-rolling-15m-wave5-ru-savings',
+        formatDocumentAccessIndexSavings(rolling15m.estimated_wave5_ru_savings, 'RU', 'less', 'more')
+    );
+    setElementText(
+        'document-access-index-rolling-15m-validation-overhead',
+        formatDocumentAccessIndexMetric(rolling15m.validation_index_ru, 'RU')
+    );
+    setElementText(
+        'document-access-index-rolling-15m-samples',
+        formatDocumentAccessIndexSampleSummary(rolling15m)
+    );
     setElementText('document-access-index-current-scope', state.current_source_scope || 'None');
     setElementText('document-access-index-completed-scopes', formatDocumentAccessIndexList(state.completed_source_scopes));
     setElementText('document-access-index-total-processed', formatNumber(state.total_documents_processed || 0));
@@ -1782,13 +2221,12 @@ async function runDocumentAccessIndexBackfillBatch(options = {}) {
             })
         });
         const data = await response.json();
-        if (!response.ok || !data.success) {
-            throw new Error(data.error || 'Document access index backfill batch failed.');
-        }
-
         const currentStatus = getDocumentAccessIndexBackfillStatusFromRunResult(data);
         if (currentStatus) {
             renderDocumentAccessIndexStatus(currentStatus);
+        }
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Document access index backfill batch failed.');
         }
 
         const status = currentStatus?.state?.status || 'completed';
@@ -3217,6 +3655,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- NEW: Chunk size controls ---
     setupChunkSizeControls();
 
+    setupRedisMonitoringControls();
     setupDocumentAccessIndexControls();
     setupCosmosThroughputControls();
     
@@ -4803,10 +5242,10 @@ function setupToggles() {
     const enableRedisCache = document.getElementById('enable_redis_cache');
     const redisSettingsDiv = document.getElementById('redis_cache_settings');
     if (enableRedisCache && redisSettingsDiv) {
-        // Set initial state
-        redisSettingsDiv.style.display = enableRedisCache.checked ? 'block' : 'none';
+        updateRedisCanonicalCacheVisibility(enableRedisCache.checked);
         enableRedisCache.addEventListener('change', function () {
-            redisSettingsDiv.style.display = this.checked ? 'block' : 'none';
+            updateRedisCanonicalCacheVisibility(this.checked);
+            markFormAsModified();
         });
     }
 
@@ -6033,7 +6472,7 @@ function setupTestButtons() {
     if (testRedisBtn) {
         testRedisBtn.addEventListener('click', async () => {
             const resultDiv = document.getElementById('test_redis_result');
-            resultDiv.innerHTML = 'Testing Redis...';
+            setRedisTestResult(resultDiv, 'Testing Redis...', 'muted');
 
             const payload = {
                 test_type: 'redis',
@@ -6050,12 +6489,13 @@ function setupTestButtons() {
                 });
                 const data = await resp.json();
                 if (resp.ok) {
-                    resultDiv.innerHTML = `<span class="text-success">${data.message}</span>`;
+                    setRedisTestResult(resultDiv, data.message || 'Redis connection successful.', 'success');
+                    loadRedisMonitoringStatus(null, { showLoading: false });
                 } else {
-                    resultDiv.innerHTML = `<span class="text-danger">${data.error || 'Error testing Redis'}</span>`;
+                    setRedisTestResult(resultDiv, data.error || 'Error testing Redis', 'danger');
                 }
             } catch (err) {
-                resultDiv.innerHTML = `<span class="text-danger">Error: ${err.message}</span>`;
+                setRedisTestResult(resultDiv, `Error: ${err.message}`, 'danger');
             }
         });
     }
@@ -6609,7 +7049,7 @@ function updateRedisCanonicalCacheVisibility(isEnabled) {
     const redisSettingsDiv = document.getElementById('redis_cache_settings');
 
     if (redisSettingsDiv) {
-        redisSettingsDiv.style.display = isEnabled ? 'block' : 'none';
+        redisSettingsDiv.classList.toggle('d-none', !isEnabled);
     }
 }
 

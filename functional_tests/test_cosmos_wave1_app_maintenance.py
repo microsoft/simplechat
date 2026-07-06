@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 1 app maintenance framework.
-Version: 0.250.010
+Version: 0.250.031
 Implemented in: 0.250.005
 
 This test ensures the maintenance runner initializes cache version documents
@@ -99,6 +99,8 @@ class FakeCosmosContainer:
             if document_metadata_type is not None and item.get("type") not in (None, document_metadata_type):
                 continue
             results.append(copy.deepcopy(item))
+        if "SELECT VALUE COUNT" in query.upper():
+            return [len(results)]
         return results
 
 
@@ -153,7 +155,8 @@ def test_maintenance_initializes_cache_version_documents():
     assert container.items["app_maintenance_state"]["last_status"] == "succeeded"
     backfill_step = next(step for step in result["steps"] if step["name"] == "document_access_index_backfill")
     assert backfill_step["status"] == "succeeded"
-    assert backfill_step["results"]["status"] == "skipped_disabled"
+    assert backfill_step["results"]["status"] == "completed"
+    assert backfill_step["results"]["current_status"]["maintenance"]["next_action"] == "monitor"
     for version_doc in maintenance.CACHE_VERSION_DOCUMENTS:
         target_container = governance_container if version_doc["container"] == "governance_policies" else container
         item = target_container.items[version_doc["id"]]
@@ -174,7 +177,8 @@ def test_maintenance_status_reports_state_and_versions():
     assert status["state"]["last_status"] == "succeeded"
     assert len(status["cache_version_documents"]) == len(maintenance.CACHE_VERSION_DOCUMENTS)
     assert status["cosmos_indexing_policies"]["mode"] == "report_only"
-    assert status["document_access_index_backfill"]["state"]["status"] == "not_started"
+    assert status["document_access_index_backfill"]["state"]["status"] == "succeeded"
+    assert status["document_access_index_backfill"]["maintenance"]["auto_maintenance_enabled"] is True
     assert {
         "app_settings_cache_version",
         "governance_cache_version",
@@ -198,7 +202,59 @@ def test_maintenance_settings_are_normalized():
     assert settings["run_on_startup"] is True
     assert settings["check_interval_seconds"] == 60
     assert settings["lease_seconds"] == 60
-    assert settings["run_document_access_index_backfill"] is False
+    assert settings["run_document_access_index_backfill"] is True
+    assert settings["document_access_index_auto_maintenance"] is True
+    assert settings["document_access_index_active_interval_seconds"] == 30
+
+    disabled_settings = maintenance.get_app_maintenance_settings({
+        "enable_app_maintenance": False,
+        "enable_startup_app_maintenance": True,
+    })
+    startup_disabled_settings = maintenance.get_app_maintenance_settings({
+        "enable_app_maintenance": True,
+        "enable_startup_app_maintenance": False,
+    })
+
+    assert disabled_settings["run_document_access_index_backfill"] is True
+    assert disabled_settings["document_access_index_auto_maintenance"] is False
+    assert startup_disabled_settings["run_document_access_index_backfill"] is True
+    assert startup_disabled_settings["document_access_index_auto_maintenance"] is False
+
+
+def test_explicit_backfill_skip_is_preserved_for_manual_runs():
+    """Manual maintenance calls should be able to skip a backfill batch for that run."""
+    container = FakeCosmosContainer()
+    maintenance = _load_maintenance_module(container)
+
+    result = maintenance.run_app_maintenance_once(
+        triggered_by="test",
+        requested_by="tester@example.com",
+        run_document_access_backfill=False,
+    )
+
+    backfill_step = next(step for step in result["steps"] if step["name"] == "document_access_index_backfill")
+    assert backfill_step["run_requested"] is False
+    assert backfill_step["results"]["backfill"]["status"] == "skipped_disabled"
+    assert backfill_step["results"]["maintenance_pending"] is True
+
+
+def test_failed_maintenance_step_sets_top_level_failure():
+    """A failed step should not be reported as a fully successful maintenance run."""
+    container = FakeCosmosContainer()
+    maintenance = _load_maintenance_module(container)
+    maintenance.run_document_access_index_backfill_maintenance = lambda **_kwargs: {
+        "success": False,
+        "status": "failed",
+        "error": "simulated failure",
+    }
+
+    result = maintenance.run_app_maintenance_once(triggered_by="test", requested_by="tester@example.com")
+
+    backfill_step = next(step for step in result["steps"] if step["name"] == "document_access_index_backfill")
+    assert result["success"] is False
+    assert result["error"] == "One or more maintenance steps failed."
+    assert result["state"]["last_status"] == "succeeded_with_warnings"
+    assert backfill_step["status"] == "failed"
 
 
 if __name__ == "__main__":
@@ -206,6 +262,8 @@ if __name__ == "__main__":
         test_maintenance_initializes_cache_version_documents,
         test_maintenance_status_reports_state_and_versions,
         test_maintenance_settings_are_normalized,
+        test_explicit_backfill_skip_is_preserved_for_manual_runs,
+        test_failed_maintenance_step_sets_top_level_failure,
     ]
     results = []
     for test in tests:

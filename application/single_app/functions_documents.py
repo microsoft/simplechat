@@ -9,8 +9,14 @@ from flask import make_response
 from config import *
 from functions_appinsights import log_event
 from functions_document_access_index import (
+    DOCUMENT_ACCESS_SCOPE_GROUP,
+    DOCUMENT_ACCESS_SCOPE_PERSONAL,
+    DOCUMENT_ACCESS_SCOPE_PUBLIC,
     delete_document_access_index_for_document_fail_open,
+    is_document_access_shadow_validation_enabled,
+    query_items_with_cosmos_diagnostics,
     sync_document_access_index_for_document_fail_open,
+    validate_document_access_index_shadow,
 )
 from functions_visio import build_visio_page_markdown, parse_vsdx_pages
 from functions_content import *
@@ -679,7 +685,7 @@ def sort_documents(documents, sort_by="_ts", sort_order="DESC"):
     return sorted(documents or [], key=sort_key, reverse=reverse)
 
 
-def _query_accessible_documents(user_id, group_id=None, public_workspace_id=None):
+def _query_accessible_documents(user_id, group_id=None, public_workspace_id=None, collect_diagnostics=False):
     cosmos_container = _get_documents_container(group_id=group_id, public_workspace_id=public_workspace_id)
 
     if public_workspace_id is not None:
@@ -716,13 +722,26 @@ def _query_accessible_documents(user_id, group_id=None, public_workspace_id=None
             {"name": "@user_id_prefix", "value": f"{user_id},"}
         ]
 
-    return list(
-        cosmos_container.query_items(
-            query=query,
-            parameters=parameters,
-            enable_cross_partition_query=True,
-        )
+    documents, diagnostics = query_items_with_cosmos_diagnostics(
+        cosmos_container,
+        diagnostics_label='source_documents',
+        collect_diagnostics=collect_diagnostics,
+        query=query,
+        parameters=parameters,
+        enable_cross_partition_query=True,
     )
+    if collect_diagnostics:
+        return documents, diagnostics
+    return documents
+
+
+def _upsert_document_and_sync_access_index(cosmos_container, document_item, operation):
+    persisted_document = cosmos_container.upsert_item(document_item)
+    sync_document_access_index_for_document_fail_open(
+        persisted_document if isinstance(persisted_document, dict) else document_item,
+        operation=operation,
+    )
+    return persisted_document if isinstance(persisted_document, dict) else document_item
 
 
 def _build_archived_scope_value(scope_value):
@@ -816,7 +835,11 @@ def normalize_document_revision_families(user_id, group_id=None, public_workspac
                     update_occurred = True
 
             if update_occurred:
-                cosmos_container.upsert_item(document_item)
+                _upsert_document_and_sync_access_index(
+                    cosmos_container,
+                    document_item,
+                    operation='document_revision_normalized',
+                )
                 changes_made = True
 
     return changes_made
@@ -986,8 +1009,8 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
                 update_existing_document = True
 
             if update_existing_document:
-                cosmos_container.upsert_item(existing_document)
-                sync_document_access_index_for_document_fail_open(
+                _upsert_document_and_sync_access_index(
+                    cosmos_container,
                     existing_document,
                     operation='document_revision_archived',
                 )
@@ -1091,8 +1114,8 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
                 "tags": carried_forward.get("tags", [])
             }
 
-        cosmos_container.upsert_item(document_metadata)
-        sync_document_access_index_for_document_fail_open(
+        _upsert_document_and_sync_access_index(
+            cosmos_container,
             document_metadata,
             operation='document_created',
         )
@@ -2423,8 +2446,8 @@ def update_document(**kwargs):
 
         # 5. Upsert the document if changes were made
         if update_occurred:
-            cosmos_container.upsert_item(existing_document)
-            sync_document_access_index_for_document_fail_open(
+            _upsert_document_and_sync_access_index(
+                cosmos_container,
                 existing_document,
                 operation='document_updated',
             )
@@ -3189,12 +3212,38 @@ def get_ordered_document_chunks(document_id, user_id, group_id=None, public_work
 
 def get_documents(user_id, group_id=None, public_workspace_id=None):
     try:
-        documents = _query_accessible_documents(
-            user_id=user_id,
-            group_id=group_id,
-            public_workspace_id=public_workspace_id,
-        )
+        collect_shadow_metrics = is_document_access_shadow_validation_enabled()
+        if collect_shadow_metrics:
+            documents, source_query_metrics = _query_accessible_documents(
+                user_id=user_id,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+                collect_diagnostics=True,
+            )
+        else:
+            documents = _query_accessible_documents(
+                user_id=user_id,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+            )
+            source_query_metrics = None
         current_documents = sort_documents(select_current_documents(documents))
+        source_scope = DOCUMENT_ACCESS_SCOPE_PERSONAL
+        shadow_group_ids = None
+        if public_workspace_id is not None:
+            source_scope = DOCUMENT_ACCESS_SCOPE_PUBLIC
+        elif group_id is not None:
+            source_scope = DOCUMENT_ACCESS_SCOPE_GROUP
+            shadow_group_ids = [group_id]
+        validate_document_access_index_shadow(
+            current_documents,
+            source_scope=source_scope,
+            user_id=user_id,
+            group_ids=shadow_group_ids,
+            public_workspace_id=public_workspace_id,
+            source_query_metrics=source_query_metrics,
+            context='functions_documents.get_documents',
+        )
         return jsonify({"documents": current_documents}), 200
     except Exception as e:
         return jsonify({'error': f'Error retrieving documents: {str(e)}'}), 500
@@ -3500,8 +3549,8 @@ def delete_document_revision(user_id, document_id, delete_mode="all_versions", g
                 public_workspace_id=public_workspace_id,
             )
             set_document_chunk_visibility(promoted_document, active=True)
-            cosmos_container.upsert_item(promoted_document)
-            sync_document_access_index_for_document_fail_open(
+            _upsert_document_and_sync_access_index(
+                cosmos_container,
                 promoted_document,
                 operation='document_revision_promoted',
             )
@@ -3743,15 +3792,15 @@ def sync_chat_upload_workspace_document_sharing_for_collaboration(conversation_d
             continue
 
         document_item['last_updated'] = current_time
-        cosmos_user_documents_container.upsert_item(document_item)
-        sync_document_access_index_for_document_fail_open(
+        persisted_document = _upsert_document_and_sync_access_index(
+            cosmos_user_documents_container,
             document_item,
             operation='chat_upload_collaboration_share_synced',
         )
         try:
             set_document_chunk_visibility(
-                document_item,
-                active=str(document_item.get('search_visibility_state') or 'active').strip().lower() != 'archived',
+                persisted_document,
+                active=str(persisted_document.get('search_visibility_state') or 'active').strip().lower() != 'archived',
             )
         except Exception as chunk_sync_error:
             log_event(
@@ -4923,8 +4972,8 @@ def upload_to_blob(temp_file_path, user_id, document_id, blob_filename, update_c
                 public_workspace_id=public_workspace_id,
             )
             if archived_blob_path:
-                cosmos_container.upsert_item(previous_document)
-                sync_document_access_index_for_document_fail_open(
+                _upsert_document_and_sync_access_index(
+                    cosmos_container,
                     previous_document,
                     operation='document_blob_archived',
                 )
@@ -4957,8 +5006,8 @@ def upload_to_blob(temp_file_path, user_id, document_id, blob_filename, update_c
         current_document["enhanced_citations"] = bool(mark_enhanced_citations)
         if current_document.get("archived_blob_path") is None:
             current_document["archived_blob_path"] = None
-        cosmos_container.upsert_item(current_document)
-        sync_document_access_index_for_document_fail_open(
+        _upsert_document_and_sync_access_index(
+            cosmos_container,
             current_document,
             operation='document_blob_uploaded',
         )
@@ -8870,8 +8919,8 @@ def share_document_with_user(document_id, owner_user_id, target_user_id):
             document_item['last_updated'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
             # Update the document
-            cosmos_user_documents_container.upsert_item(document_item)
-            sync_document_access_index_for_document_fail_open(
+            _upsert_document_and_sync_access_index(
+                cosmos_user_documents_container,
                 document_item,
                 operation='document_shared_with_user',
             )
@@ -8938,8 +8987,8 @@ def unshare_document_from_user(document_id, owner_user_id, target_user_id):
             document_item['shared_user_ids'] = new_shared_user_ids
             document_item['last_updated'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
             # Update the document
-            cosmos_user_documents_container.upsert_item(document_item)
-            sync_document_access_index_for_document_fail_open(
+            _upsert_document_and_sync_access_index(
+                cosmos_user_documents_container,
                 document_item,
                 operation='document_unshared_from_user',
             )
@@ -9105,8 +9154,8 @@ def share_document_with_group(document_id, owner_group_id, target_group_id):
             document_item['last_updated'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
             # Update the document
-            cosmos_group_documents_container.upsert_item(document_item)
-            sync_document_access_index_for_document_fail_open(
+            _upsert_document_and_sync_access_index(
+                cosmos_group_documents_container,
                 document_item,
                 operation='document_shared_with_group',
             )
@@ -9148,8 +9197,8 @@ def unshare_document_from_group(document_id, owner_group_id, target_group_id):
             document_item['last_updated'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
             # Update the document
-            cosmos_group_documents_container.upsert_item(document_item)
-            sync_document_access_index_for_document_fail_open(
+            _upsert_document_and_sync_access_index(
+                cosmos_group_documents_container,
                 document_item,
                 operation='document_unshared_from_group',
             )
@@ -9403,13 +9452,81 @@ def validate_tag_color(color, tag_name):
     return True, None, normalized_color
 
 
+def get_workspace_tag_definitions(user_id, group_id=None, public_workspace_id=None):
+    """Return tag definition metadata for a personal, group, or public workspace."""
+    # Local imports avoid circular initialization with workspace/settings helpers.
+    if public_workspace_id is not None:
+        from functions_public_workspaces import find_public_workspace_by_id
+        ws_doc = find_public_workspace_by_id(public_workspace_id)
+        workspace_tag_defs = (ws_doc or {}).get('tag_definitions', {})
+    elif group_id is not None:
+        from functions_group import find_group_by_id
+        group_doc = find_group_by_id(group_id)
+        workspace_tag_defs = (group_doc or {}).get('tag_definitions', {})
+    else:
+        from functions_settings import get_user_settings
+        user_settings = get_user_settings(user_id)
+        settings_dict = user_settings.get('settings', {})
+        tag_definitions = settings_dict.get('tag_definitions', {})
+        workspace_tag_defs = tag_definitions.get('personal', {})
+
+    return workspace_tag_defs if isinstance(workspace_tag_defs, dict) else {}
+
+
+def build_workspace_tags_from_counts(tag_counts, user_id, group_id=None, public_workspace_id=None):
+    """
+    Merge normalized tag counts with workspace tag definitions and safe colors.
+    Returns: [{'name': 'tag1', 'count': 5, 'color': '#3b82f6'}, ...]
+    """
+    normalized_counts = {}
+    for tag_name, count in (tag_counts or {}).items():
+        normalized_tag = normalize_tag(tag_name)
+        if not normalized_tag:
+            continue
+        try:
+            normalized_count = int(count or 0)
+        except (TypeError, ValueError):
+            normalized_count = 0
+        normalized_counts[normalized_tag] = normalized_counts.get(normalized_tag, 0) + normalized_count
+
+    workspace_tag_defs = get_workspace_tag_definitions(
+        user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+
+    results = []
+    for tag_name, count in normalized_counts.items():
+        tag_def = workspace_tag_defs.get(tag_name, {})
+        if not isinstance(tag_def, dict):
+            tag_def = {}
+        results.append({
+            'name': tag_name,
+            'count': count,
+            'color': get_safe_tag_color(tag_def.get('color'), tag_name)
+        })
+
+    for tag_name, tag_def in workspace_tag_defs.items():
+        normalized_tag = normalize_tag(tag_name)
+        if not normalized_tag or normalized_tag in normalized_counts:
+            continue
+        if not isinstance(tag_def, dict):
+            tag_def = {}
+        results.append({
+            'name': normalized_tag,
+            'count': 0,
+            'color': get_safe_tag_color(tag_def.get('color'), tag_name)
+        })
+
+    results.sort(key=lambda x: (-x['count'], x['name']))
+    return results
+
+
 def get_workspace_tags(user_id, group_id=None, public_workspace_id=None):
     """
     Get all unique tags used in a workspace with document counts.
     Returns: [{'name': 'tag1', 'count': 5, 'color': '#3b82f6'}, ...]
     """
-    from functions_settings import get_user_settings
-
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
 
@@ -9474,47 +9591,12 @@ def get_workspace_tags(user_id, group_id=None, public_workspace_id=None):
                 if normalized_tag:
                     tag_counts[normalized_tag] = tag_counts.get(normalized_tag, 0) + 1
 
-        # Get tag definitions (colors) from the appropriate source
-        if is_public_workspace:
-            # Read from public workspace record (shared across all users)
-            from functions_public_workspaces import find_public_workspace_by_id
-            ws_doc = find_public_workspace_by_id(public_workspace_id)
-            workspace_tag_defs = (ws_doc or {}).get('tag_definitions', {})
-        elif is_group:
-            # Read from group record (shared across all group members)
-            from functions_group import find_group_by_id
-            group_doc = find_group_by_id(group_id)
-            workspace_tag_defs = (group_doc or {}).get('tag_definitions', {})
-        else:
-            # Personal: read from user settings
-            user_settings = get_user_settings(user_id)
-            settings_dict = user_settings.get('settings', {})
-            tag_definitions = settings_dict.get('tag_definitions', {})
-            workspace_tag_defs = tag_definitions.get('personal', {})
-
-        # Build result with colors from used tags
-        results = []
-        for tag_name, count in tag_counts.items():
-            tag_def = workspace_tag_defs.get(tag_name, {})
-            results.append({
-                'name': tag_name,
-                'count': count,
-                'color': get_safe_tag_color(tag_def.get('color'), tag_name)
-            })
-
-        # Add defined tags that haven't been used yet (count = 0)
-        for tag_name, tag_def in workspace_tag_defs.items():
-            if tag_name not in tag_counts:
-                results.append({
-                    'name': tag_name,
-                    'count': 0,
-                    'color': get_safe_tag_color(tag_def.get('color'), tag_name)
-                })
-
-        # Sort by count descending, then name ascending
-        results.sort(key=lambda x: (-x['count'], x['name']))
-
-        return results
+        return build_workspace_tags_from_counts(
+            tag_counts,
+            user_id,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+        )
 
     except Exception as e:
         print(f"Error getting workspace tags: {e}")

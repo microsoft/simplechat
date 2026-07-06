@@ -2,6 +2,34 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.030)**
+
+#### New Features
+
+*   **Redis Document Access Index Cache**
+    *   Added Redis read-through caching for DAI-backed document list, tag list, and legacy-count reads with scope-version invalidation and bounded TTL controls.
+    *   Admin Settings now shows Redis DAI cache health, hit/miss/bypass/error metrics, invalidations, and the latest cache event alongside DAI read and maintenance status.
+    *   (Ref: DAI Redis cache, `functions_document_access_index.py`, `admin_settings.html`, `admin_settings.js`)
+
+#### Bug Fixes
+
+*   **DAI Cache Invalidation and Repair Safety**
+    *   Hardened DAI cache invalidation so access changes fail closed when Redis invalidation cannot be proven safe, including revoked-share, delete, partial projection failure, and untracked repair-state scenarios.
+    *   Preserved historical revoked scopes through repair and blocked DAI/cache reads while repair safety is unknown.
+    *   (Ref: DAI cache invalidation, projection repair backlog, `test_cosmos_wave6_document_access_cache.py`)
+
+*   **DAI List Parity Improvements**
+    *   DAI document-list reads now include pending shared documents needed by approval UI, preserve generated-artifact requester identity for public workspace actions, collapse legacy revisions like source reads, and match source exact/case-sensitive classification and array filters.
+    *   DAI tag-list reads now project file names for legacy rows so distinct legacy documents without revision-family metadata do not collapse into a single tag-count identity.
+    *   External public DAI lists now use unfiltered DAI legacy counts so legacy-update prompts match source-backed behavior.
+    *   (Ref: DAI list parity, public workspace documents, external public documents)
+
+*   **Maintenance Failure Visibility**
+    *   Manual app maintenance runs now surface failed step status instead of reporting full success, and Admin Settings keeps detailed DAI status visible when a run completes with errors.
+    *   The DAI maintenance status now reports automatic maintenance only when the app-maintenance scheduler gates are enabled and startup maintenance can actually run.
+    *   Optional shadow-validation source queries now fail open after successful DAI reads so diagnostics cannot break served list responses.
+    *   (Ref: app maintenance, DAI shadow validation, `functions_app_maintenance.py`, document list routes)
+
 ### **(v0.250.008)**
 
 #### Bug Fixes

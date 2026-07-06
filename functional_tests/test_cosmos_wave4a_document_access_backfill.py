@@ -2,8 +2,12 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 4A document access index backfill.
-Version: 0.250.011
+Version: 0.250.031
 Implemented in: 0.250.010
+Default read enablement updated in: 0.250.027
+Redis DAI cache invalidation updated in: 0.250.029
+Maintenance status gates updated in: 0.250.030
+DAI cache TTL default updated in: 0.250.031
 
 This test ensures the document_access_index backfill is resumable,
 scope-limited, and can reconcile repair records left by fail-open
@@ -116,8 +120,17 @@ class FakeCosmosContainer:
             if document_id is not None and item.get("source_document_id") != document_id:
                 continue
             results.append(copy.deepcopy(item))
+        if "SELECT VALUE COUNT" in query.upper():
+            return FakePagedResult([len(results)], max_item_count=kwargs.get("max_item_count", 100))
         results.sort(key=lambda item: item.get("id", ""))
         return FakePagedResult(results, max_item_count=kwargs.get("max_item_count", 100))
+
+
+class FakeRepairBacklogStateWriteFailContainer(FakeCosmosContainer):
+    def upsert_item(self, body):
+        if body.get("type") == "document_access_index_repair_backlog_state":
+            raise RuntimeError("state write throttled")
+        return super().upsert_item(body)
 
 
 def _document(document_id, owner_id):
@@ -134,7 +147,7 @@ def _document(document_id, owner_id):
 
 
 @contextmanager
-def _load_document_access_index_module(personal_documents=None):
+def _load_document_access_index_module(personal_documents=None, settings_container=None):
     original_modules = {}
     for module_name in [
         "config",
@@ -147,7 +160,7 @@ def _load_document_access_index_module(personal_documents=None):
             del sys.modules[module_name]
 
     index_container = FakeCosmosContainer()
-    settings_container = FakeCosmosContainer()
+    settings_container = settings_container or FakeCosmosContainer()
     personal_container = FakeCosmosContainer(personal_documents)
     group_container = FakeCosmosContainer()
     public_container = FakeCosmosContainer()
@@ -171,7 +184,7 @@ def _load_document_access_index_module(personal_documents=None):
     fake_settings.get_settings = lambda: {
         "enable_document_access_index_container": True,
         "enable_document_access_index_write_through": True,
-        "enable_document_access_index_reads": False,
+        "enable_document_access_index_reads": True,
         "enable_document_access_index_shadow_validation": False,
         "enable_startup_document_access_index_backfill": True,
         "document_access_index_backfill_batch_size": 1,
@@ -256,7 +269,72 @@ def test_repair_reconciliation_cleans_up_failed_delete_projection_rows():
     assert result["success"] is True
     assert result["repairs_processed"] == 1
     assert index_container.items == {}
-    assert settings_container.items == {}
+    remaining_repair_docs = [
+        item
+        for item in settings_container.items.values()
+        if item.get("type") == "document_access_index_repair"
+    ]
+    repair_backlog_state = settings_container.items.get((
+        "document_access_index_repair_backlog_state",
+        "document_access_index_repair_backlog_state",
+    ))
+    assert remaining_repair_docs == []
+    assert repair_backlog_state["has_repair_backlog"] is False
+
+
+def test_repair_reconciliation_tolerates_backlog_state_write_failure():
+    """A failed backlog-state write should not fail completed repair reconciliation."""
+    settings_container = FakeRepairBacklogStateWriteFailContainer()
+    with _load_document_access_index_module([], settings_container=settings_container) as (
+        indexing,
+        index_container,
+        _settings_container,
+        _personal_container,
+    ):
+        deleted_document = _document("doc-state-write", "owner-1")
+        indexing.sync_document_access_index_for_document(deleted_document, force=True)
+        settings_container.upsert_item({
+            "id": "document_access_projection_repair:personal:doc-state-write",
+            "type": "document_access_index_repair",
+            "status": "repair_required",
+            "operation": "document_deleted",
+            "source_scope": "personal",
+            "source_document_id": "doc-state-write",
+        })
+
+        result = indexing.reconcile_document_access_index_repair_documents(force=True)
+
+    assert result["success"] is True
+    assert result["repairs_processed"] == 1
+    assert index_container.items == {}
+
+
+def test_succeeded_with_errors_without_repairs_is_not_active_backfill_work():
+    """Completed backfills with historical errors should idle once repairs are clear."""
+    with _load_document_access_index_module([]) as (
+        indexing,
+        _index_container,
+        settings_container,
+        _personal_container,
+    ):
+        settings_container.upsert_item({
+            "id": "document_access_index_backfill_state",
+            "type": "document_access_index_backfill_state",
+            "status": "succeeded_with_errors",
+            "source_scopes": ["personal", "group", "public"],
+            "completed_source_scopes": ["personal", "group", "public"],
+            "total_documents_processed": 3,
+            "total_documents_failed": 1,
+            "schema_version": 2,
+        })
+
+        status = indexing.get_document_access_index_backfill_status()
+
+    assert status["state"]["status"] == "succeeded_with_errors"
+    assert status["repair_required_count"] == 0
+    assert status["maintenance"]["has_more_work"] is False
+    assert status["maintenance"]["next_action"] == "monitor"
+    assert indexing.is_document_access_index_maintenance_pending(status) is False
 
 
 def test_wave4a_settings_and_maintenance_contract_are_wired():
@@ -266,9 +344,13 @@ def test_wave4a_settings_and_maintenance_contract_are_wired():
     maintenance_source = open(os.path.join(SINGLE_APP_DIR, "functions_app_maintenance.py"), "r", encoding="utf-8").read()
     route_source = open(os.path.join(SINGLE_APP_DIR, "route_backend_settings.py"), "r", encoding="utf-8").read()
 
-    assert 'VERSION = "0.250.011"' in config_source
+    assert 'VERSION = "0.250.031"' in config_source
+    assert "'enable_startup_document_access_index_backfill': True" in settings_source
     assert "'document_access_index_backfill_batch_size': 200" in settings_source
     assert "'document_access_index_repair_batch_size': 100" in settings_source
+    assert "'document_access_index_active_maintenance_interval_seconds': 30" in settings_source
+    assert "'enable_document_access_index_cache': True" in settings_source
+    assert "'document_access_index_cache_ttl_seconds': 900" in settings_source
     assert "run_document_access_index_backfill_maintenance" in maintenance_source
     assert "run_document_access_backfill=payload.get('run_document_access_index_backfill')" in route_source
 
@@ -277,6 +359,8 @@ if __name__ == "__main__":
     tests = [
         test_backfill_batches_are_resumable_and_complete,
         test_repair_reconciliation_cleans_up_failed_delete_projection_rows,
+        test_repair_reconciliation_tolerates_backlog_state_write_failure,
+        test_succeeded_with_errors_without_repairs_is_not_active_backfill_work,
         test_wave4a_settings_and_maintenance_contract_are_wired,
     ]
     results = []

@@ -5233,6 +5233,7 @@
             </div>
 
             <div class="tab-pane fade" id="scale" role="tabpanel" aria-labelledby="scale-tab">
+                {% set enable_dai_debug = settings.enable_dai_debug | default(false) %}
                 <p class="text-muted">
                     Configure Redis cache to improve enterprise scale and performance by caching session data. Enabling Redis allows you to horizontally scale your application across multiple instances without losing session data.
                 </p>
@@ -5256,7 +5257,7 @@
                         </label>
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enable Redis Cache for distributed session storage, improving performance and enabling horizontal scaling across multiple application instances."></i>
                     </div>
-                    <div id="redis_cache_settings" {% if not settings.enable_redis_cache %}style="display: none;" {% endif %}>
+                    <div id="redis_cache_settings" class="{% if not settings.enable_redis_cache %}d-none{% endif %}">
                         <div class="mb-3">
                             <label for="redis_url" class="form-label">Redis Server Host Name</label>
                             <p class="text-muted">(example: simple-chat.redis.cache.windows.net)</p>
@@ -5293,6 +5294,139 @@
                         </button>
                         <div id="test_redis_result" class="mt-2"></div>
                     </div>
+                    <div class="border rounded p-3 mt-4" id="redis-monitoring-section" data-testid="redis-monitoring-section">
+                        <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+                            <div>
+                                <h6 class="mb-1">
+                                    <i class="bi bi-activity me-2" aria-hidden="true"></i>Redis Monitoring
+                                </h6>
+                                <p class="text-muted small mb-0">
+                                    Monitor Redis availability, memory pressure, hit rate, evictions, and runtime cache usage before Redis-backed document list caching is enabled.
+                                </p>
+                            </div>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" id="redis-monitoring-refresh-btn">
+                                <i class="bi bi-arrow-clockwise me-1" aria-hidden="true"></i>Refresh Redis Status
+                            </button>
+                        </div>
+                        <div class="alert alert-info small mb-3 d-none" id="redis-monitoring-message" role="status" aria-live="polite"></div>
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-3">
+                                <div class="border rounded p-3 h-100">
+                                    <div class="text-muted small">Configuration</div>
+                                    <span class="badge text-bg-secondary" id="redis-monitoring-config-status">Not loaded</span>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="border rounded p-3 h-100">
+                                    <div class="text-muted small">Health</div>
+                                    <span class="badge text-bg-secondary" id="redis-monitoring-health-status">Not loaded</span>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="border rounded p-3 h-100">
+                                    <div class="text-muted small">App Cache Runtime</div>
+                                    <span class="badge text-bg-secondary" id="redis-monitoring-app-cache-status">Not loaded</span>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="border rounded p-3 h-100">
+                                    <div class="text-muted small">Session Runtime</div>
+                                    <span class="badge text-bg-secondary" id="redis-monitoring-session-status">Not loaded</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="row g-3">
+                            <div class="col-md-3">
+                                <div class="border rounded p-3 h-100">
+                                    <div class="text-muted small">Ping Latency</div>
+                                    <div class="fw-semibold" id="redis-monitoring-ping-latency">Not loaded</div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="border rounded p-3 h-100">
+                                    <div class="text-muted small">Memory Usage</div>
+                                    <div class="fw-semibold" id="redis-monitoring-memory-usage">Not loaded</div>
+                                    <div class="text-muted small" id="redis-monitoring-memory-policy">Not loaded</div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="border rounded p-3 h-100">
+                                    <div class="text-muted small">Connected Clients</div>
+                                    <div class="fw-semibold" id="redis-monitoring-connected-clients">Not loaded</div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="border rounded p-3 h-100">
+                                    <div class="text-muted small">Ops/sec</div>
+                                    <div class="fw-semibold" id="redis-monitoring-ops-per-sec">Not loaded</div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="border rounded p-3 h-100">
+                                    <div class="text-muted small">Keyspace Hit Rate</div>
+                                    <div class="fw-semibold" id="redis-monitoring-hit-rate">Not loaded</div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="border rounded p-3 h-100">
+                                    <div class="text-muted small">Tracked Keys</div>
+                                    <div class="fw-semibold" id="redis-monitoring-key-count">Not loaded</div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="border rounded p-3 h-100">
+                                    <div class="text-muted small">Expired / Evicted Keys</div>
+                                    <div class="fw-semibold">
+                                        <span id="redis-monitoring-expired-keys">Not loaded</span>
+                                        /
+                                        <span id="redis-monitoring-evicted-keys">Not loaded</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="border rounded p-3 h-100">
+                                    <div class="text-muted small">Fragmentation Ratio</div>
+                                    <div class="fw-semibold" id="redis-monitoring-fragmentation">Not loaded</div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="border rounded p-3 h-100">
+                                    <div class="text-muted small">Error Replies</div>
+                                    <div class="fw-semibold" id="redis-monitoring-errors">Not loaded</div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="border rounded p-3 h-100">
+                                    <div class="text-muted small">Rejected Connections</div>
+                                    <div class="fw-semibold" id="redis-monitoring-rejected-connections">Not loaded</div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="border rounded p-3 h-100">
+                                    <div class="text-muted small">Redis Version</div>
+                                    <div class="fw-semibold" id="redis-monitoring-version">Not loaded</div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="border rounded p-3 h-100">
+                                    <div class="text-muted small">Monitoring Source</div>
+                                    <div class="fw-semibold" id="redis-monitoring-source">Not loaded</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="border rounded p-3 h-100">
+                                    <div class="text-muted small">Last Checked</div>
+                                    <div class="fw-semibold" id="redis-monitoring-checked-at">Not loaded</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="border rounded p-3 h-100">
+                                    <div class="text-muted small">Last Error</div>
+                                    <div class="fw-semibold" id="redis-monitoring-last-error">Not loaded</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="card p-3 mb-3" id="document-access-index-section" data-testid="document-access-index-section">
@@ -5309,18 +5443,21 @@
                             <button type="button" class="btn btn-outline-secondary btn-sm" id="document-access-index-refresh-btn">
                                 <i class="bi bi-arrow-clockwise me-1" aria-hidden="true"></i>Refresh Status
                             </button>
+                            {% if enable_dai_debug %}
                             <button type="button" class="btn btn-outline-primary btn-sm" id="document-access-index-run-batch-btn">
                                 <i class="bi bi-play-circle me-1" aria-hidden="true"></i>Run One Backfill Batch
                             </button>
                             <button type="button" class="btn btn-outline-danger btn-sm" id="document-access-index-reset-btn" data-bs-toggle="modal" data-bs-target="#documentAccessIndexResetModal">
                                 <i class="bi bi-arrow-counterclockwise me-1" aria-hidden="true"></i>Reset Checkpoint
                             </button>
+                            {% endif %}
                         </div>
                     </div>
 
                     <div class="alert alert-info small mb-3">
                         <i class="bi bi-info-circle me-2" aria-hidden="true"></i>
-                        Write-through projection is safe to leave enabled because source document writes fail open if projection updates fail. Backfill runs one saved-size batch at a time. Save Admin Settings before running a batch if you changed the toggles or batch sizes. Read switchover and shadow validation remain future-wave controls.
+                        Document access projection maintenance is automatic. The background scheduler repairs fail-open projection records first, then runs bounded backfill batches repeatedly while work remains. Production read metrics below show DAI-served reads, Redis cache hits, source fallbacks, RU, and latency without requiring shadow validation.
+                        {% if enable_dai_debug %}Debug controls and shadow validation diagnostics are visible because <code>enable_dai_debug</code> is enabled in app settings.{% endif %}
                     </div>
 
                     <div id="document-access-index-message" class="alert alert-info d-none" role="status" aria-live="polite"></div>
@@ -5341,19 +5478,52 @@
                         <div class="col-md-6 col-xl-3">
                             <div class="border rounded p-2 h-100">
                                 <div class="small text-muted">Read Path</div>
-                                <span class="badge text-bg-secondary" id="document-access-index-read-status">Future wave</span>
+                                <span class="badge text-bg-secondary" id="document-access-index-read-status">Not loaded</span>
                             </div>
                         </div>
                         <div class="col-md-6 col-xl-3">
                             <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Redis List Cache</div>
+                                <span class="badge text-bg-secondary" id="document-access-index-cache-status">Not loaded</span>
+                            </div>
+                        </div>
+                        {% if enable_dai_debug %}
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
                                 <div class="small text-muted">Shadow Validation</div>
-                                <span class="badge text-bg-secondary" id="document-access-index-shadow-status">Future wave</span>
+                                <span class="badge text-bg-secondary" id="document-access-index-shadow-status">Not loaded</span>
+                            </div>
+                        </div>
+                        {% endif %}
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Auto Maintenance</div>
+                                <span class="badge text-bg-secondary" id="document-access-index-maintenance-mode">Not loaded</span>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Next Maintenance Action</div>
+                                <div class="fw-semibold" id="document-access-index-maintenance-next-action">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">More Work Pending</div>
+                                <div class="fw-semibold" id="document-access-index-maintenance-more-work">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Active Loop Interval</div>
+                                <div class="fw-semibold" id="document-access-index-maintenance-active-interval">Not loaded</div>
                             </div>
                         </div>
                     </div>
 
-                    <div class="border rounded p-3 mb-3">
-                        <h6 class="mb-3">Safe Controls</h6>
+                    {% if enable_dai_debug %}
+                    <div class="border rounded p-3 mb-3" data-testid="document-access-index-debug-controls">
+                        <h6 class="mb-3">Automatic Maintenance and Diagnostics</h6>
                         <div class="row g-3 align-items-start">
                             <div class="col-md-6 col-xl-3">
                                 <div class="form-check form-switch">
@@ -5362,13 +5532,15 @@
                                         type="checkbox"
                                         id="enable_document_access_index_write_through"
                                         name="enable_document_access_index_write_through"
-                                        {% if settings.enable_document_access_index_write_through %}checked{% endif %}
+                                        checked
+                                        disabled
+                                        aria-describedby="document-access-index-write-through-help"
                                     >
                                     <label class="form-check-label" for="enable_document_access_index_write_through">
-                                        Enable write-through projection
+                                        Write-through projection
                                     </label>
                                 </div>
-                                <div class="form-text">Keeps new and changed documents synchronized into the access index.</div>
+                                <div class="form-text" id="document-access-index-write-through-help">Always on. New and changed documents synchronize into the access index and fail open to repair records if projection updates fail.</div>
                             </div>
                             <div class="col-md-6 col-xl-3">
                                 <div class="form-check form-switch">
@@ -5377,13 +5549,30 @@
                                         type="checkbox"
                                         id="enable_startup_document_access_index_backfill"
                                         name="enable_startup_document_access_index_backfill"
-                                        {% if settings.enable_startup_document_access_index_backfill %}checked{% endif %}
+                                        checked
+                                        disabled
+                                        aria-describedby="document-access-index-backfill-help"
                                     >
                                     <label class="form-check-label" for="enable_startup_document_access_index_backfill">
-                                        Enable scheduled backfill
+                                        Automatic repair/backfill
                                     </label>
                                 </div>
-                                <div class="form-text">Allows app maintenance to run one backfill batch per maintenance pass.</div>
+                                <div class="form-text" id="document-access-index-backfill-help">Always on. Maintenance keeps running bounded repair and backfill batches until DAI is healthy.</div>
+                            </div>
+                            <div class="col-md-6 col-xl-3">
+                                <div class="form-check form-switch">
+                                    <input
+                                        class="form-check-input"
+                                        type="checkbox"
+                                        id="enable_document_access_index_shadow_validation"
+                                        name="enable_document_access_index_shadow_validation"
+                                        {% if settings.enable_document_access_index_shadow_validation %}checked{% endif %}
+                                    >
+                                    <label class="form-check-label" for="enable_document_access_index_shadow_validation">
+                                        Enable shadow validation
+                                    </label>
+                                </div>
+                                <div class="form-text">Compares source list results to projection rows and logs mismatches without changing reads.</div>
                             </div>
                             <div class="col-md-6 col-xl-3">
                                 <label for="document_access_index_backfill_batch_size" class="form-label">Backfill Batch Size</label>
@@ -5414,43 +5603,62 @@
                         </div>
                     </div>
 
-                    <div class="border rounded p-3 mb-3">
-                        <h6 class="mb-3">Future Wave Controls</h6>
+                    <div class="border rounded p-3 mb-3" data-testid="document-access-index-debug-read-controls">
+                        <h6 class="mb-3">Default Read Path</h6>
                         <div class="row g-3">
                             <div class="col-md-6">
                                 <div class="form-check form-switch">
                                     <input
                                         class="form-check-input"
                                         type="checkbox"
-                                        id="enable_document_access_index_reads_preview"
-                                        {% if settings.enable_document_access_index_reads %}checked{% endif %}
+                                        id="enable_document_access_index_reads"
+                                        name="enable_document_access_index_reads"
+                                        checked
                                         disabled
+                                        aria-describedby="document-access-index-reads-help"
                                     >
-                                    <label class="form-check-label" for="enable_document_access_index_reads_preview">
-                                        Enable document access index reads
-                                        <span class="badge text-bg-secondary ms-1">Wave 5</span>
+                                    <label class="form-check-label" for="enable_document_access_index_reads">
+                                        Document access index reads
+                                        <span class="badge text-bg-success ms-1">Wave 5B default</span>
                                     </label>
                                 </div>
-                                <div class="form-text">Locked until shadow validation confirms projection parity.</div>
+                                <div class="form-text" id="document-access-index-reads-help">Always on. DAI-backed document and tag list reads are the normal path; source-container fallback remains automatic when backfill is not ready, repairs are pending, or a DAI query fails.</div>
                             </div>
-                            <div class="col-md-6">
+                            <div class="col-md-6 col-xl-3">
                                 <div class="form-check form-switch">
                                     <input
                                         class="form-check-input"
                                         type="checkbox"
-                                        id="enable_document_access_index_shadow_validation_preview"
-                                        {% if settings.enable_document_access_index_shadow_validation %}checked{% endif %}
-                                        disabled
+                                        role="switch"
+                                        id="enable_document_access_index_cache"
+                                        name="enable_document_access_index_cache"
+                                        {% if settings.enable_document_access_index_cache %}checked{% endif %}
+                                        aria-describedby="document-access-index-cache-help"
                                     >
-                                    <label class="form-check-label" for="enable_document_access_index_shadow_validation_preview">
-                                        Enable shadow validation
-                                        <span class="badge text-bg-secondary ms-1">Wave 4B</span>
+                                    <label class="form-check-label" for="enable_document_access_index_cache">
+                                        Redis document list cache
+                                        <span class="badge text-bg-info ms-1">Wave 6</span>
                                     </label>
                                 </div>
-                                <div class="form-text">Locked until the Wave 4B validation diff tooling is implemented.</div>
+                                <div class="form-text" id="document-access-index-cache-help">Uses Redis read-through caching for DAI document, tag, and legacy-count reads. If Redis is unavailable, reads bypass cache and use DAI directly.</div>
+                            </div>
+                            <div class="col-md-6 col-xl-3">
+                                <label for="document_access_index_cache_ttl_seconds" class="form-label">Cache TTL Seconds</label>
+                                <input
+                                    type="number"
+                                    class="form-control"
+                                    id="document_access_index_cache_ttl_seconds"
+                                    name="document_access_index_cache_ttl_seconds"
+                                    min="60"
+                                    max="900"
+                                    value="{{ settings.document_access_index_cache_ttl_seconds or 900 }}"
+                                    aria-describedby="document-access-index-cache-ttl-help"
+                                >
+                                <div class="form-text" id="document-access-index-cache-ttl-help">Default 900 seconds. Scope-version invalidation makes document changes visible immediately; TTL clears unreachable old entries.</div>
                             </div>
                         </div>
                     </div>
+                    {% endif %}
 
                     <div class="row g-3">
                         <div class="col-md-6 col-xl-3">
@@ -5465,6 +5673,182 @@
                                 <div class="fw-semibold" id="document-access-index-repair-count">Not loaded</div>
                             </div>
                         </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">15m DAI Read Attempts</div>
+                                <div class="fw-semibold" id="document-access-index-read-15m-attempts">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">15m Redis Cache Hit Rate</div>
+                                <div class="fw-semibold" id="document-access-index-cache-15m-hit-rate">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">15m Cache Hits / Misses</div>
+                                <div class="fw-semibold" id="document-access-index-cache-15m-hits-misses">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">15m Cache Bypasses / Errors</div>
+                                <div class="fw-semibold" id="document-access-index-cache-15m-bypasses-errors">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">15m Cache Invalidations</div>
+                                <div class="fw-semibold" id="document-access-index-cache-15m-invalidations">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">15m Served from DAI</div>
+                                <div class="fw-semibold" id="document-access-index-read-15m-served">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">15m Source Fallbacks</div>
+                                <div class="fw-semibold" id="document-access-index-read-15m-fallbacks">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">15m Fallback Rate</div>
+                                <div class="fw-semibold" id="document-access-index-read-15m-fallback-rate">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">15m DAI Read RU</div>
+                                <div class="fw-semibold" id="document-access-index-read-15m-ru">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">15m Avg / P95 Latency</div>
+                                <div class="fw-semibold" id="document-access-index-read-15m-latency">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Last Fallback Reason</div>
+                                <div class="fw-semibold text-break" id="document-access-index-read-last-fallback">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Last DAI Read Metric</div>
+                                <div class="fw-semibold text-break" id="document-access-index-read-last-sample">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Last Cache Event</div>
+                                <div class="fw-semibold text-break" id="document-access-index-cache-last-event">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <div class="alert alert-secondary small mb-0">
+                                <i class="bi bi-speedometer2 me-2" aria-hidden="true"></i>
+                                Production read metrics are lightweight in-process counters for the current app worker. Application Insights logs remain the durable fleet-wide source for fallback warnings and query failures.
+                            </div>
+                        </div>
+                        {% if enable_dai_debug %}
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Last Shadow Result</div>
+                                <span class="badge text-bg-secondary" id="document-access-index-shadow-last-status">Not run</span>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Shadow Mismatches</div>
+                                <div class="fw-semibold" id="document-access-index-shadow-mismatches">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Source / Validation RU</div>
+                                <div class="fw-semibold" id="document-access-index-shadow-ru-comparison">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Validation Index RU</div>
+                                <div class="fw-semibold" id="document-access-index-shadow-validation-ru">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Candidate Read RU</div>
+                                <div class="fw-semibold" id="document-access-index-shadow-candidate-ru">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Estimated Wave 5 Savings</div>
+                                <div class="fw-semibold" id="document-access-index-shadow-wave5-ru-savings">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Source / Candidate Latency</div>
+                                <div class="fw-semibold" id="document-access-index-shadow-ms-comparison">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Estimated Wave 5 Latency</div>
+                                <div class="fw-semibold" id="document-access-index-shadow-ms-savings">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <div class="alert alert-secondary small mb-0">
+                                <i class="bi bi-graph-up-arrow me-2" aria-hidden="true"></i>
+                                Rolling decision metrics aggregate shadow-validation samples over recent windows. Use these totals to compare source container RU with candidate access-index RU before enabling the future read path or Redis document access cache.
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">5m Source / Candidate RU</div>
+                                <div class="fw-semibold" id="document-access-index-rolling-5m-ru-comparison">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">5m Estimated Wave 5 Savings</div>
+                                <div class="fw-semibold" id="document-access-index-rolling-5m-wave5-ru-savings">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">15m Source / Candidate RU</div>
+                                <div class="fw-semibold" id="document-access-index-rolling-15m-ru-comparison">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">15m Estimated Wave 5 Savings</div>
+                                <div class="fw-semibold" id="document-access-index-rolling-15m-wave5-ru-savings">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">15m Validation Overhead</div>
+                                <div class="fw-semibold" id="document-access-index-rolling-15m-validation-overhead">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">15m Shadow Samples</div>
+                                <div class="fw-semibold" id="document-access-index-rolling-15m-samples">Not loaded</div>
+                            </div>
+                        </div>
+                        {% endif %}
                         <div class="col-md-6 col-xl-3">
                             <div class="border rounded p-2 h-100">
                                 <div class="small text-muted">Current Scope</div>
@@ -5516,6 +5900,7 @@
                     </div>
                 </div>
 
+                {% if enable_dai_debug %}
                 <div class="modal fade" id="documentAccessIndexResetModal" tabindex="-1" aria-labelledby="documentAccessIndexResetModalLabel" aria-hidden="true">
                     <div class="modal-dialog">
                         <div class="modal-content">
@@ -5540,6 +5925,7 @@
                                 </button>
                             </div>
                         </div>
+                        {% endif %}
                     </div>
                 </div>
 

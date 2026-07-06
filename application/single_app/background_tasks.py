@@ -27,6 +27,7 @@ from functions_cosmos_throughput import (
 )
 from functions_app_maintenance import (
     APP_MAINTENANCE_LOCK_NAME,
+    calculate_app_maintenance_sleep_seconds,
     get_app_maintenance_settings,
     run_app_maintenance_once,
 )
@@ -716,7 +717,11 @@ def run_app_maintenance_loop():
                     lease_seconds=maintenance_settings.get('lease_seconds', 300),
                 )
                 if lock_document:
-                    run_app_maintenance_once(triggered_by='background', settings=settings)
+                    maintenance_result = run_app_maintenance_once(triggered_by='background', settings=settings)
+                    sleep_seconds = calculate_app_maintenance_sleep_seconds(
+                        maintenance_result,
+                        maintenance_settings,
+                    )
         except Exception as exc:
             log_event(
                 '[AppMaintenance] Error in maintenance scheduler loop.',
@@ -728,7 +733,7 @@ def run_app_maintenance_loop():
             if lock_document:
                 release_distributed_task_lock(lock_document)
 
-        time.sleep(max(int(sleep_seconds or 3600), 60))
+        time.sleep(max(int(sleep_seconds or 3600), 15))
 
 
 def start_background_task_threads():

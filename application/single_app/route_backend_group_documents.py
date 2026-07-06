@@ -13,6 +13,15 @@ from functions_file_sync import (
     build_synced_document_delete_guard,
 )
 from functions_notifications import create_notification, delete_notifications_by_metadata
+from functions_document_access_index import (
+    DOCUMENT_ACCESS_SCOPE_GROUP,
+    build_document_access_scope_key,
+    is_document_access_shadow_validation_enabled,
+    query_items_with_cosmos_diagnostics,
+    query_document_access_index_documents,
+    query_document_access_index_legacy_count,
+    query_document_access_index_tag_counts,
+)
 from functions_simplechat_operations import download_blob_content, queue_generated_document_processing
 from utils_cache import invalidate_group_search_cache
 from functions_debug import *
@@ -503,6 +512,7 @@ def register_route_backend_group_documents(bp):
 
         query_conditions = [group_condition]
         param_count = 0
+        shadow_tags_filter = []
 
         if search_term:
             param_name = f"@search_term_{param_count}"
@@ -541,6 +551,7 @@ def register_route_backend_group_documents(bp):
             from functions_documents import sanitize_tags_for_filter
             tags_list = sanitize_tags_for_filter(tags_filter)
             if tags_list:
+                shadow_tags_filter = tags_list
                 for idx, tag in enumerate(tags_list):
                     param_name = f"@tag_{param_count}_{idx}"
                     query_conditions.append(f"ARRAY_CONTAINS(c.tags, {param_name})")
@@ -550,6 +561,17 @@ def register_route_backend_group_documents(bp):
         where_clause = " AND ".join(query_conditions)
 
         # --- 3) Query matching documents, then collapse to current revisions before paginating ---
+        shadow_filters = {
+            'search': search_term,
+            'classification': classification_filter,
+            'classification_none_matches_literal': False,
+            'author': author_filter,
+            'keywords': keywords_filter,
+            'abstract': abstract_filter,
+            'tags': shadow_tags_filter,
+            'array_match_mode': 'contains',
+        }
+        used_document_access_index = False
         try:
             offset = (page - 1) * page_size
             data_query_str = f"""
@@ -557,16 +579,70 @@ def register_route_backend_group_documents(bp):
                 FROM c
                 WHERE {where_clause}
             """
-            matching_docs = list(cosmos_group_documents_container.query_items(
-                query=data_query_str,
-                parameters=query_params,
-                enable_cross_partition_query=True
-            ))
-            current_docs = sort_documents(
-                select_current_documents(matching_docs),
-                sort_by=sort_by,
-                sort_order=sort_order,
+            index_read_result = query_document_access_index_documents(
+                source_scope=DOCUMENT_ACCESS_SCOPE_GROUP,
+                group_ids=validated_group_ids,
+                filters=shadow_filters,
             )
+
+            if index_read_result.get('success'):
+                used_document_access_index = True
+                current_docs = sort_documents(
+                    index_read_result.get('documents', []),
+                    sort_by=sort_by,
+                    sort_order=sort_order,
+                )
+                if is_document_access_shadow_validation_enabled():
+                    try:
+                        matching_docs, source_query_metrics = query_items_with_cosmos_diagnostics(
+                            cosmos_group_documents_container,
+                            diagnostics_label='source_documents',
+                            query=data_query_str,
+                            parameters=query_params,
+                            enable_cross_partition_query=True
+                        )
+                        source_current_docs = sort_documents(
+                            select_current_documents(matching_docs),
+                            sort_by=sort_by,
+                            sort_order=sort_order,
+                        )
+                        validate_document_access_index_shadow(
+                            source_current_docs,
+                            source_scope=DOCUMENT_ACCESS_SCOPE_GROUP,
+                            group_ids=validated_group_ids,
+                            filters=shadow_filters,
+                            source_query_metrics=source_query_metrics,
+                            context='api_get_group_documents',
+                        )
+                    except Exception as shadow_error:
+                        log_event(
+                            '[DocumentAccessIndex] Shadow validation source query failed after DAI read succeeded.',
+                            extra={'source_scope': DOCUMENT_ACCESS_SCOPE_GROUP, 'error': str(shadow_error)},
+                            level=logging.WARNING,
+                            exceptionTraceback=True,
+                        )
+            else:
+                matching_docs, source_query_metrics = query_items_with_cosmos_diagnostics(
+                    cosmos_group_documents_container,
+                    diagnostics_label='source_documents',
+                    collect_diagnostics=is_document_access_shadow_validation_enabled(),
+                    query=data_query_str,
+                    parameters=query_params,
+                    enable_cross_partition_query=True
+                )
+                current_docs = sort_documents(
+                    select_current_documents(matching_docs),
+                    sort_by=sort_by,
+                    sort_order=sort_order,
+                )
+                validate_document_access_index_shadow(
+                    current_docs,
+                    source_scope=DOCUMENT_ACCESS_SCOPE_GROUP,
+                    group_ids=validated_group_ids,
+                    filters=shadow_filters,
+                    source_query_metrics=source_query_metrics,
+                    context='api_get_group_documents',
+                )
             total_count = len(current_docs)
             docs = current_docs[offset:offset + page_size]
 
@@ -602,26 +678,16 @@ def register_route_backend_group_documents(bp):
 
 
         # --- new: do we have any legacy documents? ---
-        legacy_count = 0
-        try:
-            if len(validated_group_ids) == 1:
-                legacy_q = """
-                    SELECT VALUE COUNT(1)
-                    FROM c
-                    WHERE c.group_id = @group_id
-                        AND NOT IS_DEFINED(c.percentage_complete)
-                """
-                legacy_docs = list(
-                    cosmos_group_documents_container.query_items(
-                        query=legacy_q,
-                        parameters=[{"name":"@group_id","value":validated_group_ids[0]}],
-                        enable_cross_partition_query=True
-                    )
-                )
-                legacy_count = legacy_docs[0] if legacy_docs else 0
-            else:
-                # For multi-group, check each group
-                for gid in validated_group_ids:
+        if used_document_access_index:
+            legacy_count_result = query_document_access_index_legacy_count(
+                source_scope=DOCUMENT_ACCESS_SCOPE_GROUP,
+                group_ids=validated_group_ids,
+            )
+            legacy_count = legacy_count_result.get('legacy_count', 0) if legacy_count_result.get('success') else 0
+        else:
+            legacy_count = 0
+            try:
+                if len(validated_group_ids) == 1:
                     legacy_q = """
                         SELECT VALUE COUNT(1)
                         FROM c
@@ -631,13 +697,30 @@ def register_route_backend_group_documents(bp):
                     legacy_docs = list(
                         cosmos_group_documents_container.query_items(
                             query=legacy_q,
-                            parameters=[{"name":"@group_id","value":gid}],
+                            parameters=[{"name":"@group_id","value":validated_group_ids[0]}],
                             enable_cross_partition_query=True
                         )
                     )
-                    legacy_count += legacy_docs[0] if legacy_docs else 0
-        except Exception as e:
-            print(f"Error executing legacy query: {e}")
+                    legacy_count = legacy_docs[0] if legacy_docs else 0
+                else:
+                    # For multi-group, check each group
+                    for gid in validated_group_ids:
+                        legacy_q = """
+                            SELECT VALUE COUNT(1)
+                            FROM c
+                            WHERE c.group_id = @group_id
+                                AND NOT IS_DEFINED(c.percentage_complete)
+                        """
+                        legacy_docs = list(
+                            cosmos_group_documents_container.query_items(
+                                query=legacy_q,
+                                parameters=[{"name":"@group_id","value":gid}],
+                                enable_cross_partition_query=True
+                            )
+                        )
+                        legacy_count += legacy_docs[0] if legacy_docs else 0
+            except Exception as e:
+                print(f"Error executing legacy query: {e}")
 
         # --- 5) Return results ---
         app_settings = get_settings()
@@ -1904,9 +1987,10 @@ def register_route_backend_group_documents(bp):
             except (ValueError, LookupError, PermissionError):
                 group_ids = []
 
-        from functions_documents import get_workspace_tags
+        from functions_documents import build_workspace_tags_from_counts, get_workspace_tags
 
         all_tags = {}
+        validated_group_ids = []
         for gid in group_ids:
             group_doc = find_group_by_id(gid)
             if not group_doc:
@@ -1914,8 +1998,23 @@ def register_route_backend_group_documents(bp):
             role = get_user_role_in_group(group_doc, user_id)
             if not role:
                 continue
+            validated_group_ids.append(gid)
 
-            tags = get_workspace_tags(user_id, group_id=gid)
+        index_tag_result = query_document_access_index_tag_counts(
+            DOCUMENT_ACCESS_SCOPE_GROUP,
+            group_ids=validated_group_ids,
+        ) if validated_group_ids else {'success': False}
+
+        for gid in validated_group_ids:
+            if index_tag_result.get('success'):
+                scope_key = build_document_access_scope_key(DOCUMENT_ACCESS_SCOPE_GROUP, gid)
+                tags = build_workspace_tags_from_counts(
+                    index_tag_result.get('tag_counts_by_scope_key', {}).get(scope_key, {}),
+                    user_id,
+                    group_id=gid,
+                )
+            else:
+                tags = get_workspace_tags(user_id, group_id=gid)
             for tag in tags:
                 if tag['name'] in all_tags:
                     all_tags[tag['name']]['count'] += tag['count']

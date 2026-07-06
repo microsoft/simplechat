@@ -29,6 +29,7 @@ from functions_cosmos_throughput import (
     set_database_throughput,
 )
 from functions_app_maintenance import get_app_maintenance_status, run_app_maintenance_once
+from functions_redis_monitoring import get_redis_monitoring_status
 from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient
 from swagger_wrapper import swagger_route, get_auth_security
@@ -266,11 +267,7 @@ def register_route_backend_settings(bp):
             },
             level=logging.ERROR,
         )
-        return jsonify({
-            'error': 'Failed to run app maintenance.',
-            'run_id': result.get('run_id'),
-            'last_status': result.get('state', {}).get('last_status'),
-        }), 500
+        return jsonify(result), 500
 
     @bp.route('/api/admin/settings/check_index_fields', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -597,6 +594,51 @@ def register_route_backend_settings(bp):
 
         except Exception as e:
             return jsonify({'error': str(e)}), 500
+
+    @bp.route('/api/admin/settings/redis-monitoring/status', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def get_redis_monitoring_admin_status():
+        """Return sanitized Redis health and capacity metrics for the admin Scale tab."""
+        refresh_id = str(uuid.uuid4())
+        refresh_start = time.perf_counter()
+        try:
+            user = session.get('user', {})
+            admin_email = user.get('preferred_username', user.get('email', 'unknown'))
+            log_event(
+                '[RedisMonitoring] Admin status refresh requested.',
+                extra={'refresh_id': refresh_id, 'admin_email': admin_email},
+                level=logging.INFO,
+            )
+            status = get_redis_monitoring_status(
+                get_settings(),
+                session_redis_client=current_app.config.get('SESSION_REDIS'),
+                session_type=current_app.config.get('SESSION_TYPE'),
+            )
+            log_event(
+                '[RedisMonitoring] Admin status refresh completed.',
+                extra={
+                    'refresh_id': refresh_id,
+                    'status': status.get('health', {}).get('status'),
+                    'monitoring_source': status.get('runtime', {}).get('monitoring_source'),
+                    'elapsed_ms': int((time.perf_counter() - refresh_start) * 1000),
+                },
+                level=logging.INFO,
+            )
+            return jsonify(status), 200
+        except Exception as e:
+            log_event(
+                '[RedisMonitoring] Failed to load admin status.',
+                extra={
+                    'refresh_id': refresh_id,
+                    'error': str(e),
+                    'elapsed_ms': int((time.perf_counter() - refresh_start) * 1000),
+                },
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to load Redis monitoring status.'}), 500
 
     @bp.route('/api/admin/settings/cosmos-throughput/status', methods=['GET'])
     @swagger_route(security=get_auth_security())

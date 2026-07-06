@@ -1693,6 +1693,29 @@ def register_route_frontend_admin_settings(bp):
                     ),
                 ),
             )
+            document_access_index_cache_ttl_seconds = min(
+                900,
+                max(
+                    60,
+                    parse_admin_int(
+                        form_data.get('document_access_index_cache_ttl_seconds'),
+                        settings.get('document_access_index_cache_ttl_seconds', 900),
+                        'document_access_index_cache_ttl_seconds',
+                        900,
+                    ),
+                ),
+            )
+            dai_debug_enabled = bool(settings.get('enable_dai_debug', False))
+            document_access_index_shadow_validation_enabled = (
+                form_data.get('enable_document_access_index_shadow_validation') == 'on'
+                if dai_debug_enabled
+                else bool(settings.get('enable_document_access_index_shadow_validation', False))
+            )
+            document_access_index_cache_enabled = (
+                form_data.get('enable_document_access_index_cache') == 'on'
+                if dai_debug_enabled
+                else bool(settings.get('enable_document_access_index_cache', True))
+            )
 
             # --- Chunk Size Overrides ---
             chunk_size_defaults = get_chunk_size_defaults()
@@ -1854,13 +1877,20 @@ def register_route_frontend_admin_settings(bp):
                 'redis_auth_type': form_data.get('redis_auth_type', '').strip(),
 
                 # Document Access Index
-                'enable_document_access_index_container': bool(settings.get('enable_document_access_index_container', True)),
-                'enable_document_access_index_write_through': form_data.get('enable_document_access_index_write_through') == 'on',
-                'enable_document_access_index_reads': bool(settings.get('enable_document_access_index_reads', False)),
-                'enable_document_access_index_shadow_validation': bool(settings.get('enable_document_access_index_shadow_validation', False)),
-                'enable_startup_document_access_index_backfill': form_data.get('enable_startup_document_access_index_backfill') == 'on',
+                'enable_document_access_index_container': True,
+                'enable_document_access_index_write_through': True,
+                'enable_document_access_index_reads': True,
+                'enable_dai_debug': dai_debug_enabled,
+                'enable_document_access_index_shadow_validation': document_access_index_shadow_validation_enabled,
+                'enable_startup_document_access_index_backfill': True,
                 'document_access_index_backfill_batch_size': document_access_index_backfill_batch_size,
                 'document_access_index_repair_batch_size': document_access_index_repair_batch_size,
+                'document_access_index_active_maintenance_interval_seconds': settings.get(
+                    'document_access_index_active_maintenance_interval_seconds',
+                    30,
+                ),
+                'enable_document_access_index_cache': document_access_index_cache_enabled,
+                'document_access_index_cache_ttl_seconds': document_access_index_cache_ttl_seconds,
 
                 # Workspaces
                 'enable_user_workspace': form_data.get('enable_user_workspace') == 'on',

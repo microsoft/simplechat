@@ -12,6 +12,14 @@ from functions_file_sync import (
     build_synced_document_delete_guard,
 )
 from functions_notifications import create_notification, delete_notifications_by_metadata
+from functions_document_access_index import (
+    DOCUMENT_ACCESS_SCOPE_PERSONAL,
+    is_document_access_shadow_validation_enabled,
+    query_items_with_cosmos_diagnostics,
+    query_document_access_index_documents,
+    query_document_access_index_legacy_count,
+    query_document_access_index_tag_counts,
+)
 from utils_cache import invalidate_personal_search_cache
 from functions_debug import *
 from functions_activity_logging import log_document_upload, log_document_metadata_update_transaction
@@ -694,6 +702,7 @@ def register_route_backend_documents(bp):
         # Add user_id prefix for shared_user_ids with status
         user_id_prefix = f"{user_id},"
         query_params.append({"name": "@user_id_prefix", "value": user_id_prefix})
+        shadow_tags_filter = []
 
         # Replace the main ownership/shared condition
         query_conditions[0] = (
@@ -753,6 +762,7 @@ def register_route_backend_documents(bp):
             tags_list = sanitize_tags_for_filter(tags_filter)
 
             if tags_list:
+                shadow_tags_filter = tags_list
                 # Each tag must exist in the document's tags array
                 for idx, tag in enumerate(tags_list):
                     param_name = f"@tag_{param_count}_{idx}"
@@ -762,6 +772,17 @@ def register_route_backend_documents(bp):
 
         # Combine conditions into the WHERE clause
         where_clause = " AND ".join(query_conditions)
+        shadow_filters = {
+            'search': search_term,
+            'classification': classification_filter,
+            'classification_none_matches_literal': True,
+            'author': author_filter,
+            'keywords': keywords_filter,
+            'abstract': abstract_filter,
+            'tags': shadow_tags_filter,
+            'array_match_mode': 'contains',
+        }
+        used_document_access_index = False
 
         # --- 3) Query matching documents, then collapse to current revisions before paginating ---
         try:
@@ -771,17 +792,71 @@ def register_route_backend_documents(bp):
                 FROM c
                 WHERE {where_clause}
             """
-            matching_docs = list(cosmos_user_documents_container.query_items(
-                query=data_query_str,
-                parameters=query_params,
-                enable_cross_partition_query=True
-            ))
-
-            current_docs = sort_documents(
-                select_current_documents(matching_docs),
-                sort_by=sort_by,
-                sort_order=sort_order,
+            index_read_result = query_document_access_index_documents(
+                source_scope=DOCUMENT_ACCESS_SCOPE_PERSONAL,
+                user_id=user_id,
+                filters=shadow_filters,
             )
+
+            if index_read_result.get('success'):
+                used_document_access_index = True
+                current_docs = sort_documents(
+                    index_read_result.get('documents', []),
+                    sort_by=sort_by,
+                    sort_order=sort_order,
+                )
+                if is_document_access_shadow_validation_enabled():
+                    try:
+                        matching_docs, source_query_metrics = query_items_with_cosmos_diagnostics(
+                            cosmos_user_documents_container,
+                            diagnostics_label='source_documents',
+                            query=data_query_str,
+                            parameters=query_params,
+                            enable_cross_partition_query=True
+                        )
+                        source_current_docs = sort_documents(
+                            select_current_documents(matching_docs),
+                            sort_by=sort_by,
+                            sort_order=sort_order,
+                        )
+                        validate_document_access_index_shadow(
+                            source_current_docs,
+                            source_scope=DOCUMENT_ACCESS_SCOPE_PERSONAL,
+                            user_id=user_id,
+                            filters=shadow_filters,
+                            source_query_metrics=source_query_metrics,
+                            context='api_get_user_documents',
+                        )
+                    except Exception as shadow_error:
+                        log_event(
+                            '[DocumentAccessIndex] Shadow validation source query failed after DAI read succeeded.',
+                            extra={'source_scope': DOCUMENT_ACCESS_SCOPE_PERSONAL, 'error': str(shadow_error)},
+                            level=logging.WARNING,
+                            exceptionTraceback=True,
+                        )
+            else:
+                matching_docs, source_query_metrics = query_items_with_cosmos_diagnostics(
+                    cosmos_user_documents_container,
+                    diagnostics_label='source_documents',
+                    collect_diagnostics=is_document_access_shadow_validation_enabled(),
+                    query=data_query_str,
+                    parameters=query_params,
+                    enable_cross_partition_query=True
+                )
+
+                current_docs = sort_documents(
+                    select_current_documents(matching_docs),
+                    sort_by=sort_by,
+                    sort_order=sort_order,
+                )
+                validate_document_access_index_shadow(
+                    current_docs,
+                    source_scope=DOCUMENT_ACCESS_SCOPE_PERSONAL,
+                    user_id=user_id,
+                    filters=shadow_filters,
+                    source_query_metrics=source_query_metrics,
+                    context='api_get_user_documents',
+                )
             total_count = len(current_docs)
             docs = current_docs[offset:offset + page_size]
 
@@ -803,23 +878,32 @@ def register_route_backend_documents(bp):
 
         
         # --- new: do we have any legacy documents? ---
-        try:
-            legacy_q = """
-                SELECT VALUE COUNT(1)
-                FROM c
-                WHERE c.user_id = @user_id
-                    AND NOT IS_DEFINED(c.percentage_complete)
-            """
-            legacy_docs = list(
-                cosmos_user_documents_container.query_items(
-                    query=legacy_q,
-                    parameters=[{"name":"@user_id","value":user_id}],
-                    enable_cross_partition_query=True
-                )
+        legacy_count = 0
+        if used_document_access_index:
+            legacy_count_result = query_document_access_index_legacy_count(
+                source_scope=DOCUMENT_ACCESS_SCOPE_PERSONAL,
+                user_id=user_id,
             )
-            legacy_count = legacy_docs[0] if legacy_docs else 0
-        except Exception as e:
-            debug_print(f"Error executing legacy query: {e}")
+            if legacy_count_result.get('success'):
+                legacy_count = legacy_count_result.get('legacy_count', 0)
+        else:
+            try:
+                legacy_q = """
+                    SELECT VALUE COUNT(1)
+                    FROM c
+                    WHERE c.user_id = @user_id
+                        AND NOT IS_DEFINED(c.percentage_complete)
+                """
+                legacy_docs = list(
+                    cosmos_user_documents_container.query_items(
+                        query=legacy_q,
+                        parameters=[{"name":"@user_id","value":user_id}],
+                        enable_cross_partition_query=True
+                    )
+                )
+                legacy_count = legacy_docs[0] if legacy_docs else 0
+            except Exception as e:
+                debug_print(f"Error executing legacy query: {e}")
 
         # --- 5) Return results ---
         file_downloads_enabled = is_personal_workspace_file_download_enabled(get_settings())
@@ -1349,10 +1433,20 @@ def register_route_backend_documents(bp):
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
         
-        from functions_documents import get_workspace_tags
+        from functions_documents import build_workspace_tags_from_counts, get_workspace_tags
         
         try:
-            tags = get_workspace_tags(user_id)
+            index_tag_result = query_document_access_index_tag_counts(
+                DOCUMENT_ACCESS_SCOPE_PERSONAL,
+                user_id=user_id,
+            )
+            if index_tag_result.get('success'):
+                tags = build_workspace_tags_from_counts(
+                    index_tag_result.get('tag_counts', {}),
+                    user_id,
+                )
+            else:
+                tags = get_workspace_tags(user_id)
             return jsonify({'tags': tags}), 200
         except Exception as e:
             return jsonify({'error': str(e)}), 500
@@ -2115,21 +2209,22 @@ def register_route_backend_documents(bp):
             if updated:
                 document_item['shared_user_ids'] = new_shared_user_ids
                 document_item['last_updated'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-                cosmos_user_documents_container.upsert_item(document_item)
+                persisted_document = cosmos_user_documents_container.upsert_item(document_item)
+                document_for_sync = persisted_document if isinstance(persisted_document, dict) else document_item
                 sync_document_access_index_for_document_fail_open(
-                    document_item,
+                    document_for_sync,
                     operation='document_share_approved',
                 )
                 # Update all chunks with the new shared_user_ids
                 try:
-                    chunks = get_all_chunks(document_id, document_item.get('user_id'))
+                    chunks = get_all_chunks(document_id, document_for_sync.get('user_id'))
                     for chunk in chunks:
                         chunk_id = chunk.get('id')
                         if chunk_id:
                             try:
                                 update_chunk_metadata(
                                     chunk_id=chunk_id,
-                                    user_id=document_item.get('user_id'),
+                                    user_id=document_for_sync.get('user_id'),
                                     group_id=None,
                                     public_workspace_id=None,
                                     document_id=document_id,

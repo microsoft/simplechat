@@ -2,8 +2,11 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 3B document access index write-through.
-Version: 0.250.010
+Version: 0.250.031
 Implemented in: 0.250.009
+Default read enablement updated in: 0.250.027
+Redis DAI cache invalidation updated in: 0.250.029
+Repair backlog state cleanup updated in: 0.250.030
 
 This test ensures document_access_index projection rows are deterministic,
 scope-partitioned, clean up stale access rows, and fail open with repair state
@@ -51,6 +54,12 @@ class FakeCosmosContainer:
             raise FakeCosmosError(404, f"Missing item {item}")
         del self.items[key]
 
+    def read_item(self, item, partition_key):
+        key = (partition_key, item)
+        if key not in self.items:
+            raise FakeCosmosError(404, f"Missing item {item}")
+        return copy.deepcopy(self.items[key])
+
     def query_items(self, query, parameters=None, enable_cross_partition_query=False, **kwargs):
         parameter_map = {
             parameter["name"]: parameter["value"]
@@ -69,6 +78,13 @@ class FakeCosmosContainer:
                 continue
             results.append({"id": item_id, "scope_key": scope_key})
         return results
+
+
+class FakeRepairBacklogStateWriteFailContainer(FakeCosmosContainer):
+    def upsert_item(self, body):
+        if body.get("type") == "document_access_index_repair_backlog_state":
+            raise RuntimeError("state write throttled")
+        return super().upsert_item(body)
 
 
 @contextmanager
@@ -105,7 +121,7 @@ def _load_document_access_index_module(index_container=None, settings_container=
     fake_settings.get_settings = lambda: settings or {
         "enable_document_access_index_container": True,
         "enable_document_access_index_write_through": True,
-        "enable_document_access_index_reads": False,
+        "enable_document_access_index_reads": True,
         "enable_document_access_index_shadow_validation": False,
         "enable_startup_document_access_index_backfill": False,
     }
@@ -159,7 +175,7 @@ def test_projection_rows_are_scope_partitioned_and_deterministic():
 
 
 def test_projection_share_collisions_prefer_least_privilege():
-    """Malformed duplicate or legacy share entries should not grant access."""
+    """Duplicate explicit statuses and legacy bare shares prefer least privilege."""
     with _load_document_access_index_module() as (indexing, _index_container, _settings_container):
         rows = indexing.build_document_access_index_rows(
             _personal_document(["user-2,approved", "user-2,not_approved", "legacy-user"])
@@ -217,6 +233,77 @@ def test_projection_failure_records_repair_state_without_raising():
     assert len(repair_docs) == 1
     assert repair_docs[0]["source_document_id"] == "doc-1"
     assert repair_docs[0]["operation"] == "test_failure"
+    repair_backlog_state = settings_container.items.get((
+        "document_access_index_repair_backlog_state",
+        "document_access_index_repair_backlog_state",
+    ))
+    assert repair_backlog_state["has_repair_backlog"] is True
+
+
+def test_projection_failure_records_repair_doc_when_backlog_state_write_fails():
+    """Backlog state write failures must not suppress source repair records."""
+    settings_container = FakeRepairBacklogStateWriteFailContainer()
+    with _load_document_access_index_module(
+        index_container=FakeCosmosContainer(fail_upsert=True),
+        settings_container=settings_container,
+    ) as (
+        indexing,
+        _index_container,
+        _settings_container,
+    ):
+        result = indexing.sync_document_access_index_for_document_fail_open(
+            _personal_document(["user-2,approved"]),
+            operation="test_state_failure",
+        )
+
+    repair_docs = [
+        item
+        for item in settings_container.items.values()
+        if item.get("type") == "document_access_index_repair"
+    ]
+    repair_backlog_states = [
+        item
+        for item in settings_container.items.values()
+        if item.get("type") == "document_access_index_repair_backlog_state"
+    ]
+    assert result["success"] is False
+    assert len(repair_docs) == 1
+    assert repair_docs[0]["operation"] == "test_state_failure"
+    assert repair_backlog_states == []
+
+
+def test_projection_repair_clear_removes_stale_backlog_state_when_false_write_fails():
+    """A successful repair clear should not leave a stale true backlog state behind."""
+    settings_container = FakeRepairBacklogStateWriteFailContainer()
+    with _load_document_access_index_module(settings_container=settings_container) as (
+        indexing,
+        _index_container,
+        _settings_container,
+    ):
+        document = _personal_document(["user-2,approved"])
+        source_scope = "personal"
+        repair_doc_id = indexing._repair_document_id(source_scope, document["id"])
+        state_doc_id = indexing.DOCUMENT_ACCESS_REPAIR_BACKLOG_STATE_DOC_ID
+        settings_container.items[(repair_doc_id, repair_doc_id)] = {
+            "id": repair_doc_id,
+            "type": "document_access_index_repair",
+            "status": "repair_required",
+            "operation": "stale_state_test",
+            "source_scope": source_scope,
+            "source_document_id": document["id"],
+        }
+        settings_container.items[(state_doc_id, state_doc_id)] = {
+            "id": state_doc_id,
+            "type": "document_access_index_repair_backlog_state",
+            "has_repair_backlog": True,
+            "schema_version": indexing.DOCUMENT_ACCESS_INDEX_SCHEMA_VERSION,
+        }
+
+        result = indexing.sync_document_access_index_for_document(document, force=True)
+
+    assert result["success"] is True
+    assert (repair_doc_id, repair_doc_id) not in settings_container.items
+    assert (state_doc_id, state_doc_id) not in settings_container.items
 
 
 def test_wave3b_container_flags_and_hooks_are_wired():
@@ -230,8 +317,8 @@ def test_wave3b_container_flags_and_hooks_are_wired():
     assert "PartitionKey(path=\"/scope_key\")" in config_source
     assert "'enable_document_access_index_container': True" in settings_source
     assert "'enable_document_access_index_write_through': True" in settings_source
-    assert "'enable_document_access_index_reads': False" in settings_source
-    assert "'enable_startup_document_access_index_backfill': False" in settings_source
+    assert "'enable_document_access_index_reads': True" in settings_source
+    assert "'enable_startup_document_access_index_backfill': True" in settings_source
     for marker in [
         "operation='document_created'",
         "operation='document_updated'",
@@ -253,6 +340,8 @@ if __name__ == "__main__":
         test_projection_sync_removes_stale_share_rows,
         test_projection_delete_removes_all_source_rows,
         test_projection_failure_records_repair_state_without_raising,
+        test_projection_failure_records_repair_doc_when_backlog_state_write_fails,
+        test_projection_repair_clear_removes_stale_backlog_state_when_false_write_fails,
         test_wave3b_container_flags_and_hooks_are_wired,
     ]
     results = []

@@ -90,6 +90,25 @@ def resolve_admin_settings_secret_value(field_name, submitted_value, existing_se
     return str(_get_nested_setting_value(existing_settings, field_name) or '').strip()
 
 
+def normalize_document_access_index_required_settings(settings):
+    """Force DAI operational settings that are required for the default read path."""
+    if not isinstance(settings, dict):
+        return False
+
+    changed = False
+    required_flags = {
+        'enable_document_access_index_container': True,
+        'enable_document_access_index_write_through': True,
+        'enable_document_access_index_reads': True,
+        'enable_startup_document_access_index_backfill': True,
+    }
+    for key, required_value in required_flags.items():
+        if settings.get(key) != required_value:
+            settings[key] = required_value
+            changed = True
+    return changed
+
+
 def redact_admin_settings_secrets_for_form(settings):
     redacted_settings = copy.deepcopy(settings or {})
     for field_name in ADMIN_SETTINGS_FORM_SECRET_FIELDS:
@@ -913,11 +932,15 @@ def get_settings(use_cosmos=False, include_source=False):
         'app_maintenance_apply_cosmos_indexing_policies': False,
         'enable_document_access_index_container': True,
         'enable_document_access_index_write_through': True,
-        'enable_document_access_index_reads': False,
+        'enable_document_access_index_reads': True,
+        'enable_dai_debug': False,
         'enable_document_access_index_shadow_validation': False,
-        'enable_startup_document_access_index_backfill': False,
+        'enable_startup_document_access_index_backfill': True,
         'document_access_index_backfill_batch_size': 200,
         'document_access_index_repair_batch_size': 100,
+        'document_access_index_active_maintenance_interval_seconds': 30,
+        'enable_document_access_index_cache': True,
+        'document_access_index_cache_ttl_seconds': 900,
         'custom_pages_nav_cache_ttl_seconds': 60,
         'chat_bootstrap_cache_ttl_seconds': 300,
         'conversation_cache_ttl_seconds': 120,
@@ -1334,11 +1357,18 @@ def get_settings(use_cosmos=False, include_source=False):
         migration_updated = apply_custom_endpoint_setting_migration(merged)
         assignment_settings_updated = normalize_group_workflow_assignment_settings(merged)
         promoted_popular_settings_updated = normalize_agents_page_promoted_popular_settings(merged)
+        document_access_index_settings_updated = normalize_document_access_index_required_settings(merged)
 
         merged['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(merged)
 
         # If merging added anything new, upsert back to Cosmos so future reads remain up to date
-        if merge_changed or migration_updated or assignment_settings_updated or promoted_popular_settings_updated:
+        if (
+            merge_changed
+            or migration_updated
+            or assignment_settings_updated
+            or promoted_popular_settings_updated
+            or document_access_index_settings_updated
+        ):
             cosmos_settings_container.upsert_item(merged)
             _refresh_app_settings_cache_after_write(merged, context="merge_upsert")
 
@@ -1387,6 +1417,7 @@ def update_settings(new_settings):
         settings_item.update(new_settings)
         normalize_group_workflow_assignment_settings(settings_item)
         normalize_agents_page_promoted_popular_settings(settings_item)
+        normalize_document_access_index_required_settings(settings_item)
         settings_item['enable_multi_model_endpoints'] = coerce_multi_model_endpoint_enablement(
             existing_multi_endpoint_enabled,
             settings_item.get('enable_multi_model_endpoints', False),

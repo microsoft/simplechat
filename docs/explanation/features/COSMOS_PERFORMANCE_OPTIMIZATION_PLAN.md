@@ -2,12 +2,12 @@
 
 ## Header Information
 
-**Status**: Reviewed proposal for phased implementation
+**Status**: Partially implemented through Wave 6 Redis DAI document-list cache admin cleanup
 **Documented against version**: **0.250.004**
-**Implemented in version**: **TBD**
-**Related config.py version update**: No version change is included with this proposal. Implementation should increment `VERSION` in `application/single_app/config.py` when code changes are made.
+**Implemented in version**: **0.250.005 - 0.250.031**
+**Related config.py version update**: Wave 6 Redis DAI document-list cache admin cleanup is implemented in `application/single_app/config.py` version **0.250.031**.
 **Primary audience**: SimpleChat technical leadership and application developers
-**Primary goal**: Reduce high-voThelume Azure Cosmos DB reads and repeated cross-partition queries while preserving the current application architecture and existing Azure AI Search indexing model.
+**Primary goal**: Reduce high-volume Azure Cosmos DB reads and repeated cross-partition queries while preserving the current application architecture and existing Azure AI Search indexing model.
 
 ## Review Summary
 
@@ -25,6 +25,56 @@ The repository review confirmed the main direction and added several implementat
 4. **Treat permission-reducing updates as security-sensitive**: Share removal, delete, retention delete, archive, and visibility changes must not leave stale `document_access_index` rows or Azure AI Search chunk visibility behind without repair tracking and safe read fallback.
 5. **Keep Azure AI Search visibility synchronized**: The companion container optimizes Cosmos list screens only. It does not replace existing search-index visibility fields or source-of-truth authorization checks.
 6. **Use shadow validation before reads**: Backfill plus write-through is not enough. Source-container results and `document_access_index` results must be compared by scope, sort, filter, and page before enabling reads.
+
+### 2026-07-01 Wave 4B Implementation Update
+
+Wave 4B adds shadow validation without switching any document list read paths. Personal, group, and public document list routes still return source-container results, then compare those authoritative current-document identities with `document_access_index` projection rows when `enable_document_access_index_shadow_validation` is enabled. The latest shadow validation result is persisted to the settings container and surfaced in Admin Settings > Scale > Cosmos Document Access Index. Read switchover remains disabled and reserved for Wave 5.
+
+### 2026-07-01 Wave 4B.1 Shadow Metrics Update
+
+Wave 4B.1 adds source-versus-projection query diagnostics to shadow validation. When shadow validation is enabled, document list routes capture the source query elapsed time and Cosmos request charge where the SDK provides it, then compare those values with the single-partition projection query. The admin dashboard displays source/index RU, estimated RU savings, source/index latency, and estimated latency savings. These values estimate future read-path benefits; shadow mode still runs the source query plus the projection query until Wave 5 enables controlled index reads.
+
+### 2026-07-01 Wave 4B2 Candidate Read Metrics Update
+
+Wave 4B2 keeps full parity validation in place but adds a separate candidate read query against `document_access_index`. The corrected candidate query is one single-partition query per scope key, returns all current rows for that scope, avoids Cosmos-side `ORDER BY`, `OFFSET`, `LIMIT`, and `TOP`, and projects only the fields needed by the document list UI plus `source_ts` for the current default sort contract. App Service remains responsible for sort/filter/page shaping until Wave 5 read switchover is deliberately implemented. Admin Settings separates **Validation Index RU** from **Candidate Read RU** and uses the candidate scope-read diagnostics for **Estimated Wave 5 Savings**. This prevents the full-scope parity query and Cosmos-side sort/page costs from overstating the expected cost of the future Wave 5 read path.
+
+### 2026-07-01 Wave 4B3 Rolling Decision Metrics Update
+
+Wave 4B3 keeps the latest shadow validation state in the settings container and adds a bounded rolling metric history to the same document. Admin Settings now shows 5-minute and 15-minute aggregate source-versus-candidate RU totals, estimated Wave 5 savings, validation overhead, and sample counts. These dashboard values are intended to help admins compare the current source-container document-list cost with the future access-index read path over a workflow window instead of only looking at the most recent validation call. The same aggregate structure will also help evaluate Wave 6 Redis document access caching, where a short TTL such as 15 minutes may make the access-index path beneficial for more deployments.
+
+### 2026-07-02 Wave 5A Read-Switch Canary Update
+
+Wave 5 is split into **5A canary** and **5B broad enablement**. Wave 5A implements `document_access_index`-backed list reads for personal, group, and public document-list routes behind `enable_document_access_index_reads`. This includes personal workspace lists, group workspace lists, internal public workspace lists, external public workspace lists, and chat document pickers that load personal, group, or visible public workspace documents. The switch stays off by default, is exposed in Admin Settings as a canary control, and only serves from the access index when the container is enabled, write-through is enabled, the relevant backfill scope is `succeeded`, and repair backlog count is zero. If the access-index query is unavailable or readiness checks fail, routes fall back to the existing source-container read path. When shadow validation remains enabled during canary testing, routes still run the source query for validation; admins should disable shadow validation when measuring the overhead-eliminated read path.
+
+Wave 5A uses the candidate-read shape established in Wave 4B2: one single-partition query per access `scope_key`, no Cosmos-side `ORDER BY`, `OFFSET`, `LIMIT`, or `TOP`, and projection-only fields needed by the list UI. Source containers remain authoritative, and DAI rows are shaped into source-like list documents before existing sort, paging, and response enrichment run. The Wave 5A projection schema is versioned, and reads require a matching backfill state schema version so older Wave 4 projection rows cannot be served after the read path is enabled. Existing deployments now run document access repair and backfill automatically during app maintenance after upgrading; manual batches remain available for support and troubleshooting.
+
+### 2026-07-02 Wave 5A2 Tag-List Read Optimization Update
+
+Wave 5A2 extends the same DAI read pattern to the remaining hot tag-list endpoints: personal tags, group tags, and public workspace tags. These endpoints now attempt a DAI tag-count read first when the readiness gates pass, count projected current owner-scope `tags` rows with one single-partition query per access `scope_key`, then merge existing tag definitions and safe colors from settings/group/public workspace records. Source-backed `get_workspace_tags(...)` remains the fallback whenever backfill is not ready, repair backlog is present, or the projection query fails.
+
+### 2026-07-03 Wave 5A2 Operations Dashboard and Auto-Maintenance Update
+
+Wave 5A2 hardens the DAI operations posture before broad enablement. The DAI container, write-through projection, and automatic repair/backfill maintenance are now treated as always-on requirements, including for deployments with older saved settings that previously disabled them. App maintenance repairs fail-open projection records first, runs one bounded backfill batch, and uses a short active maintenance interval while repair or backfill work remains so existing deployments transparently backfill and converge after upgrade. The Admin Settings DAI card now emphasizes operational health: automatic maintenance state, next action, active loop interval, repair backlog, production DAI read attempts, DAI-served reads, source fallbacks, fallback rate, DAI read RU, DAI latency, and last fallback reason. Shadow validation metrics remain available as optional parity diagnostics, but they are no longer the primary dashboard signal for DAI read health.
+
+### 2026-07-03 Wave 5A3 Redis Monitoring Baseline Update
+
+Wave 5A3 adds Redis monitoring before Wave 6 introduces Redis-backed DAI document-list caching. Admin Settings > Scale now surfaces sanitized Redis runtime and capacity signals from the active Redis client: configuration state, health, app-cache and session runtime usage, monitoring source, ping latency, Redis version, connected clients, memory usage, maxmemory policy, fragmentation ratio, ops/sec, keyspace hit rate, tracked keys, expired keys, evicted keys, error replies, rejected connections, last checked time, and last error summary. The monitoring endpoint does not return Redis keys, secret names, or host names; it reports whether Redis is disabled, missing configuration, unavailable at runtime, degraded, healthy, or errored so admins can establish a baseline before document-list caching changes traffic patterns.
+
+### 2026-07-03 Wave 5B Broad Default Read Enablement Update
+
+Wave 5B promotes DAI-backed document and tag list reads from canary to the default read path. App settings now create and migrate `enable_document_access_index_reads` to `True`, Admin Settings displays the read path as an always-on Wave 5B default, and the settings save path preserves that required state even if an older deployment had stored the prior canary value as disabled. The existing safety gates remain unchanged: DAI rows are used only when write-through is enabled, schema-v2 backfill has succeeded for the requested source scope, repair backlog is clear, and the DAI query succeeds. Otherwise, each optimized route automatically falls back to the source document containers and records source fallback metrics for the operations dashboard. Shadow validation remains optional and should stay disabled when measuring overhead-eliminated production reads.
+
+### 2026-07-04 Wave 6 Redis Document Access Cache Update
+
+Wave 6 adds Redis-only read-through caching on top of DAI document, tag, and legacy-count reads. The cache never writes Cosmos cache documents and never forces source-container fallback when Redis is unavailable; Redis misses, unavailable clients, or Redis errors simply bypass cache and run the DAI query directly. The default TTL is **900 seconds** with a supported range of **60-900 seconds**. Cache keys include the operation, source scope, schema version, normalized filters/access role, and per-scope Redis version tokens. DAI projection sync, delete, repair, and backfill paths bump affected scope-version tokens for personal, group, and public access scopes so document uploads, deletes, metadata updates, share/access changes, tag changes, and projection repairs make new list reads miss old cache entries immediately. Old versioned entries naturally expire by TTL.
+
+Admin Settings > Scale displays Redis DAI cache status and lightweight in-process cache metrics: cache enabled/TTL, 15-minute cache hit rate, hits/misses, bypasses/errors, invalidations, and last cache event. These metrics complement the Wave 5 production DAI read metrics and Wave 5A3 Redis runtime monitoring so admins can compare Redis cache hit behavior, Redis health, and DAI/source fallback rates before and after enabling broader Redis-dependent performance work.
+
+### 2026-07-06 Wave 6 Admin Metrics UI Cleanup
+
+DAI is now treated as an always-on production read path in the Admin Settings experience. The default Redis DAI cache TTL is **900 seconds**, relying on scope-version invalidation for immediate visibility after document, tag, share, repair, delete, and backfill changes. The Scale left navigation now links directly to **DAI Metrics**, **Cosmos Metrics**, and **Redis Metrics** so admins can jump to the relevant operational dashboard.
+
+Support-only controls and diagnostics are hidden by default behind the app setting `enable_dai_debug`, which defaults to `false` and is not exposed in the Admin Settings UI. When that setting is edited directly in Cosmos and set to `true`, the DAI card renders manual backfill/reset controls, DAI read/cache toggles, batch-size fields, shadow validation controls, and rolling shadow-decision diagnostics for troubleshooting. Default admins see only production DAI health, maintenance, cache, fallback, RU, latency, repair, and backfill metrics.
 
 ## Executive Summary
 
@@ -1125,21 +1175,20 @@ Recommended rollout settings:
 
 ```python
 {
-    "enable_document_access_index_container": False,
-    "enable_document_access_index_reads": False,
+    "enable_document_access_index_container": True,
+    "enable_document_access_index_reads": True,
     "enable_document_access_index_write_through": True,
-    "enable_startup_document_access_index_backfill": False
+    "enable_startup_document_access_index_backfill": True
 }
 ```
 
 Suggested phased rollout:
 
-1. Deploy container, maintenance jobs, cache settings, and write-through projection disabled for reads.
-2. Run backfill manually or through startup maintenance.
-3. Enable write-through projection.
-4. Compare source list results and Document Access Index list results in shadow mode.
-5. Enable Document Access Index reads for admin/test users.
-6. Enable Document Access Index reads globally.
+1. Deploy container, maintenance jobs, cache settings, write-through projection, automatic repair/backfill, and default DAI reads together.
+2. Allow app maintenance to backfill and repair automatically; use manual batches only for support-driven retries.
+3. Let DAI read attempts fall back to source containers until schema-v2 backfill is complete and repairs are clear.
+4. Enable shadow validation only when parity diagnostics are needed; disable it again when measuring production read savings.
+5. Monitor DAI-served reads, source fallbacks, fallback rate, RU, latency, and repair/backfill state during and after rollout.
 
 ## Functional Test Plan
 
@@ -1396,7 +1445,7 @@ Exit criteria:
    - Query source path and access-index path.
    - Compare ids, sort order, filter behavior, pagination, counts, and deduplication.
    - Log diff summaries and RU deltas.
-4. Keep `enable_document_access_index_reads` disabled until shadow validation is clean.
+4. Keep source fallback active until shadow validation is clean and DAI maintenance is healthy.
 
 Exit criteria:
 
@@ -1432,7 +1481,7 @@ Exit criteria:
    - Rebuilding caches.
    - Rebuilding `document_access_index`.
    - Interpreting shadow validation diffs.
-   - Temporarily disabling access-index reads.
+   - Interpreting DAI source fallback metrics while repair/backfill catches up.
 5. Review whether source fallback can remain as a safety path or be limited to admin repair scenarios.
 
 ## Open Decisions
