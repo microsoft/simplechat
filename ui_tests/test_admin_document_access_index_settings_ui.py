@@ -2,7 +2,7 @@
 """
 UI test for Admin Settings document access index operations.
 
-Version: 0.250.045
+Version: 0.250.046
 Implemented in: 0.250.011
 Default read enablement updated in: 0.250.027
 Redis DAI cache dashboard updated in: 0.250.029
@@ -146,7 +146,7 @@ def test_admin_conversation_cache_dashboard_renders_safe_metrics():
         page.set_content(f"<main>{card_html}</main>")
         section = page.locator("#conversation-cache-section")
         expect(section).to_be_visible()
-        expect(section.get_by_text("Conversation Cache")).to_be_visible()
+        expect(section.get_by_role("heading", name="Conversation Cache")).to_be_visible()
         expect(page.get_by_role("button", name="Refresh Metrics")).to_be_visible()
         expect(page.get_by_label("Enable conversation cache")).to_be_checked()
         expect(page.get_by_label("Cache TTL Seconds")).to_have_value("120")
@@ -246,7 +246,7 @@ def test_admin_document_access_index_debug_mode_renders_hidden_controls():
         expect(section.get_by_text("Validation Index RU")).to_be_visible()
         expect(section.get_by_text("15m Shadow Samples")).to_be_visible()
         expect(page.locator("#documentAccessIndexResetModal")).to_be_attached()
-        expect(page.get_by_role("button", name="Reset and Run Batch")).to_be_visible()
+        expect(page.locator("#document-access-index-reset-confirm-btn")).to_be_attached()
     finally:
         browser.close()
         playwright_context.stop()

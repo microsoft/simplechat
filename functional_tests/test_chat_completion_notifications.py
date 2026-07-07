@@ -2,7 +2,7 @@
 # test_chat_completion_notifications.py
 """
 Functional test for chat completion notifications.
-Version: 0.250.036
+Version: 0.250.046
 Implemented in: 0.239.128
 Mark-read cache invalidation tuned in: 0.250.035
 Background streaming unread guard updated in: 0.250.036
@@ -13,6 +13,7 @@ mark-read flow clears both the unread marker and the related notification.
 """
 
 import copy
+import importlib
 import os
 import re
 import sys
@@ -97,10 +98,47 @@ class FakeNotificationContainer:
         return results
 
 
+class FakeConfigCosmosDatabase:
+    """Minimal Cosmos database stand-in for importing config.py without live I/O."""
+
+    def __init__(self):
+        self.containers = {}
+
+    def create_container_if_not_exists(self, id, **kwargs):
+        if id not in self.containers:
+            self.containers[id] = FakeConversationContainer()
+        return self.containers[id]
+
+
+class FakeConfigCosmosClient:
+    """Minimal Cosmos client stand-in for config.py import-time container setup."""
+
+    def __init__(self, *args, **kwargs):
+        self.database = FakeConfigCosmosDatabase()
+
+    def create_database_if_not_exists(self, *args, **kwargs):
+        return self.database
+
+
+def import_app_module_without_live_cosmos(module_name):
+    """Import app modules without letting config.py connect to live Cosmos."""
+    if module_name in sys.modules:
+        return sys.modules[module_name]
+
+    import azure.cosmos as azure_cosmos
+
+    original_cosmos_client = azure_cosmos.CosmosClient
+    azure_cosmos.CosmosClient = FakeConfigCosmosClient
+    try:
+        return importlib.import_module(module_name)
+    finally:
+        azure_cosmos.CosmosClient = original_cosmos_client
+
+
 def build_test_app(test_user_id, conversation_container, notification_container):
     """Register the conversation routes with fake auth/container dependencies."""
-    import functions_notifications
-    import route_backend_conversations
+    functions_notifications = import_app_module_without_live_cosmos("functions_notifications")
+    route_backend_conversations = import_app_module_without_live_cosmos("route_backend_conversations")
 
     original_notification_container = functions_notifications.cosmos_notifications_container
     original_conversation_container = route_backend_conversations.cosmos_conversations_container
@@ -156,7 +194,7 @@ def test_chat_response_notification_creation_and_deep_link():
     """Verify helper-created notifications include the chat completion deep link and metadata."""
     print("🔍 Testing chat completion notification creation...")
 
-    import functions_notifications
+    functions_notifications = import_app_module_without_live_cosmos("functions_notifications")
 
     fake_container = FakeNotificationContainer()
     original_container = functions_notifications.cosmos_notifications_container
@@ -256,7 +294,7 @@ def test_mark_read_endpoint_clears_unread_state_and_notification():
     """Verify mark-read clears conversation unread state and marks matching notifications read."""
     print("🔍 Testing conversation mark-read lifecycle...")
 
-    import functions_notifications
+    functions_notifications = import_app_module_without_live_cosmos("functions_notifications")
 
     test_user_id = 'test-user-mark-read'
     conversation_id = 'conversation-mark-read'
@@ -439,11 +477,11 @@ def test_version_updated_for_feature():
     with open(config_file_path, 'r', encoding='utf-8') as handle:
         config_content = handle.read()
 
-    if 'VERSION = "0.239.136"' not in config_content:
-        print("❌ Version not updated to 0.239.136")
+    if 'VERSION = "0.250.046"' not in config_content:
+        print("❌ Version not updated to 0.250.046")
         return False
 
-    print("✅ Version properly updated to 0.239.136")
+    print("✅ Version properly updated to 0.250.046")
     return True
 
 

@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 3A indexing policy maintenance.
-Version: 0.250.039
+Version: 0.250.046
 Implemented in: 0.250.008
 Maintenance cleanup integration updated in: 0.250.038
 Manual admin apply override updated in: 0.250.039
@@ -165,6 +165,9 @@ def _build_fake_environment():
         ),
         "group_documents": FakeCosmosContainer("group_documents"),
         "public_documents": FakeCosmosContainer("public_documents"),
+        "groups": FakeCosmosContainer("groups"),
+        "public_workspaces": FakeCosmosContainer("public_workspaces"),
+        "user_settings": FakeCosmosContainer("user_settings"),
     }
     database = FakeCosmosDatabase(containers)
     settings_container = FakeCosmosContainer("settings")
@@ -210,6 +213,9 @@ def _load_wave3_modules():
     fake_config.cosmos_public_documents_container = containers["public_documents"]
     fake_config.cosmos_public_documents_container_name = "public_documents"
     fake_config.cosmos_document_access_index_container = containers["document_access_index"]
+    fake_config.cosmos_groups_container = containers["groups"]
+    fake_config.cosmos_public_workspaces_container = containers["public_workspaces"]
+    fake_config.cosmos_user_settings_container = containers["user_settings"]
     sys.modules["config"] = fake_config
 
     fake_appinsights = types.ModuleType("functions_appinsights")

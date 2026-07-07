@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 3B document access index write-through.
-Version: 0.250.031
+Version: 0.250.046
 Implemented in: 0.250.009
 Default read enablement updated in: 0.250.027
 Redis DAI cache invalidation updated in: 0.250.029
@@ -111,6 +111,9 @@ def _load_document_access_index_module(index_container=None, settings_container=
     fake_config.cosmos_group_documents_container_name = "group_documents"
     fake_config.cosmos_public_documents_container = FakeCosmosContainer()
     fake_config.cosmos_public_documents_container_name = "public_documents"
+    fake_config.cosmos_groups_container = FakeCosmosContainer()
+    fake_config.cosmos_public_workspaces_container = FakeCosmosContainer()
+    fake_config.cosmos_user_settings_container = FakeCosmosContainer()
     sys.modules["config"] = fake_config
 
     fake_appinsights = types.ModuleType("functions_appinsights")

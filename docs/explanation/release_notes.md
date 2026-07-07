@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.046)**
+
+#### Bug Fixes
+
+*   **Conversation Cache Invalidation Authorization**
+    *   Route-level message mutation cache invalidation now loads personal conversations through the existing ownership authorization helper instead of directly reading a request-derived conversation id.
+    *   Updated PR-readiness functional test fixtures to match the current document access index config imports and avoid live Cosmos connections during notification regression tests.
+    *   (Ref: `route_backend_conversations.py`, `test_chat_completion_notifications.py`, DAI functional test fixtures)
+
 ### **(v0.250.044)**
 
 #### New Features

@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 4B document access shadow validation.
-Version: 0.250.031
+Version: 0.250.046
 Implemented in: 0.250.012
 Metrics added in: 0.250.013
 Candidate read metrics added in: 0.250.014
@@ -225,6 +225,9 @@ def _load_document_access_index_module(index_container=None, settings_container=
     fake_config.cosmos_group_documents_container_name = "group_documents"
     fake_config.cosmos_public_documents_container = FakeCosmosContainer()
     fake_config.cosmos_public_documents_container_name = "public_documents"
+    fake_config.cosmos_groups_container = FakeCosmosContainer()
+    fake_config.cosmos_public_workspaces_container = FakeCosmosContainer()
+    fake_config.cosmos_user_settings_container = FakeCosmosContainer()
     sys.modules["config"] = fake_config
 
     fake_appinsights = types.ModuleType("functions_appinsights")
@@ -679,7 +682,7 @@ def test_wave4b_admin_routes_and_version_are_wired():
     public_route = open(os.path.join(SINGLE_APP_DIR, "route_external_public_documents.py"), "r", encoding="utf-8").read()
     functions_documents = open(os.path.join(SINGLE_APP_DIR, "functions_documents.py"), "r", encoding="utf-8").read()
 
-    assert 'VERSION = "0.250.031"' in config_source
+    assert 'VERSION = "0.250.046"' in config_source
     assert "'enable_dai_debug': dai_debug_enabled" in route_settings_source
     assert "'enable_document_access_index_shadow_validation': document_access_index_shadow_validation_enabled" in route_settings_source
     assert "if enable_dai_debug" in admin_template

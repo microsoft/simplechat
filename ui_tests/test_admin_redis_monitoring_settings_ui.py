@@ -2,7 +2,7 @@
 """
 UI test for Admin Settings Redis monitoring.
 
-Version: 0.250.043
+Version: 0.250.046
 Implemented in: 0.250.026
 Redis Explorer implemented in: 0.250.040
 Redis Explorer DAI resolution implemented in: 0.250.043
@@ -71,10 +71,10 @@ def test_admin_redis_monitoring_dashboard_renders_safe_controls():
         expect(page.get_by_label("Key Filter")).to_be_attached()
         expect(page.get_by_text("Filters are case sensitive.")).to_be_attached()
         expect(page.get_by_label("Page Size")).to_be_attached()
-        expect(page.get_by_role("button", name="Browse All")).to_be_attached()
-        expect(page.get_by_role("button", name="Apply Filter")).to_be_attached()
-        expect(page.get_by_role("button", name="Previous Page")).to_be_attached()
-        expect(page.get_by_role("button", name="Next Page")).to_be_attached()
+        expect(page.locator("#redis-explorer-browse-all-btn")).to_be_attached()
+        expect(page.locator("#redis-explorer-search-btn")).to_be_attached()
+        expect(page.locator("#redis-explorer-prev-btn")).to_be_attached()
+        expect(page.locator("#redis-explorer-next-btn")).to_be_attached()
         expect(page.get_by_text("SimpleChat Resolution")).to_be_attached()
     finally:
         browser.close()

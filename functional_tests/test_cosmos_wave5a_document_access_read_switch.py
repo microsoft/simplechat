@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 5A/5B document access index read path.
-Version: 0.250.031
+Version: 0.250.046
 Implemented in: 0.250.022
 Public workspace UI coverage updated in: 0.250.023
 Tag listing coverage updated in: 0.250.024
@@ -200,6 +200,9 @@ def _load_document_access_index_module(index_container=None, settings_container=
     fake_config.cosmos_group_documents_container_name = "group_documents"
     fake_config.cosmos_public_documents_container = FakeCosmosContainer()
     fake_config.cosmos_public_documents_container_name = "public_documents"
+    fake_config.cosmos_groups_container = FakeCosmosContainer()
+    fake_config.cosmos_public_workspaces_container = FakeCosmosContainer()
+    fake_config.cosmos_user_settings_container = FakeCosmosContainer()
     sys.modules["config"] = fake_config
 
     fake_appinsights = types.ModuleType("functions_appinsights")
@@ -807,7 +810,7 @@ def test_wave5b_route_and_admin_contract_are_wired():
     ).read()
     settings_source = open(os.path.join(SINGLE_APP_DIR, "functions_settings.py"), "r", encoding="utf-8").read()
 
-    assert 'VERSION = "0.250.031"' in config_source
+    assert 'VERSION = "0.250.046"' in config_source
     assert "DOCUMENT_ACCESS_INDEX_SCHEMA_VERSION = 2" in index_source
     assert "def query_document_access_index_documents(" in index_source
     assert "def query_document_access_index_tag_counts(" in index_source

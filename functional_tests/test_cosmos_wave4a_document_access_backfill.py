@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 4A document access index backfill.
-Version: 0.250.037
+Version: 0.250.046
 Implemented in: 0.250.010
 Default read enablement updated in: 0.250.027
 Redis DAI cache invalidation updated in: 0.250.029
@@ -177,6 +177,9 @@ def _load_document_access_index_module(personal_documents=None, settings_contain
     fake_config.cosmos_group_documents_container_name = "group_documents"
     fake_config.cosmos_public_documents_container = public_container
     fake_config.cosmos_public_documents_container_name = "public_documents"
+    fake_config.cosmos_groups_container = FakeCosmosContainer()
+    fake_config.cosmos_public_workspaces_container = FakeCosmosContainer()
+    fake_config.cosmos_user_settings_container = FakeCosmosContainer()
     sys.modules["config"] = fake_config
 
     fake_appinsights = types.ModuleType("functions_appinsights")
@@ -399,7 +402,7 @@ def test_wave4a_settings_and_maintenance_contract_are_wired():
     maintenance_source = open(os.path.join(SINGLE_APP_DIR, "functions_app_maintenance.py"), "r", encoding="utf-8").read()
     route_source = open(os.path.join(SINGLE_APP_DIR, "route_backend_settings.py"), "r", encoding="utf-8").read()
 
-    assert 'VERSION = "0.250.037"' in config_source
+    assert 'VERSION = "0.250.046"' in config_source
     assert "'enable_startup_document_access_index_backfill': True" in settings_source
     assert "'document_access_index_backfill_batch_size': 200" in settings_source
     assert "'document_access_index_repair_batch_size': 100" in settings_source

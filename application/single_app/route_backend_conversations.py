@@ -762,10 +762,7 @@ def _authorize_personal_conversation_read(user_id, conversation_id):
 def _invalidate_conversation_cache_after_message_mutation(conversation_id, user_id, reason):
     """Invalidate conversation caches after message-level changes without failing the caller."""
     try:
-        conversation_item = cosmos_conversations_container.read_item(
-            item=conversation_id,
-            partition_key=conversation_id,
-        )
+        conversation_item = _authorize_personal_conversation_read(user_id, conversation_id)
     except Exception as exc:
         log_event(
             f"[ConversationCache] Failed to load conversation {conversation_id} for message mutation invalidation: {exc}",
