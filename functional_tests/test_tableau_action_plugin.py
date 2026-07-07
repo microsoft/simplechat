@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Tableau action plugin configuration.
-Version: 0.250.030
+Version: 0.250.047
 Implemented in: 0.241.210
 
 This test ensures the Tableau action factory, plugin, manifest validation,
@@ -37,16 +37,66 @@ plugin_invocation_logger_stub = types.ModuleType("semantic_kernel_plugins.plugin
 plugin_invocation_logger_stub.plugin_function_logger = plugin_function_logger
 sys.modules.setdefault("semantic_kernel_plugins.plugin_invocation_logger", plugin_invocation_logger_stub)
 
-from functions_tableau_operations import (  # noqa: E402
-    TABLEAU_AUTH_METHOD_PAT,
-    TABLEAU_AUTH_METHOD_USERNAME_PASSWORD,
-    TABLEAU_PLUGIN_TYPE,
-    normalize_tableau_additional_fields,
-    normalize_tableau_server_url,
-)
-from semantic_kernel_plugins.plugin_health_checker import PluginHealthChecker  # noqa: E402
-from semantic_kernel_plugins.tableau_plugin_factory import TableauPluginFactory  # noqa: E402
-import semantic_kernel_plugins.tableau_plugin as tableau_plugin_module  # noqa: E402
+
+class FakeConfigCosmosContainer:
+    """Minimal Cosmos container stand-in for importing app config in tests."""
+
+    def __init__(self):
+        self.items = {}
+
+    def read_item(self, item, partition_key=None):
+        if item in self.items:
+            return self.items[item]
+        if item == "app_settings":
+            return {"id": "app_settings", "settings": {}}
+        raise KeyError(item)
+
+    def upsert_item(self, item):
+        self.items[item["id"]] = item
+        return item
+
+    def query_items(self, *args, **kwargs):
+        return []
+
+
+class FakeConfigCosmosDatabase:
+    """Minimal Cosmos database stand-in for importing config.py without live I/O."""
+
+    def __init__(self):
+        self.containers = {}
+
+    def create_container_if_not_exists(self, id, **kwargs):
+        self.containers.setdefault(id, FakeConfigCosmosContainer())
+        return self.containers[id]
+
+
+class FakeConfigCosmosClient:
+    """Minimal Cosmos client stand-in for config.py import-time container setup."""
+
+    def __init__(self, *args, **kwargs):
+        self.database = FakeConfigCosmosDatabase()
+
+    def create_database_if_not_exists(self, *args, **kwargs):
+        return self.database
+
+
+import azure.cosmos as azure_cosmos  # noqa: E402
+
+original_cosmos_client = azure_cosmos.CosmosClient
+azure_cosmos.CosmosClient = FakeConfigCosmosClient
+try:
+    from functions_tableau_operations import (  # noqa: E402
+        TABLEAU_AUTH_METHOD_PAT,
+        TABLEAU_AUTH_METHOD_USERNAME_PASSWORD,
+        TABLEAU_PLUGIN_TYPE,
+        normalize_tableau_additional_fields,
+        normalize_tableau_server_url,
+    )
+    from semantic_kernel_plugins.plugin_health_checker import PluginHealthChecker  # noqa: E402
+    from semantic_kernel_plugins.tableau_plugin_factory import TableauPluginFactory  # noqa: E402
+    import semantic_kernel_plugins.tableau_plugin as tableau_plugin_module  # noqa: E402
+finally:
+    azure_cosmos.CosmosClient = original_cosmos_client
 
 
 class FakeTableauItem:
@@ -325,7 +375,7 @@ def test_tableau_identity_and_modal_contract():
     assert "toggleTableauAuthFields" in modal_source
     assert "populateTableauSummary" in modal_source
     assert "tableauserverclient==0.40" in requirements_source
-    assert 'VERSION = "0.250.030"' in config_source
+    assert 'VERSION = "0.250.047"' in config_source
 
     print("Tableau identity and modal source contract verified.")
     return True

@@ -4,7 +4,7 @@ import asyncio
 import re
 import builtins
 import json
-from azure.cosmos import CosmosClient
+import azure.cosmos as azure_cosmos
 from azure.cosmos.exceptions import CosmosHttpResponseError
 from azure.identity import DefaultAzureCredential
 from flask import Blueprint, jsonify, request, current_app, session
@@ -1941,7 +1941,7 @@ def test_cosmos_connection():
             headers.clear()
             headers.update(response_headers)
 
-        client = CosmosClient(
+        client = azure_cosmos.CosmosClient(
             endpoint,
             credential=DefaultAzureCredential() if auth_type == 'identity' else auth_key,
             timeout=timeout,

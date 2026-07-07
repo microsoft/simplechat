@@ -18,6 +18,7 @@ from functions_workspace_identities import (
     hydrate_action_identity_reference,
     validate_action_identity_reference,
 )
+from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
 
 def get_global_actions(return_type=SecretReturnType.TRIGGER, include_disabled=False):
     """
@@ -154,6 +155,7 @@ def save_global_action(action_data, user_id=None):
             existing_plugin=existing_action,
         )
         result = cosmos_global_actions_container.upsert_item(body=action_data)
+        bump_chat_bootstrap_global_cache_version(reason="global_action_saved")
         print(f"✅ Global action saved successfully: {result['id']}")
         return result
         
@@ -183,6 +185,7 @@ def delete_global_action(action_id):
             item=action_id,
             partition_key=action_id
         )
+        bump_chat_bootstrap_global_cache_version(reason="global_action_deleted")
         print(f"✅ Global action deleted successfully: {action_id}")
         return True
         
@@ -220,10 +223,10 @@ def update_global_action_enabled(action_id, is_enabled, user_id=None):
         action['modified_at'] = now
         action['updated_at'] = now
         result = cosmos_global_actions_container.upsert_item(body=action)
+        bump_chat_bootstrap_global_cache_version(reason="global_action_enabled_updated")
         return result
     except Exception as e:
         print(f"❌ Error updating enabled state for global action {action_id}: {str(e)}")
         traceback.print_exc()
         return None
-
 

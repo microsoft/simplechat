@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
 Functional test for Enhanced Document Metrics database queries.
-Version: 0.230.024
+Version: 0.250.047
 Implemented in: 0.230.024
+CosmosClient module import cleanup updated in: 0.250.047
 
 This test validates the document metrics calculation logic by directly
 testing the database queries and calculations without requiring a running Flask app.
@@ -11,7 +12,7 @@ testing the database queries and calculations without requiring a running Flask 
 import sys
 import os
 from datetime import datetime
-from azure.cosmos import CosmosClient
+import azure.cosmos as azure_cosmos
 
 def test_document_metrics_queries():
     """Test the document metrics database queries directly."""
@@ -22,7 +23,7 @@ def test_document_metrics_queries():
         endpoint = os.getenv('AZURE_COSMOS_ENDPOINT', '')
         key = os.getenv('AZURE_COSMOS_KEY', '')
 
-        client = CosmosClient(endpoint, key, consistency_level="Session")
+        client = azure_cosmos.CosmosClient(endpoint, key, consistency_level="Session")
         
         # Test user ID
         test_user_id = "07e61033-ea1a-4472-a1e7-6b9ac874984a"

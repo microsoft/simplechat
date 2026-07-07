@@ -2,8 +2,10 @@
 # test_chat_completion_notifications.py
 """
 Functional test for chat completion notifications.
-Version: 0.239.136
+Version: 0.250.047
 Implemented in: 0.239.128
+Mark-read cache invalidation tuned in: 0.250.035
+Background streaming unread guard updated in: 0.250.036
 
 This test ensures that personal chat completions create deep-link notifications,
 conversation unread state is normalized for list/detail responses, and the
@@ -11,6 +13,7 @@ mark-read flow clears both the unread marker and the related notification.
 """
 
 import copy
+import importlib
 import os
 import re
 import sys
@@ -26,6 +29,7 @@ class FakeConversationContainer:
 
     def __init__(self, items=None):
         self.items = {}
+        self.upsert_count = 0
         for item in items or []:
             self.upsert_item(item)
 
@@ -36,6 +40,7 @@ class FakeConversationContainer:
         return copy.deepcopy(self.items[item_id])
 
     def upsert_item(self, item):
+        self.upsert_count += 1
         self.items[item['id']] = copy.deepcopy(item)
         return copy.deepcopy(item)
 
@@ -93,10 +98,47 @@ class FakeNotificationContainer:
         return results
 
 
+class FakeConfigCosmosDatabase:
+    """Minimal Cosmos database stand-in for importing config.py without live I/O."""
+
+    def __init__(self):
+        self.containers = {}
+
+    def create_container_if_not_exists(self, id, **kwargs):
+        if id not in self.containers:
+            self.containers[id] = FakeConversationContainer()
+        return self.containers[id]
+
+
+class FakeConfigCosmosClient:
+    """Minimal Cosmos client stand-in for config.py import-time container setup."""
+
+    def __init__(self, *args, **kwargs):
+        self.database = FakeConfigCosmosDatabase()
+
+    def create_database_if_not_exists(self, *args, **kwargs):
+        return self.database
+
+
+def import_app_module_without_live_cosmos(module_name):
+    """Import app modules without letting config.py connect to live Cosmos."""
+    if module_name in sys.modules:
+        return sys.modules[module_name]
+
+    import azure.cosmos as azure_cosmos
+
+    original_cosmos_client = azure_cosmos.CosmosClient
+    azure_cosmos.CosmosClient = FakeConfigCosmosClient
+    try:
+        return importlib.import_module(module_name)
+    finally:
+        azure_cosmos.CosmosClient = original_cosmos_client
+
+
 def build_test_app(test_user_id, conversation_container, notification_container):
     """Register the conversation routes with fake auth/container dependencies."""
-    import functions_notifications
-    import route_backend_conversations
+    functions_notifications = import_app_module_without_live_cosmos("functions_notifications")
+    route_backend_conversations = import_app_module_without_live_cosmos("route_backend_conversations")
 
     original_notification_container = functions_notifications.cosmos_notifications_container
     original_conversation_container = route_backend_conversations.cosmos_conversations_container
@@ -105,6 +147,8 @@ def build_test_app(test_user_id, conversation_container, notification_container)
     original_swagger_route = route_backend_conversations.swagger_route
     original_get_auth_security = route_backend_conversations.get_auth_security
     original_get_current_user_id = route_backend_conversations.get_current_user_id
+    original_bump_conversation_cache_version = route_backend_conversations.bump_conversation_cache_version
+    cache_bumps = []
 
     functions_notifications.cosmos_notifications_container = notification_container
     route_backend_conversations.cosmos_conversations_container = conversation_container
@@ -113,6 +157,9 @@ def build_test_app(test_user_id, conversation_container, notification_container)
     route_backend_conversations.swagger_route = lambda **kwargs: (lambda func: func)
     route_backend_conversations.get_auth_security = lambda: {}
     route_backend_conversations.get_current_user_id = lambda: test_user_id
+    route_backend_conversations.bump_conversation_cache_version = (
+        lambda user_id, reason=None: cache_bumps.append((user_id, reason)) or len(cache_bumps)
+    )
 
     app = Flask(__name__)
     app.config['TESTING'] = True
@@ -126,8 +173,9 @@ def build_test_app(test_user_id, conversation_container, notification_container)
         route_backend_conversations.swagger_route = original_swagger_route
         route_backend_conversations.get_auth_security = original_get_auth_security
         route_backend_conversations.get_current_user_id = original_get_current_user_id
+        route_backend_conversations.bump_conversation_cache_version = original_bump_conversation_cache_version
 
-    return app, restore
+    return app, restore, cache_bumps
 
 
 def unwrap_response(result):
@@ -146,7 +194,7 @@ def test_chat_response_notification_creation_and_deep_link():
     """Verify helper-created notifications include the chat completion deep link and metadata."""
     print("🔍 Testing chat completion notification creation...")
 
-    import functions_notifications
+    functions_notifications = import_app_module_without_live_cosmos("functions_notifications")
 
     fake_container = FakeNotificationContainer()
     original_container = functions_notifications.cosmos_notifications_container
@@ -201,7 +249,7 @@ def test_conversation_routes_normalize_unread_fields():
         'is_hidden': False,
     }
 
-    app, restore = build_test_app(
+    app, restore, _cache_bumps = build_test_app(
         test_user_id,
         FakeConversationContainer([old_conversation]),
         FakeNotificationContainer(),
@@ -246,7 +294,7 @@ def test_mark_read_endpoint_clears_unread_state_and_notification():
     """Verify mark-read clears conversation unread state and marks matching notifications read."""
     print("🔍 Testing conversation mark-read lifecycle...")
 
-    import functions_notifications
+    functions_notifications = import_app_module_without_live_cosmos("functions_notifications")
 
     test_user_id = 'test-user-mark-read'
     conversation_id = 'conversation-mark-read'
@@ -281,7 +329,8 @@ def test_mark_read_endpoint_clears_unread_state_and_notification():
     )
     functions_notifications.cosmos_notifications_container = original_notification_container
 
-    app, restore = build_test_app(test_user_id, fake_conversations, fake_notifications)
+    app, restore, cache_bumps = build_test_app(test_user_id, fake_conversations, fake_notifications)
+    fake_conversations.upsert_count = 0
 
     try:
         with app.test_request_context(f'/api/conversations/{conversation_id}/mark-read', method='POST'):
@@ -297,6 +346,9 @@ def test_mark_read_endpoint_clears_unread_state_and_notification():
         if not response_payload.get('success'):
             print(f"❌ Mark-read endpoint did not report success: {response_payload}")
             return False
+        if response_payload.get('conversation_state_changed') is not True:
+            print(f"❌ Mark-read endpoint did not report conversation state changed: {response_payload}")
+            return False
 
         updated_conversation = fake_conversations.read_item(conversation_id, conversation_id)
         if updated_conversation.get('has_unread_assistant_response'):
@@ -310,6 +362,31 @@ def test_mark_read_endpoint_clears_unread_state_and_notification():
         stored_notification = next(iter(fake_notifications.items.values()))
         if test_user_id not in stored_notification.get('read_by', []):
             print(f"❌ Notification was not marked read: {stored_notification}")
+            return False
+
+        if cache_bumps != [(test_user_id, 'conversation_marked_read')]:
+            print(f"❌ Mark-read did not invalidate conversation cache exactly once: {cache_bumps}")
+            return False
+
+        first_upsert_count = fake_conversations.upsert_count
+        with app.test_request_context(f'/api/conversations/{conversation_id}/mark-read', method='POST'):
+            second_response, second_status_code = unwrap_response(
+                app.view_functions['mark_conversation_read_api'](conversation_id)
+            )
+
+        if second_status_code != 200:
+            print(f"❌ Unexpected idempotent mark-read status: {second_status_code}")
+            return False
+
+        second_payload = second_response.get_json()
+        if second_payload.get('conversation_state_changed') is not False:
+            print(f"❌ Idempotent mark-read should not report changed state: {second_payload}")
+            return False
+        if len(cache_bumps) != 1:
+            print(f"❌ Idempotent mark-read should not invalidate conversation cache: {cache_bumps}")
+            return False
+        if fake_conversations.upsert_count != first_upsert_count:
+            print("❌ Idempotent mark-read should not upsert an already-read conversation")
             return False
 
         print("✅ Mark-read endpoint cleared conversation unread state and related notification")
@@ -332,8 +409,10 @@ def test_frontend_wires_unread_dot_and_mark_read_flow():
         (main_list_js, 'fetch(`/api/conversations/${conversationId}/mark-read`, {'),
         (main_list_js, 'function createUnreadDotElement() {'),
         (main_list_js, 'setSidebarConversationUnreadState(conversationId, hasUnread);'),
+        (main_list_js, 'markConversationRead(conversationId, { suppressErrorToast: true })'),
         (sidebar_js, "conversation-unread-dot', 'sidebar-conversation-unread-dot"),
-        (streaming_js, "markConversationRead(finalData.conversation_id, { force: true, suppressErrorToast: true })"),
+        (streaming_js, "function markStreamingConversationReadIfActive(conversationId, contextLabel)"),
+        (streaming_js, "markStreamingConversationReadIfActive(finalData.conversation_id, 'live streaming completion')"),
         (chats_css, '.conversation-unread-dot {'),
     ]
 
@@ -398,11 +477,11 @@ def test_version_updated_for_feature():
     with open(config_file_path, 'r', encoding='utf-8') as handle:
         config_content = handle.read()
 
-    if 'VERSION = "0.239.136"' not in config_content:
-        print("❌ Version not updated to 0.239.136")
+    if 'VERSION = "0.250.047"' not in config_content:
+        print("❌ Version not updated to 0.250.047")
         return False
 
-    print("✅ Version properly updated to 0.239.136")
+    print("✅ Version properly updated to 0.250.047")
     return True
 
 

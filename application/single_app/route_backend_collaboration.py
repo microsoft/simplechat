@@ -44,6 +44,7 @@ from functions_collaboration import (
     update_personal_collaboration_member_role,
     update_personal_collaboration_title,
 )
+from functions_conversation_cache import bump_conversation_cache_version
 from functions_group import assert_group_role, check_group_status_allows_operation, find_group_by_id, require_active_group
 from functions_image_messages import decode_image_content, get_complete_image_content, is_blob_backed_image_message, is_external_image_url
 from functions_message_masking import (
@@ -1806,6 +1807,7 @@ def register_route_backend_collaboration(bp):
                 current_user['user_id'],
                 conversation_id,
             )
+            bump_conversation_cache_version(current_user['user_id'], reason="collaboration_marked_read")
 
             return jsonify({
                 'success': True,

@@ -2,6 +2,7 @@
 
 from config import *
 from functions_authentication import *
+from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
 from functions_group import *
 from functions_debug import debug_print
 from functions_notifications import create_notification
@@ -263,6 +264,7 @@ def register_route_backend_groups(bp):
         group_doc["modifiedDate"] = datetime.utcnow().isoformat()
         try:
             cosmos_groups_container.upsert_item(group_doc)
+            bump_chat_bootstrap_global_cache_version(reason="group_updated")
         except exceptions.CosmosHttpResponseError as ex:
             return jsonify({"error": str(ex)}), 400
 
@@ -337,6 +339,7 @@ def register_route_backend_groups(bp):
         except exceptions.CosmosHttpResponseError as ex:
             return jsonify({"error": str(ex)}), 400
 
+        bump_chat_bootstrap_global_cache_version(reason="group_updated")
         return jsonify({"message": "Group updated", "id": group_id}), 200
 
     @bp.route("/api/groups/<group_id>/logo", methods=["GET"])
@@ -557,6 +560,8 @@ def register_route_backend_groups(bp):
         group_doc["pendingUsers"] = pending_list
         group_doc["modifiedDate"] = datetime.utcnow().isoformat()
         cosmos_groups_container.upsert_item(group_doc)
+        if action == "approve":
+            bump_chat_bootstrap_global_cache_version(reason="group_member_request_approved")
 
         return jsonify({"message": msg}), 200
 
@@ -634,6 +639,7 @@ def register_route_backend_groups(bp):
             cosmos_groups_container.upsert_item(group_doc)
 
             if removed:
+                bump_chat_bootstrap_global_cache_version(reason="group_member_removed")
                 # Log activity for self-removal
                 from functions_activity_logging import log_group_member_deleted
                 user_email = user_info.get("email", "unknown")
@@ -686,6 +692,7 @@ def register_route_backend_groups(bp):
             cosmos_groups_container.upsert_item(group_doc)
 
             if removed:
+                bump_chat_bootstrap_global_cache_version(reason="group_member_removed")
                 # Log activity for admin/owner removal
                 from functions_activity_logging import log_group_member_deleted
                 user_email = user_info.get("email", "unknown")
@@ -767,6 +774,7 @@ def register_route_backend_groups(bp):
 
         group_doc["modifiedDate"] = datetime.utcnow().isoformat()
         cosmos_groups_container.upsert_item(group_doc)
+        bump_chat_bootstrap_global_cache_version(reason="group_member_role_updated")
 
         # Log activity for role change
         try:
@@ -935,6 +943,7 @@ def register_route_backend_groups(bp):
 
         group_doc["modifiedDate"] = datetime.utcnow().isoformat()
         cosmos_groups_container.upsert_item(group_doc)
+        bump_chat_bootstrap_global_cache_version(reason="group_ownership_transferred")
 
         return jsonify({"message": "Ownership transferred successfully"}), 200
 

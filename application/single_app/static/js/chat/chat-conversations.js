@@ -1698,7 +1698,7 @@ export async function selectConversation(conversationId) {
     } catch (error) {
       console.warn('Failed to reattach active stream for conversation:', error);
     }
-    markConversationRead(conversationId, { force: true, suppressErrorToast: true }).catch(error => {
+    markConversationRead(conversationId, { suppressErrorToast: true }).catch(error => {
       console.warn('Failed to clear unread state for conversation:', error);
     });
   }

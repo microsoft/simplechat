@@ -2,6 +2,7 @@
 
 from config import *
 from functions_authentication import *
+from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
 from functions_prompts import count_public_prompts_for_workspace
 from functions_public_workspaces import *
 from functions_settings import (
@@ -330,6 +331,7 @@ def register_route_backend_public_workspaces(bp):
 
         try:
             cosmos_public_workspaces_container.upsert_item(ws)
+            bump_chat_bootstrap_global_cache_version(reason="public_workspace_updated")
             return jsonify({"message": "Updated"}), 200
         except exceptions.CosmosHttpResponseError as ex:
             return jsonify({"error": str(ex)}), 400
@@ -558,6 +560,8 @@ def register_route_backend_public_workspaces(bp):
         ws["pendingDocumentManagers"] = pend
         ws["modifiedDate"] = datetime.utcnow().isoformat()
         cosmos_public_workspaces_container.upsert_item(ws)
+        if action == "approve":
+            bump_chat_bootstrap_global_cache_version(reason="public_workspace_member_request_approved")
         return jsonify({"message": msg}), 200
 
     @bp.route("/api/public_workspaces/<ws_id>/members", methods=["GET"])
@@ -679,6 +683,7 @@ def register_route_backend_public_workspaces(bp):
         })
         ws["modifiedDate"] = datetime.utcnow().isoformat()
         cosmos_public_workspaces_container.upsert_item(ws)
+        bump_chat_bootstrap_global_cache_version(reason="public_workspace_member_added")
         
         # Send notification to the added member
         try:
@@ -740,6 +745,7 @@ def register_route_backend_public_workspaces(bp):
         ]
         ws["modifiedDate"] = datetime.utcnow().isoformat()
         cosmos_public_workspaces_container.upsert_item(ws)
+        bump_chat_bootstrap_global_cache_version(reason="public_workspace_member_removed")
         return jsonify({"success": True, "message": "Removed"}), 200
 
     @bp.route("/api/public_workspaces/<ws_id>/members/<member_id>", methods=["PATCH"])
@@ -820,6 +826,7 @@ def register_route_backend_public_workspaces(bp):
 
         ws["modifiedDate"] = datetime.utcnow().isoformat()
         cosmos_public_workspaces_container.upsert_item(ws)
+        bump_chat_bootstrap_global_cache_version(reason="public_workspace_member_role_updated")
         
         # Send notification to the member whose role changed
         try:
@@ -916,6 +923,7 @@ def register_route_backend_public_workspaces(bp):
 
         ws["modifiedDate"] = datetime.utcnow().isoformat()
         cosmos_public_workspaces_container.upsert_item(ws)
+        bump_chat_bootstrap_global_cache_version(reason="public_workspace_ownership_transferred")
         return jsonify({"message": "Ownership transferred"}), 200
 
     @bp.route("/api/public_workspaces/<ws_id>/fileCount", methods=["GET"])
@@ -1259,4 +1267,3 @@ def register_route_backend_public_workspaces(bp):
             traceback.print_exc()
 
         return jsonify(activities), 200
-

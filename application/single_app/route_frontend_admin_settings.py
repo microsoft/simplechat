@@ -1671,6 +1671,63 @@ def register_route_frontend_admin_settings(bp):
 
             cosmos_throughput_settings = normalize_cosmos_throughput_settings(cosmos_throughput_candidate_settings)
 
+            document_access_index_backfill_batch_size = min(
+                1000,
+                max(
+                    1,
+                    parse_admin_int(
+                        form_data.get('document_access_index_backfill_batch_size'),
+                        settings.get('document_access_index_backfill_batch_size', 200),
+                        'document_access_index_backfill_batch_size',
+                        200,
+                    ),
+                ),
+            )
+            document_access_index_repair_batch_size = min(
+                500,
+                max(
+                    1,
+                    parse_admin_int(
+                        form_data.get('document_access_index_repair_batch_size'),
+                        settings.get('document_access_index_repair_batch_size', 100),
+                        'document_access_index_repair_batch_size',
+                        100,
+                    ),
+                ),
+            )
+            document_access_index_cache_ttl_seconds = min(
+                900,
+                max(
+                    60,
+                    parse_admin_int(
+                        form_data.get('document_access_index_cache_ttl_seconds'),
+                        settings.get('document_access_index_cache_ttl_seconds', 900),
+                        'document_access_index_cache_ttl_seconds',
+                        900,
+                    ),
+                ),
+            )
+            conversation_cache_ttl_seconds = max(
+                0,
+                parse_admin_int(
+                    form_data.get('conversation_cache_ttl_seconds'),
+                    settings.get('conversation_cache_ttl_seconds', 120),
+                    'conversation_cache_ttl_seconds',
+                    120,
+                ),
+            )
+            dai_debug_enabled = bool(settings.get('enable_dai_debug', False))
+            document_access_index_shadow_validation_enabled = (
+                form_data.get('enable_document_access_index_shadow_validation') == 'on'
+                if dai_debug_enabled
+                else bool(settings.get('enable_document_access_index_shadow_validation', False))
+            )
+            document_access_index_cache_enabled = (
+                form_data.get('enable_document_access_index_cache') == 'on'
+                if dai_debug_enabled
+                else bool(settings.get('enable_document_access_index_cache', True))
+            )
+
             # --- Chunk Size Overrides ---
             chunk_size_defaults = get_chunk_size_defaults()
             existing_chunk_sizes = settings.get('chunk_size', {}) if isinstance(settings, dict) else {}
@@ -1829,6 +1886,24 @@ def register_route_frontend_admin_settings(bp):
                 'redis_url': form_data.get('redis_url', '').strip(),
                 'redis_key': admin_secret('redis_key'),
                 'redis_auth_type': form_data.get('redis_auth_type', '').strip(),
+                'enable_conversation_cache': form_data.get('enable_conversation_cache') == 'on',
+                'conversation_cache_ttl_seconds': conversation_cache_ttl_seconds,
+
+                # Document Access Index
+                'enable_document_access_index_container': True,
+                'enable_document_access_index_write_through': True,
+                'enable_document_access_index_reads': True,
+                'enable_dai_debug': dai_debug_enabled,
+                'enable_document_access_index_shadow_validation': document_access_index_shadow_validation_enabled,
+                'enable_startup_document_access_index_backfill': True,
+                'document_access_index_backfill_batch_size': document_access_index_backfill_batch_size,
+                'document_access_index_repair_batch_size': document_access_index_repair_batch_size,
+                'document_access_index_active_maintenance_interval_seconds': settings.get(
+                    'document_access_index_active_maintenance_interval_seconds',
+                    30,
+                ),
+                'enable_document_access_index_cache': document_access_index_cache_enabled,
+                'document_access_index_cache_ttl_seconds': document_access_index_cache_ttl_seconds,
 
                 # Workspaces
                 'enable_user_workspace': form_data.get('enable_user_workspace') == 'on',

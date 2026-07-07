@@ -203,7 +203,7 @@ def register_route_custom_pages(bp):
         if errors:
             return jsonify({"error": "; ".join(errors)}), 400
         slug = str(payload.get("slug") or payload.get("id") or "").strip().lower()
-        if get_custom_page(slug, include_python=True):
+        if get_custom_page(slug, include_python=True, use_cache=False):
             return jsonify({"error": "A custom page with this slug already exists."}), 409
         saved = save_custom_page(payload, user_id=_current_admin_user_id())
         return jsonify(saved), 201

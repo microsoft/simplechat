@@ -1,6 +1,17 @@
 # functions_prompts.py
 
 from config import *
+from functions_chat_bootstrap_cache import (
+    bump_chat_bootstrap_global_cache_version,
+    bump_chat_bootstrap_user_cache_version,
+)
+
+
+def _invalidate_prompt_chat_bootstrap_cache(user_id, group_id=None, public_workspace_id=None, reason="prompt_changed"):
+    if group_id is not None or public_workspace_id is not None:
+        bump_chat_bootstrap_global_cache_version(reason=reason)
+    else:
+        bump_chat_bootstrap_user_cache_version(user_id, reason=reason)
 
 def get_pagination_params(args):
     try:
@@ -284,6 +295,12 @@ def create_prompt_doc(name, content, prompt_type, user_id, group_id=None, public
         doc["user_id"] = user_id
 
     created = cosmos_container.create_item(body=doc)
+    _invalidate_prompt_chat_bootstrap_cache(
+        user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+        reason="prompt_created",
+    )
     return {
         "id": created["id"],
         "name": created["name"],
@@ -325,6 +342,12 @@ def update_prompt_doc(user_id, prompt_id, prompt_type, updates, group_id=None, p
     item["updated_at"] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
     updated = cosmos_container.replace_item(item=prompt_id, body=item)
+    _invalidate_prompt_chat_bootstrap_cache(
+        user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+        reason="prompt_updated",
+    )
 
     return {
         "id":         updated["id"],
@@ -349,4 +372,10 @@ def delete_prompt_doc(user_id, prompt_id, group_id=None, public_workspace_id=Non
         return False
 
     cosmos_container.delete_item(item=prompt_id, partition_key=prompt_id)
+    _invalidate_prompt_chat_bootstrap_cache(
+        user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+        reason="prompt_deleted",
+    )
     return True

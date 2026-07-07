@@ -2,11 +2,11 @@
 
 ## Header Information
 
-**Status**: Proposal for technical review  
-**Documented against version**: **0.242.044**  
-**Implemented in version**: **TBD**  
-**Related config.py version update**: No version change is included with this proposal. Implementation should increment `VERSION` in `application/single_app/config.py` when code changes are made.  
-**Primary audience**: SimpleChat technical leadership and application developers  
+**Status**: Implemented through Phase 9 hardening docs, Cosmos indexing maintenance, stale cache cleanup maintenance, and Admin Settings maintenance visibility
+**Documented against version**: **0.250.039**
+**Implemented in version**: **0.250.005 - 0.250.039**
+**Related config.py version update**: Phase 9 hardening docs and the Admin Settings guarded index-apply action are implemented in `application/single_app/config.py` version **0.250.039**.
+**Primary audience**: SimpleChat technical leadership and application developers
 **Primary goal**: Reduce high-volume Azure Cosmos DB reads and repeated cross-partition queries while preserving the current application architecture and existing Azure AI Search indexing model.
 
 ## Review Summary
@@ -14,6 +14,103 @@
 This plan proposes a phased Cosmos performance program rather than a single large rewrite. The lowest-risk work adds advanced cache configuration, invalidation-aware caching for low-churn data, and a reusable app maintenance job framework. The highest-impact work adds a companion `document_access_index` container that acts as a read model for document list screens. Source document containers stay authoritative; the companion container exists to align high-volume UI list queries with Cosmos partitioning.
 
 The recommendation is to approve the full direction but implement it in phases, with feature flags and shadow validation before switching document list endpoints to the companion container.
+
+### 2026-06-29 Technical Review Updates
+
+The repository review confirmed the main direction and added several implementation gates that should be treated as required before user-facing read paths change:
+
+1. **Baseline first**: Capture request charge, query metrics, index metrics, latency, result count, and source/result equivalence for the current hot paths before code changes. The Python SDK can expose `x-ms-request-charge`, query metrics, and index metrics after query iteration.
+2. **Add a Phase 0 design gate**: Finalize projection row identifiers, shared-user/shared-group approval-state normalization, version-family/current-document semantics, and stale-index fallback rules before adding write-through hooks.
+3. **Use continuation-token pagination where possible**: `OFFSET LIMIT` can be acceptable for shallow page-number compatibility, but deep paging should prefer SDK continuation tokens because offsets still require skipped work.
+4. **Treat permission-reducing updates as security-sensitive**: Share removal, delete, retention delete, archive, and visibility changes must not leave stale `document_access_index` rows or Azure AI Search chunk visibility behind without repair tracking and safe read fallback.
+5. **Keep Azure AI Search visibility synchronized**: The companion container optimizes Cosmos list screens only. It does not replace existing search-index visibility fields or source-of-truth authorization checks.
+6. **Use shadow validation before reads**: Backfill plus write-through is not enough. Source-container results and `document_access_index` results must be compared by scope, sort, filter, and page before enabling reads.
+
+### 2026-07-01 Wave 4B Implementation Update
+
+Wave 4B adds shadow validation without switching any document list read paths. Personal, group, and public document list routes still return source-container results, then compare those authoritative current-document identities with `document_access_index` projection rows when `enable_document_access_index_shadow_validation` is enabled. The latest shadow validation result is persisted to the settings container and surfaced in Admin Settings > Scale > Cosmos Document Access Index. Read switchover remains disabled and reserved for Wave 5.
+
+### 2026-07-01 Wave 4B.1 Shadow Metrics Update
+
+Wave 4B.1 adds source-versus-projection query diagnostics to shadow validation. When shadow validation is enabled, document list routes capture the source query elapsed time and Cosmos request charge where the SDK provides it, then compare those values with the single-partition projection query. The admin dashboard displays source/index RU, estimated RU savings, source/index latency, and estimated latency savings. These values estimate future read-path benefits; shadow mode still runs the source query plus the projection query until Wave 5 enables controlled index reads.
+
+### 2026-07-01 Wave 4B2 Candidate Read Metrics Update
+
+Wave 4B2 keeps full parity validation in place but adds a separate candidate read query against `document_access_index`. The corrected candidate query is one single-partition query per scope key, returns all current rows for that scope, avoids Cosmos-side `ORDER BY`, `OFFSET`, `LIMIT`, and `TOP`, and projects only the fields needed by the document list UI plus `source_ts` for the current default sort contract. App Service remains responsible for sort/filter/page shaping until Wave 5 read switchover is deliberately implemented. Admin Settings separates **Validation Index RU** from **Candidate Read RU** and uses the candidate scope-read diagnostics for **Estimated Wave 5 Savings**. This prevents the full-scope parity query and Cosmos-side sort/page costs from overstating the expected cost of the future Wave 5 read path.
+
+### 2026-07-01 Wave 4B3 Rolling Decision Metrics Update
+
+Wave 4B3 keeps the latest shadow validation state in the settings container and adds a bounded rolling metric history to the same document. Admin Settings now shows 5-minute and 15-minute aggregate source-versus-candidate RU totals, estimated Wave 5 savings, validation overhead, and sample counts. These dashboard values are intended to help admins compare the current source-container document-list cost with the future access-index read path over a workflow window instead of only looking at the most recent validation call. The same aggregate structure will also help evaluate Wave 6 Redis document access caching, where a short TTL such as 15 minutes may make the access-index path beneficial for more deployments.
+
+### 2026-07-02 Wave 5A Read-Switch Canary Update
+
+Wave 5 is split into **5A canary** and **5B broad enablement**. Wave 5A implements `document_access_index`-backed list reads for personal, group, and public document-list routes behind `enable_document_access_index_reads`. This includes personal workspace lists, group workspace lists, internal public workspace lists, external public workspace lists, and chat document pickers that load personal, group, or visible public workspace documents. The switch stays off by default, is exposed in Admin Settings as a canary control, and only serves from the access index when the container is enabled, write-through is enabled, the relevant backfill scope is `succeeded`, and repair backlog count is zero. If the access-index query is unavailable or readiness checks fail, routes fall back to the existing source-container read path. When shadow validation remains enabled during canary testing, routes still run the source query for validation; admins should disable shadow validation when measuring the overhead-eliminated read path.
+
+Wave 5A uses the candidate-read shape established in Wave 4B2: one single-partition query per access `scope_key`, no Cosmos-side `ORDER BY`, `OFFSET`, `LIMIT`, or `TOP`, and projection-only fields needed by the list UI. Source containers remain authoritative, and DAI rows are shaped into source-like list documents before existing sort, paging, and response enrichment run. The Wave 5A projection schema is versioned, and reads require a matching backfill state schema version so older Wave 4 projection rows cannot be served after the read path is enabled. Existing deployments now run document access repair and backfill automatically during app maintenance after upgrading; manual batches remain available for support and troubleshooting.
+
+### 2026-07-02 Wave 5A2 Tag-List Read Optimization Update
+
+Wave 5A2 extends the same DAI read pattern to the remaining hot tag-list endpoints: personal tags, group tags, and public workspace tags. These endpoints now attempt a DAI tag-count read first when the readiness gates pass, count projected current owner-scope `tags` rows with one single-partition query per access `scope_key`, then merge existing tag definitions and safe colors from settings/group/public workspace records. Source-backed `get_workspace_tags(...)` remains the fallback whenever backfill is not ready, repair backlog is present, or the projection query fails.
+
+### 2026-07-03 Wave 5A2 Operations Dashboard and Auto-Maintenance Update
+
+Wave 5A2 hardens the DAI operations posture before broad enablement. The DAI container, write-through projection, and automatic repair/backfill maintenance are now treated as always-on requirements, including for deployments with older saved settings that previously disabled them. App maintenance repairs fail-open projection records first, runs one bounded backfill batch, and uses a short active maintenance interval while repair or backfill work remains so existing deployments transparently backfill and converge after upgrade. The Admin Settings DAI card now emphasizes operational health: automatic maintenance state, next action, active loop interval, repair backlog, production DAI read attempts, DAI-served reads, source fallbacks, fallback rate, DAI read RU, DAI latency, and last fallback reason. Shadow validation metrics remain available as optional parity diagnostics, but they are no longer the primary dashboard signal for DAI read health.
+
+### 2026-07-03 Wave 5A3 Redis Monitoring Baseline Update
+
+Wave 5A3 adds Redis monitoring before Wave 6 introduces Redis-backed DAI document-list caching. Admin Settings > Scale now surfaces sanitized Redis runtime and capacity signals from the active Redis client: configuration state, health, app-cache and session runtime usage, monitoring source, ping latency, Redis version, connected clients, memory usage, maxmemory policy, fragmentation ratio, ops/sec, keyspace hit rate, tracked keys, expired keys, evicted keys, error replies, rejected connections, last checked time, and last error summary. The monitoring endpoint does not return Redis keys, secret names, or host names; it reports whether Redis is disabled, missing configuration, unavailable at runtime, degraded, healthy, or errored so admins can establish a baseline before document-list caching changes traffic patterns.
+
+### 2026-07-03 Wave 5B Broad Default Read Enablement Update
+
+Wave 5B promotes DAI-backed document and tag list reads from canary to the default read path. App settings now create and migrate `enable_document_access_index_reads` to `True`, Admin Settings displays the read path as an always-on Wave 5B default, and the settings save path preserves that required state even if an older deployment had stored the prior canary value as disabled. The existing safety gates remain unchanged: DAI rows are used only when write-through is enabled, schema-v2 backfill has succeeded for the requested source scope, repair backlog is clear, and the DAI query succeeds. Otherwise, each optimized route automatically falls back to the source document containers and records source fallback metrics for the operations dashboard. Shadow validation remains optional and should stay disabled when measuring overhead-eliminated production reads.
+
+### 2026-07-04 Wave 6 Redis Document Access Cache Update
+
+Wave 6 adds Redis-only read-through caching on top of DAI document, tag, and legacy-count reads. The cache never writes Cosmos cache documents and never forces source-container fallback when Redis is unavailable; Redis misses, unavailable clients, or Redis errors simply bypass cache and run the DAI query directly. The default TTL is **900 seconds** with a supported range of **60-900 seconds**. Cache keys include the operation, source scope, schema version, normalized filters/access role, and per-scope Redis version tokens. DAI projection sync, delete, repair, and backfill paths bump affected scope-version tokens for personal, group, and public access scopes so document uploads, deletes, metadata updates, share/access changes, tag changes, and projection repairs make new list reads miss old cache entries immediately. Old versioned entries naturally expire by TTL.
+
+Admin Settings > Scale displays Redis DAI cache status and lightweight in-process cache metrics: cache enabled/TTL, 15-minute cache hit rate, hits/misses, bypasses/errors, invalidations, and last cache event. These metrics complement the Wave 5 production DAI read metrics and Wave 5A3 Redis runtime monitoring so admins can compare Redis cache hit behavior, Redis health, and DAI/source fallback rates before and after enabling broader Redis-dependent performance work.
+
+### 2026-07-06 Wave 6 Admin Metrics UI Cleanup
+
+DAI is now treated as an always-on production read path in the Admin Settings experience. The default Redis DAI cache TTL is **900 seconds**, relying on scope-version invalidation for immediate visibility after document, tag, share, repair, delete, and backfill changes. The Scale left navigation now links directly to **DAI Metrics**, **Cosmos Metrics**, and **Redis Metrics** so admins can jump to the relevant operational dashboard.
+
+Support-only controls and diagnostics are hidden by default behind the app setting `enable_dai_debug`, which defaults to `false` and is not exposed in the Admin Settings UI. When that setting is edited directly in Cosmos and set to `true`, the DAI card renders manual backfill/reset controls, DAI read/cache toggles, batch-size fields, shadow validation controls, and rolling shadow-decision diagnostics for troubleshooting. Default admins see only production DAI health, maintenance, cache, fallback, RU, latency, repair, and backfill metrics.
+
+### 2026-07-06 Phase 3 Low-Churn Cache Hardening
+
+Phase 3 completes and hardens the existing shared low-churn cache foundation for custom pages/navigation and chat bootstrap data. Shared cache helpers now record safe hit, miss, write, delete, and version-bump counters using hashed cache-key context, and app maintenance status includes these shared cache metrics alongside cache version document status.
+
+Custom pages cache invalidation now runs after app settings writes so feature enablement, menu configuration, and TTL changes do not depend on old cache entries expiring. Chat bootstrap cache invalidation coverage now includes group creation/deletion/status/member/role/ownership/model-endpoint changes and public workspace creation/deletion/status/member/role/ownership changes across both normal workspace routes, Control Center admin routes, and SimpleChat-native operations used by internal tools. Existing Redis-first/Cosmos-fallback shared cache behavior remains unchanged, and process memory remains a diagnostic/near-cache layer rather than the authoritative invalidation mechanism.
+
+### 2026-07-06 Phase 4 Conversation Cache Hardening
+
+Phase 4 completes and hardens the existing conversation list, feed, and advanced-search cache path. Conversation cache remains user-scoped and versioned, but version tokens and volatile payloads are Redis-only as of version `0.250.037`. When an app-cache Redis client is unavailable, routes bypass cache reads/writes and run the existing Cosmos source queries directly; when conversation caching is explicitly disabled, routes also bypass cache reads/writes and run the source path directly.
+
+The default app setting `enable_conversation_cache` is `true`, with `conversation_cache_ttl_seconds` controlling cache entry lifetime. Cache keys include user id, operation, user cache version, normalized request parameters, and group-access fingerprints for collaboration-visible feed/search results. Mutation coverage includes conversation create, title update, delete, bulk delete, pin/hide changes, mark-read, metadata/summary/context updates, scope-lock changes, chat completion/title initialization, collaboration participant/message/title/member changes, and notification read/dismiss actions.
+
+Version `0.250.034` adds DAI-style conversation cache metrics to Admin Settings > Scale. Reads, writes, disabled/TTL bypasses, and version invalidations emit lightweight in-process rolling samples over 5-minute, 15-minute, and 60-minute windows. The admin dashboard displays runtime state, 15-minute hit rate, hits/misses, bypasses/errors, writes/invalidations, operation mix, last cache event, and last invalidation without adding Cosmos reads to the conversation hot path.
+
+Version `0.250.035` tunes the mark-read flow exposed by those metrics. Normal conversation navigation no longer forces a mark-read request when the client has no unread state, and the backend mark-read endpoint only upserts the conversation and bumps the conversation cache version when unread fields actually changed. Notification clearing remains available, but already-read conversations no longer churn the conversation feed cache simply because a user switched conversations or reloaded the page.
+
+Version `0.250.036` preserves background chat-completion unread state after the mark-read tuning. Streaming finalization now only force-clears unread state when the completed conversation is still the active conversation, and it no longer switches the active conversation back to a completed background stream. This keeps the "chat finished while away" notification and green unread dot until the user opens that conversation.
+
+### 2026-07-06 Settings Container RU Suppression and Stale Cleanup Planning
+
+Version `0.250.037` removes the unexpected idle `settings` container RU pattern discovered during Phase 4 validation. Generic app settings writes no longer bump unrelated chat-bootstrap and custom-pages version documents, Cosmos throughput status refresh is read-only, no-op background autoscale checks no longer persist runtime status, volatile chat-bootstrap/conversation cache payloads do not fall back to Cosmos when Redis is unavailable, and DAI status uses short-lived in-process state caching while skipping disabled shadow-validation state reads. Post-deploy monitoring confirmed that `settings` dropped out of the top normalized RU consumers during idle monitoring.
+
+The remaining obsolete `settings` documents should be cleaned up through app maintenance rather than by ad hoc deletion. Cleanup must be allowlisted, idempotent, dry-run capable, and limited to stale operational cache artifacts that the new code no longer uses, such as old `conversation_cache_version:*` documents and volatile `shared_cache_entry:conversation_cache:*` entries. Cleanup must not delete `app_settings`, active cache-version docs that still coordinate low-churn caches, app-maintenance state, DAI state, repair/backfill state, or any source-of-truth configuration document.
+
+### 2026-07-06 Phase 5 Cosmos Maintenance Implementation
+
+Version `0.250.038` implements the Phase 5 maintenance surface. Expected Cosmos indexing policies remain centralized in `functions_cosmos_indexing.py`, app maintenance can compare or apply missing composite indexes non-destructively, and Admin Settings > Scale now displays indexing status, mode, missing expected indexes, updated containers, failures, and last evaluation time.
+
+The same maintenance surface now includes stale operational cache cleanup. Cleanup is logically separate from indexing updates, is skipped by default for background runs, and can be triggered from Admin Settings in dry-run or apply mode. Apply mode deletes only allowlisted stale cache artifacts from the settings container: retired `conversation_cache_version:*` documents, obsolete Redis-only `shared_cache_entry:conversation_cache:*` and `shared_cache_entry:chat_bootstrap:*` payloads, and expired shared cache entries. It reports candidate, deleted, skipped, failed, category, and more-candidate counts without touching app settings, active cache-version documents, DAI state, app maintenance state, source documents, or user data.
+
+### 2026-07-06 Phase 9 Hardening and Admin Index Apply
+
+Version `0.250.039` completes the Phase 9 runbook pass and exposes a guarded Admin Settings action for applying missing Cosmos composite indexes. Admin Settings > Scale > Cosmos Maintenance now keeps the default status view read-only, then requires an explicit confirmation modal before posting `apply_cosmos_indexing_policies=true` to the existing app-maintenance run endpoint. The modal clarifies that the update is additive and non-destructive, preserves existing indexing policy paths, can improve supported lookup and ordered-query speed, and may add write-index overhead plus asynchronous Cosmos index transformation work.
+
+Phase 9 also documents support runbooks for rebuilding caches, rebuilding `document_access_index`, cleaning stale operational cache documents, interpreting shadow validation diffs, interpreting DAI fallback/cache metrics, and deciding whether broad source fallback should remain after DAI/cache telemetry is stable.
 
 ## Executive Summary
 
@@ -364,7 +461,7 @@ Conversation search also loads candidate conversations and runs a cross-partitio
 
 ### Proposed Cache Strategy
 
-Use per-user versioned cache keys. Redis is preferred, but the same key model can be stored in Cosmos cache documents when Redis is unavailable:
+Use per-user versioned cache keys. Redis is the runtime backend for conversation cache version tokens and volatile payloads; when Redis is unavailable, the application bypasses cache and uses source Cosmos queries:
 
 ```text
 conversation_cache_version:{user_id} = 42
@@ -373,9 +470,9 @@ conversation_search:{user_id}:v42:{filters_hash}
 conversation_classifications:{user_id}:v42
 ```
 
-When conversation state changes, increment `conversation_cache_version:{user_id}` in the shared backend. Old keys become stale immediately because reads use the latest version. Worker memory can keep a short-lived near-cache of the latest version and payload, but it must re-check the shared version before trusting local data beyond the local version-read TTL.
+When conversation state changes, increment `conversation_cache_version:{user_id}` in Redis. Old keys become stale immediately because reads use the latest version. If Redis is unavailable, no Cosmos cache-version fallback is used; cache key construction returns no key and the request falls through to the source query behavior.
 
-Example Cosmos-backed conversation cache entry:
+Retired Cosmos-backed conversation cache entry shape cleaned up by Phase 5 maintenance:
 
 ```json
 {
@@ -734,6 +831,12 @@ Parameters:
 ]
 ```
 
+Pagination implementation note:
+
+- Prefer SDK continuation tokens for high-volume or deep paging. Continuation tokens avoid repeatedly scanning and discarding skipped results.
+- If the current UI must preserve page-number semantics, use `OFFSET LIMIT` only for shallow pages and capture RU/latency separately for deeper pages.
+- Keep `TOP` values as literal integers if `TOP` is used in Cosmos SQL; do not parameterize `TOP`.
+
 Count current documents for a group:
 
 ```sql
@@ -818,6 +921,40 @@ Option B, store projection entries on the source document:
 
 Recommendation: start with deterministic row ids and add `document_access_index_entries` only if cleanup becomes too scattered.
 
+Recommended deterministic row id shape:
+
+```text
+{scope_key}:source:{source_container}:doc:{document_id}
+```
+
+The implementation should generate row ids from normalized projection inputs, not from display names or mutable metadata. `scope_key`, `source_container`, and `document_id` are enough for one current list row per source document per access scope. If future requirements need multiple rows per scope and document, add a stable suffix such as `:access:{access_type}`.
+
+### Shared Access Normalization
+
+The current source document arrays can contain simple ids and comma-suffixed approval-state values. The projection must normalize those source values before writing index rows:
+
+```json
+{
+  "scope_key": "user:99115fd2-1234-45a8-9184-000000000020",
+  "scope_type": "user",
+  "scope_id": "99115fd2-1234-45a8-9184-000000000020",
+  "access_type": "shared_user",
+  "share_status": "approved"
+}
+```
+
+Projection helpers should centralize parsing so list queries, cleanup, backfill, and write-through paths all interpret sharing state the same way. This also avoids carrying source-array delimiter behavior into new query code.
+
+### Version Family Semantics
+
+The `document_access_index` should represent listable current documents, not every historical revision:
+
+- Only the current source document in a revision family should have active index rows.
+- New version creation should update existing rows to the new current document/version metadata and ensure the old version no longer appears in list results.
+- Deleting a non-current revision should not change index rows unless it changes current-version resolution.
+- If deleting the current revision promotes another revision, the promotion step must update index rows in the same maintenance/write-through flow.
+- Direct document open and download must continue to validate access against source-of-truth documents, not only against the index row.
+
 ### Consistency Model
 
 The source containers remain authoritative. The Document Access Index is eventually consistent within the application write flow.
@@ -825,9 +962,11 @@ The source containers remain authoritative. The Document Access Index is eventua
 For user-facing behavior:
 
 - Normal writes should update source and Document Access Index rows together.
-- If index update fails, log the issue and enqueue or mark for maintenance repair.
+- If a permission-grant projection fails, the operation may proceed only if a repair marker is recorded and the affected scope falls back to the source query until repaired.
+- If a permission-reducing projection fails, such as unshare, delete, archive, or retention delete, the affected scope must be marked unsafe for index reads until repair completes.
 - The admin maintenance job can rebuild the Document Access Index from source documents.
 - Direct document open should still validate access against source-of-truth data if there is any doubt.
+- Azure AI Search chunk visibility and sharing fields must continue to be updated by existing document workflows. The access index is a Cosmos list read model, not a replacement for search authorization metadata.
 
 ### Expected RU Reduction
 
@@ -938,6 +1077,17 @@ The buttons should start jobs and return immediately. The UI should poll job sta
       },
       "processed": 0,
       "errors": []
+    },
+    "cleanup_stale_cache_docs": {
+      "status": "pending",
+      "dry_run": true,
+      "candidate_count": 0,
+      "deleted_count": 0,
+      "skipped_count": 0,
+      "checkpoint": {
+        "continuation_token": null
+      },
+      "errors": []
     }
   },
   "summary": {
@@ -946,7 +1096,9 @@ The buttons should start jobs and return immediately. The UI should poll job sta
     "indexing_policies_submitted": 2,
     "access_index_rows_upserted": 0,
     "access_index_rows_deleted": 0,
-    "cache_versions_initialized": 4
+    "cache_versions_initialized": 4,
+    "stale_cache_docs_deleted": 0,
+    "stale_cache_docs_skipped": 0
   }
 }
 ```
@@ -1005,7 +1157,29 @@ document_access_index_projection_version
 
 This should be optional because conversation cache can lazy warm. Manual rebuild may be useful after cache flushes or support events.
 
-#### Step 6: Backfill Document Access Index Container
+#### Step 6: Clean Stale Operational Cache Documents
+
+This step removes obsolete cache artifacts from the `settings` container after the code version that stopped using them is confirmed live.
+
+- Run in dry-run mode by default and report candidate counts by document prefix/type.
+- Delete only allowlisted stale artifacts:
+  - `conversation_cache_version:*`
+  - `shared_cache_entry:conversation_cache:*`
+  - expired volatile shared cache entries whose namespace is no longer Cosmos-backed.
+- Preserve source-of-truth and active coordination docs:
+  - `app_settings`
+  - `app_settings_cache_version`
+  - `governance_cache_version`
+  - `custom_pages_cache_version`
+  - `chat_bootstrap_global_cache_version`
+  - `document_access_index_projection_version`
+  - `app_maintenance_state`
+  - DAI backfill, repair backlog, and shadow-validation state docs
+  - background-task lock docs
+- Process deletes in bounded batches and record deleted counts, skipped counts, last continuation token, and failures.
+- Surface cleanup status and failures in Admin Settings maintenance status.
+
+#### Step 7: Backfill Document Access Index Container
 
 For each source document container:
 
@@ -1031,6 +1205,7 @@ POST /api/admin/maintenance/run-app-maintenance
 POST /api/admin/maintenance/rebuild-document-access-index
 POST /api/admin/maintenance/rebuild-custom-pages-cache
 POST /api/admin/maintenance/clear-app-caches
+POST /api/admin/maintenance/cleanup-stale-cache-docs
 ```
 
 All endpoints must use:
@@ -1072,21 +1247,20 @@ Recommended rollout settings:
 
 ```python
 {
-    "enable_document_access_index_container": False,
-    "enable_document_access_index_reads": False,
+    "enable_document_access_index_container": True,
+    "enable_document_access_index_reads": True,
     "enable_document_access_index_write_through": True,
-    "enable_startup_document_access_index_backfill": False
+    "enable_startup_document_access_index_backfill": True
 }
 ```
 
 Suggested phased rollout:
 
-1. Deploy container, maintenance jobs, cache settings, and write-through projection disabled for reads.
-2. Run backfill manually or through startup maintenance.
-3. Enable write-through projection.
-4. Compare source list results and Document Access Index list results in shadow mode.
-5. Enable Document Access Index reads for admin/test users.
-6. Enable Document Access Index reads globally.
+1. Deploy container, maintenance jobs, cache settings, write-through projection, automatic repair/backfill, and default DAI reads together.
+2. Allow app maintenance to backfill and repair automatically; use manual batches only for support-driven retries.
+3. Let DAI read attempts fall back to source containers until schema-v2 backfill is complete and repairs are clear.
+4. Enable shadow validation only when parity diagnostics are needed; disable it again when measuring production read savings.
+5. Monitor DAI-served reads, source fallbacks, fallback rate, RU, latency, and repair/backfill state during and after rollout.
 
 ## Functional Test Plan
 
@@ -1114,19 +1288,33 @@ Recommended tests:
    - Verify distributed lock prevents duplicate runs.
    - Verify status doc updates.
    - Verify failed step records error and job remains inspectable.
+   - Verify stale cache cleanup dry-run reports candidates without deleting.
+   - Verify stale cache cleanup apply mode deletes only allowlisted obsolete cache docs.
+   - Verify stale cache cleanup preserves app settings, active version docs, DAI state docs, and background-task locks.
 
 5. **Document Access Index Projection Test**
    - Verify create document writes owner index row.
    - Verify new version updates existing index row rather than creating duplicate current rows.
    - Verify share with user creates user index row.
+   - Verify comma-suffixed or approval-state share values are normalized into `scope_id` and `share_status`.
    - Verify share with group creates group index row, not one row per member.
    - Verify unshare deletes corresponding index row.
+   - Verify permission-reducing changes mark affected scopes unsafe for index reads if projection cleanup fails.
    - Verify document delete removes all index rows.
+   - Verify source document search visibility updates continue to propagate to Azure AI Search chunks.
 
 6. **Document Access Index Query Equivalence Test**
    - Build source-container result set and Document Access Index result set for a fixture user.
    - Verify visible document ids match.
    - Verify sorting, filtering, and pagination are equivalent.
+   - Verify multi-scope merges deduplicate documents visible through more than one scope.
+   - Verify stale or missing projection rows trigger source-query fallback while feature flags are not fully enabled.
+
+7. **Version Family Projection Test**
+   - Verify only the current revision appears in `document_access_index`.
+   - Verify new version creation updates index metadata to the new current version.
+   - Verify deleting a non-current revision leaves index rows unchanged.
+   - Verify deleting or archiving a current revision updates or removes index rows safely.
 
 ## Performance Validation Plan
 
@@ -1141,6 +1329,9 @@ Before and after implementation, collect:
 - Maintenance job duration and throughput.
 - Document Access Index backfill throughput.
 - Query latency p50, p95, and p99 where available.
+- Cosmos query metrics and index metrics for representative Python SDK queries by setting `populate_query_metrics=True` and `populate_index_metrics=True` during diagnostic runs.
+- Continuation-token versus `OFFSET LIMIT` RU and latency for document list paging, especially beyond the first few pages.
+- Source-query versus access-index equivalence counts and diff summaries during shadow mode.
 
 Add structured App Insights events for:
 
@@ -1171,50 +1362,291 @@ document_access_index_projection_repair_needed
 
 ## Recommended Implementation Phases
 
-### Phase 1: Cache Configuration and Maintenance Framework
+### Phase 0: Baseline Metrics and Design Lock
 
-- Add advanced cache settings defaults.
-- Add admin UI fields for performance/cache TTLs.
-- Add maintenance job container or job docs in settings container.
-- Add background maintenance loop with distributed lock.
-- Add manual admin maintenance endpoints and UI.
-- Add job status polling.
+This phase should happen before code behavior changes.
 
-### Phase 2: Low-Churn Cache Wins
+1. Capture current RU charge, query metrics, index metrics, latency, result count, and payload size for:
+   - Personal document lists.
+   - Group document lists.
+   - Public workspace document lists.
+   - Conversation list and conversation search.
+   - Custom page navigation injection.
+   - Chat bootstrap loaders.
+2. Finalize `document_access_index` projection rules:
+   - Deterministic row id format.
+   - Shared user/group parsing and approval-state normalization.
+   - Current-version and revision-family semantics.
+   - Permission-reducing failure behavior.
+   - Source-query fallback criteria.
+3. Build representative fixtures for owner, shared user, shared group, public workspace, multi-version, archived, deleted, and overlapping multi-scope visibility.
 
-- Implement custom pages static cache.
-- Implement chat bootstrap scoped cache fragments.
-- Add invalidation to agent/action/prompt/group/public workspace/governance write paths.
-- Add cache telemetry.
+Exit criteria:
 
-### Phase 3: Conversation Cache
+- Baseline metrics are recorded.
+- Projection rules are documented.
+- Functional test fixture expectations are agreed.
 
-- Add conversation cache helper.
-- Add lazy warm to `/api/get_conversations`.
-- Add version bump to conversation CRUD and metadata update paths.
-- Add conversation search result cache with query hash.
-- Add manual rebuild and clear controls.
+### Phase 1: Maintenance Framework and Admin Controls
 
-### Phase 4: Cosmos Indexing Policy Maintenance
+1. Reuse `background_tasks.py` distributed lock patterns for app maintenance jobs.
+2. Store low-volume job state in the existing settings container, using `type` fields and stable ids.
+3. Add a dedicated maintenance job/log container only if job history or logs become high-volume.
+4. Add startup maintenance loop with:
+   - Idempotent step execution.
+   - Checkpoints.
+   - Lease protection.
+   - Safe no-op behavior when disabled.
+5. Add admin-only manual maintenance endpoints and UI controls:
+   - Job status.
+   - Run selected job.
+   - Cancel or mark job cancelled where safe.
+   - Clear/rebuild caches.
+   - Validate containers and indexing policies.
+6. Add route-policy and admin functional tests for new endpoints.
 
-- Define expected indexing policies for high-use containers.
-- Add maintenance validation and apply step.
-- Expose status in admin maintenance UI.
+Exit criteria:
 
-### Phase 5: Document Access Index Companion Container
+- Jobs can be started manually and by startup loop without duplicate execution across workers.
+- Job state is visible to admins.
+- Failed steps are inspectable and resumable.
 
-- Add `document_access_index` container.
-- Add projection builder helper.
-- Add write-through updates for create/update/share/unshare/delete/version changes.
-- Add backfill maintenance job.
-- Add shadow comparison mode.
-- Switch document list endpoints to Document Access Index reads behind feature flag.
+### Phase 2: Shared Cache Foundation
+
+1. Extract or extend existing app settings/governance/search cache patterns into shared helpers for:
+   - Redis-first cache access.
+   - Cosmos-backed cache documents when Redis is unavailable.
+   - Versioned cache keys.
+   - Short-lived worker-local near-cache after shared version checks.
+   - Cache hit/miss/invalidation telemetry.
+2. Add advanced admin settings for cache enablement, TTLs, version-read TTL, and backend preference.
+3. Add manual cache clear and version bump helpers.
+
+Exit criteria:
+
+- New cache consumers can use one common versioned cache contract.
+- Worker-local memory is never the authoritative invalidation layer.
+
+### Phase 3: Low-Churn Cache Wins
+
+Implemented in version: **0.250.032**
+
+Implement the safest cache wins before higher-risk read-model changes.
+
+1. Custom pages cache:
+   - Cache catalog and role-aware navigation.
+   - Invalidate on custom page create/update/delete and manual cache clear.
+   - Rebuild via maintenance job.
+2. Chat bootstrap cache:
+   - Cache scoped fragments for user, group, and global bootstrap data.
+   - Add invalidation hooks for agents, actions, prompts, groups, public workspaces, governance policy changes, and model endpoint changes.
+3. Add functional tests and App Insights events for cache hits, misses, and invalidations.
+
+Exit criteria:
+
+- Repeated page loads avoid repeated Cosmos reads for unchanged low-churn data.
+- All write paths that change cached data bump the correct shared version.
+
+### Phase 4: Conversation List and Search Cache
+
+Implemented in version: **0.250.033**; metrics dashboard updated in **0.250.034**; mark-read invalidation tuned in **0.250.035**; background unread-state preservation updated in **0.250.036**
+
+1. Add user-scoped conversation cache version docs or Redis version keys.
+2. Add lazy warm for `/api/get_conversations`.
+3. Cache normalized conversation search result signatures with query/filter hashes.
+4. Invalidate on:
+   - Create.
+   - Rename/title update.
+   - Delete or bulk delete.
+   - Pin/unpin.
+   - Hide/unhide.
+   - Mark read/unread.
+   - Scope lock changes.
+   - Metadata, summary, classification, tag, or context updates.
+5. Add manual rebuild/clear controls.
+6. Add operational dashboard metrics for runtime status, hit rate, hits/misses, bypasses/errors, writes/invalidations, operation mix, and last invalidation.
+7. Keep mark-read invalidation idempotent so normal navigation does not invalidate the feed cache when no unread state changed.
+
+Exit criteria:
+
+- Cache misses still use source queries safely.
+- Cache invalidation is versioned and cross-worker safe.
+- Conversation list/search RU reductions are measurable against Phase 0 baseline.
+
+### Phase 5: Cosmos Indexing Policy Maintenance
+
+Implemented in version: **0.250.038**; guarded admin apply action added in **0.250.039**
+
+1. Define expected indexing policies in one central module.
+2. Compare current container policies to expected policies.
+3. Apply non-destructive updates through maintenance jobs.
+4. Record index transformation submission and current status where available.
+5. Validate high-use source-container query metrics before and after policy updates.
+6. Surface indexing-policy comparison, transformation progress, skipped containers, and failures in Admin Settings maintenance status.
+7. Include the stale operational cache-document cleanup task in the same maintenance framework, but keep it logically separate from indexing-policy updates so a cleanup failure cannot block policy validation.
+
+Exit criteria:
+
+- Indexing policy changes can be re-run safely.
+- Admins can see whether policy validation or update failed.
+- Admins can explicitly apply missing composite indexes from the UI after acknowledging write-index overhead and asynchronous transformation behavior.
+- Source-query RU improves or remains stable while companion-container work proceeds.
+- Stale cache cleanup can run in dry-run and apply modes, reports exact candidate/deleted/skipped counts, and never deletes source-of-truth or active coordination documents.
+
+### Phase 6: Document Access Index Container and Write-Through
+
+1. Add `document_access_index` container partitioned by `/scope_key`.
+2. Add feature flags:
+   - `enable_document_access_index_container`.
+   - `enable_document_access_index_write_through`.
+   - `enable_document_access_index_reads`.
+   - `enable_document_access_index_shadow_validation`.
+   - `enable_startup_document_access_index_backfill`.
+3. Add projection builder helpers that normalize source documents into deterministic rows.
+4. Add write-through hooks in source document workflows:
+   - Create.
+   - Metadata update.
+   - Processing status update.
+   - Share/unshare.
+   - Share approval/denial.
+   - New version/current-version changes.
+   - Archive/unarchive.
+   - Delete and retention delete.
+5. Keep Azure AI Search visibility updates in the same source workflows.
+
+Exit criteria:
+
+- New writes produce expected projection rows while reads remain on source paths.
+- Projection failure creates repair/fallback state instead of silent drift.
+
+### Phase 7: Backfill, Reconciliation, and Shadow Validation
+
+1. Add resumable, throttled backfill job with checkpoints per source container.
+2. Add reconciliation job that detects:
+   - Missing rows.
+   - Orphan rows.
+   - Incorrect current-version rows.
+   - Incorrect sharing status rows.
+   - Unsafe scopes requiring source fallback.
+3. Add shadow validation for document list endpoints:
+   - Query source path and access-index path.
+   - Compare ids, sort order, filter behavior, pagination, counts, and deduplication.
+   - Log diff summaries and RU deltas.
+4. Keep source fallback active until shadow validation is clean and DAI maintenance is healthy.
+
+Exit criteria:
+
+- Backfill has completed or reached an accepted scope.
+- Shadow validation shows equivalent results for representative users, groups, public workspaces, and edge-case fixtures.
+- Repair jobs can fix detected drift.
+
+### Phase 8: Controlled Read Switchover
+
+1. Add read wrapper that chooses source query or access-index query based on feature flags, scope safety, and shadow validation state.
+2. Enable access-index reads in this order:
+   - Admin/test users.
+   - Small internal cohort.
+   - Personal document list.
+   - Group document list.
+   - Public workspace document list.
+   - Global rollout.
+3. Keep direct document open/download authorization against source-of-truth data.
+4. Monitor RU, latency, error rate, stale fallback count, repair count, and user-reported discrepancies.
+
+Exit criteria:
+
+- Document list RU and latency improve against baseline.
+- No unresolved projection drift or authorization regressions are observed.
+- Source fallback remains available until confidence is high enough to remove or narrow it.
+
+### Phase 9: Hardening, Documentation, and Release Readiness
+
+Implemented in version: **0.250.039**
+
+1. Add or update functional tests for caches, maintenance jobs, indexing policy validation, projection write-through, backfill, reconciliation, shadow validation, and read switchover.
+2. Add fix/feature documentation with the implementation version.
+3. Update release notes if approved.
+4. Add support runbook content for:
+   - Rebuilding caches.
+   - Rebuilding `document_access_index`.
+   - Cleaning stale operational cache documents from `settings`.
+   - Interpreting shadow validation diffs.
+   - Interpreting DAI source fallback metrics while repair/backfill catches up.
+   - Interpreting DAI Redis cache metrics and Redis-unavailable bypass behavior.
+5. Review whether source fallback can remain as a broad safety path or should be limited to admin repair scenarios after DAI, Redis cache, and maintenance telemetry are stable.
+6. Complete final docs and release readiness checks, including maintenance runbooks, support-safe cleanup guidance, and validation queries for idle RU baselines.
+
+#### Phase 9 Support Runbook
+
+Use Admin Settings > Scale as the first operational surface. The dashboard is intentionally split into DAI Metrics, Cosmos Maintenance, Cosmos Metrics, Redis Metrics, and Conversation Cache so support can isolate the subsystem before changing settings.
+
+##### Rebuilding low-churn and conversation caches
+
+1. Confirm Redis health in Redis Metrics. If Redis is unavailable, Redis-only cache paths bypass cache and use the safe source or DAI query path rather than writing volatile cache payloads to Cosmos.
+2. For custom pages/navigation and chat bootstrap cache issues, make the source-of-truth change again or save the relevant app/custom-page/workspace setting to bump the low-churn cache version.
+3. For conversation list/feed/search cache issues, use the normal user-visible mutation path that changes the affected conversation, such as title update, pin/hide, delete, mark-read when unread state actually changed, or metadata update. These paths bump Redis-only conversation version tokens.
+4. Do not recreate retired `conversation_cache_version:*` or volatile shared-cache payload documents in `settings`. If old documents remain, use the stale cleanup dry run and apply action instead.
+
+##### Rebuilding `document_access_index`
+
+1. Check Cosmos Document Access Index status in Admin Settings > Scale.
+2. Confirm DAI container, write-through, automatic maintenance, repair backlog, backfill state, and last error.
+3. If DAI debug mode is enabled through the hidden `enable_dai_debug` setting, run one manual backfill batch or reset the checkpoint only when support needs to reprocess all source scopes.
+4. Leave production source fallback enabled while repair or backfill is incomplete. Routes only serve DAI rows when readiness gates pass and the projection query succeeds.
+5. After repair backlog clears and backfill state is succeeded for the relevant scopes, compare 15-minute DAI served reads, fallback count, fallback rate, DAI RU, and DAI latency.
+
+##### Applying expected Cosmos composite indexes
+
+1. Open Cosmos Maintenance and refresh status.
+2. Review Missing Expected Indexes, Indexing Failures, and Last Indexing Evaluation.
+3. Choose **Apply Missing Indexes** only when the team accepts the tradeoff: additional composite indexes improve supported lookup/ordered-query patterns but add write-index maintenance overhead and may start asynchronous index transformation.
+4. Confirm the modal. This posts an apply-mode app-maintenance run. It only appends missing expected composite indexes and preserves current included paths, excluded paths, default indexes, TTL, conflict-resolution, analytical-storage TTL, and full-text policy settings.
+5. Refresh status later to monitor updated container count, failures, and `indexTransformationProgress` where Cosmos returns it.
+
+##### Cleaning stale operational cache documents
+
+1. Run **Dry Run Cleanup** first.
+2. Review candidate count, categories, failed count, and whether more candidates remain.
+3. Use **Delete Stale Cache Docs** only after dry-run counts look reasonable.
+4. Apply mode deletes one bounded batch of allowlisted operational artifacts only: retired conversation cache versions, obsolete Redis-only conversation/chat-bootstrap shared-cache payloads, and expired shared-cache entries.
+5. Repeat dry-run/apply if `More Candidates` remains `Yes`.
+
+##### Interpreting shadow validation diffs
+
+Shadow validation is a diagnostic, not the normal production read path. If enabled for troubleshooting:
+
+- `missing_count` means source documents expected by the current source path were not found in DAI projection rows.
+- `extra_count` means DAI returned rows that the source path did not return.
+- Source/index RU and latency compare the cost of the current source query and the validation/candidate DAI query.
+- Rolling 5-minute and 15-minute samples are useful for workflow-level comparison but should not be mixed with Redis cache hit-rate conclusions.
+- Disable shadow validation before measuring production DAI/cache RU because shadow mode intentionally adds validation work.
+
+##### Interpreting DAI fallback and Redis cache metrics
+
+- `DAI Read Attempts` counts optimized read attempts.
+- `DAI Served Reads` means the access index satisfied the read.
+- `Source Fallbacks` and `Fallback Rate` show how often routes used the source containers because readiness, repair, backfill, cache safety, or query execution did not allow DAI service.
+- `Last Fallback Reason` is the fastest way to decide whether to wait for backfill/repair, investigate projection errors, or inspect Redis/cache safety.
+- Redis DAI cache misses and bypasses are not failures by themselves. A Redis miss should run the DAI query; Redis unavailable bypass should not write volatile cache documents to Cosmos.
+- A healthy deployment should trend toward low source fallback once backfill and repair converge. A high fallback rate with clear repair backlog is expected during rollout; a high fallback rate after convergence needs investigation.
+
+##### Source fallback readiness decision
+
+Keep broad source fallback while any of the following are true:
+
+- DAI repair backlog is non-zero or unknown.
+- Backfill is incomplete for active source scopes.
+- Shadow validation is reporting unresolved missing or extra rows.
+- Production fallback reasons show projection, readiness, Redis invalidation, or query errors.
+- Support has not yet validated idle RU, 15-minute DAI served reads, cache hit rate, and direct source authorization behavior after the latest deployment.
+
+Consider narrowing fallback only after DAI readiness remains stable across representative personal, group, public, and chat document-picker workflows; Redis cache bypass behavior is understood; and support has a tested rebuild path for projection drift.
 
 ## Open Decisions
 
 1. Should maintenance jobs use a new `maintenance_jobs` container or store job docs in the existing `settings` container?
-   - New container is cleaner for querying job history.
-   - Existing settings container avoids adding one more container.
+  - Recommended: start with low-volume job state in the existing `settings` container to reuse current lock/version patterns.
+  - Add a dedicated `maintenance_jobs` or `maintenance_job_logs` container only if detailed job history becomes high-volume or needs independent retention.
 
 2. Should Document Access Index projection be enabled for writes before reads?
    - Recommended: yes. This allows backfill and shadow validation before user-facing read switch.
@@ -1227,6 +1659,15 @@ document_access_index_projection_repair_needed
 
 5. Should custom pages cache use Redis by default when Redis is enabled?
   - Recommended: yes. When Redis is unavailable, use Cosmos-backed cache documents. Worker-local memory may only act as a short-lived near-cache after checking a shared version value.
+
+6. Should document list paging use continuation tokens or page-number offsets?
+  - Recommended: use continuation tokens for high-volume list APIs and keep page-number offsets only where the current UI requires shallow random access.
+
+7. Should permission-reducing projection failures fail the source write?
+  - Recommended: avoid silent success. Either complete the source, search visibility, and projection updates together, or mark the affected scope unsafe for access-index reads and enqueue repair before returning success.
+
+8. Should the Document Access Index replace source authorization checks?
+  - Recommended: no. It is a list read model only. Direct open/download and sensitive operations must validate against source documents.
 
 ## Approval Request
 

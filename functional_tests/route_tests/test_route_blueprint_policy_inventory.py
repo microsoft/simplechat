@@ -2,7 +2,7 @@
 # test_route_blueprint_policy_inventory.py
 """
 Functional test for route blueprint policy inventory.
-Version: 0.250.004
+Version: 0.250.006
 Implemented in: 0.242.069
 
 This test ensures every SimpleChat route is assigned to a Blueprint-based

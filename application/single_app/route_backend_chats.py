@@ -104,6 +104,7 @@ from functions_chart_operations import (
     normalize_chart_kind,
     user_request_supports_proactive_charts,
 )
+from functions_conversation_cache import invalidate_conversation_cache_for_item
 from functions_conversation_metadata import collect_conversation_metadata, update_conversation_with_metadata
 from functions_conversation_unread import mark_conversation_unread
 from functions_image_messages import build_image_message_documents, decode_image_content
@@ -2263,6 +2264,7 @@ def _create_personal_conversation(user_id, conversation_id=None):
 
     conversation_item['added_to_activity_log'] = True
     cosmos_conversations_container.upsert_item(conversation_item)
+    invalidate_conversation_cache_for_item(conversation_item, reason="conversation_created")
     return conversation_item
 
 
@@ -11655,6 +11657,7 @@ def register_route_backend_chats(bp):
         )
         conversation_item['added_to_activity_log'] = True
         cosmos_conversations_container.upsert_item(conversation_item)
+        invalidate_conversation_cache_for_item(conversation_item, reason="conversation_created")
         return conversation_item
 
     def execute_document_action_chat_request(data=None, publish_background_event=None, forced_action_type=None):
@@ -11912,6 +11915,7 @@ def register_route_backend_chats(bp):
         if title_updated:
             conversation_item['last_updated'] = datetime.utcnow().isoformat()
             cosmos_conversations_container.upsert_item(conversation_item)
+            invalidate_conversation_cache_for_item(conversation_item, reason="conversation_title_initialized")
             if callable(publish_background_event):
                 publish_background_event(_build_conversation_metadata_stream_event(conversation_item))
 
@@ -12191,6 +12195,7 @@ def register_route_backend_chats(bp):
             debug_print(f'[ChatDocumentAnalysis] Conversation metadata update failed: {exc}')
 
         cosmos_conversations_container.upsert_item(conversation_item)
+        invalidate_conversation_cache_for_item(conversation_item, reason="document_action_chat_completed")
         debug_print(
             '[ChatDocumentAction] Execution completed | '
             f'user_id={user_id} | '
@@ -12419,6 +12424,7 @@ def register_route_backend_chats(bp):
 
             conversation_item['last_updated'] = datetime.utcnow().isoformat()
             cosmos_conversations_container.upsert_item(conversation_item)
+            invalidate_conversation_cache_for_item(conversation_item, reason="chat_image_proposal_generated")
 
             image_doc = image_result.pop('image_message', {}) or {}
             image_doc_metadata = image_doc.get('metadata') if isinstance(image_doc.get('metadata'), dict) else {}
@@ -13324,6 +13330,7 @@ def register_route_backend_chats(bp):
 
                 conversation_item['last_updated'] = datetime.utcnow().isoformat()
                 cosmos_conversations_container.upsert_item(conversation_item) # Update timestamp and potentially title
+                invalidate_conversation_cache_for_item(conversation_item, reason="conversation_title_initialized")
 
             assistant_message_id, thought_tracker, assistant_thread_attempt, response_message_context = _initialize_assistant_response_tracking(
                 conversation_id=conversation_id,
@@ -13432,6 +13439,7 @@ def register_route_backend_chats(bp):
                         # Update conversation's last_updated
                         conversation_item['last_updated'] = datetime.utcnow().isoformat()
                         cosmos_conversations_container.upsert_item(conversation_item)
+                        invalidate_conversation_cache_for_item(conversation_item, reason="chat_safety_blocked")
 
                         # Return a normal 200 with a special field: blocked=True
                         return jsonify({
@@ -14247,6 +14255,7 @@ def register_route_backend_chats(bp):
 
                     conversation_item['last_updated'] = datetime.utcnow().isoformat()
                     cosmos_conversations_container.upsert_item(conversation_item)
+                    invalidate_conversation_cache_for_item(conversation_item, reason="chat_image_generated")
 
                     return jsonify({
                         'reply': "Image loading...",
@@ -15866,6 +15875,7 @@ def register_route_backend_chats(bp):
 
             # Add any other final updates to conversation_item if needed (like classifications if not done earlier)
             cosmos_conversations_container.upsert_item(conversation_item)
+            invalidate_conversation_cache_for_item(conversation_item, reason="chat_completed")
 
             # ---------------------------------------------------------------------
             # 8) Return final success (even if AI generated an error message)
@@ -16887,6 +16897,7 @@ def register_route_backend_chats(bp):
 
                 conversation_item['last_updated'] = datetime.utcnow().isoformat()
                 cosmos_conversations_container.upsert_item(conversation_item)
+                invalidate_conversation_cache_for_item(conversation_item, reason="conversation_title_initialized")
                 if title_updated:
                     yield _build_conversation_metadata_stream_event(conversation_item)
 
@@ -17056,6 +17067,7 @@ def register_route_backend_chats(bp):
 
                             conversation_item['last_updated'] = datetime.utcnow().isoformat()
                             cosmos_conversations_container.upsert_item(conversation_item)
+                            invalidate_conversation_cache_for_item(conversation_item, reason="chat_safety_blocked")
 
                             final_data = make_json_serializable({
                                 'content': blocked_msg_content.strip(),
@@ -18260,6 +18272,7 @@ def register_route_backend_chats(bp):
                         cosmos_messages_container.upsert_item(assistant_doc)
                         conversation_item['last_updated'] = datetime.utcnow().isoformat()
                         cosmos_conversations_container.upsert_item(conversation_item)
+                        invalidate_conversation_cache_for_item(conversation_item, reason="chat_stream_stopped")
                         message_persisted = True
 
                     log_event(
@@ -18964,6 +18977,7 @@ def register_route_backend_chats(bp):
                         )
 
                     cosmos_conversations_container.upsert_item(conversation_item)
+                    invalidate_conversation_cache_for_item(conversation_item, reason="chat_stream_completed")
 
                     # Send final message with metadata
                     final_data = make_json_serializable({
