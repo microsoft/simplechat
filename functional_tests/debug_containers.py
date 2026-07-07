@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """
 Debug script to check container structure and data.
+Version: 0.250.047
+
+CosmosClient module import cleanup updated in: 0.250.047
 """
 
 import os
 import sys
-from azure.cosmos import CosmosClient
+import azure.cosmos as azure_cosmos
 
 def debug_containers():
     """Debug containers and data structure."""
@@ -14,7 +17,7 @@ def debug_containers():
     endpoint = os.getenv('AZURE_COSMOS_ENDPOINT', '')
     key = os.getenv('AZURE_COSMOS_KEY', '')
 
-    client = CosmosClient(endpoint, key, consistency_level="Session")
+    client = azure_cosmos.CosmosClient(endpoint, key, consistency_level="Session")
     
     database = client.get_database_client("SimpleChat")
     

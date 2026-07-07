@@ -2,7 +2,7 @@
 # test_chat_completion_notifications.py
 """
 Functional test for chat completion notifications.
-Version: 0.250.046
+Version: 0.250.047
 Implemented in: 0.239.128
 Mark-read cache invalidation tuned in: 0.250.035
 Background streaming unread guard updated in: 0.250.036
@@ -477,11 +477,11 @@ def test_version_updated_for_feature():
     with open(config_file_path, 'r', encoding='utf-8') as handle:
         config_content = handle.read()
 
-    if 'VERSION = "0.250.046"' not in config_content:
-        print("❌ Version not updated to 0.250.046")
+    if 'VERSION = "0.250.047"' not in config_content:
+        print("❌ Version not updated to 0.250.047")
         return False
 
-    print("✅ Version properly updated to 0.250.046")
+    print("✅ Version properly updated to 0.250.047")
     return True
 
 

@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 4A document access index backfill.
-Version: 0.250.046
+Version: 0.250.047
 Implemented in: 0.250.010
 Default read enablement updated in: 0.250.027
 Redis DAI cache invalidation updated in: 0.250.029
@@ -402,7 +402,7 @@ def test_wave4a_settings_and_maintenance_contract_are_wired():
     maintenance_source = open(os.path.join(SINGLE_APP_DIR, "functions_app_maintenance.py"), "r", encoding="utf-8").read()
     route_source = open(os.path.join(SINGLE_APP_DIR, "route_backend_settings.py"), "r", encoding="utf-8").read()
 
-    assert 'VERSION = "0.250.046"' in config_source
+    assert 'VERSION = "0.250.047"' in config_source
     assert "'enable_startup_document_access_index_backfill': True" in settings_source
     assert "'document_access_index_backfill_batch_size': 200" in settings_source
     assert "'document_access_index_repair_batch_size': 100" in settings_source

@@ -12,7 +12,8 @@ from datetime import datetime, timedelta, timezone
 
 from azure.core import MatchConditions
 from azure.core.credentials import AzureKeyCredential
-from azure.cosmos import CosmosClient, PartitionKey
+import azure.cosmos as azure_cosmos
+from azure.cosmos import PartitionKey
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from azure.identity import DefaultAzureCredential
 from azure.search.documents import SearchClient
@@ -713,9 +714,9 @@ def _get_target_cosmos_database(settings):
         key = _safe_text((settings or {}).get("target_cosmos_key"))
         if not key:
             raise ValueError("Target Cosmos account key is required when account key authentication is selected.")
-        client = CosmosClient(endpoint, credential=key, consistency_level="Session")
+        client = azure_cosmos.CosmosClient(endpoint, credential=key, consistency_level="Session")
     else:
-        client = CosmosClient(endpoint, credential=DefaultAzureCredential(), consistency_level="Session")
+        client = azure_cosmos.CosmosClient(endpoint, credential=DefaultAzureCredential(), consistency_level="Session")
     return client.create_database_if_not_exists(DATA_MANAGEMENT_TARGET_COSMOS_DATABASE_NAME)
 
 

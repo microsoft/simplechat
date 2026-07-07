@@ -9,7 +9,7 @@ import logging
 import re
 from typing import Any, Dict, List, Optional, Sequence, Union
 
-from azure.cosmos import CosmosClient
+import azure.cosmos as azure_cosmos
 from azure.cosmos.exceptions import CosmosHttpResponseError
 from azure.identity import DefaultAzureCredential
 from semantic_kernel.functions import kernel_function
@@ -34,7 +34,7 @@ class ResultWithMetadata:
 class CosmosQueryPlugin(BasePlugin):
     """Read-only Azure Cosmos DB for NoSQL query plugin."""
 
-    _client_cache: Dict[str, CosmosClient] = {}
+    _client_cache: Dict[str, azure_cosmos.CosmosClient] = {}
 
     def __init__(self, manifest: Dict[str, Any]):
         super().__init__(manifest)
@@ -310,7 +310,7 @@ class CosmosQueryPlugin(BasePlugin):
             client_cache_key = self._get_client_cache_key()
             client = self._client_cache.get(client_cache_key)
             if client is None:
-                client = CosmosClient(
+                client = azure_cosmos.CosmosClient(
                     self.endpoint,
                     credential=self._get_client_credential(),
                     timeout=self.timeout,

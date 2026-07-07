@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 3B document access index write-through.
-Version: 0.250.046
+Version: 0.250.047
 Implemented in: 0.250.009
 Default read enablement updated in: 0.250.027
 Redis DAI cache invalidation updated in: 0.250.029

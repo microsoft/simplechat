@@ -71,7 +71,8 @@ from PIL import Image
 from io import BytesIO
 from typing import List
 
-from azure.cosmos import CosmosClient, PartitionKey, exceptions
+import azure.cosmos as azure_cosmos
+from azure.cosmos import PartitionKey, exceptions
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from azure.core.credentials import AzureKeyCredential
 from azure.ai.documentintelligence import DocumentIntelligenceClient
@@ -95,7 +96,7 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.250.046"
+VERSION = "0.250.047"
 
 SESSION_COOKIE_SAMESITE = os.getenv('SESSION_COOKIE_SAMESITE', 'Lax')
 SESSION_COOKIE_HTTPONLY = os.getenv('SESSION_COOKIE_HTTPONLY', 'true').lower() != 'false'
@@ -419,9 +420,9 @@ cosmos_key = os.getenv("AZURE_COSMOS_KEY")
 cosmos_authentication_type = os.getenv("AZURE_COSMOS_AUTHENTICATION_TYPE", "key") #key or managed_identity
 
 if cosmos_authentication_type == "managed_identity":
-    cosmos_client = CosmosClient(cosmos_endpoint, credential=DefaultAzureCredential(), consistency_level="Session")
+    cosmos_client = azure_cosmos.CosmosClient(cosmos_endpoint, credential=DefaultAzureCredential(), consistency_level="Session")
 else:
-    cosmos_client = CosmosClient(cosmos_endpoint, cosmos_key, consistency_level="Session")
+    cosmos_client = azure_cosmos.CosmosClient(cosmos_endpoint, cosmos_key, consistency_level="Session")
 
 cosmos_database_name = "SimpleChat"
 cosmos_database = cosmos_client.create_database_if_not_exists(cosmos_database_name)

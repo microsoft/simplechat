@@ -7,6 +7,7 @@ category: Version History
 ---
 
 - [Azure OpenAI Model Discovery Identity Fix](v0.250.001/AZURE_OPENAI_MODEL_DISCOVERY_IDENTITY_FIX.md)
+- [CosmosClient Import Binding CodeQL Fix](COSMOSCLIENT_IMPORT_BINDING_CODEQL_FIX.md)
 - [Conversation Cache Invalidation Authorization Fix](CONVERSATION_CACHE_INVALIDATION_AUTHORIZATION_FIX.md)
 - [Chat Completion Background Unread Guard Fix](CHAT_COMPLETION_BACKGROUND_UNREAD_GUARD_FIX.md)
 - [Settings Container RU Write Suppression Fix](SETTINGS_CONTAINER_RU_WRITE_SUPPRESSION_FIX.md)

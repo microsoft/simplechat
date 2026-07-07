@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 4A1 document access admin UI.
-Version: 0.250.046
+Version: 0.250.047
 Implemented in: 0.250.011
 Default read enablement updated in: 0.250.027
 Redis DAI cache dashboard updated in: 0.250.029
@@ -220,7 +220,7 @@ def test_wave4a1_version_is_current():
     """Config version should reflect the current cache admin UI change."""
     config_source = _read(os.path.join("application", "single_app", "config.py"))
 
-    assert 'VERSION = "0.250.046"' in config_source
+    assert 'VERSION = "0.250.047"' in config_source
 
 
 if __name__ == "__main__":
