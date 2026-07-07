@@ -10037,6 +10037,9 @@
 
                         <!-- Audio File Support -->
                         <div class="mb-4">
+                            {% set audio_runtime = audio_runtime_capabilities or {} %}
+                            {% set audio_supported_extensions = audio_runtime.supported_extensions or [] %}
+                            {% set audio_direct_extensions = audio_runtime.direct_transcription_extensions or [] %}
                             <div class="form-check form-switch mb-2">
                                 <input
                                     type="checkbox"
@@ -10053,6 +10056,19 @@
                                 Upload audio files (MP3, WAV, M4A, etc.) to workspaces where they're automatically transcribed and indexed.
                                 The AI can then search, analyze, and answer questions about audio content—perfect for meetings, interviews, lectures, and podcasts.
                             </p>
+                            <div class="ms-4 ps-3 mt-2">
+                                <div class="small {% if audio_runtime.broad_transcoding_available %}text-success{% else %}text-warning{% endif %}" id="audio_runtime_status">
+                                    <i class="bi {% if audio_runtime.broad_transcoding_available %}bi-check-circle{% else %}bi-exclamation-triangle{% endif %} me-1"></i>{{ audio_runtime.message or 'Audio runtime support has not been checked yet.' }}
+                                </div>
+                                <div class="small text-muted mt-1" id="audio_supported_extensions">
+                                    Supported audio upload extensions: {{ audio_supported_extensions|join(', ') }}
+                                </div>
+                                {% if audio_direct_extensions %}
+                                <div class="small text-muted mt-1">
+                                    Without FFmpeg, source-file fallback is best for: {{ audio_direct_extensions|join(', ') }}. Container builds can include FFmpeg for broader codec support.
+                                </div>
+                                {% endif %}
+                            </div>
                         </div>
 
                         <!-- Speech-to-Text -->

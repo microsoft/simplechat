@@ -161,6 +161,34 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Optional shadow-validation source queries now fail open after successful DAI reads so diagnostics cannot break served list responses.
     *   (Ref: app maintenance, DAI shadow validation, `functions_app_maintenance.py`, document list routes)
 
+### **(v0.250.015)**
+
+#### Bug Fixes
+
+*   **Anonymous Notification Polling 401 Log Reduction**
+    *   Stopped loading the notification polling script for unauthenticated sessions, preventing the login screen from repeatedly calling `/api/notifications/count` after idle timeout or before sign-in.
+    *   This reduces expected 401 noise in App Service log streams and Application Insights while preserving notification badge polling for authenticated users.
+    *   (Ref: notification polling, idle timeout, `base.html`, `notifications.js`, `test_notification_polling_redirect_guard.py`)
+
+### **(v0.250.010)**
+
+#### New Features
+
+*   **Audio File Runtime Support**
+    *   Added default-on FFmpeg and FFprobe packaging for container builds so SimpleChat can transcode a much broader set of audio files before Azure Speech transcription.
+    *   Expanded recognized audio upload extensions to include common containers and codecs such as 3GA, AAC, AC3, AIFF, AMR, AU, CAF, FLAC, M4A/M4B/M4R, Matroska audio, MP2/MP3/MPA, OGG/Opus/Speex, WAV, WebM audio, WMA, and WavPack.
+    *   Added Admin Settings runtime guidance showing whether FFmpeg broad transcoding is available in the current app runtime and which audio upload extensions are recognized.
+    *   Added `SIMPLECHAT_INSTALL_FFMPEG` / `INSTALL_AUDIO_FFMPEG` build controls for deployments that need to opt out of bundling FFmpeg.
+    *   (Ref: audio uploads, FFmpeg runtime, `Dockerfile`, `functions_documents.py`, `admin_settings.html`, `AUDIO_FILE_RUNTIME_SUPPORT.md`)
+
+#### Bug Fixes
+
+*   **iPhone M4A Upload FFmpeg Fallback**
+    *   Fixed supported iPhone `.m4a` audio uploads failing before transcription when the app runtime could not resolve a local `ffmpeg` executable.
+    *   Public Azure environments can now fall back to Azure Speech fast transcription using the original supported source audio file and content type when local segmentation fails because FFmpeg is missing.
+    *   FFmpeg segmentation now targets the first audio stream and emits mono 16 kHz PCM WAV chunks for Speech when FFmpeg is available.
+    *   (Ref: microsoft/simplechat#974, `.m4a` upload processing, Azure Speech fast transcription, `IPHONE_M4A_FFMPEG_FALLBACK_FIX.md`)
+
 ### **(v0.250.008)**
 
 #### Bug Fixes

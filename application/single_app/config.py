@@ -156,7 +156,12 @@ VIDEO_EXTENSIONS = {
     'mpg', 'wmv', 'asf', 'm4v', 'isma', 'ismv', 'dvr-ms', 'webm', 'mpeg'
 }
 
-AUDIO_EXTENSIONS = {'mp3', 'wav', 'ogg', 'aac', 'flac', 'm4a'}
+AUDIO_EXTENSIONS = {
+    '3ga', 'aac', 'ac3', 'aif', 'aifc', 'aiff', 'amr', 'ape', 'au', 'caf',
+    'dts', 'f4a', 'flac', 'm4a', 'm4b', 'm4r', 'mka', 'mp2', 'mp3', 'mpa',
+    'oga', 'ogg', 'opus', 'spx', 'wav', 'weba', 'wma', 'wv'
+}
+AUDIO_FAST_TRANSCRIPTION_SOURCE_EXTENSIONS = {'aac', 'flac', 'm4a', 'mp3', 'ogg', 'wav'}
 
 def get_allowed_extensions(enable_video=False, enable_audio=False):
     """
@@ -182,6 +187,49 @@ def get_allowed_extensions(enable_video=False, enable_audio=False):
         extensions.update(AUDIO_EXTENSIONS)
 
     return extensions
+
+def get_allowed_extension_categories(enable_video=False, enable_audio=False):
+    """
+    Get allowed file extensions grouped for display in workspace upload dialogs.
+    """
+    categories = [
+        {
+            'name': 'Documents and presentations',
+            'extensions': BASE_ALLOWED_EXTENSIONS | DOCUMENT_EXTENSIONS,
+        },
+        {
+            'name': 'Tables and data',
+            'extensions': TABULAR_EXTENSIONS,
+        },
+        {
+            'name': 'Images',
+            'extensions': IMAGE_EXTENSIONS,
+        },
+        {
+            'name': 'Email and diagrams',
+            'extensions': EMAIL_EXTENSIONS | VISIO_EXTENSIONS,
+        },
+    ]
+
+    if enable_audio:
+        categories.append({
+            'name': 'Audio',
+            'extensions': AUDIO_EXTENSIONS,
+        })
+
+    if enable_video:
+        categories.append({
+            'name': 'Video',
+            'extensions': VIDEO_EXTENSIONS,
+        })
+
+    return [
+        {
+            'name': category['name'],
+            'extensions': sorted(category['extensions']),
+        }
+        for category in categories
+    ]
 
 ALLOWED_EXTENSIONS = get_allowed_extensions(enable_video=True, enable_audio=True)
 

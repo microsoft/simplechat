@@ -58,12 +58,12 @@ def register_route_frontend_public_workspaces(bp):
         enable_video_file_support = settings.get('enable_video_file_support', False)
         enable_audio_file_support = settings.get('enable_audio_file_support', False)
 
-        # Get allowed extensions from central function and build allowed extensions string
-        allowed_extensions = sorted(get_allowed_extensions(
-            enable_video=enable_video_file_support in [True, 'True', 'true'],
-            enable_audio=enable_audio_file_support in [True, 'True', 'true']
-        ))
-        allowed_extensions_str = "Allowed: " + ", ".join(allowed_extensions)
+        enable_video_uploads = enable_video_file_support in [True, 'True', 'true']
+        enable_audio_uploads = enable_audio_file_support in [True, 'True', 'true']
+        allowed_extension_categories = get_allowed_extension_categories(
+            enable_video=enable_video_uploads,
+            enable_audio=enable_audio_uploads
+        )
         
         return render_template(
             'public_workspaces.html',
@@ -73,7 +73,7 @@ def register_route_frontend_public_workspaces(bp):
             enable_extract_meta_data=enable_extract_meta_data,
             enable_video_file_support=enable_video_file_support,
             enable_audio_file_support=enable_audio_file_support,
-            allowed_extensions=allowed_extensions_str
+            allowed_extension_categories=allowed_extension_categories
         )
 
     @bp.route("/public_directory", methods=["GET"])
