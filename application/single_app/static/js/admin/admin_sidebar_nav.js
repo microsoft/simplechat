@@ -202,9 +202,11 @@ function scrollToSection(sectionId) {
         'file-processing-logs-section': 'file-processing-logs-section',
         // Scale tab sections
         'redis-cache-section': 'redis-cache-section',
-        'document-access-index-section': 'document-access-index-section',
-        'cosmos-throughput-section': 'cosmos-throughput-section',
         'redis-monitoring-section': 'redis-monitoring-section',
+        'document-access-index-section': 'document-access-index-section',
+        'cosmos-maintenance-section': 'cosmos-maintenance-section',
+        'cosmos-throughput-section': 'cosmos-throughput-section',
+        'cosmos-throughput-metrics-table-section': 'cosmos-throughput-metrics-table-section',
         'front-door-section': 'front-door-section',
         // Workspaces tab sections
         'personal-workspaces-section': 'personal-workspaces-section',

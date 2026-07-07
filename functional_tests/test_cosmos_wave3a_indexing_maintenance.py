@@ -2,8 +2,10 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 3A indexing policy maintenance.
-Version: 0.250.010
+Version: 0.250.039
 Implemented in: 0.250.008
+Maintenance cleanup integration updated in: 0.250.038
+Manual admin apply override updated in: 0.250.039
 
 This test ensures expected Cosmos indexing policies can be compared, safely
 merged, and invoked through the app maintenance framework without live Azure
@@ -176,7 +178,9 @@ def _load_wave3_modules():
     module_names = [
         "config",
         "functions_appinsights",
+        "functions_group",
         "functions_shared_cache",
+        "functions_cosmos_stale_cleanup",
         "functions_cosmos_indexing",
         "functions_document_access_index",
         "functions_app_maintenance",
@@ -189,7 +193,7 @@ def _load_wave3_modules():
 
     containers, database, settings_container, governance_container = _build_fake_environment()
     fake_config = types.ModuleType("config")
-    fake_config.VERSION = "0.250.010"
+    fake_config.VERSION = "0.250.039"
     fake_config.cosmos_database = database
     fake_config.cosmos_settings_container = settings_container
     fake_config.cosmos_governance_policies_container = governance_container
@@ -210,7 +214,13 @@ def _load_wave3_modules():
 
     fake_appinsights = types.ModuleType("functions_appinsights")
     fake_appinsights.log_event = lambda *args, **kwargs: None
+    fake_appinsights.debug_print = lambda *args, **kwargs: None
+    fake_appinsights.is_debug_enabled = lambda: False
     sys.modules["functions_appinsights"] = fake_appinsights
+
+    fake_group = types.ModuleType("functions_group")
+    fake_group.find_group_by_id = lambda group_id: None
+    sys.modules["functions_group"] = fake_group
 
     fake_settings = types.ModuleType("functions_settings")
     fake_settings.get_settings = lambda: {}
@@ -283,8 +293,34 @@ def test_app_maintenance_runs_indexing_policy_step():
     assert indexing_step["results"]["mode"] == "apply"
     assert database.replace_calls
     assert status["cosmos_indexing_policies"]["mode"] == "report_only"
+    assert status["stale_cache_cleanup"]["status"] == "skipped_disabled"
     assert status["settings"]["apply_cosmos_indexing_policies"] is True
-    assert status["document_access_index_backfill"]["state"]["status"] == "not_started"
+    assert status["document_access_index_backfill"]["state"]["status"] == "succeeded"
+
+
+def test_app_maintenance_manual_indexing_apply_override():
+    """Manual admin runs should apply indexes when payload override is true."""
+    with _load_wave3_modules() as (_indexing, maintenance, database, _containers):
+        result = maintenance.run_app_maintenance_once(
+            triggered_by="admin_manual",
+            requested_by="tester@example.com",
+            settings={},
+            apply_indexing_policies=True,
+            run_document_access_backfill=False,
+            run_stale_cache_cleanup=False,
+        )
+
+    indexing_step = next(step for step in result["steps"] if step["name"] == "cosmos_indexing_policy_maintenance")
+    cleanup_step = next(step for step in result["steps"] if step["name"] == "stale_cache_document_cleanup")
+    backfill_step = next(step for step in result["steps"] if step["name"] == "document_access_index_backfill")
+    assert result["success"] is True
+    assert indexing_step["apply_requested"] is True
+    assert indexing_step["results"]["mode"] == "apply"
+    assert indexing_step["results"]["updated_container_count"] > 0
+    assert database.replace_calls
+    assert cleanup_step["run_requested"] is False
+    assert cleanup_step["results"]["status"] == "skipped_disabled"
+    assert backfill_step["run_requested"] is False
 
 
 if __name__ == "__main__":
@@ -292,6 +328,7 @@ if __name__ == "__main__":
         test_indexing_policy_report_is_read_only,
         test_indexing_policy_apply_merges_without_removing_existing_paths,
         test_app_maintenance_runs_indexing_policy_step,
+        test_app_maintenance_manual_indexing_apply_override,
     ]
     results = []
     for test in tests:

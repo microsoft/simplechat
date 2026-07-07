@@ -29,7 +29,11 @@ from functions_cosmos_throughput import (
     set_database_throughput,
 )
 from functions_app_maintenance import get_app_maintenance_status, run_app_maintenance_once
-from functions_redis_monitoring import get_redis_monitoring_status
+from functions_redis_monitoring import (
+    get_redis_explorer_keys,
+    get_redis_explorer_value,
+    get_redis_monitoring_status,
+)
 from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient
 from swagger_wrapper import swagger_route, get_auth_security
@@ -228,6 +232,9 @@ def register_route_backend_settings(bp):
             apply_indexing_policies = None
             if 'apply_cosmos_indexing_policies' in payload:
                 apply_indexing_policies = bool(payload.get('apply_cosmos_indexing_policies'))
+            apply_stale_cache_cleanup = None
+            if 'apply_stale_cache_cleanup' in payload:
+                apply_stale_cache_cleanup = bool(payload.get('apply_stale_cache_cleanup'))
             result = run_app_maintenance_once(
                 triggered_by='admin_manual',
                 requested_by=admin_email,
@@ -235,6 +242,8 @@ def register_route_backend_settings(bp):
                 apply_indexing_policies=apply_indexing_policies,
                 run_document_access_backfill=payload.get('run_document_access_index_backfill'),
                 reset_document_access_backfill=bool(payload.get('reset_document_access_index_backfill', False)),
+                run_stale_cache_cleanup=payload.get('run_stale_cache_cleanup'),
+                apply_stale_cache_cleanup=apply_stale_cache_cleanup,
             )
         except Exception as exc:
             log_event(
@@ -640,6 +649,115 @@ def register_route_backend_settings(bp):
             )
             return jsonify({'error': 'Failed to load Redis monitoring status.'}), 500
 
+    @bp.route('/api/admin/settings/redis-explorer/keys', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def get_redis_explorer_admin_keys():
+        """Return a cursor-paginated Redis key page for the admin Redis Explorer."""
+        refresh_id = str(uuid.uuid4())
+        refresh_start = time.perf_counter()
+        try:
+            user = session.get('user', {})
+            admin_email = user.get('preferred_username', user.get('email', 'unknown'))
+            log_event(
+                '[RedisExplorer] Admin key page requested.',
+                extra={'refresh_id': refresh_id, 'admin_email': admin_email},
+                level=logging.INFO,
+            )
+            result = get_redis_explorer_keys(
+                get_settings(),
+                cursor=request.args.get('cursor', 0),
+                page_size=request.args.get('page_size', 25),
+                key_filter=request.args.get('filter', ''),
+                session_redis_client=current_app.config.get('SESSION_REDIS'),
+                session_type=current_app.config.get('SESSION_TYPE'),
+            )
+            log_event(
+                '[RedisExplorer] Admin key page completed.',
+                extra={
+                    'refresh_id': refresh_id,
+                    'success': result.get('success'),
+                    'status': result.get('status'),
+                    'key_count': len(result.get('keys') or []),
+                    'has_more': result.get('has_more'),
+                    'elapsed_ms': int((time.perf_counter() - refresh_start) * 1000),
+                },
+                level=logging.INFO,
+            )
+            return jsonify(result), 200 if result.get('success') else 503
+        except Exception as e:
+            log_event(
+                '[RedisExplorer] Failed to load key page.',
+                extra={
+                    'refresh_id': refresh_id,
+                    'error': str(e),
+                    'elapsed_ms': int((time.perf_counter() - refresh_start) * 1000),
+                },
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to load Redis Explorer keys.'}), 500
+
+    @bp.route('/api/admin/settings/redis-explorer/value', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def get_redis_explorer_admin_value():
+        """Return sanitized Redis key metadata and preview content for admins."""
+        refresh_id = str(uuid.uuid4())
+        refresh_start = time.perf_counter()
+        try:
+            payload = request.get_json(silent=True) or {}
+            user = session.get('user', {})
+            admin_email = user.get('preferred_username', user.get('email', 'unknown'))
+            log_event(
+                '[RedisExplorer] Admin key preview requested.',
+                extra={'refresh_id': refresh_id, 'admin_email': admin_email},
+                level=logging.INFO,
+            )
+            result = get_redis_explorer_value(
+                get_settings(),
+                key=payload.get('key'),
+                session_redis_client=current_app.config.get('SESSION_REDIS'),
+                session_type=current_app.config.get('SESSION_TYPE'),
+            )
+            status_code = 200
+            if not result.get('success'):
+                status_code = 404 if result.get('status') == 'not_found' else 503
+            log_event(
+                '[RedisExplorer] Admin key preview completed.',
+                extra={
+                    'refresh_id': refresh_id,
+                    'success': result.get('success'),
+                    'status': result.get('status'),
+                    'type': result.get('type'),
+                    'preview_restricted': result.get('preview_restricted'),
+                    'elapsed_ms': int((time.perf_counter() - refresh_start) * 1000),
+                },
+                level=logging.INFO,
+            )
+            return jsonify(result), status_code
+        except ValueError as e:
+            log_event(
+                '[RedisExplorer] Invalid key preview request.',
+                extra={'refresh_id': refresh_id, 'error': str(e)},
+                level=logging.WARNING,
+            )
+            return jsonify({'error': str(e)}), 400
+        except Exception as e:
+            log_event(
+                '[RedisExplorer] Failed to load key preview.',
+                extra={
+                    'refresh_id': refresh_id,
+                    'error': str(e),
+                    'elapsed_ms': int((time.perf_counter() - refresh_start) * 1000),
+                },
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to load Redis Explorer key preview.'}), 500
+
     @bp.route('/api/admin/settings/cosmos-throughput/status', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -657,7 +775,6 @@ def register_route_backend_settings(bp):
                 level=logging.INFO,
             )
             status = get_cosmos_throughput_status(get_settings(), include_metrics=True, refresh_id=refresh_id)
-            update_settings(build_runtime_update(status=status))
             log_event(
                 '[CosmosThroughput] Admin status refresh completed.',
                 extra={

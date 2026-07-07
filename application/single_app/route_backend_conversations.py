@@ -36,7 +36,7 @@ from functions_conversation_cache import (
     build_conversation_cache_key,
     bump_conversation_cache_version,
     get_cached_conversation_payload,
-    get_conversation_cache_ttl_seconds,
+    get_conversation_cache_settings,
     invalidate_conversation_cache_for_item,
     set_cached_conversation_payload,
 )
@@ -1014,10 +1014,15 @@ def register_route_backend_conversations(bp):
         user_id = get_current_user_id()
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
-        cache_key = build_conversation_cache_key(user_id, "list", parameters={"include_hidden": True})
-        cached_payload = get_cached_conversation_payload(cache_key)
-        if isinstance(cached_payload, dict) and isinstance(cached_payload.get('conversations'), list):
-            return jsonify(cached_payload), 200
+        settings = get_settings()
+        cache_settings = get_conversation_cache_settings(settings)
+        cache_key = None
+        if cache_settings.get('enabled'):
+            cache_key = build_conversation_cache_key(user_id, "list", parameters={"include_hidden": True})
+            if cache_key:
+                cached_payload = get_cached_conversation_payload(cache_key, settings=settings)
+                if isinstance(cached_payload, dict) and isinstance(cached_payload.get('conversations'), list):
+                    return jsonify(cached_payload), 200
 
         query = "SELECT * FROM c WHERE c.user_id = @user_id ORDER BY c.last_updated DESC"
         items = list(cosmos_conversations_container.query_items(
@@ -1029,11 +1034,13 @@ def register_route_backend_conversations(bp):
         payload = {
             'conversations': normalized_items
         }
-        set_cached_conversation_payload(
-            cache_key,
-            payload,
-            ttl_seconds=get_conversation_cache_ttl_seconds(get_settings()),
-        )
+        if cache_key:
+            set_cached_conversation_payload(
+                cache_key,
+                payload,
+                ttl_seconds=cache_settings.get('ttl_seconds'),
+                settings=settings,
+            )
         return jsonify(payload), 200
 
 
@@ -1059,6 +1066,8 @@ def register_route_backend_conversations(bp):
             source_offsets = get_conversation_feed_source_offsets(cursor_data) if cursor_is_compatible else {}
             include_priority = not cursor_is_compatible
 
+            settings = get_settings()
+            cache_settings = get_conversation_cache_settings(settings)
             access_parameters = _build_conversation_cache_access_parameters(user_id)
             feed_cache_parameters = {
                 "search_term": search_term,
@@ -1069,15 +1078,16 @@ def register_route_backend_conversations(bp):
                 "access": access_parameters,
             }
             feed_cache_key = None
-            if access_parameters is not None:
+            if cache_settings.get('enabled') and access_parameters is not None:
                 feed_cache_key = build_conversation_cache_key(
                     user_id,
                     "feed",
                     parameters=feed_cache_parameters,
                 )
-                cached_feed_payload = get_cached_conversation_payload(feed_cache_key)
-                if isinstance(cached_feed_payload, dict) and isinstance(cached_feed_payload.get('conversations'), list):
-                    return jsonify(cached_feed_payload), 200
+                if feed_cache_key:
+                    cached_feed_payload = get_cached_conversation_payload(feed_cache_key, settings=settings)
+                    if isinstance(cached_feed_payload, dict) and isinstance(cached_feed_payload.get('conversations'), list):
+                        return jsonify(cached_feed_payload), 200
 
             feed_payload = _build_conversation_feed(
                 user_id=user_id,
@@ -1093,7 +1103,8 @@ def register_route_backend_conversations(bp):
                 set_cached_conversation_payload(
                     feed_cache_key,
                     feed_payload,
-                    ttl_seconds=get_conversation_cache_ttl_seconds(get_settings()),
+                    ttl_seconds=cache_settings.get('ttl_seconds'),
+                    settings=settings,
                 )
             return jsonify(feed_payload), 200
         except Exception as exc:
@@ -1644,6 +1655,7 @@ def register_route_backend_conversations(bp):
             _, updated = normalize_chat_type(conversation_item)
             if updated:
                 cosmos_conversations_container.upsert_item(conversation_item)
+                invalidate_conversation_cache_for_item(conversation_item, reason="conversation_chat_type_normalized")
 
             linked_workspace_documents = []
             try:
@@ -1707,9 +1719,15 @@ def register_route_backend_conversations(bp):
             if conversation_item.get('user_id') != user_id:
                 return jsonify({'error': 'Forbidden'}), 403
 
-            conversation_item = clear_conversation_unread(conversation_item)
-            cosmos_conversations_container.upsert_item(conversation_item)
-            bump_conversation_cache_version(user_id, reason="conversation_marked_read")
+            conversation_state_changed = (
+                conversation_item.get('has_unread_assistant_response') is True
+                or conversation_item.get('last_unread_assistant_message_id') is not None
+                or conversation_item.get('last_unread_assistant_at') is not None
+            )
+            if conversation_state_changed:
+                conversation_item = clear_conversation_unread(conversation_item)
+                cosmos_conversations_container.upsert_item(conversation_item)
+                bump_conversation_cache_version(user_id, reason="conversation_marked_read")
 
             notifications_marked_read = mark_chat_response_notifications_read_for_conversation(
                 user_id,
@@ -1721,6 +1739,7 @@ def register_route_backend_conversations(bp):
                 'conversation_id': conversation_id,
                 'has_unread_assistant_response': False,
                 'notifications_marked_read': notifications_marked_read,
+                'conversation_state_changed': conversation_state_changed,
             }), 200
         except CosmosResourceNotFoundError:
             return jsonify({'error': 'Conversation not found'}), 404
@@ -1968,6 +1987,8 @@ def register_route_backend_conversations(bp):
                     'error': 'Search term must be at least 3 characters'
                 }), 400
 
+            settings = get_settings()
+            cache_settings = get_conversation_cache_settings(settings)
             access_parameters = _build_conversation_cache_access_parameters(user_id)
             search_cache_parameters = {
                 'search_term': search_term,
@@ -1983,15 +2004,16 @@ def register_route_backend_conversations(bp):
                 'access': access_parameters,
             }
             search_cache_key = None
-            if access_parameters is not None:
+            if cache_settings.get('enabled') and access_parameters is not None:
                 search_cache_key = build_conversation_cache_key(
                     user_id,
                     "search",
                     parameters=search_cache_parameters,
                 )
-                cached_search_payload = get_cached_conversation_payload(search_cache_key)
-                if isinstance(cached_search_payload, dict) and cached_search_payload.get('success') is True:
-                    return jsonify(cached_search_payload), 200
+                if search_cache_key:
+                    cached_search_payload = get_cached_conversation_payload(search_cache_key, settings=settings)
+                    if isinstance(cached_search_payload, dict) and cached_search_payload.get('success') is True:
+                        return jsonify(cached_search_payload), 200
             
             selected_chat_types = _expand_search_chat_type_filters(chat_types)
 
@@ -2160,7 +2182,8 @@ def register_route_backend_conversations(bp):
                 set_cached_conversation_payload(
                     search_cache_key,
                     payload,
-                    ttl_seconds=get_conversation_cache_ttl_seconds(get_settings()),
+                    ttl_seconds=cache_settings.get('ttl_seconds'),
+                    settings=settings,
                 )
             return jsonify(payload), 200
             

@@ -1705,6 +1705,15 @@ def register_route_frontend_admin_settings(bp):
                     ),
                 ),
             )
+            conversation_cache_ttl_seconds = max(
+                0,
+                parse_admin_int(
+                    form_data.get('conversation_cache_ttl_seconds'),
+                    settings.get('conversation_cache_ttl_seconds', 120),
+                    'conversation_cache_ttl_seconds',
+                    120,
+                ),
+            )
             dai_debug_enabled = bool(settings.get('enable_dai_debug', False))
             document_access_index_shadow_validation_enabled = (
                 form_data.get('enable_document_access_index_shadow_validation') == 'on'
@@ -1875,6 +1884,8 @@ def register_route_frontend_admin_settings(bp):
                 'redis_url': form_data.get('redis_url', '').strip(),
                 'redis_key': admin_secret('redis_key'),
                 'redis_auth_type': form_data.get('redis_auth_type', '').strip(),
+                'enable_conversation_cache': form_data.get('enable_conversation_cache') == 'on',
+                'conversation_cache_ttl_seconds': conversation_cache_ttl_seconds,
 
                 # Document Access Index
                 'enable_document_access_index_container': True,

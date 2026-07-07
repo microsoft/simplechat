@@ -2,12 +2,15 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 4A1 document access admin UI.
-Version: 0.250.031
+Version: 0.250.036
 Implemented in: 0.250.011
 Default read enablement updated in: 0.250.027
 Redis DAI cache dashboard updated in: 0.250.029
 Maintenance status gates updated in: 0.250.030
 DAI debug UI cleanup updated in: 0.250.031
+Conversation cache controls updated in: 0.250.033
+Conversation cache metrics updated in: 0.250.034
+Conversation mark-read cache invalidation tuned in: 0.250.035
 
 This test ensures Admin Settings exposes safe document_access_index
 operational controls, status polling hooks, manual batch execution,
@@ -70,6 +73,18 @@ def test_admin_template_exposes_safe_document_access_controls():
         "document-access-index-rolling-15m-wave5-ru-savings",
         "document-access-index-rolling-15m-validation-overhead",
         "document-access-index-rolling-15m-samples",
+        "conversation-cache-section",
+        "conversation-cache-refresh-btn",
+        "enable_conversation_cache",
+        "conversation_cache_ttl_seconds",
+        "conversation-cache-runtime-status",
+        "conversation-cache-15m-hit-rate",
+        "conversation-cache-15m-hits-misses",
+        "conversation-cache-15m-bypasses-errors",
+        "conversation-cache-15m-writes-invalidations",
+        "conversation-cache-15m-operation-counts",
+        "conversation-cache-last-event",
+        "conversation-cache-last-invalidation",
     ]
 
     for element_id in required_ids:
@@ -85,6 +100,14 @@ def test_admin_template_exposes_safe_document_access_controls():
     assert "Wave 5B default" in template
     assert "Wave 6" in template
     assert "Redis document list cache" in template
+    assert "Conversation Cache" in template
+    assert "Enable conversation cache" in template
+    assert 'name="enable_conversation_cache"' in template
+    assert 'name="conversation_cache_ttl_seconds"' in template
+    assert "Redis is optional; cache misses and disabled cache paths continue using source Cosmos queries." in template
+    assert "15m Cache Hit Rate" in template
+    assert "15m Writes / Invalidations" in template
+    assert "Phase 4" not in template[template.index('id="conversation-cache-section"'):template.index('id="document-access-index-section"')]
     assert 'name="enable_document_access_index_shadow_validation"' in template
     assert "{% if enable_dai_debug %}" in template
     assert "data-testid=\"document-access-index-debug-controls\"" in template
@@ -107,6 +130,9 @@ def test_admin_save_persists_document_access_settings():
     assert "dai_debug_enabled = bool(settings.get('enable_dai_debug', False))" in route_source
     assert "'enable_document_access_index_cache': document_access_index_cache_enabled" in route_source
     assert "'document_access_index_cache_ttl_seconds': document_access_index_cache_ttl_seconds" in route_source
+    assert "'enable_conversation_cache': form_data.get('enable_conversation_cache') == 'on'" in route_source
+    assert "'conversation_cache_ttl_seconds': conversation_cache_ttl_seconds" in route_source
+    assert "settings.get('conversation_cache_ttl_seconds', 120)" in route_source
     assert "'enable_document_access_index_shadow_validation': document_access_index_shadow_validation_enabled" in route_source
     assert "settings.get('document_access_index_cache_ttl_seconds', 900)" in route_source
     assert "if 'apply_cosmos_indexing_policies' in payload:" in backend_route_source
@@ -116,6 +142,8 @@ def test_admin_save_persists_document_access_settings():
 def test_document_access_status_contract_includes_dashboard_settings():
     """Status payload should include the flags needed by the admin dashboard."""
     index_source = _read(os.path.join("application", "single_app", "functions_document_access_index.py"))
+    maintenance_source = _read(os.path.join("application", "single_app", "functions_app_maintenance.py"))
+    conversation_cache_source = _read(os.path.join("application", "single_app", "functions_conversation_cache.py"))
 
     assert "'write_through_enabled': True" in index_source
     assert "'startup_backfill_enabled': True" in index_source
@@ -143,6 +171,12 @@ def test_document_access_status_contract_includes_dashboard_settings():
     assert "'estimated_ms_savings': None" in index_source
     assert "'estimated_wave5_ms_savings': None" in index_source
     assert "shadow_validation['rolling_metrics'] = _empty_shadow_rolling_metrics()" in index_source
+    assert "get_conversation_cache_metrics" in maintenance_source
+    assert "get_conversation_cache_settings" in maintenance_source
+    assert "'conversation_cache': {" in maintenance_source
+    assert "'metrics': get_conversation_cache_metrics()" in maintenance_source
+    assert "def get_conversation_cache_metrics()" in conversation_cache_source
+    assert "CONVERSATION_CACHE_METRIC_WINDOWS_MINUTES = (5, 15, 60)" in conversation_cache_source
 
 
 def test_admin_javascript_uses_existing_maintenance_api_safely():
@@ -167,6 +201,11 @@ def test_admin_javascript_uses_existing_maintenance_api_safely():
     assert "function getDocumentAccessIndexRollingWindow" in admin_js
     assert "function getDocumentAccessIndexReadWindow" in admin_js
     assert "document-access-index-read-15m-fallback-rate" in admin_js
+    assert "function renderConversationCacheStatus" in admin_js
+    assert "function formatConversationCacheOperationCounts" in admin_js
+    assert "conversation-cache-refresh-btn" in admin_js
+    assert "conversation-cache-15m-hit-rate" in admin_js
+    assert "conversation-cache-15m-writes-invalidations" in admin_js
     assert "document-access-index-maintenance-next-action" in admin_js
     assert "formatDocumentAccessIndexSampleSummary" in admin_js
     assert "function isDocumentAccessIndexBackfillActive" not in admin_js
@@ -178,10 +217,10 @@ def test_admin_javascript_uses_existing_maintenance_api_safely():
 
 
 def test_wave4a1_version_is_current():
-    """Config version should reflect the Wave 4A1 code change."""
+    """Config version should reflect the current cache admin UI change."""
     config_source = _read(os.path.join("application", "single_app", "config.py"))
 
-    assert 'VERSION = "0.250.031"' in config_source
+    assert 'VERSION = "0.250.036"' in config_source
 
 
 if __name__ == "__main__":

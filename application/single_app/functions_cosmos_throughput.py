@@ -2280,11 +2280,15 @@ def evaluate_and_apply_cosmos_throughput_scaling(settings, current_time=None, re
             scale_result['direction'] = decision.get('direction')
             scale_result['reason'] = decision.get('reason')
 
+        settings_update = None
+        if scale_result:
+            settings_update = build_runtime_update(status, decision, scale_result, settings=settings)
+
         return {
             'status': status,
             'decision': decision,
             'scale_result': scale_result,
-            'settings_update': build_runtime_update(status, decision, scale_result, settings=settings),
+            'settings_update': settings_update,
         }
     except Exception as exc:
         log_event(

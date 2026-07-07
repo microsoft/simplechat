@@ -49,6 +49,7 @@ from functions_collaboration import (
     persist_collaboration_message,
 )
 from functions_documents import allowed_file, create_document, process_document_upload_background, update_document
+from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
 from functions_group import (
     assert_group_role,
     check_group_status_allows_operation,
@@ -885,6 +886,7 @@ def make_group_inactive_for_current_user(
         }
     )
     updated_group_doc = cosmos_groups_container.upsert_item(group_doc)
+    bump_chat_bootstrap_global_cache_version(reason="group_marked_inactive")
 
     log_group_status_change(
         group_id=resolved_group_id,
@@ -1106,6 +1108,7 @@ def add_group_member_for_current_user(
 
     group_doc["modifiedDate"] = datetime.utcnow().isoformat()
     updated_group_doc = cosmos_groups_container.upsert_item(group_doc)
+    bump_chat_bootstrap_global_cache_version(reason="group_member_added")
 
     _log_group_member_addition(
         actor_user=current_user,

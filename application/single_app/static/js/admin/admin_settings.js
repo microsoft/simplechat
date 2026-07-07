@@ -38,6 +38,15 @@ let currentCosmosMetricsWindowMinutes = 0;
 let currentCosmosStatusLoaded = false;
 let currentCosmosContainerSort = { field: 'container_name', direction: 'asc' };
 let documentAccessIndexStatusPollId = null;
+let redisExplorerState = {
+    cursor: '0',
+    nextCursor: '0',
+    cursorHistory: [],
+    filter: '',
+    pageSize: 25,
+    loaded: false,
+    selectedKey: ''
+};
 
 const COSMOS_CONTAINER_SORT_FIELDS = new Set([
     'container_name',
@@ -1677,6 +1686,7 @@ function renderRedisMonitoringStatus(statusPayload) {
     const stats = statusPayload?.stats || {};
     const keyspace = statusPayload?.keyspace || {};
     const server = statusPayload?.server || {};
+    const daiCache = statusPayload?.dai_cache || {};
 
     let configurationText = 'Disabled';
     let configurationVariant = 'secondary';
@@ -1715,6 +1725,16 @@ function renderRedisMonitoringStatus(statusPayload) {
     setElementText('redis-monitoring-ops-per-sec', formatNumber(stats.instantaneous_ops_per_sec));
     setElementText('redis-monitoring-hit-rate', formatRedisPercent(stats.keyspace_hit_rate_percent));
     setElementText('redis-monitoring-key-count', formatNumber(keyspace.total_keys));
+    setElementText('redis-monitoring-dai-version-markers', formatNumber(daiCache.version_marker_count));
+    setElementText(
+        'redis-monitoring-dai-version-marker-expiry',
+        `${formatNumber(daiCache.version_marker_no_expiry_count)} no-expiry marker(s)`
+    );
+    setElementText('redis-monitoring-dai-payload-keys', formatNumber(daiCache.payload_key_count));
+    setElementText(
+        'redis-monitoring-dai-version-ttl-policy',
+        `Version TTL: ${formatRedisExplorerTtl(daiCache.version_marker_ttl_seconds)}`
+    );
     setElementText('redis-monitoring-expired-keys', formatNumber(stats.expired_keys));
     setElementText('redis-monitoring-evicted-keys', formatNumber(stats.evicted_keys));
     setElementText('redis-monitoring-fragmentation', formatNumber(memory.mem_fragmentation_ratio));
@@ -1764,6 +1784,340 @@ async function loadRedisMonitoringStatus(event = null, options = {}) {
     }
 }
 
+function setRedisExplorerMessage(message, variant = 'info') {
+    const messageElement = document.getElementById('redis-explorer-message');
+    if (!messageElement) {
+        return;
+    }
+
+    messageElement.textContent = message || '';
+    messageElement.className = `alert alert-${variant} small`;
+    messageElement.classList.toggle('d-none', !message);
+}
+
+function formatRedisExplorerTtl(ttlSeconds) {
+    const numericValue = Number(ttlSeconds);
+    if (Number.isNaN(numericValue)) {
+        return 'Not available';
+    }
+    if (numericValue === -2) {
+        return 'Expired or missing';
+    }
+    if (numericValue === -1) {
+        return 'No expiry';
+    }
+    return `${numericValue.toLocaleString()} sec`;
+}
+
+function formatRedisExplorerMemory(bytes) {
+    const numericValue = Number(bytes);
+    if (Number.isNaN(numericValue) || numericValue < 0) {
+        return 'Not available';
+    }
+    if (numericValue >= 1024 * 1024) {
+        return `${(numericValue / (1024 * 1024)).toLocaleString(undefined, { maximumFractionDigits: 2 })} MB`;
+    }
+    if (numericValue >= 1024) {
+        return `${(numericValue / 1024).toLocaleString(undefined, { maximumFractionDigits: 2 })} KB`;
+    }
+    return `${numericValue.toLocaleString()} bytes`;
+}
+
+
+function formatRedisExplorerResolutionLabel(resolution) {
+    if (!resolution) {
+        return '';
+    }
+    if (resolution.resolved && resolution.entity_type) {
+        const entityType = formatRedisStatus(resolution.entity_type);
+        const entityName = resolution.entity_name || resolution.entity_id || 'Unknown';
+        return `${resolution.label || 'SimpleChat entity'}: ${entityType} - ${entityName}`;
+    }
+    return resolution.label || '';
+}
+
+
+function formatRedisExplorerResolutionEntity(resolution) {
+    if (!resolution) {
+        return 'Not resolved';
+    }
+    if (!resolution.resolved) {
+        return formatRedisStatus(resolution.resolution_status || 'unresolved');
+    }
+    const parts = [];
+    if (resolution.entity_type) {
+        parts.push(`Entity: ${formatRedisStatus(resolution.entity_type)}`);
+    }
+    if (resolution.entity_name) {
+        parts.push(`Name: ${resolution.entity_name}`);
+    }
+    if (resolution.entity_status) {
+        parts.push(`Status: ${formatRedisStatus(resolution.entity_status)}`);
+    }
+    if (Number.isFinite(Number(resolution.row_count))) {
+        parts.push(`DAI rows: ${formatNumber(resolution.row_count)}`);
+    }
+    return parts.join(' | ') || 'Resolved';
+}
+
+
+function renderRedisExplorerResolution(resolution) {
+    const resolutionCard = document.getElementById('redis-explorer-resolution-card');
+    if (!resolutionCard) {
+        return;
+    }
+
+    resolutionCard.classList.toggle('d-none', !resolution);
+    if (!resolution) {
+        return;
+    }
+
+    setElementText('redis-explorer-resolution-kind', resolution.label || formatRedisStatus(resolution.kind));
+    setElementText('redis-explorer-resolution-entity', formatRedisExplorerResolutionEntity(resolution));
+    setElementText('redis-explorer-resolution-scope', resolution.scope_key || resolution.cache_hash || resolution.scope_hash || 'No reversible scope key available');
+    setElementText('redis-explorer-resolution-note', resolution.note || 'Resolved from Redis key classification.');
+}
+
+
+function setRedisExplorerPreviewVisible(isVisible) {
+    document.getElementById('redis-explorer-preview-empty')?.classList.toggle('d-none', isVisible);
+    document.getElementById('redis-explorer-preview-panel')?.classList.toggle('d-none', !isVisible);
+}
+
+function resetRedisExplorerPreview() {
+    redisExplorerState.selectedKey = '';
+    setRedisExplorerPreviewVisible(false);
+    setElementText('redis-explorer-preview-key', 'Not loaded');
+    setElementText('redis-explorer-preview-type', 'Not loaded');
+    setElementText('redis-explorer-preview-ttl', 'Not loaded');
+    setElementText('redis-explorer-preview-memory', 'Not loaded');
+    setElementText('redis-explorer-preview-redacted', 'Not loaded');
+    setElementText('redis-explorer-preview-content', 'Not loaded');
+    renderRedisExplorerResolution(null);
+}
+
+function getRedisExplorerScopeLabel() {
+    const filter = (redisExplorerState.filter || '').trim();
+    return filter ? `Filter: "${filter}"` : 'Browsing all keys';
+}
+
+function renderRedisExplorerKeys(payload) {
+    const keyList = document.getElementById('redis-explorer-key-list');
+    if (!keyList) {
+        return;
+    }
+
+    const keys = Array.isArray(payload?.keys) ? payload.keys : [];
+    keyList.replaceChildren();
+    const pageNumber = redisExplorerState.cursorHistory.length + 1;
+    setElementText(
+        'redis-explorer-key-count',
+        `${getRedisExplorerScopeLabel()} | Page ${formatNumber(pageNumber)} | ${formatNumber(keys.length)} key(s)${payload?.has_more ? ' / more available' : ''}`
+    );
+
+    if (keys.length === 0) {
+        const emptyState = document.createElement('div');
+        emptyState.className = 'list-group-item text-muted small';
+        emptyState.textContent = 'No Redis keys matched this page and filter.';
+        keyList.appendChild(emptyState);
+    } else {
+        keys.forEach(item => {
+            const keyButton = document.createElement('button');
+            keyButton.type = 'button';
+            keyButton.className = 'list-group-item list-group-item-action';
+            keyButton.setAttribute('role', 'option');
+
+            const keyName = document.createElement('div');
+            keyName.className = 'fw-semibold text-break';
+            keyName.textContent = item.key || '(empty key)';
+
+            const metadata = document.createElement('div');
+            metadata.className = 'small text-muted';
+            metadata.textContent = [
+                `Type: ${formatRedisStatus(item.type || 'unknown')}`,
+                `TTL: ${formatRedisExplorerTtl(item.ttl_seconds)}`,
+                item.preview_restricted ? 'Preview: restricted' : 'Preview: sanitized'
+            ].join(' | ');
+
+            keyButton.appendChild(keyName);
+            keyButton.appendChild(metadata);
+            const resolutionLabel = formatRedisExplorerResolutionLabel(item.resolution);
+            if (resolutionLabel) {
+                const resolutionMetadata = document.createElement('div');
+                resolutionMetadata.className = 'small text-primary';
+                resolutionMetadata.textContent = resolutionLabel;
+                keyButton.appendChild(resolutionMetadata);
+            }
+            keyButton.addEventListener('click', () => loadRedisExplorerValue(item.key, keyButton));
+            keyList.appendChild(keyButton);
+        });
+    }
+    keyList.scrollTop = 0;
+
+    redisExplorerState.nextCursor = String(payload?.next_cursor || '0');
+    document.getElementById('redis-explorer-prev-btn')?.toggleAttribute(
+        'disabled',
+        redisExplorerState.cursorHistory.length === 0
+    );
+    document.getElementById('redis-explorer-next-btn')?.toggleAttribute(
+        'disabled',
+        !payload?.has_more
+    );
+}
+
+function getRedisExplorerRequestState(options = {}) {
+    const reset = Boolean(options.reset);
+    const filterInput = document.getElementById('redis-explorer-filter');
+    const pageSizeSelect = document.getElementById('redis-explorer-page-size');
+    if (reset) {
+        redisExplorerState.cursor = '0';
+        redisExplorerState.nextCursor = '0';
+        redisExplorerState.cursorHistory = [];
+    }
+    redisExplorerState.filter = filterInput?.value || '';
+    redisExplorerState.pageSize = Number(pageSizeSelect?.value || 25);
+    return {
+        cursor: redisExplorerState.cursor,
+        filter: redisExplorerState.filter,
+        pageSize: redisExplorerState.pageSize
+    };
+}
+
+async function loadRedisExplorerKeys(options = {}) {
+    const triggerButton = options.triggerButton || null;
+    if (triggerButton) {
+        setButtonBusy(triggerButton, true, 'Loading...');
+    }
+    setRedisExplorerMessage('Loading Redis keys...', 'info');
+    resetRedisExplorerPreview();
+
+    try {
+        const requestState = getRedisExplorerRequestState(options);
+        const query = new URLSearchParams({
+            cursor: requestState.cursor,
+            page_size: String(requestState.pageSize),
+            filter: requestState.filter
+        });
+        const response = await fetch(`/api/admin/settings/redis-explorer/keys?${query.toString()}`, {
+            method: 'GET',
+            headers: { 'Accept': 'application/json' },
+            credentials: 'same-origin'
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || data.last_error || 'Failed to load Redis keys.');
+        }
+
+        renderRedisExplorerKeys(data);
+        redisExplorerState.loaded = true;
+        setRedisExplorerMessage(`${getRedisExplorerScopeLabel()} loaded. Select a key to view sanitized preview content.`, 'success');
+    } catch (error) {
+        renderRedisExplorerKeys({ keys: [], has_more: false, next_cursor: '0' });
+        setRedisExplorerMessage(error.message || 'Failed to load Redis keys.', 'danger');
+    } finally {
+        if (triggerButton) {
+            setButtonBusy(triggerButton, false);
+        }
+    }
+}
+
+async function loadRedisExplorerValue(key, triggerButton = null) {
+    if (!key) {
+        return;
+    }
+    if (triggerButton) {
+        setButtonBusy(triggerButton, true, 'Loading...');
+    }
+    setRedisExplorerMessage('Loading sanitized Redis key preview...', 'info');
+
+    try {
+        const response = await fetch('/api/admin/settings/redis-explorer/value', {
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({ key })
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || data.preview || 'Failed to load Redis key preview.');
+        }
+
+        redisExplorerState.selectedKey = key;
+        setRedisExplorerPreviewVisible(true);
+        setElementText('redis-explorer-preview-key', data.key || key);
+        setElementText('redis-explorer-preview-type', formatRedisStatus(data.type || 'unknown'));
+        setElementText('redis-explorer-preview-ttl', formatRedisExplorerTtl(data.ttl_seconds));
+        setElementText('redis-explorer-preview-memory', formatRedisExplorerMemory(data.memory_usage_bytes));
+        setElementText(
+            'redis-explorer-preview-redacted',
+            data.preview_restricted ? 'Restricted' : data.redacted ? 'Redacted' : 'Sanitized'
+        );
+        renderRedisExplorerResolution(data.resolution);
+        setElementText('redis-explorer-preview-content', data.preview || 'No preview available.');
+        const previewContent = document.getElementById('redis-explorer-preview-content');
+        if (previewContent) {
+            previewContent.scrollTop = 0;
+        }
+        setRedisExplorerMessage(
+            data.truncated ? 'Preview loaded and truncated to the safe display limit.' : 'Sanitized preview loaded.',
+            data.preview_restricted || data.redacted || data.truncated ? 'warning' : 'success'
+        );
+    } catch (error) {
+        setRedisExplorerMessage(error.message || 'Failed to load Redis key preview.', 'danger');
+    } finally {
+        if (triggerButton) {
+            setButtonBusy(triggerButton, false);
+        }
+    }
+}
+
+function setupRedisExplorerControls() {
+    const modalElement = document.getElementById('redisExplorerModal');
+    if (!modalElement) {
+        return;
+    }
+
+    modalElement.addEventListener('shown.bs.modal', () => {
+        if (!redisExplorerState.loaded) {
+            loadRedisExplorerKeys({ reset: true });
+        }
+    });
+    document.getElementById('redis-explorer-search-btn')?.addEventListener('click', event => {
+        loadRedisExplorerKeys({ reset: true, triggerButton: event.currentTarget });
+    });
+    document.getElementById('redis-explorer-browse-all-btn')?.addEventListener('click', event => {
+        const filterInput = document.getElementById('redis-explorer-filter');
+        if (filterInput) {
+            filterInput.value = '';
+        }
+        loadRedisExplorerKeys({ reset: true, triggerButton: event.currentTarget });
+    });
+    document.getElementById('redis-explorer-refresh-btn')?.addEventListener('click', event => {
+        loadRedisExplorerKeys({ triggerButton: event.currentTarget });
+    });
+    document.getElementById('redis-explorer-filter')?.addEventListener('keydown', event => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            loadRedisExplorerKeys({ reset: true });
+        }
+    });
+    document.getElementById('redis-explorer-page-size')?.addEventListener('change', () => {
+        loadRedisExplorerKeys({ reset: true });
+    });
+    document.getElementById('redis-explorer-next-btn')?.addEventListener('click', event => {
+        redisExplorerState.cursorHistory.push(redisExplorerState.cursor);
+        redisExplorerState.cursor = redisExplorerState.nextCursor || '0';
+        loadRedisExplorerKeys({ triggerButton: event.currentTarget });
+    });
+    document.getElementById('redis-explorer-prev-btn')?.addEventListener('click', event => {
+        redisExplorerState.cursor = redisExplorerState.cursorHistory.pop() || '0';
+        loadRedisExplorerKeys({ triggerButton: event.currentTarget });
+    });
+}
+
 function setupRedisMonitoringControls() {
     const section = document.getElementById('redis-monitoring-section');
     if (!section) {
@@ -1771,6 +2125,7 @@ function setupRedisMonitoringControls() {
     }
 
     document.getElementById('redis-monitoring-refresh-btn')?.addEventListener('click', loadRedisMonitoringStatus);
+    setupRedisExplorerControls();
     loadRedisMonitoringStatus(null, { showLoading: false });
 }
 
@@ -1798,13 +2153,13 @@ function formatDocumentAccessIndexStatus(value) {
 
 function getDocumentAccessIndexStatusVariant(value) {
     const normalizedValue = String(value || '').trim().toLowerCase();
-    if (['succeeded', 'skipped_completed', 'completed', 'reconciled', 'matched'].includes(normalizedValue)) {
+    if (['succeeded', 'skipped_completed', 'completed', 'dry_run_completed', 'reconciled', 'matched', 'aligned'].includes(normalizedValue)) {
         return 'success';
     }
     if (['running', 'in_progress'].includes(normalizedValue)) {
         return 'primary';
     }
-    if (['succeeded_with_errors', 'completed_with_errors', 'reconciled_with_errors', 'mismatch'].includes(normalizedValue)) {
+    if (['succeeded_with_errors', 'completed_with_errors', 'reconciled_with_errors', 'mismatch', 'missing_expected_indexes'].includes(normalizedValue)) {
         return 'warning';
     }
     if (['failed', 'error'].includes(normalizedValue)) {
@@ -1897,6 +2252,19 @@ function getDocumentAccessIndexCacheWindow(cacheMetrics, windowKey) {
     return windows[windowKey] || {};
 }
 
+function formatConversationCacheOperationCounts(operationCounts) {
+    const entries = Object.entries(operationCounts || {})
+        .filter(([, count]) => Number(count || 0) > 0)
+        .sort(([left], [right]) => left.localeCompare(right));
+    if (entries.length === 0) {
+        return 'No samples';
+    }
+
+    return entries
+        .map(([operation, count]) => `${formatDocumentAccessIndexStatus(operation)}: ${formatNumber(count)}`)
+        .join(', ');
+}
+
 function formatDocumentAccessIndexSampleSummary(windowMetrics) {
     if (!windowMetrics || Number(windowMetrics.sample_count || 0) === 0) {
         return 'No samples';
@@ -1939,6 +2307,141 @@ function formatDocumentAccessIndexLatencyWindow(windowMetrics) {
     return `${averageLatency} / ${p95Latency}`;
 }
 
+function renderConversationCacheStatus(statusPayload) {
+    const conversationCache = statusPayload?.conversation_cache || {};
+    const settings = conversationCache?.settings || {};
+    const metrics = conversationCache?.metrics || {};
+    const cache15m = getDocumentAccessIndexCacheWindow(metrics, '15m');
+    const cacheEnabled = settings.enabled !== false;
+    const ttlSeconds = Number(settings.ttl_seconds ?? 120);
+    const runtimeStatus = cacheEnabled
+        ? (ttlSeconds > 0 ? `Enabled / ${formatDocumentAccessIndexMetric(ttlSeconds, 'sec')}` : 'Enabled / Writes disabled')
+        : 'Disabled';
+
+    setDocumentAccessIndexBadge(
+        'conversation-cache-runtime-status',
+        runtimeStatus,
+        cacheEnabled ? 'success' : 'secondary'
+    );
+    setElementText(
+        'conversation-cache-15m-hit-rate',
+        formatDocumentAccessIndexPercent(cache15m.hit_rate_percent)
+    );
+    setElementText(
+        'conversation-cache-15m-hits-misses',
+        `${formatNumber(cache15m.hit_count || 0)} / ${formatNumber(cache15m.miss_count || 0)}`
+    );
+    setElementText(
+        'conversation-cache-15m-bypasses-errors',
+        `${formatNumber(cache15m.bypass_count || 0)} / ${formatNumber(cache15m.error_count || 0)}`
+    );
+    setElementText(
+        'conversation-cache-15m-writes-invalidations',
+        `${formatNumber(cache15m.write_count || 0)} / ${formatNumber(cache15m.invalidation_count || 0)}`
+    );
+    setElementText(
+        'conversation-cache-15m-operation-counts',
+        formatConversationCacheOperationCounts(cache15m.operation_counts)
+    );
+    setElementText(
+        'conversation-cache-last-event',
+        formatDocumentAccessIndexCacheEvent(metrics.last_event)
+    );
+    setElementText(
+        'conversation-cache-last-invalidation',
+        formatDocumentAccessIndexCacheEvent(metrics.last_invalidation)
+    );
+}
+
+function setCosmosMaintenanceMessage(message, variant = 'info') {
+    const messageElement = document.getElementById('cosmos-maintenance-message');
+    if (!messageElement) {
+        return;
+    }
+
+    messageElement.textContent = message || '';
+    messageElement.className = `alert alert-${variant} small mb-3`;
+    messageElement.classList.toggle('d-none', !message);
+}
+
+function getCosmosIndexingPolicyStatusText(indexingPolicy) {
+    if (!indexingPolicy || Object.keys(indexingPolicy).length === 0) {
+        return 'not_loaded';
+    }
+    if (Number(indexingPolicy.failed_container_count || 0) > 0) {
+        return 'failed';
+    }
+    if (Number(indexingPolicy.containers_missing_expected_indexes || 0) > 0) {
+        return 'missing_expected_indexes';
+    }
+    return 'aligned';
+}
+
+function formatStaleCacheCleanupCategories(categories) {
+    if (!Array.isArray(categories) || categories.length === 0) {
+        return 'No categories';
+    }
+
+    return categories
+        .map(category => {
+            const name = formatDocumentAccessIndexStatus(category.category || 'unknown');
+            const candidates = formatNumber(category.candidate_count || 0);
+            const deleted = formatNumber(category.deleted_count || 0);
+            const failed = formatNumber(category.failed_count || 0);
+            return `${name}: ${candidates} candidates / ${deleted} deleted / ${failed} failed`;
+        })
+        .join('; ');
+}
+
+function renderCosmosMaintenanceStatus(statusPayload) {
+    const indexingPolicy = statusPayload?.cosmos_indexing_policies || {};
+    const cleanup = statusPayload?.stale_cache_cleanup || {};
+    const indexingStatus = getCosmosIndexingPolicyStatusText(indexingPolicy);
+    const cleanupStatus = cleanup.status || 'not_run';
+
+    setDocumentAccessIndexBadge(
+        'cosmos-indexing-policy-status',
+        formatDocumentAccessIndexStatus(indexingStatus),
+        getDocumentAccessIndexStatusVariant(indexingStatus)
+    );
+    setElementText('cosmos-indexing-policy-mode', formatDocumentAccessIndexStatus(indexingPolicy.mode || 'not_loaded'));
+    setElementText('cosmos-indexing-policy-container-count', formatNumber(indexingPolicy.container_count || 0));
+    setElementText(
+        'cosmos-indexing-policy-missing-count',
+        formatNumber(indexingPolicy.containers_missing_expected_indexes || 0)
+    );
+    setElementText('cosmos-indexing-policy-updated-count', formatNumber(indexingPolicy.updated_container_count || 0));
+    setElementText('cosmos-indexing-policy-failed-count', formatNumber(indexingPolicy.failed_container_count || 0));
+    setElementText('cosmos-indexing-policy-last-evaluated', indexingPolicy.evaluated_at || 'Not loaded');
+
+    setDocumentAccessIndexBadge(
+        'stale-cache-cleanup-status',
+        formatDocumentAccessIndexStatus(cleanupStatus),
+        getDocumentAccessIndexStatusVariant(cleanupStatus)
+    );
+    setElementText('stale-cache-cleanup-mode', formatDocumentAccessIndexStatus(cleanup.mode || 'not_run'));
+    setElementText('stale-cache-cleanup-candidates', formatNumber(cleanup.candidate_count || 0));
+    setElementText('stale-cache-cleanup-deleted', formatNumber(cleanup.deleted_count || 0));
+    setElementText('stale-cache-cleanup-failed', formatNumber(cleanup.failed_count || 0));
+    setElementText('stale-cache-cleanup-more-candidates', cleanup.has_more_candidates ? 'Yes' : 'No');
+    setElementText('stale-cache-cleanup-categories', formatStaleCacheCleanupCategories(cleanup.categories));
+    setElementText('stale-cache-cleanup-last-evaluated', cleanup.evaluated_at || 'Not run yet');
+}
+
+function getStaleCacheCleanupStatusFromRunResult(result) {
+    const cleanupStep = Array.isArray(result?.steps)
+        ? result.steps.find(step => step?.name === 'stale_cache_document_cleanup')
+        : null;
+    return cleanupStep?.results || null;
+}
+
+function getCosmosIndexingPolicyStatusFromRunResult(result) {
+    const indexingStep = Array.isArray(result?.steps)
+        ? result.steps.find(step => step?.name === 'cosmos_indexing_policy_maintenance')
+        : null;
+    return indexingStep?.results || null;
+}
+
 function getNormalizedDocumentAccessIndexStatus(status) {
     return String(status || '').trim().toLowerCase();
 }
@@ -1973,6 +2476,19 @@ function getDocumentAccessIndexBackfillStatusFromRunResult(result) {
         ? result.steps.find(step => step?.name === 'document_access_index_backfill')
         : null;
     return backfillStep?.results?.current_status || null;
+}
+
+async function fetchAppMaintenanceStatus(errorMessage = 'Failed to load app maintenance status.') {
+    const response = await fetch('/api/admin/settings/app-maintenance/status', {
+        method: 'GET',
+        headers: { 'Accept': 'application/json' },
+        credentials: 'same-origin'
+    });
+    const data = await response.json();
+    if (!response.ok) {
+        throw new Error(data.error || errorMessage);
+    }
+    return data;
 }
 
 function renderDocumentAccessIndexStatus(statusPayload) {
@@ -2166,31 +2682,182 @@ function renderDocumentAccessIndexStatus(statusPayload) {
 async function loadDocumentAccessIndexStatus(event = null, options = {}) {
     const showLoading = options.showLoading !== false;
     const triggerButton = event?.currentTarget || (showLoading ? document.getElementById('document-access-index-refresh-btn') : null);
+    const isConversationCacheTrigger = triggerButton?.id === 'conversation-cache-refresh-btn';
     if (triggerButton) {
         setButtonBusy(triggerButton, true, 'Loading...');
     }
     if (showLoading) {
-        setDocumentAccessIndexMessage('Loading document access index status...', 'info');
+        setDocumentAccessIndexMessage(
+            isConversationCacheTrigger ? 'Loading conversation cache metrics...' : 'Loading document access index status...',
+            'info'
+        );
     }
 
     try {
-        const response = await fetch('/api/admin/settings/app-maintenance/status', {
-            method: 'GET',
-            headers: { 'Accept': 'application/json' },
-            credentials: 'same-origin'
-        });
-        const data = await response.json();
-        if (!response.ok) {
-            throw new Error(data.error || 'Failed to load document access index status.');
-        }
+        const data = await fetchAppMaintenanceStatus('Failed to load document access index status.');
 
         renderDocumentAccessIndexStatus(data);
+        renderConversationCacheStatus(data);
+        renderCosmosMaintenanceStatus(data);
         if (showLoading) {
-            setDocumentAccessIndexMessage('Document access index status loaded.', 'success');
+            setDocumentAccessIndexMessage(
+                isConversationCacheTrigger ? 'Conversation cache metrics loaded.' : 'Document access index status loaded.',
+                'success'
+            );
         }
     } catch (error) {
-        setDocumentAccessIndexMessage(error.message || 'Failed to load document access index status.', 'danger');
+        setDocumentAccessIndexMessage(
+            error.message || (
+                isConversationCacheTrigger
+                    ? 'Failed to load conversation cache metrics.'
+                    : 'Failed to load document access index status.'
+            ),
+            'danger'
+        );
         stopDocumentAccessIndexPolling();
+    } finally {
+        if (triggerButton) {
+            setButtonBusy(triggerButton, false);
+        }
+    }
+}
+
+async function loadCosmosMaintenanceStatus(event = null, options = {}) {
+    const showLoading = options.showLoading !== false;
+    const triggerButton = event?.currentTarget || (showLoading ? document.getElementById('cosmos-maintenance-refresh-btn') : null);
+    if (triggerButton) {
+        setButtonBusy(triggerButton, true, 'Loading...');
+    }
+    if (showLoading) {
+        setCosmosMaintenanceMessage('Loading Cosmos maintenance status...', 'info');
+    }
+
+    try {
+        const data = await fetchAppMaintenanceStatus('Failed to load Cosmos maintenance status.');
+        renderDocumentAccessIndexStatus(data);
+        renderConversationCacheStatus(data);
+        renderCosmosMaintenanceStatus(data);
+        if (showLoading) {
+            setCosmosMaintenanceMessage('Cosmos maintenance status loaded.', 'success');
+        }
+    } catch (error) {
+        setCosmosMaintenanceMessage(error.message || 'Failed to load Cosmos maintenance status.', 'danger');
+    } finally {
+        if (triggerButton) {
+            setButtonBusy(triggerButton, false);
+        }
+    }
+}
+
+async function runStaleCacheCleanup(options = {}) {
+    const applyChanges = Boolean(options.applyChanges);
+    const triggerButton = options.triggerButton || document.getElementById(
+        applyChanges ? 'stale-cache-cleanup-apply-confirm-btn' : 'stale-cache-cleanup-dry-run-btn'
+    );
+    if (triggerButton) {
+        setButtonBusy(triggerButton, true, applyChanges ? 'Deleting...' : 'Scanning...');
+    }
+    setCosmosMaintenanceMessage(
+        applyChanges ? 'Deleting one bounded batch of stale cache documents...' : 'Scanning for stale cache cleanup candidates...',
+        'info'
+    );
+
+    try {
+        const response = await fetch('/api/admin/settings/app-maintenance/run', {
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+                apply_cosmos_indexing_policies: false,
+                run_document_access_index_backfill: false,
+                run_stale_cache_cleanup: true,
+                apply_stale_cache_cleanup: applyChanges
+            })
+        });
+        const data = await response.json();
+        const cleanupResult = getStaleCacheCleanupStatusFromRunResult(data);
+        if (cleanupResult) {
+            renderCosmosMaintenanceStatus({ stale_cache_cleanup: cleanupResult });
+        }
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Stale cache cleanup failed.');
+        }
+
+        const candidates = formatNumber(cleanupResult?.candidate_count || 0);
+        const deleted = formatNumber(cleanupResult?.deleted_count || 0);
+        const message = applyChanges
+            ? `Stale cache cleanup deleted ${deleted} document(s) from ${candidates} candidate(s).`
+            : `Stale cache cleanup dry run found ${candidates} candidate document(s).`;
+        setCosmosMaintenanceMessage(message, cleanupResult?.has_more_candidates ? 'warning' : 'success');
+        showToast(message, cleanupResult?.has_more_candidates ? 'warning' : 'success');
+
+        const modalElement = document.getElementById('staleCacheCleanupApplyModal');
+        if (applyChanges && modalElement) {
+            bootstrap.Modal.getInstance(modalElement)?.hide();
+        }
+        await loadCosmosMaintenanceStatus(null, { showLoading: false });
+    } catch (error) {
+        setCosmosMaintenanceMessage(error.message || 'Stale cache cleanup failed.', 'danger');
+        showToast(error.message || 'Stale cache cleanup failed.', 'danger');
+    } finally {
+        if (triggerButton) {
+            setButtonBusy(triggerButton, false);
+        }
+    }
+}
+
+async function runCosmosIndexingPolicyApply(options = {}) {
+    const triggerButton = options.triggerButton || document.getElementById('cosmos-indexing-policy-apply-confirm-btn');
+    if (triggerButton) {
+        setButtonBusy(triggerButton, true, 'Applying...');
+    }
+    setCosmosMaintenanceMessage(
+        'Submitting missing Cosmos composite index updates. Index transformation may continue asynchronously in Azure Cosmos DB.',
+        'info'
+    );
+
+    try {
+        const response = await fetch('/api/admin/settings/app-maintenance/run', {
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+                apply_cosmos_indexing_policies: true,
+                run_document_access_index_backfill: false,
+                run_stale_cache_cleanup: false
+            })
+        });
+        const data = await response.json();
+        const indexingResult = getCosmosIndexingPolicyStatusFromRunResult(data);
+        if (indexingResult) {
+            renderCosmosMaintenanceStatus({ cosmos_indexing_policies: indexingResult });
+        }
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Cosmos indexing policy update failed.');
+        }
+
+        const updated = formatNumber(indexingResult?.updated_container_count || 0);
+        const missing = formatNumber(indexingResult?.containers_missing_expected_indexes || 0);
+        const message = Number(indexingResult?.updated_container_count || 0) > 0
+            ? `Cosmos indexing policy update submitted for ${updated} container(s). Refresh later to monitor transformation status.`
+            : `Cosmos indexing policies are already aligned. Missing expected indexes: ${missing}.`;
+        setCosmosMaintenanceMessage(message, 'success');
+        showToast(message, 'success');
+
+        const modalElement = document.getElementById('cosmosIndexingPolicyApplyModal');
+        if (modalElement) {
+            bootstrap.Modal.getInstance(modalElement)?.hide();
+        }
+        await loadCosmosMaintenanceStatus(null, { showLoading: false });
+    } catch (error) {
+        setCosmosMaintenanceMessage(error.message || 'Cosmos indexing policy update failed.', 'danger');
+        showToast(error.message || 'Cosmos indexing policy update failed.', 'danger');
     } finally {
         if (triggerButton) {
             setButtonBusy(triggerButton, false);
@@ -2269,6 +2936,7 @@ function setupDocumentAccessIndexControls() {
     }
 
     document.getElementById('document-access-index-refresh-btn')?.addEventListener('click', loadDocumentAccessIndexStatus);
+    document.getElementById('conversation-cache-refresh-btn')?.addEventListener('click', loadDocumentAccessIndexStatus);
     document.getElementById('document-access-index-run-batch-btn')?.addEventListener('click', event => {
         runDocumentAccessIndexBackfillBatch({ triggerButton: event.currentTarget });
     });
@@ -2276,6 +2944,24 @@ function setupDocumentAccessIndexControls() {
         runDocumentAccessIndexBackfillBatch({ reset: true, triggerButton: event.currentTarget });
     });
     loadDocumentAccessIndexStatus(null, { showLoading: false });
+}
+
+function setupCosmosMaintenanceControls() {
+    const section = document.getElementById('cosmos-maintenance-section');
+    if (!section) {
+        return;
+    }
+
+    document.getElementById('cosmos-maintenance-refresh-btn')?.addEventListener('click', loadCosmosMaintenanceStatus);
+    document.getElementById('cosmos-indexing-policy-apply-confirm-btn')?.addEventListener('click', event => {
+        runCosmosIndexingPolicyApply({ triggerButton: event.currentTarget });
+    });
+    document.getElementById('stale-cache-cleanup-dry-run-btn')?.addEventListener('click', event => {
+        runStaleCacheCleanup({ applyChanges: false, triggerButton: event.currentTarget });
+    });
+    document.getElementById('stale-cache-cleanup-apply-confirm-btn')?.addEventListener('click', event => {
+        runStaleCacheCleanup({ applyChanges: true, triggerButton: event.currentTarget });
+    });
 }
 
 function setupCosmosThroughputControls() {
@@ -3656,6 +4342,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setupChunkSizeControls();
 
     setupRedisMonitoringControls();
+    setupCosmosMaintenanceControls();
     setupDocumentAccessIndexControls();
     setupCosmosThroughputControls();
     

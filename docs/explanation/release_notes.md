@@ -2,6 +2,137 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.044)**
+
+#### New Features
+
+*   **Development Requirements Overlay**
+    *   Added a root `requirements-dev.txt` for test and development-only Python dependencies that are not already included in the base app requirements.
+    *   The overlay includes pytest, pytest Playwright integration, and Azure Playwright management support so local validation can be installed without duplicating the production dependency set.
+    *   (Ref: `requirements-dev.txt`, testing dependencies, local development setup)
+
+### **(v0.250.043)**
+
+#### New Features
+
+*   **Redis Explorer SimpleChat Resolution**
+    *   Redis Explorer now resolves `DAI_LIST_CACHE_VERSION:{hash}` keys to safe SimpleChat scope metadata when possible, including user/group/public workspace identity, workspace name/status, DAI row counts, and source/access-role summaries.
+    *   Added DAI cache hygiene counters to Redis Monitoring for payload keys, version markers, no-expiry markers, and the active version-marker TTL policy.
+    *   (Ref: `functions_redis_monitoring.py`, `functions_document_access_index.py`, `admin_settings.html`, `admin_settings.js`, `REDIS_EXPLORER.md`)
+
+#### Bug Fixes
+
+*   **DAI Redis Version Marker TTL Hygiene**
+    *   DAI Redis version marker keys now receive a bounded TTL that outlives DAI payload cache entries instead of remaining in Redis indefinitely.
+    *   Marker TTLs refresh on DAI cache reads, cache invalidations, and app-maintenance hygiene; existing no-expiry markers are repaired in place rather than deleted.
+    *   With the current 900-second DAI payload TTL, version markers are refreshed to 3,600 seconds.
+    *   (Ref: DAI Redis cache version markers, `refresh_document_access_cache_version_marker_ttls`, app maintenance)
+
+### **(v0.250.041)**
+
+#### User Interface Enhancements
+
+*   **Redis Explorer Browse-All Layout**
+    *   Improved Redis Explorer with a fixed-height modal where the key list and sanitized preview pane scroll independently, keeping pagination controls and selected preview context easier to use.
+    *   Added an explicit Browse All action, clearer Apply Filter and Previous Page/Next Page controls, page/scope status text, and guidance for app settings cache key names such as `APP_SETTINGS_CACHE`.
+    *   (Ref: `REDIS_EXPLORER.md`, `admin_settings.html`, `admin_settings.js`, Redis Explorer)
+
+### **(v0.250.040)**
+
+#### New Features
+
+*   **Redis Explorer**
+    *   Added an admin-only Redis Explorer in Admin Settings > Scale > Redis Monitoring for read-only, cursor-paginated Redis key browsing with substring filtering and page-size controls.
+    *   Admins can select a key to view sanitized metadata and bounded preview content; session, token, cookie, credential, password, secret, authorization, and CSRF-like keys return restricted previews.
+    *   JSON previews redact sensitive fields and all browser rendering uses text-safe DOM updates.
+    *   (Ref: `REDIS_EXPLORER.md`, `functions_redis_monitoring.py`, `route_backend_settings.py`, `admin_settings.html`, `admin_settings.js`)
+
+### **(v0.250.039)**
+
+#### New Features
+
+*   **Phase 9 Cosmos Performance Runbooks**
+    *   Added support guidance for rebuilding caches, rebuilding the Document Access Index, cleaning stale operational cache documents, applying expected Cosmos composite indexes, interpreting shadow validation diffs, and interpreting DAI fallback/cache metrics.
+    *   Documented when broad source fallback should remain available while DAI repair, backfill, Redis cache, and production fallback telemetry stabilize.
+    *   (Ref: `COSMOS_PERFORMANCE_OPTIMIZATION_PLAN.md`, Cosmos maintenance, DAI runbooks)
+
+#### User Interface Enhancements
+
+*   **Guarded Cosmos Index Apply Action**
+    *   Added an Admin Settings > Scale > Cosmos Maintenance action for applying missing expected Cosmos composite indexes through the existing app-maintenance endpoint.
+    *   The confirmation modal explains that updates are additive and preserve existing indexing policy paths, but can add write-index overhead and trigger asynchronous Cosmos index transformation.
+    *   (Ref: `admin_settings.html`, `admin_settings.js`, `functions_cosmos_indexing.py`, app maintenance)
+
+### **(v0.250.037)**
+
+#### Bug Fixes
+
+*   **Settings Container RU Write Suppression**
+    *   Reduced idle Cosmos DB `settings` container RU consumption by stopping routine status refreshes, no-op autoscale checks, and generic settings writes from creating unrelated cache/version churn.
+    *   Conversation cache versioning and volatile chat bootstrap/conversation payloads now require Redis; when Redis is unavailable, the app bypasses those caches and falls back to source Cosmos query behavior instead of writing cache artifacts to `settings`.
+    *   Document Access Index status now uses short-lived in-process state caching and skips shadow-validation state reads when shadow validation is disabled.
+    *   Post-deploy validation showed `settings` dropped out of the top normalized RU consumers during idle monitoring.
+    *   (Ref: `functions_settings.py`, `functions_cosmos_throughput.py`, `functions_shared_cache.py`, `functions_conversation_cache.py`, `functions_document_access_index.py`, `SETTINGS_CONTAINER_RU_WRITE_SUPPRESSION_FIX.md`)
+
+### **(v0.250.035)**
+
+#### Bug Fixes
+
+*   **Conversation Cache Mark-Read Invalidation Tuning**
+    *   Normal conversation switching now skips mark-read requests when the client has no unread assistant-response state, reducing unnecessary conversation feed cache invalidations during page reloads and navigation.
+    *   The mark-read API now only upserts the conversation and bumps the user-scoped conversation cache version when unread conversation fields actually changed; notification clearing remains intact.
+    *   (Ref: conversation cache invalidation, mark-read flow, `chat-conversations.js`, `route_backend_conversations.py`, `test_conversations_read_ownership_authorization.py`)
+
+### **(v0.250.034)**
+
+#### New Features
+
+*   **Conversation Cache Metrics Dashboard**
+    *   Added DAI-style rolling metrics for conversation list, feed, and advanced-search cache activity, including 15-minute hit rate, hits/misses, bypasses/errors, writes/invalidations, operation mix, last cache event, and last invalidation.
+    *   Exposed normalized conversation cache settings and metrics through app maintenance status without adding Cosmos reads to the conversation hot path.
+    *   Removed the Phase 4 badge from the Conversation Cache card now that the feature is part of the operational dashboard.
+    *   (Ref: conversation cache metrics, `functions_conversation_cache.py`, `functions_app_maintenance.py`, `admin_settings.html`, `admin_settings.js`)
+
+### **(v0.250.033)**
+
+#### New Features
+
+*   **Phase 4 Conversation Cache Hardening**
+    *   Hardened conversation list, feed, and advanced-search caching behind an explicit `enable_conversation_cache` setting.
+    *   Added Admin Settings > Scale controls for enabling conversation cache and adjusting the conversation cache TTL without requiring direct Cosmos settings edits.
+    *   Redis remains optional: enabled cache paths use the shared Redis-first/Cosmos-fallback helper, while disabled cache paths bypass cache reads and writes and continue using source Cosmos queries.
+    *   Conversation cache entries remain user-scoped and versioned, with collaboration-aware feed/search fingerprints based on the user's group-access state.
+    *   (Ref: conversation cache, optional Redis fallback, `functions_conversation_cache.py`, `route_backend_conversations.py`, `admin_settings.html`)
+
+#### Bug Fixes
+
+*   **Conversation Cache Invalidation Coverage**
+    *   Added cache invalidation after metadata reads normalize and persist legacy/missing `chat_type` values so cached list/search payloads do not remain stale.
+    *   Updated conversation cache and ownership authorization regressions to cover disabled-cache bypass, source fallback, and route wiring.
+    *   (Ref: conversation metadata normalization, cache invalidation, `test_cosmos_wave2b_conversation_cache.py`, `test_conversations_read_ownership_authorization.py`)
+
+### **(v0.250.032)**
+
+#### New Features
+
+*   **Phase 3 Low-Churn Cache Hardening**
+    *   Hardened the shared low-churn cache foundation for custom pages/navigation and chat bootstrap data.
+    *   Added safe shared-cache diagnostics for hit, miss, write, delete, and version-bump activity using hashed cache-key context, and exposed those metrics through app maintenance status.
+    *   Expanded chat bootstrap cache invalidation coverage across group and public workspace metadata, membership, role, ownership, status, model endpoint, Control Center, and SimpleChat operation mutations.
+    *   (Ref: shared cache metrics, chat bootstrap cache, custom pages cache, `functions_shared_cache.py`, `functions_app_maintenance.py`)
+
+#### Bug Fixes
+
+*   **Low-Churn Cache Invalidation Coverage**
+    *   Fixed stale chat bootstrap labels after group rename/update paths by invalidating the global chat bootstrap cache after successful group metadata writes.
+    *   Custom pages/navigation cache now invalidates after app settings writes so menu and feature-setting changes do not wait for TTL expiry.
+    *   (Ref: group metadata updates, custom page settings invalidation, `route_backend_groups.py`, `functions_settings.py`)
+
+*   **Public Workspace Document Manager Approval**
+    *   Fixed document-manager request approval so the manager addition and pending-request cleanup are persisted in a single workspace update instead of risking a stale overwrite.
+    *   The approval and rejection flows now invalidate chat bootstrap cache state for public workspace visibility updates.
+    *   (Ref: public workspace document managers, `functions_public_workspaces.py`, `test_cosmos_wave2a_chat_bootstrap_cache.py`)
+
 ### **(v0.250.030)**
 
 #### New Features

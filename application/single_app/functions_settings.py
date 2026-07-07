@@ -731,20 +731,8 @@ def _refresh_app_settings_cache_after_write(settings_payload, context="app_setti
                 level=logging.WARNING
             )
 
-    try:
-        from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
-        bump_chat_bootstrap_global_cache_version(reason=f"settings_write:{context}")
-    except Exception as bootstrap_cache_error:
-        log_event(
-            "Chat bootstrap cache invalidation failed after settings write.",
-            extra={
-                "context": context,
-                "error": str(bootstrap_cache_error)
-            },
-            level=logging.WARNING
-        )
-
     _update_cache("after_version_bump")
+
 
 def get_settings(use_cosmos=False, include_source=False):
     import secrets
@@ -943,6 +931,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'document_access_index_cache_ttl_seconds': 900,
         'custom_pages_nav_cache_ttl_seconds': 60,
         'chat_bootstrap_cache_ttl_seconds': 300,
+        'enable_conversation_cache': True,
         'conversation_cache_ttl_seconds': 120,
 
         # Cosmos DB Throughput Scale Settings

@@ -2,15 +2,20 @@
 """
 UI test for Admin Settings document access index operations.
 
-Version: 0.250.031
+Version: 0.250.045
 Implemented in: 0.250.011
 Default read enablement updated in: 0.250.027
 Redis DAI cache dashboard updated in: 0.250.029
 DAI debug UI cleanup updated in: 0.250.031
+Conversation cache metrics updated in: 0.250.034
+Cosmos maintenance cleanup updated in: 0.250.038
+Cosmos index apply action updated in: 0.250.039
+Scale left navigation updated in: 0.250.045
 
 This test ensures the Scale tab exposes the DAI operations dashboard,
 automatic maintenance status, production read metrics, default-hidden debug
-controls, optional shadow validation, and Wave 6 Redis DAI cache metrics.
+controls, optional shadow validation, Wave 6 Redis DAI cache metrics, and
+conversation cache metrics.
 """
 
 import re
@@ -35,6 +40,18 @@ ADMIN_SIDEBAR_JS = REPO_ROOT / "application" / "single_app" / "static" / "js" / 
 def _extract_document_access_index_markup(template):
     start = template.index('<div class="card p-3 mb-3" id="document-access-index-section"')
     end = template.index('<div class="card p-3 mb-3" id="cosmos-throughput-section"', start)
+    return template[start:end]
+
+
+def _extract_cosmos_maintenance_markup(template):
+    start = template.index('<div class="card p-3 mb-3" id="cosmos-maintenance-section"')
+    end = template.index('<div class="card p-3 mb-3" id="cosmos-throughput-section"', start)
+    return template[start:end]
+
+
+def _extract_conversation_cache_markup(template):
+    start = template.index('<div class="card p-3 mb-3" id="conversation-cache-section"')
+    end = template.index('<div class="card p-3 mb-3" id="document-access-index-section"', start)
     return template[start:end]
 
 
@@ -94,6 +111,59 @@ def _render_document_access_index_markup(template, enable_dai_debug=False):
     return re.sub(r"\{\{[^}]*\}\}", "", markup)
 
 
+def _render_conversation_cache_markup(template):
+    markup = _extract_conversation_cache_markup(template)
+    replacements = {
+        "{% if settings.enable_conversation_cache | default(true) %}checked{% endif %}": "checked",
+        "{{ settings.conversation_cache_ttl_seconds | default(120) }}": "120",
+    }
+    for old_value, new_value in replacements.items():
+        markup = markup.replace(old_value, new_value)
+    markup = re.sub(r"\{\%[^%]*\%\}", "", markup)
+    return re.sub(r"\{\{[^}]*\}\}", "", markup)
+
+
+def _render_cosmos_maintenance_markup(template):
+    markup = _extract_cosmos_maintenance_markup(template)
+    markup = re.sub(r"\{\%[^%]*\%\}", "", markup)
+    return re.sub(r"\{\{[^}]*\}\}", "", markup)
+
+
+@pytest.mark.ui
+def test_admin_conversation_cache_dashboard_renders_safe_metrics():
+    """Validate the conversation cache dashboard markup and accessible controls."""
+    if sync_playwright is None or expect is None:
+        pytest.skip("Install playwright to run this UI test.")
+
+    template = ADMIN_TEMPLATE.read_text(encoding="utf-8")
+    card_html = _render_conversation_cache_markup(template)
+
+    playwright_context = sync_playwright().start()
+    browser = playwright_context.chromium.launch()
+    page = browser.new_page(viewport={"width": 1280, "height": 900})
+
+    try:
+        page.set_content(f"<main>{card_html}</main>")
+        section = page.locator("#conversation-cache-section")
+        expect(section).to_be_visible()
+        expect(section.get_by_text("Conversation Cache")).to_be_visible()
+        expect(page.get_by_role("button", name="Refresh Metrics")).to_be_visible()
+        expect(page.get_by_label("Enable conversation cache")).to_be_checked()
+        expect(page.get_by_label("Cache TTL Seconds")).to_have_value("120")
+        expect(section.get_by_text("Runtime Status")).to_be_visible()
+        expect(section.get_by_text("15m Cache Hit Rate")).to_be_visible()
+        expect(section.get_by_text("15m Cache Hits / Misses")).to_be_visible()
+        expect(section.get_by_text("15m Cache Bypasses / Errors")).to_be_visible()
+        expect(section.get_by_text("15m Writes / Invalidations")).to_be_visible()
+        expect(section.get_by_text("15m Operation Mix")).to_be_visible()
+        expect(section.get_by_text("Last Cache Event")).to_be_visible()
+        expect(section.get_by_text("Last Invalidation")).to_be_visible()
+        expect(section.get_by_text("Phase 4")).to_have_count(0)
+    finally:
+        browser.close()
+        playwright_context.stop()
+
+
 @pytest.mark.ui
 def test_admin_document_access_index_dashboard_renders_safe_controls():
     """Validate the document access index dashboard markup and accessible controls."""
@@ -112,7 +182,7 @@ def test_admin_document_access_index_dashboard_renders_safe_controls():
         section = page.locator("#document-access-index-section")
         expect(section).to_be_visible()
         expect(section.get_by_text("Cosmos Document Access Index")).to_be_visible()
-        expect(page.get_by_role("button", name="Refresh Status")).to_be_visible()
+        expect(section.get_by_role("button", name="Refresh Status")).to_be_visible()
         expect(page.get_by_role("button", name="Run One Backfill Batch")).to_have_count(0)
         expect(page.get_by_role("button", name="Reset Checkpoint")).to_have_count(0)
         expect(page.get_by_label("Write-through projection")).to_have_count(0)
@@ -182,12 +252,83 @@ def test_admin_document_access_index_debug_mode_renders_hidden_controls():
         playwright_context.stop()
 
 
+@pytest.mark.ui
+def test_admin_cosmos_maintenance_dashboard_renders_safe_controls():
+    """Validate the Cosmos maintenance dashboard markup and cleanup actions."""
+    if sync_playwright is None or expect is None:
+        pytest.skip("Install playwright to run this UI test.")
+
+    template = ADMIN_TEMPLATE.read_text(encoding="utf-8")
+    card_html = _render_cosmos_maintenance_markup(template)
+
+    playwright_context = sync_playwright().start()
+    browser = playwright_context.chromium.launch()
+    page = browser.new_page(viewport={"width": 1280, "height": 900})
+
+    try:
+        page.set_content(f"<main>{card_html}</main>")
+        section = page.locator("#cosmos-maintenance-section")
+        expect(section).to_be_visible()
+        expect(section.get_by_text("Cosmos Maintenance")).to_be_visible()
+        expect(page.get_by_role("button", name="Refresh Status")).to_be_visible()
+        expect(page.get_by_role("button", name="Apply Missing Indexes")).to_be_visible()
+        expect(page.get_by_role("button", name="Dry Run Cleanup")).to_be_visible()
+        expect(page.get_by_role("button", name="Delete Stale Cache Docs")).to_be_visible()
+        expect(section.get_by_text("Indexing Policy Status")).to_be_visible()
+        expect(section.get_by_text("Missing Expected Indexes")).to_be_visible()
+        expect(section.get_by_text("Composite indexes can increase write-index overhead")).to_be_visible()
+        expect(section.get_by_text("Stale Cleanup Status")).to_be_visible()
+        expect(section.get_by_text("Cleanup Categories")).to_be_visible()
+        expect(page.locator("#cosmosIndexingPolicyApplyModal")).to_be_attached()
+        expect(page.locator("#cosmos-indexing-policy-apply-confirm-btn")).to_be_attached()
+        expect(page.locator("#staleCacheCleanupApplyModal")).to_be_attached()
+        expect(page.locator("#stale-cache-cleanup-apply-confirm-btn")).to_be_attached()
+    finally:
+        browser.close()
+        playwright_context.stop()
+
+
 def test_admin_document_access_index_dashboard_wiring_contract():
     """Validate static ids, endpoint wiring, and Wave 5B field exposure."""
     template = ADMIN_TEMPLATE.read_text(encoding="utf-8")
     source = ADMIN_JS.read_text(encoding="utf-8")
 
     required_ids = [
+        "conversation-cache-section",
+        "conversation-cache-refresh-btn",
+        "conversation-cache-runtime-status",
+        "conversation-cache-15m-hit-rate",
+        "conversation-cache-15m-hits-misses",
+        "conversation-cache-15m-bypasses-errors",
+        "conversation-cache-15m-writes-invalidations",
+        "conversation-cache-15m-operation-counts",
+        "conversation-cache-last-event",
+        "conversation-cache-last-invalidation",
+        "cosmos-maintenance-section",
+        "cosmos-maintenance-refresh-btn",
+        "cosmos-maintenance-message",
+        "cosmos-indexing-policy-status",
+        "cosmos-indexing-policy-mode",
+        "cosmos-indexing-policy-container-count",
+        "cosmos-indexing-policy-missing-count",
+        "cosmos-indexing-policy-updated-count",
+        "cosmos-indexing-policy-failed-count",
+        "cosmos-indexing-policy-last-evaluated",
+        "cosmos-indexing-policy-apply-btn",
+        "cosmosIndexingPolicyApplyModal",
+        "cosmos-indexing-policy-apply-confirm-btn",
+        "stale-cache-cleanup-dry-run-btn",
+        "stale-cache-cleanup-apply-btn",
+        "stale-cache-cleanup-status",
+        "stale-cache-cleanup-mode",
+        "stale-cache-cleanup-candidates",
+        "stale-cache-cleanup-deleted",
+        "stale-cache-cleanup-failed",
+        "stale-cache-cleanup-more-candidates",
+        "stale-cache-cleanup-categories",
+        "stale-cache-cleanup-last-evaluated",
+        "staleCacheCleanupApplyModal",
+        "stale-cache-cleanup-apply-confirm-btn",
         "document-access-index-section",
         "document-access-index-refresh-btn",
         "document-access-index-run-batch-btn",
@@ -235,6 +376,9 @@ def test_admin_document_access_index_dashboard_wiring_contract():
     for element_id in required_ids:
         assert f'id="{element_id}"' in template
 
+    rendered_conversation_cache = _render_conversation_cache_markup(template)
+    assert "Phase 4" not in rendered_conversation_cache
+    assert "Conversation cache metrics are lightweight in-process counters" in rendered_conversation_cache
     rendered_default = _render_document_access_index_markup(template, enable_dai_debug=False)
     assert 'id="document-access-index-run-batch-btn"' not in rendered_default
     assert 'id="enable_document_access_index_shadow_validation"' not in rendered_default
@@ -265,6 +409,20 @@ def test_admin_document_access_index_dashboard_wiring_contract():
     assert "function getDocumentAccessIndexReadWindow" in source
     assert "function getDocumentAccessIndexCacheWindow" in source
     assert "formatDocumentAccessIndexCacheEvent" in source
+    assert "function renderConversationCacheStatus" in source
+    assert "function renderCosmosMaintenanceStatus" in source
+    assert "function runCosmosIndexingPolicyApply" in source
+    assert "getCosmosIndexingPolicyStatusFromRunResult" in source
+    assert "function runStaleCacheCleanup" in source
+    assert "setupCosmosMaintenanceControls();" in source
+    assert "function formatConversationCacheOperationCounts" in source
+    assert "conversation-cache-refresh-btn" in source
+    assert "conversation-cache-15m-writes-invalidations" in source
+    assert "run_stale_cache_cleanup: true" in source
+    assert "apply_stale_cache_cleanup: applyChanges" in source
+    assert "apply_cosmos_indexing_policies: true" in source
+    assert "run_stale_cache_cleanup: false" in source
+    assert "Index transformation may continue asynchronously" in source
     assert "formatDocumentAccessIndexLatencyWindow" in source
     assert "'/api/admin/settings/app-maintenance/status'" in source
     assert "'/api/admin/settings/app-maintenance/run'" in source
@@ -281,11 +439,31 @@ def test_admin_scale_sidebar_metric_links_are_wired():
     sidebar_source = ADMIN_SIDEBAR_JS.read_text(encoding="utf-8")
 
     expected_links = [
-        ("DAI Metrics", "document-access-index-section"),
-        ("Cosmos Metrics", "cosmos-throughput-section"),
+        ("Redis Cache", "redis-cache-section"),
         ("Redis Metrics", "redis-monitoring-section"),
+        ("DAI Metrics", "document-access-index-section"),
+        ("Cosmos Maintenance", "cosmos-maintenance-section"),
+        ("Cosmos DB Throughput", "cosmos-throughput-section"),
+        ("Cosmos Metrics", "cosmos-throughput-metrics-table-section"),
+        ("Azure Front Door", "front-door-section"),
     ]
     for label, section_id in expected_links:
         assert label in sidebar_template
         assert f'data-section="{section_id}"' in sidebar_template
         assert f"'{section_id}': '{section_id}'" in sidebar_source
+
+    scale_submenu = sidebar_template[
+        sidebar_template.index('id="scale-submenu"'):
+        sidebar_template.index('</ul>', sidebar_template.index('id="scale-submenu"'))
+    ]
+    ordered_labels = [
+        "Redis Cache",
+        "Redis Metrics",
+        "DAI Metrics",
+        "Cosmos Maintenance",
+        "Cosmos DB Throughput",
+        "Cosmos Metrics",
+        "Azure Front Door",
+    ]
+    ordered_positions = [scale_submenu.index(label) for label in ordered_labels]
+    assert ordered_positions == sorted(ordered_positions)

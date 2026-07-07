@@ -2,8 +2,11 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 1 app maintenance framework.
-Version: 0.250.031
+Version: 0.250.043
 Implemented in: 0.250.005
+Conversation cache metrics updated in: 0.250.034
+Stale cache cleanup maintenance updated in: 0.250.038
+DAI version marker TTL hygiene updated in: 0.250.043
 
 This test ensures the maintenance runner initializes cache version documents
 and records durable run state without requiring live Azure resources.
@@ -111,10 +114,13 @@ class FakeCosmosDatabase:
 
 def _load_maintenance_module(container, governance_container=None):
     fake_config = types.ModuleType("config")
-    fake_config.VERSION = "0.250.010"
+    fake_config.VERSION = "0.250.043"
     fake_config.cosmos_settings_container = container
     fake_config.cosmos_governance_policies_container = governance_container or container
     fake_config.cosmos_document_access_index_container = FakeCosmosContainer()
+    fake_config.cosmos_groups_container = FakeCosmosContainer()
+    fake_config.cosmos_public_workspaces_container = FakeCosmosContainer()
+    fake_config.cosmos_user_settings_container = FakeCosmosContainer()
     fake_config.cosmos_database = FakeCosmosDatabase()
     for name in [
         "cosmos_collaboration_messages",
@@ -130,13 +136,25 @@ def _load_maintenance_module(container, governance_container=None):
 
     fake_appinsights = types.ModuleType("functions_appinsights")
     fake_appinsights.log_event = lambda *args, **kwargs: None
+    fake_appinsights.debug_print = lambda *args, **kwargs: None
+    fake_appinsights.is_debug_enabled = lambda: False
     sys.modules["functions_appinsights"] = fake_appinsights
+
+    fake_app_settings_cache = types.ModuleType("app_settings_cache")
+    fake_app_settings_cache.get_app_cache_redis_client = lambda: None
+    sys.modules["app_settings_cache"] = fake_app_settings_cache
+
+    fake_group = types.ModuleType("functions_group")
+    fake_group.find_group_by_id = lambda group_id: None
+    sys.modules["functions_group"] = fake_group
 
     fake_settings = types.ModuleType("functions_settings")
     fake_settings.get_settings = lambda: {}
     sys.modules["functions_settings"] = fake_settings
 
     sys.modules.pop("functions_shared_cache", None)
+    sys.modules.pop("functions_conversation_cache", None)
+    sys.modules.pop("functions_cosmos_stale_cleanup", None)
     sys.modules.pop("functions_cosmos_indexing", None)
     sys.modules.pop("functions_document_access_index", None)
     sys.modules.pop("functions_app_maintenance", None)
@@ -176,7 +194,14 @@ def test_maintenance_status_reports_state_and_versions():
     assert status["success"] is True
     assert status["state"]["last_status"] == "succeeded"
     assert len(status["cache_version_documents"]) == len(maintenance.CACHE_VERSION_DOCUMENTS)
+    assert isinstance(status["shared_cache_metrics"], dict)
+    assert "counts" in status["shared_cache_metrics"]
+    assert status["conversation_cache"]["settings"]["enabled"] is True
+    assert status["conversation_cache"]["settings"]["ttl_seconds"] == 120
+    assert "15m" in status["conversation_cache"]["metrics"]["windows"]
     assert status["cosmos_indexing_policies"]["mode"] == "report_only"
+    assert status["stale_cache_cleanup"]["status"] == "skipped_disabled"
+    assert status["stale_cache_cleanup"]["candidate_count"] == 0
     assert status["document_access_index_backfill"]["state"]["status"] == "succeeded"
     assert status["document_access_index_backfill"]["maintenance"]["auto_maintenance_enabled"] is True
     assert {
@@ -238,6 +263,104 @@ def test_explicit_backfill_skip_is_preserved_for_manual_runs():
     assert backfill_step["results"]["maintenance_pending"] is True
 
 
+def _seed_stale_cleanup_documents(container):
+    container.items["conversation_cache_version:user-1"] = {
+        "id": "conversation_cache_version:user-1",
+        "type": "cache_version",
+        "version": 42,
+    }
+    container.items["shared_cache_entry:conversation_cache:list:user-1:abc"] = {
+        "id": "shared_cache_entry:conversation_cache:list:user-1:abc",
+        "type": "shared_cache_entry",
+        "namespace": "conversation_cache",
+        "key": "list:user-1:abc",
+    }
+    container.items["shared_cache_entry:chat_bootstrap:user:user-1:abc"] = {
+        "id": "shared_cache_entry:chat_bootstrap:user:user-1:abc",
+        "type": "shared_cache_entry",
+        "namespace": "chat_bootstrap",
+        "key": "user:user-1:abc",
+    }
+    container.items["shared_cache_entry:custom_pages:old"] = {
+        "id": "shared_cache_entry:custom_pages:old",
+        "type": "shared_cache_entry",
+        "namespace": "custom_pages",
+        "key": "old",
+        "expires_at": "2000-01-01T00:00:00+00:00",
+    }
+    container.items["shared_cache_entry:custom_pages:active"] = {
+        "id": "shared_cache_entry:custom_pages:active",
+        "type": "shared_cache_entry",
+        "namespace": "custom_pages",
+        "key": "active",
+        "expires_at": "2999-01-01T00:00:00+00:00",
+    }
+    container.items["chat_bootstrap_global_cache_version"] = {
+        "id": "chat_bootstrap_global_cache_version",
+        "type": "cache_version",
+        "version": 10,
+    }
+    container.items["app_settings"] = {
+        "id": "app_settings",
+        "type": "app_settings",
+    }
+
+
+def test_stale_cache_cleanup_dry_run_preserves_candidates():
+    """Dry-run cleanup should report allowlisted stale docs without deleting them."""
+    container = FakeCosmosContainer()
+    _seed_stale_cleanup_documents(container)
+    maintenance = _load_maintenance_module(container)
+
+    result = maintenance.run_app_maintenance_once(
+        triggered_by="test",
+        requested_by="tester@example.com",
+        run_document_access_backfill=False,
+        run_stale_cache_cleanup=True,
+        apply_stale_cache_cleanup=False,
+    )
+
+    cleanup_step = next(step for step in result["steps"] if step["name"] == "stale_cache_document_cleanup")
+    assert result["success"] is True
+    assert cleanup_step["run_requested"] is True
+    assert cleanup_step["apply_requested"] is False
+    assert cleanup_step["results"]["status"] == "dry_run_completed"
+    assert cleanup_step["results"]["candidate_count"] == 4
+    assert cleanup_step["results"]["deleted_count"] == 0
+    assert "conversation_cache_version:user-1" in container.items
+    assert "shared_cache_entry:conversation_cache:list:user-1:abc" in container.items
+    assert "shared_cache_entry:chat_bootstrap:user:user-1:abc" in container.items
+    assert "shared_cache_entry:custom_pages:old" in container.items
+
+
+def test_stale_cache_cleanup_apply_deletes_only_allowlisted_documents():
+    """Apply cleanup should delete stale cache artifacts and preserve active settings docs."""
+    container = FakeCosmosContainer()
+    _seed_stale_cleanup_documents(container)
+    maintenance = _load_maintenance_module(container)
+
+    result = maintenance.run_app_maintenance_once(
+        triggered_by="test",
+        requested_by="tester@example.com",
+        run_document_access_backfill=False,
+        run_stale_cache_cleanup=True,
+        apply_stale_cache_cleanup=True,
+    )
+
+    cleanup_step = next(step for step in result["steps"] if step["name"] == "stale_cache_document_cleanup")
+    assert result["success"] is True
+    assert cleanup_step["results"]["status"] == "completed"
+    assert cleanup_step["results"]["candidate_count"] == 4
+    assert cleanup_step["results"]["deleted_count"] == 4
+    assert "conversation_cache_version:user-1" not in container.items
+    assert "shared_cache_entry:conversation_cache:list:user-1:abc" not in container.items
+    assert "shared_cache_entry:chat_bootstrap:user:user-1:abc" not in container.items
+    assert "shared_cache_entry:custom_pages:old" not in container.items
+    assert "shared_cache_entry:custom_pages:active" in container.items
+    assert "chat_bootstrap_global_cache_version" in container.items
+    assert "app_settings" in container.items
+
+
 def test_failed_maintenance_step_sets_top_level_failure():
     """A failed step should not be reported as a fully successful maintenance run."""
     container = FakeCosmosContainer()
@@ -263,6 +386,8 @@ if __name__ == "__main__":
         test_maintenance_status_reports_state_and_versions,
         test_maintenance_settings_are_normalized,
         test_explicit_backfill_skip_is_preserved_for_manual_runs,
+        test_stale_cache_cleanup_dry_run_preserves_candidates,
+        test_stale_cache_cleanup_apply_deletes_only_allowlisted_documents,
         test_failed_maintenance_step_sets_top_level_failure,
     ]
     results = []

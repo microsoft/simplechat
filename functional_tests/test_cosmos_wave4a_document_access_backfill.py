@@ -2,12 +2,13 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 4A document access index backfill.
-Version: 0.250.031
+Version: 0.250.037
 Implemented in: 0.250.010
 Default read enablement updated in: 0.250.027
 Redis DAI cache invalidation updated in: 0.250.029
 Maintenance status gates updated in: 0.250.030
 DAI cache TTL default updated in: 0.250.031
+Settings state read cache updated in: 0.250.037
 
 This test ensures the document_access_index backfill is resumable,
 scope-limited, and can reconcile repair records left by fail-open
@@ -74,6 +75,7 @@ class FakePagedResult:
 class FakeCosmosContainer:
     def __init__(self, initial_items=None):
         self.items = {}
+        self.read_counts = {}
         for item in list(initial_items or []):
             self.upsert_item(item)
 
@@ -87,6 +89,7 @@ class FakeCosmosContainer:
 
     def read_item(self, item, partition_key):
         key = (partition_key, item)
+        self.read_counts[key] = self.read_counts.get(key, 0) + 1
         if key not in self.items:
             raise FakeCosmosError(404, f"Missing item {item}")
         return copy.deepcopy(self.items[key])
@@ -337,6 +340,58 @@ def test_succeeded_with_errors_without_repairs_is_not_active_backfill_work():
     assert indexing.is_document_access_index_maintenance_pending(status) is False
 
 
+def test_backfill_status_uses_short_ttl_cache_for_state_reads():
+    """Repeated status reads should not point-read unchanged DAI state docs every time."""
+    settings_container = FakeCosmosContainer()
+    state_doc_id = "document_access_index_backfill_state"
+    settings_container.upsert_item({
+        "id": state_doc_id,
+        "type": state_doc_id,
+        "status": "succeeded",
+        "source_scopes": ["personal", "group", "public"],
+        "completed_source_scopes": ["personal", "group", "public"],
+        "total_documents_processed": 3,
+        "schema_version": 2,
+    })
+
+    with _load_document_access_index_module([], settings_container=settings_container) as (
+        indexing,
+        _index_container,
+        _settings_container,
+        _personal_container,
+    ):
+        first_status = indexing.get_document_access_index_backfill_status()
+        second_status = indexing.get_document_access_index_backfill_status()
+
+    assert first_status["state"]["status"] == "succeeded"
+    assert second_status["state"]["status"] == "succeeded"
+    assert settings_container.read_counts[(state_doc_id, state_doc_id)] == 1
+
+
+def test_backfill_status_does_not_read_shadow_state_when_shadow_disabled():
+    """Disabled shadow validation should not point-read shadow validation state."""
+    settings_container = FakeCosmosContainer()
+    shadow_state_doc_id = "document_access_index_shadow_validation_state"
+    settings_container.upsert_item({
+        "id": shadow_state_doc_id,
+        "type": shadow_state_doc_id,
+        "status": "historical",
+        "missing_count": 99,
+    })
+
+    with _load_document_access_index_module([], settings_container=settings_container) as (
+        indexing,
+        _index_container,
+        _settings_container,
+        _personal_container,
+    ):
+        status = indexing.get_document_access_index_backfill_status()
+
+    assert status["settings"]["shadow_validation_enabled"] is False
+    assert status["shadow_validation"]["status"] == "not_run"
+    assert (shadow_state_doc_id, shadow_state_doc_id) not in settings_container.read_counts
+
+
 def test_wave4a_settings_and_maintenance_contract_are_wired():
     """Contract test for Wave 4A defaults and maintenance hook markers."""
     config_source = open(os.path.join(SINGLE_APP_DIR, "config.py"), "r", encoding="utf-8").read()
@@ -344,7 +399,7 @@ def test_wave4a_settings_and_maintenance_contract_are_wired():
     maintenance_source = open(os.path.join(SINGLE_APP_DIR, "functions_app_maintenance.py"), "r", encoding="utf-8").read()
     route_source = open(os.path.join(SINGLE_APP_DIR, "route_backend_settings.py"), "r", encoding="utf-8").read()
 
-    assert 'VERSION = "0.250.031"' in config_source
+    assert 'VERSION = "0.250.037"' in config_source
     assert "'enable_startup_document_access_index_backfill': True" in settings_source
     assert "'document_access_index_backfill_batch_size': 200" in settings_source
     assert "'document_access_index_repair_batch_size': 100" in settings_source
@@ -361,6 +416,8 @@ if __name__ == "__main__":
         test_repair_reconciliation_cleans_up_failed_delete_projection_rows,
         test_repair_reconciliation_tolerates_backlog_state_write_failure,
         test_succeeded_with_errors_without_repairs_is_not_active_backfill_work,
+        test_backfill_status_uses_short_ttl_cache_for_state_reads,
+        test_backfill_status_does_not_read_shadow_state_when_shadow_disabled,
         test_wave4a_settings_and_maintenance_contract_are_wired,
     ]
     results = []

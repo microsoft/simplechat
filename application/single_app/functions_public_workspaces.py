@@ -6,6 +6,7 @@ import functions_settings
 from functions_group import *
 from typing import Iterable
 
+from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
 from functions_workspace_branding import (
     DEFAULT_WORKSPACE_HERO_COLOR,
     get_workspace_logo_metadata,
@@ -43,6 +44,7 @@ def create_public_workspace(name: str, description: str) -> dict:
         "modifiedDate": now_iso
     }
     cosmos_public_workspaces_container.create_item(ws_doc)
+    bump_chat_bootstrap_global_cache_version(reason="public_workspace_created")
     return ws_doc
 
 
@@ -144,6 +146,7 @@ def delete_public_workspace(ws_id: str) -> None:
         item=ws_id,
         partition_key=ws_id
     )
+    bump_chat_bootstrap_global_cache_version(reason="public_workspace_deleted")
 
 
 def get_user_role_in_public_workspace(ws_doc: dict, user_id: str) -> str | None:
@@ -246,6 +249,7 @@ def add_document_manager(ws_id: str, user_id: str, email: str, display_name: str
     })
     ws["modifiedDate"] = datetime.utcnow().isoformat()
     cosmos_public_workspaces_container.upsert_item(ws)
+    bump_chat_bootstrap_global_cache_version(reason="public_workspace_document_manager_added")
 
 
 def remove_document_manager(ws_id: str, user_id: str) -> None:
@@ -262,6 +266,7 @@ def remove_document_manager(ws_id: str, user_id: str) -> None:
     ]
     ws["modifiedDate"] = datetime.utcnow().isoformat()
     cosmos_public_workspaces_container.upsert_item(ws)
+    bump_chat_bootstrap_global_cache_version(reason="public_workspace_document_manager_removed")
 
 
 def approve_document_manager_request(ws_id: str, request_user_id: str) -> None:
@@ -276,13 +281,23 @@ def approve_document_manager_request(ws_id: str, request_user_id: str) -> None:
     new_pend = []
     for p in pend:
         if p["userId"] == request_user_id:
-            add_document_manager(ws_id, p["userId"], p["email"], p["displayName"])
+            existing_manager_ids = {
+                dm.get("userId") if isinstance(dm, dict) else dm
+                for dm in ws.get("documentManagers", [])
+            }
+            if p["userId"] not in existing_manager_ids:
+                ws.setdefault("documentManagers", []).append({
+                    "userId": p["userId"],
+                    "email": p["email"],
+                    "displayName": p["displayName"]
+                })
         else:
             new_pend.append(p)
 
     ws["pendingDocumentManagers"] = new_pend
     ws["modifiedDate"] = datetime.utcnow().isoformat()
     cosmos_public_workspaces_container.upsert_item(ws)
+    bump_chat_bootstrap_global_cache_version(reason="public_workspace_document_manager_request_approved")
 
 
 def reject_document_manager_request(ws_id: str, request_user_id: str) -> None:
@@ -299,6 +314,7 @@ def reject_document_manager_request(ws_id: str, request_user_id: str) -> None:
     ]
     ws["modifiedDate"] = datetime.utcnow().isoformat()
     cosmos_public_workspaces_container.upsert_item(ws)
+    bump_chat_bootstrap_global_cache_version(reason="public_workspace_document_manager_request_rejected")
 
 
 def count_public_workspace_documents(ws_id: str) -> int:

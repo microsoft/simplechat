@@ -141,6 +141,7 @@ def get_cached_chat_bootstrap_payload(cache_key: str) -> Optional[Dict[str, Any]
         CHAT_BOOTSTRAP_CACHE_NAMESPACE,
         cache_key,
         redis_client=_get_redis_client(),
+        allow_cosmos_fallback=False,
     )
     if not isinstance(cached, dict):
         log_event(
@@ -168,6 +169,7 @@ def set_cached_chat_bootstrap_payload(cache_key: str, payload: Dict[str, Any], t
         copy.deepcopy(payload or {}),
         ttl_seconds=ttl_seconds or CHAT_BOOTSTRAP_DEFAULT_TTL_SECONDS,
         redis_client=_get_redis_client(),
+        allow_cosmos_fallback=False,
     )
 
 

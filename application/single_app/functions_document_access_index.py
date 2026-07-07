@@ -15,11 +15,14 @@ import app_settings_cache
 from azure.core import MatchConditions
 from config import (
     cosmos_document_access_index_container,
+    cosmos_groups_container,
     cosmos_group_documents_container,
     cosmos_group_documents_container_name,
+    cosmos_public_workspaces_container,
     cosmos_public_documents_container,
     cosmos_public_documents_container_name,
     cosmos_settings_container,
+    cosmos_user_settings_container,
     cosmos_user_documents_container,
     cosmos_user_documents_container_name,
 )
@@ -61,6 +64,11 @@ DOCUMENT_ACCESS_MAX_REPAIR_BATCH_SIZE = 500
 DOCUMENT_ACCESS_DEFAULT_CACHE_TTL_SECONDS = 900
 DOCUMENT_ACCESS_MIN_CACHE_TTL_SECONDS = 60
 DOCUMENT_ACCESS_MAX_CACHE_TTL_SECONDS = 900
+DOCUMENT_ACCESS_CACHE_VERSION_MIN_TTL_SECONDS = 3600
+DOCUMENT_ACCESS_CACHE_VERSION_MAX_TTL_SECONDS = 86400
+DOCUMENT_ACCESS_CACHE_VERSION_TTL_MULTIPLIER = 4
+DOCUMENT_ACCESS_CACHE_VERSION_HYGIENE_BATCH_SIZE = 100
+DOCUMENT_ACCESS_CACHE_VERSION_HYGIENE_MAX_SCAN_ITERATIONS = 5
 DOCUMENT_ACCESS_CACHE_KEY_PREFIX = 'DAI_LIST_CACHE'
 DOCUMENT_ACCESS_CACHE_VERSION_KEY_PREFIX = 'DAI_LIST_CACHE_VERSION'
 DOCUMENT_ACCESS_ARCHIVED_REVISION_BLOB_PATH_MODE = 'archived_revision'
@@ -75,6 +83,7 @@ DOCUMENT_ACCESS_READ_METRIC_MAX_SAMPLES = 2000
 DOCUMENT_ACCESS_CACHE_METRIC_WINDOWS_MINUTES = (5, 15, 60)
 DOCUMENT_ACCESS_CACHE_METRIC_RETENTION_MINUTES = 60
 DOCUMENT_ACCESS_CACHE_METRIC_MAX_SAMPLES = 2000
+DOCUMENT_ACCESS_STATE_READ_TTL_SECONDS = 30
 DOCUMENT_ACCESS_BACKFILL_READY_STATUSES = {'succeeded', 'succeeded_with_errors'}
 DOCUMENT_ACCESS_BACKFILL_COMPLETE_STATUSES = DOCUMENT_ACCESS_BACKFILL_READY_STATUSES | {'skipped_completed'}
 
@@ -87,6 +96,8 @@ DOCUMENT_ACCESS_SOURCE_SCOPES = (
 _document_access_read_metric_lock = threading.Lock()
 _document_access_read_metric_samples = []
 _document_access_cache_metric_lock = threading.Lock()
+_document_access_state_cache = {}
+_document_access_state_cache_lock = threading.Lock()
 _document_access_cache_metric_samples = []
 _document_access_cache_epoch_lock = threading.Lock()
 _document_access_cache_process_epoch = uuid.uuid4().hex
@@ -132,12 +143,48 @@ def _parse_utc_datetime(value):
     return parsed_value.astimezone(timezone.utc)
 
 
+def _get_cached_document_access_state(doc_id):
+    now = perf_counter()
+    with _document_access_state_cache_lock:
+        cached_state = _document_access_state_cache.get(doc_id)
+        if not cached_state:
+            return False, None
+        if cached_state.get('expires_at', 0) <= now:
+            _document_access_state_cache.pop(doc_id, None)
+            return False, None
+        return True, copy.deepcopy(cached_state.get('value'))
+
+
+def _set_cached_document_access_state(doc_id, value):
+    with _document_access_state_cache_lock:
+        _document_access_state_cache[doc_id] = {
+            'value': copy.deepcopy(value),
+            'expires_at': perf_counter() + DOCUMENT_ACCESS_STATE_READ_TTL_SECONDS,
+        }
+
+
 def _normalize_positive_int(value, default_value, min_value=1, max_value=1000):
     try:
         normalized_value = int(value)
     except (TypeError, ValueError):
         normalized_value = default_value
     return min(max(normalized_value, min_value), max_value)
+
+
+def _calculate_document_access_cache_version_ttl_seconds(cache_ttl_seconds):
+    normalized_cache_ttl = _normalize_positive_int(
+        cache_ttl_seconds,
+        DOCUMENT_ACCESS_DEFAULT_CACHE_TTL_SECONDS,
+        min_value=DOCUMENT_ACCESS_MIN_CACHE_TTL_SECONDS,
+        max_value=DOCUMENT_ACCESS_MAX_CACHE_TTL_SECONDS,
+    )
+    return min(
+        max(
+            normalized_cache_ttl * DOCUMENT_ACCESS_CACHE_VERSION_TTL_MULTIPLIER,
+            DOCUMENT_ACCESS_CACHE_VERSION_MIN_TTL_SECONDS,
+        ),
+        DOCUMENT_ACCESS_CACHE_VERSION_MAX_TTL_SECONDS,
+    )
 
 
 def _safe_float(value):
@@ -556,6 +603,12 @@ def get_document_access_index_settings(settings=None):
             level=logging.WARNING,
         )
         settings = {}
+    cache_ttl_seconds = _normalize_positive_int(
+        settings.get(DOCUMENT_ACCESS_CACHE_TTL_SECONDS_SETTING),
+        DOCUMENT_ACCESS_DEFAULT_CACHE_TTL_SECONDS,
+        min_value=DOCUMENT_ACCESS_MIN_CACHE_TTL_SECONDS,
+        max_value=DOCUMENT_ACCESS_MAX_CACHE_TTL_SECONDS,
+    )
     return {
         'container_enabled': True,
         'write_through_enabled': True,
@@ -574,12 +627,8 @@ def get_document_access_index_settings(settings=None):
         ),
         'cache_enabled': bool(settings.get(DOCUMENT_ACCESS_CACHE_ENABLED_SETTING, True)),
         'redis_cache_configured': bool(settings.get('enable_redis_cache', False)),
-        'cache_ttl_seconds': _normalize_positive_int(
-            settings.get(DOCUMENT_ACCESS_CACHE_TTL_SECONDS_SETTING),
-            DOCUMENT_ACCESS_DEFAULT_CACHE_TTL_SECONDS,
-            min_value=DOCUMENT_ACCESS_MIN_CACHE_TTL_SECONDS,
-            max_value=DOCUMENT_ACCESS_MAX_CACHE_TTL_SECONDS,
-        ),
+        'cache_ttl_seconds': cache_ttl_seconds,
+        'cache_version_ttl_seconds': _calculate_document_access_cache_version_ttl_seconds(cache_ttl_seconds),
     }
 
 
@@ -761,8 +810,13 @@ def _document_access_cache_hash(value):
     return hashlib.sha256(serialized_value.encode('utf-8')).hexdigest()
 
 
+def build_document_access_cache_scope_hash(scope_key):
+    """Return the stable Redis DAI cache hash for a user/group/public scope key."""
+    return _document_access_cache_hash({'scope_key': scope_key})
+
+
 def _document_access_cache_version_key(scope_key):
-    scope_hash = _document_access_cache_hash({'scope_key': scope_key})
+    scope_hash = build_document_access_cache_scope_hash(scope_key)
     return f'{DOCUMENT_ACCESS_CACHE_VERSION_KEY_PREFIX}:{scope_hash}'
 
 
@@ -828,7 +882,21 @@ def _get_document_access_cache_client(
     return redis_client
 
 
-def _read_document_access_cache_scope_versions(redis_client, scope_keys, operation, source_scope):
+def _set_document_access_cache_version_key_if_missing(redis_client, version_key, ttl_seconds):
+    try:
+        return redis_client.set(version_key, 0, ex=ttl_seconds, nx=True)
+    except TypeError:
+        created = redis_client.setnx(version_key, 0)
+        if created:
+            redis_client.expire(version_key, ttl_seconds)
+        return created
+
+
+def _refresh_document_access_cache_version_key_ttl(redis_client, version_key, ttl_seconds):
+    return redis_client.expire(version_key, ttl_seconds)
+
+
+def _read_document_access_cache_scope_versions(redis_client, scope_keys, operation, source_scope, version_ttl_seconds):
     scope_versions = []
     started_at = perf_counter()
     try:
@@ -836,10 +904,30 @@ def _read_document_access_cache_scope_versions(redis_client, scope_keys, operati
             version_key = _document_access_cache_version_key(scope_key)
             version_value = redis_client.get(version_key)
             if version_value is None:
-                redis_client.setnx(version_key, 0)
-                version_value = 0
+                created = _set_document_access_cache_version_key_if_missing(
+                    redis_client,
+                    version_key,
+                    version_ttl_seconds,
+                )
+                if created:
+                    version_value = 0
+                else:
+                    version_value = redis_client.get(version_key)
+                    if version_value is None:
+                        _set_document_access_cache_version_key_if_missing(
+                            redis_client,
+                            version_key,
+                            version_ttl_seconds,
+                        )
+                        version_value = 0
+            else:
+                _refresh_document_access_cache_version_key_ttl(
+                    redis_client,
+                    version_key,
+                    version_ttl_seconds,
+                )
             scope_versions.append({
-                'scope_hash': _document_access_cache_hash({'scope_key': scope_key}),
+                'scope_hash': build_document_access_cache_scope_hash(scope_key),
                 'version': _safe_int(version_value),
             })
     except Exception as exc:
@@ -877,7 +965,13 @@ def _build_document_access_cache_context(operation, source_scope, scope_keys, ke
     if redis_client is None:
         return None
 
-    scope_versions = _read_document_access_cache_scope_versions(redis_client, scope_keys, operation, source_scope)
+    scope_versions = _read_document_access_cache_scope_versions(
+        redis_client,
+        scope_keys,
+        operation,
+        source_scope,
+        normalized_settings.get('cache_version_ttl_seconds'),
+    )
     if scope_versions is None:
         return None
 
@@ -1070,8 +1164,15 @@ def invalidate_document_access_index_cache_scope_keys(scope_keys, reason=None, s
     invalidated_count = 0
     started_at = perf_counter()
     try:
+        version_ttl_seconds = normalized_settings.get('cache_version_ttl_seconds')
         for scope_key in normalized_scope_keys:
-            redis_client.incr(_document_access_cache_version_key(scope_key))
+            version_key = _document_access_cache_version_key(scope_key)
+            redis_client.incr(version_key)
+            _refresh_document_access_cache_version_key_ttl(
+                redis_client,
+                version_key,
+                version_ttl_seconds,
+            )
             invalidated_count += 1
     except Exception as exc:
         _record_document_access_cache_metric(
@@ -1135,6 +1236,340 @@ def _raise_for_failed_cache_invalidation(invalidation_result, operation, scope_k
         invalidation_result.get('status') or 'unknown',
         scope_keys=scope_keys,
     )
+
+
+def _normalize_document_access_cache_version_hashes(scope_hashes):
+    return sorted({
+        str(scope_hash or '').strip().lower()
+        for scope_hash in scope_hashes or []
+        if re.fullmatch(r'[a-f0-9]{64}', str(scope_hash or '').strip().lower())
+    })
+
+
+def _empty_document_access_cache_version_resolution(scope_hash):
+    return {
+        'kind': 'document_access_index_scope_version',
+        'label': 'DAI scope version marker',
+        'resolved': False,
+        'resolution_status': 'unresolved',
+        'scope_hash': scope_hash,
+        'scope_key': None,
+        'entity_type': None,
+        'entity_id': None,
+        'entity_name': None,
+        'entity_status': None,
+        'row_count': None,
+        'granted_row_count': None,
+        'source_scopes': {},
+        'access_roles': {},
+        'note': 'No matching SimpleChat user, group, public workspace, or DAI projection scope was found.',
+    }
+
+
+def _document_access_resolution_entity_type(scope_type):
+    if scope_type == DOCUMENT_ACCESS_SCOPE_GROUP:
+        return 'group_workspace'
+    if scope_type == DOCUMENT_ACCESS_SCOPE_PUBLIC:
+        return 'public_workspace'
+    if scope_type == DOCUMENT_ACCESS_PRINCIPAL_USER:
+        return 'user'
+    return scope_type
+
+
+def _build_document_access_cache_version_resolution(
+    scope_hash,
+    scope_key,
+    entity_type,
+    entity_id,
+    entity_name=None,
+    entity_status=None,
+    row_count=None,
+    granted_row_count=None,
+    source_scopes=None,
+    access_roles=None,
+    source='document_access_index',
+):
+    return {
+        'kind': 'document_access_index_scope_version',
+        'label': 'DAI scope version marker',
+        'resolved': True,
+        'resolution_status': 'resolved',
+        'scope_hash': scope_hash,
+        'scope_key': scope_key,
+        'entity_type': _document_access_resolution_entity_type(entity_type),
+        'entity_id': entity_id,
+        'entity_name': entity_name,
+        'entity_status': entity_status,
+        'row_count': row_count,
+        'granted_row_count': granted_row_count,
+        'source_scopes': source_scopes or {},
+        'access_roles': access_roles or {},
+        'source': source,
+        'note': 'Resolved by re-hashing known SimpleChat access scope keys.',
+    }
+
+
+def _increment_counter(counter, key):
+    normalized_key = str(key or '').strip() or 'unknown'
+    counter[normalized_key] = counter.get(normalized_key, 0) + 1
+
+
+def _resolve_document_access_hashes_from_projection(scope_hashes, resolutions):
+    if not scope_hashes:
+        return
+    query = (
+        'SELECT c.scope_key, c.scope_type, c.scope_id, c.source_scope, c.access_role, c.access_granted '
+        'FROM c WHERE c.type = @type'
+    )
+    projection_rows = cosmos_document_access_index_container.query_items(
+        query=query,
+        parameters=[{'name': '@type', 'value': DOCUMENT_ACCESS_INDEX_TYPE}],
+        enable_cross_partition_query=True,
+    )
+    scope_summaries = {}
+    for row in projection_rows:
+        scope_key = str(row.get('scope_key') or '').strip()
+        if not scope_key:
+            continue
+        scope_hash = build_document_access_cache_scope_hash(scope_key)
+        if scope_hash not in scope_hashes:
+            continue
+        summary = scope_summaries.setdefault(scope_hash, {
+            'scope_key': scope_key,
+            'entity_type': row.get('scope_type'),
+            'entity_id': row.get('scope_id'),
+            'row_count': 0,
+            'granted_row_count': 0,
+            'source_scopes': {},
+            'access_roles': {},
+        })
+        summary['row_count'] += 1
+        if row.get('access_granted'):
+            summary['granted_row_count'] += 1
+        _increment_counter(summary['source_scopes'], row.get('source_scope'))
+        _increment_counter(summary['access_roles'], row.get('access_role'))
+
+    for scope_hash, summary in scope_summaries.items():
+        resolutions[scope_hash] = _build_document_access_cache_version_resolution(
+            scope_hash,
+            summary.get('scope_key'),
+            summary.get('entity_type'),
+            summary.get('entity_id'),
+            row_count=summary.get('row_count'),
+            granted_row_count=summary.get('granted_row_count'),
+            source_scopes=summary.get('source_scopes'),
+            access_roles=summary.get('access_roles'),
+        )
+
+
+def _resolve_document_access_hashes_from_workspace_container(
+    scope_hashes,
+    resolutions,
+    container,
+    scope_type,
+    entity_status_default='active',
+):
+    if not scope_hashes:
+        return
+    query = 'SELECT c.id, c.name, c.status FROM c'
+    for item in container.query_items(query=query, enable_cross_partition_query=True):
+        entity_id = str(item.get('id') or '').strip()
+        if not entity_id:
+            continue
+        scope_key = build_document_access_scope_key(scope_type, entity_id)
+        scope_hash = build_document_access_cache_scope_hash(scope_key)
+        if scope_hash not in scope_hashes:
+            continue
+        if resolutions.get(scope_hash, {}).get('resolved'):
+            resolutions[scope_hash]['entity_name'] = item.get('name')
+            resolutions[scope_hash]['entity_status'] = item.get('status') or entity_status_default
+            continue
+        resolutions[scope_hash] = _build_document_access_cache_version_resolution(
+            scope_hash,
+            scope_key,
+            scope_type,
+            entity_id,
+            entity_name=item.get('name'),
+            entity_status=item.get('status') or entity_status_default,
+            row_count=0,
+            granted_row_count=0,
+            source='workspace_container',
+        )
+
+
+def _resolve_document_access_hashes_from_user_settings(scope_hashes, resolutions):
+    if not scope_hashes:
+        return
+    query = 'SELECT c.id, c.displayName, c.name FROM c'
+    for item in cosmos_user_settings_container.query_items(query=query, enable_cross_partition_query=True):
+        entity_id = str(item.get('id') or '').strip()
+        if not entity_id:
+            continue
+        scope_key = build_document_access_scope_key(DOCUMENT_ACCESS_PRINCIPAL_USER, entity_id)
+        scope_hash = build_document_access_cache_scope_hash(scope_key)
+        if scope_hash not in scope_hashes:
+            continue
+        if resolutions.get(scope_hash, {}).get('resolved'):
+            resolutions[scope_hash]['entity_name'] = item.get('displayName') or item.get('name')
+            continue
+        resolutions[scope_hash] = _build_document_access_cache_version_resolution(
+            scope_hash,
+            scope_key,
+            DOCUMENT_ACCESS_PRINCIPAL_USER,
+            entity_id,
+            entity_name=item.get('displayName') or item.get('name'),
+            row_count=0,
+            granted_row_count=0,
+            source='user_settings',
+        )
+
+
+def resolve_document_access_cache_version_hashes(scope_hashes):
+    """Resolve Redis DAI version marker hashes to safe SimpleChat scope metadata."""
+    normalized_hashes = _normalize_document_access_cache_version_hashes(scope_hashes)
+    resolutions = {
+        scope_hash: _empty_document_access_cache_version_resolution(scope_hash)
+        for scope_hash in normalized_hashes
+    }
+    if not normalized_hashes:
+        return resolutions
+
+    try:
+        _resolve_document_access_hashes_from_projection(set(normalized_hashes), resolutions)
+    except Exception as exc:
+        log_event(
+            '[DocumentAccessIndexCache] Failed to resolve DAI Redis hashes from projection rows.',
+            extra={'hash_count': len(normalized_hashes), 'error_type': type(exc).__name__},
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+
+    try:
+        _resolve_document_access_hashes_from_workspace_container(
+            set(normalized_hashes),
+            resolutions,
+            cosmos_groups_container,
+            DOCUMENT_ACCESS_SCOPE_GROUP,
+        )
+    except Exception as exc:
+        log_event(
+            '[DocumentAccessIndexCache] Failed to resolve DAI Redis hashes from group workspaces.',
+            extra={'hash_count': len(normalized_hashes), 'error_type': type(exc).__name__},
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+
+    try:
+        _resolve_document_access_hashes_from_workspace_container(
+            set(normalized_hashes),
+            resolutions,
+            cosmos_public_workspaces_container,
+            DOCUMENT_ACCESS_SCOPE_PUBLIC,
+        )
+    except Exception as exc:
+        log_event(
+            '[DocumentAccessIndexCache] Failed to resolve DAI Redis hashes from public workspaces.',
+            extra={'hash_count': len(normalized_hashes), 'error_type': type(exc).__name__},
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+
+    try:
+        _resolve_document_access_hashes_from_user_settings(set(normalized_hashes), resolutions)
+    except Exception as exc:
+        log_event(
+            '[DocumentAccessIndexCache] Failed to resolve DAI Redis hashes from user settings.',
+            extra={'hash_count': len(normalized_hashes), 'error_type': type(exc).__name__},
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+
+    return resolutions
+
+
+def refresh_document_access_cache_version_marker_ttls(settings=None, redis_client=None, batch_size=None):
+    """Apply the derived TTL policy to legacy DAI Redis version markers."""
+    normalized_settings = get_document_access_index_settings(settings)
+    resolved_client = redis_client or _get_document_access_cache_client(
+        normalized_settings,
+        'version_marker_hygiene',
+        'mixed',
+        0,
+        require_cache_enabled=False,
+    )
+    version_ttl_seconds = normalized_settings.get('cache_version_ttl_seconds')
+    payload_ttl_seconds = normalized_settings.get('cache_ttl_seconds')
+    result = {
+        'success': True,
+        'status': 'skipped_redis_unavailable',
+        'version_marker_ttl_seconds': version_ttl_seconds,
+        'payload_ttl_seconds': payload_ttl_seconds,
+        'scanned_count': 0,
+        'refreshed_count': 0,
+        'no_expiry_count': 0,
+        'unsafe_ttl_count': 0,
+        'skipped_count': 0,
+        'scan_iterations': 0,
+        'has_more': False,
+    }
+    if resolved_client is None:
+        return result
+
+    normalized_batch_size = _normalize_positive_int(
+        batch_size,
+        DOCUMENT_ACCESS_CACHE_VERSION_HYGIENE_BATCH_SIZE,
+        min_value=1,
+        max_value=1000,
+    )
+    cursor = 0
+    try:
+        while result['scan_iterations'] < DOCUMENT_ACCESS_CACHE_VERSION_HYGIENE_MAX_SCAN_ITERATIONS:
+            cursor, keys = resolved_client.scan(
+                cursor=cursor,
+                match=f'{DOCUMENT_ACCESS_CACHE_VERSION_KEY_PREFIX}:*',
+                count=normalized_batch_size,
+            )
+            cursor = _safe_int(cursor)
+            result['scan_iterations'] += 1
+            for key in list(keys or []):
+                result['scanned_count'] += 1
+                try:
+                    ttl_seconds = int(resolved_client.ttl(key))
+                except (TypeError, ValueError):
+                    ttl_seconds = -2
+                if ttl_seconds == -1:
+                    result['no_expiry_count'] += 1
+                if ttl_seconds == -1 or (ttl_seconds >= 0 and ttl_seconds < payload_ttl_seconds):
+                    if ttl_seconds >= 0 and ttl_seconds < payload_ttl_seconds:
+                        result['unsafe_ttl_count'] += 1
+                    _refresh_document_access_cache_version_key_ttl(
+                        resolved_client,
+                        key,
+                        version_ttl_seconds,
+                    )
+                    result['refreshed_count'] += 1
+                else:
+                    result['skipped_count'] += 1
+            if cursor == 0:
+                break
+        result['has_more'] = cursor != 0
+        result['status'] = 'completed'
+        return result
+    except Exception as exc:
+        log_event(
+            '[DocumentAccessIndexCache] Failed to refresh DAI Redis version marker TTLs.',
+            extra={
+                'scanned_count': result.get('scanned_count'),
+                'refreshed_count': result.get('refreshed_count'),
+                'error_type': type(exc).__name__,
+            },
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+        result['success'] = False
+        result['status'] = 'failed'
+        result['error'] = str(exc)
+        return result
 
 
 def build_document_access_index_row_id(scope_key, source_scope, document_id, version):
@@ -1429,14 +1864,19 @@ def _query_existing_projection_rows(source_scope, document_id):
     ))
 
 
-def _read_shadow_validation_state():
+def _read_shadow_validation_state(use_cache=True):
+    if use_cache:
+        cache_hit, cached_state = _get_cached_document_access_state(DOCUMENT_ACCESS_SHADOW_STATE_DOC_ID)
+        if cache_hit:
+            return cached_state
     try:
-        return cosmos_settings_container.read_item(
+        state = cosmos_settings_container.read_item(
             item=DOCUMENT_ACCESS_SHADOW_STATE_DOC_ID,
             partition_key=DOCUMENT_ACCESS_SHADOW_STATE_DOC_ID,
         )
     except Exception as exc:
         if _is_not_found_error(exc):
+            _set_cached_document_access_state(DOCUMENT_ACCESS_SHADOW_STATE_DOC_ID, None)
             return None
         log_event(
             '[DocumentAccessIndex] Failed to read document access shadow validation state.',
@@ -1445,6 +1885,8 @@ def _read_shadow_validation_state():
             exceptionTraceback=True,
         )
         return None
+    _set_cached_document_access_state(DOCUMENT_ACCESS_SHADOW_STATE_DOC_ID, state)
+    return state
 
 
 def _empty_shadow_metric_window(window_minutes):
@@ -1625,7 +2067,7 @@ def _write_shadow_validation_state(state):
     last_conflict = None
 
     for attempt in range(DOCUMENT_ACCESS_SHADOW_STATE_WRITE_MAX_RETRIES):
-        previous_state = _read_shadow_validation_state()
+        previous_state = _read_shadow_validation_state(use_cache=False)
         state_body = copy.deepcopy(state or {})
         state_body.update({
             'id': DOCUMENT_ACCESS_SHADOW_STATE_DOC_ID,
@@ -1649,6 +2091,7 @@ def _write_shadow_validation_state(state):
                 )
             else:
                 cosmos_settings_container.create_item(body=state_body)
+            _set_cached_document_access_state(DOCUMENT_ACCESS_SHADOW_STATE_DOC_ID, state_body)
             return state_body
         except Exception as exc:
             if _is_write_conflict_error(exc):
@@ -3032,6 +3475,7 @@ def _write_repair_backlog_state(
     if repair_tracking_failed:
         state_doc['repair_tracking_failed'] = True
     cosmos_settings_container.upsert_item(state_doc)
+    _set_cached_document_access_state(DOCUMENT_ACCESS_REPAIR_BACKLOG_STATE_DOC_ID, state_doc)
     return state_doc
 
 
@@ -3070,9 +3514,11 @@ def _try_delete_repair_backlog_state(reason=None):
             item=DOCUMENT_ACCESS_REPAIR_BACKLOG_STATE_DOC_ID,
             partition_key=DOCUMENT_ACCESS_REPAIR_BACKLOG_STATE_DOC_ID,
         )
+        _set_cached_document_access_state(DOCUMENT_ACCESS_REPAIR_BACKLOG_STATE_DOC_ID, None)
         return True
     except Exception as exc:
         if _is_not_found_error(exc):
+            _set_cached_document_access_state(DOCUMENT_ACCESS_REPAIR_BACKLOG_STATE_DOC_ID, None)
             return True
         log_event(
             '[DocumentAccessIndex] Failed to delete projection repair backlog state.',
@@ -3086,7 +3532,11 @@ def _try_delete_repair_backlog_state(reason=None):
         return False
 
 
-def _read_repair_backlog_state():
+def _read_repair_backlog_state(use_cache=True):
+    if use_cache:
+        cache_hit, cached_state = _get_cached_document_access_state(DOCUMENT_ACCESS_REPAIR_BACKLOG_STATE_DOC_ID)
+        if cache_hit:
+            return cached_state
     try:
         state = cosmos_settings_container.read_item(
             item=DOCUMENT_ACCESS_REPAIR_BACKLOG_STATE_DOC_ID,
@@ -3094,12 +3544,16 @@ def _read_repair_backlog_state():
         )
     except Exception as exc:
         if _is_not_found_error(exc):
+            _set_cached_document_access_state(DOCUMENT_ACCESS_REPAIR_BACKLOG_STATE_DOC_ID, None)
             return None
         raise
     if not isinstance(state, dict) or state.get('type') != DOCUMENT_ACCESS_REPAIR_BACKLOG_STATE_TYPE:
+        _set_cached_document_access_state(DOCUMENT_ACCESS_REPAIR_BACKLOG_STATE_DOC_ID, None)
         return None
     if not isinstance(state.get('has_repair_backlog'), bool):
+        _set_cached_document_access_state(DOCUMENT_ACCESS_REPAIR_BACKLOG_STATE_DOC_ID, None)
         return None
+    _set_cached_document_access_state(DOCUMENT_ACCESS_REPAIR_BACKLOG_STATE_DOC_ID, state)
     return state
 
 
@@ -3129,7 +3583,7 @@ def _query_repair_backlog_exists():
 
 
 def _refresh_repair_backlog_state_from_query(reason=None):
-    existing_state = _read_repair_backlog_state()
+    existing_state = _read_repair_backlog_state(use_cache=False)
     has_backlog = _query_repair_backlog_exists()
     if not has_backlog and _repair_backlog_state_has_untracked_failure(existing_state):
         return True
@@ -3218,14 +3672,19 @@ def _query_repair_documents(max_item_count=DOCUMENT_ACCESS_DEFAULT_REPAIR_BATCH_
     return repair_docs
 
 
-def _read_backfill_state():
+def _read_backfill_state(use_cache=True):
+    if use_cache:
+        cache_hit, cached_state = _get_cached_document_access_state(DOCUMENT_ACCESS_BACKFILL_STATE_DOC_ID)
+        if cache_hit:
+            return cached_state
     try:
-        return cosmos_settings_container.read_item(
+        state = cosmos_settings_container.read_item(
             item=DOCUMENT_ACCESS_BACKFILL_STATE_DOC_ID,
             partition_key=DOCUMENT_ACCESS_BACKFILL_STATE_DOC_ID,
         )
     except Exception as exc:
         if _is_not_found_error(exc):
+            _set_cached_document_access_state(DOCUMENT_ACCESS_BACKFILL_STATE_DOC_ID, None)
             return None
         log_event(
             '[DocumentAccessIndex] Failed to read document access index backfill state.',
@@ -3234,6 +3693,8 @@ def _read_backfill_state():
             exceptionTraceback=True,
         )
         raise
+    _set_cached_document_access_state(DOCUMENT_ACCESS_BACKFILL_STATE_DOC_ID, state)
+    return state
 
 
 def _write_backfill_state(state):
@@ -3245,6 +3706,7 @@ def _write_backfill_state(state):
         'schema_version': DOCUMENT_ACCESS_INDEX_SCHEMA_VERSION,
     })
     cosmos_settings_container.upsert_item(state_body)
+    _set_cached_document_access_state(DOCUMENT_ACCESS_BACKFILL_STATE_DOC_ID, state_body)
     return state_body
 
 
@@ -3431,7 +3893,7 @@ def get_document_access_index_backfill_status(settings=None):
     normalized_settings = get_document_access_index_settings(settings)
     state = _read_backfill_state() or _build_initial_backfill_state(DOCUMENT_ACCESS_SOURCE_SCOPES)
     repair_required_count = count_document_access_index_repair_documents()
-    shadow_validation = _read_shadow_validation_state() or {
+    shadow_validation = {
         'status': 'not_run',
         'missing_count': 0,
         'extra_count': 0,
@@ -3450,6 +3912,8 @@ def get_document_access_index_backfill_status(settings=None):
         'estimated_wave5_ms_savings': None,
         'shadow_overhead_ms': None,
     }
+    if normalized_settings.get('shadow_validation_enabled'):
+        shadow_validation = _read_shadow_validation_state() or shadow_validation
     if isinstance(shadow_validation, dict) and not isinstance(shadow_validation.get('rolling_metrics'), dict):
         shadow_validation['rolling_metrics'] = _empty_shadow_rolling_metrics()
     return {

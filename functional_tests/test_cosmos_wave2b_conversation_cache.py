@@ -2,12 +2,14 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 2B conversation list/search cache.
-Version: 0.250.007
+Version: 0.250.037
 Implemented in: 0.250.007
+Conversation cache metrics updated in: 0.250.034
+Redis-only volatile cache fallback implemented in: 0.250.037
 
 This test ensures conversation list/search/feed caches are versioned per user,
 invalidate for personal and collaboration mutations, and fail open when cache
-writes are unavailable.
+writes or Redis are unavailable.
 """
 
 import copy
@@ -92,8 +94,33 @@ class ConflictOnceFakeCosmosContainer(FakeCosmosContainer):
         )
 
 
+class FakeRedisClient:
+    def __init__(self):
+        self.values = {}
+
+    def get(self, key):
+        return self.values.get(key)
+
+    def set(self, key, value):
+        self.values[key] = value
+        return True
+
+    def setex(self, key, ttl_seconds, value):
+        self.values[key] = value
+        return True
+
+    def incr(self, key):
+        value = int(self.values.get(key) or 0) + 1
+        self.values[key] = str(value)
+        return value
+
+    def delete(self, key):
+        self.values.pop(key, None)
+        return True
+
+
 @contextmanager
-def _load_conversation_cache_module(settings_container, group_doc=None):
+def _load_conversation_cache_module(settings_container, group_doc=None, redis_client=None):
     module_names = [
         "config",
         "functions_appinsights",
@@ -116,7 +143,7 @@ def _load_conversation_cache_module(settings_container, group_doc=None):
     sys.modules["functions_appinsights"] = fake_appinsights
 
     fake_app_settings_cache = types.ModuleType("app_settings_cache")
-    fake_app_settings_cache.get_app_cache_redis_client = lambda: None
+    fake_app_settings_cache.get_app_cache_redis_client = lambda: redis_client
     sys.modules["app_settings_cache"] = fake_app_settings_cache
 
     fake_group = types.ModuleType("functions_group")
@@ -141,7 +168,7 @@ def _load_conversation_cache_module(settings_container, group_doc=None):
 def test_conversation_cache_key_changes_after_user_bump():
     """A user version bump should change that user's list cache key."""
     settings_container = FakeCosmosContainer()
-    with _load_conversation_cache_module(settings_container) as conversation_cache:
+    with _load_conversation_cache_module(settings_container, redis_client=FakeRedisClient()) as conversation_cache:
         first_key = conversation_cache.build_conversation_cache_key(
             "user-1",
             "list",
@@ -162,32 +189,35 @@ def test_conversation_cache_key_changes_after_user_bump():
         assert first_key != second_key
         assert conversation_cache.get_cached_conversation_payload(first_key)["conversations"][0]["id"] == "conversation-1"
         assert conversation_cache.get_cached_conversation_payload(second_key) is None
+        assert not settings_container.items
 
 
-def test_conversation_cache_bump_retries_etag_conflict():
-    """Concurrent version updates should retry and preserve both invalidations."""
+def test_conversation_cache_bump_uses_redis_version_counter():
+    """Conversation version bumps should use Redis instead of settings-container version docs."""
     settings_container = ConflictOnceFakeCosmosContainer()
-    with _load_conversation_cache_module(settings_container) as conversation_cache:
-        version = conversation_cache.bump_conversation_cache_version("user-1", reason="conflict-test")
+    with _load_conversation_cache_module(settings_container, redis_client=FakeRedisClient()) as conversation_cache:
+        first_version = conversation_cache.bump_conversation_cache_version("user-1", reason="first")
+        second_version = conversation_cache.bump_conversation_cache_version("user-1", reason="second")
 
-    assert version == 2
+    assert first_version == 1
+    assert second_version == 2
+    assert "conversation_cache_version:user-1" not in settings_container.items
 
 
-def test_conversation_cache_key_bypasses_local_version_cache():
-    """Conversation keys should observe external version bumps without local TTL delay."""
+def test_conversation_cache_key_reads_redis_version_without_settings_container():
+    """Conversation keys should observe external Redis version bumps without settings-container reads."""
     settings_container = FakeCosmosContainer()
-    with _load_conversation_cache_module(settings_container) as conversation_cache:
+    redis_client = FakeRedisClient()
+    with _load_conversation_cache_module(settings_container, redis_client=redis_client) as conversation_cache:
         conversation_cache.bump_conversation_cache_version("user-1", reason="initial")
         first_key = conversation_cache.build_conversation_cache_key("user-1", "feed", parameters={})
 
-        version_doc_id = "conversation_cache_version:user-1"
-        version_doc = settings_container.read_item(version_doc_id, version_doc_id)
-        version_doc["version"] = int(version_doc.get("version", 0)) + 1
-        settings_container.upsert_item(version_doc)
+        redis_client.incr("conversation_cache_version:user-1")
 
         second_key = conversation_cache.build_conversation_cache_key("user-1", "feed", parameters={})
 
     assert first_key != second_key
+    assert not settings_container.items
 
 
 def test_conversation_cache_invalidation_fans_out_to_viewers():
@@ -195,6 +225,7 @@ def test_conversation_cache_invalidation_fans_out_to_viewers():
     settings_container = FakeCosmosContainer()
     with _load_conversation_cache_module(
         settings_container,
+        redis_client=FakeRedisClient(),
         group_doc={
             "id": "group-1",
             "owner": {"id": "group-owner"},
@@ -248,7 +279,7 @@ def test_conversation_cache_invalidation_fans_out_to_viewers():
 def test_conversation_cache_write_failures_do_not_escape():
     """Cache write failures should not fail the caller."""
     settings_container = FakeCosmosContainer()
-    with _load_conversation_cache_module(settings_container) as conversation_cache:
+    with _load_conversation_cache_module(settings_container, redis_client=FakeRedisClient()) as conversation_cache:
         def raise_cache_write(*args, **kwargs):
             raise RuntimeError("cache unavailable")
 
@@ -260,6 +291,105 @@ def test_conversation_cache_write_failures_do_not_escape():
         ) is False
 
 
+def test_conversation_cache_disabled_bypasses_reads_and_writes():
+    """Disabled conversation cache should bypass cache entries and leave source reads authoritative."""
+    settings_container = FakeCosmosContainer()
+    with _load_conversation_cache_module(settings_container, redis_client=FakeRedisClient()) as conversation_cache:
+        cache_key = conversation_cache.build_conversation_cache_key(
+            "user-1",
+            "list",
+            parameters={"include_hidden": True},
+        )
+        assert conversation_cache.set_cached_conversation_payload(
+            cache_key,
+            {"conversations": [{"id": "conversation-1"}]},
+            ttl_seconds=120,
+        ) is True
+
+        disabled_settings = {"enable_conversation_cache": False}
+        assert conversation_cache.get_cached_conversation_payload(
+            cache_key,
+            settings=disabled_settings,
+        ) is None
+        assert conversation_cache.set_cached_conversation_payload(
+            "disabled-key",
+            {"conversations": [{"id": "conversation-2"}]},
+            settings=disabled_settings,
+        ) is False
+        assert "shared_cache_entry:conversation_cache:disabled-key" not in settings_container.items
+
+
+def test_conversation_cache_redis_unavailable_bypasses_without_settings_writes():
+    """Redis-unavailable conversation cache should fall back to source Cosmos query behavior."""
+    settings_container = FakeCosmosContainer()
+    with _load_conversation_cache_module(settings_container, redis_client=None) as conversation_cache:
+        cache_key = conversation_cache.build_conversation_cache_key(
+            "user-1",
+            "list",
+            parameters={"include_hidden": True},
+        )
+
+        assert cache_key is None
+        assert conversation_cache.bump_conversation_cache_version("user-1", reason="redis-missing") is None
+        assert conversation_cache.get_cached_conversation_payload("list:user-1:test") is None
+        assert conversation_cache.set_cached_conversation_payload(
+            "list:user-1:test",
+            {"conversations": [{"id": "conversation-1"}]},
+            ttl_seconds=120,
+        ) is False
+        assert not settings_container.items
+
+
+def test_conversation_cache_metrics_track_rolling_events():
+    """Conversation cache metrics should track DAI-style rolling cache events."""
+    settings_container = FakeCosmosContainer()
+    with _load_conversation_cache_module(settings_container, redis_client=FakeRedisClient()) as conversation_cache:
+        conversation_cache.reset_conversation_cache_metrics()
+        list_key = conversation_cache.build_conversation_cache_key(
+            "user-1",
+            "list",
+            parameters={"include_hidden": True},
+        )
+        feed_key = conversation_cache.build_conversation_cache_key(
+            "user-1",
+            "feed",
+            parameters={"limit": 25},
+        )
+
+        assert conversation_cache.set_cached_conversation_payload(
+            list_key,
+            {"conversations": [{"id": "conversation-1"}]},
+            ttl_seconds=120,
+        ) is True
+        assert conversation_cache.get_cached_conversation_payload(list_key)["conversations"][0]["id"] == "conversation-1"
+        assert conversation_cache.get_cached_conversation_payload(feed_key) is None
+        assert conversation_cache.get_cached_conversation_payload(
+            list_key,
+            settings={"enable_conversation_cache": False},
+        ) is None
+        assert conversation_cache.set_cached_conversation_payload(
+            list_key,
+            {"conversations": [{"id": "conversation-2"}]},
+            settings={"conversation_cache_ttl_seconds": 0},
+        ) is False
+        assert conversation_cache.bump_conversation_cache_version("user-1", reason="metrics-test") == 1
+
+        metrics = conversation_cache.get_conversation_cache_metrics()
+        window_15m = metrics["windows"]["15m"]
+
+    assert window_15m["hit_count"] == 1
+    assert window_15m["miss_count"] == 1
+    assert window_15m["bypass_count"] == 2
+    assert window_15m["write_count"] == 1
+    assert window_15m["invalidation_count"] == 1
+    assert window_15m["error_count"] == 0
+    assert window_15m["hit_rate_percent"] == 50.0
+    assert window_15m["operation_counts"]["list"] == 4
+    assert window_15m["operation_counts"]["feed"] == 1
+    assert window_15m["operation_counts"]["version"] == 1
+    assert metrics["last_invalidation"]["reason"] == "metrics-test"
+
+
 def test_conversation_cache_route_and_mutation_hooks_are_wired():
     """Contract test for list/search/feed cache usage and invalidation hooks."""
     route_source = open(
@@ -269,11 +399,31 @@ def test_conversation_cache_route_and_mutation_hooks_are_wired():
     ).read()
     assert "build_conversation_cache_key(user_id, \"list\"" in route_source
     assert "_build_conversation_cache_access_parameters(user_id)" in route_source
+    assert "get_conversation_cache_settings(settings)" in route_source
+    assert "cache_settings.get('enabled')" in route_source
     assert "\"access\": access_parameters" in route_source or "'access': access_parameters" in route_source
     assert "feed_cache_parameters" in route_source and "\"feed\"" in route_source
     assert "search_cache_parameters" in route_source and "\"search\"" in route_source
     assert "get_cached_conversation_payload" in route_source
     assert "set_cached_conversation_payload" in route_source
+    assert "invalidate_conversation_cache_for_item(conversation_item, reason=\"conversation_chat_type_normalized\")" in route_source
+
+    settings_source = open(os.path.join(SINGLE_APP_DIR, "functions_settings.py"), "r", encoding="utf-8").read()
+    assert "'enable_conversation_cache': True" in settings_source
+
+    cache_source = open(os.path.join(SINGLE_APP_DIR, "functions_conversation_cache.py"), "r", encoding="utf-8").read()
+    maintenance_source = open(os.path.join(SINGLE_APP_DIR, "functions_app_maintenance.py"), "r", encoding="utf-8").read()
+    assert "def get_conversation_cache_metrics()" in cache_source
+    assert "bump_shared_cache_version" not in cache_source
+    assert "get_shared_cache_version" not in cache_source
+    assert "allow_cosmos_fallback=False" in cache_source
+    assert "redis_unavailable" in cache_source
+    assert "_record_conversation_cache_metric(\"hit\", operation=operation)" in cache_source
+    assert "_record_conversation_cache_metric(\"miss\", operation=operation)" in cache_source
+    assert "_record_conversation_cache_metric(\"bypass\", operation=operation, reason=\"disabled\")" in cache_source
+    assert "_record_conversation_cache_metric(\"invalidate\", operation=\"version\", reason=reason)" in cache_source
+    assert "'conversation_cache': {" in maintenance_source
+    assert "'metrics': get_conversation_cache_metrics()" in maintenance_source
 
     for file_name, marker in {
         "route_backend_conversations.py": "bump_conversation_cache_version(user_id, reason=\"conversation_pin_toggled\")",
@@ -292,10 +442,13 @@ def test_conversation_cache_route_and_mutation_hooks_are_wired():
 if __name__ == "__main__":
     tests = [
         test_conversation_cache_key_changes_after_user_bump,
-        test_conversation_cache_bump_retries_etag_conflict,
-        test_conversation_cache_key_bypasses_local_version_cache,
+        test_conversation_cache_bump_uses_redis_version_counter,
+        test_conversation_cache_key_reads_redis_version_without_settings_container,
         test_conversation_cache_invalidation_fans_out_to_viewers,
         test_conversation_cache_write_failures_do_not_escape,
+        test_conversation_cache_disabled_bypasses_reads_and_writes,
+        test_conversation_cache_redis_unavailable_bypasses_without_settings_writes,
+        test_conversation_cache_metrics_track_rolling_events,
         test_conversation_cache_route_and_mutation_hooks_are_wired,
     ]
     results = []

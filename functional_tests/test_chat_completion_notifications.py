@@ -2,8 +2,10 @@
 # test_chat_completion_notifications.py
 """
 Functional test for chat completion notifications.
-Version: 0.239.136
+Version: 0.250.036
 Implemented in: 0.239.128
+Mark-read cache invalidation tuned in: 0.250.035
+Background streaming unread guard updated in: 0.250.036
 
 This test ensures that personal chat completions create deep-link notifications,
 conversation unread state is normalized for list/detail responses, and the
@@ -26,6 +28,7 @@ class FakeConversationContainer:
 
     def __init__(self, items=None):
         self.items = {}
+        self.upsert_count = 0
         for item in items or []:
             self.upsert_item(item)
 
@@ -36,6 +39,7 @@ class FakeConversationContainer:
         return copy.deepcopy(self.items[item_id])
 
     def upsert_item(self, item):
+        self.upsert_count += 1
         self.items[item['id']] = copy.deepcopy(item)
         return copy.deepcopy(item)
 
@@ -105,6 +109,8 @@ def build_test_app(test_user_id, conversation_container, notification_container)
     original_swagger_route = route_backend_conversations.swagger_route
     original_get_auth_security = route_backend_conversations.get_auth_security
     original_get_current_user_id = route_backend_conversations.get_current_user_id
+    original_bump_conversation_cache_version = route_backend_conversations.bump_conversation_cache_version
+    cache_bumps = []
 
     functions_notifications.cosmos_notifications_container = notification_container
     route_backend_conversations.cosmos_conversations_container = conversation_container
@@ -113,6 +119,9 @@ def build_test_app(test_user_id, conversation_container, notification_container)
     route_backend_conversations.swagger_route = lambda **kwargs: (lambda func: func)
     route_backend_conversations.get_auth_security = lambda: {}
     route_backend_conversations.get_current_user_id = lambda: test_user_id
+    route_backend_conversations.bump_conversation_cache_version = (
+        lambda user_id, reason=None: cache_bumps.append((user_id, reason)) or len(cache_bumps)
+    )
 
     app = Flask(__name__)
     app.config['TESTING'] = True
@@ -126,8 +135,9 @@ def build_test_app(test_user_id, conversation_container, notification_container)
         route_backend_conversations.swagger_route = original_swagger_route
         route_backend_conversations.get_auth_security = original_get_auth_security
         route_backend_conversations.get_current_user_id = original_get_current_user_id
+        route_backend_conversations.bump_conversation_cache_version = original_bump_conversation_cache_version
 
-    return app, restore
+    return app, restore, cache_bumps
 
 
 def unwrap_response(result):
@@ -201,7 +211,7 @@ def test_conversation_routes_normalize_unread_fields():
         'is_hidden': False,
     }
 
-    app, restore = build_test_app(
+    app, restore, _cache_bumps = build_test_app(
         test_user_id,
         FakeConversationContainer([old_conversation]),
         FakeNotificationContainer(),
@@ -281,7 +291,8 @@ def test_mark_read_endpoint_clears_unread_state_and_notification():
     )
     functions_notifications.cosmos_notifications_container = original_notification_container
 
-    app, restore = build_test_app(test_user_id, fake_conversations, fake_notifications)
+    app, restore, cache_bumps = build_test_app(test_user_id, fake_conversations, fake_notifications)
+    fake_conversations.upsert_count = 0
 
     try:
         with app.test_request_context(f'/api/conversations/{conversation_id}/mark-read', method='POST'):
@@ -297,6 +308,9 @@ def test_mark_read_endpoint_clears_unread_state_and_notification():
         if not response_payload.get('success'):
             print(f"❌ Mark-read endpoint did not report success: {response_payload}")
             return False
+        if response_payload.get('conversation_state_changed') is not True:
+            print(f"❌ Mark-read endpoint did not report conversation state changed: {response_payload}")
+            return False
 
         updated_conversation = fake_conversations.read_item(conversation_id, conversation_id)
         if updated_conversation.get('has_unread_assistant_response'):
@@ -310,6 +324,31 @@ def test_mark_read_endpoint_clears_unread_state_and_notification():
         stored_notification = next(iter(fake_notifications.items.values()))
         if test_user_id not in stored_notification.get('read_by', []):
             print(f"❌ Notification was not marked read: {stored_notification}")
+            return False
+
+        if cache_bumps != [(test_user_id, 'conversation_marked_read')]:
+            print(f"❌ Mark-read did not invalidate conversation cache exactly once: {cache_bumps}")
+            return False
+
+        first_upsert_count = fake_conversations.upsert_count
+        with app.test_request_context(f'/api/conversations/{conversation_id}/mark-read', method='POST'):
+            second_response, second_status_code = unwrap_response(
+                app.view_functions['mark_conversation_read_api'](conversation_id)
+            )
+
+        if second_status_code != 200:
+            print(f"❌ Unexpected idempotent mark-read status: {second_status_code}")
+            return False
+
+        second_payload = second_response.get_json()
+        if second_payload.get('conversation_state_changed') is not False:
+            print(f"❌ Idempotent mark-read should not report changed state: {second_payload}")
+            return False
+        if len(cache_bumps) != 1:
+            print(f"❌ Idempotent mark-read should not invalidate conversation cache: {cache_bumps}")
+            return False
+        if fake_conversations.upsert_count != first_upsert_count:
+            print("❌ Idempotent mark-read should not upsert an already-read conversation")
             return False
 
         print("✅ Mark-read endpoint cleared conversation unread state and related notification")
@@ -332,8 +371,10 @@ def test_frontend_wires_unread_dot_and_mark_read_flow():
         (main_list_js, 'fetch(`/api/conversations/${conversationId}/mark-read`, {'),
         (main_list_js, 'function createUnreadDotElement() {'),
         (main_list_js, 'setSidebarConversationUnreadState(conversationId, hasUnread);'),
+        (main_list_js, 'markConversationRead(conversationId, { suppressErrorToast: true })'),
         (sidebar_js, "conversation-unread-dot', 'sidebar-conversation-unread-dot"),
-        (streaming_js, "markConversationRead(finalData.conversation_id, { force: true, suppressErrorToast: true })"),
+        (streaming_js, "function markStreamingConversationReadIfActive(conversationId, contextLabel)"),
+        (streaming_js, "markStreamingConversationReadIfActive(finalData.conversation_id, 'live streaming completion')"),
         (chats_css, '.conversation-unread-dot {'),
     ]
 

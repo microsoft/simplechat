@@ -13,6 +13,7 @@ from functions_cosmos_indexing import (
     get_cosmos_indexing_policy_status,
     run_cosmos_indexing_policy_maintenance,
 )
+from functions_conversation_cache import get_conversation_cache_metrics, get_conversation_cache_settings
 from functions_document_access_index import (
     DOCUMENT_ACCESS_ACTIVE_MAINTENANCE_INTERVAL_SETTING,
     DOCUMENT_ACCESS_BACKFILL_BATCH_SIZE_SETTING,
@@ -21,9 +22,19 @@ from functions_document_access_index import (
     get_document_access_index_settings,
     get_document_access_index_backfill_status,
     is_document_access_index_maintenance_pending,
+    refresh_document_access_cache_version_marker_ttls,
     run_document_access_index_backfill_maintenance,
 )
-from functions_shared_cache import ensure_shared_cache_version_doc, get_shared_cache_version
+from functions_cosmos_stale_cleanup import (
+    COSMOS_STALE_CACHE_CLEANUP_APPLY_SETTING,
+    COSMOS_STALE_CACHE_CLEANUP_BATCH_SIZE_SETTING,
+    COSMOS_STALE_CACHE_CLEANUP_MAX_BATCH_SIZE,
+    COSMOS_STALE_CACHE_CLEANUP_RUN_SETTING,
+    build_skipped_stale_cache_cleanup_result,
+    build_stale_cache_cleanup_status,
+    run_stale_cache_document_cleanup,
+)
+from functions_shared_cache import ensure_shared_cache_version_doc, get_shared_cache_metrics, get_shared_cache_version
 
 
 APP_MAINTENANCE_STATE_DOC_ID = 'app_maintenance_state'
@@ -210,6 +221,15 @@ def get_app_maintenance_settings(settings):
             int(settings.get(DOCUMENT_ACCESS_REPAIR_BATCH_SIZE_SETTING, 100) or 100),
             1,
         ),
+        'run_stale_cache_cleanup': bool(settings.get(COSMOS_STALE_CACHE_CLEANUP_RUN_SETTING, False)),
+        'apply_stale_cache_cleanup': bool(settings.get(COSMOS_STALE_CACHE_CLEANUP_APPLY_SETTING, False)),
+        'stale_cache_cleanup_batch_size': min(
+            max(
+                int(settings.get(COSMOS_STALE_CACHE_CLEANUP_BATCH_SIZE_SETTING, 100) or 100),
+                1,
+            ),
+            COSMOS_STALE_CACHE_CLEANUP_MAX_BATCH_SIZE,
+        ),
     }
 
 
@@ -240,6 +260,14 @@ def _extract_document_access_index_step_status(maintenance_result):
             results = step.get('results') if isinstance(step.get('results'), dict) else {}
             return results.get('current_status') or results
     return maintenance_result.get('document_access_index_backfill')
+
+
+def _extract_last_step_results(state, step_name):
+    for step in reversed(list((state or {}).get('last_steps') or [])):
+        if isinstance(step, dict) and step.get('name') == step_name:
+            results = step.get('results')
+            return results if isinstance(results, dict) else None
+    return None
 
 
 def initialize_cache_version_documents():
@@ -295,11 +323,27 @@ def get_app_maintenance_status(settings=None):
         'success': True,
         'state': state,
         'cache_version_documents': get_cache_version_document_status(),
+        'shared_cache_metrics': get_shared_cache_metrics(),
+        'conversation_cache': {
+            'settings': get_conversation_cache_settings(settings or {}),
+            'metrics': get_conversation_cache_metrics(),
+        },
         'cosmos_indexing_policies': get_cosmos_indexing_policy_status(),
+        'stale_cache_cleanup': build_stale_cache_cleanup_status(
+            _extract_last_step_results(state, 'stale_cache_document_cleanup')
+        ),
+        'document_access_cache_version_ttl_hygiene': (
+            _extract_last_step_results(state, 'document_access_cache_version_ttl_hygiene') or {}
+        ),
         'document_access_index_backfill': document_access_index_status,
         'settings': {
             'apply_cosmos_indexing_policies': maintenance_settings.get('apply_cosmos_indexing_policies'),
             'cosmos_indexing_policy_apply_setting': COSMOS_INDEXING_POLICY_APPLY_SETTING,
+            'run_stale_cache_cleanup': maintenance_settings.get('run_stale_cache_cleanup'),
+            'apply_stale_cache_cleanup': maintenance_settings.get('apply_stale_cache_cleanup'),
+            'stale_cache_cleanup_batch_size': maintenance_settings.get('stale_cache_cleanup_batch_size'),
+            'stale_cache_cleanup_run_setting': COSMOS_STALE_CACHE_CLEANUP_RUN_SETTING,
+            'stale_cache_cleanup_apply_setting': COSMOS_STALE_CACHE_CLEANUP_APPLY_SETTING,
             'run_document_access_index_backfill': maintenance_settings.get('run_document_access_index_backfill'),
             'document_access_index_auto_maintenance': maintenance_settings.get('document_access_index_auto_maintenance'),
             'document_access_index_active_interval_seconds': maintenance_settings.get('document_access_index_active_interval_seconds'),
@@ -316,6 +360,8 @@ def run_app_maintenance_once(
     apply_indexing_policies=None,
     run_document_access_backfill=None,
     reset_document_access_backfill=False,
+    run_stale_cache_cleanup=None,
+    apply_stale_cache_cleanup=None,
 ):
     """Run idempotent app maintenance tasks once and persist the outcome."""
     run_id = str(uuid.uuid4())
@@ -326,6 +372,10 @@ def run_app_maintenance_once(
             apply_indexing_policies = maintenance_settings.get('apply_cosmos_indexing_policies', False)
         if run_document_access_backfill is None:
             run_document_access_backfill = maintenance_settings.get('run_document_access_index_backfill', False)
+        if run_stale_cache_cleanup is None:
+            run_stale_cache_cleanup = maintenance_settings.get('run_stale_cache_cleanup', False)
+        if apply_stale_cache_cleanup is None:
+            apply_stale_cache_cleanup = maintenance_settings.get('apply_stale_cache_cleanup', False)
         _record_started(run_id, triggered_by, requested_by)
         log_event(
             '[AppMaintenance] Maintenance run started.',
@@ -335,6 +385,16 @@ def run_app_maintenance_once(
         cache_version_results = initialize_cache_version_documents()
         indexing_policy_results = run_cosmos_indexing_policy_maintenance(
             apply_changes=bool(apply_indexing_policies),
+        )
+        if run_stale_cache_cleanup:
+            stale_cache_cleanup_results = run_stale_cache_document_cleanup(
+                apply_changes=bool(apply_stale_cache_cleanup),
+                batch_size=maintenance_settings.get('stale_cache_cleanup_batch_size'),
+            )
+        else:
+            stale_cache_cleanup_results = build_skipped_stale_cache_cleanup_result()
+        document_access_cache_version_ttl_results = refresh_document_access_cache_version_marker_ttls(
+            settings=settings,
         )
         document_access_backfill_results = run_document_access_index_backfill_maintenance(
             settings=settings,
@@ -354,6 +414,18 @@ def run_app_maintenance_once(
                 'status': 'succeeded' if indexing_policy_results.get('success') else 'failed',
                 'apply_requested': bool(apply_indexing_policies),
                 'results': indexing_policy_results,
+            },
+            {
+                'name': 'stale_cache_document_cleanup',
+                'status': 'succeeded' if stale_cache_cleanup_results.get('success') else 'failed',
+                'run_requested': bool(run_stale_cache_cleanup),
+                'apply_requested': bool(apply_stale_cache_cleanup),
+                'results': stale_cache_cleanup_results,
+            },
+            {
+                'name': 'document_access_cache_version_ttl_hygiene',
+                'status': 'succeeded' if document_access_cache_version_ttl_results.get('success') else 'failed',
+                'results': document_access_cache_version_ttl_results,
             },
             {
                 'name': 'document_access_index_backfill',

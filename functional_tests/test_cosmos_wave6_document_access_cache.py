@@ -2,9 +2,10 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 6 document access Redis cache.
-Version: 0.250.031
+Version: 0.250.043
 Implemented in: 0.250.029
 DAI cache TTL default updated in: 0.250.031
+DAI version marker TTL hygiene added in: 0.250.043
 
 This test ensures DAI document-list reads use Redis read-through caching with
 scope-version invalidation, bounded TTLs, and safe fallback to direct DAI reads
@@ -12,6 +13,7 @@ when Redis cache operations fail.
 """
 
 import copy
+import fnmatch
 import importlib
 import os
 import sys
@@ -118,7 +120,9 @@ class FakeRedisClient:
         self.values = {}
         self.ttls = {}
         self.get_calls = []
+        self.set_calls = []
         self.setex_calls = []
+        self.expire_calls = []
         self.incr_calls = []
 
     def get(self, key):
@@ -130,6 +134,41 @@ class FakeRedisClient:
             self.values[key] = str(value)
             return True
         return False
+
+    def set(self, key, value, ex=None, nx=False):
+        if nx and key in self.values:
+            return False
+        self.values[key] = str(value)
+        self.set_calls.append((key, value, ex, nx))
+        if ex is not None:
+            self.ttls[key] = ex
+        return True
+
+    def expire(self, key, ttl_seconds):
+        if key not in self.values:
+            return False
+        self.ttls[key] = ttl_seconds
+        self.expire_calls.append((key, ttl_seconds))
+        return True
+
+    def ttl(self, key):
+        if key not in self.values:
+            return -2
+        return self.ttls.get(key, -1)
+
+    def scan(self, cursor=0, match="*", count=100):
+        keys = [
+            key
+            for key in sorted(self.values)
+            if fnmatch.fnmatch(key, match)
+        ]
+        cursor_index = int(cursor or 0)
+        next_index = min(cursor_index + int(count or 100), len(keys))
+        next_cursor = 0 if next_index >= len(keys) else next_index
+        return next_cursor, keys[cursor_index:next_index]
+
+    def memory_usage(self, key):
+        return len(str(self.values.get(key, "")))
 
     def incr(self, key):
         next_value = int(self.values.get(key) or 0) + 1
@@ -229,7 +268,15 @@ def _document(document_id, owner_id, **overrides):
 
 
 @contextmanager
-def _load_document_access_index_module(redis_client, settings=None, settings_container=None, index_container=None):
+def _load_document_access_index_module(
+    redis_client,
+    settings=None,
+    settings_container=None,
+    index_container=None,
+    groups_container=None,
+    public_workspaces_container=None,
+    user_settings_container=None,
+):
     original_modules = {}
     for module_name in [
         "app_settings_cache",
@@ -244,6 +291,9 @@ def _load_document_access_index_module(redis_client, settings=None, settings_con
 
     index_container = index_container or FakeCosmosContainer()
     settings_container = settings_container or FakeCosmosContainer()
+    groups_container = groups_container or FakeCosmosContainer()
+    public_workspaces_container = public_workspaces_container or FakeCosmosContainer()
+    user_settings_container = user_settings_container or FakeCosmosContainer()
 
     fake_app_settings_cache = types.ModuleType("app_settings_cache")
     fake_app_settings_cache.get_app_cache_redis_client = lambda: redis_client
@@ -251,7 +301,10 @@ def _load_document_access_index_module(redis_client, settings=None, settings_con
 
     fake_config = types.ModuleType("config")
     fake_config.cosmos_document_access_index_container = index_container
+    fake_config.cosmos_groups_container = groups_container
     fake_config.cosmos_settings_container = settings_container
+    fake_config.cosmos_public_workspaces_container = public_workspaces_container
+    fake_config.cosmos_user_settings_container = user_settings_container
     fake_config.cosmos_user_documents_container = FakeCosmosContainer()
     fake_config.cosmos_user_documents_container_name = "documents"
     fake_config.cosmos_group_documents_container = FakeCosmosContainer()
@@ -333,10 +386,78 @@ def test_document_list_cache_hit_and_scope_version_invalidation():
     assert redis_client.setex_calls
     assert all(ttl_seconds == 900 for _key, ttl_seconds, _value in redis_client.setex_calls)
     assert len(redis_client.incr_calls) >= 2
+    version_keys = [
+        key for key in redis_client.values
+        if key.startswith("DAI_LIST_CACHE_VERSION:")
+    ]
+    assert version_keys
+    assert all(redis_client.ttl(key) == 3600 for key in version_keys)
+    assert redis_client.expire_calls
     assert cache_metrics["windows"]["15m"]["hit_count"] == 1
     assert cache_metrics["windows"]["15m"]["miss_count"] == 2
     assert cache_metrics["windows"]["15m"]["invalidation_count"] >= 1
     assert read_metrics["windows"]["15m"]["served_from_cache_count"] == 1
+
+
+def test_document_access_cache_version_marker_ttl_hygiene_refreshes_existing_markers():
+    """Maintenance should add bounded TTLs to existing no-expiry DAI version markers."""
+    redis_client = FakeRedisClient()
+    redis_client.values["DAI_LIST_CACHE_VERSION:no-expiry"] = "0"
+    redis_client.values["DAI_LIST_CACHE_VERSION:short-ttl"] = "4"
+    redis_client.ttls["DAI_LIST_CACHE_VERSION:short-ttl"] = 30
+
+    with _load_document_access_index_module(redis_client) as (indexing, _index_container, _settings_container):
+        result = indexing.refresh_document_access_cache_version_marker_ttls(
+            settings=_settings(),
+            batch_size=10,
+        )
+
+    assert result["success"] is True
+    assert result["status"] == "completed"
+    assert result["scanned_count"] == 2
+    assert result["refreshed_count"] == 2
+    assert result["no_expiry_count"] == 1
+    assert result["unsafe_ttl_count"] == 1
+    assert redis_client.ttl("DAI_LIST_CACHE_VERSION:no-expiry") == 3600
+    assert redis_client.ttl("DAI_LIST_CACHE_VERSION:short-ttl") == 3600
+
+
+def test_document_access_cache_version_hash_resolution_returns_safe_scope_metadata():
+    """DAI version marker hashes should resolve to known SimpleChat scopes when possible."""
+    redis_client = FakeRedisClient()
+    groups_container = FakeCosmosContainer()
+    groups_container.upsert_item({
+        "id": "group-1",
+        "name": "Incident Workspace",
+        "status": "active",
+    })
+    group_document = _document(
+        "doc-1",
+        "owner-1",
+        user_id="owner-1",
+        group_id="group-1",
+    )
+
+    with _load_document_access_index_module(
+        redis_client,
+        groups_container=groups_container,
+    ) as (indexing, _index_container, settings_container):
+        settings_container.upsert_item(_succeeded_backfill_state())
+        indexing.sync_document_access_index_for_document(
+            group_document,
+            operation="test_resolution_seed",
+            force=True,
+        )
+        scope_hash = indexing.build_document_access_cache_scope_hash("group:group-1")
+        resolutions = indexing.resolve_document_access_cache_version_hashes([scope_hash])
+
+    resolution = resolutions[scope_hash]
+    assert resolution["resolved"] is True
+    assert resolution["entity_type"] == "group_workspace"
+    assert resolution["entity_id"] == "group-1"
+    assert resolution["entity_name"] == "Incident Workspace"
+    assert resolution["scope_key"] == "group:group-1"
+    assert resolution["row_count"] == 1
 
 
 def test_invalidation_runs_when_cache_setting_is_disabled():
@@ -634,6 +755,8 @@ def test_redis_failures_bypass_cache_without_forcing_source_fallback():
 if __name__ == "__main__":
     tests = [
         test_document_list_cache_hit_and_scope_version_invalidation,
+        test_document_access_cache_version_marker_ttl_hygiene_refreshes_existing_markers,
+        test_document_access_cache_version_hash_resolution_returns_safe_scope_metadata,
         test_invalidation_runs_when_cache_setting_is_disabled,
         test_failed_invalidation_marks_repair_and_blocks_cached_reads,
         test_missing_redis_client_when_configured_marks_repair,

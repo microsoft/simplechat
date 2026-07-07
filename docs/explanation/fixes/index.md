@@ -7,6 +7,8 @@ category: Version History
 ---
 
 - [Azure OpenAI Model Discovery Identity Fix](v0.250.001/AZURE_OPENAI_MODEL_DISCOVERY_IDENTITY_FIX.md)
+- [Chat Completion Background Unread Guard Fix](CHAT_COMPLETION_BACKGROUND_UNREAD_GUARD_FIX.md)
+- [Settings Container RU Write Suppression Fix](SETTINGS_CONTAINER_RU_WRITE_SUPPRESSION_FIX.md)
 - [Tabular SK Python 3.13 Kernel Parameter Fix](v0.242.068/TABULAR_SK_PY313_KERNEL_PARAMETER_FIX.md)
 - [Chat Model Icon Avatar Fix](v0.242.071/CHAT_MODEL_ICON_AVATAR_FIX.md)
 - [Python 3.12 CI and XSS Guardrail Fix](PYTHON_312_CI_AND_XSS_GUARDRAIL_FIX.md)

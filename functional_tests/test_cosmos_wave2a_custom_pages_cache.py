@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 2A custom pages cache.
-Version: 0.250.006
+Version: 0.250.032
 Implemented in: 0.250.006
 
 This test ensures custom page catalog and navigation reads use shared cache

@@ -2,7 +2,7 @@
 """
 UI test for Admin Settings Cosmos throughput controls.
 
-Version: 0.241.199
+Version: 0.250.045
 Implemented in: 0.241.147
 
 This test ensures the Scale tab exposes Cosmos throughput monitoring and
@@ -21,6 +21,7 @@ Version 0.241.181 adds container table refresh button coverage.
 Version 0.241.183 adds explicit setup guidance and detailed Validate Access diagnostics coverage.
 Version 0.241.184 adds neutral informational copy for normal container-targeted throughput mode.
 Version 0.241.199 adds SimpleChat's 10,000 RU/s scale support ceiling, monitor-only indicators, and container policy modal filtering coverage.
+Version 0.250.045 adds a stable left-nav anchor for the Cosmos metrics table.
 """
 
 import re
@@ -76,6 +77,7 @@ def test_admin_cosmos_throughput_controls_render_from_template():
         "cosmos-throughput-scale-down-btn",
         "cosmos-throughput-container-filter",
         "cosmos-throughput-container-filter-count",
+        "cosmos-throughput-metrics-table-section",
         "cosmos-throughput-container-policy-filter",
         "cosmos-throughput-container-policy-filter-count",
         "cosmos-throughput-refresh-table-btn",

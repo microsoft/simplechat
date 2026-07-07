@@ -10,6 +10,7 @@ from flask import make_response
 
 from config import *
 from functions_authentication import *
+from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
 from functions_settings import *
 from functions_logging import *
 from functions_activity_logging import *
@@ -3265,6 +3266,7 @@ def register_route_backend_control_center(bp):
                 
                 # Update in database
                 cosmos_groups_container.upsert_item(group)
+                bump_chat_bootstrap_global_cache_version(reason="group_status_updated")
                 
                 # Log to activity_logs container for audit trail
                 from functions_activity_logging import log_group_status_change
@@ -3708,6 +3710,7 @@ def register_route_backend_control_center(bp):
             
             # Save group
             cosmos_groups_container.upsert_item(group)
+            bump_chat_bootstrap_global_cache_version(reason="group_member_added")
             
             # Determine the action source (single add vs bulk CSV)
             source = data.get('source', 'csv')  # Default to 'csv' for backward compatibility
@@ -4139,6 +4142,7 @@ def register_route_backend_control_center(bp):
                 
                 # Update in database
                 cosmos_public_workspaces_container.upsert_item(workspace)
+                bump_chat_bootstrap_global_cache_version(reason="public_workspace_status_updated")
                 
                 # Log to activity_logs container for audit trail
                 from functions_activity_logging import log_public_workspace_status_change
@@ -4297,6 +4301,7 @@ def register_route_backend_control_center(bp):
                             })
                             
                             cosmos_public_workspaces_container.upsert_item(workspace)
+                            bump_chat_bootstrap_global_cache_version(reason="public_workspace_bulk_status_updated")
                             
                             # Log activity
                             from functions_activity_logging import log_public_workspace_status_change
@@ -4527,6 +4532,7 @@ def register_route_backend_control_center(bp):
             
             # Save workspace
             cosmos_public_workspaces_container.upsert_item(workspace)
+            bump_chat_bootstrap_global_cache_version(reason="public_workspace_member_added")
             
             # Determine the action source
             source = data.get('source', 'csv')
@@ -4636,6 +4642,7 @@ def register_route_backend_control_center(bp):
             
             # Save workspace
             cosmos_public_workspaces_container.upsert_item(workspace)
+            bump_chat_bootstrap_global_cache_version(reason="public_workspace_member_added")
             
             # Log to activity logs
             activity_record = {
@@ -7147,6 +7154,7 @@ def register_route_backend_control_center(bp):
             
             group['modifiedDate'] = datetime.utcnow().isoformat()
             cosmos_groups_container.upsert_item(group)
+            bump_chat_bootstrap_global_cache_version(reason="group_ownership_transferred")
             
             # Log to activity logs
             activity_record = {
@@ -7284,6 +7292,7 @@ def register_route_backend_control_center(bp):
             
             workspace['modifiedDate'] = datetime.utcnow().isoformat()
             cosmos_public_workspaces_container.upsert_item(workspace)
+            bump_chat_bootstrap_global_cache_version(reason="public_workspace_ownership_transferred")
             
             # Log to activity logs
             activity_record = {
@@ -7369,6 +7378,7 @@ def register_route_backend_control_center(bp):
             
             group['modifiedDate'] = datetime.utcnow().isoformat()
             cosmos_groups_container.upsert_item(group)
+            bump_chat_bootstrap_global_cache_version(reason="group_ownership_transferred")
             
             # Log to activity logs
             activity_record = {
@@ -7509,6 +7519,7 @@ def register_route_backend_control_center(bp):
             
             workspace['modifiedDate'] = datetime.utcnow().isoformat()
             cosmos_public_workspaces_container.upsert_item(workspace)
+            bump_chat_bootstrap_global_cache_version(reason="public_workspace_ownership_transferred")
             
             # Log to activity logs
             activity_record = {

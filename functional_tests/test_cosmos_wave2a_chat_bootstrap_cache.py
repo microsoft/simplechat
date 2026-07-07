@@ -2,11 +2,13 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 2A chat bootstrap cache.
-Version: 0.250.006
+Version: 0.250.037
 Implemented in: 0.250.006
+Settings write invalidation scoped in: 0.250.037
 
 This test ensures chat bootstrap cache keys are versioned and invalidated by
-global and per-user cache version bumps.
+global and per-user cache version bumps without relying on generic settings
+write invalidation.
 """
 
 import copy
@@ -14,6 +16,7 @@ import importlib
 import os
 import sys
 import types
+from datetime import datetime
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -69,7 +72,27 @@ class FakeCosmosContainer:
         del self.items[item]
 
 
-def _load_chat_bootstrap_module(settings_container):
+class FakeRedisClient:
+    def __init__(self):
+        self.values = {}
+
+    def get(self, key):
+        return self.values.get(key)
+
+    def set(self, key, value):
+        self.values[key] = value
+        return True
+
+    def setex(self, key, ttl_seconds, value):
+        self.values[key] = value
+        return True
+
+    def delete(self, key):
+        self.values.pop(key, None)
+        return True
+
+
+def _load_chat_bootstrap_module(settings_container, redis_client=None):
     fake_config = types.ModuleType("config")
     fake_config.cosmos_settings_container = settings_container
     sys.modules["config"] = fake_config
@@ -78,13 +101,51 @@ def _load_chat_bootstrap_module(settings_container):
     fake_appinsights.log_event = lambda *args, **kwargs: None
     sys.modules["functions_appinsights"] = fake_appinsights
 
+    fake_app_settings_cache = types.ModuleType("app_settings_cache")
+    fake_app_settings_cache.get_app_cache_redis_client = lambda: redis_client
+    fake_app_settings_cache.get_app_settings_cache_version = lambda: 0
+    fake_app_settings_cache.get_governance_cache_version = lambda: 0
+    sys.modules["app_settings_cache"] = fake_app_settings_cache
+
     for module_name in [
         "functions_shared_cache",
-        "app_settings_cache",
         "functions_chat_bootstrap_cache",
     ]:
         sys.modules.pop(module_name, None)
     return importlib.import_module("functions_chat_bootstrap_cache")
+
+
+def _load_public_workspaces_module(public_workspaces_container, invalidation_reasons):
+    fake_config = types.ModuleType("config")
+    fake_config.cosmos_public_workspaces_container = public_workspaces_container
+    fake_config.datetime = datetime
+    fake_config.exceptions = types.SimpleNamespace(CosmosResourceNotFoundError=FakeCosmosError)
+    sys.modules["config"] = fake_config
+
+    fake_group = types.ModuleType("functions_group")
+    sys.modules["functions_group"] = fake_group
+
+    fake_authentication = types.ModuleType("functions_authentication")
+    fake_authentication.get_current_user_info = lambda: None
+    sys.modules["functions_authentication"] = fake_authentication
+
+    fake_settings = types.ModuleType("functions_settings")
+    sys.modules["functions_settings"] = fake_settings
+
+    fake_branding = types.ModuleType("functions_workspace_branding")
+    fake_branding.DEFAULT_WORKSPACE_HERO_COLOR = "#000000"
+    fake_branding.get_workspace_logo_metadata = lambda *args, **kwargs: {}
+    fake_branding.normalize_workspace_hero_color = lambda value: value or "#000000"
+    sys.modules["functions_workspace_branding"] = fake_branding
+
+    fake_bootstrap_cache = types.ModuleType("functions_chat_bootstrap_cache")
+    fake_bootstrap_cache.bump_chat_bootstrap_global_cache_version = (
+        lambda reason=None: invalidation_reasons.append(reason)
+    )
+    sys.modules["functions_chat_bootstrap_cache"] = fake_bootstrap_cache
+
+    sys.modules.pop("functions_public_workspaces", None)
+    return importlib.import_module("functions_public_workspaces")
 
 
 def _cache_inputs():
@@ -113,7 +174,7 @@ def _cache_inputs():
 def test_chat_bootstrap_cache_key_changes_after_global_bump():
     """A global version bump should change the chat bootstrap cache key."""
     settings_container = FakeCosmosContainer()
-    bootstrap_cache = _load_chat_bootstrap_module(settings_container)
+    bootstrap_cache = _load_chat_bootstrap_module(settings_container, redis_client=FakeRedisClient())
     inputs = _cache_inputs()
 
     first_key = bootstrap_cache.build_chat_bootstrap_cache_key("user-1", **inputs)
@@ -137,7 +198,7 @@ def test_chat_bootstrap_cache_key_changes_after_global_bump():
 def test_chat_bootstrap_cache_key_changes_after_user_bump():
     """A user version bump should only change that user's cache key."""
     settings_container = FakeCosmosContainer()
-    bootstrap_cache = _load_chat_bootstrap_module(settings_container)
+    bootstrap_cache = _load_chat_bootstrap_module(settings_container, redis_client=FakeRedisClient())
     inputs = _cache_inputs()
 
     user_one_before = bootstrap_cache.build_chat_bootstrap_cache_key("user-1", **inputs)
@@ -169,12 +230,116 @@ def test_chat_bootstrap_route_and_write_hooks_are_wired():
         "functions_personal_actions.py": "bump_chat_bootstrap_user_cache_version(user_id, reason=\"personal_action_saved\")",
         "functions_group_actions.py": "bump_chat_bootstrap_global_cache_version(reason=\"group_action_saved\")",
         "functions_prompts.py": "_invalidate_prompt_chat_bootstrap_cache(",
-        "functions_settings.py": "bump_chat_bootstrap_global_cache_version(reason=f\"settings_write:{context}\")",
     }.items():
         source = open(os.path.join(SINGLE_APP_DIR, file_name), "r", encoding="utf-8").read()
         assert marker in source, f"Missing invalidation hook marker in {file_name}: {marker}"
         if file_name == "functions_settings.py":
             assert source.count("def _refresh_app_settings_cache_after_write(") == 1
+
+    settings_source = open(os.path.join(SINGLE_APP_DIR, "functions_settings.py"), "r", encoding="utf-8").read()
+    assert "bump_chat_bootstrap_global_cache_version(reason=f\"settings_write:{context}\")" not in settings_source
+
+
+def test_phase3_low_churn_invalidation_hooks_are_wired():
+    """Contract test for Phase 3 group/public/custom-pages invalidation coverage."""
+    expected_markers = {
+        "functions_group.py": [
+            "bump_chat_bootstrap_global_cache_version(reason=\"group_created\")",
+            "bump_chat_bootstrap_global_cache_version(reason=\"group_deleted\")",
+            "bump_chat_bootstrap_global_cache_version(reason=\"group_model_endpoints_updated\")",
+        ],
+        "functions_public_workspaces.py": [
+            "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_created\")",
+            "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_deleted\")",
+            "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_document_manager_added\")",
+            "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_document_manager_removed\")",
+            "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_document_manager_request_approved\")",
+            "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_document_manager_request_rejected\")",
+        ],
+        "functions_simplechat_operations.py": [
+            "bump_chat_bootstrap_global_cache_version(reason=\"group_marked_inactive\")",
+            "bump_chat_bootstrap_global_cache_version(reason=\"group_member_added\")",
+        ],
+        "route_backend_groups.py": [
+            "bump_chat_bootstrap_global_cache_version(reason=\"group_updated\")",
+            "bump_chat_bootstrap_global_cache_version(reason=\"group_member_request_approved\")",
+            "bump_chat_bootstrap_global_cache_version(reason=\"group_member_removed\")",
+            "bump_chat_bootstrap_global_cache_version(reason=\"group_member_role_updated\")",
+            "bump_chat_bootstrap_global_cache_version(reason=\"group_ownership_transferred\")",
+        ],
+        "route_backend_public_workspaces.py": [
+            "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_updated\")",
+            "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_member_request_approved\")",
+            "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_member_added\")",
+            "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_member_removed\")",
+            "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_member_role_updated\")",
+            "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_ownership_transferred\")",
+        ],
+        "route_backend_control_center.py": [
+            "bump_chat_bootstrap_global_cache_version(reason=\"group_status_updated\")",
+            "bump_chat_bootstrap_global_cache_version(reason=\"group_member_added\")",
+            "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_status_updated\")",
+            "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_bulk_status_updated\")",
+            "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_member_added\")",
+            "bump_chat_bootstrap_global_cache_version(reason=\"group_ownership_transferred\")",
+            "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_ownership_transferred\")",
+        ],
+    }
+
+    for file_name, markers in expected_markers.items():
+        source = open(os.path.join(SINGLE_APP_DIR, file_name), "r", encoding="utf-8").read()
+        for marker in markers:
+            assert marker in source, f"Missing Phase 3 invalidation hook in {file_name}: {marker}"
+
+    groups_source = open(os.path.join(SINGLE_APP_DIR, "route_backend_groups.py"), "r", encoding="utf-8").read()
+    group_update_route = groups_source[
+        groups_source.index("def api_update_group(group_id):"):
+        groups_source.index("def api_get_group_logo(group_id):")
+    ]
+    assert "cosmos_groups_container.upsert_item(group_doc)" in group_update_route
+    assert "bump_chat_bootstrap_global_cache_version(reason=\"group_updated\")" in group_update_route
+
+
+def test_chat_bootstrap_payload_cache_does_not_fallback_to_settings_container_without_redis():
+    """Volatile chat bootstrap payloads should not write shared cache entries to settings without Redis."""
+    settings_container = FakeCosmosContainer()
+    bootstrap_cache = _load_chat_bootstrap_module(settings_container, redis_client=None)
+    inputs = _cache_inputs()
+
+    cache_key = bootstrap_cache.build_chat_bootstrap_cache_key("user-1", **inputs)
+
+    assert bootstrap_cache.set_cached_chat_bootstrap_payload(cache_key, {"chat_agent_options": []}) is False
+    assert bootstrap_cache.get_cached_chat_bootstrap_payload(cache_key) is None
+    assert not any(item_id.startswith("shared_cache_entry:chat_bootstrap:") for item_id in settings_container.items)
+
+
+def test_public_workspace_request_approval_persists_manager_and_invalidates_cache():
+    """Approving a document-manager request should persist both membership and pending cleanup."""
+    public_workspaces_container = FakeCosmosContainer()
+    invalidation_reasons = []
+    public_workspaces_container.create_item({
+        "id": "workspace-1",
+        "pendingDocumentManagers": [
+            {
+                "userId": "user-1",
+                "email": "user1@example.com",
+                "displayName": "User One",
+            },
+        ],
+        "documentManagers": [],
+    })
+    public_workspaces = _load_public_workspaces_module(public_workspaces_container, invalidation_reasons)
+
+    public_workspaces.approve_document_manager_request("workspace-1", "user-1")
+
+    saved_workspace = public_workspaces_container.items["workspace-1"]
+    assert saved_workspace["pendingDocumentManagers"] == []
+    assert saved_workspace["documentManagers"] == [{
+        "userId": "user-1",
+        "email": "user1@example.com",
+        "displayName": "User One",
+    }]
+    assert invalidation_reasons == ["public_workspace_document_manager_request_approved"]
 
 
 if __name__ == "__main__":
@@ -182,6 +347,9 @@ if __name__ == "__main__":
         test_chat_bootstrap_cache_key_changes_after_global_bump,
         test_chat_bootstrap_cache_key_changes_after_user_bump,
         test_chat_bootstrap_route_and_write_hooks_are_wired,
+        test_phase3_low_churn_invalidation_hooks_are_wired,
+        test_chat_bootstrap_payload_cache_does_not_fallback_to_settings_container_without_redis,
+        test_public_workspace_request_approval_persists_manager_and_invalidates_cache,
     ]
     results = []
     for test in tests:

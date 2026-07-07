@@ -2,10 +2,10 @@
 
 ## Header Information
 
-**Status**: Partially implemented through Wave 6 Redis DAI document-list cache admin cleanup
-**Documented against version**: **0.250.004**
-**Implemented in version**: **0.250.005 - 0.250.031**
-**Related config.py version update**: Wave 6 Redis DAI document-list cache admin cleanup is implemented in `application/single_app/config.py` version **0.250.031**.
+**Status**: Implemented through Phase 9 hardening docs, Cosmos indexing maintenance, stale cache cleanup maintenance, and Admin Settings maintenance visibility
+**Documented against version**: **0.250.039**
+**Implemented in version**: **0.250.005 - 0.250.039**
+**Related config.py version update**: Phase 9 hardening docs and the Admin Settings guarded index-apply action are implemented in `application/single_app/config.py` version **0.250.039**.
 **Primary audience**: SimpleChat technical leadership and application developers
 **Primary goal**: Reduce high-volume Azure Cosmos DB reads and repeated cross-partition queries while preserving the current application architecture and existing Azure AI Search indexing model.
 
@@ -75,6 +75,42 @@ Admin Settings > Scale displays Redis DAI cache status and lightweight in-proces
 DAI is now treated as an always-on production read path in the Admin Settings experience. The default Redis DAI cache TTL is **900 seconds**, relying on scope-version invalidation for immediate visibility after document, tag, share, repair, delete, and backfill changes. The Scale left navigation now links directly to **DAI Metrics**, **Cosmos Metrics**, and **Redis Metrics** so admins can jump to the relevant operational dashboard.
 
 Support-only controls and diagnostics are hidden by default behind the app setting `enable_dai_debug`, which defaults to `false` and is not exposed in the Admin Settings UI. When that setting is edited directly in Cosmos and set to `true`, the DAI card renders manual backfill/reset controls, DAI read/cache toggles, batch-size fields, shadow validation controls, and rolling shadow-decision diagnostics for troubleshooting. Default admins see only production DAI health, maintenance, cache, fallback, RU, latency, repair, and backfill metrics.
+
+### 2026-07-06 Phase 3 Low-Churn Cache Hardening
+
+Phase 3 completes and hardens the existing shared low-churn cache foundation for custom pages/navigation and chat bootstrap data. Shared cache helpers now record safe hit, miss, write, delete, and version-bump counters using hashed cache-key context, and app maintenance status includes these shared cache metrics alongside cache version document status.
+
+Custom pages cache invalidation now runs after app settings writes so feature enablement, menu configuration, and TTL changes do not depend on old cache entries expiring. Chat bootstrap cache invalidation coverage now includes group creation/deletion/status/member/role/ownership/model-endpoint changes and public workspace creation/deletion/status/member/role/ownership changes across both normal workspace routes, Control Center admin routes, and SimpleChat-native operations used by internal tools. Existing Redis-first/Cosmos-fallback shared cache behavior remains unchanged, and process memory remains a diagnostic/near-cache layer rather than the authoritative invalidation mechanism.
+
+### 2026-07-06 Phase 4 Conversation Cache Hardening
+
+Phase 4 completes and hardens the existing conversation list, feed, and advanced-search cache path. Conversation cache remains user-scoped and versioned, but version tokens and volatile payloads are Redis-only as of version `0.250.037`. When an app-cache Redis client is unavailable, routes bypass cache reads/writes and run the existing Cosmos source queries directly; when conversation caching is explicitly disabled, routes also bypass cache reads/writes and run the source path directly.
+
+The default app setting `enable_conversation_cache` is `true`, with `conversation_cache_ttl_seconds` controlling cache entry lifetime. Cache keys include user id, operation, user cache version, normalized request parameters, and group-access fingerprints for collaboration-visible feed/search results. Mutation coverage includes conversation create, title update, delete, bulk delete, pin/hide changes, mark-read, metadata/summary/context updates, scope-lock changes, chat completion/title initialization, collaboration participant/message/title/member changes, and notification read/dismiss actions.
+
+Version `0.250.034` adds DAI-style conversation cache metrics to Admin Settings > Scale. Reads, writes, disabled/TTL bypasses, and version invalidations emit lightweight in-process rolling samples over 5-minute, 15-minute, and 60-minute windows. The admin dashboard displays runtime state, 15-minute hit rate, hits/misses, bypasses/errors, writes/invalidations, operation mix, last cache event, and last invalidation without adding Cosmos reads to the conversation hot path.
+
+Version `0.250.035` tunes the mark-read flow exposed by those metrics. Normal conversation navigation no longer forces a mark-read request when the client has no unread state, and the backend mark-read endpoint only upserts the conversation and bumps the conversation cache version when unread fields actually changed. Notification clearing remains available, but already-read conversations no longer churn the conversation feed cache simply because a user switched conversations or reloaded the page.
+
+Version `0.250.036` preserves background chat-completion unread state after the mark-read tuning. Streaming finalization now only force-clears unread state when the completed conversation is still the active conversation, and it no longer switches the active conversation back to a completed background stream. This keeps the "chat finished while away" notification and green unread dot until the user opens that conversation.
+
+### 2026-07-06 Settings Container RU Suppression and Stale Cleanup Planning
+
+Version `0.250.037` removes the unexpected idle `settings` container RU pattern discovered during Phase 4 validation. Generic app settings writes no longer bump unrelated chat-bootstrap and custom-pages version documents, Cosmos throughput status refresh is read-only, no-op background autoscale checks no longer persist runtime status, volatile chat-bootstrap/conversation cache payloads do not fall back to Cosmos when Redis is unavailable, and DAI status uses short-lived in-process state caching while skipping disabled shadow-validation state reads. Post-deploy monitoring confirmed that `settings` dropped out of the top normalized RU consumers during idle monitoring.
+
+The remaining obsolete `settings` documents should be cleaned up through app maintenance rather than by ad hoc deletion. Cleanup must be allowlisted, idempotent, dry-run capable, and limited to stale operational cache artifacts that the new code no longer uses, such as old `conversation_cache_version:*` documents and volatile `shared_cache_entry:conversation_cache:*` entries. Cleanup must not delete `app_settings`, active cache-version docs that still coordinate low-churn caches, app-maintenance state, DAI state, repair/backfill state, or any source-of-truth configuration document.
+
+### 2026-07-06 Phase 5 Cosmos Maintenance Implementation
+
+Version `0.250.038` implements the Phase 5 maintenance surface. Expected Cosmos indexing policies remain centralized in `functions_cosmos_indexing.py`, app maintenance can compare or apply missing composite indexes non-destructively, and Admin Settings > Scale now displays indexing status, mode, missing expected indexes, updated containers, failures, and last evaluation time.
+
+The same maintenance surface now includes stale operational cache cleanup. Cleanup is logically separate from indexing updates, is skipped by default for background runs, and can be triggered from Admin Settings in dry-run or apply mode. Apply mode deletes only allowlisted stale cache artifacts from the settings container: retired `conversation_cache_version:*` documents, obsolete Redis-only `shared_cache_entry:conversation_cache:*` and `shared_cache_entry:chat_bootstrap:*` payloads, and expired shared cache entries. It reports candidate, deleted, skipped, failed, category, and more-candidate counts without touching app settings, active cache-version documents, DAI state, app maintenance state, source documents, or user data.
+
+### 2026-07-06 Phase 9 Hardening and Admin Index Apply
+
+Version `0.250.039` completes the Phase 9 runbook pass and exposes a guarded Admin Settings action for applying missing Cosmos composite indexes. Admin Settings > Scale > Cosmos Maintenance now keeps the default status view read-only, then requires an explicit confirmation modal before posting `apply_cosmos_indexing_policies=true` to the existing app-maintenance run endpoint. The modal clarifies that the update is additive and non-destructive, preserves existing indexing policy paths, can improve supported lookup and ordered-query speed, and may add write-index overhead plus asynchronous Cosmos index transformation work.
+
+Phase 9 also documents support runbooks for rebuilding caches, rebuilding `document_access_index`, cleaning stale operational cache documents, interpreting shadow validation diffs, interpreting DAI fallback/cache metrics, and deciding whether broad source fallback should remain after DAI/cache telemetry is stable.
 
 ## Executive Summary
 
@@ -425,7 +461,7 @@ Conversation search also loads candidate conversations and runs a cross-partitio
 
 ### Proposed Cache Strategy
 
-Use per-user versioned cache keys. Redis is preferred, but the same key model can be stored in Cosmos cache documents when Redis is unavailable:
+Use per-user versioned cache keys. Redis is the runtime backend for conversation cache version tokens and volatile payloads; when Redis is unavailable, the application bypasses cache and uses source Cosmos queries:
 
 ```text
 conversation_cache_version:{user_id} = 42
@@ -434,9 +470,9 @@ conversation_search:{user_id}:v42:{filters_hash}
 conversation_classifications:{user_id}:v42
 ```
 
-When conversation state changes, increment `conversation_cache_version:{user_id}` in the shared backend. Old keys become stale immediately because reads use the latest version. Worker memory can keep a short-lived near-cache of the latest version and payload, but it must re-check the shared version before trusting local data beyond the local version-read TTL.
+When conversation state changes, increment `conversation_cache_version:{user_id}` in Redis. Old keys become stale immediately because reads use the latest version. If Redis is unavailable, no Cosmos cache-version fallback is used; cache key construction returns no key and the request falls through to the source query behavior.
 
-Example Cosmos-backed conversation cache entry:
+Retired Cosmos-backed conversation cache entry shape cleaned up by Phase 5 maintenance:
 
 ```json
 {
@@ -1041,6 +1077,17 @@ The buttons should start jobs and return immediately. The UI should poll job sta
       },
       "processed": 0,
       "errors": []
+    },
+    "cleanup_stale_cache_docs": {
+      "status": "pending",
+      "dry_run": true,
+      "candidate_count": 0,
+      "deleted_count": 0,
+      "skipped_count": 0,
+      "checkpoint": {
+        "continuation_token": null
+      },
+      "errors": []
     }
   },
   "summary": {
@@ -1049,7 +1096,9 @@ The buttons should start jobs and return immediately. The UI should poll job sta
     "indexing_policies_submitted": 2,
     "access_index_rows_upserted": 0,
     "access_index_rows_deleted": 0,
-    "cache_versions_initialized": 4
+    "cache_versions_initialized": 4,
+    "stale_cache_docs_deleted": 0,
+    "stale_cache_docs_skipped": 0
   }
 }
 ```
@@ -1108,7 +1157,29 @@ document_access_index_projection_version
 
 This should be optional because conversation cache can lazy warm. Manual rebuild may be useful after cache flushes or support events.
 
-#### Step 6: Backfill Document Access Index Container
+#### Step 6: Clean Stale Operational Cache Documents
+
+This step removes obsolete cache artifacts from the `settings` container after the code version that stopped using them is confirmed live.
+
+- Run in dry-run mode by default and report candidate counts by document prefix/type.
+- Delete only allowlisted stale artifacts:
+  - `conversation_cache_version:*`
+  - `shared_cache_entry:conversation_cache:*`
+  - expired volatile shared cache entries whose namespace is no longer Cosmos-backed.
+- Preserve source-of-truth and active coordination docs:
+  - `app_settings`
+  - `app_settings_cache_version`
+  - `governance_cache_version`
+  - `custom_pages_cache_version`
+  - `chat_bootstrap_global_cache_version`
+  - `document_access_index_projection_version`
+  - `app_maintenance_state`
+  - DAI backfill, repair backlog, and shadow-validation state docs
+  - background-task lock docs
+- Process deletes in bounded batches and record deleted counts, skipped counts, last continuation token, and failures.
+- Surface cleanup status and failures in Admin Settings maintenance status.
+
+#### Step 7: Backfill Document Access Index Container
 
 For each source document container:
 
@@ -1134,6 +1205,7 @@ POST /api/admin/maintenance/run-app-maintenance
 POST /api/admin/maintenance/rebuild-document-access-index
 POST /api/admin/maintenance/rebuild-custom-pages-cache
 POST /api/admin/maintenance/clear-app-caches
+POST /api/admin/maintenance/cleanup-stale-cache-docs
 ```
 
 All endpoints must use:
@@ -1216,6 +1288,9 @@ Recommended tests:
    - Verify distributed lock prevents duplicate runs.
    - Verify status doc updates.
    - Verify failed step records error and job remains inspectable.
+   - Verify stale cache cleanup dry-run reports candidates without deleting.
+   - Verify stale cache cleanup apply mode deletes only allowlisted obsolete cache docs.
+   - Verify stale cache cleanup preserves app settings, active version docs, DAI state docs, and background-task locks.
 
 5. **Document Access Index Projection Test**
    - Verify create document writes owner index row.
@@ -1354,6 +1429,8 @@ Exit criteria:
 
 ### Phase 3: Low-Churn Cache Wins
 
+Implemented in version: **0.250.032**
+
 Implement the safest cache wins before higher-risk read-model changes.
 
 1. Custom pages cache:
@@ -1372,6 +1449,8 @@ Exit criteria:
 
 ### Phase 4: Conversation List and Search Cache
 
+Implemented in version: **0.250.033**; metrics dashboard updated in **0.250.034**; mark-read invalidation tuned in **0.250.035**; background unread-state preservation updated in **0.250.036**
+
 1. Add user-scoped conversation cache version docs or Redis version keys.
 2. Add lazy warm for `/api/get_conversations`.
 3. Cache normalized conversation search result signatures with query/filter hashes.
@@ -1385,6 +1464,8 @@ Exit criteria:
    - Scope lock changes.
    - Metadata, summary, classification, tag, or context updates.
 5. Add manual rebuild/clear controls.
+6. Add operational dashboard metrics for runtime status, hit rate, hits/misses, bypasses/errors, writes/invalidations, operation mix, and last invalidation.
+7. Keep mark-read invalidation idempotent so normal navigation does not invalidate the feed cache when no unread state changed.
 
 Exit criteria:
 
@@ -1394,17 +1475,23 @@ Exit criteria:
 
 ### Phase 5: Cosmos Indexing Policy Maintenance
 
+Implemented in version: **0.250.038**; guarded admin apply action added in **0.250.039**
+
 1. Define expected indexing policies in one central module.
 2. Compare current container policies to expected policies.
 3. Apply non-destructive updates through maintenance jobs.
 4. Record index transformation submission and current status where available.
 5. Validate high-use source-container query metrics before and after policy updates.
+6. Surface indexing-policy comparison, transformation progress, skipped containers, and failures in Admin Settings maintenance status.
+7. Include the stale operational cache-document cleanup task in the same maintenance framework, but keep it logically separate from indexing-policy updates so a cleanup failure cannot block policy validation.
 
 Exit criteria:
 
 - Indexing policy changes can be re-run safely.
 - Admins can see whether policy validation or update failed.
+- Admins can explicitly apply missing composite indexes from the UI after acknowledging write-index overhead and asynchronous transformation behavior.
 - Source-query RU improves or remains stable while companion-container work proceeds.
+- Stale cache cleanup can run in dry-run and apply modes, reports exact candidate/deleted/skipped counts, and never deletes source-of-truth or active coordination documents.
 
 ### Phase 6: Document Access Index Container and Write-Through
 
@@ -1474,15 +1561,86 @@ Exit criteria:
 
 ### Phase 9: Hardening, Documentation, and Release Readiness
 
+Implemented in version: **0.250.039**
+
 1. Add or update functional tests for caches, maintenance jobs, indexing policy validation, projection write-through, backfill, reconciliation, shadow validation, and read switchover.
 2. Add fix/feature documentation with the implementation version.
 3. Update release notes if approved.
 4. Add support runbook content for:
    - Rebuilding caches.
    - Rebuilding `document_access_index`.
+   - Cleaning stale operational cache documents from `settings`.
    - Interpreting shadow validation diffs.
    - Interpreting DAI source fallback metrics while repair/backfill catches up.
-5. Review whether source fallback can remain as a safety path or be limited to admin repair scenarios.
+   - Interpreting DAI Redis cache metrics and Redis-unavailable bypass behavior.
+5. Review whether source fallback can remain as a broad safety path or should be limited to admin repair scenarios after DAI, Redis cache, and maintenance telemetry are stable.
+6. Complete final docs and release readiness checks, including maintenance runbooks, support-safe cleanup guidance, and validation queries for idle RU baselines.
+
+#### Phase 9 Support Runbook
+
+Use Admin Settings > Scale as the first operational surface. The dashboard is intentionally split into DAI Metrics, Cosmos Maintenance, Cosmos Metrics, Redis Metrics, and Conversation Cache so support can isolate the subsystem before changing settings.
+
+##### Rebuilding low-churn and conversation caches
+
+1. Confirm Redis health in Redis Metrics. If Redis is unavailable, Redis-only cache paths bypass cache and use the safe source or DAI query path rather than writing volatile cache payloads to Cosmos.
+2. For custom pages/navigation and chat bootstrap cache issues, make the source-of-truth change again or save the relevant app/custom-page/workspace setting to bump the low-churn cache version.
+3. For conversation list/feed/search cache issues, use the normal user-visible mutation path that changes the affected conversation, such as title update, pin/hide, delete, mark-read when unread state actually changed, or metadata update. These paths bump Redis-only conversation version tokens.
+4. Do not recreate retired `conversation_cache_version:*` or volatile shared-cache payload documents in `settings`. If old documents remain, use the stale cleanup dry run and apply action instead.
+
+##### Rebuilding `document_access_index`
+
+1. Check Cosmos Document Access Index status in Admin Settings > Scale.
+2. Confirm DAI container, write-through, automatic maintenance, repair backlog, backfill state, and last error.
+3. If DAI debug mode is enabled through the hidden `enable_dai_debug` setting, run one manual backfill batch or reset the checkpoint only when support needs to reprocess all source scopes.
+4. Leave production source fallback enabled while repair or backfill is incomplete. Routes only serve DAI rows when readiness gates pass and the projection query succeeds.
+5. After repair backlog clears and backfill state is succeeded for the relevant scopes, compare 15-minute DAI served reads, fallback count, fallback rate, DAI RU, and DAI latency.
+
+##### Applying expected Cosmos composite indexes
+
+1. Open Cosmos Maintenance and refresh status.
+2. Review Missing Expected Indexes, Indexing Failures, and Last Indexing Evaluation.
+3. Choose **Apply Missing Indexes** only when the team accepts the tradeoff: additional composite indexes improve supported lookup/ordered-query patterns but add write-index maintenance overhead and may start asynchronous index transformation.
+4. Confirm the modal. This posts an apply-mode app-maintenance run. It only appends missing expected composite indexes and preserves current included paths, excluded paths, default indexes, TTL, conflict-resolution, analytical-storage TTL, and full-text policy settings.
+5. Refresh status later to monitor updated container count, failures, and `indexTransformationProgress` where Cosmos returns it.
+
+##### Cleaning stale operational cache documents
+
+1. Run **Dry Run Cleanup** first.
+2. Review candidate count, categories, failed count, and whether more candidates remain.
+3. Use **Delete Stale Cache Docs** only after dry-run counts look reasonable.
+4. Apply mode deletes one bounded batch of allowlisted operational artifacts only: retired conversation cache versions, obsolete Redis-only conversation/chat-bootstrap shared-cache payloads, and expired shared-cache entries.
+5. Repeat dry-run/apply if `More Candidates` remains `Yes`.
+
+##### Interpreting shadow validation diffs
+
+Shadow validation is a diagnostic, not the normal production read path. If enabled for troubleshooting:
+
+- `missing_count` means source documents expected by the current source path were not found in DAI projection rows.
+- `extra_count` means DAI returned rows that the source path did not return.
+- Source/index RU and latency compare the cost of the current source query and the validation/candidate DAI query.
+- Rolling 5-minute and 15-minute samples are useful for workflow-level comparison but should not be mixed with Redis cache hit-rate conclusions.
+- Disable shadow validation before measuring production DAI/cache RU because shadow mode intentionally adds validation work.
+
+##### Interpreting DAI fallback and Redis cache metrics
+
+- `DAI Read Attempts` counts optimized read attempts.
+- `DAI Served Reads` means the access index satisfied the read.
+- `Source Fallbacks` and `Fallback Rate` show how often routes used the source containers because readiness, repair, backfill, cache safety, or query execution did not allow DAI service.
+- `Last Fallback Reason` is the fastest way to decide whether to wait for backfill/repair, investigate projection errors, or inspect Redis/cache safety.
+- Redis DAI cache misses and bypasses are not failures by themselves. A Redis miss should run the DAI query; Redis unavailable bypass should not write volatile cache documents to Cosmos.
+- A healthy deployment should trend toward low source fallback once backfill and repair converge. A high fallback rate with clear repair backlog is expected during rollout; a high fallback rate after convergence needs investigation.
+
+##### Source fallback readiness decision
+
+Keep broad source fallback while any of the following are true:
+
+- DAI repair backlog is non-zero or unknown.
+- Backfill is incomplete for active source scopes.
+- Shadow validation is reporting unresolved missing or extra rows.
+- Production fallback reasons show projection, readiness, Redis invalidation, or query errors.
+- Support has not yet validated idle RU, 15-minute DAI served reads, cache hit rate, and direct source authorization behavior after the latest deployment.
+
+Consider narrowing fallback only after DAI readiness remains stable across representative personal, group, public, and chat document-picker workflows; Redis cache bypass behavior is understood; and support has a tested rebuild path for projection drift.
 
 ## Open Decisions
 

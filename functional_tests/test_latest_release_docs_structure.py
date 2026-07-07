@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for latest-release documentation structure.
-Version: 0.250.034
-Implemented in: 0.241.002; 0.241.003; 0.241.164; 0.241.165; 0.241.166; 0.241.167; 0.241.183; 0.241.184; 0.250.001; 0.250.034
+Version: 0.250.045
+Implemented in: 0.241.002; 0.241.003; 0.241.164; 0.241.165; 0.241.166; 0.241.167; 0.241.183; 0.241.184; 0.250.001; 0.250.034; 0.250.035; 0.250.036; 0.250.041; 0.250.042; 0.250.043; 0.250.044; 0.250.045
 
 This test ensures the docs/latest-release landing page is driven by the latest
 release YAML data, exposes current, previous, and earlier release sections, and
@@ -109,7 +109,7 @@ def test_latest_release_docs_structure() -> bool:
     index_content = read_text(LATEST_RELEASE_INDEX)
     release_data = yaml.safe_load(read_text(LATEST_RELEASE_DATA))
 
-    assert 'VERSION = "0.250.034"' in config_content, "Config version marker is not current."
+    assert 'VERSION = "0.250.045"' in config_content, "Config version marker is not current."
 
     required_index_markers = [
         'layout: latest-release-index',
