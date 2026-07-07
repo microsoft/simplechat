@@ -700,8 +700,10 @@
   <script src="{{ url_for('static', filename='js/sidebar-resize.js') }}"></script>
   <!-- Profile Image JavaScript -->
   <script src="{{ url_for('static', filename='js/profile-image.js') }}"></script>
-  <!-- Notifications JavaScript (for badge polling on all pages) -->
+  {% if session.get('user') %}
+  <!-- Notifications JavaScript (for badge polling on authenticated pages) -->
   <script src="{{ url_for('static', filename='js/notifications.js') }}"></script>
+  {% endif %}
   {% if session.get('user') and app_settings.enable_speech_to_text_input %}
   <script src="{{ url_for('static', filename='js/form-voice-input.js') }}?v={{ config['VERSION'] }}"></script>
   {% endif %}

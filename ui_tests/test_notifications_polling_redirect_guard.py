@@ -1,11 +1,12 @@
 # test_notifications_polling_redirect_guard.py
 """
 UI test for notification polling redirect guards.
-Version: 0.241.095
-Implemented in: 0.241.095
+Version: 0.250.015
+Implemented in: 0.250.015
 
-This test ensures an auth-like notification polling response disables further
-notification polling for the current page session instead of retrying forever.
+This test ensures notification polling is limited to authenticated pages and an
+auth-like notification polling response disables further notification polling for
+the current page session instead of retrying forever.
 """
 
 import json
