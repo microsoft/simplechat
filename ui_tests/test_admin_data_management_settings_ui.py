@@ -1,13 +1,17 @@
 # test_admin_data_management_settings_ui.py
 """
 UI test for Admin Settings Data Management controls.
-Version: 0.241.221
+Version: 0.250.051
 Implemented in: 0.241.211
 Updated in: 0.241.221
+Updated in: 0.250.051
 
 This test ensures admins can discover the Data Management tab, see the
 operational-business-hours warning, and access the backup, encryption,
-migration, backup inventory, and job-history controls without unsafe frontend rendering.
+migration, Cosmos DB JSON editor, backup inventory, and job-history controls without unsafe frontend rendering.
+Version 0.250.049 moves query results and document editing into a scrollable modal.
+Version 0.250.050 keeps this coverage aligned with the Cosmos editor save-path fix.
+Version 0.250.051 verifies the Cosmos editor results list scrolls independently.
 """
 
 import os
@@ -26,6 +30,7 @@ except ModuleNotFoundError:
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ADMIN_TEMPLATE = REPO_ROOT / "application" / "single_app" / "templates" / "admin_settings.html"
 ADMIN_JS = REPO_ROOT / "application" / "single_app" / "static" / "js" / "admin" / "admin_data_management.js"
+STYLES_CSS = REPO_ROOT / "application" / "single_app" / "static" / "css" / "styles.css"
 BASE_URL = os.getenv("SIMPLECHAT_UI_BASE_URL", "").rstrip("/")
 STORAGE_STATE = os.getenv("SIMPLECHAT_UI_ADMIN_STORAGE_STATE") or os.getenv("SIMPLECHAT_UI_STORAGE_STATE", "")
 
@@ -34,6 +39,7 @@ def test_admin_data_management_controls_render_from_template():
     """Validate the Data Management controls are present in the admin template."""
     template = ADMIN_TEMPLATE.read_text(encoding="utf-8")
     js_source = ADMIN_JS.read_text(encoding="utf-8")
+    css_source = STYLES_CSS.read_text(encoding="utf-8")
 
     required_ids = [
         "data-management-tab",
@@ -95,6 +101,32 @@ def test_admin_data_management_controls_render_from_template():
         "data-management-migration-summary",
         "data-management-migration-preview-btn",
         "data-management-execute-migration-btn",
+        "data-management-cosmos-editor-section",
+        "data-management-cosmos-editor-open-danger-btn",
+        "data-management-cosmos-editor-locked-message",
+        "data-management-cosmos-editor-workspace",
+        "data_management_cosmos_editor_container",
+        "data-management-cosmos-editor-container-help",
+        "data_management_cosmos_editor_page_size",
+        "data_management_cosmos_editor_query",
+        "data-management-cosmos-editor-run-query-btn",
+        "data-management-cosmos-editor-results-modal",
+        "data-management-cosmos-editor-modal-title",
+        "data-management-cosmos-editor-modal-subtitle",
+        "data-management-cosmos-editor-modal-status",
+        "data-management-cosmos-editor-next-page-btn",
+        "data-management-cosmos-editor-refresh-document-btn",
+        "data-management-cosmos-editor-results-list",
+        "data-management-cosmos-editor-document-meta",
+        "data-management-cosmos-editor-save-btn",
+        "data_management_cosmos_editor_document_json",
+        "data-management-cosmos-editor-danger-modal",
+        "data_management_cosmos_editor_danger_accept",
+        "data-management-cosmos-editor-accept-danger-btn",
+        "data-management-cosmos-editor-save-modal",
+        "data-management-cosmos-editor-save-summary",
+        "data_management_cosmos_editor_confirmation_phrase",
+        "data-management-cosmos-editor-confirm-save-btn",
         "data-management-backup-operations-section",
         "data-management-run-full-backup-btn",
         "data-management-run-partial-backup-btn",
@@ -121,6 +153,18 @@ def test_admin_data_management_controls_render_from_template():
     assert 'id="data-management-save-settings-btn" disabled aria-disabled="true"' in template
     assert '<h4 class="mb-1">Backup</h4>' in template
     assert '<h4 class="mb-1">Migration</h4>' in template
+    assert "Cosmos DB JSON Editor" in template
+    assert "Query results and the JSON editor open in a modal" in template
+    assert "modal-xl modal-dialog-scrollable" in template
+    assert "cosmos-editor-results-modal-body" in template
+    assert "cosmos-editor-results-list" in template
+    assert 'style="max-height: 62vh;"' not in template
+    assert "#data-management-cosmos-editor-results-modal .cosmos-editor-results-modal-body" in css_source
+    assert "#data-management-cosmos-editor-results-modal .cosmos-editor-results-list" in css_source
+    assert "max-height: calc(100vh - 18rem);" in css_source
+    assert "overflow-y: auto;" in css_source
+    assert "I understand this editor can damage overall system health." in template
+    assert "Required phrase: <code>I understand this can damage system data</code>" in template
     assert '<h4 class="mb-1">Backup Inventory</h4>' in template
     assert 'aria-label="Backup inventory filters"' in template
     assert '<span>Available backups</span>' in template
@@ -152,6 +196,15 @@ def test_admin_data_management_controls_render_from_template():
     assert 'buildMigrationPlan' in js_source
     assert 'queueMigration(false)' in js_source
     assert 'loadMigrationCatalog(targetType)' in js_source
+    assert 'loadCosmosEditorContainers' in js_source
+    assert 'queryCosmosEditorDocuments(false)' in js_source
+    assert 'cosmosEditorContinuationToken' in js_source
+    assert 'showCosmosEditorResultsModal' in js_source
+    assert 'setCosmosEditorQueryStatus' in js_source
+    assert 'openCosmosEditorSaveModal' in js_source
+    assert 'confirmation_phrase: cosmosEditorConfirmationPhrase' in js_source
+    assert 'The edit was recorded in Activity Logs.' in js_source
+    assert 'closest("[data-ignore-data-management-change' in js_source
     assert 'testTargetCosmos' in js_source
     assert 'testTargetSearch' in js_source
     assert 'testTargetEnhancedCitationStorage' in js_source
@@ -214,6 +267,12 @@ def test_admin_data_management_tab_browser_workflow():
         expect(page.locator("#data-management-test-target-search-btn")).to_be_visible()
         expect(page.locator("#data-management-migration-workflow-section")).to_be_visible()
         expect(page.locator("#data-management-execute-migration-btn")).to_be_visible()
+        expect(page.locator("#data-management-cosmos-editor-section")).to_be_visible()
+        expect(page.locator("#data-management-cosmos-editor-locked-message")).to_be_visible()
+        expect(page.locator("#data-management-cosmos-editor-workspace")).to_have_class(re.compile(r"\bd-none\b"))
+        expect(page.locator("#data-management-cosmos-editor-danger-modal")).to_be_attached()
+        expect(page.locator("#data-management-cosmos-editor-results-modal")).to_be_attached()
+        expect(page.locator("#data-management-cosmos-editor-save-modal")).to_be_attached()
         expect(page.locator("#data-management-save-settings-btn")).to_be_visible()
         expect(page.locator("#data-management-save-settings-btn")).to_be_disabled()
         expect(page.locator("#data-management-save-settings-btn")).to_contain_text("Saved")

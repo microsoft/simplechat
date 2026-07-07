@@ -1240,3 +1240,19 @@ main {
     border-left-color: #495057;
     color: #adb5bd;
 }
+
+/* Cosmos editor modal */
+#data-management-cosmos-editor-results-modal .cosmos-editor-results-modal-body {
+    overflow-x: hidden;
+}
+
+#data-management-cosmos-editor-results-modal .cosmos-editor-results-list {
+    max-height: calc(100vh - 18rem);
+    overflow-y: auto;
+}
+
+@media (max-width: 991.98px) {
+    #data-management-cosmos-editor-results-modal .cosmos-editor-results-list {
+        max-height: 18rem;
+    }
+}

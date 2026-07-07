@@ -2,6 +2,41 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.051)**
+
+#### User Interface Enhancements
+
+*   **Cosmos Editor Independent Results Scrolling**
+    *   Cosmos editor query results now use a dedicated scroll area inside the results modal, so long result lists do not stretch the rest of the modal.
+    *   Added a smaller results-list cap for narrower screens while keeping the document editor and modal footer accessible.
+    *   (Ref: microsoft/simplechat#1006, `admin_settings.html`, `styles.css`, Cosmos DB JSON Editor)
+
+### **(v0.250.049)**
+
+#### Bug Fixes
+
+*   **Cosmos Editor Page Size Enforcement**
+    *   Empty Cosmos editor browse mode now respects the selected page size up to the 100-document cap instead of always requesting 100 items.
+    *   This keeps small page-size selections useful for compact validation and targeted inspection.
+    *   (Ref: microsoft/simplechat#1006, Cosmos DB JSON Editor, `functions_data_management.py`)
+
+#### User Interface Enhancements
+
+*   **Cosmos Editor Results Modal**
+    *   Moved Cosmos editor query results and the JSON document editor into a large scrollable modal opened by Run Query.
+    *   Kept the Data Management card focused on unlock, container selection, page size, and query setup while the modal provides compact result rows, a scrollable results pane, document refresh, Next Page, and Save JSON controls.
+    *   (Ref: microsoft/simplechat#1006, `admin_settings.html`, `admin_data_management.js`, `COSMOS_DB_JSON_EDITOR.md`)
+
+### **(v0.250.048)**
+
+#### New Features
+
+*   **Admin Cosmos DB JSON Editor**
+    *   Added an admin-only Data Management tool for selecting SimpleChat Cosmos DB containers, running paged SELECT queries, opening individual documents, editing JSON, and saving changes with ETag concurrency protection.
+    *   Empty browse mode is capped at the first 100 documents, while custom SELECT queries page beyond 100 through continuation tokens without returning oversized result sets in one request.
+    *   The interface is protected by danger acknowledgements, blocks `id` and partition key edits, and records editor actions plus save summaries in Activity Logs.
+    *   (Ref: microsoft/simplechat#1006, `COSMOS_DB_JSON_EDITOR.md`, `functions_data_management.py`, `route_backend_data_management.py`, `admin_settings.html`, `admin_data_management.js`)
+
 ### **(v0.250.047)**
 
 #### Bug Fixes

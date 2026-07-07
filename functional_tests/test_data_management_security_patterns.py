@@ -2,14 +2,21 @@
 # test_data_management_security_patterns.py
 """
 Functional test for Data Management security patterns.
-Version: 0.241.231
+Version: 0.250.051
 Implemented in: 0.241.211
-Updated in: 0.241.231
+Updated in: 0.250.051
 
 This test ensures Data Management admin routes require authenticated admin
 access, secrets stay redacted in frontend responses, and the admin browser
 controller avoids XSS-prone rendering sinks. It also verifies the migration
-target database name is fixed to SimpleChat.
+target database name is fixed to SimpleChat and the Cosmos DB JSON editor
+uses SELECT-only, paged, ETag-protected writes with Activity Log audit records.
+Version 0.250.049 adds selected page-size enforcement for empty browse mode
+and moves results/editing into a scrollable modal.
+Version 0.250.050 verifies Cosmos editor saves do not pass unsupported
+partition_key kwargs into the Python Cosmos SDK replace_item call.
+Version 0.250.051 keeps version coverage aligned with the Cosmos editor
+results-pane scroll refinement.
 """
 
 import ast
@@ -59,7 +66,7 @@ def test_version_and_container_registration():
     """Validate the Data Management version and Cosmos job container registrations."""
     config_source = read_text(CONFIG_FILE)
 
-    assert 'VERSION = "0.241.231"' in config_source
+    assert 'VERSION = "0.250.051"' in config_source
     assert 'cosmos_data_management_jobs_container_name = "data_management_jobs"' in config_source
     assert 'partition_key=PartitionKey(path="/id")' in config_source
     assert 'cosmos_data_management_job_items_container_name = "data_management_job_items"' in config_source
@@ -69,7 +76,7 @@ def test_version_and_container_registration():
 def test_admin_routes_require_login_admin_and_swagger_security():
     """Validate every Data Management route has the required admin security stack."""
     routes = route_functions_with_decorators()
-    assert len(routes) == 13
+    assert len(routes) == 18
 
     for function_name, decorators in routes:
         assert "swagger_route" in decorators, f"{function_name} missing swagger_route"
@@ -87,6 +94,11 @@ def test_admin_routes_require_login_admin_and_swagger_security():
     assert '/api/admin/data-management/target/cosmos/test' in source
     assert '/api/admin/data-management/target/search/test' in source
     assert '/api/admin/data-management/target/enhanced-citation-storage/test' in source
+    assert '/api/admin/data-management/cosmos-editor/containers' in source
+    assert '/api/admin/data-management/cosmos-editor/danger-acknowledgement' in source
+    assert '/api/admin/data-management/cosmos-editor/query' in source
+    assert '/api/admin/data-management/cosmos-editor/document' in source
+    assert 'save_data_management_cosmos_editor_document(' in source
     assert 'current_app._get_current_object()' in source
 
 
@@ -135,6 +147,57 @@ def test_settings_secrets_are_redacted_for_frontend():
     assert 'summarize_backup_artifacts(artifacts)' in source
     assert 'sanitized[field_name] = DATA_MANAGEMENT_REDACTED_VALUE' in source
     assert 'if payload.get(secret_field) == DATA_MANAGEMENT_REDACTED_VALUE:' in source
+
+
+def test_cosmos_editor_backend_safety_contract():
+    """Validate the Cosmos DB JSON editor backend uses read paging, guarded saves, and audit logs."""
+    source = read_text(FUNCTIONS_FILE)
+    route_source = read_text(ROUTE_FILE)
+
+    for marker in [
+        'DATA_MANAGEMENT_COSMOS_EDITOR_EMPTY_QUERY = "SELECT * FROM c"',
+        'DATA_MANAGEMENT_COSMOS_EDITOR_EMPTY_QUERY_LIMIT = 100',
+        'DATA_MANAGEMENT_COSMOS_EDITOR_MAX_PAGE_SIZE = 100',
+        'DATA_MANAGEMENT_COSMOS_EDITOR_CONFIRMATION_PHRASE = "I understand this can damage system data"',
+        'DATA_MANAGEMENT_COSMOS_EDITOR_CONTAINER_DEFINITIONS',
+        'def get_data_management_cosmos_editor_containers',
+        'def query_data_management_cosmos_editor_documents',
+        'def get_data_management_cosmos_editor_document',
+        'def save_data_management_cosmos_editor_document',
+        'def log_data_management_cosmos_editor_activity',
+        'if not re.match(r"^\\s*SELECT\\b", query, re.IGNORECASE):',
+        'safe_page_size = _safe_int(',
+        'safe_continuation_token = None if is_empty_query else _safe_text(continuation_token) or None',
+        'page_iterator = query_iterable.by_page(continuation_token=safe_continuation_token)',
+        '"empty_query_limit_applied": is_empty_query',
+        '"selectable": document_id is not None and partition_key_value is not None',
+        'Document id cannot be changed in the Cosmos DB editor.',
+        'Document partition key value cannot be changed in the Cosmos DB editor.',
+        'replace_target = safe_document_id',
+        'if isinstance(original_document, dict) and original_document.get("_self"):',
+        'replace_target = original_document',
+        'item=replace_target,',
+        'match_condition=MatchConditions.IfNotModified',
+        '"cosmos_editor_document_saved"',
+        '"changed_paths": change_summary["changed_paths"]',
+        '"activity_type": "data_management"',
+    ]:
+        assert marker in source
+    replace_call = re.search(
+        r"saved_document = container\.replace_item\((?P<args>.*?)\n    \)",
+        source,
+        flags=re.DOTALL,
+    )
+    assert replace_call
+    assert "partition_key=" not in replace_call.group("args")
+
+    for marker in [
+        'cosmos_editor_danger_acknowledged',
+        'cosmos_editor_query_rejected',
+        'cosmos_editor_save_rejected',
+        'Cosmos DB document changed after it was opened. Refresh before saving again.',
+    ]:
+        assert marker in route_source
 
 
 def test_admin_javascript_uses_safe_dom_patterns():
@@ -189,6 +252,15 @@ def test_admin_javascript_uses_safe_dom_patterns():
         'Stored connection string saved. You can test storage without re-entering it.',
         'backup_storage_blob_endpoint: backupStorageAuthenticationType === backupStorageAuthManagedIdentity ? getValue(elements.datamanagementblobendpoint) : "",',
         'backup_storage_connection_string: backupStorageAuthenticationType === backupStorageAuthConnectionString ? getValue(elements.datamanagementconnectionstring) : "",',
+        'loadCosmosEditorContainers',
+        'queryCosmosEditorDocuments(false)',
+        'cosmosEditorContinuationToken',
+        'showCosmosEditorResultsModal',
+        'dataManagementCosmosEditorResultsModal',
+        'openCosmosEditorSaveModal',
+        'saveCosmosEditorDocument',
+        'confirmation_phrase: cosmosEditorConfirmationPhrase',
+        'closest("[data-ignore-data-management-change',
     ]:
         assert required_snippet in source
 
@@ -229,6 +301,24 @@ def test_admin_ui_exposes_data_management_without_external_assets():
         'id="data-management-migration-workflow-section"',
         'id="data-management-migration-summary"',
         'id="data-management-execute-migration-btn"',
+        'id="data-management-cosmos-editor-section"',
+        'id="data-management-cosmos-editor-open-danger-btn"',
+        'id="data-management-cosmos-editor-locked-message"',
+        'id="data-management-cosmos-editor-workspace"',
+        'id="data_management_cosmos_editor_container"',
+        'id="data_management_cosmos_editor_query"',
+        'id="data-management-cosmos-editor-run-query-btn"',
+        'id="data-management-cosmos-editor-results-modal"',
+        'id="data-management-cosmos-editor-modal-status"',
+        'id="data-management-cosmos-editor-next-page-btn"',
+        'id="data_management_cosmos_editor_document_json"',
+        'id="data-management-cosmos-editor-danger-modal"',
+        'id="data_management_cosmos_editor_danger_accept"',
+        'id="data-management-cosmos-editor-save-modal"',
+        'id="data_management_cosmos_editor_confirmation_phrase"',
+        'Cosmos DB JSON Editor',
+        'I understand this editor can damage overall system health.',
+        'I understand this can damage system data',
         'id="data-management-advanced-scope-drawer"',
         'Advanced backup scope',
         'Modify them at your own risk',
@@ -280,6 +370,7 @@ def test_admin_ui_exposes_data_management_without_external_assets():
     assert 'cdn.jsdelivr.net' not in read_text(ADMIN_JS)
     assert 'data-tab="data-management"' in sidebar
     assert 'data-section="data-management-backup-section"' in sidebar
+    assert 'data-section="data-management-cosmos-editor-section"' in sidebar
     assert 'data-section="data-management-backup-inventory-section"' in sidebar
     assert 'data-section="data-management-migration-section"' in sidebar
 
@@ -288,6 +379,7 @@ if __name__ == "__main__":
     test_version_and_container_registration()
     test_admin_routes_require_login_admin_and_swagger_security()
     test_settings_secrets_are_redacted_for_frontend()
+    test_cosmos_editor_backend_safety_contract()
     test_admin_javascript_uses_safe_dom_patterns()
     test_admin_ui_exposes_data_management_without_external_assets()
     print("Data Management security pattern tests passed")
