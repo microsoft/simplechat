@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.015)**
+
+#### Bug Fixes
+
+*   **Anonymous Notification Polling 401 Log Reduction**
+    *   Stopped loading the notification polling script for unauthenticated sessions, preventing the login screen from repeatedly calling `/api/notifications/count` after idle timeout or before sign-in.
+    *   This reduces expected 401 noise in App Service log streams and Application Insights while preserving notification badge polling for authenticated users.
+    *   (Ref: notification polling, idle timeout, `base.html`, `notifications.js`, `test_notification_polling_redirect_guard.py`)
+
 ### **(v0.250.010)**
 
 #### New Features
