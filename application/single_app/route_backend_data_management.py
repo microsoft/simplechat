@@ -312,12 +312,17 @@ def register_route_backend_data_management(bp):
                 admin_email=admin_email,
             )
         except DataManagementCosmosEditorError as exc:
+            log_event(
+                "[DataManagement] Cosmos editor document open rejected.",
+                {"container": payload.get("container"), "document_id": payload.get("id"), "error": str(exc)},
+                level=logging.WARNING,
+            )
             _log_cosmos_editor_failure(
                 "cosmos_editor_document_rejected",
                 "Rejected a Cosmos DB editor document open request.",
                 {"container": payload.get("container"), "document_id": payload.get("id"), "error": str(exc)},
             )
-            return jsonify({"success": False, "error": str(exc)}), 400
+            return jsonify({"success": False, "error": "Cosmos DB document request was invalid."}), 400
         except Exception as exc:
             status_code = _cosmos_editor_error_status(exc, default_status=400)
             log_event(
