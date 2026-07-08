@@ -2,10 +2,13 @@
 """Data Management settings, schedules, and durable job records."""
 
 import copy
+import hashlib
 import json
 import logging
 import os
+import re
 import socket
+import time
 import tempfile
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -130,6 +133,10 @@ DATA_MANAGEMENT_DEFAULT_SETTINGS = {
 class DataManagementSettingsValidationError(ValueError):
     """Raised when Data Management settings fail admin-safe validation."""
 
+
+class DataManagementCosmosEditorError(ValueError):
+    """Raised when Cosmos editor input is unsafe or incomplete."""
+
 DATA_MANAGEMENT_FRONTEND_SECRET_FIELDS = {
     "backup_storage_connection_string",
     "encryption_key_reference",
@@ -192,6 +199,77 @@ DATA_MANAGEMENT_COSMOS_ARTIFACTS = [
     {"name": "group_workspace_identities", "container_attr": "cosmos_group_workspace_identities_container", "container_name_attr": "cosmos_group_workspace_identities_container_name", "partition_key_path": "/group_id", "category": "identities"},
     {"name": "public_workspace_identities", "container_attr": "cosmos_public_workspace_identities_container", "container_name_attr": "cosmos_public_workspace_identities_container_name", "partition_key_path": "/public_workspace_id", "category": "identities"},
     {"name": "global_workspace_identities", "container_attr": "cosmos_global_workspace_identities_container", "container_name_attr": "cosmos_global_workspace_identities_container_name", "partition_key_path": "/id", "category": "identities"},
+]
+
+DATA_MANAGEMENT_COSMOS_EDITOR_EMPTY_QUERY = "SELECT * FROM c"
+DATA_MANAGEMENT_COSMOS_EDITOR_EMPTY_QUERY_LIMIT = 100
+DATA_MANAGEMENT_COSMOS_EDITOR_MAX_PAGE_SIZE = 100
+DATA_MANAGEMENT_COSMOS_EDITOR_MAX_QUERY_LENGTH = 4000
+DATA_MANAGEMENT_COSMOS_EDITOR_CONFIRMATION_PHRASE = "I understand this can damage system data"
+DATA_MANAGEMENT_COSMOS_EDITOR_CONTAINER_DEFINITIONS = [
+    ("conversations", "cosmos_conversations_container", "cosmos_conversations_container_name", "/id", "conversations"),
+    ("messages", "cosmos_messages_container", "cosmos_messages_container_name", "/conversation_id", "conversations"),
+    ("tabular_export_runs", "cosmos_tabular_export_runs_container", "cosmos_tabular_export_runs_container_name", "/user_id", "exports"),
+    ("data_management_jobs", "cosmos_data_management_jobs_container", "cosmos_data_management_jobs_container_name", "/id", "data_management"),
+    ("data_management_job_items", "cosmos_data_management_job_items_container", "cosmos_data_management_job_items_container_name", "/job_id", "data_management"),
+    ("personal_workflows", "cosmos_personal_workflows_container", "cosmos_personal_workflows_container_name", "/user_id", "workflows"),
+    ("personal_workflow_runs", "cosmos_personal_workflow_runs_container", "cosmos_personal_workflow_runs_container_name", "/user_id", "workflows"),
+    ("personal_workflow_run_items", "cosmos_personal_workflow_run_items_container", "cosmos_personal_workflow_run_items_container_name", "/run_id", "workflows"),
+    ("group_workflows", "cosmos_group_workflows_container", "cosmos_group_workflows_container_name", "/group_id", "workflows"),
+    ("group_workflow_runs", "cosmos_group_workflow_runs_container", "cosmos_group_workflow_runs_container_name", "/group_id", "workflows"),
+    ("group_workflow_run_items", "cosmos_group_workflow_run_items_container", "cosmos_group_workflow_run_items_container_name", "/run_id", "workflows"),
+    ("group_conversations", "cosmos_group_conversations_container", "cosmos_group_conversations_container_name", "/id", "conversations"),
+    ("group_messages", "cosmos_group_messages_container", "cosmos_group_messages_container_name", "/conversation_id", "conversations"),
+    ("collaboration_conversations", "cosmos_collaboration_conversations_container", "cosmos_collaboration_conversations_container_name", "/id", "collaboration"),
+    ("collaboration_messages", "cosmos_collaboration_messages_container", "cosmos_collaboration_messages_container_name", "/conversation_id", "collaboration"),
+    ("collaboration_user_state", "cosmos_collaboration_user_state_container", "cosmos_collaboration_user_state_container_name", "/user_id", "collaboration"),
+    ("settings", "cosmos_settings_container", "cosmos_settings_container_name", "/id", "settings"),
+    ("custom_pages", "cosmos_custom_pages_container", "cosmos_custom_pages_container_name", "/id", "settings"),
+    ("groups", "cosmos_groups_container", "cosmos_groups_container_name", "/id", "workspaces"),
+    ("public_workspaces", "cosmos_public_workspaces_container", "cosmos_public_workspaces_container_name", "/id", "workspaces"),
+    ("documents", "cosmos_user_documents_container", "cosmos_user_documents_container_name", "/id", "documents"),
+    ("group_documents", "cosmos_group_documents_container", "cosmos_group_documents_container_name", "/id", "documents"),
+    ("public_documents", "cosmos_public_documents_container", "cosmos_public_documents_container_name", "/id", "documents"),
+    ("document_access_index", "cosmos_document_access_index_container", "cosmos_document_access_index_container_name", "/scope_key", "documents"),
+    ("personal_file_sync_sources", "cosmos_personal_file_sync_sources_container", "cosmos_personal_file_sync_sources_container_name", "/user_id", "file_sync"),
+    ("group_file_sync_sources", "cosmos_group_file_sync_sources_container", "cosmos_group_file_sync_sources_container_name", "/group_id", "file_sync"),
+    ("public_file_sync_sources", "cosmos_public_file_sync_sources_container", "cosmos_public_file_sync_sources_container_name", "/public_workspace_id", "file_sync"),
+    ("personal_workspace_identities", "cosmos_personal_workspace_identities_container", "cosmos_personal_workspace_identities_container_name", "/user_id", "identities"),
+    ("group_workspace_identities", "cosmos_group_workspace_identities_container", "cosmos_group_workspace_identities_container_name", "/group_id", "identities"),
+    ("public_workspace_identities", "cosmos_public_workspace_identities_container", "cosmos_public_workspace_identities_container_name", "/public_workspace_id", "identities"),
+    ("global_workspace_identities", "cosmos_global_workspace_identities_container", "cosmos_global_workspace_identities_container_name", "/global_id", "identities"),
+    ("personal_file_sync_items", "cosmos_personal_file_sync_items_container", "cosmos_personal_file_sync_items_container_name", "/source_id", "file_sync"),
+    ("group_file_sync_items", "cosmos_group_file_sync_items_container", "cosmos_group_file_sync_items_container_name", "/source_id", "file_sync"),
+    ("public_file_sync_items", "cosmos_public_file_sync_items_container", "cosmos_public_file_sync_items_container_name", "/source_id", "file_sync"),
+    ("personal_file_sync_runs", "cosmos_personal_file_sync_runs_container", "cosmos_personal_file_sync_runs_container_name", "/source_id", "file_sync"),
+    ("group_file_sync_runs", "cosmos_group_file_sync_runs_container", "cosmos_group_file_sync_runs_container_name", "/source_id", "file_sync"),
+    ("public_file_sync_runs", "cosmos_public_file_sync_runs_container", "cosmos_public_file_sync_runs_container_name", "/source_id", "file_sync"),
+    ("user_settings", "cosmos_user_settings_container", "cosmos_user_settings_container_name", "/id", "settings"),
+    ("safety", "cosmos_safety_container", "cosmos_safety_container_name", "/id", "safety"),
+    ("feedback", "cosmos_feedback_container", "cosmos_feedback_container_name", "/id", "feedback"),
+    ("archived_conversations", "cosmos_archived_conversations_container", "cosmos_archived_conversations_container_name", "/id", "archive"),
+    ("archived_messages", "cosmos_archived_messages_container", "cosmos_archived_messages_container_name", "/conversation_id", "archive"),
+    ("prompts", "cosmos_user_prompts_container", "cosmos_user_prompts_container_name", "/id", "prompts"),
+    ("group_prompts", "cosmos_group_prompts_container", "cosmos_group_prompts_container_name", "/id", "prompts"),
+    ("public_prompts", "cosmos_public_prompts_container", "cosmos_public_prompts_container_name", "/id", "prompts"),
+    ("file_processing", "cosmos_file_processing_container", "cosmos_file_processing_container_name", "/document_id", "documents"),
+    ("personal_agents", "cosmos_personal_agents_container", "cosmos_personal_agents_container_name", "/user_id", "agents"),
+    ("personal_actions", "cosmos_personal_actions_container", "cosmos_personal_actions_container_name", "/user_id", "actions"),
+    ("group_agents", "cosmos_group_agents_container", "cosmos_group_agents_container_name", "/group_id", "agents"),
+    ("group_actions", "cosmos_group_actions_container", "cosmos_group_actions_container_name", "/group_id", "actions"),
+    ("global_agents", "cosmos_global_agents_container", "cosmos_global_agents_container_name", "/id", "agents"),
+    ("global_actions", "cosmos_global_actions_container", "cosmos_global_actions_container_name", "/id", "actions"),
+    ("governance_policies", "cosmos_governance_policies_container", "cosmos_governance_policies_container_name", "/id", "governance"),
+    ("governance_item_policies", "cosmos_governance_item_policies_container", "cosmos_governance_item_policies_container_name", "/id", "governance"),
+    ("agent_templates", "cosmos_agent_templates_container", "cosmos_agent_templates_container_name", "/id", "agents"),
+    ("agent_facts", "cosmos_agent_facts_container", "cosmos_agent_facts_container_name", "/scope_id", "agents"),
+    ("search_cache", "cosmos_search_cache_container", "cosmos_search_cache_container_name", "/user_id", "cache"),
+    ("activity_logs", "cosmos_activity_logs_container", "cosmos_activity_logs_container_name", "/user_id", "activity"),
+    ("notifications", "cosmos_notifications_container", "cosmos_notifications_container_name", "/user_id", "notifications"),
+    ("approvals", "cosmos_approvals_container", "cosmos_approvals_container_name", "/group_id", "approvals"),
+    ("msgraph_pending_actions", "cosmos_msgraph_pending_actions_container", "cosmos_msgraph_pending_actions_container_name", "/user_id", "actions"),
+    ("thoughts", "cosmos_thoughts_container", "cosmos_thoughts_container_name", "/user_id", "thoughts"),
+    ("archive_thoughts", "cosmos_archived_thoughts_container", "cosmos_archived_thoughts_container_name", "/user_id", "archive"),
 ]
 
 DATA_MANAGEMENT_SEARCH_ARTIFACTS = [
@@ -1638,6 +1716,402 @@ def _strip_cosmos_system_fields(document):
         for key, value in document.items()
         if not key.startswith("_")
     }
+
+
+def _format_cosmos_editor_label(container_name):
+    return _safe_text(container_name).replace("_", " ").title()
+
+
+def _cosmos_editor_partition_key_field(partition_key_path):
+    normalized_path = _safe_text(partition_key_path)
+    if not normalized_path.startswith("/"):
+        raise DataManagementCosmosEditorError("Cosmos editor container metadata has an invalid partition key path.")
+    path_parts = [part for part in normalized_path.strip("/").split("/") if part]
+    if not path_parts:
+        raise DataManagementCosmosEditorError("Cosmos editor container metadata has an invalid partition key path.")
+    return path_parts[-1]
+
+
+def _get_document_path_value(document, path):
+    if not isinstance(document, dict):
+        return None
+    path_parts = [part for part in _safe_text(path).strip("/").split("/") if part]
+    current_value = document
+    for path_part in path_parts:
+        if not isinstance(current_value, dict) or path_part not in current_value:
+            return None
+        current_value = current_value.get(path_part)
+    return current_value
+
+
+def _build_cosmos_editor_container_metadata():
+    containers = []
+    seen_container_names = set()
+    for logical_name, container_attr, container_name_attr, partition_key_path, category in DATA_MANAGEMENT_COSMOS_EDITOR_CONTAINER_DEFINITIONS:
+        container_name = _safe_text(getattr(app_config, container_name_attr, logical_name))
+        if not container_name or container_name in seen_container_names or not hasattr(app_config, container_attr):
+            continue
+        seen_container_names.add(container_name)
+        containers.append({
+            "id": container_name,
+            "name": container_name,
+            "logical_name": logical_name,
+            "display_name": _format_cosmos_editor_label(container_name),
+            "category": category,
+            "container_attr": container_attr,
+            "container_name_attr": container_name_attr,
+            "partition_key_path": partition_key_path,
+            "partition_key_field": _cosmos_editor_partition_key_field(partition_key_path),
+            "max_page_size": DATA_MANAGEMENT_COSMOS_EDITOR_MAX_PAGE_SIZE,
+            "empty_query_limit": DATA_MANAGEMENT_COSMOS_EDITOR_EMPTY_QUERY_LIMIT,
+            "editable": True,
+        })
+    return sorted(containers, key=lambda container: (container["category"], container["display_name"]))
+
+
+def get_data_management_cosmos_editor_containers():
+    return [
+        {
+            "id": container["id"],
+            "name": container["name"],
+            "display_name": container["display_name"],
+            "category": container["category"],
+            "partition_key_path": container["partition_key_path"],
+            "partition_key_field": container["partition_key_field"],
+            "max_page_size": container["max_page_size"],
+            "empty_query_limit": container["empty_query_limit"],
+            "editable": container["editable"],
+        }
+        for container in _build_cosmos_editor_container_metadata()
+    ]
+
+
+def _get_cosmos_editor_container_metadata(container_name):
+    safe_container_name = _safe_text(container_name)
+    if not safe_container_name:
+        raise DataManagementCosmosEditorError("Choose a Cosmos DB container.")
+    for container in _build_cosmos_editor_container_metadata():
+        if safe_container_name in {container["id"], container["name"], container["logical_name"]}:
+            return container
+    raise DataManagementCosmosEditorError("The selected Cosmos DB container is not available for Data Management editing.")
+
+
+def _get_cosmos_editor_container(container_name):
+    metadata = _get_cosmos_editor_container_metadata(container_name)
+    return metadata, getattr(app_config, metadata["container_attr"])
+
+
+def _hash_cosmos_editor_query(query_text):
+    if not query_text:
+        return ""
+    return hashlib.sha256(query_text.encode("utf-8")).hexdigest()
+
+
+def _normalize_cosmos_editor_query(query_text):
+    query = _safe_text(query_text)
+    if not query:
+        return DATA_MANAGEMENT_COSMOS_EDITOR_EMPTY_QUERY, True
+    if len(query) > DATA_MANAGEMENT_COSMOS_EDITOR_MAX_QUERY_LENGTH:
+        raise DataManagementCosmosEditorError("Cosmos query text is too long.")
+    if ";" in query:
+        raise DataManagementCosmosEditorError("Run one SELECT query at a time without semicolons.")
+    if not re.match(r"^\s*SELECT\b", query, re.IGNORECASE):
+        raise DataManagementCosmosEditorError("Cosmos editor queries must start with SELECT.")
+    return query, False
+
+
+def log_data_management_cosmos_editor_activity(admin_user_id, admin_email, action, status, message, details=None):
+    now = _now_iso()
+    safe_action = _safe_text(action)
+    safe_admin_user_id = _safe_text(admin_user_id, "unknown") or "unknown"
+    activity_record = {
+        "id": str(uuid.uuid4()),
+        "user_id": safe_admin_user_id,
+        "activity_type": "data_management",
+        "timestamp": now,
+        "created_at": now,
+        "action": safe_action,
+        "description": _safe_text(message) or safe_action,
+        "workspace_type": "admin",
+        "workspace_context": {
+            "action": safe_action,
+            "tool": "cosmos_json_editor",
+        },
+        "additional_context": {
+            "tool": "cosmos_json_editor",
+            "status": _safe_text(status),
+            "details": _sanitize_activity_value(details if isinstance(details, dict) else {}),
+        },
+        "admin": {
+            "user_id": safe_admin_user_id,
+            "email": _safe_text(admin_email, "unknown") or "unknown",
+        },
+    }
+
+    try:
+        app_config.cosmos_activity_logs_container.create_item(body=activity_record)
+    except Exception as exc:
+        log_event(
+            "[DataManagement] Failed to write Cosmos editor activity record.",
+            {"action": safe_action, "status": status, "error": str(exc)},
+            level=logging.WARNING,
+        )
+
+
+def _summarize_cosmos_editor_item(item, container_metadata):
+    if not isinstance(item, dict):
+        preview_text = _safe_text(item)
+        return {
+            "id": None,
+            "partition_key": None,
+            "etag": None,
+            "timestamp": None,
+            "selectable": False,
+            "preview": preview_text[:200],
+        }
+
+    document_id = item.get("id")
+    partition_key_value = _get_document_path_value(item, container_metadata["partition_key_path"])
+    preview_fields = []
+    for field_name in ("name", "display_name", "title", "type", "user_id", "group_id", "public_workspace_id", "created_at", "updated_at"):
+        field_value = item.get(field_name)
+        if field_value is not None:
+            preview_fields.append(f"{field_name}: {_safe_text(field_value)[:80]}")
+        if len(preview_fields) >= 3:
+            break
+
+    return {
+        "id": _safe_text(document_id) if document_id is not None else None,
+        "partition_key": partition_key_value,
+        "etag": item.get("_etag"),
+        "timestamp": item.get("_ts"),
+        "selectable": document_id is not None and partition_key_value is not None,
+        "preview": "; ".join(preview_fields) if preview_fields else _safe_text(document_id)[:200],
+    }
+
+
+def query_data_management_cosmos_editor_documents(container_name, query_text=None, page_size=None, continuation_token=None, admin_user_id=None, admin_email=None):
+    container_metadata, container = _get_cosmos_editor_container(container_name)
+    query, is_empty_query = _normalize_cosmos_editor_query(query_text)
+    safe_page_size = _safe_int(
+        page_size,
+        default=DATA_MANAGEMENT_COSMOS_EDITOR_MAX_PAGE_SIZE,
+        minimum=1,
+        maximum=DATA_MANAGEMENT_COSMOS_EDITOR_MAX_PAGE_SIZE,
+    )
+    safe_continuation_token = None if is_empty_query else _safe_text(continuation_token) or None
+    started_at = time.perf_counter()
+
+    query_iterable = container.query_items(
+        query=query,
+        enable_cross_partition_query=True,
+        max_item_count=safe_page_size,
+    )
+    if hasattr(query_iterable, "by_page"):
+        page_iterator = query_iterable.by_page(continuation_token=safe_continuation_token)
+        try:
+            page_items = list(next(page_iterator))
+        except StopIteration:
+            page_items = []
+        next_continuation_token = None if is_empty_query else getattr(page_iterator, "continuation_token", None)
+    else:
+        page_items = list(query_iterable)[:safe_page_size]
+        next_continuation_token = None
+
+    duration_ms = int((time.perf_counter() - started_at) * 1000)
+    items = [
+        _summarize_cosmos_editor_item(item, container_metadata)
+        for item in page_items
+    ]
+    result = {
+        "container": get_data_management_cosmos_editor_container_public_metadata(container_metadata),
+        "query": {
+            "mode": "empty" if is_empty_query else "custom",
+            "page_size": safe_page_size,
+            "query_hash": _hash_cosmos_editor_query(query if not is_empty_query else ""),
+            "empty_query_limit_applied": is_empty_query,
+        },
+        "items": items,
+        "count": len(items),
+        "continuation_token": next_continuation_token,
+        "has_more": bool(next_continuation_token),
+        "duration_ms": duration_ms,
+    }
+    log_data_management_cosmos_editor_activity(
+        admin_user_id,
+        admin_email,
+        "cosmos_editor_query_executed",
+        "success",
+        "Executed a Cosmos DB editor query.",
+        {
+            "container": container_metadata["name"],
+            "query_mode": result["query"]["mode"],
+            "page_size": safe_page_size,
+            "returned_count": len(items),
+            "has_more": bool(next_continuation_token),
+            "duration_ms": duration_ms,
+            "query_hash": result["query"]["query_hash"],
+        },
+    )
+    return result
+
+
+def get_data_management_cosmos_editor_container_public_metadata(container_metadata):
+    return {
+        "id": container_metadata["id"],
+        "name": container_metadata["name"],
+        "display_name": container_metadata["display_name"],
+        "category": container_metadata["category"],
+        "partition_key_path": container_metadata["partition_key_path"],
+        "partition_key_field": container_metadata["partition_key_field"],
+        "max_page_size": container_metadata["max_page_size"],
+        "empty_query_limit": container_metadata["empty_query_limit"],
+        "editable": container_metadata["editable"],
+    }
+
+
+def get_data_management_cosmos_editor_document(container_name, document_id, partition_key_value, admin_user_id=None, admin_email=None):
+    container_metadata, container = _get_cosmos_editor_container(container_name)
+    safe_document_id = _safe_text(document_id)
+    if not safe_document_id:
+        raise DataManagementCosmosEditorError("Choose a Cosmos DB document.")
+    if partition_key_value is None:
+        raise DataManagementCosmosEditorError("The selected document is missing its partition key value.")
+
+    document = container.read_item(item=safe_document_id, partition_key=partition_key_value)
+    current_partition_key_value = _get_document_path_value(document, container_metadata["partition_key_path"])
+    result = {
+        "container": get_data_management_cosmos_editor_container_public_metadata(container_metadata),
+        "document": document,
+        "id": safe_document_id,
+        "partition_key": current_partition_key_value,
+        "etag": document.get("_etag") if isinstance(document, dict) else None,
+    }
+    log_data_management_cosmos_editor_activity(
+        admin_user_id,
+        admin_email,
+        "cosmos_editor_document_opened",
+        "success",
+        "Opened a Cosmos DB document in the editor.",
+        {
+            "container": container_metadata["name"],
+            "document_id": safe_document_id,
+            "partition_key_path": container_metadata["partition_key_path"],
+        },
+    )
+    return result
+
+
+def _summarize_cosmos_editor_changes(original_document, updated_document):
+    if not isinstance(original_document, dict) or not isinstance(updated_document, dict):
+        return {"changed_paths": [], "changed_count": 0, "added_count": 0, "removed_count": 0, "updated_count": 0}
+
+    changed_paths = []
+    added_count = 0
+    removed_count = 0
+    updated_count = 0
+
+    def compare_values(original_value, updated_value, path):
+        nonlocal added_count, removed_count, updated_count
+        if isinstance(original_value, dict) and isinstance(updated_value, dict):
+            all_keys = sorted(set(original_value.keys()) | set(updated_value.keys()))
+            for key in all_keys:
+                if key.startswith("_"):
+                    continue
+                child_path = f"{path}.{key}" if path else key
+                if key not in original_value:
+                    added_count += 1
+                    changed_paths.append(child_path)
+                    continue
+                if key not in updated_value:
+                    removed_count += 1
+                    changed_paths.append(child_path)
+                    continue
+                compare_values(original_value.get(key), updated_value.get(key), child_path)
+            return
+        if original_value != updated_value:
+            updated_count += 1
+            changed_paths.append(path)
+
+    compare_values(original_document, updated_document, "")
+    return {
+        "changed_paths": changed_paths[:50],
+        "changed_count": len(changed_paths),
+        "added_count": added_count,
+        "removed_count": removed_count,
+        "updated_count": updated_count,
+        "truncated": len(changed_paths) > 50,
+    }
+
+
+def _validate_cosmos_editor_save_confirmation(confirmation_accepted, confirmation_phrase):
+    if confirmation_accepted is not True:
+        raise DataManagementCosmosEditorError("Confirm that you understand this Cosmos DB edit can damage system data.")
+    if _safe_text(confirmation_phrase) != DATA_MANAGEMENT_COSMOS_EDITOR_CONFIRMATION_PHRASE:
+        raise DataManagementCosmosEditorError("Type the required confirmation phrase before saving this Cosmos DB document.")
+
+
+def save_data_management_cosmos_editor_document(container_name, document_id, partition_key_value, etag, document, confirmation_accepted=False, confirmation_phrase="", admin_user_id=None, admin_email=None):
+    container_metadata, container = _get_cosmos_editor_container(container_name)
+    safe_document_id = _safe_text(document_id)
+    safe_etag = _safe_text(etag)
+    if not safe_document_id:
+        raise DataManagementCosmosEditorError("Choose a Cosmos DB document before saving.")
+    if partition_key_value is None:
+        raise DataManagementCosmosEditorError("The selected document is missing its partition key value.")
+    if not safe_etag:
+        raise DataManagementCosmosEditorError("The selected document is missing its ETag. Refresh the document before saving.")
+    if not isinstance(document, dict):
+        raise DataManagementCosmosEditorError("Cosmos DB document JSON must be an object.")
+
+    _validate_cosmos_editor_save_confirmation(confirmation_accepted, confirmation_phrase)
+
+    if _safe_text(document.get("id")) != safe_document_id:
+        raise DataManagementCosmosEditorError("Document id cannot be changed in the Cosmos DB editor.")
+    updated_partition_key_value = _get_document_path_value(document, container_metadata["partition_key_path"])
+    if updated_partition_key_value != partition_key_value:
+        raise DataManagementCosmosEditorError("Document partition key value cannot be changed in the Cosmos DB editor.")
+
+    original_document = container.read_item(item=safe_document_id, partition_key=partition_key_value)
+    change_summary = _summarize_cosmos_editor_changes(original_document, document)
+    clean_document = _strip_cosmos_system_fields(copy.deepcopy(document))
+    replace_target = safe_document_id
+    if isinstance(original_document, dict) and original_document.get("_self"):
+        replace_target = original_document
+    saved_document = container.replace_item(
+        item=replace_target,
+        body=clean_document,
+        etag=safe_etag,
+        match_condition=MatchConditions.IfNotModified,
+    )
+
+    result = {
+        "container": get_data_management_cosmos_editor_container_public_metadata(container_metadata),
+        "document": saved_document,
+        "id": safe_document_id,
+        "partition_key": _get_document_path_value(saved_document, container_metadata["partition_key_path"]),
+        "etag": saved_document.get("_etag") if isinstance(saved_document, dict) else None,
+        "change_summary": change_summary,
+    }
+    log_data_management_cosmos_editor_activity(
+        admin_user_id,
+        admin_email,
+        "cosmos_editor_document_saved",
+        "success",
+        "Saved a Cosmos DB document from the Data Management editor.",
+        {
+            "container": container_metadata["name"],
+            "document_id": safe_document_id,
+            "partition_key_path": container_metadata["partition_key_path"],
+            "changed_count": change_summary["changed_count"],
+            "added_count": change_summary["added_count"],
+            "removed_count": change_summary["removed_count"],
+            "updated_count": change_summary["updated_count"],
+            "changed_paths": change_summary["changed_paths"],
+            "changed_paths_truncated": change_summary["truncated"],
+        },
+    )
+    return result
 
 
 def _save_data_management_job(job):

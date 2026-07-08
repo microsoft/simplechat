@@ -13,16 +13,22 @@ from functions_data_management import (
     DATA_MANAGEMENT_OPERATION_DRY_RUN,
     DATA_MANAGEMENT_OPERATION_MIGRATION,
     DATA_MANAGEMENT_OPERATION_RESTORE,
+    DataManagementCosmosEditorError,
     DataManagementSettingsValidationError,
     generate_data_management_encryption_key,
+    get_data_management_cosmos_editor_containers,
+    get_data_management_cosmos_editor_document,
     get_data_management_backup_summary,
     get_data_management_job_detail,
     get_data_management_jobs,
     get_data_management_migration_catalog,
     get_data_management_settings,
+    log_data_management_cosmos_editor_activity,
     queue_data_management_job,
+    query_data_management_cosmos_editor_documents,
     sanitize_data_management_job_for_admin,
     sanitize_data_management_settings_for_admin,
+    save_data_management_cosmos_editor_document,
     summarize_data_management_migration_plan,
     submit_data_management_job,
     test_backup_storage_connection,
@@ -56,6 +62,32 @@ def _log_data_management_admin_action(action, description, additional_context=No
             {"action": action, "error": str(exc)},
             level=logging.WARNING,
         )
+
+
+def _get_cosmos_editor_payload():
+    payload = request.get_json(silent=True) or {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _cosmos_editor_error_status(exc, default_status=400):
+    status_code = getattr(exc, "status_code", None)
+    if status_code == 404:
+        return 404
+    if status_code == 412:
+        return 409
+    return default_status
+
+
+def _log_cosmos_editor_failure(action, message, details=None):
+    admin_user_id, admin_email = _get_admin_context()
+    log_data_management_cosmos_editor_activity(
+        admin_user_id,
+        admin_email,
+        action,
+        "failed",
+        message,
+        details=details or {},
+    )
 
 
 def register_route_backend_data_management(bp):
@@ -200,6 +232,160 @@ def register_route_backend_data_management(bp):
             )
             return jsonify({"success": False, "error": "Target Enhanced Citation Storage connection test failed."}), 400
         return jsonify(result), 200
+
+    @bp.route("/api/admin/data-management/cosmos-editor/containers", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def list_admin_data_management_cosmos_editor_containers():
+        return jsonify({
+            "success": True,
+            "containers": get_data_management_cosmos_editor_containers(),
+        }), 200
+
+    @bp.route("/api/admin/data-management/cosmos-editor/danger-acknowledgement", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def acknowledge_admin_data_management_cosmos_editor_danger():
+        admin_user_id, admin_email = _get_admin_context()
+        log_data_management_cosmos_editor_activity(
+            admin_user_id,
+            admin_email,
+            "cosmos_editor_danger_acknowledged",
+            "success",
+            "Acknowledged the Cosmos DB editor danger prompt.",
+            {"prompt": "interface_entry"},
+        )
+        return jsonify({"success": True}), 200
+
+    @bp.route("/api/admin/data-management/cosmos-editor/query", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def query_admin_data_management_cosmos_editor_documents():
+        payload = _get_cosmos_editor_payload()
+        admin_user_id, admin_email = _get_admin_context()
+        try:
+            result = query_data_management_cosmos_editor_documents(
+                payload.get("container"),
+                query_text=payload.get("query"),
+                page_size=payload.get("page_size"),
+                continuation_token=payload.get("continuation_token"),
+                admin_user_id=admin_user_id,
+                admin_email=admin_email,
+            )
+        except DataManagementCosmosEditorError as exc:
+            _log_cosmos_editor_failure(
+                "cosmos_editor_query_rejected",
+                "Rejected a Cosmos DB editor query.",
+                {"container": payload.get("container"), "error": str(exc)},
+            )
+            return jsonify({"success": False, "error": "Cosmos DB editor query was rejected."}), 400
+        except Exception as exc:
+            log_event(
+                "[DataManagement] Cosmos editor query failed.",
+                {"container": payload.get("container"), "error": str(exc)},
+                level=logging.WARNING,
+            )
+            _log_cosmos_editor_failure(
+                "cosmos_editor_query_failed",
+                "Cosmos DB editor query failed.",
+                {"container": payload.get("container"), "status_code": getattr(exc, "status_code", None), "error": str(exc)},
+            )
+            return jsonify({"success": False, "error": "Cosmos DB editor query failed."}), _cosmos_editor_error_status(exc)
+        return jsonify({"success": True, **result}), 200
+
+    @bp.route("/api/admin/data-management/cosmos-editor/document", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def get_admin_data_management_cosmos_editor_document():
+        payload = _get_cosmos_editor_payload()
+        admin_user_id, admin_email = _get_admin_context()
+        try:
+            result = get_data_management_cosmos_editor_document(
+                payload.get("container"),
+                payload.get("id"),
+                payload.get("partition_key"),
+                admin_user_id=admin_user_id,
+                admin_email=admin_email,
+            )
+        except DataManagementCosmosEditorError as exc:
+            log_event(
+                "[DataManagement] Cosmos editor document open rejected.",
+                {"container": payload.get("container"), "document_id": payload.get("id"), "error": str(exc)},
+                level=logging.WARNING,
+            )
+            _log_cosmos_editor_failure(
+                "cosmos_editor_document_rejected",
+                "Rejected a Cosmos DB editor document open request.",
+                {"container": payload.get("container"), "document_id": payload.get("id"), "error": str(exc)},
+            )
+            return jsonify({"success": False, "error": "Cosmos DB document request was invalid."}), 400
+        except Exception as exc:
+            status_code = _cosmos_editor_error_status(exc, default_status=400)
+            log_event(
+                "[DataManagement] Cosmos editor document open failed.",
+                {"container": payload.get("container"), "document_id": payload.get("id"), "error": str(exc)},
+                level=logging.WARNING,
+            )
+            _log_cosmos_editor_failure(
+                "cosmos_editor_document_failed",
+                "Cosmos DB editor document open failed.",
+                {"container": payload.get("container"), "document_id": payload.get("id"), "status_code": getattr(exc, "status_code", None), "error": str(exc)},
+            )
+            error_message = "Cosmos DB document was not found." if status_code == 404 else "Cosmos DB document could not be opened."
+            return jsonify({"success": False, "error": error_message}), status_code
+        return jsonify({"success": True, **result}), 200
+
+    @bp.route("/api/admin/data-management/cosmos-editor/document", methods=["PUT"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def save_admin_data_management_cosmos_editor_document():
+        payload = _get_cosmos_editor_payload()
+        admin_user_id, admin_email = _get_admin_context()
+        try:
+            result = save_data_management_cosmos_editor_document(
+                payload.get("container"),
+                payload.get("id"),
+                payload.get("partition_key"),
+                payload.get("etag"),
+                payload.get("document"),
+                confirmation_accepted=payload.get("confirmation_accepted") is True,
+                confirmation_phrase=payload.get("confirmation_phrase"),
+                admin_user_id=admin_user_id,
+                admin_email=admin_email,
+            )
+        except DataManagementCosmosEditorError as exc:
+            _log_cosmos_editor_failure(
+                "cosmos_editor_save_rejected",
+                "Rejected a Cosmos DB editor save request.",
+                {"container": payload.get("container"), "document_id": payload.get("id"), "error": str(exc)},
+            )
+            return jsonify({"success": False, "error": "Cosmos DB document save request was rejected."}), 400
+        except Exception as exc:
+            status_code = _cosmos_editor_error_status(exc, default_status=400)
+            log_event(
+                "[DataManagement] Cosmos editor save failed.",
+                {"container": payload.get("container"), "document_id": payload.get("id"), "error": str(exc)},
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
+            _log_cosmos_editor_failure(
+                "cosmos_editor_save_failed",
+                "Cosmos DB editor save failed.",
+                {"container": payload.get("container"), "document_id": payload.get("id"), "status_code": getattr(exc, "status_code", None), "error": str(exc)},
+            )
+            if status_code == 409:
+                error_message = "Cosmos DB document changed after it was opened. Refresh before saving again."
+            elif status_code == 404:
+                error_message = "Cosmos DB document was not found."
+            else:
+                error_message = "Cosmos DB document could not be saved."
+            return jsonify({"success": False, "error": error_message}), status_code
+        return jsonify({"success": True, **result}), 200
 
     @bp.route("/api/admin/data-management/jobs", methods=["GET"])
     @swagger_route(security=get_auth_security())

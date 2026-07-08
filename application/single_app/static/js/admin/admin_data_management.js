@@ -6,6 +6,7 @@ const redactedValue = "***REDACTED***";
 const backupStorageAuthManagedIdentity = "managed_identity";
 const backupStorageAuthConnectionString = "connection_string";
 const targetCosmosDatabaseName = "SimpleChat";
+const cosmosEditorConfirmationPhrase = "I understand this can damage system data";
 const elements = {};
 let dataManagementModified = false;
 let storedBackupConnectionStringAvailable = false;
@@ -15,6 +16,12 @@ let currentJobDetailId = null;
 let jobDetailRefreshTimer = null;
 let jobDetailRefreshInFlight = false;
 let refreshListsWhenJobCompletes = false;
+let cosmosEditorUnlocked = false;
+let cosmosEditorContainers = [];
+let cosmosEditorContinuationToken = null;
+let cosmosEditorResultCount = 0;
+let cosmosEditorSelectedDocument = null;
+let cosmosEditorPendingDocument = null;
 
 const jobDetailRefreshIntervalMs = 4000;
 const activeJobStatuses = new Set(["queued", "running"]);
@@ -35,6 +42,8 @@ document.addEventListener("DOMContentLoaded", () => {
     loadDataManagementSettings();
     loadDataManagementBackups();
     loadDataManagementJobs();
+    initializeCosmosEditorLockedState();
+    loadCosmosEditorContainers();
 });
 
 function bindElements() {
@@ -135,6 +144,35 @@ function bindElements() {
         "data-management-job-artifacts-tbody",
         "data-management-job-manifest-detail",
         "data-management-job-warnings",
+        "data-management-cosmos-editor-section",
+        "data-management-cosmos-editor-open-danger-btn",
+        "data-management-cosmos-editor-locked-message",
+        "data-management-cosmos-editor-workspace",
+        "data_management_cosmos_editor_container",
+        "data-management-cosmos-editor-container-help",
+        "data_management_cosmos_editor_page_size",
+        "data_management_cosmos_editor_query",
+        "data-management-cosmos-editor-run-query-btn",
+        "data-management-cosmos-editor-next-page-btn",
+        "data-management-cosmos-editor-refresh-document-btn",
+        "data-management-cosmos-editor-query-status",
+        "data-management-cosmos-editor-results-list",
+        "data-management-cosmos-editor-document-meta",
+        "data-management-cosmos-editor-save-btn",
+        "data_management_cosmos_editor_document_json",
+        "data-management-cosmos-editor-document-help",
+        "data-management-cosmos-editor-danger-modal",
+        "data_management_cosmos_editor_danger_accept",
+        "data-management-cosmos-editor-accept-danger-btn",
+        "data-management-cosmos-editor-save-modal",
+        "data-management-cosmos-editor-save-subtitle",
+        "data-management-cosmos-editor-save-summary",
+        "data_management_cosmos_editor_confirmation_phrase",
+        "data-management-cosmos-editor-confirm-save-btn",
+        "data-management-cosmos-editor-results-modal",
+        "data-management-cosmos-editor-modal-title",
+        "data-management-cosmos-editor-modal-subtitle",
+        "data-management-cosmos-editor-modal-status",
     ];
 
     ids.forEach((id) => {
@@ -182,6 +220,17 @@ function bindEvents() {
     elements.dataManagementRefreshJobsBtn?.addEventListener("click", loadDataManagementJobs);
     elements.dataManagementJobDetailModal?.addEventListener("hidden.bs.modal", () => stopJobDetailAutoRefresh({ clearJob: true }));
     elements.dataManagementKeyVaultLink?.addEventListener("click", openKeyVaultSettings);
+    elements.dataManagementCosmosEditorOpenDangerBtn?.addEventListener("click", showCosmosEditorDangerModal);
+    elements.datamanagementcosmoseditordangeraccept?.addEventListener("change", updateCosmosEditorDangerAcceptState);
+    elements.dataManagementCosmosEditorAcceptDangerBtn?.addEventListener("click", acceptCosmosEditorDanger);
+    elements.datamanagementcosmoseditorcontainer?.addEventListener("change", () => resetCosmosEditorQueryState({ clearResults: true, clearDocument: true }));
+    elements.datamanagementcosmoseditorquery?.addEventListener("input", () => resetCosmosEditorQueryState({ clearResults: false, clearDocument: true }));
+    elements.dataManagementCosmosEditorRunQueryBtn?.addEventListener("click", () => queryCosmosEditorDocuments(false));
+    elements.dataManagementCosmosEditorNextPageBtn?.addEventListener("click", () => queryCosmosEditorDocuments(true));
+    elements.dataManagementCosmosEditorRefreshDocumentBtn?.addEventListener("click", refreshCosmosEditorDocument);
+    elements.dataManagementCosmosEditorSaveBtn?.addEventListener("click", openCosmosEditorSaveModal);
+    elements.datamanagementcosmoseditorconfirmationphrase?.addEventListener("input", updateCosmosEditorConfirmSaveState);
+    elements.dataManagementCosmosEditorConfirmSaveBtn?.addEventListener("click", saveCosmosEditorDocument);
     bindDataManagementChangeTracking();
     setStorageAuthVisibility();
     setMigrationTargetVisibility();
@@ -210,6 +259,9 @@ function bindMigrationPickerEvents() {
 
 function bindDataManagementChangeTracking() {
     elements.tabPane?.querySelectorAll("input, select, textarea").forEach((element) => {
+        if (element.closest("[data-ignore-data-management-change='true']")) {
+            return;
+        }
         const eventName = element.type === "checkbox" || element.type === "radio" || element.tagName === "SELECT" ? "change" : "input";
         element.addEventListener(eventName, markDataManagementModified);
     });
@@ -266,6 +318,14 @@ function setBusy(button, isBusy, busyLabel = "Working...") {
     }
     button.removeAttribute("aria-busy");
     button.disabled = false;
+}
+
+function setButtonDisabled(button, disabled) {
+    if (!button) {
+        return;
+    }
+    button.disabled = Boolean(disabled);
+    button.setAttribute("aria-disabled", String(Boolean(disabled)));
 }
 
 function setValue(element, value) {
@@ -558,6 +618,475 @@ async function requestJson(url, options = {}) {
         throw new Error(data.error || `Request failed with status ${response.status}`);
     }
     return data;
+}
+
+function initializeCosmosEditorLockedState() {
+    setElementVisible(elements.dataManagementCosmosEditorWorkspace, cosmosEditorUnlocked);
+    setElementVisible(elements.dataManagementCosmosEditorLockedMessage, !cosmosEditorUnlocked);
+    setButtonDisabled(elements.dataManagementCosmosEditorRunQueryBtn, !cosmosEditorUnlocked || cosmosEditorContainers.length === 0);
+    setButtonDisabled(elements.dataManagementCosmosEditorNextPageBtn, true);
+    setButtonDisabled(elements.dataManagementCosmosEditorRefreshDocumentBtn, true);
+    setButtonDisabled(elements.dataManagementCosmosEditorSaveBtn, true);
+    if (elements.datamanagementcosmoseditorcontainer) {
+        elements.datamanagementcosmoseditorcontainer.disabled = !cosmosEditorUnlocked;
+    }
+    if (elements.datamanagementcosmoseditorpagesize) {
+        elements.datamanagementcosmoseditorpagesize.disabled = !cosmosEditorUnlocked;
+    }
+    if (elements.datamanagementcosmoseditorquery) {
+        elements.datamanagementcosmoseditorquery.disabled = !cosmosEditorUnlocked;
+    }
+    if (elements.datamanagementcosmoseditordocumentjson) {
+        elements.datamanagementcosmoseditordocumentjson.disabled = true;
+    }
+}
+
+function showCosmosEditorDangerModal() {
+    if (cosmosEditorUnlocked) {
+        setElementVisible(elements.dataManagementCosmosEditorWorkspace, true);
+        return;
+    }
+    if (elements.datamanagementcosmoseditordangeraccept) {
+        elements.datamanagementcosmoseditordangeraccept.checked = false;
+    }
+    updateCosmosEditorDangerAcceptState();
+    if (elements.dataManagementCosmosEditorDangerModal && window.bootstrap?.Modal) {
+        window.bootstrap.Modal.getOrCreateInstance(elements.dataManagementCosmosEditorDangerModal).show();
+    }
+}
+
+function updateCosmosEditorDangerAcceptState() {
+    setButtonDisabled(
+        elements.dataManagementCosmosEditorAcceptDangerBtn,
+        !elements.datamanagementcosmoseditordangeraccept?.checked
+    );
+}
+
+async function acceptCosmosEditorDanger() {
+    if (!elements.datamanagementcosmoseditordangeraccept?.checked) {
+        return;
+    }
+    setBusy(elements.dataManagementCosmosEditorAcceptDangerBtn, true, "Unlocking...");
+    try {
+        await requestJson("/api/admin/data-management/cosmos-editor/danger-acknowledgement", {
+            method: "POST",
+            body: "{}",
+        });
+        cosmosEditorUnlocked = true;
+        initializeCosmosEditorLockedState();
+        setStatus("Cosmos DB JSON editor unlocked for this page session.", "warning");
+        showToast("Cosmos DB JSON editor unlocked.", "warning");
+        if (elements.dataManagementCosmosEditorDangerModal && window.bootstrap?.Modal) {
+            window.bootstrap.Modal.getOrCreateInstance(elements.dataManagementCosmosEditorDangerModal).hide();
+        }
+    } catch (error) {
+        setStatus(error.message || "Cosmos DB editor could not be unlocked.", "danger");
+        showToast(error.message || "Cosmos DB editor could not be unlocked.", "danger");
+    } finally {
+        setBusy(elements.dataManagementCosmosEditorAcceptDangerBtn, false);
+        updateCosmosEditorDangerAcceptState();
+    }
+}
+
+async function loadCosmosEditorContainers() {
+    const select = elements.datamanagementcosmoseditorcontainer;
+    if (!select) {
+        return;
+    }
+    try {
+        const data = await requestJson("/api/admin/data-management/cosmos-editor/containers", { method: "GET" });
+        cosmosEditorContainers = Array.isArray(data.containers) ? data.containers : [];
+        renderCosmosEditorContainerOptions();
+    } catch (error) {
+        cosmosEditorContainers = [];
+        renderCosmosEditorContainerOptions(error.message || "Cosmos DB containers could not be loaded.");
+    }
+}
+
+function renderCosmosEditorContainerOptions(errorMessage = "") {
+    const select = elements.datamanagementcosmoseditorcontainer;
+    if (!select) {
+        return;
+    }
+    select.replaceChildren();
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = errorMessage || "Choose a container";
+    select.appendChild(placeholder);
+    cosmosEditorContainers.forEach((container) => {
+        const option = document.createElement("option");
+        option.value = container.name;
+        option.textContent = `${container.display_name || container.name} (${container.partition_key_path})`;
+        select.appendChild(option);
+    });
+    setButtonDisabled(elements.dataManagementCosmosEditorRunQueryBtn, !cosmosEditorUnlocked || cosmosEditorContainers.length === 0);
+    updateCosmosEditorContainerHelp();
+}
+
+function updateCosmosEditorContainerHelp() {
+    const container = getSelectedCosmosEditorContainer();
+    if (!container) {
+        setText(elements.dataManagementCosmosEditorContainerHelp, "Choose a known SimpleChat Cosmos DB container.");
+        return;
+    }
+    setText(
+        elements.dataManagementCosmosEditorContainerHelp,
+        `Category: ${formatActivityLabel(container.category)}. Partition key: ${container.partition_key_path}.`
+    );
+}
+
+function getSelectedCosmosEditorContainer() {
+    const selectedName = getValue(elements.datamanagementcosmoseditorcontainer);
+    return cosmosEditorContainers.find((container) => container.name === selectedName) || null;
+}
+
+function setCosmosEditorQueryStatus(message) {
+    setText(elements.dataManagementCosmosEditorQueryStatus, message);
+    setText(elements.dataManagementCosmosEditorModalStatus, message);
+}
+
+function showCosmosEditorResultsModal() {
+    const selectedContainer = getSelectedCosmosEditorContainer();
+    if (selectedContainer) {
+        setText(elements.dataManagementCosmosEditorModalTitle, `${selectedContainer.display_name || selectedContainer.name} Results`);
+        setText(
+            elements.dataManagementCosmosEditorModalSubtitle,
+            `Container: ${selectedContainer.name}; partition key: ${selectedContainer.partition_key_path}`
+        );
+    }
+    if (elements.dataManagementCosmosEditorResultsModal && window.bootstrap?.Modal) {
+        window.bootstrap.Modal.getOrCreateInstance(elements.dataManagementCosmosEditorResultsModal).show();
+    }
+}
+
+function resetCosmosEditorQueryState(options = {}) {
+    cosmosEditorContinuationToken = null;
+    if (options.clearResults) {
+        cosmosEditorResultCount = 0;
+        renderCosmosEditorResultMessage("Run a query to list documents.");
+    }
+    if (options.clearDocument) {
+        clearCosmosEditorDocument();
+    }
+    updateCosmosEditorContainerHelp();
+    setButtonDisabled(elements.dataManagementCosmosEditorNextPageBtn, true);
+}
+
+function clearCosmosEditorDocument() {
+    cosmosEditorSelectedDocument = null;
+    cosmosEditorPendingDocument = null;
+    setValue(elements.datamanagementcosmoseditordocumentjson, "");
+    if (elements.datamanagementcosmoseditordocumentjson) {
+        elements.datamanagementcosmoseditordocumentjson.disabled = true;
+        elements.datamanagementcosmoseditordocumentjson.setAttribute("aria-disabled", "true");
+    }
+    setText(elements.dataManagementCosmosEditorDocumentMeta, "Select a result to load JSON.");
+    setButtonDisabled(elements.dataManagementCosmosEditorRefreshDocumentBtn, true);
+    setButtonDisabled(elements.dataManagementCosmosEditorSaveBtn, true);
+}
+
+async function queryCosmosEditorDocuments(useContinuation) {
+    if (!cosmosEditorUnlocked) {
+        showCosmosEditorDangerModal();
+        return;
+    }
+    const selectedContainer = getSelectedCosmosEditorContainer();
+    if (!selectedContainer) {
+        showToast("Choose a Cosmos DB container first.", "warning");
+        return;
+    }
+    if (useContinuation && !cosmosEditorContinuationToken) {
+        return;
+    }
+
+    const triggerButton = useContinuation ? elements.dataManagementCosmosEditorNextPageBtn : elements.dataManagementCosmosEditorRunQueryBtn;
+    setBusy(triggerButton, true, useContinuation ? "Loading..." : "Querying...");
+    setCosmosEditorQueryStatus(useContinuation ? "Loading next page..." : "Running query...");
+    try {
+        const data = await requestJson("/api/admin/data-management/cosmos-editor/query", {
+            method: "POST",
+            body: JSON.stringify({
+                container: selectedContainer.name,
+                query: getValue(elements.datamanagementcosmoseditorquery),
+                page_size: getNumberValue(elements.datamanagementcosmoseditorpagesize, 100),
+                continuation_token: useContinuation ? cosmosEditorContinuationToken : null,
+            }),
+        });
+        if (!useContinuation) {
+            clearCosmosEditorDocument();
+            cosmosEditorResultCount = 0;
+        }
+        renderCosmosEditorResults(data, useContinuation);
+        cosmosEditorContinuationToken = data.continuation_token || null;
+        setButtonDisabled(elements.dataManagementCosmosEditorNextPageBtn, !cosmosEditorContinuationToken);
+        const modeLabel = data.query?.mode === "empty" ? "empty browse" : "custom SELECT";
+        const pageNote = data.has_more ? "More results are available." : "No more results returned.";
+        setCosmosEditorQueryStatus(`${formatNumber(cosmosEditorResultCount)} loaded from ${modeLabel} query. ${pageNote}`);
+        showCosmosEditorResultsModal();
+    } catch (error) {
+        setCosmosEditorQueryStatus(error.message || "Cosmos DB query failed.");
+        showToast(error.message || "Cosmos DB query failed.", "danger");
+    } finally {
+        setBusy(triggerButton, false);
+        setButtonDisabled(elements.dataManagementCosmosEditorRunQueryBtn, !cosmosEditorUnlocked || cosmosEditorContainers.length === 0);
+        setButtonDisabled(elements.dataManagementCosmosEditorNextPageBtn, !cosmosEditorContinuationToken);
+    }
+}
+
+function renderCosmosEditorResults(data, append) {
+    const resultsList = elements.dataManagementCosmosEditorResultsList;
+    if (!resultsList) {
+        return;
+    }
+    const items = Array.isArray(data.items) ? data.items : [];
+    if (!append) {
+        resultsList.replaceChildren();
+    }
+    if (!items.length && !append) {
+        renderCosmosEditorResultMessage("No documents matched this query.");
+        return;
+    }
+    items.forEach((item) => {
+        cosmosEditorResultCount += 1;
+        resultsList.appendChild(createCosmosEditorResultButton(item, cosmosEditorResultCount));
+    });
+}
+
+function renderCosmosEditorResultMessage(message) {
+    const resultsList = elements.dataManagementCosmosEditorResultsList;
+    if (!resultsList) {
+        return;
+    }
+    const messageElement = document.createElement("div");
+    messageElement.className = "list-group-item text-muted";
+    messageElement.textContent = message;
+    resultsList.replaceChildren(messageElement);
+}
+
+function createCosmosEditorResultButton(item, index) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "list-group-item list-group-item-action py-2";
+    button.disabled = item.selectable !== true;
+
+    const header = document.createElement("div");
+    header.className = "d-flex justify-content-between align-items-start gap-2";
+    const title = document.createElement("div");
+    title.className = "small fw-semibold text-break";
+    title.textContent = item.id || "Non-document projection";
+    const indexBadge = createBadge(formatNumber(index), item.selectable === true ? "bg-light text-dark border" : "bg-secondary");
+    header.append(title, indexBadge);
+    const partition = document.createElement("div");
+    partition.className = "small text-muted text-break";
+    partition.textContent = item.partition_key !== null && item.partition_key !== undefined
+        ? `Partition key: ${formatDetailValue(item.partition_key)}`
+        : "Projection is missing the partition key.";
+    const preview = document.createElement("div");
+    preview.className = "small text-muted";
+    const previewText = item.preview || "No preview fields available.";
+    preview.textContent = previewText.length > 120 ? `${previewText.slice(0, 117)}...` : previewText;
+    button.append(header, partition, preview);
+    if (item.selectable === true) {
+        button.addEventListener("click", () => openCosmosEditorDocument(item));
+    }
+    return button;
+}
+
+async function openCosmosEditorDocument(item) {
+    const selectedContainer = getSelectedCosmosEditorContainer();
+    if (!selectedContainer || !item?.id) {
+        return;
+    }
+    setText(elements.dataManagementCosmosEditorDocumentMeta, "Loading selected document...");
+    try {
+        const data = await requestJson("/api/admin/data-management/cosmos-editor/document", {
+            method: "POST",
+            body: JSON.stringify({
+                container: selectedContainer.name,
+                id: item.id,
+                partition_key: item.partition_key,
+            }),
+        });
+        renderCosmosEditorDocument(data);
+    } catch (error) {
+        clearCosmosEditorDocument();
+        setText(elements.dataManagementCosmosEditorDocumentMeta, error.message || "Document could not be opened.");
+        showToast(error.message || "Document could not be opened.", "danger");
+    }
+}
+
+function renderCosmosEditorDocument(data) {
+    const documentJson = data.document && typeof data.document === "object" ? data.document : {};
+    cosmosEditorSelectedDocument = {
+        container: data.container?.name || getValue(elements.datamanagementcosmoseditorcontainer),
+        id: data.id,
+        partitionKey: data.partition_key,
+        etag: data.etag,
+        originalDocument: documentJson,
+    };
+    setValue(elements.datamanagementcosmoseditordocumentjson, JSON.stringify(documentJson, null, 2));
+    if (elements.datamanagementcosmoseditordocumentjson) {
+        elements.datamanagementcosmoseditordocumentjson.disabled = false;
+        elements.datamanagementcosmoseditordocumentjson.setAttribute("aria-disabled", "false");
+    }
+    setText(
+        elements.dataManagementCosmosEditorDocumentMeta,
+        `Container: ${cosmosEditorSelectedDocument.container}; id: ${cosmosEditorSelectedDocument.id}; ETag: ${cosmosEditorSelectedDocument.etag || "not returned"}`
+    );
+    setButtonDisabled(elements.dataManagementCosmosEditorRefreshDocumentBtn, false);
+    setButtonDisabled(elements.dataManagementCosmosEditorSaveBtn, false);
+}
+
+function refreshCosmosEditorDocument() {
+    if (!cosmosEditorSelectedDocument) {
+        return;
+    }
+    openCosmosEditorDocument({
+        id: cosmosEditorSelectedDocument.id,
+        partition_key: cosmosEditorSelectedDocument.partitionKey,
+        selectable: true,
+    });
+}
+
+function parseCosmosEditorDocumentJson() {
+    const rawJson = getValue(elements.datamanagementcosmoseditordocumentjson);
+    const parsedDocument = JSON.parse(rawJson);
+    if (!parsedDocument || typeof parsedDocument !== "object" || Array.isArray(parsedDocument)) {
+        throw new Error("Cosmos DB document JSON must be an object.");
+    }
+    return parsedDocument;
+}
+
+function openCosmosEditorSaveModal() {
+    if (!cosmosEditorSelectedDocument) {
+        return;
+    }
+    let parsedDocument;
+    try {
+        parsedDocument = parseCosmosEditorDocumentJson();
+    } catch (error) {
+        showToast(error.message || "Document JSON is invalid.", "danger");
+        return;
+    }
+
+    cosmosEditorPendingDocument = parsedDocument;
+    const summary = summarizeCosmosEditorChanges(cosmosEditorSelectedDocument.originalDocument, parsedDocument);
+    renderCosmosEditorSaveSummary(summary);
+    setText(
+        elements.dataManagementCosmosEditorSaveSubtitle,
+        `Container: ${cosmosEditorSelectedDocument.container}; id: ${cosmosEditorSelectedDocument.id}`
+    );
+    setValue(elements.datamanagementcosmoseditorconfirmationphrase, "");
+    updateCosmosEditorConfirmSaveState();
+    if (elements.dataManagementCosmosEditorSaveModal && window.bootstrap?.Modal) {
+        window.bootstrap.Modal.getOrCreateInstance(elements.dataManagementCosmosEditorSaveModal).show();
+    }
+}
+
+function summarizeCosmosEditorChanges(originalDocument, updatedDocument) {
+    const changedPaths = [];
+    let addedCount = 0;
+    let removedCount = 0;
+    let updatedCount = 0;
+
+    function compareValues(originalValue, updatedValue, path) {
+        if (isPlainObject(originalValue) && isPlainObject(updatedValue)) {
+            const keys = Array.from(new Set([...Object.keys(originalValue), ...Object.keys(updatedValue)])).sort();
+            keys.forEach((key) => {
+                if (key.startsWith("_")) {
+                    return;
+                }
+                const childPath = path ? `${path}.${key}` : key;
+                if (!Object.prototype.hasOwnProperty.call(originalValue, key)) {
+                    addedCount += 1;
+                    changedPaths.push(childPath);
+                    return;
+                }
+                if (!Object.prototype.hasOwnProperty.call(updatedValue, key)) {
+                    removedCount += 1;
+                    changedPaths.push(childPath);
+                    return;
+                }
+                compareValues(originalValue[key], updatedValue[key], childPath);
+            });
+            return;
+        }
+        if (JSON.stringify(originalValue) !== JSON.stringify(updatedValue)) {
+            updatedCount += 1;
+            changedPaths.push(path);
+        }
+    }
+
+    compareValues(originalDocument || {}, updatedDocument || {}, "");
+    return {
+        changedPaths,
+        changedCount: changedPaths.length,
+        addedCount,
+        removedCount,
+        updatedCount,
+    };
+}
+
+function isPlainObject(value) {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function renderCosmosEditorSaveSummary(summary) {
+    const container = elements.dataManagementCosmosEditorSaveSummary;
+    if (!container) {
+        return;
+    }
+    const wrapper = document.createElement("div");
+    wrapper.className = "vstack gap-2";
+    wrapper.append(
+        createDetailBlock("Changed paths", formatNumber(summary.changedCount)),
+        createDetailBlock("Added / removed / updated", `${formatNumber(summary.addedCount)} / ${formatNumber(summary.removedCount)} / ${formatNumber(summary.updatedCount)}`)
+    );
+    const paths = document.createElement("div");
+    paths.className = "small text-muted text-break";
+    paths.textContent = summary.changedPaths.length
+        ? summary.changedPaths.slice(0, 20).join(", ")
+        : "No value changes detected. Saving will still refresh the document ETag.";
+    wrapper.appendChild(paths);
+    container.replaceChildren(wrapper);
+}
+
+function updateCosmosEditorConfirmSaveState() {
+    const phraseMatches = getValue(elements.datamanagementcosmoseditorconfirmationphrase) === cosmosEditorConfirmationPhrase;
+    setButtonDisabled(elements.dataManagementCosmosEditorConfirmSaveBtn, !phraseMatches);
+}
+
+async function saveCosmosEditorDocument() {
+    if (!cosmosEditorSelectedDocument || !cosmosEditorPendingDocument) {
+        return;
+    }
+    setBusy(elements.dataManagementCosmosEditorConfirmSaveBtn, true, "Saving...");
+    try {
+        const data = await requestJson("/api/admin/data-management/cosmos-editor/document", {
+            method: "PUT",
+            body: JSON.stringify({
+                container: cosmosEditorSelectedDocument.container,
+                id: cosmosEditorSelectedDocument.id,
+                partition_key: cosmosEditorSelectedDocument.partitionKey,
+                etag: cosmosEditorSelectedDocument.etag,
+                document: cosmosEditorPendingDocument,
+                confirmation_accepted: true,
+                confirmation_phrase: cosmosEditorConfirmationPhrase,
+            }),
+        });
+        if (elements.dataManagementCosmosEditorSaveModal && window.bootstrap?.Modal) {
+            window.bootstrap.Modal.getOrCreateInstance(elements.dataManagementCosmosEditorSaveModal).hide();
+        }
+        renderCosmosEditorDocument(data);
+        setStatus("Cosmos DB document saved. The edit was recorded in Activity Logs.", "success");
+        showToast("Cosmos DB document saved.", "success");
+    } catch (error) {
+        setStatus(error.message || "Cosmos DB document could not be saved.", "danger");
+        showToast(error.message || "Cosmos DB document could not be saved.", "danger");
+    } finally {
+        setBusy(elements.dataManagementCosmosEditorConfirmSaveBtn, false);
+        updateCosmosEditorConfirmSaveState();
+    }
 }
 
 async function loadDataManagementSettings() {
