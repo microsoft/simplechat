@@ -3,6 +3,7 @@
 ## Overview
 
 Implemented in version: **0.250.055**
+Current documentation version: **0.250.056**
 
 Terms of Use lets administrators require users to accept configurable terms, rules of behavior, or an entry notice before using SimpleChat. It is separate from the existing upload-focused User Agreement.
 

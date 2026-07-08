@@ -2,7 +2,7 @@
 # test_terms_of_use.py
 """
 Functional test for Terms of Use recurrence and persistence helpers.
-Version: 0.250.055
+Version: 0.250.056
 Implemented in: 0.250.055
 
 This test ensures Terms of Use hashes, redirect validation,
