@@ -26,6 +26,15 @@ from functions_activity_logging import log_web_search_consent_acceptance, log_ge
 from functions_notifications import broadcast_system_notification
 from functions_logging import *
 from functions_document_actions import normalize_document_action_capabilities
+from functions_terms_of_use import (
+    TERMS_OF_USE_DEFAULT_REDIRECT,
+    TERMS_OF_USE_MAX_BUTTON_TEXT_LENGTH,
+    TERMS_OF_USE_MAX_MESSAGE_LENGTH,
+    TERMS_OF_USE_MAX_TITLE_LENGTH,
+    normalize_terms_of_use_frequency,
+    normalize_terms_of_use_redirect_url,
+    normalize_terms_of_use_text,
+)
 from swagger_wrapper import swagger_route, get_auth_security
 from datetime import datetime, timedelta, timezone
 from admin_settings_int_utils import safe_int_with_source
@@ -424,7 +433,23 @@ def register_route_frontend_admin_settings(bp):
             settings['classification_banner_color'] = '#ffc107'  # Bootstrap warning color
         if 'classification_banner_text_color' not in settings:
             settings['classification_banner_text_color'] = '#ffffff'  # White text by default
-        
+
+        # --- Add defaults for terms of use ---
+        if 'enable_terms_of_use' not in settings:
+            settings['enable_terms_of_use'] = False
+        if 'terms_of_use_title' not in settings:
+            settings['terms_of_use_title'] = 'Terms of Use'
+        if 'terms_of_use_message' not in settings:
+            settings['terms_of_use_message'] = ''
+        settings['terms_of_use_frequency'] = normalize_terms_of_use_frequency(
+            settings.get('terms_of_use_frequency')
+        )
+        if 'terms_of_use_decline_redirect_url' not in settings:
+            settings['terms_of_use_decline_redirect_url'] = TERMS_OF_USE_DEFAULT_REDIRECT
+        if 'terms_of_use_accept_button_text' not in settings:
+            settings['terms_of_use_accept_button_text'] = 'Accept and continue'
+        if 'terms_of_use_decline_button_text' not in settings:
+            settings['terms_of_use_decline_button_text'] = 'Cancel'
         # --- Add defaults for user agreement ---
         if 'enable_user_agreement' not in settings:
             settings['enable_user_agreement'] = False
@@ -1605,6 +1630,47 @@ def register_route_frontend_admin_settings(bp):
                 if word_count > 200:
                     flash('User Agreement text exceeds 200 word limit. Please shorten the text.', 'warning')
 
+            # --- Terms of Use Settings ---
+            enable_terms_of_use = form_data.get('enable_terms_of_use') == 'on'
+            terms_of_use_title = normalize_terms_of_use_text(
+                form_data.get('terms_of_use_title'),
+                fallback='Terms of Use',
+                max_length=TERMS_OF_USE_MAX_TITLE_LENGTH,
+            )
+            terms_of_use_message = normalize_terms_of_use_text(
+                form_data.get('terms_of_use_message'),
+                max_length=TERMS_OF_USE_MAX_MESSAGE_LENGTH,
+            )
+            terms_of_use_frequency = normalize_terms_of_use_frequency(
+                form_data.get('terms_of_use_frequency')
+            )
+            terms_of_use_accept_button_text = normalize_terms_of_use_text(
+                form_data.get('terms_of_use_accept_button_text'),
+                fallback='Accept and continue',
+                max_length=TERMS_OF_USE_MAX_BUTTON_TEXT_LENGTH,
+            )
+            terms_of_use_decline_button_text = normalize_terms_of_use_text(
+                form_data.get('terms_of_use_decline_button_text'),
+                fallback='Cancel',
+                max_length=TERMS_OF_USE_MAX_BUTTON_TEXT_LENGTH,
+            )
+            raw_terms_of_use_decline_redirect_url = form_data.get(
+                'terms_of_use_decline_redirect_url',
+                TERMS_OF_USE_DEFAULT_REDIRECT,
+            )
+            terms_of_use_decline_redirect_url = normalize_terms_of_use_redirect_url(
+                raw_terms_of_use_decline_redirect_url
+            )
+            if (
+                raw_terms_of_use_decline_redirect_url.strip()
+                and terms_of_use_decline_redirect_url != raw_terms_of_use_decline_redirect_url.strip()
+            ):
+                flash('Terms of Use cancel redirect was invalid and has been reset to the default.', 'warning')
+
+            if enable_terms_of_use and not terms_of_use_message:
+                flash('Terms of Use message is required when the feature is enabled.', 'danger')
+                return redirect(url_for('frontend_admin_settings.admin_settings'))
+
             # --- Authentication & Redirect Settings ---
             enable_front_door = form_data.get('enable_front_door') == 'on'
             front_door_url = form_data.get('front_door_url', '').strip()
@@ -1975,6 +2041,15 @@ def register_route_frontend_admin_settings(bp):
                 'user_agreement_text': user_agreement_text,
                 'user_agreement_apply_to': user_agreement_apply_to,
                 'enable_user_agreement_daily': enable_user_agreement_daily,
+
+                # Terms of Use
+                'enable_terms_of_use': enable_terms_of_use,
+                'terms_of_use_title': terms_of_use_title,
+                'terms_of_use_message': terms_of_use_message,
+                'terms_of_use_frequency': terms_of_use_frequency,
+                'terms_of_use_decline_redirect_url': terms_of_use_decline_redirect_url,
+                'terms_of_use_accept_button_text': terms_of_use_accept_button_text,
+                'terms_of_use_decline_button_text': terms_of_use_decline_button_text,
 
                 # Multimedia & Metadata
                 'enable_video_file_support': enable_video_file_support,

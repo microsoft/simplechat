@@ -2194,6 +2194,107 @@
                     </div>
                 </div>
 
+                <div class="card p-3 mb-3" id="terms-of-use-section">
+                    <h5>
+                        <i class="bi bi-door-open me-2"></i>Terms of Use
+                    </h5>
+                    <p class="text-muted small">
+                        Require users to accept the Terms of Use before using SimpleChat. Standard Microsoft sign-in users see it before authentication; Teams SSO and other passive sign-in flows are gated immediately after the app session is created.
+                    </p>
+
+                    <div class="form-check form-switch mb-3">
+                        <input
+                            class="form-check-input"
+                            type="checkbox"
+                            id="enable_terms_of_use"
+                            name="enable_terms_of_use"
+                            {% if settings.enable_terms_of_use %}checked{% endif %}
+                        >
+                        <label class="form-check-label ms-2" for="enable_terms_of_use">
+                            Require terms of use
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, users must accept the Terms of Use before accessing authenticated application pages or APIs."></i>
+                    </div>
+
+                    <div class="row g-3">
+                        <div class="col-lg-6">
+                            <label for="terms_of_use_title" class="form-label">Popup Title</label>
+                            <input
+                                type="text"
+                                class="form-control"
+                                id="terms_of_use_title"
+                                name="terms_of_use_title"
+                                maxlength="160"
+                                value="{{ settings.terms_of_use_title or 'Terms of Use' }}"
+                            >
+                        </div>
+                        <div class="col-lg-6">
+                            <label for="terms_of_use_frequency" class="form-label">Show Frequency</label>
+                            <select class="form-select" id="terms_of_use_frequency" name="terms_of_use_frequency">
+                                <option value="every_session" {% if settings.terms_of_use_frequency == 'every_session' %}selected{% endif %}>At the start of every session</option>
+                                <option value="daily" {% if settings.terms_of_use_frequency == 'daily' %}selected{% endif %}>Once per day</option>
+                                <option value="once" {% if settings.terms_of_use_frequency == 'once' %}selected{% endif %}>Just once per terms version</option>
+                            </select>
+                            <small class="form-text text-muted">Changing the title, message, or frequency creates a new terms version that users must accept again.</small>
+                        </div>
+                    </div>
+
+                    <div class="mb-3 mt-3">
+                        <label for="terms_of_use_message" class="form-label">Terms of Use Message</label>
+                        <textarea
+                            class="form-control"
+                            id="terms_of_use_message"
+                            name="terms_of_use_message"
+                            rows="7"
+                            maxlength="10000"
+                            placeholder="Enter the terms, notice, or rules of behavior users must accept before using the application."
+                        >{{ settings.terms_of_use_message or '' }}</textarea>
+                        <small class="form-text text-muted">Plain text is shown to users with line breaks preserved.</small>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="terms_of_use_decline_redirect_url" class="form-label">Cancel Redirect URL</label>
+                        <input
+                            type="text"
+                            class="form-control"
+                            id="terms_of_use_decline_redirect_url"
+                            name="terms_of_use_decline_redirect_url"
+                            value="{{ settings.terms_of_use_decline_redirect_url or '/' }}"
+                            placeholder="/"
+                        >
+                        <small class="form-text text-muted">Use a local path such as <code>/</code> or an admin-approved HTTP(S) URL. Signed-in users are locally logged out before this redirect.</small>
+                    </div>
+
+                    <div class="row g-3">
+                        <div class="col-lg-6">
+                            <label for="terms_of_use_accept_button_text" class="form-label">Accept Button Text</label>
+                            <input
+                                type="text"
+                                class="form-control"
+                                id="terms_of_use_accept_button_text"
+                                name="terms_of_use_accept_button_text"
+                                maxlength="80"
+                                value="{{ settings.terms_of_use_accept_button_text or 'Accept and continue' }}"
+                            >
+                        </div>
+                        <div class="col-lg-6">
+                            <label for="terms_of_use_decline_button_text" class="form-label">Cancel Button Text</label>
+                            <input
+                                type="text"
+                                class="form-control"
+                                id="terms_of_use_decline_button_text"
+                                name="terms_of_use_decline_button_text"
+                                maxlength="80"
+                                value="{{ settings.terms_of_use_decline_button_text or 'Cancel' }}"
+                            >
+                        </div>
+                    </div>
+
+                    <div class="alert alert-info mt-3 mb-0" role="alert">
+                        <strong>Tracking:</strong> Every-session acceptance is stored in the Flask session. Daily and once-per-version acceptance are stored in user settings, and accepted or declined events are written to the activity log when the user identity is known.
+                    </div>
+                </div>
+
                 <div class="card p-3 mb-3" id="support-menu-section">
                     <h5>
                         <i class="bi bi-life-preserver me-2"></i>Support
@@ -6595,9 +6696,9 @@
                                 </button>
                             </div>
                         </div>
-                        {% endif %}
                     </div>
                 </div>
+                {% endif %}
 
                 <div class="card p-3 mb-3" id="cosmos-throughput-section" data-testid="cosmos-throughput-section">
                     <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">

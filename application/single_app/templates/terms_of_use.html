@@ -1,0 +1,118 @@
+<!-- terms_of_use.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{ terms.title }} - {{ app_settings.app_title or 'SimpleChat' }}</title>
+    <link href="{{ url_for('static', filename='css/bootstrap.min.css') }}" rel="stylesheet" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/bootstrap-icons.min.css') }}" />
+    <style>
+        :root {
+            color-scheme: light;
+        }
+
+        body {
+            align-items: center;
+            background: #f7f8fb;
+            color: #24262d;
+            display: flex;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            justify-content: center;
+            margin: 0;
+            min-height: 100vh;
+            padding: 1.5rem;
+        }
+
+        .terms-panel {
+            background: #ffffff;
+            border: 1px solid #d9dee8;
+            border-radius: 12px;
+            box-shadow: 0 16px 48px rgba(32, 41, 64, 0.12);
+            max-width: 760px;
+            padding: 2rem;
+            width: 100%;
+        }
+
+        .terms-logo {
+            align-items: center;
+            display: flex;
+            gap: 0.9rem;
+            margin-bottom: 1.25rem;
+        }
+
+        .terms-logo img {
+            max-height: 48px;
+            max-width: 48px;
+        }
+
+        .terms-app-title {
+            color: #667085;
+            font-size: 0.98rem;
+            font-weight: 600;
+            margin: 0;
+        }
+
+        .terms-title {
+            color: #1d2939;
+            font-size: clamp(1.75rem, 3vw, 2.25rem);
+            font-weight: 700;
+            line-height: 1.15;
+            margin-bottom: 1rem;
+        }
+
+        .terms-message {
+            background: #f8fafc;
+            border: 1px solid #e4e7ec;
+            border-radius: 10px;
+            color: #344054;
+            line-height: 1.6;
+            max-height: min(52vh, 520px);
+            overflow: auto;
+            padding: 1.25rem;
+            white-space: pre-wrap;
+        }
+
+        .terms-actions {
+            align-items: center;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+            justify-content: flex-end;
+            margin-top: 1.5rem;
+        }
+    </style>
+</head>
+<body>
+    <main class="terms-panel" aria-labelledby="terms-of-use-title">
+        <section class="terms-logo" aria-label="Application identity">
+            {% if app_settings.show_logo %}
+                {% if app_settings.custom_logo_base64 %}
+                    <img src="{{ url_for('static', filename='images/custom_logo.png') }}?v={{ app_settings.logo_version | default(1) }}" alt="Logo" />
+                {% else %}
+                    <img src="{{ url_for('static', filename='images/logo-lightmode.png') }}" alt="Logo" />
+                {% endif %}
+            {% endif %}
+            {% if not app_settings.hide_app_title %}
+                <p class="terms-app-title">{{ app_settings.app_title or 'SimpleChat' }}</p>
+            {% endif %}
+        </section>
+
+        <h1 id="terms-of-use-title" class="terms-title">{{ terms.title }}</h1>
+        <div class="terms-message">{{ terms.message }}</div>
+
+        <div class="terms-actions">
+            <form method="post" action="{{ url_for('frontend_terms_of_use.decline_terms_of_use') }}">
+                <button type="submit" class="btn btn-outline-secondary">
+                    {{ terms.decline_button_text }}
+                </button>
+            </form>
+            <form method="post" action="{{ url_for('frontend_terms_of_use.accept_terms_of_use') }}">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-check-circle me-1" aria-hidden="true"></i>{{ terms.accept_button_text }}
+                </button>
+            </form>
+        </div>
+    </main>
+</body>
+</html>

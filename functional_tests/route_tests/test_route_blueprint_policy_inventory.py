@@ -2,7 +2,7 @@
 # test_route_blueprint_policy_inventory.py
 """
 Functional test for route blueprint policy inventory.
-Version: 0.250.006
+Version: 0.250.055
 Implemented in: 0.242.069
 
 This test ensures every SimpleChat route is assigned to a Blueprint-based
@@ -71,6 +71,7 @@ REGISTERED_BLUEPRINT_POLICIES = {
     "external_no_auth_health": (),
     "frontend_admin_settings": ("login_required", "admin_required"),
     "frontend_agents": ("login_required", "user_required"),
+    "frontend_terms_of_use": (),
     "frontend_authentication": (),
     "frontend_chats": ("login_required", "user_required"),
     "frontend_control_center": ("login_required",),
@@ -94,6 +95,9 @@ EXPECTED_PUBLIC_PATHS = {
     "/getATokenApi",
     "/logout",
     "/logout/local",
+    "/terms-of-use",
+    "/terms-of-use/accept",
+    "/terms-of-use/decline",
     "/ci-auth/session",
     "/robots933456.txt",
     "/favicon.ico",

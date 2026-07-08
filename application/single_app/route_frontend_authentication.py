@@ -7,6 +7,11 @@ import requests
 
 from config import *
 from functions_activity_logging import log_user_login, record_user_login_session_activity
+from functions_terms_of_use import (
+    apply_pending_pre_auth_terms_of_use,
+    get_terms_of_use_config,
+    has_terms_of_use_acceptance,
+)
 from functions_appinsights import log_event
 from functions_authentication import _build_msal_app, _load_cache, _save_cache, clear_requested_oauth_scopes, create_ci_bearer_session, get_graph_authority, get_graph_endpoint, get_requested_oauth_scopes
 from functions_debug import debug_print
@@ -165,7 +170,11 @@ def register_route_frontend_authentication(bp):
         
         # Get settings from database, with environment variable fallback
         settings = get_settings() or {}
-        
+
+        terms_config = get_terms_of_use_config(settings)
+        if terms_config["enabled"] and not has_terms_of_use_acceptance(settings):
+            return redirect(url_for('frontend_terms_of_use.terms_of_use'))
+
         # Only use Front Door redirect URL if Front Door is enabled
         if settings.get('enable_front_door', False):
             front_door_url = settings.get('front_door_url')
@@ -264,6 +273,22 @@ def register_route_frontend_authentication(bp):
                 record_user_login_session_activity(session)
         except Exception as e:
             debug_print(f"Could not log login activity: {e}")
+
+        try:
+            user_id = session['user'].get('oid') or session['user'].get('sub')
+            if user_id:
+                apply_pending_pre_auth_terms_of_use(
+                    user_id=user_id,
+                    settings=settings,
+                    source="azure_ad_pre_auth",
+                )
+        except Exception as e:
+            log_event(
+                "[TermsOfUse] Failed to apply pending Azure AD pre-auth acceptance.",
+                extra={'error': str(e)},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
         
         # Redirect to the originally intended page or home
         # You might want to store the original destination in the session during /login
@@ -419,6 +444,20 @@ def register_route_frontend_authentication(bp):
             record_user_login_session_activity(session)
         except Exception as e:
             debug_print(f"[TeamsSSO] Could not log Teams login activity: {e}")
+
+        try:
+            apply_pending_pre_auth_terms_of_use(
+                user_id=session_user.get('oid'),
+                settings=get_settings() or {},
+                source="teams_sso_pre_auth",
+            )
+        except Exception as e:
+            log_event(
+                "[TermsOfUse] Failed to apply pending Teams pre-auth acceptance.",
+                extra={'error': str(e)},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
 
         return jsonify({
             "success": True,
