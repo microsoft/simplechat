@@ -1752,6 +1752,96 @@ def log_user_agreement_accepted(
         debug_print(f"⚠️  Warning: Failed to log user agreement acceptance: {str(e)}")
 
 
+def log_terms_of_use_accepted(
+    user_id: str,
+    terms_hash: str,
+    frequency: str,
+    source: str,
+    accepted_date: str,
+    auth_state: Optional[str] = None,
+) -> None:
+    """Log when a user accepts the terms of use."""
+    try:
+        acceptance_record = {
+            'id': str(uuid.uuid4()),
+            'user_id': user_id,
+            'activity_type': 'terms_of_use_accepted',
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'accepted_date': accepted_date,
+            'terms_hash': terms_hash,
+            'frequency': frequency,
+            'source': source,
+            'auth_state': auth_state or 'authenticated',
+        }
+
+        cosmos_activity_logs_container.create_item(body=acceptance_record)
+        log_event(
+            message=f"Terms of Use accepted: user {user_id}",
+            extra=acceptance_record,
+            level=logging.INFO,
+        )
+    except Exception as e:
+        log_event(
+            message=f"Error logging terms of use acceptance: {str(e)}",
+            extra={
+                'user_id': user_id,
+                'terms_hash': terms_hash,
+                'frequency': frequency,
+                'source': source,
+                'error': str(e),
+            },
+            level=logging.ERROR,
+        )
+        debug_print(f"⚠️  Warning: Failed to log terms of use acceptance: {str(e)}")
+
+
+def log_terms_of_use_declined(
+    user_id: str,
+    terms_hash: str,
+    frequency: str,
+    source: str,
+    redirect_url: str,
+    auth_state: Optional[str] = None,
+) -> None:
+    """Log when a signed-in user declines the terms of use."""
+    try:
+        decline_record = {
+            'id': str(uuid.uuid4()),
+            'user_id': user_id,
+            'activity_type': 'terms_of_use_declined',
+            'timestamp': datetime.utcnow().isoformat(),
+            'created_at': datetime.utcnow().isoformat(),
+            'declined_date': datetime.utcnow().strftime('%Y-%m-%d'),
+            'terms_hash': terms_hash,
+            'frequency': frequency,
+            'source': source,
+            'redirect_url': redirect_url,
+            'auth_state': auth_state or 'authenticated',
+        }
+
+        cosmos_activity_logs_container.create_item(body=decline_record)
+        log_event(
+            message=f"Terms of Use declined: user {user_id}",
+            extra=decline_record,
+            level=logging.INFO,
+        )
+    except Exception as e:
+        log_event(
+            message=f"Error logging terms of use decline: {str(e)}",
+            extra={
+                'user_id': user_id,
+                'terms_hash': terms_hash,
+                'frequency': frequency,
+                'source': source,
+                'redirect_url': redirect_url,
+                'error': str(e),
+            },
+            level=logging.ERROR,
+        )
+        debug_print(f"⚠️  Warning: Failed to log terms of use decline: {str(e)}")
+
+
 def has_user_accepted_agreement_today(
     user_id: str,
     workspace_type: str,

@@ -55,6 +55,7 @@ from route_frontend_safety import *
 from route_frontend_feedback import *
 from route_frontend_support import *
 from route_frontend_notifications import *
+from route_frontend_terms_of_use import register_route_frontend_terms_of_use
 from route_custom_pages import register_route_custom_pages
 
 from route_backend_chats import *
@@ -98,6 +99,7 @@ from route_migration import bp_migration
 from route_plugin_logging import bpl as plugin_logging_bp
 from functions_custom_pages import get_custom_pages_nav
 from functions_debug import debug_print
+from functions_terms_of_use import has_terms_of_use_acceptance
 
 from opentelemetry.instrumentation.flask import FlaskInstrumentor
 
@@ -813,6 +815,74 @@ def _is_idle_timeout_exempt(path):
     return any(path.startswith(prefix) for prefix in IDLE_TIMEOUT_EXEMPT_PREFIXES)
 
 
+TERMS_OF_USE_EXEMPT_PATHS = {
+    '/login',
+    '/logout',
+    '/logout/local',
+    '/getAToken',
+    '/getATokenApi',
+    '/ci-auth/session',
+    '/auth/teams/token-exchange',
+    '/terms-of-use',
+    '/terms-of-use/accept',
+    '/terms-of-use/decline',
+    '/robots933456.txt',
+    '/favicon.ico',
+    '/acceptable_use_policy.html',
+    '/external/healthcheck',
+    '/external/healthcheckz',
+}
+
+TERMS_OF_USE_EXEMPT_PREFIXES = (
+    '/static/',
+    '/health',
+    '/api/health',
+)
+
+
+def _is_terms_of_use_exempt(path):
+    if path in TERMS_OF_USE_EXEMPT_PATHS:
+        return True
+    return any(path.startswith(prefix) for prefix in TERMS_OF_USE_EXEMPT_PREFIXES)
+
+
+@app.before_request
+def enforce_terms_of_use():
+    """Block authenticated app usage until the current terms of use is accepted."""
+    if 'user' not in session:
+        return None
+    if request.method == 'OPTIONS' or _is_terms_of_use_exempt(request.path):
+        return None
+
+    request_settings = get_request_settings()
+    user_id = session.get('user', {}).get('oid') or session.get('user', {}).get('sub')
+    if has_terms_of_use_acceptance(request_settings, user_id=user_id):
+        return None
+
+    terms_url = url_for(
+        'frontend_terms_of_use.terms_of_use',
+        next=normalize_path_with_query(request.path, request.query_string),
+    )
+    is_api_request = (
+        request.accept_mimetypes.accept_json
+        and not request.accept_mimetypes.accept_html
+    ) or request.path.startswith('/api/')
+    if is_api_request:
+        return jsonify({
+            'error': 'terms_of_use_required',
+            'message': 'Terms of Use acceptance is required before using SimpleChat.',
+            'terms_url': terms_url,
+        }), 403
+    return redirect(terms_url)
+
+
+def normalize_path_with_query(path, query_string):
+    query_text = query_string.decode('utf-8', errors='ignore') if isinstance(query_string, bytes) else str(query_string or '')
+    if not query_text:
+        return path
+    return f"{path}?{query_text}"
+
+
 def maybe_log_authenticated_browser_request():
     """Record throttled login activity for authenticated browser page requests."""
     if request.method != 'GET' or request.path.startswith('/api/'):
@@ -1078,6 +1148,9 @@ app.register_blueprint(debug_admin_bp)
 # =================== Front End Routes ===================
 # ------------------- User Authentication Routes ---------
 register_route_blueprint('frontend_authentication', register_route_frontend_authentication)
+
+# ------------------- Terms of Use Routes --
+register_route_blueprint('frontend_terms_of_use', register_route_frontend_terms_of_use)
 
 # ------------------- User Profile Routes ----------------
 register_route_blueprint('frontend_profile', register_route_frontend_profile, login_required_blueprint)
