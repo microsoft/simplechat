@@ -281,7 +281,7 @@ def register_route_backend_data_management(bp):
                 "Rejected a Cosmos DB editor query.",
                 {"container": payload.get("container"), "error": str(exc)},
             )
-            return jsonify({"success": False, "error": str(exc)}), 400
+            return jsonify({"success": False, "error": "Cosmos DB editor query was rejected."}), 400
         except Exception as exc:
             log_event(
                 "[DataManagement] Cosmos editor query failed.",
