@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.052)**
+
+#### Bug Fixes
+
+*   **Control Center Left Nav Endpoint Fix**
+    *   Fixed an issue where admins could open Control Center while the left navigation Control Center section stayed hidden when ControlCenterAdmin enforcement was disabled.
+    *   Updated the sidebar endpoint check to use the blueprint-qualified `frontend_control_center.control_center` route and added regression coverage for the regular Admin fallback.
+    *   (Ref: microsoft/simplechat#1009, `_sidebar_nav.html`, `test_control_center_left_nav_endpoint.py`)
+
 ### **(v0.250.051)**
 
 #### User Interface Enhancements
