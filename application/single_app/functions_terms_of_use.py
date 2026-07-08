@@ -21,6 +21,7 @@ TERMS_OF_USE_FREQUENCIES = ("every_session", "daily", "once")
 TERMS_OF_USE_DEFAULT_FREQUENCY = "once"
 TERMS_OF_USE_SESSION_KEY = "terms_of_use_acceptance"
 TERMS_OF_USE_PRE_AUTH_SESSION_KEY = "terms_of_use_pre_auth_acceptance"
+TERMS_OF_USE_RETURN_PATH_SESSION_KEY = "terms_of_use_return_path"
 TERMS_OF_USE_USER_SETTINGS_KEY = "termsOfUse"
 TERMS_OF_USE_DEFAULT_REDIRECT = "/"
 TERMS_OF_USE_MAX_TITLE_LENGTH = 160
@@ -59,7 +60,12 @@ def normalize_terms_of_use_redirect_url(value):
         return candidate
 
     parsed = urlparse(candidate)
-    if parsed.scheme in {"http", "https"} and parsed.netloc:
+    if (
+        parsed.scheme == "https"
+        and parsed.netloc
+        and not parsed.username
+        and not parsed.password
+    ):
         return candidate
     return TERMS_OF_USE_DEFAULT_REDIRECT
 

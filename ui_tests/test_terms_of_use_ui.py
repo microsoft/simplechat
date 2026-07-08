@@ -1,8 +1,9 @@
 # test_terms_of_use_ui.py
 """
 UI tests for Terms of Use admin and interstitial templates.
-Version: 0.250.056
+Version: 0.250.057
 Implemented in: 0.250.055
+Redirect hardening updated in: 0.250.057
 
 These tests ensure the admin General tab exposes the terms of use controls
 and the user-facing interstitial uses local assets and safe escaped rendering.
@@ -53,6 +54,7 @@ def test_terms_of_use_template_uses_local_assets_and_escaped_message():
     assert "https://" not in source
     assert "http://" not in source
     assert "{{ terms.message }}" in source
+    assert 'name="return_url"' not in source
     assert "|safe" not in source
     assert "innerHTML" not in source
     assert "display:none" not in source

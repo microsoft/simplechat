@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.057)**
+
+#### Bug Fixes
+
+*   **Terms of Use Redirect Hardening**
+    *   Replaced wildcard config imports in the Terms of Use route with explicit Flask imports.
+    *   Moved post-acceptance return paths from hidden form values to server-side session storage, keeping user-controlled return targets local-only.
+    *   Restricted admin-configured external decline redirects to HTTPS URLs without embedded credentials while preserving local-path redirects.
+    *   (Ref: microsoft/simplechat#504, `route_frontend_terms_of_use.py`, `functions_terms_of_use.py`, `terms_of_use.html`)
+
 ### **(v0.250.056)**
 
 #### New Features

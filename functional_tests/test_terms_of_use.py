@@ -2,8 +2,9 @@
 # test_terms_of_use.py
 """
 Functional test for Terms of Use recurrence and persistence helpers.
-Version: 0.250.056
+Version: 0.250.057
 Implemented in: 0.250.055
+Redirect hardening updated in: 0.250.057
 
 This test ensures Terms of Use hashes, redirect validation,
 pre-auth session acceptance, and user-settings persistence behave consistently.
@@ -102,6 +103,8 @@ def test_hash_and_redirect_normalization():
     assert terms.normalize_terms_of_use_frequency("once-per-day") == "daily"
     assert terms.normalize_terms_of_use_redirect_url("/goodbye") == "/goodbye"
     assert terms.normalize_terms_of_use_redirect_url("https://contoso.example/terms") == "https://contoso.example/terms"
+    assert terms.normalize_terms_of_use_redirect_url("http://contoso.example/terms") == "/"
+    assert terms.normalize_terms_of_use_redirect_url("https://user:pass@contoso.example/terms") == "/"
     assert terms.normalize_terms_of_use_redirect_url("//evil.example") == "/"
     assert terms.normalize_terms_of_use_redirect_url("javascript:alert(1)") == "/"
     assert terms.normalize_terms_of_use_return_path("/chats?x=1") == "/chats?x=1"

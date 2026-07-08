@@ -3,7 +3,7 @@
 ## Overview
 
 Implemented in version: **0.250.055**
-Current documentation version: **0.250.056**
+Current documentation version: **0.250.057**
 
 Terms of Use lets administrators require users to accept configurable terms, rules of behavior, or an entry notice before using SimpleChat. It is separate from the existing upload-focused User Agreement.
 
@@ -18,6 +18,7 @@ Terms of Use lets administrators require users to accept configurable terms, rul
 * **Authentication integration**:
   * Standard Microsoft sign-in users see the Terms of Use before being sent to Entra ID.
   * SSO/passive sign-in users are gated immediately after the SimpleChat session is created.
+* **Redirect safety**: User-controlled return paths are local-only and stored server-side in the session. The decline destination is admin-configured and may be local or an HTTPS URL.
 * **Server-side enforcement**: Authenticated browser requests are redirected to the Terms of Use page until accepted. Authenticated API requests receive a `403` response with `terms_of_use_required`.
 * **Audit logging**: Accepted and declined events are written to activity logs when a user identity is known.
 
