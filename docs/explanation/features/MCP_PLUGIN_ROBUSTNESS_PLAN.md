@@ -51,6 +51,8 @@ PR #722, **MCP Server addition and modification of SimpleChat API to accommodate
 - Add an enterprise-ready plan for a SimpleChat inbound MCP server after outbound MCP plugin hardening is under way.
 - Start inbound SimpleChat MCP with a small, personal-scope tool set and grow only after governance, authorization, observability, and scaling controls are in place.
 - Use a combined access model where Entra roles/scopes provide coarse access, SimpleChat governance provides tool/scope policy, and existing workspace roles protect data.
+- Add fine-grained outbound MCP destination controls so admins can restrict which external MCP servers may be used by personal, group, or global actions.
+- Add a server-side catalog of preconfigured outbound MCP servers so useful unauthenticated or low-friction MCP servers can be created from trusted templates without confusing them with compatibility presets.
 
 ## Non-Goals For The First Slice
 
@@ -62,6 +64,7 @@ PR #722, **MCP Server addition and modification of SimpleChat API to accommodate
 - Do not deliver inbound MCP full feature parity with the SimpleChat web UI or internal SimpleChat plugin in the first inbound slice.
 - Do not enable group, public, or all-scope inbound MCP tools until workspace role checks and governance policy are explicitly wired and tested.
 - Do not use PR #722's external app as-is as the production MCP server.
+- Do not ship broad outbound preconfigured MCP server creation without server-side destination governance and backend enforcement during action save, discovery, and runtime invocation.
 
 ## Track A: Outbound MCP Plugin Robustness
 
@@ -106,6 +109,87 @@ PR #722, **MCP Server addition and modification of SimpleChat API to accommodate
    - Cover invalid and expired token error shapes with mocked connector failures.
    - Cover tool allowlist behavior.
    - Cover backward-compatible manifest normalization.
+
+### Phase 1B: Outbound Destination Governance And Preconfigured Server Catalog
+
+This phase is separate from MCP server presets.
+
+- **Preset**: compatibility defaults for a class of MCP server, such as Generic MCP Server or Splunk MCP Server. Presets set transport/auth/timeouts/help text but should not represent a concrete destination.
+- **Preconfiguration**: a concrete action template for a known MCP server, such as Microsoft Learn, GitHub documentation, or Azure documentation. Preconfigurations may include endpoint, transport, auth method, default tool allowlist, documentation links, and scope eligibility.
+
+1. Add fine-grained outbound MCP destination allowlisting.
+   - Admins must be able to control which external MCP destinations can be used for personal, group, and admin/global actions.
+   - Policies should support exact URL, origin, hostname, path-prefix, and wildcard matching.
+   - Policies should support action scope: personal, group, global/admin, and future public workspace scopes if outbound actions are added there.
+   - Policies should support target scope IDs such as a specific user, specific group, all groups, or all personal actions.
+   - Policies should support transport restrictions such as `streamable_http`, `sse`, `websocket`, and admin-only `stdio`.
+   - Policies should optionally bind to a preset ID or preconfiguration ID.
+   - Policies should optionally restrict auth methods so a destination can be allowed only for no-auth, bearer, API key, basic, identity, or future OAuth.
+   - Policies should allow wildcard `*` for organizations that do not want outbound destination filtering.
+   - Default compatibility posture should preserve existing behavior until an admin enables enforcement; secure deployments can switch to deny-by-default.
+
+2. Enforce destination policy server-side.
+   - Enforce during action create and update.
+   - Enforce during MCP discovery and compatibility probe.
+   - Enforce during runtime tool invocation.
+   - Do not rely on frontend filtering alone.
+   - Store the normalized destination decision with enough audit context to explain why a call was allowed or denied.
+
+3. Add outbound SSRF and endpoint-safety guardrails.
+   - Normalize URLs before policy evaluation.
+   - Reject credentials embedded in URLs.
+   - Reject unsupported schemes.
+   - Prevent redirects from bypassing destination policy.
+   - Consider blocking private, loopback, link-local, and metadata-service IP ranges unless an admin explicitly allows them for a trusted internal deployment.
+   - Treat DNS rebinding and CNAME-to-private-IP behavior as security risks when resolving destinations.
+   - Preserve the existing restriction that `stdio` is only available for admin-managed global actions.
+
+4. Add a server-side preconfigured MCP server catalog.
+   - Store preconfiguration definitions outside browser-static files.
+   - Validate definitions against a JSON schema before returning them to the browser.
+   - Return sanitized definitions through an authenticated API route.
+   - Allow bundled shippable definitions and optional organization-provided definitions.
+   - Never include secrets, tokens, passwords, tenant-specific credentials, or customer data in definitions.
+
+5. Initial shippable preconfiguration candidates.
+   - Microsoft Learn MCP server.
+   - Azure documentation MCP server.
+   - GitHub documentation MCP server.
+   - SimpleChat local MCP development server as a development-only catalog item when local/dev mode is enabled.
+
+6. Define preconfiguration metadata.
+   - Stable `id`.
+   - Display name and description.
+   - Provider/category.
+   - Endpoint and transport.
+   - Preset ID to apply first.
+   - Auth requirement: none, optional, required, or identity-backed.
+   - Default custom headers by name only, never secret values.
+   - Default allowed tool names when the server has broad tools.
+   - Scope eligibility: personal, group, global/admin.
+   - Destination policy tags.
+   - Risk label and admin-facing notes.
+   - Documentation URL.
+   - Enabled/disabled flag.
+
+7. Add modal flow for "Create from preconfigured MCP server."
+   - The client should call the server-side preconfiguration API.
+   - The dropdown should show only definitions allowed for the current action scope and governance context.
+   - Selecting a preconfiguration should populate the MCP action form.
+   - The user should still be able to review, discover tools, adjust allowed tools, and save.
+   - Save/discovery/runtime must still pass server-side destination policy.
+
+8. Add outbound destination and preconfiguration tests.
+   - Exact host allow.
+   - Wildcard allow.
+   - Personal action destination denied while group action destination allowed.
+   - Specific group destination denied while other groups are unaffected.
+   - Destination policy enforced on save, discovery, and runtime invocation.
+   - Redirect/private-IP policy cannot bypass allowlisting.
+   - Preconfigured catalog definitions validate against schema.
+   - Disabled or scope-ineligible preconfigurations are not returned to the modal.
+   - Preconfigurations never expose secrets.
+   - Creating from catalog produces the expected MCP manifest fields.
 
 ### Phase 2: Capability Probe And Tool Metadata Robustness
 
@@ -264,6 +348,7 @@ Status: **Auth foundation and PRM contract recorded in version 0.250.062.** See 
    - Support the required Entra token version intentionally rather than by accident.
    - Require a dedicated inbound MCP app role or scope such as `McpServerAccess` or a deliberately reused `ExternalApi`.
    - Add an allowed client application ID list similar to the existing CI bearer-session allowlist pattern.
+   - Include source allowlist context in the auth/governance decision, while treating custom headers, Origin, Referer, and User-Agent as supplemental signals rather than primary identity proof.
 
 2. Separate app-only and delegated user access.
    - User-data tools must run with a delegated user identity or validated on-behalf-of flow.
@@ -292,11 +377,15 @@ Use a combined model rather than choosing only governance or only roles:
    - Global enablement flag for inbound MCP.
    - Per-client enablement.
    - Per-tool allowlist.
+   - Per-resource-family allowlist: profile, conversations, documents, prompts, agent templates, chat.
+   - Per-operation allowlist: list, retrieve, search, write.
    - Per-scope allowlist: personal, group, public.
+   - Per-target allowlist or denylist: all groups, a specific group, all public workspaces, a specific public workspace, or a specific delegated user scope.
+   - Per-source allowlist with wildcard `*` support for deployments that only require identity, client, and governance checks.
    - Optional per-client or per-user rate limits.
 
 2. Keep the initial tool registry explicit.
-   - Each MCP tool should declare required identity type, workspace scope, feature flags, governance keys, rate-limit category, and audit event type.
+   - Each MCP tool should declare required identity type, workspace scope, resource family, operation, feature flags, governance keys, rate-limit category, and audit event type.
    - Do not expose a tool simply because a Python function exists.
 
 3. Reuse existing authorization helpers.
@@ -304,6 +393,13 @@ Use a combined model rather than choosing only governance or only roles:
    - Group tools must use the same group role checks used by web/API routes.
    - Public workspace tools must use the same public workspace role and workspace-status checks used by existing external/public routes.
    - Governance must deny by default when a client/tool/scope is not configured.
+   - Fine-grained governance allow must never grant data access that existing workspace authorization would deny.
+
+4. Evaluate policy with deny-by-default and explicit-deny precedence.
+   - Missing policy denies the operation.
+   - Explicit deny wins over allow.
+   - Specific target policy, such as a group id, is evaluated before wildcard policies when effects do not conflict.
+   - Source allowlist `*` disables source filtering but keeps identity, client app, tool, scope, resource, operation, and workspace authorization checks.
 
 ### Phase B3: Initial Read-Only Personal Tool Set
 
@@ -410,30 +506,50 @@ Prerequisites before enabling:
 ### MCP Plugin And Validation
 
 - `application/single_app/functions_mcp_operations.py`
-  - Normalize and validate custom headers, OAuth config, retry settings, result policy, capability metadata, TLS references, and schema-validation flags.
+  - Normalize and validate custom headers, outbound destination metadata, OAuth config, retry settings, result policy, capability metadata, TLS references, and schema-validation flags.
+
+- New `application/single_app/functions_mcp_destinations.py` or equivalent.
+  - Normalize outbound MCP destinations, evaluate per-scope destination policies, block unsafe endpoints, and produce audit-safe allow/deny decisions.
+
+- New `application/single_app/functions_mcp_preconfigurations.py` or equivalent.
+  - Load, validate, sanitize, filter, and return shippable and organization-provided outbound MCP server preconfiguration definitions.
 
 - `application/single_app/semantic_kernel_plugins/mcp_plugin_factory.py`
-  - Merge headers, resolve auth/OAuth tokens, create connectors, run discovery/probes, serialize results, classify errors, and optionally validate arguments.
+  - Merge headers, resolve auth/OAuth tokens, evaluate outbound destination policy before connector creation, create connectors, run discovery/probes, serialize results, classify errors, and optionally validate arguments.
 
 - `application/single_app/semantic_kernel_plugins/mcp_plugin.py`
-  - Expose discovered tool metadata, enforce allowlists, route tool calls through validation/result policy, and later expose resources/prompts if supported.
+  - Expose discovered tool metadata, enforce tool allowlists, enforce outbound destination decisions before tool calls, route tool calls through validation/result policy, and later expose resources/prompts if supported.
 
 - `application/single_app/semantic_kernel_plugins/plugin_health_checker.py`
-  - Validate expanded MCP manifest fields, auth-method requirements, header safety, TLS references, OAuth requirements, and timeout/retry limits.
+  - Validate expanded MCP manifest fields, destination policy compatibility, auth-method requirements, header safety, TLS references, OAuth requirements, and timeout/retry limits.
 
 ### Routes, UI, And Schemas
 
 - `application/single_app/route_backend_plugins.py`
-  - Extend discovery/test routes, hydrate secrets/identities, add compatibility probe route, and later add OAuth connect/callback/disconnect routes.
+  - Extend discovery/test routes, hydrate secrets/identities, add destination policy checks, add preconfiguration catalog routes, add compatibility probe route, and later add OAuth connect/callback/disconnect routes.
 
 - `application/single_app/static/js/plugin_modal_stepper.js`
-  - Update MCP modal behavior for custom headers, Splunk preset, diagnostics, OAuth status, TLS settings, result policy, and richer discovery warnings.
+  - Update MCP modal behavior for custom headers, server presets, preconfigured server creation, destination policy feedback, diagnostics, OAuth status, TLS settings, result policy, and richer discovery warnings.
 
 - `application/single_app/templates/_plugin_modal.html`
-  - Add controls for new MCP settings without external browser assets.
+  - Add controls for new MCP settings and preconfiguration selection without external browser assets.
 
 - `application/single_app/static/json/schemas/mcp_plugin.additional_settings.schema.json`
-  - Add expanded MCP settings and backward-compatible defaults.
+  - Add expanded MCP settings, destination metadata, preconfiguration IDs, and backward-compatible defaults.
+
+- New `application/single_app/mcp_preconfigurations/` or equivalent.
+  - Store server-side outbound MCP preconfiguration JSON schema and bundled catalog definitions.
+
+- Existing `application/single_app/mcp_presets/`.
+  - Continue storing compatibility presets only; do not mix concrete server preconfigurations into the preset catalog.
+
+### Admin Governance And Settings
+
+- `application/single_app/functions_governance.py`
+  - Add outbound MCP destination, scope, and preconfiguration governance helpers if existing item-delegation policy primitives are not sufficient.
+
+- Existing admin settings/governance routes and templates.
+  - Later surface controls for enabling outbound MCP destination filtering, creating per-personal/group/global policies, and enabling/disabling shippable preconfigurations.
 
 ### Shared Auth And Secret Infrastructure
 
@@ -450,13 +566,13 @@ Prerequisites before enabling:
 ### Inbound SimpleChat MCP Server
 
 - New `application/single_app/functions_mcp_server_auth.py` or equivalent.
-  - Validate inbound MCP bearer tokens, issuer, audience, client app ID, role/scope, delegated user identity, and app-only restrictions.
+  - Validate inbound MCP bearer tokens, issuer, audience, client app ID, source context, role/scope, delegated user identity, and app-only restrictions.
 
 - New `application/single_app/functions_mcp_server_governance.py` or equivalent.
-  - Resolve inbound MCP client/tool/scope policy and compose Entra roles/scopes, app allowlists, SimpleChat governance, and workspace-role checks.
+  - Resolve inbound MCP client/source/tool/resource/operation/scope policy and compose Entra roles/scopes, app allowlists, SimpleChat governance, source allowlists, resource-operation policy, and workspace-role checks.
 
 - New `application/single_app/functions_mcp_server_tools.py` or equivalent.
-  - Implement the explicit inbound SimpleChat MCP tool registry and call reusable SimpleChat service functions with authorization-aware context.
+  - Implement the explicit inbound SimpleChat MCP tool registry and call reusable SimpleChat service functions with authorization-aware context, declared resource family, declared operation, and target-scope policy checks.
 
 - New `application/single_app/route_mcp_server.py` or equivalent.
   - Host streamable HTTP MCP endpoints, PRM metadata, health/readiness behavior, and inbound MCP request handling.
@@ -518,6 +634,12 @@ Prerequisites before enabling:
 2. Add and run focused functional tests for:
    - Custom headers.
    - Bearer/Splunk profile.
+   - Destination allowlist exact/wildcard matches.
+   - Destination policy by personal, group, and global/admin action scope.
+   - Specific group destination denied while other groups remain unaffected.
+   - Destination policy enforced on action save, discovery/probe, and runtime invocation.
+   - Redirect/private-IP policy cannot bypass allowlisting.
+   - Preconfigured catalog loading, validation, scope filtering, and manifest population.
    - Discovery hydration.
    - Header redaction.
    - Invalid header rejection.
@@ -537,6 +659,8 @@ Prerequisites before enabling:
 
 4. Extend UI tests for:
    - MCP preset selection.
+   - MCP preconfiguration catalog selection.
+   - Destination policy warning and denial states.
    - Custom header entry.
    - OAuth connect state.
    - TLS warnings.
@@ -574,8 +698,13 @@ Prerequisites before enabling:
 3. Add governance tests:
    - Inbound MCP disabled globally.
    - Client disabled.
+   - Source disabled when source allowlist is not wildcard `*`.
    - Tool disabled.
+   - Resource family disabled.
+   - Resource operation disabled.
    - Personal scope disabled.
+   - Specific group document listing/retrieval disabled while other group operations remain governed independently.
+   - Wildcard all-groups policy applies consistently.
    - Group/public/all-scope tools remain disabled by default.
    - Governance denial returns a clear authorization response without leaking policy internals.
 
@@ -612,18 +741,21 @@ Prerequisites before enabling:
 
 1. Track A Phase 1 custom headers, Splunk preset, validation, redaction, diagnostics, and tests. **Status: implemented with the declarative MCP preset catalog extension.**
 2. Track B Phase B0 architecture decision and Track B Phase B1 auth foundation design. **Status: recorded; next executable slice is the disabled inbound MCP shell.**
-3. Track A Phase 2 capability probe, richer metadata, result policies, and opt-in schema validation. **Status: deferred until after the inbound B0/B1 shell decision gate.**
-4. Track B Phase B2 governance/tool registry and Track B Phase B3 initial read-only personal tools.
-5. Track B Phase B4 personal chat write tool only after read-only tools, auth, and governance are stable.
-6. Track A Phase 3 TLS diagnostics and optional certificate references after connector support is confirmed.
-7. Track A Phase 4 OAuth 2.1 PKCE.
-8. Track B Phase B5 group/public/all-scope tools only after explicit governance and workspace-role tests.
-9. Track A Phase 5 prompts/resources/streaming/long-running jobs and Track B Phase B6 enterprise readiness hardening.
+3. Track A Phase 1B outbound destination governance and preconfigured MCP server catalog. **Status: planned; should precede broad shippable outbound catalog rollout.**
+4. Track A Phase 2 capability probe, richer metadata, result policies, and opt-in schema validation. **Status: deferred until after the inbound B0/B1 shell decision gate.**
+5. Track B Phase B2 governance/tool registry and Track B Phase B3 initial read-only personal tools.
+6. Track B Phase B4 personal chat write tool only after read-only tools, auth, and governance are stable.
+7. Track A Phase 3 TLS diagnostics and optional certificate references after connector support is confirmed.
+8. Track A Phase 4 OAuth 2.1 PKCE.
+9. Track B Phase B5 group/public/all-scope tools only after explicit governance and workspace-role tests.
+10. Track A Phase 5 prompts/resources/streaming/long-running jobs and Track B Phase B6 enterprise readiness hardening.
 
 ## Risk Notes
 
 - OAuth token storage and refresh is the highest-risk area because it spans auth, Key Vault, workspace identity scope, callbacks, UI state, and redaction.
 - Custom headers need strict validation to avoid header injection and credential leakage.
+- Outbound MCP destination filtering is a data-exfiltration and SSRF control. It must be enforced on the server during save, discovery/probe, and runtime invocation rather than only in the browser.
+- Preconfigured outbound MCP servers improve usability but can encourage broad external data flow if destination policy, scope eligibility, tool allowlists, and admin enablement are not enforced.
 - Result storage can create cleanup and retention obligations if large outputs are persisted.
 - Schema validation can break existing dynamic tools if enabled by default; keep it opt-in initially.
 - TLS controls should not be exposed until the connector stack can honor them securely.

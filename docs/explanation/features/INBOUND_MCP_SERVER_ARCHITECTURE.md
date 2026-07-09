@@ -1,6 +1,8 @@
 # Inbound SimpleChat MCP Server Architecture
 
-Implemented in version: **0.250.062**
+Architecture recorded in version: **0.250.062**
+
+Runtime implementation: **Not yet implemented**
 
 ## Overview
 
@@ -138,6 +140,9 @@ tenant_id
 audience
 issuer
 caller_app_id
+source_id
+source_signal_type
+source_trust_level
 token_type
 roles
 scopes
@@ -160,6 +165,8 @@ INBOUND_MCP_REQUIRED_ROLE=McpServerAccess
 INBOUND_MCP_REQUIRED_SCOPE=McpServerAccess
 INBOUND_MCP_ALLOWED_CLIENT_APP_IDS=
 INBOUND_MCP_ALLOWED_TENANT_IDS=
+INBOUND_MCP_ALLOWED_SOURCE_IDS=*
+INBOUND_MCP_SOURCE_HEADER=X-SimpleChat-MCP-Source
 INBOUND_MCP_RESOURCE_PATH=/api/mcp
 INBOUND_MCP_PRM_PATH=/.well-known/oauth-protected-resource/mcp
 ```
@@ -168,6 +175,7 @@ Default behavior must be deny-by-default:
 
 - Inbound MCP disabled.
 - No clients allowed unless configured.
+- Source allowlist defaults to `*`, which means identity, client, and governance checks are enforced without source-location filtering.
 - No tools enabled unless governance allows them.
 - Group/public/all-scope tools disabled.
 
@@ -221,9 +229,11 @@ Recommended responses:
 | Wrong audience/issuer/tenant | 401 | `invalid_token` |
 | Missing role/scope | 403 | `insufficient_mcp_permissions` |
 | Disallowed client app | 403 | `mcp_client_not_allowed` |
+| Disallowed source | 403 | `mcp_source_not_allowed` |
 | Inbound MCP disabled | 404 or 403 | `inbound_mcp_disabled` |
 | Tool disabled by governance | 403 | `mcp_tool_not_allowed` |
 | Scope disabled by governance | 403 | `mcp_scope_not_allowed` |
+| Resource operation disabled | 403 | `mcp_resource_operation_not_allowed` |
 
 Log internal detail with `log_event`, but never return raw token or policy internals to the caller.
 
@@ -233,16 +243,21 @@ Use a combined model:
 
 1. **Entra app role/scope**: coarse gate to reach inbound MCP.
 2. **Client app allowlist**: caller application must be approved.
-3. **SimpleChat governance**: tools and scopes are enabled explicitly.
-4. **Workspace authorization**: the represented user must already have access to the target data.
+3. **Source allowlist**: optional approved connection/source policy for where approved clients may connect from.
+4. **SimpleChat governance**: tools, resources, operations, users, groups, and scopes are enabled explicitly.
+5. **Workspace authorization**: the represented user must already have access to the target data.
 
 Initial governance dimensions:
 
 ```text
 global inbound MCP enabled
 client app id enabled
+source id enabled or wildcard "*"
 tool id enabled
+resource family enabled: profile, conversations, documents, prompts, agent_templates, chat
+resource operation enabled: list, retrieve, search, write
 scope enabled: personal, group, public, all
+target scope id enabled: user id, group id, public workspace id, or wildcard "*"
 identity type allowed: delegated, app-only
 optional per-client/user rate limit
 ```
@@ -256,7 +271,74 @@ group scope: disabled
 public scope: disabled
 all scope: disabled
 all tools: disabled
+all resource operations: disabled
+source allowlist: "*" until admins opt into source filtering
 ```
+
+### Fine-Grained Resource Exposure
+
+Fine-grained resource exposure is a required design constraint for the first implementation, even if the first executable slice only ships a disabled shell.
+
+Admins must be able to independently toggle exposed MCP resources and operations by:
+
+- tool id,
+- resource family,
+- operation,
+- caller user or caller group segment,
+- client application id,
+- target workspace scope,
+- specific target group or public workspace,
+- wildcard target such as all groups or all public workspaces.
+
+Examples:
+
+| Policy goal | Required policy shape |
+| --- | --- |
+| Disable document listing for every group | `scope=group`, `resource_family=documents`, `operation=list`, `target_scope_id=*`, `effect=deny` |
+| Disable document retrieval for one group only | `scope=group`, `resource_family=documents`, `operation=retrieve`, `target_scope_id=<group_id>`, `effect=deny` |
+| Allow one client to search personal documents only | `client_app_id=<app_id>`, `scope=personal`, `resource_family=documents`, `operation=search`, `effect=allow` |
+| Disable prompt retrieval for a user segment | `caller_segment=<group_or_policy_id>`, `resource_family=prompts`, `operation=retrieve`, `effect=deny` |
+
+Policy evaluation should follow these rules:
+
+1. Explicit deny wins over allow.
+2. More specific target policy wins over wildcard policy when effects do not conflict.
+3. Missing policy means deny.
+4. Workspace authorization is always evaluated after governance allows the operation.
+5. Governance allow never grants access to data the delegated user cannot already access.
+
+This is intentionally similar to item-delegation governance: every exposed MCP resource operation should have an explicit policy surface, not just a broad "MCP enabled" toggle.
+
+### Source Allowlisting
+
+Admins must also be able to whitelist approved sources so an approved user/client cannot use SimpleChat's inbound MCP surface from an unapproved source location when source filtering is enabled.
+
+Important security posture:
+
+- Token identity and client app id remain the primary trusted controls.
+- `Origin`, `Referer`, `User-Agent`, and custom headers are not strong identity proofs for non-browser MCP clients.
+- Custom headers may be useful for routing or admin policy, but they are spoofable unless injected by trusted infrastructure or paired with a signed/secret source attestation.
+- Some MCP clients, including hosted agent platforms, may not provide stable or controllable browser-style origin headers.
+- The allowlist must support `*` for organizations that only want identity/client/governance checks.
+
+Recommended source signal order:
+
+1. **Token caller app id (`azp`/`appid`)**: strongest available application identity signal and mandatory for allowlisting.
+2. **Trusted infrastructure injection**: source id header injected by APIM, Front Door, App Gateway, or another trusted reverse proxy after it validates network/client properties.
+3. **Signed source attestation header**: future option for clients that can sign a source id using a shared secret or certificate-bound mechanism.
+4. **Origin/Referer headers**: advisory only; useful for browser-like clients but not reliable for server-to-server clients.
+5. **User-Agent or raw custom source header**: logging/advisory only unless paired with another trusted signal.
+
+Initial source allowlist contract:
+
+```text
+allowed_source_ids=["*"] means source filtering is disabled.
+allowed_source_ids=["m365-agents", "contoso-copilot"] means the resolved source id must match.
+source_id is resolved from trusted infrastructure first, then optional configured header, then origin, then "unknown".
+source_trust_level records trusted_proxy, signed_header, token_client, origin, advisory_header, or unknown.
+```
+
+The disabled-shell implementation should include this model in the auth/governance context, even if enforcement initially defaults to wildcard `*`.
 
 ## Initial Tool Registry Design
 
@@ -270,6 +352,8 @@ Suggested registry record:
     "display_name": "List conversations",
     "description": "List conversations visible to the delegated user.",
     "scope": "personal",
+    "resource_family": "conversations",
+    "operation": "list",
     "identity_type": "delegated",
     "feature_flag": "enable_user_workspace",
     "governance_key": "inbound_mcp.list_conversations",
@@ -327,8 +411,10 @@ Log:
 - caller app ID
 - tenant ID
 - delegated user ID, when present
+- source ID and source trust level
 - token type
 - tool ID
+- resource family and operation
 - governance decision
 - scope
 - duration
@@ -355,6 +441,8 @@ Auth contract tests before tools:
 - Invalid tenant.
 - Missing required role/scope.
 - Disallowed caller app ID.
+- Disallowed source when source allowlist is not wildcard `*`.
+- Wildcard source `*` permits source-agnostic access only after identity/client/governance checks pass.
 - App-only token rejected for user-data tools.
 - Delegated token accepted only for represented user.
 
@@ -371,8 +459,21 @@ Governance tests:
 - Client disabled.
 - Tool disabled.
 - Scope disabled.
+- Resource family disabled.
+- Resource operation disabled.
+- Specific group target disabled while other groups remain governed independently.
+- Wildcard all-groups policy applies to group resources unless a more specific policy overrides it.
 - Personal scope allowed only for delegated users.
 - Group/public/all scopes remain disabled by default.
+- Explicit deny wins over allow.
+
+Source allowlist tests:
+
+- `INBOUND_MCP_ALLOWED_SOURCE_IDS=*` does not block otherwise-authorized requests.
+- Non-wildcard source allowlist rejects unknown source.
+- Trusted proxy-injected source id is preferred over caller-supplied advisory headers.
+- Raw custom source header is treated as advisory unless configured as trusted through infrastructure or signed attestation.
+- Missing source signal is logged as `unknown` and rejected when wildcard is not configured.
 
 Scale tests:
 
@@ -392,8 +493,10 @@ Phase B0/B1 is complete when:
 6. App-only vs delegated user policy is defined.
 7. PRM metadata contract is defined.
 8. Governance dimensions and deny-by-default posture are defined.
-9. Initial tool registry shape is defined.
-10. Test plan for the first executable inbound slice is defined.
+9. Fine-grained resource family and operation governance requirements are defined.
+10. Source allowlisting requirements and trust limitations are defined.
+11. Initial tool registry shape is defined.
+12. Test plan for the first executable inbound slice is defined.
 
 ## Next Executable Slice
 
@@ -405,6 +508,8 @@ The next implementation slice should add the disabled inbound MCP shell:
 4. Health/readiness route.
 5. Auth guard helper with mocked-token unit tests.
 6. Governance helper skeleton.
-7. Explicit tool registry returning no enabled tools by default.
+7. Source signal extraction skeleton with wildcard `*` default.
+8. Resource-operation policy model skeleton with deny-by-default behavior.
+9. Explicit tool registry returning no enabled tools by default.
 
 Only after that should Phase B3 expose read-only personal tools.
