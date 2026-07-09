@@ -3,6 +3,12 @@
   "title": "MCP Plugin Additional Settings",
   "type": "object",
   "properties": {
+    "server_profile": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+      "default": "generic",
+      "description": "Optional MCP server preset id loaded from the server-side MCP preset catalog."
+    },
     "transport": {
       "type": "string",
       "enum": ["streamable_http", "sse", "websocket", "stdio"],
@@ -19,6 +25,12 @@
       "type": "string",
       "default": "X-API-Key",
       "description": "Header name used when auth_method is api_key."
+    },
+    "custom_headers": {
+      "type": "object",
+      "default": {},
+      "additionalProperties": {"type": "string"},
+      "description": "Additional HTTP headers for remote MCP transports. Values are treated as secrets and redacted from UI/logging."
     },
     "load_tools": {
       "type": "boolean",
@@ -50,6 +62,20 @@
       "minimum": 1,
       "maximum": 300,
       "description": "SSE read timeout in seconds for HTTP-based MCP transports."
+    },
+    "retry_count": {
+      "type": "integer",
+      "default": 0,
+      "minimum": 0,
+      "maximum": 3,
+      "description": "Number of retry attempts for transient MCP discovery and tool-call failures."
+    },
+    "retry_backoff_seconds": {
+      "type": "integer",
+      "default": 1,
+      "minimum": 1,
+      "maximum": 30,
+      "description": "Initial backoff in seconds before retrying transient MCP failures."
     },
     "command": {
       "type": "string",
@@ -90,6 +116,6 @@
       "description": "Cached MCP tool metadata from discovery."
     }
   },
-  "required": ["transport", "auth_method"],
+  "required": ["server_profile", "transport", "auth_method"],
   "additionalProperties": true
 }

@@ -1,6 +1,7 @@
 # mcp_plugin_factory.py
 """Factory for creating Model Context Protocol Semantic Kernel plugins."""
 
+import asyncio
 import base64
 from typing import Any, Dict, List, Optional
 
@@ -11,13 +12,19 @@ from semantic_kernel.connectors.mcp import (
     MCPWebsocketPlugin,
 )
 
+from functions_debug import debug_print
 from functions_mcp_operations import (
+    MCP_CUSTOM_HEADERS_FIELD,
     MCP_MAX_TOOL_RESULT_TEXT_LENGTH,
     MCP_PLUGIN_TYPE,
+    McpRuntimeError,
+    classify_mcp_exception,
+    get_mcp_custom_header_validation_errors,
+    is_valid_mcp_header_name,
     normalize_mcp_additional_fields,
     normalize_mcp_tool_metadata,
+    validate_mcp_endpoint_for_transport,
 )
-from functions_debug import debug_print
 from semantic_kernel_plugins.mcp_plugin import McpPlugin
 
 
@@ -34,6 +41,15 @@ class McpPluginFactory:
     @classmethod
     async def discover_tools_from_config(cls, config: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Connect to an MCP server and return normalized tool metadata."""
+        return await cls._run_with_retries(
+            config,
+            "tool_discovery",
+            lambda: cls._discover_tools_once(config),
+        )
+
+    @classmethod
+    async def _discover_tools_once(cls, config: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Perform one MCP tool discovery attempt."""
         connector = cls.create_connector(config)
         try:
             debug_print("[McpPluginFactory] Connecting to MCP server for tool discovery.")
@@ -57,8 +73,27 @@ class McpPluginFactory:
             await connector.close()
 
     @classmethod
-    async def call_tool_from_config(cls, config: Dict[str, Any], tool_name: str, arguments: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def call_tool_from_config(
+        cls,
+        config: Dict[str, Any],
+        tool_name: str,
+        arguments: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """Connect to an MCP server, invoke one tool, and normalize the result."""
+        return await cls._run_with_retries(
+            config,
+            "tool_call",
+            lambda: cls._call_tool_once(config, tool_name, arguments),
+        )
+
+    @classmethod
+    async def _call_tool_once(
+        cls,
+        config: Dict[str, Any],
+        tool_name: str,
+        arguments: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Perform one MCP tool call attempt."""
         connector = cls.create_connector(config)
         try:
             debug_print(f"[McpPluginFactory] Connecting to MCP server for tool call tool_name={tool_name}.")
@@ -73,6 +108,46 @@ class McpPluginFactory:
         finally:
             debug_print(f"[McpPluginFactory] Closing MCP tool connector tool_name={tool_name}.")
             await connector.close()
+
+    @classmethod
+    async def _run_with_retries(cls, config: Dict[str, Any], operation: str, operation_factory):
+        """Run an MCP operation with bounded retries and classified failures."""
+        additional_fields = normalize_mcp_additional_fields((config or {}).get("additionalFields", {}))
+        retry_count = int(additional_fields.get("retry_count") or 0)
+        retry_backoff_seconds = int(additional_fields.get("retry_backoff_seconds") or 1)
+
+        attempt = 0
+        while True:
+            try:
+                return await operation_factory()
+            except McpRuntimeError:
+                raise
+            except Exception as exc:
+                error_info = classify_mcp_exception(exc, operation)
+                if isinstance(exc, ValueError) and error_info["category"] == "unknown":
+                    error_info.update({
+                        "category": "validation",
+                        "message": error_info["detail"] or "MCP configuration is invalid.",
+                        "retryable": False,
+                    })
+
+                if error_info["retryable"] and attempt < retry_count:
+                    delay = retry_backoff_seconds * (2 ** attempt)
+                    debug_print(
+                        f"[McpPluginFactory] Retrying MCP operation operation={operation} "
+                        f"attempt={attempt + 1} delay_seconds={delay} category={error_info['category']}."
+                    )
+                    await asyncio.sleep(delay)
+                    attempt += 1
+                    continue
+
+                raise McpRuntimeError(
+                    error_info["message"],
+                    category=error_info["category"],
+                    operation=operation,
+                    detail=error_info["detail"],
+                    retryable=error_info["retryable"],
+                ) from exc
 
     @classmethod
     def create_connector(cls, config: Dict[str, Any]):
@@ -107,10 +182,17 @@ class McpPluginFactory:
             )
 
         endpoint = str(manifest.get("endpoint") or "").strip()
-        if not endpoint:
-            raise ValueError("MCP remote transports require an endpoint.")
+        endpoint_errors = validate_mcp_endpoint_for_transport(endpoint, transport)
+        if endpoint_errors:
+            raise ValueError("; ".join(endpoint_errors))
 
         headers = cls._build_headers(manifest)
+        if transport == "websocket" and headers:
+            raise ValueError(
+                "MCP websocket transport does not support custom or authentication headers. "
+                "Use streamable_http or sse for header-based authentication."
+            )
+
         timeout = float(additional_fields.get("connect_timeout") or 10)
         sse_read_timeout = float(additional_fields.get("sse_read_timeout") or 300)
         debug_print(
@@ -161,29 +243,39 @@ class McpPluginFactory:
         auth_method = additional_fields.get("auth_method") or "none"
         secret_value = str(auth.get("key") or "").strip()
         identity_value = str(auth.get("identity") or "").strip()
+        headers = dict(additional_fields.get(MCP_CUSTOM_HEADERS_FIELD) or {})
+        header_errors = get_mcp_custom_header_validation_errors(headers)
+        if header_errors:
+            raise ValueError("; ".join(header_errors))
 
+        auth_headers = {}
         if auth_method == "bearer" and secret_value:
-            return {"Authorization": f"Bearer {secret_value}"}
+            auth_headers["Authorization"] = f"Bearer {secret_value}"
         if auth_method == "api_key" and secret_value:
             header_name = str(additional_fields.get("api_key_header_name") or "X-API-Key").strip() or "X-API-Key"
-            return {header_name: secret_value}
+            if not is_valid_mcp_header_name(header_name):
+                raise ValueError("MCP api_key auth requires a valid api_key_header_name")
+            auth_headers[header_name] = secret_value
         if auth_method == "basic" and identity_value and secret_value:
             credential_bytes = f"{identity_value}:{secret_value}".encode("utf-8")
             encoded_credentials = base64.b64encode(credential_bytes).decode("ascii")
-            return {"Authorization": f"Basic {encoded_credentials}"}
+            auth_headers["Authorization"] = f"Basic {encoded_credentials}"
 
         identity_auth_type = str(additional_fields.get("identity_auth_type") or "").strip().lower()
         if identity_auth_type == "bearer_token" and secret_value:
-            return {"Authorization": f"Bearer {secret_value}"}
+            auth_headers["Authorization"] = f"Bearer {secret_value}"
         if identity_auth_type == "api_key" and secret_value:
             header_name = str(additional_fields.get("api_key_header_name") or "X-API-Key").strip() or "X-API-Key"
-            return {header_name: secret_value}
+            if not is_valid_mcp_header_name(header_name):
+                raise ValueError("MCP api_key identity requires a valid api_key_header_name")
+            auth_headers[header_name] = secret_value
         if identity_auth_type == "username_password" and identity_value and secret_value:
             credential_bytes = f"{identity_value}:{secret_value}".encode("utf-8")
             encoded_credentials = base64.b64encode(credential_bytes).decode("ascii")
-            return {"Authorization": f"Basic {encoded_credentials}"}
+            auth_headers["Authorization"] = f"Basic {encoded_credentials}"
 
-        return {}
+        headers.update(auth_headers)
+        return headers
 
     @staticmethod
     def _coerce_schema(schema_value: Any) -> Dict[str, Any]:

@@ -523,7 +523,14 @@
                 <i class="bi bi-diagram-3 me-2"></i>MCP Server
               </div>
               <div class="row g-3">
-                <div class="col-md-6">
+                <div class="col-md-4">
+                  <label for="mcp-server-profile" class="form-label">Server Preset</label>
+                  <select class="form-select" id="mcp-server-profile">
+                    <option value="generic">Generic MCP Server</option>
+                  </select>
+                  <div class="form-text" id="mcp-server-profile-help">Use generic unless the server needs a specific compatibility preset.</div>
+                </div>
+                <div class="col-md-4">
                   <label for="mcp-transport" class="form-label">Transport <span class="text-danger">*</span></label>
                   <select class="form-select" id="mcp-transport">
                     <option value="streamable_http">Streamable HTTP</option>
@@ -532,7 +539,7 @@
                     <option value="stdio">Stdio</option>
                   </select>
                 </div>
-                <div class="col-md-6" id="mcp-endpoint-group">
+                <div class="col-md-4" id="mcp-endpoint-group">
                   <label for="mcp-endpoint" class="form-label">Endpoint <span class="text-danger">*</span></label>
                   <input type="text" class="form-control" id="mcp-endpoint" placeholder="https://example.com/mcp" />
                 </div>
@@ -601,6 +608,14 @@
                   <input type="password" class="form-control" id="mcp-basic-password" autocomplete="new-password" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" />
                 </div>
               </div>
+
+              <div class="mt-3">
+                <label for="mcp-custom-headers" class="form-label">Custom Headers (JSON)</label>
+                <textarea class="form-control" id="mcp-custom-headers" rows="4" placeholder="{&#10;  &quot;X-Request-Source&quot;: &quot;simplechat&quot;&#10;}"></textarea>
+                <div class="form-text">
+                  Optional HTTP headers for streamable HTTP/SSE MCP servers. Header values are treated as secrets; authentication headers override matching custom headers.
+                </div>
+              </div>
             </div>
 
             <div class="simplechat-config-card mb-3">
@@ -643,7 +658,7 @@
 
             <div class="simplechat-config-card mb-0">
               <div class="config-section-label">
-                <i class="bi bi-speedometer2 me-2"></i>Timeouts
+                <i class="bi bi-speedometer2 me-2"></i>Timeouts and Retries
               </div>
               <div class="row g-3">
                 <div class="col-md-4">
@@ -657,6 +672,17 @@
                 <div class="col-md-4">
                   <label for="mcp-sse-read-timeout" class="form-label">SSE Read Timeout</label>
                   <input type="number" class="form-control" id="mcp-sse-read-timeout" value="300" min="1" max="300" />
+                </div>
+              </div>
+              <div class="row g-3 mt-1">
+                <div class="col-md-4">
+                  <label for="mcp-retry-count" class="form-label">Retry Count</label>
+                  <input type="number" class="form-control" id="mcp-retry-count" value="0" min="0" max="3" />
+                </div>
+                <div class="col-md-4">
+                  <label for="mcp-retry-backoff-seconds" class="form-label">Retry Backoff</label>
+                  <input type="number" class="form-control" id="mcp-retry-backoff-seconds" value="1" min="1" max="30" />
+                  <div class="form-text">Initial seconds before retrying transient failures.</div>
                 </div>
               </div>
             </div>
@@ -1333,6 +1359,12 @@
                 </div>
                 <div class="col-md-6">
                   <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Server Preset</label>
+                    <span class="fw-medium" id="summary-mcp-server-profile">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
                     <label class="text-muted small mb-1">Load Mode</label>
                     <span class="fw-medium" id="summary-mcp-load-mode">-</span>
                   </div>
@@ -1347,6 +1379,18 @@
                   <div class="d-flex flex-column">
                     <label class="text-muted small mb-1">Connect Timeout</label>
                     <span class="fw-medium" id="summary-mcp-connect-timeout">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Retry Policy</label>
+                    <span class="fw-medium" id="summary-mcp-retry-policy">-</span>
+                  </div>
+                </div>
+                <div class="col-12">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Custom Headers</label>
+                    <span class="fw-medium" id="summary-mcp-custom-headers">-</span>
                   </div>
                 </div>
                 <div class="col-12">

@@ -14,6 +14,8 @@ __pycache__
 
 # Azure App Service artifacts
 .env
+.env.*
+!.env.example
 .pem
 .deployment
 

@@ -33,9 +33,7 @@ import glob
 import jwt
 import pandas
 
-# Add dotenv import
-from dotenv import load_dotenv
-
+from functions_environment import load_simplechat_dotenv
 from flask import (
     Flask, 
     flash, 
@@ -89,14 +87,14 @@ from azure.ai.contentsafety import ContentSafetyClient
 from azure.ai.contentsafety.models import AnalyzeTextOptions, TextCategory
 from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
 
-# Load environment variables from .env file
-load_dotenv()
+# Load environment variables from a selected dotenv profile or the default .env file.
+DOTENV_LOAD_RESULT = load_simplechat_dotenv()
 
 # Flask app configuration constants
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.250.057"
+VERSION = "0.250.062"
 
 SESSION_COOKIE_SAMESITE = os.getenv('SESSION_COOKIE_SAMESITE', 'Lax')
 SESSION_COOKIE_HTTPONLY = os.getenv('SESSION_COOKIE_HTTPONLY', 'true').lower() != 'false'

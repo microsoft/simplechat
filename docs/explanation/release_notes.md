@@ -2,6 +2,42 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.062)**
+
+#### New Features
+
+*   **Declarative MCP Server Presets**
+    *   Replaced hard-coded MCP server preset behavior with validated server-side JSON definitions loaded through an authenticated preset API.
+    *   Added bundled Generic and Splunk MCP presets plus an authoring guide so organizations can create custom preset catalogs without changing browser code.
+    *   (Ref: microsoft/simplechat#1014, `functions_mcp_presets.py`, `mcp_presets\definitions`, `MCP_SERVER_PRESETS.md`, MCP action modal)
+
+### **(v0.250.061)**
+
+#### Bug Fixes
+
+*   **Group Action Type Scope Routing**
+    *   Fixed an issue where the shared action modal loaded group action types through the personal action-type endpoint, causing personal action governance to hide group action types.
+    *   Group action creation now uses a group-scoped action-type endpoint and evaluates `governance_group_actions` independently from personal action settings.
+    *   (Ref: microsoft/simplechat#1014, `plugin_modal_stepper.js`, `route_backend_plugins.py`, group action governance)
+
+### **(v0.250.060)**
+
+#### New Features
+
+*   **Selectable Local Environment Files**
+    *   Added `SIMPLECHAT_ENV_FILE` support so developers can run SimpleChat against named local dotenv profiles, such as MAG and commercial demo resources, without editing one shared `.env` file.
+    *   Preserves the existing default `.env` loading behavior when the selector is not set and fails clearly if a selected profile path is missing.
+    *   (Ref: `functions_environment.py`, `config.py`, `.gitignore`, `ENV_FILE_SELECTION.md`)
+
+### **(v0.250.059)**
+
+#### New Features
+
+*   **Local MCP Validation Server**
+    *   Added a SimpleChat-owned local MCP development server for validating outbound MCP actions without depending on Splunk or third-party public MCP services.
+    *   Supports streamable HTTP discovery, custom header inspection, bearer/API-key/basic auth validation, mock responses, bounded latency, deterministic failures, and ingress header-gate scenarios.
+    *   (Ref: microsoft/simplechat#1014, `application\development\local_mcp`, `functional_tests\test_local_mcp_server.py`, MCP action validation)
+
 ### **(v0.250.057)**
 
 #### Bug Fixes

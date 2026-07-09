@@ -1,0 +1,37 @@
+{
+    "id": "splunk",
+    "version": "1.0.0",
+    "displayName": "Splunk MCP Server",
+    "description": "Preset for Splunk MCP Server using streamable HTTP and bearer authentication.",
+    "provider": "Splunk",
+    "enabled": true,
+    "sortOrder": 20,
+    "defaults": {
+        "transport": "streamable_http",
+        "auth_method": "bearer",
+        "api_key_header_name": "X-API-Key",
+        "load_tools": true,
+        "load_prompts": false,
+        "request_timeout": 30,
+        "connect_timeout": 10,
+        "sse_read_timeout": 300,
+        "retry_count": 0,
+        "retry_backoff_seconds": 1,
+        "allowed_tool_names": []
+    },
+    "ui": {
+        "helpText": "Splunk preset keeps HTTP-based MCP defaults and treats custom header values as secrets.",
+        "endpointPlaceholder": "https://splunk.example.com:8089/mcp",
+        "websocketEndpointPlaceholder": "wss://splunk.example.com/mcp"
+    },
+    "constraints": {
+        "allowedTransports": ["streamable_http"],
+        "allowedAuthMethods": ["bearer"],
+        "customHeadersAllowed": true,
+        "stdioAllowed": false
+    },
+    "suggestedHeaders": [],
+    "warnings": [
+        "Use scoped test tokens for validation and store production credentials only through approved SimpleChat secret flows."
+    ]
+}

@@ -1,7 +1,7 @@
 # test_workspace_mcp_action_modal.py
 """
 UI test for the workspace MCP action modal.
-Version: 0.241.103
+Version: 0.250.062
 Implemented in: 0.241.103
 
 This test ensures users can select the MCP action type, configure transport,
@@ -38,6 +38,8 @@ def test_workspace_mcp_action_modal(playwright):
     admin_validation_requests = []
     saved_payloads = []
     discovery_requests = []
+    type_requests = []
+    preset_requests = []
 
     browser = playwright.chromium.launch()
     context = browser.new_context(
@@ -90,7 +92,93 @@ def test_workspace_mcp_action_modal(playwright):
             }),
         )
 
+    def handle_types(route):
+        type_requests.append(route.request.url)
+        route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps([
+                {
+                    "type": "mcp",
+                    "displayName": "Model Context Protocol server",
+                    "description": "Connect to an MCP server.",
+                }
+            ]),
+        )
+
+    def handle_presets(route):
+        preset_requests.append(route.request.url)
+        route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps({
+                "defaultPreset": "generic",
+                "presets": [
+                    {
+                        "id": "generic",
+                        "displayName": "Generic MCP Server",
+                        "description": "Default MCP server preset.",
+                        "defaults": {
+                            "transport": "streamable_http",
+                            "auth_method": "none",
+                            "api_key_header_name": "X-API-Key",
+                            "load_tools": True,
+                            "load_prompts": False,
+                            "request_timeout": 30,
+                            "connect_timeout": 10,
+                            "sse_read_timeout": 300,
+                            "retry_count": 0,
+                            "retry_backoff_seconds": 1,
+                            "allowed_tool_names": [],
+                        },
+                        "ui": {
+                            "helpText": "Use generic unless the server needs a specific compatibility preset.",
+                            "endpointPlaceholder": "https://example.com/mcp",
+                            "websocketEndpointPlaceholder": "wss://example.com/mcp",
+                        },
+                        "constraints": {
+                            "allowedTransports": ["streamable_http", "sse", "websocket", "stdio"],
+                            "allowedAuthMethods": ["none", "bearer", "api_key", "basic"],
+                            "customHeadersAllowed": True,
+                            "stdioAllowed": True,
+                        },
+                    },
+                    {
+                        "id": "splunk",
+                        "displayName": "Splunk MCP Server",
+                        "description": "Splunk MCP compatibility preset.",
+                        "defaults": {
+                            "transport": "streamable_http",
+                            "auth_method": "bearer",
+                            "api_key_header_name": "X-API-Key",
+                            "load_tools": True,
+                            "load_prompts": False,
+                            "request_timeout": 30,
+                            "connect_timeout": 10,
+                            "sse_read_timeout": 300,
+                            "retry_count": 0,
+                            "retry_backoff_seconds": 1,
+                            "allowed_tool_names": [],
+                        },
+                        "ui": {
+                            "helpText": "Splunk preset returned by the test catalog.",
+                            "endpointPlaceholder": "https://splunk.example.com:8089/mcp",
+                            "websocketEndpointPlaceholder": "wss://splunk.example.com/mcp",
+                        },
+                        "constraints": {
+                            "allowedTransports": ["streamable_http"],
+                            "allowedAuthMethods": ["bearer"],
+                            "customHeadersAllowed": True,
+                            "stdioAllowed": False,
+                        },
+                    },
+                ],
+            }),
+        )
+
     page.route("**/api/user/plugins", handle_plugins)
+    page.route("**/api/user/plugins/types", handle_types)
+    page.route("**/api/plugins/mcp/presets", handle_presets)
     page.route("**/api/plugins/validate", handle_validation)
     page.route("**/api/admin/plugins/validate", handle_admin_validation)
     page.route("**/api/plugins/mcp/discover", handle_mcp_discovery)
@@ -133,16 +221,23 @@ def test_workspace_mcp_action_modal(playwright):
         expect(page.locator("#generic-config-section")).to_be_hidden()
         expect(page.locator("#sql-config-section")).to_be_hidden()
 
+        page.locator("#mcp-server-profile").select_option("splunk")
         page.locator("#mcp-transport").select_option("streamable_http")
         page.locator("#mcp-endpoint").fill("https://example.com/mcp")
         page.locator("#mcp-auth-method").select_option("bearer")
         page.locator("#mcp-bearer-token").fill("test-token")
+        page.locator("#mcp-custom-headers").fill(json.dumps({
+            "Authorization": "Splunk custom-token",
+            "X-Splunk-Host": "search-head",
+        }, indent=2))
         page.locator("#mcp-tool-names").fill("search_repositories\nget_issue")
         page.locator("#mcp-discover-tools-btn").click()
         expect(page.locator("#mcp-discover-status")).to_have_text("Discovered 1 tool.")
         page.locator("#mcp-request-timeout").fill("45")
         page.locator("#mcp-connect-timeout").fill("12")
         page.locator("#mcp-sse-read-timeout").fill("120")
+        page.locator("#mcp-retry-count").fill("2")
+        page.locator("#mcp-retry-backoff-seconds").fill("3")
 
         page.locator("#plugin-modal-skip").click()
 
@@ -151,6 +246,10 @@ def test_workspace_mcp_action_modal(playwright):
         expect(page.locator("#summary-plugin-auth")).to_have_text("Bearer Token")
         expect(page.locator("#summary-plugin-endpoint")).to_have_text("https://example.com/mcp")
         expect(page.locator("#summary-mcp-transport")).to_have_text("Streamable HTTP")
+        expect(page.locator("#summary-mcp-server-profile")).to_have_text("Splunk MCP Server")
+        expect(page.locator("#summary-mcp-custom-headers")).to_contain_text("X-Splunk-Host")
+        expect(page.locator("#summary-mcp-custom-headers")).not_to_contain_text("custom-token")
+        expect(page.locator("#summary-mcp-retry-policy")).to_have_text("2 retries, 3s initial backoff")
         expect(page.locator("#summary-mcp-tool-names")).to_contain_text("search_repositories")
         expect(page.locator("#summary-mcp-tool-metadata")).to_have_text("1 cached tool")
 
@@ -158,6 +257,9 @@ def test_workspace_mcp_action_modal(playwright):
 
         expect(modal).to_be_hidden()
         assert len(discovery_requests) == 1, "Expected the MCP discovery endpoint to be called once."
+        assert len(type_requests) == 1, "Expected the personal action types endpoint to be called once."
+        assert len(preset_requests) == 1, "Expected MCP server presets to be loaded from the API."
+        assert type_requests[0].endswith("/api/user/plugins/types")
         assert len(validation_requests) == 1, "Expected the shared validation endpoint to be called once."
         assert not admin_validation_requests, "Workspace action save should not call the admin validation endpoint."
         assert len(saved_payloads) == 1, "Expected the workspace action save request to be submitted once."
@@ -167,6 +269,8 @@ def test_workspace_mcp_action_modal(playwright):
         assert discovery_payload["type"] == "mcp"
         assert discovery_payload["endpoint"] == "https://example.com/mcp"
         assert discovery_payload["additionalFields"]["auth_method"] == "bearer"
+        assert discovery_payload["additionalFields"]["server_profile"] == "splunk"
+        assert discovery_payload["additionalFields"]["custom_headers"]["X-Splunk-Host"] == "search-head"
 
         assert saved_plugin["type"] == "mcp"
         assert saved_plugin["name"] == "github_mcp_tools"
@@ -175,13 +279,18 @@ def test_workspace_mcp_action_modal(playwright):
         assert saved_plugin["auth"]["key"] == "test-token"
 
         additional_fields = saved_plugin["additionalFields"]
+        assert additional_fields["server_profile"] == "splunk"
         assert additional_fields["transport"] == "streamable_http"
         assert additional_fields["auth_method"] == "bearer"
+        assert additional_fields["custom_headers"]["Authorization"] == "Splunk custom-token"
+        assert additional_fields["custom_headers"]["X-Splunk-Host"] == "search-head"
         assert additional_fields["load_tools"] is True
         assert additional_fields["load_prompts"] is False
         assert additional_fields["request_timeout"] == 45
         assert additional_fields["connect_timeout"] == 12
         assert additional_fields["sse_read_timeout"] == 120
+        assert additional_fields["retry_count"] == 2
+        assert additional_fields["retry_backoff_seconds"] == 3
         assert additional_fields["allowed_tool_names"] == ["search_repositories", "get_issue"]
         assert additional_fields["mcp_tools"][0]["function_name"] == "search_repositories"
     finally:

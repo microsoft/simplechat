@@ -1,0 +1,35 @@
+{
+    "id": "generic",
+    "version": "1.0.0",
+    "displayName": "Generic MCP Server",
+    "description": "Default MCP server preset for standards-compliant MCP servers.",
+    "provider": "Generic",
+    "enabled": true,
+    "sortOrder": 10,
+    "defaults": {
+        "transport": "streamable_http",
+        "auth_method": "none",
+        "api_key_header_name": "X-API-Key",
+        "load_tools": true,
+        "load_prompts": false,
+        "request_timeout": 30,
+        "connect_timeout": 10,
+        "sse_read_timeout": 300,
+        "retry_count": 0,
+        "retry_backoff_seconds": 1,
+        "allowed_tool_names": []
+    },
+    "ui": {
+        "helpText": "Use generic unless the server needs a specific compatibility preset.",
+        "endpointPlaceholder": "https://example.com/mcp",
+        "websocketEndpointPlaceholder": "wss://example.com/mcp"
+    },
+    "constraints": {
+        "allowedTransports": ["streamable_http", "sse", "websocket", "stdio"],
+        "allowedAuthMethods": ["none", "bearer", "api_key", "basic"],
+        "customHeadersAllowed": true,
+        "stdioAllowed": true
+    },
+    "suggestedHeaders": [],
+    "warnings": []
+}

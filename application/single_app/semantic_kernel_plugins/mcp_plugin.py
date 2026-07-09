@@ -9,6 +9,8 @@ from semantic_kernel.functions.kernel_plugin import KernelPlugin
 from functions_debug import debug_print
 from functions_mcp_operations import (
     MCP_PLUGIN_TYPE,
+    McpRuntimeError,
+    classify_mcp_exception,
     normalize_mcp_additional_fields,
     normalize_mcp_tool_metadata,
 )
@@ -66,6 +68,7 @@ class McpPlugin(BasePlugin):
             "name": self.manifest.get("name", "mcp"),
             "type": MCP_PLUGIN_TYPE,
             "description": self.manifest.get("description") or "Model Context Protocol action configuration.",
+            "server_profile": self._additional_fields.get("server_profile"),
             "transport": self._additional_fields.get("transport"),
             "methods": methods,
         }
@@ -184,14 +187,27 @@ class McpPlugin(BasePlugin):
                 "error": str(exc),
                 "error_type": "validation",
             }
-        except Exception as exc:
+        except McpRuntimeError as exc:
             debug_print(
                 f"[McpPlugin] MCP tool call failed tool_name={tool_name} "
-                f"exception_type={type(exc).__name__} message={exc}"
+                f"category={exc.category} operation={exc.operation}"
             )
             return {
                 "success": False,
-                "error": f"Failed to call MCP tool '{tool_name}'.",
-                "error_type": "mcp_call_failed",
-                "details": str(exc),
+                "error": str(exc),
+                "error_type": exc.category,
+                "operation": exc.operation,
+                "details": exc.detail,
+            }
+        except Exception as exc:
+            error_info = classify_mcp_exception(exc, "tool_call")
+            debug_print(
+                f"[McpPlugin] MCP tool call failed tool_name={tool_name} "
+                f"exception_type={type(exc).__name__} category={error_info['category']}"
+            )
+            return {
+                "success": False,
+                "error": f"Failed to call MCP tool '{tool_name}'. {error_info['message']}",
+                "error_type": error_info["category"],
+                "details": error_info["detail"],
             }

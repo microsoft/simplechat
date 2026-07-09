@@ -81,10 +81,14 @@ from functions_tableau_operations import (
     normalize_tableau_server_url,
 )
 from functions_mcp_operations import (
+    MCP_CUSTOM_HEADERS_FIELD,
     MCP_PLUGIN_TYPE,
     MCP_STDIO_ENDPOINT,
+    McpRuntimeError,
+    get_mcp_error_http_status,
     normalize_mcp_additional_fields,
 )
+from functions_mcp_presets import build_mcp_server_presets_response
 from semantic_kernel_plugins.mcp_plugin_factory import McpPluginFactory
 from functions_msgraph_operations import (
     MSGRAPH_DEFAULT_ENDPOINT,
@@ -622,6 +626,37 @@ def _resolve_secret_value_for_plugin_test(value, field_name, plugin_label='plugi
     return resolved_value
 
 
+def _hydrate_mcp_custom_headers_for_test(discovery_manifest, existing_plugin):
+    """Resolve or preserve MCP custom header values for transient discovery calls."""
+    additional_fields = discovery_manifest.get('additionalFields') if isinstance(discovery_manifest.get('additionalFields'), dict) else {}
+    custom_headers = additional_fields.get(MCP_CUSTOM_HEADERS_FIELD, {})
+    if not isinstance(custom_headers, dict):
+        return
+
+    existing_additional_fields = existing_plugin.get('additionalFields') if isinstance(existing_plugin, dict) and isinstance(existing_plugin.get('additionalFields'), dict) else {}
+    existing_headers = existing_additional_fields.get(MCP_CUSTOM_HEADERS_FIELD, {})
+    if not isinstance(existing_headers, dict):
+        existing_headers = {}
+
+    hydrated_headers = {}
+    for header_name, header_value in custom_headers.items():
+        resolved_header_value = header_value
+        if resolved_header_value in ('', None, ui_trigger_word):
+            resolved_header_value = existing_headers.get(header_name)
+        if resolved_header_value == ui_trigger_word:
+            raise ValueError(f"Stored MCP custom header '{header_name}' could not be resolved. Re-enter the header value.")
+        if not resolved_header_value:
+            continue
+        hydrated_headers[header_name] = _resolve_secret_value_for_plugin_test(
+            resolved_header_value,
+            f"custom_headers.{header_name}",
+            plugin_label='MCP',
+        )
+
+    additional_fields[MCP_CUSTOM_HEADERS_FIELD] = hydrated_headers
+    discovery_manifest['additionalFields'] = additional_fields
+
+
 def _resolve_secret_value_for_sql_test(value, field_name, scope_value=None, scope="user"):
     """Resolve a Key Vault reference for SQL test-connection flows."""
     if not isinstance(value, str) or not value:
@@ -796,6 +831,9 @@ def set_user_plugins():
         validation_error = validate_plugin(plugin_to_save)
         if validation_error:
             return jsonify({'error': f'Plugin validation failed: {validation_error}'}), 400
+        is_valid, validation_errors = PluginHealthChecker.validate_plugin_manifest(plugin_to_save, plugin_type)
+        if not is_valid:
+            return jsonify({'error': f'Plugin validation failed: {"; ".join(validation_errors)}'}), 400
         
         filtered_plugins.append(plugin_to_save)
         new_plugin_names.add(plugin_to_save['name'])
@@ -992,6 +1030,10 @@ def create_group_action_route():
     except (ValueError, LookupError, PermissionError) as exc:
         return jsonify({'error': str(exc)}), 400
 
+    is_valid, validation_errors = PluginHealthChecker.validate_plugin_manifest(payload, payload.get('type'))
+    if not is_valid:
+        return jsonify({'error': f'Plugin validation failed: {"; ".join(validation_errors)}'}), 400
+
     try:
         saved = save_group_action(active_group, payload, user_id=user_id)
     except PermissionError as exc:
@@ -1070,6 +1112,10 @@ def update_group_action_route(action_id):
     except (ValueError, LookupError, PermissionError) as exc:
         return jsonify({'error': str(exc)}), 400
 
+    is_valid, validation_errors = PluginHealthChecker.validate_plugin_manifest(merged, merged.get('type'))
+    if not is_valid:
+        return jsonify({'error': f'Plugin validation failed: {"; ".join(validation_errors)}'}), 400
+
     try:
         saved = save_group_action(active_group, merged, user_id=user_id)
     except PermissionError as exc:
@@ -1131,6 +1177,36 @@ def get_user_plugin_types():
             'personal',
         )
     )
+
+
+@bpap.route('/api/group/plugins/types', methods=['GET'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+@enabled_required('enable_group_workspaces')
+def get_group_plugin_types():
+    user_id = get_current_user_id()
+    try:
+        active_group = require_active_group(user_id)
+        app_settings = get_settings()
+        allowed_roles = ("Owner",) if app_settings.get('require_owner_for_group_agent_management') else ("Owner", "Admin")
+        assert_group_role(user_id, active_group, allowed_roles=allowed_roles)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except LookupError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except PermissionError as exc:
+        return jsonify({'error': str(exc)}), 403
+
+    return get_plugin_types(
+        allowed_type_filter=lambda action_type: is_action_type_access_allowed(
+            'governance_group_actions',
+            user_id,
+            action_type,
+            'group',
+        )
+    )
+
 
 # === ADMIN PLUGINS ENDPOINTS ===
 
@@ -1540,6 +1616,15 @@ def get_plugin_auth_types(plugin_type):
     })
 
 
+@bpap.route('/api/plugins/mcp/presets', methods=['GET'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+def get_mcp_server_presets():
+    """Return validated MCP server presets for action modal configuration."""
+    return jsonify(build_mcp_server_presets_response())
+
+
 @bpap.route('/api/plugins/mcp/discover', methods=['POST'])
 @swagger_route(security=get_auth_security())
 @login_required
@@ -1587,6 +1672,8 @@ def discover_mcp_tools():
                 auth['key'] = _resolve_secret_value_for_plugin_test(auth.get('key'), 'auth.key', plugin_label='MCP')
             discovery_manifest['auth'] = auth
 
+        _hydrate_mcp_custom_headers_for_test(discovery_manifest, existing_plugin)
+
         is_valid, validation_errors = PluginHealthChecker.validate_plugin_manifest(discovery_manifest, MCP_PLUGIN_TYPE)
         if not is_valid:
             return jsonify({
@@ -1614,6 +1701,23 @@ def discover_mcp_tools():
         return jsonify({'error': str(exc)}), 403
     except (LookupError, ValueError) as exc:
         return jsonify({'error': str(exc)}), 400
+    except McpRuntimeError as exc:
+        log_event(
+            "[MCP Discovery] Classified MCP discovery failure",
+            extra={
+                "user_id": user_id,
+                "category": exc.category,
+                "operation": exc.operation,
+            },
+            level=logging.WARNING,
+        )
+        return jsonify({
+            'success': False,
+            'error': str(exc),
+            'error_type': exc.category,
+            'operation': exc.operation,
+            'details': exc.detail,
+        }), get_mcp_error_http_status(exc.category)
     except Exception as exc:
         log_event(
             f"[MCP Discovery] Failed to discover MCP tools: {exc}",

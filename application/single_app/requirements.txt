@@ -6,6 +6,7 @@ Flask-WTF==1.2.1
 gunicorn==25.0.3
 Werkzeug==3.1.6
 requests==2.33.1
+jsonschema==4.25.1
 openai==1.109.1
 docx2txt==0.8
 olefile==0.47
