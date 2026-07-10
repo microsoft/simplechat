@@ -1,10 +1,10 @@
 # MCP Plugin Robustness Plan
 
-Planning version: **0.250.064**
+Planning version: **0.250.065**
 
 Implemented in version: **In progress across phases**
 
-Related configuration version: `application/single_app/config.py` currently sets `VERSION = "0.250.064"`.
+Related configuration version: `application/single_app/config.py` currently sets `VERSION = "0.250.065"`.
 
 Detailed Track B Phase B0/B1 architecture outcome: [Inbound SimpleChat MCP Server Architecture](./INBOUND_MCP_SERVER_ARCHITECTURE.md).
 
@@ -53,6 +53,7 @@ PR #722, **MCP Server addition and modification of SimpleChat API to accommodate
 - Use a combined access model where Entra roles/scopes provide coarse access, SimpleChat governance provides tool/scope policy, and existing workspace roles protect data.
 - Add fine-grained outbound MCP destination controls so admins can restrict which external MCP servers may be used by personal, group, or global actions.
 - Add a server-side catalog of preconfigured outbound MCP servers so useful unauthenticated or low-friction MCP servers can be created from trusted templates without confusing them with compatibility presets.
+- Classify preconfigured outbound MCP servers by risk and auth tier, including future authenticated enterprise templates for Microsoft Sentinel MCP and Azure MCP Server.
 - Manage outbound MCP destination and preconfiguration policy through SimpleChat's governance/item-delegation model where possible, using roles only as coarse access gates.
 
 ## Non-Goals For The First Slice
@@ -66,6 +67,7 @@ PR #722, **MCP Server addition and modification of SimpleChat API to accommodate
 - Do not enable group, public, or all-scope inbound MCP tools until workspace role checks and governance policy are explicitly wired and tested.
 - Do not use PR #722's external app as-is as the production MCP server.
 - Do not ship broad outbound preconfigured MCP server creation without server-side destination governance and backend enforcement during action save, discovery, and runtime invocation.
+- Do not ship Microsoft Sentinel MCP or Azure MCP Server as default unauthenticated preconfigurations; they require explicit admin governance, identity/token design, tool allowlists, source/destination controls, and audit readiness.
 
 ## Track A: Outbound MCP Plugin Robustness
 
@@ -160,29 +162,44 @@ This phase is separate from MCP server presets.
    - GitHub documentation MCP server.
    - SimpleChat local MCP development server as a development-only catalog item when local/dev mode is enabled.
 
-6. Define preconfiguration metadata.
+6. Future authenticated enterprise preconfiguration template candidates.
+   - Microsoft Sentinel MCP server.
+     - Treat as an Entra-authenticated, high-risk security-data connector, not an unauthenticated docs connector.
+     - Track prerequisites such as Sentinel data lake onboarding, Microsoft Defender/Sentinel product access, and Security reader or product-specific permissions.
+     - Default to disabled until admin approval, source allowlisting, destination governance, identity/token refresh, per-tool allowlists, and audit logging are complete.
+     - Start with read-oriented/data exploration or triage tool collections only; never enable all Sentinel tools by default.
+   - Azure MCP Server.
+     - Treat as an Entra/Azure-authenticated, high-risk operational connector because it can inspect and potentially change Azure resources.
+     - Do not have SimpleChat execute local `npx`, `dnx`, `uvx`, Docker, or other command-based MCP servers from user input.
+     - Support only organization-hosted remote Azure MCP endpoints initially, or a later explicitly designed managed connector.
+     - Prefer read-only mode, explicit enabled service namespaces, and conservative tool allowlists before any mutating Azure tools are exposed.
+
+7. Define preconfiguration metadata.
    - Stable `id`.
    - Display name and description.
    - Provider/category.
    - Endpoint and transport.
    - Preset ID to apply first.
    - Auth requirement: none, optional, required, or identity-backed.
+   - Auth tier: public unauthenticated, user-provided credential, delegated OAuth/Entra, app identity, or organization-hosted.
+   - Deployment model: hosted remote endpoint, organization-hosted remote endpoint, or local/stdio reference only.
    - Default custom headers by name only, never secret values.
    - Default allowed tool names when the server has broad tools.
    - Scope eligibility: personal, group, global/admin.
    - Destination policy tags.
    - Risk label and admin-facing notes.
+   - Required governance gates such as source allowlisting, destination allowlisting, per-tool policy, read-only mode, and audit requirements.
    - Documentation URL.
    - Enabled/disabled flag.
 
-7. Add modal flow for "Create from preconfigured MCP server."
+8. Add modal flow for "Create from preconfigured MCP server."
    - The client should call the server-side preconfiguration API.
    - The dropdown should show only definitions allowed for the current action scope and governance context.
    - Selecting a preconfiguration should populate the MCP action form.
    - The user should still be able to review, discover tools, adjust allowed tools, and save.
    - Save/discovery/runtime must still pass server-side destination policy.
 
-8. Add outbound destination and preconfiguration tests.
+9. Add outbound destination and preconfiguration tests.
    - Exact host allow.
    - Wildcard allow.
    - Personal action destination denied while group action destination allowed.
@@ -202,6 +219,8 @@ Implemented Phase 1B artifacts:
 - MCP modal preconfiguration dropdown that applies server-returned definitions without hard-coded provider logic.
 - `preconfiguration_id` storage in MCP `additionalFields`.
 - `MCP_SERVER_PRECONFIGURATIONS.md` documentation and functional/UI test coverage.
+
+Future authenticated enterprise catalog entries are now tracked separately from the initial unauthenticated/low-friction catalog. Microsoft Sentinel MCP and Azure MCP Server should be added as disabled-by-default, admin-governed templates only after the identity, source allowlisting, destination governance, per-tool policy, and audit gates above are ready.
 
 ### Phase 1C: Destination Governance UI And Policy Persistence
 
@@ -255,9 +274,39 @@ Recommended approach:
    - Disallowed destinations are rejected on save, discovery, and runtime invocation.
    - UI/API responses never expose credentials, tokens, raw settings, or internal policy implementation details.
 
+### Phase 1D: Authenticated Enterprise Preconfiguration Templates For Sentinel And Azure MCP
+
+Status: **planned**. This phase adds roadmap and catalog support for high-value Microsoft enterprise MCP servers without treating them as public unauthenticated defaults.
+
+1. Add catalog tiering for authenticated enterprise templates.
+   - Separate public unauthenticated starter entries from authenticated enterprise entries and organization-hosted templates.
+   - Keep enterprise templates disabled by default until an admin explicitly enables them for a scope.
+   - Require destination governance and `preconfiguration:<id>` policy support before enterprise templates are returned to non-admin users.
+   - Show admin-facing warnings for security-data access, cloud-resource access, mutating tools, wildcard destinations, and broad tool allowlists.
+
+2. Add Microsoft Sentinel MCP as a future enterprise template.
+   - Classify as high risk because it can expose security operations data such as alerts, incidents, entities, evidence, and hunting/query results.
+   - Require Microsoft Entra identity and product prerequisites rather than static unauthenticated access.
+   - Gate use by admin approval, user/group policy, source allowlisting, destination allowlisting, and per-tool allowlists.
+   - Prefer the smallest read-oriented Sentinel tool collections first; defer custom tool creation, agent creation, and broader triage/action tools until governance and audit controls are mature.
+   - Document prerequisites and expected roles/permissions instead of embedding tenant-specific endpoints, secrets, or credentials.
+
+3. Add Azure MCP Server as a future enterprise template.
+   - Classify as high risk because it can inspect and potentially modify Azure resources across many services.
+   - Treat local package-run configurations as documentation references only; SimpleChat should not execute user-supplied local MCP commands.
+   - Support an organization-hosted remote Azure MCP endpoint first, with admin-provided endpoint details and no bundled secrets.
+   - Require read-only mode and explicitly enabled Azure service namespaces by default.
+   - Defer mutating Azure tools until OAuth/identity, RBAC, per-tool policy, audit logging, and operator warnings are complete.
+
+4. Add validation gates before either template is broadly usable.
+   - Identity/token handling supports expiry and refresh without mixing MCP tokens into SimpleChat sign-in token caches.
+   - Admins can restrict by user, group, action scope, destination, source/client, preconfiguration ID, and tool name.
+   - Audit logs identify the user, workspace/group, MCP destination, preconfiguration ID, tool invoked, allow/deny reason, and redacted result summary.
+   - Tests prove disabled templates are hidden from ordinary users, policy-enabled templates appear only in the intended scope, and high-risk tools are not enabled by default.
+
 ### Phase 2: Capability Probe And Tool Metadata Robustness
 
-Status: **planned after Phase 1C unless capability probing becomes a higher operational priority.**
+Status: **planned after Phase 1C; can proceed before or after Phase 1D depending on whether authenticated enterprise preconfiguration planning or general MCP robustness is the higher priority.**
 
 1. Add an MCP compatibility probe endpoint or discovery mode.
    - Reuse `McpPluginFactory.create_connector`.
@@ -578,7 +627,7 @@ Prerequisites before enabling:
   - Normalize outbound MCP destinations, evaluate per-scope destination policies, block unsafe endpoints, and produce audit-safe allow/deny decisions.
 
 - New `application/single_app/functions_mcp_preconfigurations.py` or equivalent.
-  - Load, validate, sanitize, filter, and return shippable and organization-provided outbound MCP server preconfiguration definitions.
+  - Load, validate, sanitize, filter, and return shippable, authenticated enterprise, and organization-provided outbound MCP server preconfiguration definitions.
 
 - `application/single_app/semantic_kernel_plugins/mcp_plugin_factory.py`
   - Merge headers, resolve auth/OAuth tokens, evaluate outbound destination policy before connector creation, create connectors, run discovery/probes, serialize results, classify errors, and optionally validate arguments.
@@ -604,7 +653,7 @@ Prerequisites before enabling:
   - Add expanded MCP settings, destination metadata, preconfiguration IDs, and backward-compatible defaults.
 
 - New `application/single_app/mcp_preconfigurations/` or equivalent.
-  - Store server-side outbound MCP preconfiguration JSON schema and bundled catalog definitions.
+  - Store server-side outbound MCP preconfiguration JSON schema and bundled catalog definitions, including future disabled-by-default templates for Microsoft Sentinel MCP and Azure MCP Server.
 
 - Existing `application/single_app/mcp_presets/`.
   - Continue storing compatibility presets only; do not mix concrete server preconfigurations into the preset catalog.
@@ -617,6 +666,7 @@ Prerequisites before enabling:
 
 - Existing admin settings/governance routes and templates.
   - Phase 1C should surface controls for enabling outbound MCP destination filtering, creating per-personal/group/global policies, configuring per-group overrides, and enabling/disabling shippable preconfigurations.
+  - Phase 1D should add enterprise-template policy warnings and eligibility controls for high-risk authenticated entries such as Microsoft Sentinel MCP and Azure MCP Server.
 
 ### Shared Auth And Secret Infrastructure
 
@@ -812,13 +862,14 @@ Prerequisites before enabling:
 2. Track B Phase B0 architecture decision and Track B Phase B1 auth foundation design. **Status: recorded; disabled inbound MCP shell implemented.**
 3. Track A Phase 1B outbound destination governance and preconfigured MCP server catalog. **Status: implemented as config/env-backed server enforcement in v0.250.064.**
 4. Track A Phase 1C destination governance UI and policy persistence. **Status: implemented in v0.250.065 using delegated item policies; remaining catalog-admin refinements can follow later.**
-5. Track A Phase 2 capability probe, richer metadata, result policies, and opt-in schema validation. **Status: next Track A robustness slice unless outbound OAuth or inbound planning becomes higher priority.**
-6. Track B Phase B2 governance/tool registry and Track B Phase B3 initial read-only personal tools.
-7. Track B Phase B4 personal chat write tool only after read-only tools, auth, and governance are stable.
-8. Track A Phase 3 TLS diagnostics and optional certificate references after connector support is confirmed.
-9. Track A Phase 4 OAuth 2.1 PKCE.
-10. Track B Phase B5 group/public/all-scope tools only after explicit governance and workspace-role tests.
-11. Track A Phase 5 prompts/resources/streaming/long-running jobs and Track B Phase B6 enterprise readiness hardening.
+5. Track A Phase 1D authenticated enterprise preconfiguration templates for Microsoft Sentinel MCP and Azure MCP Server. **Status: planned; templates should stay disabled/admin-governed until identity, source allowlisting, per-tool policy, and audit gates are ready.**
+6. Track A Phase 2 capability probe, richer metadata, result policies, and opt-in schema validation. **Status: next general Track A robustness slice unless Phase 1D, outbound OAuth, or inbound planning becomes higher priority.**
+7. Track B Phase B2 governance/tool registry and Track B Phase B3 initial read-only personal tools.
+8. Track B Phase B4 personal chat write tool only after read-only tools, auth, and governance are stable.
+9. Track A Phase 3 TLS diagnostics and optional certificate references after connector support is confirmed.
+10. Track A Phase 4 OAuth 2.1 PKCE.
+11. Track B Phase B5 group/public/all-scope tools only after explicit governance and workspace-role tests.
+12. Track A Phase 5 prompts/resources/streaming/long-running jobs and Track B Phase B6 enterprise readiness hardening.
 
 ## Risk Notes
 
@@ -826,6 +877,8 @@ Prerequisites before enabling:
 - Custom headers need strict validation to avoid header injection and credential leakage.
 - Outbound MCP destination filtering is a data-exfiltration and SSRF control. It must be enforced on the server during save, discovery/probe, and runtime invocation rather than only in the browser.
 - Preconfigured outbound MCP servers improve usability but can encourage broad external data flow if destination policy, scope eligibility, tool allowlists, and admin enablement are not enforced.
+- Microsoft Sentinel MCP can expose sensitive security operations data; it must be treated as an authenticated, high-risk enterprise connector with admin approval, least-privilege roles, source/destination allowlists, and audited tool invocation.
+- Azure MCP Server can inspect or change Azure resources; SimpleChat should not execute local package-run MCP commands from user input, and any Azure MCP template should default to organization-hosted remote endpoints, read-only mode, explicit service namespaces, and conservative tool allowlists.
 - Result storage can create cleanup and retention obligations if large outputs are persisted.
 - Schema validation can break existing dynamic tools if enabled by default; keep it opt-in initially.
 - TLS controls should not be exposed until the connector stack can honor them securely.
@@ -865,8 +918,9 @@ The first inbound planning/architecture slice and disabled shell are also comple
 
 Current forward options:
 
-1. Continue Track A Phase 2: capability probing, richer discovered tool metadata, result policies, and opt-in schema validation.
-2. Continue Track B with Phase B2/B3: durable inbound governance evaluation and the first read-only personal tool.
-3. Add outbound MCP catalog-administration refinements: per-definition enable/disable controls, policy summaries, and optional environment/config import review.
+1. Continue Track A Phase 1D: authenticated enterprise preconfiguration template planning for Microsoft Sentinel MCP and Azure MCP Server, without enabling them as unauthenticated defaults.
+2. Continue Track A Phase 2: capability probing, richer discovered tool metadata, result policies, and opt-in schema validation.
+3. Continue Track B with Phase B2/B3: durable inbound governance evaluation and the first read-only personal tool.
+4. Add outbound MCP catalog-administration refinements: per-definition enable/disable controls, policy summaries, and optional environment/config import review.
 
 The first inbound executable slice should expose only read-only personal tools after token validation, client allowlisting, governance checks, observability, redaction, and tests are in place.
