@@ -788,6 +788,8 @@ def get_settings(use_cosmos=False, include_source=False):
         'governance_user_actions': False,
         'governance_group_actions': False,
         'governance_global_actions_usage': False,
+        'enable_mcp_destination_governance': False,
+        'mcp_block_unsafe_destinations': False,
         'allow_ai_foundry_agents': False,
         'allow_group_ai_foundry_agents': False,
         'allow_personal_ai_foundry_agents': False,

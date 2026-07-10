@@ -88,6 +88,12 @@ from functions_mcp_operations import (
     get_mcp_error_http_status,
     normalize_mcp_additional_fields,
 )
+from functions_mcp_destinations import (
+    McpDestinationPolicyError,
+    assert_mcp_destination_allowed,
+    get_mcp_destination_policy_config,
+)
+from functions_mcp_preconfigurations import build_mcp_server_preconfigurations_response
 from functions_mcp_presets import build_mcp_server_presets_response
 from semantic_kernel_plugins.mcp_plugin_factory import McpPluginFactory
 from functions_msgraph_operations import (
@@ -585,6 +591,23 @@ def _reject_non_admin_mcp_stdio(plugin_manifest, scope_label="personal"):
     return None
 
 
+def _enforce_mcp_destination_policy(plugin_manifest, scope_type, scope_id, operation, user_id=None):
+    """Enforce outbound MCP destination policy for save, discovery, and runtime-adjacent routes."""
+    if not isinstance(plugin_manifest, dict) or plugin_manifest.get('type') != MCP_PLUGIN_TYPE:
+        return None
+
+    normalized_user_id = str(user_id or get_current_user_id() or '').strip()
+    policy_config = get_mcp_destination_policy_config(get_settings(), user_id=normalized_user_id)
+    return assert_mcp_destination_allowed(
+        plugin_manifest,
+        scope_type=scope_type,
+        scope_id=scope_id,
+        policy_config=policy_config,
+        operation=operation,
+        user_id=normalized_user_id,
+    )
+
+
 def _hydrate_sql_test_identity(data, existing_plugin, user_id):
     """Resolve a selected workspace identity into transient SQL test credentials."""
     identity_id = str((data or {}).get("identity_id") or "").strip()
@@ -834,6 +857,19 @@ def set_user_plugins():
         is_valid, validation_errors = PluginHealthChecker.validate_plugin_manifest(plugin_to_save, plugin_type)
         if not is_valid:
             return jsonify({'error': f'Plugin validation failed: {"; ".join(validation_errors)}'}), 400
+
+        try:
+            _enforce_mcp_destination_policy(
+                plugin_to_save,
+                WORKSPACE_IDENTITY_SCOPE_PERSONAL,
+                user_id,
+                operation='personal_action_save',
+                user_id=user_id,
+            )
+        except McpDestinationPolicyError as exc:
+            return jsonify({'error': str(exc)}), 403
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
         
         filtered_plugins.append(plugin_to_save)
         new_plugin_names.add(plugin_to_save['name'])
@@ -1035,6 +1071,19 @@ def create_group_action_route():
         return jsonify({'error': f'Plugin validation failed: {"; ".join(validation_errors)}'}), 400
 
     try:
+        _enforce_mcp_destination_policy(
+            payload,
+            WORKSPACE_IDENTITY_SCOPE_GROUP,
+            active_group,
+            operation='group_action_create',
+            user_id=user_id,
+        )
+    except McpDestinationPolicyError as exc:
+        return jsonify({'error': str(exc)}), 403
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+
+    try:
         saved = save_group_action(active_group, payload, user_id=user_id)
     except PermissionError as exc:
         return jsonify({'error': str(exc)}), 403
@@ -1115,6 +1164,19 @@ def update_group_action_route(action_id):
     is_valid, validation_errors = PluginHealthChecker.validate_plugin_manifest(merged, merged.get('type'))
     if not is_valid:
         return jsonify({'error': f'Plugin validation failed: {"; ".join(validation_errors)}'}), 400
+
+    try:
+        _enforce_mcp_destination_policy(
+            merged,
+            WORKSPACE_IDENTITY_SCOPE_GROUP,
+            active_group,
+            operation='group_action_update',
+            user_id=user_id,
+        )
+    except McpDestinationPolicyError as exc:
+        return jsonify({'error': str(exc)}), 403
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
 
     try:
         saved = save_group_action(active_group, merged, user_id=user_id)
@@ -1370,6 +1432,19 @@ def add_plugin():
             log_event("Add plugin failed: manifest validation error", level=logging.WARNING, 
                      extra={"action": "add", "plugin": _redact_plugin_for_logging(new_plugin), "errors": validation_errors})
             return jsonify({'error': f"Manifest validation failed: {'; '.join(validation_errors)}"}), 400
+
+        try:
+            _enforce_mcp_destination_policy(
+                new_plugin,
+                WORKSPACE_IDENTITY_SCOPE_GLOBAL,
+                WORKSPACE_IDENTITY_SCOPE_GLOBAL,
+                operation='global_action_add',
+                user_id=str(get_current_user_id() or ''),
+            )
+        except McpDestinationPolicyError as exc:
+            return jsonify({'error': str(exc)}), 403
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
         
         # Merge with schema to ensure all required fields are present
         schema_dir = os.path.join(current_app.root_path, 'static', 'json', 'schemas')
@@ -1446,6 +1521,19 @@ def edit_plugin(plugin_name):
             log_event("Edit plugin failed: manifest validation error", level=logging.WARNING, 
                      extra={"action": "edit", "plugin": _redact_plugin_for_logging(updated_plugin), "errors": validation_errors})
             return jsonify({'error': f"Manifest validation failed: {'; '.join(validation_errors)}"}), 400
+
+        try:
+            _enforce_mcp_destination_policy(
+                updated_plugin,
+                WORKSPACE_IDENTITY_SCOPE_GLOBAL,
+                WORKSPACE_IDENTITY_SCOPE_GLOBAL,
+                operation='global_action_edit',
+                user_id=str(get_current_user_id() or ''),
+            )
+        except McpDestinationPolicyError as exc:
+            return jsonify({'error': str(exc)}), 403
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
         
         # Merge with schema to ensure all required fields are present
         schema_dir = os.path.join(current_app.root_path, 'static', 'json', 'schemas')
@@ -1625,6 +1713,29 @@ def get_mcp_server_presets():
     return jsonify(build_mcp_server_presets_response())
 
 
+@bpap.route('/api/plugins/mcp/preconfigurations', methods=['GET'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+def get_mcp_server_preconfigurations():
+    """Return validated MCP server preconfigurations for action modal configuration."""
+    action_scope = request.args.get('scope') or 'personal'
+    user_id = str(get_current_user_id() or '').strip()
+    try:
+        scope_type, scope_id = _resolve_action_identity_context({'action_scope': action_scope}, None, user_id)
+    except PermissionError as exc:
+        return jsonify({'error': str(exc)}), 403
+    except (ValueError, LookupError) as exc:
+        return jsonify({'error': str(exc)}), 400
+
+    return jsonify(build_mcp_server_preconfigurations_response(
+        action_scope=scope_type,
+        scope_id=scope_id,
+        user_id=user_id,
+        settings=get_settings(),
+    ))
+
+
 @bpap.route('/api/plugins/mcp/discover', methods=['POST'])
 @swagger_route(security=get_auth_security())
 @login_required
@@ -1681,6 +1792,14 @@ def discover_mcp_tools():
                 'error': 'MCP discovery manifest is invalid.',
                 'errors': validation_errors,
             }), 400
+
+        _enforce_mcp_destination_policy(
+            discovery_manifest,
+            scope_type,
+            scope_id,
+            operation='mcp_tool_discovery',
+            user_id=user_id,
+        )
 
         tools = asyncio.run(McpPluginFactory.discover_tools_from_config(discovery_manifest))
         log_event(

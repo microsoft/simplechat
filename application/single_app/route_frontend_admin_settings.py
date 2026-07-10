@@ -1898,6 +1898,8 @@ def register_route_frontend_admin_settings(bp):
                 'governance_user_actions': form_data.get('governance_user_actions') == 'on' and form_data.get('allow_user_plugins') == 'on',
                 'governance_group_actions': form_data.get('governance_group_actions') == 'on' and form_data.get('allow_group_plugins') == 'on',
                 'governance_global_actions_usage': form_data.get('governance_global_actions_usage') == 'on' and form_data.get('enable_semantic_kernel') == 'on',
+                'enable_mcp_destination_governance': form_data.get('enable_mcp_destination_governance') == 'on',
+                'mcp_block_unsafe_destinations': form_data.get('mcp_block_unsafe_destinations') == 'on',
 
                 # GPT (Direct & APIM)
                 'enable_gpt_apim': form_data.get('enable_gpt_apim') == 'on',
@@ -2452,6 +2454,8 @@ def register_route_frontend_admin_settings(bp):
                 'governance_user_actions',
                 'governance_group_actions',
                 'governance_global_actions_usage',
+                'enable_mcp_destination_governance',
+                'mcp_block_unsafe_destinations',
             ]
             governance_toggle_changes = {}
             for toggle_key in governance_toggle_keys:

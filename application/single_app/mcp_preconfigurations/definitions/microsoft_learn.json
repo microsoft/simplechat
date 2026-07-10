@@ -1,0 +1,39 @@
+{
+    "id": "microsoft_learn",
+    "version": "1.0.0",
+    "displayName": "Microsoft Learn Documentation",
+    "description": "Create an MCP action for trusted Microsoft Learn documentation and code sample search.",
+    "provider": "Microsoft",
+    "category": "Documentation",
+    "enabled": true,
+    "developmentOnly": false,
+    "sortOrder": 10,
+    "presetId": "generic",
+    "endpoint": "https://learn.microsoft.com/api/mcp",
+    "transport": "streamable_http",
+    "authRequirement": "none",
+    "defaults": {
+        "auth_method": "none",
+        "api_key_header_name": "X-API-Key",
+        "load_tools": true,
+        "load_prompts": false,
+        "request_timeout": 30,
+        "connect_timeout": 10,
+        "sse_read_timeout": 300,
+        "retry_count": 0,
+        "retry_backoff_seconds": 1,
+        "allowed_tool_names": [
+            "microsoft_docs_search",
+            "microsoft_docs_fetch",
+            "microsoft_code_sample_search"
+        ]
+    },
+    "scopeEligibility": ["personal", "group", "global"],
+    "destinationTags": ["microsoft", "learn", "documentation", "public"],
+    "riskLabel": "low",
+    "documentationUrl": "https://learn.microsoft.com/en-us/training/support/mcp",
+    "ui": {
+        "helpText": "Uses the public Microsoft Learn MCP endpoint over streamable HTTP and does not require authentication."
+    },
+    "warnings": []
+}

@@ -9,6 +9,12 @@
       "default": "generic",
       "description": "Optional MCP server preset id loaded from the server-side MCP preset catalog."
     },
+    "preconfiguration_id": {
+      "type": "string",
+      "pattern": "^$|^[a-z0-9][a-z0-9_-]{0,63}$",
+      "default": "",
+      "description": "Optional concrete MCP server preconfiguration id selected from the server-side MCP preconfiguration catalog."
+    },
     "transport": {
       "type": "string",
       "enum": ["streamable_http", "sse", "websocket", "stdio"],

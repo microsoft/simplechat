@@ -1,10 +1,10 @@
 # MCP Plugin Robustness Plan
 
-Planning version: **0.250.062**
+Planning version: **0.250.064**
 
 Implemented in version: **In progress across phases**
 
-Related configuration version: `application/single_app/config.py` currently sets `VERSION = "0.250.062"`.
+Related configuration version: `application/single_app/config.py` currently sets `VERSION = "0.250.064"`.
 
 Detailed Track B Phase B0/B1 architecture outcome: [Inbound SimpleChat MCP Server Architecture](./INBOUND_MCP_SERVER_ARCHITECTURE.md).
 
@@ -53,6 +53,7 @@ PR #722, **MCP Server addition and modification of SimpleChat API to accommodate
 - Use a combined access model where Entra roles/scopes provide coarse access, SimpleChat governance provides tool/scope policy, and existing workspace roles protect data.
 - Add fine-grained outbound MCP destination controls so admins can restrict which external MCP servers may be used by personal, group, or global actions.
 - Add a server-side catalog of preconfigured outbound MCP servers so useful unauthenticated or low-friction MCP servers can be created from trusted templates without confusing them with compatibility presets.
+- Manage outbound MCP destination and preconfiguration policy through SimpleChat's governance/item-delegation model where possible, using roles only as coarse access gates.
 
 ## Non-Goals For The First Slice
 
@@ -111,6 +112,8 @@ PR #722, **MCP Server addition and modification of SimpleChat API to accommodate
    - Cover backward-compatible manifest normalization.
 
 ### Phase 1B: Outbound Destination Governance And Preconfigured Server Catalog
+
+Status: **implemented as the first server-side slice in v0.250.064**. Admin UI and persisted item-delegation policy management are split into Phase 1C.
 
 This phase is separate from MCP server presets.
 
@@ -191,7 +194,70 @@ This phase is separate from MCP server presets.
    - Preconfigurations never expose secrets.
    - Creating from catalog produces the expected MCP manifest fields.
 
+Implemented Phase 1B artifacts:
+
+- `functions_mcp_destinations.py` for config/env-backed destination allowlists, endpoint normalization, unsafe literal-IP blocking, and save/discovery/runtime enforcement.
+- `functions_mcp_preconfigurations.py` plus `mcp_preconfigurations/` JSON schema and bundled Microsoft Learn, Azure documentation, GitHub, and local development definitions.
+- `GET /api/plugins/mcp/preconfigurations` for authenticated, scope-filtered catalog retrieval.
+- MCP modal preconfiguration dropdown that applies server-returned definitions without hard-coded provider logic.
+- `preconfiguration_id` storage in MCP `additionalFields`.
+- `MCP_SERVER_PRECONFIGURATIONS.md` documentation and functional/UI test coverage.
+
+### Phase 1C: Destination Governance UI And Policy Persistence
+
+Status: **implemented as the first admin-governed persistence slice in v0.250.065**. Future catalog administration can add per-definition enable/disable switches, but destination and preconfiguration use is now governable through delegated item policies.
+
+Phase 1B added the server-side enforcement hooks and configuration-backed policy evaluation. Phase 1C makes that governable by administrators through the existing SimpleChat governance model instead of relying on environment variables or one-off MCP-specific controls.
+
+Recommended approach:
+
+- Use existing governance/item-delegation policy primitives as the durable control plane whenever possible.
+- Use roles as a coarse prerequisite for whether a user, group, or admin can create/use MCP actions at all.
+- Use governance policy for fine-grained decisions about destinations, preconfiguration IDs, transport, auth method, action scope, target user/group, and future tool exposure.
+- Avoid creating a parallel "MCP-only governance island" unless the existing policy model cannot represent the required decisions safely.
+
+1. Add persisted outbound MCP destination policy fields.
+   - Represent personal, group, and global/admin policies independently. **Implemented with `mcp_personal_destination`, `mcp_group_destination`, and `mcp_global_destination` delegated item policy entity types.**
+   - Support target identifiers such as a specific user, all personal actions, a specific group, all groups, and global/admin actions. **Implemented through existing item-policy allow-all/user/group principal allowlists plus `group:<group-id>::<pattern>` item IDs for group-specific overrides.**
+   - Support allowed destination patterns: `*`, exact origin, hostname, wildcard hostname, URL prefix, `preset:<id>`, `preconfiguration:<id>`, and `transport:<transport>`. **Implemented in the shared destination evaluator.**
+   - Support optional auth-method restrictions: none, bearer, API key, basic, identity, and future OAuth.
+   - Preserve compatibility when destination governance is disabled.
+   - Keep deny-by-default available for secure deployments.
+
+2. Add admin UI controls for MCP destination governance.
+   - Surface controls under the existing admin governance/settings area rather than creating an unrelated MCP-only page.
+   - Let admins enable/disable destination enforcement.
+   - Let admins edit global/admin, personal, and group policy scopes.
+   - Let admins add per-group overrides without affecting personal actions or other groups.
+   - Let admins explicitly allow `*` when identity/governance is sufficient and destination filtering is not desired.
+   - Display clear warnings for wildcard rules, local/private endpoints, bearer-token destinations, and broad preconfiguration enablement.
+   - **Implemented admin controls for destination enforcement, unsafe literal-IP blocking, and creating delegated destination policies for personal, group, and global scopes.**
+
+3. Add preconfiguration enablement and eligibility controls.
+   - Allow admins to enable/disable bundled and organization-provided preconfigurations. **Still planned as a future catalog-administration refinement.**
+   - Allow policy to restrict which preconfiguration IDs can be used in personal, group, or global/admin contexts. **Implemented through `preconfiguration:<id>` destination policies.**
+   - Ensure the preconfiguration API returns only definitions that are enabled and eligible for the caller's scope/governance context. **Implemented for scope and destination-governance eligibility.**
+   - Keep definitions secret-free; credentials still come from the user's/admin's action configuration or future workspace identity/OAuth flows.
+
+4. Wire persisted policy into enforcement.
+   - Update `functions_mcp_destinations.py` to read governance-backed policy before falling back to config/env policy. **Implemented by merging delegated item policies into the existing policy config.**
+   - Enforce the same policy during action create/update, discovery/probe, and runtime invocation. **Implemented with caller identity on save/discovery and request/stored identity where available at runtime.**
+   - Keep audit-safe allow/deny reasons consistent across save, discovery, and runtime.
+   - Do not rely on frontend filtering for enforcement.
+
+5. Add governance UI and backend tests.
+   - Enabled/disabled governance preserves current compatibility behavior.
+   - Personal policy does not affect group action behavior.
+   - Group policy does not affect personal action behavior.
+   - A specific group policy does not affect other groups.
+   - Wildcard `*` allows destinations only in the intended scope.
+   - `preconfiguration:<id>` rules allow only the intended preconfiguration.
+   - Disallowed destinations are rejected on save, discovery, and runtime invocation.
+   - UI/API responses never expose credentials, tokens, raw settings, or internal policy implementation details.
+
 ### Phase 2: Capability Probe And Tool Metadata Robustness
+
+Status: **planned after Phase 1C unless capability probing becomes a higher operational priority.**
 
 1. Add an MCP compatibility probe endpoint or discovery mode.
    - Reuse `McpPluginFactory.create_connector`.
@@ -318,7 +384,7 @@ The inbound MCP server is a separate feature track from outbound MCP plugin robu
 
 ### Phase B0: Architecture Decision
 
-Status: **Architecture decision recorded in version 0.250.062.** See [Inbound SimpleChat MCP Server Architecture](./INBOUND_MCP_SERVER_ARCHITECTURE.md).
+Status: **Architecture decision recorded in version 0.250.062; disabled shell implemented in version 0.250.063.** See [Inbound SimpleChat MCP Server Architecture](./INBOUND_MCP_SERVER_ARCHITECTURE.md).
 
 1. Choose the first production hosting model.
    - **Recommended first design target:** a first-class SimpleChat component or tightly integrated service layer that can share existing settings, auth validation, governance, logging, and operation helpers.
@@ -340,7 +406,7 @@ Status: **Architecture decision recorded in version 0.250.062.** See [Inbound Si
 
 ### Phase B1: Auth Foundation And Protected Resource Metadata
 
-Status: **Auth foundation and PRM contract recorded in version 0.250.062.** See [Inbound SimpleChat MCP Server Architecture](./INBOUND_MCP_SERVER_ARCHITECTURE.md).
+Status: **Auth foundation and PRM contract recorded in version 0.250.062; dedicated disabled-shell guard and PRM route implemented in version 0.250.063.** See [Inbound SimpleChat MCP Server Architecture](./INBOUND_MCP_SERVER_ARCHITECTURE.md).
 
 1. Add a dedicated inbound MCP auth guard.
    - Do not weaken or broaden the shared `accesstoken_required` decorator used by existing external routes.
@@ -547,9 +613,10 @@ Prerequisites before enabling:
 
 - `application/single_app/functions_governance.py`
   - Add outbound MCP destination, scope, and preconfiguration governance helpers if existing item-delegation policy primitives are not sufficient.
+  - Prefer extending the existing item-delegation policy model over creating a separate MCP-only authorization store.
 
 - Existing admin settings/governance routes and templates.
-  - Later surface controls for enabling outbound MCP destination filtering, creating per-personal/group/global policies, and enabling/disabling shippable preconfigurations.
+  - Phase 1C should surface controls for enabling outbound MCP destination filtering, creating per-personal/group/global policies, configuring per-group overrides, and enabling/disabling shippable preconfigurations.
 
 ### Shared Auth And Secret Infrastructure
 
@@ -660,6 +727,8 @@ Prerequisites before enabling:
 4. Extend UI tests for:
    - MCP preset selection.
    - MCP preconfiguration catalog selection.
+   - Admin MCP destination governance policy editing.
+   - Per-scope personal/group/global policy isolation.
    - Destination policy warning and denial states.
    - Custom header entry.
    - OAuth connect state.
@@ -740,15 +809,16 @@ Prerequisites before enabling:
 ## Implementation Order
 
 1. Track A Phase 1 custom headers, Splunk preset, validation, redaction, diagnostics, and tests. **Status: implemented with the declarative MCP preset catalog extension.**
-2. Track B Phase B0 architecture decision and Track B Phase B1 auth foundation design. **Status: recorded; next executable slice is the disabled inbound MCP shell.**
-3. Track A Phase 1B outbound destination governance and preconfigured MCP server catalog. **Status: planned; should precede broad shippable outbound catalog rollout.**
-4. Track A Phase 2 capability probe, richer metadata, result policies, and opt-in schema validation. **Status: deferred until after the inbound B0/B1 shell decision gate.**
-5. Track B Phase B2 governance/tool registry and Track B Phase B3 initial read-only personal tools.
-6. Track B Phase B4 personal chat write tool only after read-only tools, auth, and governance are stable.
-7. Track A Phase 3 TLS diagnostics and optional certificate references after connector support is confirmed.
-8. Track A Phase 4 OAuth 2.1 PKCE.
-9. Track B Phase B5 group/public/all-scope tools only after explicit governance and workspace-role tests.
-10. Track A Phase 5 prompts/resources/streaming/long-running jobs and Track B Phase B6 enterprise readiness hardening.
+2. Track B Phase B0 architecture decision and Track B Phase B1 auth foundation design. **Status: recorded; disabled inbound MCP shell implemented.**
+3. Track A Phase 1B outbound destination governance and preconfigured MCP server catalog. **Status: implemented as config/env-backed server enforcement in v0.250.064.**
+4. Track A Phase 1C destination governance UI and policy persistence. **Status: implemented in v0.250.065 using delegated item policies; remaining catalog-admin refinements can follow later.**
+5. Track A Phase 2 capability probe, richer metadata, result policies, and opt-in schema validation. **Status: next Track A robustness slice unless outbound OAuth or inbound planning becomes higher priority.**
+6. Track B Phase B2 governance/tool registry and Track B Phase B3 initial read-only personal tools.
+7. Track B Phase B4 personal chat write tool only after read-only tools, auth, and governance are stable.
+8. Track A Phase 3 TLS diagnostics and optional certificate references after connector support is confirmed.
+9. Track A Phase 4 OAuth 2.1 PKCE.
+10. Track B Phase B5 group/public/all-scope tools only after explicit governance and workspace-role tests.
+11. Track A Phase 5 prompts/resources/streaming/long-running jobs and Track B Phase B6 enterprise readiness hardening.
 
 ## Risk Notes
 
@@ -767,7 +837,7 @@ Prerequisites before enabling:
 
 ## Recommended First Slice
 
-Implement Track A Phase 1 first:
+Track A Phase 1 has been implemented:
 
 - Splunk profile/preset.
 - Safe custom headers.
@@ -778,7 +848,7 @@ Implement Track A Phase 1 first:
 
 This first slice improves Splunk GA token mode and most token-based MCP servers without touching the highest-conflict shared OAuth/storage surfaces.
 
-Then implement the first inbound planning/architecture slice before any inbound tools are exposed:
+The first inbound planning/architecture slice and disabled shell are also complete:
 
 - Track B Phase B0 architecture decision.
 - Track B Phase B1 auth foundation design.
@@ -787,5 +857,16 @@ Then implement the first inbound planning/architecture slice before any inbound 
 - Governance model for client, tool, and scope allowlists.
 - Initial read-only personal tool registry.
 - Auth and governance test plan.
+- Disabled `/api/mcp` route shell.
+- Dedicated inbound MCP auth guard.
+- PRM metadata route.
+- Health/readiness route.
+- Deny-by-default governance and no-enabled-tools registry skeleton.
+
+Current forward options:
+
+1. Continue Track A Phase 2: capability probing, richer discovered tool metadata, result policies, and opt-in schema validation.
+2. Continue Track B with Phase B2/B3: durable inbound governance evaluation and the first read-only personal tool.
+3. Add outbound MCP catalog-administration refinements: per-definition enable/disable controls, policy summaries, and optional environment/config import review.
 
 The first inbound executable slice should expose only read-only personal tools after token validation, client allowlisting, governance checks, observability, redaction, and tests are in place.

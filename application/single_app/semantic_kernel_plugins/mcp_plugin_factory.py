@@ -25,6 +25,7 @@ from functions_mcp_operations import (
     normalize_mcp_tool_metadata,
     validate_mcp_endpoint_for_transport,
 )
+from functions_mcp_destinations import assert_mcp_destination_allowed, infer_mcp_destination_scope
 from semantic_kernel_plugins.mcp_plugin import McpPlugin
 
 
@@ -161,6 +162,15 @@ class McpPluginFactory:
         request_timeout = additional_fields.get("request_timeout")
         load_tools = bool(additional_fields.get("load_tools", True))
         load_prompts = bool(additional_fields.get("load_prompts", False))
+
+        inferred_scope_type, inferred_scope_id = infer_mcp_destination_scope(manifest)
+        assert_mcp_destination_allowed(
+            manifest,
+            scope_type=inferred_scope_type,
+            scope_id=inferred_scope_id,
+            operation="mcp_runtime_connector",
+            user_id=manifest.get("runtime_user_id") or manifest.get("user_id") or "",
+        )
 
         if transport == "stdio":
             command = str(additional_fields.get("command") or "").strip()

@@ -7,6 +7,8 @@ from datetime import datetime
 from threading import RLock
 from time import monotonic
 from typing import Any, Dict, List, Optional, Set, Tuple
+import base64
+import re
 import uuid
 
 from flask import g, has_request_context
@@ -39,6 +41,9 @@ DEFAULT_ITEM_POLICY_ENTITY_TYPES = {
     "personal_action_type",
     "group_action_type",
     "global_action_type",
+    "mcp_personal_destination",
+    "mcp_group_destination",
+    "mcp_global_destination",
 }
 
 
@@ -104,6 +109,7 @@ LEGACY_ITEM_POLICY_ENTITY_TYPE_ALIASES = {
 
 
 GOVERNANCE_CACHE_TTL_SECONDS = 60
+COSMOS_UNSAFE_ID_CHARS_PATTERN = re.compile(r"[\\/#?\x00-\x1f\x7f]")
 _GOVERNANCE_REQUEST_CACHE_ATTR = "simplechat_governance_request_cache"
 _GOVERNANCE_CACHE_MISS = object()
 _governance_cache_lock = RLock()
@@ -263,11 +269,20 @@ def _get_legacy_item_policy_entity_types(entity_type: str) -> List[str]:
     ]
 
 
+def _safe_item_policy_document_segment(value: str) -> str:
+    normalized_value = str(value or "").strip()
+    if not COSMOS_UNSAFE_ID_CHARS_PATTERN.search(normalized_value):
+        return normalized_value
+    encoded_value = base64.urlsafe_b64encode(normalized_value.encode("utf-8")).decode("ascii").rstrip("=")
+    return f"b64:{encoded_value}"
+
+
 def _item_policy_document_id(entity_type: str, item_id: str, policy_id: str) -> str:
     normalized_entity_type = _normalize_item_policy_entity_type(entity_type)
     normalized_item_id = _normalize_item_policy_item_id(normalized_entity_type, item_id)
+    normalized_item_id_segment = _safe_item_policy_document_segment(normalized_item_id)
     normalized_policy_id = str(policy_id or "default").strip() or "default"
-    return f"item:{normalized_entity_type}:{normalized_item_id}:{normalized_policy_id}"
+    return f"item:{normalized_entity_type}:{normalized_item_id_segment}:{normalized_policy_id}"
 
 
 def _legacy_item_policy_document_id(entity_type: str, item_id: str) -> str:
@@ -284,7 +299,8 @@ def _extract_policy_id_from_item_doc(policy: Dict[str, Any], entity_type: str, i
     doc_id = str((policy or {}).get("id") or "").strip()
     normalized_entity_type = _normalize_item_policy_entity_type(entity_type)
     normalized_item_id = _normalize_item_policy_item_id(normalized_entity_type, item_id)
-    prefix = f"item:{normalized_entity_type}:{normalized_item_id}:"
+    normalized_item_id_segment = _safe_item_policy_document_segment(normalized_item_id)
+    prefix = f"item:{normalized_entity_type}:{normalized_item_id_segment}:"
     if doc_id.startswith(prefix):
         suffix = doc_id[len(prefix):].strip()
         if suffix:

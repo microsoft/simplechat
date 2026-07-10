@@ -2,6 +2,35 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.065)**
+
+#### New Features
+
+*   **MCP Destination Governance UI And Policy Persistence**
+    *   Added Admin Settings > Governance controls for enabling outbound MCP destination allowlist enforcement and unsafe literal-IP destination blocking.
+    *   Extended delegated item policies so admins can allow personal, group, and global MCP destinations with patterns such as `preconfiguration:<id>`, wildcard hosts, URL prefixes, transports, or `*`, including group-specific overrides.
+    *   Filtered the MCP preconfiguration API through destination governance so disallowed preconfigured MCP servers are not returned to the action modal.
+    *   (Ref: microsoft/simplechat#1014, `functions_mcp_destinations.py`, `functions_governance.py`, `admin_governance.js`, `MCP_SERVER_PRECONFIGURATIONS.md`)
+
+### **(v0.250.064)**
+
+#### New Features
+
+*   **Outbound MCP Destination Governance And Preconfigurations**
+    *   Added server-side outbound MCP destination allowlisting hooks for personal, group, and global actions, with enforcement during action save/update, MCP discovery, and runtime connector creation.
+    *   Added a validated server-side MCP preconfiguration catalog with bundled Microsoft Learn, Azure documentation, GitHub, and local development entries.
+    *   Updated the MCP action modal to load preconfigurations through an authenticated API and apply selected definitions without hard-coded provider behavior.
+    *   (Ref: microsoft/simplechat#1014, `functions_mcp_destinations.py`, `functions_mcp_preconfigurations.py`, `MCP_SERVER_PRECONFIGURATIONS.md`, MCP action modal)
+
+### **(v0.250.063)**
+
+#### New Features
+
+*   **Disabled Inbound MCP Server Shell**
+    *   Added the first disabled-by-default inbound MCP server shell with safe protected-resource metadata, dedicated bearer-token auth guard, source/client allowlist scaffolding, and deny-by-default governance/registry skeletons.
+    *   No inbound tools are exposed yet; this establishes the secure route, auth, and policy foundation for future governed read-only personal tools.
+    *   (Ref: microsoft/simplechat#1017, `route_inbound_mcp.py`, `functions_mcp_server_auth.py`, `INBOUND_MCP_SERVER_ARCHITECTURE.md`)
+
 ### **(v0.250.062)**
 
 #### New Features

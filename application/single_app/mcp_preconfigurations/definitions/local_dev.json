@@ -1,0 +1,37 @@
+{
+    "id": "local_dev",
+    "version": "1.0.0",
+    "displayName": "SimpleChat Local MCP Development Server",
+    "description": "Create an MCP action for the SimpleChat-owned local MCP validation server used during development.",
+    "provider": "SimpleChat",
+    "category": "Development",
+    "enabled": true,
+    "developmentOnly": true,
+    "sortOrder": 90,
+    "presetId": "generic",
+    "endpoint": "http://127.0.0.1:8765/mcp",
+    "transport": "streamable_http",
+    "authRequirement": "none",
+    "defaults": {
+        "auth_method": "none",
+        "api_key_header_name": "X-API-Key",
+        "load_tools": true,
+        "load_prompts": false,
+        "request_timeout": 30,
+        "connect_timeout": 10,
+        "sse_read_timeout": 300,
+        "retry_count": 0,
+        "retry_backoff_seconds": 1,
+        "allowed_tool_names": []
+    },
+    "scopeEligibility": ["personal", "group", "global"],
+    "destinationTags": ["simplechat", "development", "local"],
+    "riskLabel": "medium",
+    "documentationUrl": "application\\development\\local_mcp\\README.md",
+    "ui": {
+        "helpText": "Development-only entry for the local MCP fixture. Enable with ENABLE_LOCAL_MCP_PRECONFIGURATION=true."
+    },
+    "warnings": [
+        "This endpoint is loopback-only and is intended for development or controlled validation environments."
+    ]
+}

@@ -2,7 +2,9 @@
 
 Architecture recorded in version: **0.250.062**
 
-Runtime implementation: **Not yet implemented**
+Disabled shell implemented in version: **0.250.063**
+
+Runtime implementation: **Disabled inbound MCP shell implemented; no inbound MCP tools are exposed.**
 
 ## Overview
 
@@ -18,7 +20,7 @@ This phase is intentionally an architecture and auth-foundation slice. It does *
 - Existing governance helpers in `functions_governance.py`.
 - Existing group/public workspace authorization helpers.
 - Existing `log_event` telemetry pattern.
-- Future MCP transport implementation using streamable HTTP.
+- Disabled streamable HTTP route shell in `route_inbound_mcp.py`; full MCP protocol/tool execution remains future work.
 
 ## Phase B0 Architecture Decisions
 
@@ -498,18 +500,41 @@ Phase B0/B1 is complete when:
 11. Initial tool registry shape is defined.
 12. Test plan for the first executable inbound slice is defined.
 
-## Next Executable Slice
+## Disabled Shell Implementation
 
-The next implementation slice should add the disabled inbound MCP shell:
+The disabled shell was implemented in version **0.250.063** with:
 
 1. Configuration flags.
 2. Dedicated inbound MCP blueprint.
 3. PRM metadata route.
 4. Health/readiness route.
-5. Auth guard helper with mocked-token unit tests.
+5. Dedicated inbound MCP auth guard helper.
 6. Governance helper skeleton.
 7. Source signal extraction skeleton with wildcard `*` default.
 8. Resource-operation policy model skeleton with deny-by-default behavior.
 9. Explicit tool registry returning no enabled tools by default.
+10. Route policy and functional regression tests.
 
-Only after that should Phase B3 expose read-only personal tools.
+Implemented files:
+
+```text
+application\single_app\route_inbound_mcp.py
+application\single_app\functions_mcp_server_auth.py
+application\single_app\functions_mcp_server_governance.py
+application\single_app\functions_mcp_server_registry.py
+functional_tests\test_inbound_mcp_server_shell.py
+```
+
+The shell is disabled by default through `ENABLE_INBOUND_MCP_SERVER=false`. The public PRM endpoint returns safe metadata only. The `/api/mcp` and `/api/mcp/health` routes use the dedicated inbound MCP bearer-token guard when enabled, and return no tools.
+
+## Next Executable Slice
+
+Only after the disabled shell is reviewed should Phase B2/B3 expose read-only personal tools. The next implementation slice should add durable governance policy storage/evaluation and one read-only personal tool behind:
+
+1. delegated-user token validation,
+2. client app allowlisting,
+3. source allowlisting,
+4. explicit SimpleChat MCP governance allow,
+5. existing workspace/object authorization,
+6. audit logging,
+7. negative tests proving disabled group/public/all scopes stay unavailable.

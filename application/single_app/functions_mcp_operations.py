@@ -68,6 +68,7 @@ MCP_SECRET_ASSIGNMENT_RE = re.compile(
     r"(?i)\b(api[-_]?key|access[-_]?token|authorization|client[-_]?secret|password|secret|token)=([^&\s,;]+)"
 )
 MCP_AUTHORIZATION_VALUE_RE = re.compile(r"(?i)\b(Bearer|Basic|Splunk)\s+[A-Za-z0-9._~+/=-]+")
+MCP_PRECONFIGURATION_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 
 class McpRuntimeError(RuntimeError):
@@ -104,6 +105,17 @@ def normalize_mcp_server_profile(value):
     if mcp_server_preset_exists(normalized_value):
         return normalized_value
     return MCP_DEFAULT_SERVER_PROFILE
+
+
+def normalize_mcp_preconfiguration_id(value):
+    """Normalize an optional MCP server preconfiguration id."""
+    normalized_value = str(value or "").strip().lower()
+    normalized_value = re.sub(r"\s+", "_", normalized_value)
+    if normalized_value in {"", "custom", "none"}:
+        return ""
+    if MCP_PRECONFIGURATION_ID_PATTERN.fullmatch(normalized_value):
+        return normalized_value
+    return ""
 
 
 def normalize_mcp_auth_method(value):
@@ -379,6 +391,9 @@ def normalize_mcp_additional_fields(additional_fields):
     """Normalize MCP additionalFields while preserving unknown future fields."""
     normalized_fields = dict(additional_fields) if isinstance(additional_fields, dict) else {}
     normalized_fields["server_profile"] = normalize_mcp_server_profile(normalized_fields.get("server_profile"))
+    normalized_fields["preconfiguration_id"] = normalize_mcp_preconfiguration_id(
+        normalized_fields.get("preconfiguration_id")
+    )
     normalized_fields["transport"] = normalize_mcp_transport(normalized_fields.get("transport"))
     normalized_fields["auth_method"] = normalize_mcp_auth_method(normalized_fields.get("auth_method"))
     normalized_fields["api_key_header_name"] = str(normalized_fields.get("api_key_header_name") or "X-API-Key").strip() or "X-API-Key"

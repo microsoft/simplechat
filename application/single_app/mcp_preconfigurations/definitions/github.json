@@ -1,0 +1,38 @@
+{
+    "id": "github",
+    "version": "1.0.0",
+    "displayName": "GitHub MCP Server",
+    "description": "Create an MCP action for GitHub repository, issue, pull request, and documentation workflows through GitHub's hosted MCP server.",
+    "provider": "GitHub",
+    "category": "Developer Tools",
+    "enabled": true,
+    "developmentOnly": false,
+    "sortOrder": 30,
+    "presetId": "generic",
+    "endpoint": "https://api.githubcopilot.com/mcp/",
+    "transport": "streamable_http",
+    "authRequirement": "required",
+    "defaults": {
+        "auth_method": "bearer",
+        "api_key_header_name": "X-API-Key",
+        "load_tools": true,
+        "load_prompts": false,
+        "request_timeout": 30,
+        "connect_timeout": 10,
+        "sse_read_timeout": 300,
+        "retry_count": 0,
+        "retry_backoff_seconds": 1,
+        "allowed_tool_names": []
+    },
+    "scopeEligibility": ["personal", "group", "global"],
+    "destinationTags": ["github", "developer-tools", "hosted"],
+    "riskLabel": "medium",
+    "documentationUrl": "https://docs.github.com/en/copilot/how-tos/provide-context/use-mcp-in-your-ide/use-the-github-mcp-server",
+    "ui": {
+        "helpText": "Requires a GitHub PAT or compatible reusable identity. Review tool exposure carefully because GitHub tools can read and mutate repository resources."
+    },
+    "warnings": [
+        "GitHub MCP tools inherit the permissions of the supplied GitHub identity.",
+        "Use least-privilege credentials and restrict allowed tools for group or global actions."
+    ]
+}

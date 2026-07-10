@@ -1669,6 +1669,46 @@
                     </div>
                 </div>
 
+                <div class="card p-3 mb-3" id="governance-mcp-destination-section">
+                    <h5>
+                        <i class="bi bi-diagram-3 me-2"></i>MCP Destination Governance
+                    </h5>
+                    <p class="text-muted mb-2">
+                        Restrict outbound remote MCP servers by destination pattern and scope. Destination policies reuse delegated item policies, so admins can allow all users, specific users, or workspace groups for each approved destination.
+                    </p>
+                    <div class="row g-3 align-items-start">
+                        <div class="col-lg-4">
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="enable_mcp_destination_governance" name="enable_mcp_destination_governance" {% if settings.enable_mcp_destination_governance %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="enable_mcp_destination_governance">Enforce MCP Destination Allowlist</label>
+                            </div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="mcp_block_unsafe_destinations" name="mcp_block_unsafe_destinations" {% if settings.mcp_block_unsafe_destinations %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="mcp_block_unsafe_destinations">Block Private/Local Literal IP Destinations</label>
+                            </div>
+                            <div class="form-text">
+                                Save with the main Settings button. Unsafe literal-IP blocking can be enabled even before the allowlist is enforced.
+                            </div>
+                        </div>
+                        <div class="col-lg-5">
+                            <div class="small fw-semibold mb-1">Supported destination patterns</div>
+                            <ul class="small text-muted mb-0">
+                                <li><code>*</code> for any remote MCP destination after identity/auth checks.</li>
+                                <li><code>preconfiguration:microsoft_learn</code> or <code>preset:generic</code>.</li>
+                                <li><code>*.contoso.com</code>, <code>https://example.com/mcp*</code>, or <code>transport:streamable-http</code>.</li>
+                                <li><code>group:&lt;group-id&gt;::preconfiguration:github</code> for one group-specific override.</li>
+                            </ul>
+                        </div>
+                        <div class="col-lg-3">
+                            <div class="d-grid gap-2">
+                                <button type="button" class="btn btn-outline-primary btn-sm governance-new-mcp-destination-policy-btn" data-governance-mcp-destination-entity="mcp_personal_destination">New Personal Destination Policy</button>
+                                <button type="button" class="btn btn-outline-primary btn-sm governance-new-mcp-destination-policy-btn" data-governance-mcp-destination-entity="mcp_group_destination">New Group Destination Policy</button>
+                                <button type="button" class="btn btn-outline-primary btn-sm governance-new-mcp-destination-policy-btn" data-governance-mcp-destination-entity="mcp_global_destination">New Global Destination Policy</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="card p-3 mb-3" id="governance-feature-policies-section">
                     <div class="d-flex justify-content-between align-items-center mb-2">
                         <h5 class="mb-0"><i class="bi bi-sliders2 me-2"></i>Feature Policies</h5>
@@ -1718,6 +1758,9 @@
                                 <option value="personal_action_type">Personal Action Type</option>
                                 <option value="group_action_type">Group Action Type</option>
                                 <option value="global_action_type">Global Action Type</option>
+                                <option value="mcp_personal_destination">MCP Personal Destination</option>
+                                <option value="mcp_group_destination">MCP Group Destination</option>
+                                <option value="mcp_global_destination">MCP Global Destination</option>
                             </select>
                         </div>
                         <div class="col-lg-2 col-md-4">

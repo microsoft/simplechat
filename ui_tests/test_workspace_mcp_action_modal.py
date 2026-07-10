@@ -1,7 +1,7 @@
 # test_workspace_mcp_action_modal.py
 """
 UI test for the workspace MCP action modal.
-Version: 0.250.062
+Version: 0.250.065
 Implemented in: 0.241.103
 
 This test ensures users can select the MCP action type, configure transport,
@@ -14,7 +14,6 @@ import os
 from pathlib import Path
 
 import pytest
-from playwright.sync_api import expect
 
 
 BASE_URL = os.getenv("SIMPLECHAT_UI_BASE_URL", "").rstrip("/")
@@ -30,8 +29,10 @@ def _require_ui_env():
 
 
 @pytest.mark.ui
-def test_workspace_mcp_action_modal(playwright):
+def test_workspace_mcp_action_modal():
     """Validate that the workspace action modal exposes the dedicated MCP flow."""
+    sync_api = pytest.importorskip("playwright.sync_api")
+    expect = sync_api.expect
     _require_ui_env()
 
     validation_requests = []
@@ -40,7 +41,9 @@ def test_workspace_mcp_action_modal(playwright):
     discovery_requests = []
     type_requests = []
     preset_requests = []
+    preconfiguration_requests = []
 
+    playwright = sync_api.sync_playwright().start()
     browser = playwright.chromium.launch()
     context = browser.new_context(
         storage_state=STORAGE_STATE,
@@ -176,9 +179,54 @@ def test_workspace_mcp_action_modal(playwright):
             }),
         )
 
+    def handle_preconfigurations(route):
+        preconfiguration_requests.append(route.request.url)
+        route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps({
+                "defaultPreconfiguration": "",
+                "scope": "personal",
+                "preconfigurations": [
+                    {
+                        "id": "github",
+                        "displayName": "GitHub MCP Server",
+                        "description": "GitHub hosted MCP server returned by the test catalog.",
+                        "provider": "GitHub",
+                        "category": "Developer Tools",
+                        "presetId": "generic",
+                        "endpoint": "https://api.githubcopilot.com/mcp/",
+                        "transport": "streamable_http",
+                        "authRequirement": "required",
+                        "defaults": {
+                            "auth_method": "bearer",
+                            "api_key_header_name": "X-API-Key",
+                            "load_tools": True,
+                            "load_prompts": False,
+                            "request_timeout": 30,
+                            "connect_timeout": 10,
+                            "sse_read_timeout": 300,
+                            "retry_count": 0,
+                            "retry_backoff_seconds": 1,
+                            "allowed_tool_names": [],
+                        },
+                        "scopeEligibility": ["personal", "group", "global"],
+                        "destinationTags": ["github", "hosted"],
+                        "riskLabel": "medium",
+                        "documentationUrl": "https://docs.github.com/",
+                        "ui": {
+                            "helpText": "Requires a GitHub token.",
+                        },
+                        "warnings": [],
+                    },
+                ],
+            }),
+        )
+
     page.route("**/api/user/plugins", handle_plugins)
     page.route("**/api/user/plugins/types", handle_types)
     page.route("**/api/plugins/mcp/presets", handle_presets)
+    page.route("**/api/plugins/mcp/preconfigurations*", handle_preconfigurations)
     page.route("**/api/plugins/validate", handle_validation)
     page.route("**/api/admin/plugins/validate", handle_admin_validation)
     page.route("**/api/plugins/mcp/discover", handle_mcp_discovery)
@@ -221,14 +269,12 @@ def test_workspace_mcp_action_modal(playwright):
         expect(page.locator("#generic-config-section")).to_be_hidden()
         expect(page.locator("#sql-config-section")).to_be_hidden()
 
-        page.locator("#mcp-server-profile").select_option("splunk")
-        page.locator("#mcp-transport").select_option("streamable_http")
-        page.locator("#mcp-endpoint").fill("https://example.com/mcp")
-        page.locator("#mcp-auth-method").select_option("bearer")
+        page.locator("#mcp-preconfiguration").select_option("github")
+        expect(page.locator("#mcp-endpoint")).to_have_value("https://api.githubcopilot.com/mcp/")
+        expect(page.locator("#mcp-auth-method")).to_have_value("bearer")
         page.locator("#mcp-bearer-token").fill("test-token")
         page.locator("#mcp-custom-headers").fill(json.dumps({
-            "Authorization": "Splunk custom-token",
-            "X-Splunk-Host": "search-head",
+            "X-GitHub-Host": "api.github.com",
         }, indent=2))
         page.locator("#mcp-tool-names").fill("search_repositories\nget_issue")
         page.locator("#mcp-discover-tools-btn").click()
@@ -244,11 +290,12 @@ def test_workspace_mcp_action_modal(playwright):
         expect(page.locator("#summary-mcp-section")).to_be_visible()
         expect(page.locator("#summary-plugin-database-type")).to_have_text("Model Context Protocol server")
         expect(page.locator("#summary-plugin-auth")).to_have_text("Bearer Token")
-        expect(page.locator("#summary-plugin-endpoint")).to_have_text("https://example.com/mcp")
+        expect(page.locator("#summary-plugin-endpoint")).to_have_text("https://api.githubcopilot.com/mcp/")
         expect(page.locator("#summary-mcp-transport")).to_have_text("Streamable HTTP")
-        expect(page.locator("#summary-mcp-server-profile")).to_have_text("Splunk MCP Server")
-        expect(page.locator("#summary-mcp-custom-headers")).to_contain_text("X-Splunk-Host")
-        expect(page.locator("#summary-mcp-custom-headers")).not_to_contain_text("custom-token")
+        expect(page.locator("#summary-mcp-preconfiguration")).to_have_text("GitHub MCP Server")
+        expect(page.locator("#summary-mcp-server-profile")).to_have_text("Generic MCP Server")
+        expect(page.locator("#summary-mcp-custom-headers")).to_contain_text("X-GitHub-Host")
+        expect(page.locator("#summary-mcp-custom-headers")).not_to_contain_text("api.github.com")
         expect(page.locator("#summary-mcp-retry-policy")).to_have_text("2 retries, 3s initial backoff")
         expect(page.locator("#summary-mcp-tool-names")).to_contain_text("search_repositories")
         expect(page.locator("#summary-mcp-tool-metadata")).to_have_text("1 cached tool")
@@ -259,6 +306,7 @@ def test_workspace_mcp_action_modal(playwright):
         assert len(discovery_requests) == 1, "Expected the MCP discovery endpoint to be called once."
         assert len(type_requests) == 1, "Expected the personal action types endpoint to be called once."
         assert len(preset_requests) == 1, "Expected MCP server presets to be loaded from the API."
+        assert len(preconfiguration_requests) == 1, "Expected MCP server preconfigurations to be loaded from the API."
         assert type_requests[0].endswith("/api/user/plugins/types")
         assert len(validation_requests) == 1, "Expected the shared validation endpoint to be called once."
         assert not admin_validation_requests, "Workspace action save should not call the admin validation endpoint."
@@ -267,23 +315,24 @@ def test_workspace_mcp_action_modal(playwright):
         saved_plugin = saved_payloads[0][0]
         discovery_payload = discovery_requests[0]
         assert discovery_payload["type"] == "mcp"
-        assert discovery_payload["endpoint"] == "https://example.com/mcp"
+        assert discovery_payload["endpoint"] == "https://api.githubcopilot.com/mcp/"
         assert discovery_payload["additionalFields"]["auth_method"] == "bearer"
-        assert discovery_payload["additionalFields"]["server_profile"] == "splunk"
-        assert discovery_payload["additionalFields"]["custom_headers"]["X-Splunk-Host"] == "search-head"
+        assert discovery_payload["additionalFields"]["server_profile"] == "generic"
+        assert discovery_payload["additionalFields"]["preconfiguration_id"] == "github"
+        assert discovery_payload["additionalFields"]["custom_headers"]["X-GitHub-Host"] == "api.github.com"
 
         assert saved_plugin["type"] == "mcp"
         assert saved_plugin["name"] == "github_mcp_tools"
-        assert saved_plugin["endpoint"] == "https://example.com/mcp"
+        assert saved_plugin["endpoint"] == "https://api.githubcopilot.com/mcp/"
         assert saved_plugin["auth"]["type"] == "key"
         assert saved_plugin["auth"]["key"] == "test-token"
 
         additional_fields = saved_plugin["additionalFields"]
-        assert additional_fields["server_profile"] == "splunk"
+        assert additional_fields["preconfiguration_id"] == "github"
+        assert additional_fields["server_profile"] == "generic"
         assert additional_fields["transport"] == "streamable_http"
         assert additional_fields["auth_method"] == "bearer"
-        assert additional_fields["custom_headers"]["Authorization"] == "Splunk custom-token"
-        assert additional_fields["custom_headers"]["X-Splunk-Host"] == "search-head"
+        assert additional_fields["custom_headers"]["X-GitHub-Host"] == "api.github.com"
         assert additional_fields["load_tools"] is True
         assert additional_fields["load_prompts"] is False
         assert additional_fields["request_timeout"] == 45
@@ -296,3 +345,4 @@ def test_workspace_mcp_action_modal(playwright):
     finally:
         context.close()
         browser.close()
+        playwright.stop()

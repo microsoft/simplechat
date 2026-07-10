@@ -94,7 +94,7 @@ DOTENV_LOAD_RESULT = load_simplechat_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.250.062"
+VERSION = "0.250.065"
 
 SESSION_COOKIE_SAMESITE = os.getenv('SESSION_COOKIE_SAMESITE', 'Lax')
 SESSION_COOKIE_HTTPONLY = os.getenv('SESSION_COOKIE_HTTPONLY', 'true').lower() != 'false'
@@ -126,6 +126,34 @@ def _split_origin_list(raw_value):
         for origin in parsed_values
         if str(origin).strip()
     ]
+
+
+def _split_env_list(raw_value, lowercase=False):
+    """Return trimmed values from comma, space, or JSON-list environment values."""
+    if not raw_value:
+        return []
+
+    value = raw_value.strip()
+    parsed_values = []
+    if value.startswith('['):
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, list):
+                parsed_values = parsed
+        except (TypeError, ValueError):
+            parsed_values = []
+    else:
+        parsed_values = re.split(r'[\s,]+', value)
+
+    normalized_values = []
+    for item in parsed_values:
+        normalized_item = str(item).strip()
+        if not normalized_item:
+            continue
+        if lowercase:
+            normalized_item = normalized_item.lower()
+        normalized_values.append(normalized_item)
+    return normalized_values
 
 
 CSRF_TRUSTED_ORIGINS = _split_origin_list(os.getenv('CSRF_TRUSTED_ORIGINS', ''))
@@ -283,6 +311,33 @@ CI_BEARER_SESSION_ALLOWED_APP_IDS = [
     if app_id.strip()
 ]
 CI_BEARER_SESSION_REQUIRED_ROLE = os.getenv("CI_BEARER_SESSION_REQUIRED_ROLE", "Admin")
+ENABLE_INBOUND_MCP_SERVER = os.getenv("ENABLE_INBOUND_MCP_SERVER", "false").lower() == "true"
+INBOUND_MCP_REQUIRED_ROLE = os.getenv("INBOUND_MCP_REQUIRED_ROLE", "McpServerAccess")
+INBOUND_MCP_REQUIRED_SCOPE = os.getenv("INBOUND_MCP_REQUIRED_SCOPE", "McpServerAccess")
+INBOUND_MCP_ALLOWED_CLIENT_APP_IDS = _split_env_list(
+    os.getenv("INBOUND_MCP_ALLOWED_CLIENT_APP_IDS", ""),
+    lowercase=True
+)
+INBOUND_MCP_ALLOWED_TENANT_IDS = _split_env_list(
+    os.getenv("INBOUND_MCP_ALLOWED_TENANT_IDS", "")
+)
+INBOUND_MCP_ALLOWED_SOURCE_IDS = _split_env_list(
+    os.getenv("INBOUND_MCP_ALLOWED_SOURCE_IDS", "*")
+) or ["*"]
+INBOUND_MCP_SOURCE_HEADER = os.getenv("INBOUND_MCP_SOURCE_HEADER", "X-SimpleChat-MCP-Source")
+INBOUND_MCP_RESOURCE_PATH = os.getenv("INBOUND_MCP_RESOURCE_PATH", "/api/mcp")
+INBOUND_MCP_PRM_PATH = os.getenv(
+    "INBOUND_MCP_PRM_PATH",
+    "/.well-known/oauth-protected-resource/mcp"
+)
+ENABLE_MCP_DESTINATION_GOVERNANCE = os.getenv("ENABLE_MCP_DESTINATION_GOVERNANCE", "false").lower() == "true"
+MCP_ALLOWED_DESTINATIONS = _split_env_list(os.getenv("MCP_ALLOWED_DESTINATIONS", ""))
+MCP_ALLOWED_PERSONAL_DESTINATIONS = _split_env_list(os.getenv("MCP_ALLOWED_PERSONAL_DESTINATIONS", ""))
+MCP_ALLOWED_GROUP_DESTINATIONS = _split_env_list(os.getenv("MCP_ALLOWED_GROUP_DESTINATIONS", ""))
+MCP_ALLOWED_GLOBAL_DESTINATIONS = _split_env_list(os.getenv("MCP_ALLOWED_GLOBAL_DESTINATIONS", ""))
+MCP_BLOCK_UNSAFE_DESTINATIONS = os.getenv("MCP_BLOCK_UNSAFE_DESTINATIONS", "false").lower() == "true"
+SIMPLECHAT_MCP_PRECONFIGURATION_PATHS = os.getenv("SIMPLECHAT_MCP_PRECONFIGURATION_PATHS", "")
+ENABLE_LOCAL_MCP_PRECONFIGURATION = os.getenv("ENABLE_LOCAL_MCP_PRECONFIGURATION", "false").lower() == "true"
 LOGIN_REDIRECT_URL = os.getenv("LOGIN_REDIRECT_URL")
 HOME_REDIRECT_URL = os.getenv("HOME_REDIRECT_URL")  # Front Door URL for home page
 AZURE_ENVIRONMENT = os.getenv("AZURE_ENVIRONMENT", "public") # public, usgovernment, custom

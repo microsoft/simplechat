@@ -91,6 +91,7 @@ const MCP_FALLBACK_SERVER_PRESETS = [
     warnings: []
   }
 ];
+const MCP_FALLBACK_SERVER_PRECONFIGURATIONS = [];
 const BLOB_STORAGE_CAPABILITY_DEFINITIONS = [
   {
     key: 'list_container_contents',
@@ -322,6 +323,9 @@ export class PluginModalStepper {
     this.mcpServerPresetMap = {};
     this.mcpDefaultServerPreset = MCP_DEFAULT_SERVER_PROFILE;
     this.mcpServerPresetsLoaded = false;
+    this.mcpServerPreconfigurations = MCP_FALLBACK_SERVER_PRECONFIGURATIONS;
+    this.mcpServerPreconfigurationMap = {};
+    this.mcpServerPreconfigurationsLoaded = false;
 
     this._loadPluginSchema().then(() => { // Load schema on initialization
       this._populateGenericAuthTypeDropdown(); // Dynamically populate generic auth type dropdown after schema loads (will be called again after schema loads)
@@ -409,6 +413,9 @@ export class PluginModalStepper {
     this.actionIdentityScope = { scope, apiBase };
     this.actionIdentities = [];
     this.actionIdentitiesLoaded = false;
+    this.mcpServerPreconfigurations = MCP_FALLBACK_SERVER_PRECONFIGURATIONS;
+    this.mcpServerPreconfigurationMap = {};
+    this.mcpServerPreconfigurationsLoaded = false;
   }
 
   async loadActionIdentities() {
@@ -643,6 +650,7 @@ export class PluginModalStepper {
     document.getElementById('plugin-auth-type').addEventListener('change', () => this.toggleOpenApiAuthFields());
     document.getElementById('plugin-auth-type-generic').addEventListener('change', () => this.toggleGenericAuthFields());
     document.getElementById('plugin-auth-identity-select').addEventListener('change', () => this.handleActionIdentityChange('openapi'));
+    document.getElementById('mcp-preconfiguration').addEventListener('change', () => this.applyMcpPreconfiguration());
     document.getElementById('mcp-server-profile').addEventListener('change', () => this.applyMcpServerProfile());
     document.getElementById('mcp-transport').addEventListener('change', () => this.toggleMcpTransportFields());
     document.getElementById('mcp-auth-method').addEventListener('change', () => this.toggleMcpAuthFields());
@@ -729,6 +737,7 @@ export class PluginModalStepper {
     document.getElementById('plugin-modal-error').classList.add('d-none');
 
     await this.loadMcpServerPresets();
+    await this.loadMcpServerPreconfigurations();
 
     // Load available types and populate
     await this.loadAvailableTypes();
@@ -2436,6 +2445,140 @@ export class PluginModalStepper {
     return preset.displayName || profile || '-';
   }
 
+  async loadMcpServerPreconfigurations() {
+    if (this.mcpServerPreconfigurationsLoaded) {
+      return this.mcpServerPreconfigurations;
+    }
+
+    let preconfigurations = MCP_FALLBACK_SERVER_PRECONFIGURATIONS;
+    try {
+      const scope = this.actionIdentityScope?.scope || 'personal';
+      const response = await fetch(`/api/plugins/mcp/preconfigurations?scope=${encodeURIComponent(scope)}`);
+      if (!response.ok) {
+        throw new Error(`MCP preconfiguration request failed with status ${response.status}`);
+      }
+      const payload = await response.json();
+      if (Array.isArray(payload.preconfigurations)) {
+        preconfigurations = payload.preconfigurations;
+      }
+    } catch (error) {
+      console.warn('Failed to load MCP server preconfigurations; using custom-only fallback.', error.message || error);
+    }
+
+    this.setMcpServerPreconfigurations(preconfigurations);
+    this.mcpServerPreconfigurationsLoaded = true;
+    return this.mcpServerPreconfigurations;
+  }
+
+  setMcpServerPreconfigurations(preconfigurations) {
+    const validPreconfigurations = Array.isArray(preconfigurations) ? preconfigurations : MCP_FALLBACK_SERVER_PRECONFIGURATIONS;
+    this.mcpServerPreconfigurations = validPreconfigurations;
+    this.mcpServerPreconfigurationMap = {};
+    validPreconfigurations.forEach(preconfiguration => {
+      if (preconfiguration?.id) {
+        this.mcpServerPreconfigurationMap[preconfiguration.id] = preconfiguration;
+      }
+    });
+    this.populateMcpServerPreconfigurationDropdown();
+  }
+
+  populateMcpServerPreconfigurationDropdown() {
+    const select = document.getElementById('mcp-preconfiguration');
+    if (!select) {
+      return;
+    }
+
+    const currentValue = select.value || '';
+    const customOption = document.createElement('option');
+    customOption.value = '';
+    customOption.textContent = 'Custom configuration';
+    const options = [customOption];
+    this.mcpServerPreconfigurations.forEach(preconfiguration => {
+      const option = document.createElement('option');
+      option.value = preconfiguration.id;
+      option.textContent = preconfiguration.displayName || preconfiguration.id;
+      options.push(option);
+    });
+    select.replaceChildren(...options);
+
+    select.value = this.mcpServerPreconfigurationMap[currentValue] ? currentValue : '';
+    this.updateMcpPreconfigurationHelp();
+  }
+
+  getMcpServerPreconfiguration(preconfigurationId) {
+    return this.mcpServerPreconfigurationMap[preconfigurationId] || null;
+  }
+
+  formatMcpServerPreconfiguration(preconfigurationId) {
+    const preconfiguration = this.getMcpServerPreconfiguration(preconfigurationId);
+    return preconfiguration?.displayName || (preconfigurationId ? preconfigurationId : '-');
+  }
+
+  updateMcpPreconfigurationHelp() {
+    const select = document.getElementById('mcp-preconfiguration');
+    const help = document.getElementById('mcp-preconfiguration-help');
+    if (!select || !help) {
+      return;
+    }
+
+    const preconfiguration = this.getMcpServerPreconfiguration(select.value);
+    if (!preconfiguration) {
+      help.textContent = 'Choose a curated server template, or keep custom configuration.';
+      return;
+    }
+
+    const docsText = preconfiguration.documentationUrl ? ` Docs: ${preconfiguration.documentationUrl}` : '';
+    help.textContent = `${preconfiguration.description || 'Curated MCP server configuration.'}${docsText}`;
+  }
+
+  applyMcpPreconfiguration() {
+    const select = document.getElementById('mcp-preconfiguration');
+    const preconfiguration = this.getMcpServerPreconfiguration(select?.value);
+    this.updateMcpPreconfigurationHelp();
+    if (!preconfiguration) {
+      return;
+    }
+
+    const defaults = preconfiguration.defaults || {};
+    const setFieldValue = (fieldId, value) => {
+      const element = document.getElementById(fieldId);
+      if (element && value !== undefined && value !== null) {
+        element.value = String(value);
+      }
+    };
+    const setIfBlank = (fieldId, value) => {
+      const element = document.getElementById(fieldId);
+      if (element && !element.value.trim() && value) {
+        element.value = String(value);
+      }
+    };
+
+    setIfBlank('plugin-display-name', preconfiguration.displayName);
+    setIfBlank('plugin-description', preconfiguration.description);
+    setFieldValue('mcp-server-profile', preconfiguration.presetId || MCP_DEFAULT_SERVER_PROFILE);
+    this.applyMcpServerProfile({ applyDefaults: true });
+    setFieldValue('mcp-transport', preconfiguration.transport);
+    setFieldValue('mcp-endpoint', preconfiguration.endpoint);
+    setFieldValue('mcp-auth-method', defaults.auth_method);
+    setFieldValue('mcp-api-key-header-name', defaults.api_key_header_name);
+    setFieldValue('mcp-request-timeout', defaults.request_timeout);
+    setFieldValue('mcp-connect-timeout', defaults.connect_timeout);
+    setFieldValue('mcp-sse-read-timeout', defaults.sse_read_timeout);
+    setFieldValue('mcp-retry-count', defaults.retry_count);
+    setFieldValue('mcp-retry-backoff-seconds', defaults.retry_backoff_seconds);
+    setFieldValue('mcp-tool-names', Array.isArray(defaults.allowed_tool_names) ? defaults.allowed_tool_names.join('\n') : '');
+    const loadTools = document.getElementById('mcp-load-tools');
+    if (loadTools && typeof defaults.load_tools === 'boolean') {
+      loadTools.checked = defaults.load_tools;
+    }
+    const loadPrompts = document.getElementById('mcp-load-prompts');
+    if (loadPrompts && typeof defaults.load_prompts === 'boolean') {
+      loadPrompts.checked = defaults.load_prompts;
+    }
+    this.toggleMcpAuthFields();
+    this.toggleMcpTransportFields();
+  }
+
   getMcpEndpointPlaceholder(transport, profile) {
     if (transport === 'websocket') {
       return this.getMcpServerPreset(profile)?.ui?.websocketEndpointPlaceholder || 'wss://example.com/mcp';
@@ -2568,6 +2711,7 @@ export class PluginModalStepper {
 
   initializeMcpConfiguration() {
     const defaults = {
+      'mcp-preconfiguration': '',
       'mcp-server-profile': this.mcpDefaultServerPreset || MCP_DEFAULT_SERVER_PROFILE,
       'mcp-transport': 'streamable_http',
       'mcp-auth-method': 'none',
@@ -2689,6 +2833,12 @@ export class PluginModalStepper {
     const transport = additionalFields.transport || 'streamable_http';
 
     const storedProfile = additionalFields.server_profile || this.mcpDefaultServerPreset || MCP_DEFAULT_SERVER_PROFILE;
+    const storedPreconfiguration = additionalFields.preconfiguration_id || '';
+    const preconfigurationSelect = document.getElementById('mcp-preconfiguration');
+    if (preconfigurationSelect) {
+      preconfigurationSelect.value = this.mcpServerPreconfigurationMap[storedPreconfiguration] ? storedPreconfiguration : '';
+      this.updateMcpPreconfigurationHelp();
+    }
     document.getElementById('mcp-server-profile').value = this.mcpServerPresetMap[storedProfile]
       ? storedProfile
       : (this.mcpDefaultServerPreset || MCP_DEFAULT_SERVER_PROFILE);
@@ -2738,6 +2888,7 @@ export class PluginModalStepper {
     const selectedIdentity = this.getSelectedActionIdentity('mcp');
     const authMethod = selectedIdentity ? 'identity' : (document.getElementById('mcp-auth-method')?.value || 'none');
     const additionalFields = {
+      preconfiguration_id: document.getElementById('mcp-preconfiguration')?.value || '',
       server_profile: document.getElementById('mcp-server-profile')?.value || this.mcpDefaultServerPreset || MCP_DEFAULT_SERVER_PROFILE,
       transport,
       auth_method: authMethod,
@@ -5629,6 +5780,7 @@ export class PluginModalStepper {
 
     const transport = document.getElementById('mcp-transport')?.value || 'streamable_http';
     const serverProfile = document.getElementById('mcp-server-profile')?.value || this.mcpDefaultServerPreset || MCP_DEFAULT_SERVER_PROFILE;
+    const preconfigurationId = document.getElementById('mcp-preconfiguration')?.value || '';
     const loadTools = Boolean(document.getElementById('mcp-load-tools')?.checked);
     const loadPrompts = Boolean(document.getElementById('mcp-load-prompts')?.checked);
     const loadModes = [];
@@ -5658,6 +5810,7 @@ export class PluginModalStepper {
     const retryBackoff = document.getElementById('mcp-retry-backoff-seconds')?.value || '1';
 
     document.getElementById('summary-mcp-transport').textContent = this.formatMcpTransport(transport);
+    document.getElementById('summary-mcp-preconfiguration').textContent = this.formatMcpServerPreconfiguration(preconfigurationId);
     document.getElementById('summary-mcp-server-profile').textContent = this.formatMcpServerProfile(serverProfile);
     document.getElementById('summary-mcp-load-mode').textContent = loadModes.length ? loadModes.join(', ') : 'None';
     document.getElementById('summary-mcp-request-timeout').textContent = `${document.getElementById('mcp-request-timeout')?.value || '30'} seconds`;
@@ -6252,6 +6405,7 @@ export class PluginModalStepper {
     safeSetValue('azure-maps-key');
 
     // Step 3 fields - MCP Plugin
+    safeSetValue('mcp-preconfiguration');
     safeSetValue('mcp-server-profile', this.mcpDefaultServerPreset || MCP_DEFAULT_SERVER_PROFILE);
     safeSetValue('mcp-transport', 'streamable_http');
     safeSetValue('mcp-endpoint');
@@ -6281,6 +6435,7 @@ export class PluginModalStepper {
     if (loadPrompts) {
       loadPrompts.checked = false;
     }
+    this.updateMcpPreconfigurationHelp();
 
     // Step 3 fields - Databricks Plugin
     safeSetValue('databricks-workspace-url');
