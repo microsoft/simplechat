@@ -2,7 +2,7 @@
 # test_chat_turn_orchestration_plan.py
 """
 Functional test for the chat turn orchestration planning foundation.
-Version: 0.250.059
+Version: 0.250.060
 Implemented in: 0.250.058
 
 This test ensures every turn receives a direct or coordinated plan, selected
@@ -351,7 +351,7 @@ def test_streaming_chat_path_persists_and_applies_plan():
     route_source = ROUTE_BACKEND_CHATS.read_text(encoding='utf-8')
     config_source = CONFIG_FILE.read_text(encoding='utf-8')
 
-    assert 'VERSION = "0.250.059"' in config_source
+    assert 'VERSION = "0.250.060"' in config_source
     assert 'turn_orchestration_plan = build_turn_orchestration_plan(' in route_source
     assert 'requested_action_document_ids = _normalize_conversation_task_document_ids(' in route_source
     assert 'requested_action_document_ids\n            if requested_action_document_ids' in route_source

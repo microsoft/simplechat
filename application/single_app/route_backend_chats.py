@@ -111,7 +111,11 @@ from functions_chat_orchestration import (
     build_turn_orchestration_guidance_message,
     build_turn_orchestration_plan,
 )
-from functions_evidence_ledger import create_evidence_ledger_from_plan
+from functions_evidence_collectors import populate_evidence_ledger_from_chat_sources
+from functions_evidence_ledger import (
+    build_evidence_ledger_guidance_message,
+    create_evidence_ledger_from_plan,
+)
 from functions_image_messages import build_image_message_documents, decode_image_content
 from functions_icon_utils import normalize_icon_payload
 from functions_image_generation import (
@@ -2171,7 +2175,8 @@ def _resolve_chat_selected_document_metadata(document_id, user_id=None, document
             'source_hint': 'workspace',
             'cosmos_container': cosmos_user_documents_container,
             'query': """
-                SELECT TOP 1 c.id, c.file_name, c.title, c.group_id, c.public_workspace_id
+                SELECT TOP 1 c.id, c.file_name, c.title, c.group_id, c.public_workspace_id,
+                    c.mime_type, c.vision_analysis, c.created_from_chat_upload
                 FROM c
                 WHERE c.id = @doc_id
                     AND (
@@ -2194,7 +2199,8 @@ def _resolve_chat_selected_document_metadata(document_id, user_id=None, document
                 'source_hint': 'group',
                 'cosmos_container': cosmos_group_documents_container,
                 'query': """
-                    SELECT TOP 1 c.id, c.file_name, c.title, c.group_id, c.public_workspace_id
+                    SELECT TOP 1 c.id, c.file_name, c.title, c.group_id, c.public_workspace_id,
+                        c.mime_type, c.vision_analysis, c.created_from_chat_upload
                     FROM c
                     WHERE c.id = @doc_id
                         AND (
@@ -2217,7 +2223,8 @@ def _resolve_chat_selected_document_metadata(document_id, user_id=None, document
                 'source_hint': 'public',
                 'cosmos_container': cosmos_public_documents_container,
                 'query': """
-                    SELECT TOP 1 c.id, c.file_name, c.title, c.group_id, c.public_workspace_id
+                    SELECT TOP 1 c.id, c.file_name, c.title, c.group_id, c.public_workspace_id,
+                        c.mime_type, c.vision_analysis, c.created_from_chat_upload
                     FROM c
                     WHERE c.id = @doc_id
                         AND c.public_workspace_id = @public_workspace_id
@@ -2243,6 +2250,102 @@ def _resolve_chat_selected_document_metadata(document_id, user_id=None, document
         return doc_info
 
     return None
+
+
+def _resolve_authorized_chat_selected_documents(
+    document_ids,
+    *,
+    user_id,
+    document_scope,
+    active_group_id=None,
+    active_group_ids=None,
+    active_public_workspace_id=None,
+    active_public_workspace_ids=None,
+):
+    """Revalidate selected document access at the evidence collection boundary."""
+    authorized_documents = []
+    for document_id in _normalize_conversation_task_document_ids(document_ids):
+        document_info = _resolve_chat_selected_document_metadata(
+            document_id,
+            user_id=user_id,
+            document_scope=document_scope,
+            active_group_id=active_group_id,
+            active_group_ids=active_group_ids,
+            active_public_workspace_id=active_public_workspace_id,
+            active_public_workspace_ids=active_public_workspace_ids,
+        )
+        if not document_info:
+            continue
+        document_info['workspace_scope'] = document_info.get('source_hint')
+        authorized_documents.append(document_info)
+    return authorized_documents
+
+
+def _build_authorized_selected_image_references(messages, documents, workspace_evidence):
+    """Build compact image references from authorized conversation and document outputs."""
+    image_references = []
+    seen_reference_ids = set()
+
+    def append_reference(candidate, reference_id):
+        normalized_reference_id = str(reference_id or '').strip()
+        if not normalized_reference_id or normalized_reference_id in seen_reference_ids:
+            return
+        seen_reference_ids.add(normalized_reference_id)
+        image_references.append(candidate)
+
+    for message in messages or []:
+        if not isinstance(message, Mapping) or str(message.get('role') or '').strip().lower() != 'image':
+            continue
+        message_metadata = message.get('metadata') if isinstance(message.get('metadata'), Mapping) else {}
+        if not message_metadata.get('is_user_upload'):
+            continue
+        message_id = str(message.get('id') or '').strip()
+        append_reference({
+            'message_id': message_id,
+            'file_name': message.get('filename') or 'Uploaded conversation image',
+            'mime_type': message.get('mime_type'),
+            'workspace_scope': 'conversation',
+            'selection_origin': 'conversation_history',
+            'vision_analysis': (
+                message.get('vision_analysis')
+                if isinstance(message.get('vision_analysis'), Mapping)
+                else message_metadata.get('vision_analysis')
+            ),
+        }, message_id)
+
+    for document_items, selection_origin in (
+        (documents, 'selected_document'),
+        (workspace_evidence, 'workspace_search'),
+    ):
+        for document in document_items or []:
+            if not isinstance(document, Mapping):
+                continue
+            document_id = str(document.get('document_id') or document.get('id') or '').strip()
+            file_name = str(document.get('file_name') or document.get('title') or '').strip()
+            mime_type = str(document.get('mime_type') or '').strip().lower()
+            vision_analysis = document.get('vision_analysis')
+            is_image = bool(
+                mime_type.startswith('image/')
+                or re.search(r'\.(?:avif|bmp|gif|heic|heif|jpe?g|png|tiff?|webp)$', file_name, re.IGNORECASE)
+                or isinstance(vision_analysis, Mapping)
+                or document.get('metadata_type') == 'vision'
+            )
+            if not is_image:
+                continue
+            append_reference({
+                'document_id': document_id,
+                'file_name': file_name or 'Workspace image',
+                'mime_type': mime_type or None,
+                'workspace_scope': (
+                    document.get('workspace_scope')
+                    or document.get('source_hint')
+                    or ('group' if document.get('group_id') else 'public' if document.get('public_workspace_id') else 'personal')
+                ),
+                'selection_origin': selection_origin,
+                'vision_analysis': vision_analysis if isinstance(vision_analysis, Mapping) else None,
+            }, document_id)
+
+    return image_references
 
 
 def _create_personal_conversation(user_id, conversation_id=None):
@@ -4957,6 +5060,21 @@ def maybe_append_turn_orchestration_system_message(conversation_history, orchest
     return insert_system_message_after_existing_system_messages(
         conversation_history,
         guidance,
+    )
+
+
+def maybe_append_turn_evidence_ledger_system_message(conversation_history, evidence_ledger):
+    """Add the populated, compact evidence ledger before central finalization."""
+    if not isinstance(evidence_ledger, Mapping) or evidence_ledger.get('orchestration_mode') != 'coordinated':
+        return conversation_history
+    if not any(
+        evidence_ledger.get(section)
+        for section in ('facts', 'results', 'citations', 'artifacts', 'conflicts', 'missing_or_failed')
+    ):
+        return conversation_history
+    return insert_system_message_after_existing_system_messages(
+        conversation_history,
+        build_evidence_ledger_guidance_message(evidence_ledger),
     )
 
 
@@ -12131,6 +12249,32 @@ def register_route_backend_chats(bp):
         if assigned_knowledge_context_citations:
             hybrid_citations_list.extend(assigned_knowledge_context_citations)
             hybrid_citations_list.sort(key=_build_hybrid_citation_sort_key, reverse=True)
+        authorized_action_documents = _resolve_authorized_chat_selected_documents(
+            selected_document_ids,
+            user_id=user_id,
+            document_scope=document_scope,
+            active_group_ids=active_group_ids,
+            active_public_workspace_ids=active_public_workspace_ids,
+        )
+        selected_image_references = _build_authorized_selected_image_references(
+            [],
+            authorized_action_documents,
+            [],
+        )
+        populate_evidence_ledger_from_chat_sources(
+            turn_evidence_ledger,
+            turn_orchestration_plan,
+            authorized_selected_documents=authorized_action_documents,
+            selected_document_ids=requested_selected_document_ids,
+            authorized_chat_upload_documents=authorized_action_documents,
+            chat_upload_document_ids=auto_linked_chat_upload_document_ids,
+            workspace_citations=hybrid_citations_list,
+            workspace_search_attempted=True,
+            selected_image_references=selected_image_references,
+        )
+        user_metadata['evidence_ledger'] = turn_evidence_ledger
+        user_message_doc['metadata'] = user_metadata
+        cosmos_messages_container.upsert_item(user_message_doc)
         prepared_agent_citations = persist_agent_citation_artifacts(
             conversation_id=conversation_id,
             assistant_message_id=assistant_message_id,
@@ -16346,6 +16490,7 @@ def register_route_backend_chats(bp):
                 generated_analysis_artifacts_list = []
                 system_messages_for_augmentation = []
                 search_results = []
+                workspace_search_failure = None
                 selected_agent = None
 
                 # Configuration
@@ -17438,6 +17583,7 @@ def register_route_backend_chats(bp):
                         return
                     except Exception as e:
                         debug_print(f"Error during hybrid search: {e}")
+                        workspace_search_failure = 'Workspace search failed before evidence could be collected.'
 
                     if search_results:
                         unique_doc_names_stream = set(doc.get('file_name', 'Unknown') for doc in search_results)
@@ -17618,7 +17764,9 @@ def register_route_backend_chats(bp):
                                             "version": doc.get('version', 'N/A'),
                                             "classification": doc.get('document_classification'),
                                             "metadata_type": "vision",
-                                            "metadata_content": vision_content
+                                            "metadata_content": vision_content,
+                                            "mime_type": metadata.get('mime_type'),
+                                            "vision_analysis": vision_analysis,
                                         }
                                         hybrid_citations_list.append(vision_citation)
                                         combined_documents.append(vision_citation)
@@ -17997,6 +18145,49 @@ def register_route_backend_chats(bp):
                         query=all_messages_query, parameters=params_all,
                         partition_key=conversation_id, enable_cross_partition_query=True
                     ))
+                    authorized_selected_documents = _resolve_authorized_chat_selected_documents(
+                        requested_selected_document_ids,
+                        user_id=user_id,
+                        document_scope=requested_document_scope or effective_document_scope,
+                        active_group_ids=requested_active_group_ids,
+                        active_public_workspace_ids=requested_active_public_workspace_ids,
+                    )
+                    authorized_chat_upload_documents = [
+                        document
+                        for document in (task_resolution.get('documents') or [])
+                        if isinstance(document, Mapping)
+                        and str(document.get('id') or '').strip() in auto_linked_chat_upload_document_ids
+                    ]
+                    selected_image_references = _build_authorized_selected_image_references(
+                        all_messages,
+                        authorized_selected_documents + authorized_chat_upload_documents,
+                        combined_documents,
+                    )
+                    populate_evidence_ledger_from_chat_sources(
+                        turn_evidence_ledger,
+                        turn_orchestration_plan,
+                        conversation_messages=all_messages,
+                        current_user_message_id=user_message_id,
+                        authorized_selected_documents=authorized_selected_documents,
+                        selected_document_ids=requested_selected_document_ids,
+                        authorized_chat_upload_documents=authorized_chat_upload_documents,
+                        chat_upload_document_ids=auto_linked_chat_upload_document_ids,
+                        workspace_search_results=search_results,
+                        workspace_citations=hybrid_citations_list,
+                        workspace_search_attempted=bool(hybrid_search_enabled or history_grounded_search_used),
+                        workspace_search_failure=workspace_search_failure,
+                        web_search_citations=web_search_citations_list,
+                        web_search_runs=deep_research_web_search_runs,
+                        web_search_attempted=bool(web_search_enabled),
+                        source_review_result=source_review_result,
+                        source_review_attempted=bool(source_review_enabled),
+                        source_review_authorized=bool(url_access_enabled or source_review_allowed_for_user),
+                        deep_research_enabled=bool(deep_research_enabled),
+                        selected_image_references=selected_image_references,
+                    )
+                    user_metadata['evidence_ledger'] = turn_evidence_ledger
+                    user_message_doc['metadata'] = user_metadata
+                    cosmos_messages_container.upsert_item(user_message_doc)
                     history_segments = build_conversation_history_segments(
                         all_messages=all_messages,
                         conversation_history_limit=conversation_history_limit,
@@ -18332,6 +18523,10 @@ def register_route_backend_chats(bp):
                 conversation_history_for_api = maybe_append_turn_orchestration_system_message(
                     conversation_history_for_api,
                     turn_orchestration_plan,
+                )
+                conversation_history_for_api = maybe_append_turn_evidence_ledger_system_message(
+                    conversation_history_for_api,
+                    turn_evidence_ledger,
                 )
                 conversation_history_for_api = maybe_append_image_proposal_system_message(
                     conversation_history_for_api,

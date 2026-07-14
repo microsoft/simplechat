@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.060)**
+
+#### New Features
+
+*   **Chat Orchestration Source Collectors**
+    *   Added generic collectors that normalize authorized conversation facts, prior citation and artifact lineage, selected and conversation-upload documents, workspace search, Web Search, Source Review, Deep Research, and selected-image vision metadata into the shared evidence ledger.
+    *   Streaming finalization now receives the populated, bounded ledger before response generation, with explicit `not_found`, `failed`, `skipped`, `partial`, and `unauthorized` outcomes instead of silently dropping required evidence.
+    *   Selected documents are revalidated at the collector boundary, assistant-generated history is not promoted to supported fact, and compact image evidence excludes raw image bytes and signed URLs.
+    *   (Ref: microsoft/simplechat#1021, `functions_evidence_collectors.py`, `route_backend_chats.py`, `CHAT_TURN_ORCHESTRATION.md`)
+
 ### **(v0.250.059)**
 
 #### New Features
