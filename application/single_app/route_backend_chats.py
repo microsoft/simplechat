@@ -111,6 +111,7 @@ from functions_chat_orchestration import (
     build_turn_orchestration_guidance_message,
     build_turn_orchestration_plan,
 )
+from functions_evidence_ledger import create_evidence_ledger_from_plan
 from functions_image_messages import build_image_message_documents, decode_image_content
 from functions_icon_utils import normalize_icon_payload
 from functions_image_generation import (
@@ -11919,6 +11920,11 @@ def register_route_backend_chats(bp):
         previous_thread_id = _get_latest_chat_thread_id(conversation_id)
         current_thread_id = str(uuid.uuid4())
         user_message_id = f"{conversation_id}_user_{int(time.time())}_{random.randint(1000,9999)}"
+        turn_evidence_ledger = create_evidence_ledger_from_plan(
+            turn_orchestration_plan,
+            conversation_id=conversation_id,
+            user_message_id=user_message_id,
+        )
         user_metadata = _build_document_action_user_metadata(
             data=data,
             user_id=user_id,
@@ -11931,6 +11937,7 @@ def register_route_backend_chats(bp):
             streaming_enabled=callable(publish_background_event),
         )
         user_metadata['orchestration'] = turn_orchestration_plan
+        user_metadata['evidence_ledger'] = turn_evidence_ledger
         if auto_linked_chat_upload_document_ids:
             user_metadata['workspace_search']['auto_linked_chat_upload_document_ids'] = auto_linked_chat_upload_document_ids
             user_metadata['workspace_search']['auto_linked_chat_upload_document_count'] = len(auto_linked_chat_upload_document_ids)
@@ -12174,6 +12181,7 @@ def register_route_backend_chats(bp):
                 'token_usage': execution_result.get('token_usage'),
                 'user_info': response_message_context.get('user_info'),
                 'orchestration': turn_orchestration_plan,
+                'evidence_ledger': turn_evidence_ledger,
                 'capability_usage': document_action_capability_usage,
                 'thread_info': {
                     'thread_id': response_message_context.get('thread_id'),
@@ -16815,6 +16823,11 @@ def register_route_backend_chats(bp):
 
                 # Save user message
                 user_message_id = f"{conversation_id}_user_{int(time.time())}_{random.randint(1000,9999)}"
+                turn_evidence_ledger = create_evidence_ledger_from_plan(
+                    turn_orchestration_plan,
+                    conversation_id=conversation_id,
+                    user_message_id=user_message_id,
+                )
 
                 user_metadata = {}
                 current_user = get_current_user_info()
@@ -16950,6 +16963,7 @@ def register_route_backend_chats(bp):
                     user_metadata['agent_selection'] = agent_selection_metadata
 
                 user_metadata['orchestration'] = turn_orchestration_plan
+                user_metadata['evidence_ledger'] = turn_evidence_ledger
                 user_metadata['chat_context'] = {
                     'conversation_id': conversation_id
                 }
@@ -18386,6 +18400,7 @@ def register_route_backend_chats(bp):
                                 },
                                 'history_context': history_debug_info,
                                 'orchestration': turn_orchestration_plan,
+                                'evidence_ledger': turn_evidence_ledger,
                                 'capability_usage': build_streaming_capability_usage(),
                                 'source_review': compact_source_review_result_for_metadata(source_review_result),
                                 'deep_research': deep_research_result,
@@ -18437,6 +18452,7 @@ def register_route_backend_chats(bp):
                             'metadata': {
                                 **cancel_metadata,
                                 'orchestration': turn_orchestration_plan,
+                                'evidence_ledger': turn_evidence_ledger,
                             },
                             'thoughts_enabled': thought_tracker.enabled,
                         },
@@ -18972,6 +18988,7 @@ def register_route_backend_chats(bp):
                             },
                             'history_context': history_debug_info,
                             'orchestration': turn_orchestration_plan,
+                            'evidence_ledger': turn_evidence_ledger,
                             'capability_usage': build_streaming_capability_usage(),
                             'agent_runtime': agent_runtime_metadata or None,
                             'source_review': compact_source_review_result_for_metadata(source_review_result),
@@ -19189,6 +19206,7 @@ def register_route_backend_chats(bp):
                                 'reasoning_effort': reasoning_effort,
                                 'history_context': history_debug_info,
                                 'orchestration': turn_orchestration_plan,
+                                'evidence_ledger': turn_evidence_ledger,
                                 'capability_usage': build_streaming_capability_usage(),
                                 'source_review': compact_source_review_result_for_metadata(source_review_result),
                                 'deep_research': deep_research_result,
@@ -19213,6 +19231,7 @@ def register_route_backend_chats(bp):
                             'incomplete': True,
                             'error': error_msg,
                             'orchestration': turn_orchestration_plan,
+                            'evidence_ledger': turn_evidence_ledger,
                         },
                     }
                     yield f"data: {json.dumps(partial_error_payload)}\n\n"
