@@ -2,7 +2,7 @@
 # test_image_proposal_pipeline.py
 """
 Functional test for opt-in chat image proposal pipeline.
-Version: 0.241.138
+Version: 0.250.058
 Implemented in: 0.241.138
 
 This test ensures the reusable image proposal helpers normalize model-authored
@@ -62,6 +62,8 @@ def test_image_proposal_guidance_and_gating():
     assert image_generation_is_enabled({'enable_image_generation': True}) is True
     assert image_generation_is_enabled({'enable_image_generation': False}) is False
     assert user_request_supports_image_proposals('Create a classroom timeline slide deck') is True
+    assert user_request_supports_image_proposals('Draw a landscape') is True
+    assert user_request_supports_image_proposals('Draw insights from the SQL data') is False
     assert user_request_supports_image_proposals('What is the capital of France?') is False
 
 

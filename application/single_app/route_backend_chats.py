@@ -107,6 +107,10 @@ from functions_chart_operations import (
 from functions_conversation_cache import invalidate_conversation_cache_for_item
 from functions_conversation_metadata import collect_conversation_metadata, update_conversation_with_metadata
 from functions_conversation_unread import mark_conversation_unread
+from functions_chat_orchestration import (
+    build_turn_orchestration_guidance_message,
+    build_turn_orchestration_plan,
+)
 from functions_image_messages import build_image_message_documents, decode_image_content
 from functions_icon_utils import normalize_icon_payload
 from functions_image_generation import (
@@ -4940,6 +4944,18 @@ def maybe_append_chart_tool_system_message(conversation_history, user_message, s
     return insert_system_message_after_existing_system_messages(
         conversation_history,
         build_chart_tool_usage_system_message(),
+    )
+
+
+def maybe_append_turn_orchestration_system_message(conversation_history, orchestration_plan):
+    """Add coordination guidance for a planned multi-source turn."""
+    guidance = build_turn_orchestration_guidance_message(orchestration_plan)
+    if not guidance:
+        return conversation_history
+
+    return insert_system_message_after_existing_system_messages(
+        conversation_history,
+        guidance,
     )
 
 
@@ -11679,6 +11695,7 @@ def register_route_backend_chats(bp):
         selected_document_ids = data.get('selected_document_ids', [])
         if not selected_document_ids and selected_document_id:
             selected_document_ids = [selected_document_id]
+        requested_selected_document_ids = list(selected_document_ids or [])
 
         requested_action = data.get('document_action') if isinstance(data.get('document_action'), dict) else {}
         debug_print(
@@ -11699,6 +11716,14 @@ def register_route_backend_chats(bp):
                 'window_unit': 'pages',
                 'max_retries_per_window': 1,
             }
+        requested_action_document_ids = _normalize_conversation_task_document_ids(
+            requested_action.get('document_ids')
+        )
+        requested_selected_document_ids = (
+            requested_action_document_ids
+            if requested_action_document_ids
+            else requested_selected_document_ids
+        )
         request_agent_info = data.get('agent_info') if isinstance(data.get('agent_info'), dict) else {}
         canonical_request_agent = _resolve_canonical_chat_agent(user_id, settings, request_agent_info)
         assigned_knowledge_filters = (
@@ -11853,6 +11878,44 @@ def register_route_backend_chats(bp):
         conversation_id = conversation_item.get('id')
         g.conversation_id = conversation_id
 
+        assigned_knowledge_planned = bool(
+            assigned_knowledge_filters
+            and assigned_knowledge_filters.get('has_workspace_knowledge')
+        )
+        turn_orchestration_plan = build_turn_orchestration_plan(
+            user_message,
+            conversation_id=conversation_id,
+            selected_agent=request_agent_info,
+            selected_action=normalized_action,
+            selected_document_ids=requested_selected_document_ids,
+            conversation_document_ids=auto_linked_chat_upload_document_ids,
+            assigned_knowledge_enabled=assigned_knowledge_planned,
+            document_scope=document_scope,
+            active_group_ids=active_group_ids,
+            active_public_workspace_ids=active_public_workspace_ids,
+            tags=data.get('tags'),
+            user_workspace_context_enabled=data.get('user_workspace_context_enabled'),
+            image_generation_available=image_generation_is_enabled(settings),
+            model_deployment=data.get('model_deployment'),
+            model_id=data.get('model_id'),
+            model_endpoint_id=data.get('model_endpoint_id'),
+            model_provider=data.get('model_provider'),
+            reasoning_effort=data.get('reasoning_effort'),
+            prompt_info=data.get('prompt_info'),
+        )
+        log_event(
+            '[Orchestration] Document action turn plan created',
+            extra={
+                'conversation_id': conversation_id,
+                'user_id': user_id,
+                'run_id': turn_orchestration_plan.get('run_id'),
+                'mode': turn_orchestration_plan.get('mode'),
+                'task_profile': turn_orchestration_plan.get('task_profile'),
+                'action_type': normalized_action.get('type'),
+                'source_count': len(turn_orchestration_plan.get('sources') or []),
+            },
+        )
+
         previous_thread_id = _get_latest_chat_thread_id(conversation_id)
         current_thread_id = str(uuid.uuid4())
         user_message_id = f"{conversation_id}_user_{int(time.time())}_{random.randint(1000,9999)}"
@@ -11867,6 +11930,7 @@ def register_route_backend_chats(bp):
             assigned_knowledge_filters=assigned_knowledge_filters,
             streaming_enabled=callable(publish_background_event),
         )
+        user_metadata['orchestration'] = turn_orchestration_plan
         if auto_linked_chat_upload_document_ids:
             user_metadata['workspace_search']['auto_linked_chat_upload_document_ids'] = auto_linked_chat_upload_document_ids
             user_metadata['workspace_search']['auto_linked_chat_upload_document_count'] = len(auto_linked_chat_upload_document_ids)
@@ -12109,6 +12173,7 @@ def register_route_backend_chats(bp):
             'metadata': {
                 'token_usage': execution_result.get('token_usage'),
                 'user_info': response_message_context.get('user_info'),
+                'orchestration': turn_orchestration_plan,
                 'capability_usage': document_action_capability_usage,
                 'thread_info': {
                     'thread_id': response_message_context.get('thread_id'),
@@ -16300,6 +16365,16 @@ def register_route_backend_chats(bp):
                 if isinstance(user_workspace_context_requested, str):
                     user_workspace_context_requested = user_workspace_context_requested.lower() == 'true'
                 user_workspace_context_requested = bool(user_workspace_context_requested)
+                requested_selected_document_ids = list(selected_document_ids or [])
+                requested_document_scope = document_scope
+                requested_active_group_ids = list(active_group_ids or [])
+                requested_active_public_workspace_ids = list(active_public_workspace_ids or [])
+                requested_tags_filter = list(tags_filter or [])
+                requested_hybrid_search_enabled = bool(hybrid_search_enabled)
+                requested_web_search_enabled = bool(web_search_enabled)
+                requested_url_access_enabled = bool(url_access_enabled)
+                requested_source_review_enabled = bool(source_review_enabled)
+                requested_deep_research_enabled = bool(deep_research_enabled)
                 prompt_urls = extract_urls_from_text(user_message)
                 url_access_requested = bool(url_access_enabled)
                 if url_access_requested:
@@ -16675,6 +16750,54 @@ def register_route_backend_chats(bp):
                     selected_document_id = effective_selected_document_id
                     document_scope = effective_document_scope
 
+                prior_grounded_document_refs = _normalize_prior_grounded_document_refs(conversation_item)
+                assigned_knowledge_planned = bool(
+                    assigned_knowledge_filters
+                    and (
+                        assigned_knowledge_filters.get('has_workspace_knowledge')
+                        or assigned_knowledge_url_review_urls
+                        or assigned_knowledge_deep_research_urls
+                    )
+                )
+                turn_orchestration_plan = build_turn_orchestration_plan(
+                    user_message,
+                    conversation_id=conversation_id,
+                    selected_agent=request_agent_info,
+                    selected_action=data.get('document_action'),
+                    selected_document_ids=requested_selected_document_ids,
+                    conversation_document_ids=auto_linked_chat_upload_document_ids,
+                    assigned_knowledge_enabled=assigned_knowledge_planned,
+                    document_scope=requested_document_scope,
+                    active_group_ids=requested_active_group_ids,
+                    active_public_workspace_ids=requested_active_public_workspace_ids,
+                    tags=requested_tags_filter,
+                    hybrid_search_enabled=requested_hybrid_search_enabled,
+                    web_search_enabled=requested_web_search_enabled,
+                    url_access_enabled=requested_url_access_enabled,
+                    source_review_enabled=requested_source_review_enabled,
+                    deep_research_enabled=requested_deep_research_enabled,
+                    user_workspace_context_enabled=user_workspace_context_requested,
+                    prior_citation_count=len(prior_grounded_document_refs),
+                    image_generation_available=image_generation_is_enabled(settings),
+                    model_deployment=frontend_gpt_model,
+                    model_id=frontend_model_id,
+                    model_endpoint_id=frontend_model_endpoint_id,
+                    model_provider=frontend_model_provider,
+                    reasoning_effort=reasoning_effort,
+                    prompt_info=data.get('prompt_info'),
+                )
+                log_event(
+                    '[Orchestration] Turn plan created',
+                    extra={
+                        'conversation_id': conversation_id,
+                        'user_id': user_id,
+                        'run_id': turn_orchestration_plan.get('run_id'),
+                        'mode': turn_orchestration_plan.get('mode'),
+                        'task_profile': turn_orchestration_plan.get('task_profile'),
+                        'source_count': len(turn_orchestration_plan.get('sources') or []),
+                    },
+                )
+
                 # Determine chat type
                 actual_chat_type = 'personal_single_user'
                 if conversation_item.get('chat_type'):
@@ -16826,6 +16949,7 @@ def register_route_backend_chats(bp):
                 if agent_selection_metadata:
                     user_metadata['agent_selection'] = agent_selection_metadata
 
+                user_metadata['orchestration'] = turn_orchestration_plan
                 user_metadata['chat_context'] = {
                     'conversation_id': conversation_id
                 }
@@ -18191,6 +18315,10 @@ def register_route_backend_chats(bp):
                     user_message,
                     selected_agent,
                 )
+                conversation_history_for_api = maybe_append_turn_orchestration_system_message(
+                    conversation_history_for_api,
+                    turn_orchestration_plan,
+                )
                 conversation_history_for_api = maybe_append_image_proposal_system_message(
                     conversation_history_for_api,
                     user_message,
@@ -18257,6 +18385,7 @@ def register_route_backend_chats(bp):
                                     'streaming': 'Enabled',
                                 },
                                 'history_context': history_debug_info,
+                                'orchestration': turn_orchestration_plan,
                                 'capability_usage': build_streaming_capability_usage(),
                                 'source_review': compact_source_review_result_for_metadata(source_review_result),
                                 'deep_research': deep_research_result,
@@ -18305,7 +18434,10 @@ def register_route_backend_chats(bp):
                             'agent_name': agent_name_used if use_agent_streaming else None,
                             'agent_icon': agent_icon_used if use_agent_streaming else None,
                             'agent_tags': agent_tags_used if use_agent_streaming else [],
-                            'metadata': cancel_metadata,
+                            'metadata': {
+                                **cancel_metadata,
+                                'orchestration': turn_orchestration_plan,
+                            },
                             'thoughts_enabled': thought_tracker.enabled,
                         },
                     )
@@ -18839,6 +18971,7 @@ def register_route_backend_chats(bp):
                                 'streaming': 'Enabled',
                             },
                             'history_context': history_debug_info,
+                            'orchestration': turn_orchestration_plan,
                             'capability_usage': build_streaming_capability_usage(),
                             'agent_runtime': agent_runtime_metadata or None,
                             'source_review': compact_source_review_result_for_metadata(source_review_result),
@@ -19055,6 +19188,7 @@ def register_route_backend_chats(bp):
                                 'error': error_msg,
                                 'reasoning_effort': reasoning_effort,
                                 'history_context': history_debug_info,
+                                'orchestration': turn_orchestration_plan,
                                 'capability_usage': build_streaming_capability_usage(),
                                 'source_review': compact_source_review_result_for_metadata(source_review_result),
                                 'deep_research': deep_research_result,
@@ -19072,7 +19206,16 @@ def register_route_backend_chats(bp):
                         except Exception as ex:
                             pass
 
-                    yield f"data: {json.dumps({'error': error_msg, 'partial_content': accumulated_content})}\n\n"
+                    partial_error_payload = {
+                        'error': error_msg,
+                        'partial_content': accumulated_content,
+                        'metadata': {
+                            'incomplete': True,
+                            'error': error_msg,
+                            'orchestration': turn_orchestration_plan,
+                        },
+                    }
+                    yield f"data: {json.dumps(partial_error_payload)}\n\n"
 
             except Exception as e:
                 import traceback

@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.058)**
+
+#### New Features
+
+*   **Chat Turn Orchestration Foundation**
+    *   Added a lightweight direct-or-coordinated plan for standard streaming and Analyze/Compare chat turns, capturing selected agents, actions, documents, retrieval modes, conversation-linked context, model choices, and evidence requirements.
+    *   Selected capabilities are represented as required attempts, equivalent source requirements share execution steps, and coordinated finalizers receive guidance to use available results, disclose missing sources, preserve conflicts, and avoid unsupported claims.
+    *   Grounded image generation is the first proving profile, with finalizer instructions to withhold image proposals until requested evidence sources have been attempted or explicitly failed; simple questions and generic image requests retain direct one-step plans.
+    *   (Ref: microsoft/simplechat#1021, `functions_chat_orchestration.py`, `route_backend_chats.py`, `CHAT_TURN_ORCHESTRATION.md`)
+
 ### **(v0.250.057)**
 
 #### Bug Fixes
