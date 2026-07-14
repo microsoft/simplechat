@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.061)**
+
+#### New Features
+
+*   **Chat Orchestration Agent And Action Evidence Contract**
+    *   Added a connector-neutral `evidence_collection` task and response contract so selected agents and document actions can attempt governed tools and normalize supported facts, results, citations, artifacts, missing evidence, and failures into the shared ledger.
+    *   Private lookups remain bound to authenticated request context, current-turn invocation baselines prevent stale tool calls from becoming evidence, and credential-bearing tool output is redacted before compact persistence.
+    *   Grounded-image executors can no longer emit final proposal prose directly; their output is buffered into the ledger and replaced with an evidence-status handoff for the Phase 5 central finalizer.
+    *   (Ref: microsoft/simplechat#1021, `functions_agent_action_evidence.py`, `functions_evidence_collectors.py`, `route_backend_chats.py`, `CHAT_TURN_ORCHESTRATION.md`)
+
 ### **(v0.250.060)**
 
 #### New Features

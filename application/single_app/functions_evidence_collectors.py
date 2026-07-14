@@ -21,6 +21,7 @@ COLLECTOR_STATUSES = frozenset({
     'succeeded',
     'partial',
     'not_found',
+    'not_available',
     'failed',
     'unauthorized',
 })
@@ -999,6 +1000,19 @@ def apply_evidence_collector_result(
         if not fact_text:
             continue
         fact_confidence = str(fact.get('confidence') or 'source_supported').strip().lower()
+        requested_fact_requirement_ids = _normalize_ids(
+            fact.get('requirement_ids') or fact.get('requirement_id')
+        )
+        known_requirement_ids = {
+            str(requirement.get('id') or '').strip()
+            for requirement in ledger.get('requirements', [])
+            if isinstance(requirement, Mapping)
+        }
+        fact_requirement_ids = [
+            requirement_id
+            for requirement_id in requested_fact_requirement_ids
+            if requirement_id in known_requirement_ids
+        ] or effective_requirement_ids
         existing = next(
             (
                 entry
@@ -1010,7 +1024,7 @@ def apply_evidence_collector_result(
         if existing:
             if normalized_source_id not in existing.get('source_ids', []):
                 existing.setdefault('source_ids', []).append(normalized_source_id)
-            for requirement_id in effective_requirement_ids:
+            for requirement_id in fact_requirement_ids:
                 if requirement_id not in existing.get('requirement_ids', []):
                     existing.setdefault('requirement_ids', []).append(requirement_id)
             fact_ids.append(existing['id'])
@@ -1019,7 +1033,7 @@ def apply_evidence_collector_result(
             ledger,
             fact_text,
             [normalized_source_id],
-            requirement_ids=effective_requirement_ids,
+            requirement_ids=fact_requirement_ids,
             confidence=fact_confidence,
             fact_id=_unique_requested_id(
                 ledger.get('facts', []) + ledger.get('unsupported_facts', []),
@@ -1038,23 +1052,37 @@ def apply_evidence_collector_result(
         gap_message = _normalize_text(gap.get('message'), max_chars=1000)
         if not gap_message:
             continue
+        requested_gap_requirement_ids = _normalize_ids(
+            gap.get('requirement_ids') or gap.get('requirement_id')
+        )
+        known_gap_requirement_ids = {
+            str(requirement.get('id') or '').strip()
+            for requirement in ledger.get('requirements', [])
+            if isinstance(requirement, Mapping)
+        }
+        gap_requirement_ids = [
+            requirement_id
+            for requirement_id in requested_gap_requirement_ids
+            if requirement_id in known_gap_requirement_ids
+        ] or effective_requirement_ids
         if gap_kind == 'missing_evidence':
-            requirement_id = str(gap.get('requirement_id') or '').strip()
-            if not requirement_id and effective_requirement_ids:
-                requirement_id = effective_requirement_ids[0]
-            gap_entry = add_missing_evidence(
-                ledger,
-                requirement_id or None,
-                normalized_source_type,
-                gap_status,
-                gap_message,
-                source_id=normalized_source_id,
-                missing_id=_unique_requested_id(
-                    ledger.get('missing_or_failed', []),
-                    gap.get('id'),
-                    'gap',
-                ),
-            )
+            target_requirement_ids = gap_requirement_ids or [None]
+            for requirement_id in target_requirement_ids:
+                gap_entry = add_missing_evidence(
+                    ledger,
+                    requirement_id,
+                    normalized_source_type,
+                    gap_status,
+                    gap_message,
+                    source_id=normalized_source_id,
+                    missing_id=_unique_requested_id(
+                        ledger.get('missing_or_failed', []),
+                        gap.get('id'),
+                        'gap',
+                    ),
+                )
+                gap_ids.append(gap_entry['id'])
+            continue
         else:
             gap_entry = add_execution_failure(
                 ledger,
@@ -1063,7 +1091,7 @@ def apply_evidence_collector_result(
                 gap_message,
                 source_id=normalized_source_id,
                 step_id=gap.get('step_id'),
-                requirement_ids=effective_requirement_ids,
+                requirement_ids=gap_requirement_ids,
                 failure_id=_unique_requested_id(
                     ledger.get('missing_or_failed', []),
                     gap.get('id'),

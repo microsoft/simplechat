@@ -111,6 +111,14 @@ from functions_chat_orchestration import (
     build_turn_orchestration_guidance_message,
     build_turn_orchestration_plan,
 )
+from functions_agent_action_evidence import (
+    append_agent_action_evidence_guidance,
+    apply_agent_action_evidence_to_ledger,
+    build_agent_action_evidence_guidance_message,
+    build_agent_action_evidence_status_message,
+    build_agent_action_evidence_task,
+    normalize_agent_action_evidence_response,
+)
 from functions_evidence_collectors import populate_evidence_ledger_from_chat_sources
 from functions_evidence_ledger import (
     build_evidence_ledger_guidance_message,
@@ -5078,9 +5086,28 @@ def maybe_append_turn_evidence_ledger_system_message(conversation_history, evide
     )
 
 
-def maybe_append_image_proposal_system_message(conversation_history, user_message, settings, selected_agent=None):
+def maybe_append_agent_action_evidence_system_message(conversation_history, evidence_task):
+    """Add the structured evidence task before invoking a selected executor."""
+    guidance = build_agent_action_evidence_guidance_message(evidence_task)
+    if not guidance:
+        return conversation_history
+    return insert_system_message_after_existing_system_messages(
+        conversation_history,
+        guidance,
+    )
+
+
+def maybe_append_image_proposal_system_message(
+    conversation_history,
+    user_message,
+    settings,
+    selected_agent=None,
+    evidence_collection_task=None,
+):
     """Add image proposal guidance when image generation is available and useful."""
     del selected_agent
+    if evidence_collection_task:
+        return conversation_history
     if not image_generation_is_enabled(settings):
         return conversation_history
 
@@ -11996,6 +12023,7 @@ def register_route_backend_chats(bp):
 
         conversation_id = conversation_item.get('id')
         g.conversation_id = conversation_id
+        _set_authorized_chat_request_context(user_id, conversation_id, action_scope_context)
 
         assigned_knowledge_planned = bool(
             assigned_knowledge_filters
@@ -12043,6 +12071,31 @@ def register_route_backend_chats(bp):
             conversation_id=conversation_id,
             user_message_id=user_message_id,
         )
+        action_evidence_task = None
+        if turn_orchestration_plan.get('grounded_image_generation_requested'):
+            action_evidence_task = build_agent_action_evidence_task(
+                turn_orchestration_plan,
+                turn_evidence_ledger,
+                user_message,
+                executor_type='selected_action',
+                executor_name=normalized_action.get('type'),
+                capability_metadata=normalized_action,
+                authorization_context=getattr(g, 'authorized_chat_context', None),
+            )
+            if action_evidence_task and request_agent_info:
+                selected_agent_source = next(
+                    (
+                        source
+                        for source in turn_evidence_ledger.get('sources', [])
+                        if source.get('id') == 'selected_agent'
+                    ),
+                    None,
+                )
+                if selected_agent_source:
+                    action_evidence_task['delegated_sources'].append({
+                        'source_id': 'selected_agent',
+                        'requirement_ids': [],
+                    })
         user_metadata = _build_document_action_user_metadata(
             data=data,
             user_id=user_id,
@@ -12175,6 +12228,10 @@ def register_route_backend_chats(bp):
             assigned_knowledge_action_context.get('context_block'),
             normalized_action.get('type'),
         )
+        workflow_task_prompt = append_agent_action_evidence_guidance(
+            workflow_task_prompt,
+            action_evidence_task,
+        )
 
         workflow_like = {
             'id': f'chat-analyze:{conversation_id}',
@@ -12193,6 +12250,7 @@ def register_route_backend_chats(bp):
                 'provider': str(data.get('model_provider') or '').strip(),
             },
             'document_action': normalized_action,
+            'evidence_collection': action_evidence_task,
             'analyze': {
                 'enabled': normalized_action.get('type') == DOCUMENT_ACTION_TYPE_ANALYZE,
                 'document_ids': normalized_action.get('document_ids', []),
@@ -12242,6 +12300,19 @@ def register_route_backend_chats(bp):
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
+            if action_evidence_task:
+                action_failure_result = normalize_agent_action_evidence_response(
+                    action_evidence_task,
+                    execution_error=exc,
+                )
+                apply_agent_action_evidence_to_ledger(
+                    turn_evidence_ledger,
+                    action_evidence_task,
+                    action_failure_result,
+                )
+                user_metadata['evidence_ledger'] = turn_evidence_ledger
+                user_message_doc['metadata'] = user_metadata
+                cosmos_messages_container.upsert_item(user_message_doc)
             return {'error': str(exc), 'conversation_id': conversation_id, 'user_message_id': user_message_id}, 500
 
         assistant_timestamp = datetime.utcnow().isoformat()
@@ -12272,6 +12343,33 @@ def register_route_backend_chats(bp):
             workspace_search_attempted=True,
             selected_image_references=selected_image_references,
         )
+        document_action_reply = execution_result.get('reply', '')
+        if action_evidence_task:
+            action_response_contract = {
+                'sources_attempted': [{
+                    'tool': normalized_action.get('type'),
+                    'status': 'succeeded',
+                }],
+                'results': [{
+                    'type': f'document_{normalized_action.get("type")}',
+                    'status': 'succeeded',
+                    'summary': execution_result.get('reply') or 'Document action completed.',
+                }],
+            }
+            action_evidence_result = normalize_agent_action_evidence_response(
+                action_evidence_task,
+                executor_response=action_response_contract,
+                tool_invocations=execution_result.get('agent_citations') or [],
+                artifacts=execution_result.get('generated_analysis_artifacts') or [],
+            )
+            apply_agent_action_evidence_to_ledger(
+                turn_evidence_ledger,
+                action_evidence_task,
+                action_evidence_result,
+            )
+            document_action_reply = build_agent_action_evidence_status_message(
+                action_evidence_result
+            )
         user_metadata['evidence_ledger'] = turn_evidence_ledger
         user_message_doc['metadata'] = user_metadata
         cosmos_messages_container.upsert_item(user_message_doc)
@@ -12286,7 +12384,7 @@ def register_route_backend_chats(bp):
         document_generated_tabular_outputs = list(execution_result.get('generated_tabular_outputs') or [])
         assistant_table_generated_output = maybe_create_assistant_table_generated_output(
             user_question=user_message,
-            assistant_content=execution_result.get('reply', ''),
+            assistant_content=document_action_reply,
             conversation_id=conversation_id,
             existing_outputs=document_generated_analysis_artifacts + document_generated_tabular_outputs,
         )
@@ -12311,7 +12409,7 @@ def register_route_backend_chats(bp):
             'id': assistant_message_id,
             'conversation_id': conversation_id,
             'role': 'assistant',
-            'content': execution_result.get('reply', ''),
+            'content': document_action_reply,
             'timestamp': assistant_timestamp,
             'augmented': False,
             'hybrid_citations': hybrid_citations_list,
@@ -12426,7 +12524,7 @@ def register_route_backend_chats(bp):
         )
 
         return make_json_serializable({
-            'reply': execution_result.get('reply', ''),
+            'reply': document_action_reply,
             'conversation_id': conversation_id,
             'conversation_title': conversation_item.get('title', 'New Conversation'),
             'classification': conversation_item.get('classification', []),
@@ -18458,6 +18556,7 @@ def register_route_backend_chats(bp):
                 # Check if agents are enabled and should be used
                 selected_agent = None
                 selected_agent_metadata = None
+                agent_evidence_task = None
                 agent_name_used = None
                 agent_display_name_used = None
                 agent_icon_used = None
@@ -18515,6 +18614,20 @@ def register_route_backend_chats(bp):
                 if selected_agent_metadata:
                     user_metadata['agent_selection'] = selected_agent_metadata
 
+                if (
+                    selected_agent
+                    and turn_orchestration_plan.get('grounded_image_generation_requested')
+                ):
+                    agent_evidence_task = build_agent_action_evidence_task(
+                        turn_orchestration_plan,
+                        turn_evidence_ledger,
+                        user_message,
+                        executor_type='selected_agent',
+                        executor_name=agent_display_name_used or agent_name_used,
+                        capability_metadata=selected_agent,
+                        authorization_context=getattr(g, 'authorized_chat_context', None),
+                    )
+
                 conversation_history_for_api = maybe_append_chart_tool_system_message(
                     conversation_history_for_api,
                     user_message,
@@ -18528,15 +18641,21 @@ def register_route_backend_chats(bp):
                     conversation_history_for_api,
                     turn_evidence_ledger,
                 )
+                conversation_history_for_api = maybe_append_agent_action_evidence_system_message(
+                    conversation_history_for_api,
+                    agent_evidence_task,
+                )
                 conversation_history_for_api = maybe_append_image_proposal_system_message(
                     conversation_history_for_api,
                     user_message,
                     settings,
                     selected_agent,
+                    evidence_collection_task=agent_evidence_task,
                 )
 
                 # Stream the response
                 accumulated_content = ""
+                executor_evidence_content = ""
                 token_usage_data = None  # Will be populated from final stream chunk
                 # assistant_message_id was generated earlier for thought tracking
                 final_model_used = gpt_model  # Default to gpt_model, will be overridden if agent is used
@@ -18681,6 +18800,13 @@ def register_route_backend_chats(bp):
 
                         # Register callback to persist plugin thoughts to Cosmos in real-time
                         plugin_logger_cb = get_plugin_logger()
+                        baseline_agent_invocation_count = len(
+                            plugin_logger_cb.get_invocations_for_conversation(
+                                user_id,
+                                conversation_id,
+                                limit=1000,
+                            )
+                        )
                         callback_key = register_plugin_invocation_thought_callback(
                             plugin_logger_cb,
                             thought_tracker,
@@ -18757,6 +18883,7 @@ def register_route_backend_chats(bp):
                                             'active_public_workspace_ids': effective_active_public_workspace_ids,
                                             'selected_document_count': len(effective_selected_document_ids or []),
                                             'search_query': search_query,
+                                            'evidence_collection': agent_evidence_task,
                                         }
                                         agent_stream = selected_agent.invoke_stream(
                                             messages=agent_message_history,
@@ -18793,8 +18920,11 @@ def register_route_backend_chats(bp):
                                             chunk_content = response
 
                                         if chunk_content:
-                                            accumulated_content += chunk_content
-                                            yield f"data: {json.dumps({'content': chunk_content})}\n\n"
+                                            if agent_evidence_task:
+                                                executor_evidence_content += chunk_content
+                                            else:
+                                                accumulated_content += chunk_content
+                                                yield f"data: {json.dumps({'content': chunk_content})}\n\n"
 
                                         if stream_cancel_requested():
                                             yield finalize_cancelled_agent_stream_response()
@@ -18811,7 +18941,12 @@ def register_route_backend_chats(bp):
                                 except Exception as stream_error:
                                     if agent_retry_plan is None:
                                         candidate_retry_plan = classify_agent_stream_retry_mode(stream_error)
-                                        if candidate_retry_plan and not accumulated_content and attempt_number == 0:
+                                        if (
+                                            candidate_retry_plan
+                                            and not accumulated_content
+                                            and not executor_evidence_content
+                                            and attempt_number == 0
+                                        ):
                                             agent_retry_plan = candidate_retry_plan
                                             retry_state = apply_agent_stream_retry_mode(
                                                 selected_agent,
@@ -18838,6 +18973,19 @@ def register_route_backend_chats(bp):
                             )
                             debug_print(f"❌ Agent streaming error: {stream_error}")
                             traceback.print_exc()
+                            if agent_evidence_task:
+                                agent_failure_result = normalize_agent_action_evidence_response(
+                                    agent_evidence_task,
+                                    execution_error=stream_error,
+                                )
+                                apply_agent_action_evidence_to_ledger(
+                                    turn_evidence_ledger,
+                                    agent_evidence_task,
+                                    agent_failure_result,
+                                )
+                                user_metadata['evidence_ledger'] = turn_evidence_ledger
+                                user_message_doc['metadata'] = user_metadata
+                                cosmos_messages_container.upsert_item(user_message_doc)
                             error_payload = {'error': f'Agent streaming failed: {str(stream_error)}'}
                             if isinstance(stream_error, FoundryAgentUserAuthenticationRequired):
                                 auth_response = getattr(stream_error, 'auth_response', {}) or {}
@@ -18869,7 +19017,14 @@ def register_route_backend_chats(bp):
                             f"[Streaming][Plugin Callback] Deregistered callback after successful stream for key={callback_key}"
                         )
 
-                        agent_plugin_invocations = plugin_logger_cb.get_invocations_for_conversation(user_id, conversation_id)
+                        agent_plugin_invocations = get_new_plugin_invocations(
+                            plugin_logger_cb.get_invocations_for_conversation(
+                                user_id,
+                                conversation_id,
+                                limit=1000,
+                            ),
+                            baseline_agent_invocation_count,
+                        )
 
                         # Try to capture token usage from stream metadata
                         if stream_usage:
@@ -18981,6 +19136,24 @@ def register_route_backend_chats(bp):
                                     'timestamp': datetime.utcnow().isoformat(),
                                     'success': True
                                 })
+
+                        if agent_evidence_task:
+                            agent_evidence_result = normalize_agent_action_evidence_response(
+                                agent_evidence_task,
+                                executor_response=executor_evidence_content,
+                                tool_invocations=agent_plugin_invocations,
+                                citations=foundry_citations,
+                            )
+                            apply_agent_action_evidence_to_ledger(
+                                turn_evidence_ledger,
+                                agent_evidence_task,
+                                agent_evidence_result,
+                            )
+                            accumulated_content = build_agent_action_evidence_status_message(
+                                agent_evidence_result
+                            )
+                            yield f"data: {json.dumps({'content': accumulated_content})}\n\n"
+                            user_metadata['evidence_ledger'] = turn_evidence_ledger
 
                         debug_print(f"[Agent Streaming] Captured {len(agent_citations_list)} citations")
                         final_model_used = actual_model_used
@@ -19271,6 +19444,7 @@ def register_route_backend_chats(bp):
                             user_message_doc['metadata']['model_selection']['model_icon'] = gpt_model_icon
                         if selected_agent_metadata:
                             user_message_doc.setdefault('metadata', {})['agent_selection'] = selected_agent_metadata
+                        user_message_doc.setdefault('metadata', {})['evidence_ledger'] = turn_evidence_ledger
                         cosmos_messages_container.upsert_item(user_message_doc)
                     except Exception as e:
                         debug_print(f"Warning: Could not update streaming user message metadata: {e}")
