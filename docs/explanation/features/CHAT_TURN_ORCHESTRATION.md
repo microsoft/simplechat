@@ -1,6 +1,6 @@
-# Chat Turn Orchestration Foundation
+# Chat Turn Orchestration
 
-Implemented in version: **0.250.058**  
+Implemented in version: **0.250.059**
 Associated issue: **[#1021](https://github.com/microsoft/simplechat/issues/1021)**
 
 ## Overview
@@ -70,11 +70,34 @@ Phase 1 is integrated with:
 
 The plan is intentionally dependency-light and rules-based so direct requests do not incur an extra planning-model call.
 
+## Phase 2 Result And Evidence Ledger
+
+Every supported turn now initializes a versioned, output-neutral result and evidence ledger after the user message ID is assigned. Standard streaming stores the same ledger beside the immutable plan on user, successful assistant, cancelled, and partial-error metadata. Analyze/Compare stores it on user and successful assistant metadata.
+
+The ledger is initialized from the plan and records:
+
+- Requested output, task type, task profile, orchestration mode, and plan/run linkage.
+- Evidence requirements and the source types that can satisfy them.
+- Planned sources with required state, origin, permission state, and requirement linkage.
+- Supported, derived, user-provided, placeholder, and unsupported fact confidence classes.
+- Normalized computed results, citations, and artifact lineage.
+- Explicit missing evidence, execution failures, authorization denials, and cancellations.
+- Unresolved or resolved conflicts that retain all contributing source and fact IDs.
+
+Unsupported statements are stored separately from supported facts. Provenance references must resolve to entries already present in the ledger, preventing finalizers from receiving facts with unknown source lineage.
+
+The contract is shared by answer, image-proposal, report, table, and future artifact finalizers. `compact_evidence_ledger_for_model()` returns bounded valid JSON without dangling provenance references, and `build_evidence_ledger_guidance_message()` provides common evidence-before-claims instructions without adding output-specific fields to the core schema.
+
+Phase 2 establishes and persists the contract. The route does not yet inject the initial planned ledger into the finalizer prompt because it contains no normalized live results and must not override evidence supplied through existing context paths. Phase 3 adapts existing conversation, document, workspace, web, research, source-review, and selected-image result structures to populate and inject it before finalization. Phase 4 applies the same contract to selected agents and actions.
+
 ## Security And Governance
 
 - Caller-supplied IDs are never treated as proof of authorization.
 - Existing conversation, document, group, public workspace, agent, and action authorization remains in force.
 - The plan stores compact metadata rather than raw tool payloads or source content.
+- The ledger records authorization status but never treats that status or a stored scope ID as an access decision; collectors and executors must revalidate access at their own boundaries.
+- Raw metadata parameters are not retained in the ledger. Binary values and metadata keys associated with credentials, secrets, tokens, keys, connection strings, or internal endpoints are omitted.
+- HTTP citation and artifact references have query strings and fragments removed so signed URLs are not persisted or sent to a model.
 - Prompt content is not copied into orchestration metadata.
 - Selected capabilities are required attempts, but unavailable or unauthorized sources must be represented explicitly rather than bypassing access controls.
 - Side effects, sensitive access, and budget overflow are marked as approval-required policy classes for later runtime enforcement.
@@ -101,13 +124,23 @@ Functional coverage is in `functional_tests/test_chat_turn_orchestration_plan.py
 - Selected-image Q&A without false generation.
 - Standard streaming and document-action route wiring.
 
+Ledger coverage is in `functional_tests/test_chat_evidence_ledger.py` and validates:
+
+- Plan-based initialization for answer and artifact task profiles.
+- Selected-image, public-web, selected-agent, and computed-output evidence.
+- Source, citation, artifact, fact, and result lineage.
+- Unsupported-fact separation, missing evidence, permission failures, and conflicts.
+- Secret, signed-URL, raw-payload, and binary-data omission.
+- Bounded model compaction that remains valid JSON.
+- Standard streaming success, cancellation, and partial-error persistence, plus document-action user and success metadata.
+
 ## Known Limitations
 
 Phase 1 records and gates plans but does not yet provide the complete orchestration runtime.
 
 - Planned steps are not yet scheduled through a generic execution graph.
 - Arbitrary governed tools are not yet discovered automatically.
-- Capability outputs do not yet share one normalized result/evidence ledger.
+- Existing capability outputs are not populated into the ledger until the Phase 3 and Phase 4 adapters are implemented; Phase 2 entries therefore begin in planned state.
 - A selected agent can still own response streaming instead of returning structured evidence to a separate central finalizer.
 - Plan status does not yet provide complete per-step execution reconciliation.
 - The legacy non-streaming compatibility path does not yet use the generic plan contract.

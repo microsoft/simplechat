@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.059)**
+
+#### New Features
+
+*   **Chat Result And Evidence Ledger Foundation**
+    *   Added a shared, output-neutral ledger for requirements, sources, supported and unsupported facts, computed results, citations, artifacts, conflicts, missing evidence, execution failures, and permission states.
+    *   Standard streaming now carries the same plan-linked ledger through user, success, cancellation, and partial-error metadata, while Analyze/Compare persists it on user and successful assistant messages.
+    *   Added bounded model compaction that preserves referential integrity while omitting raw payloads, binary data, credential-like metadata, and signed URL query strings.
+    *   (Ref: microsoft/simplechat#1021, `functions_evidence_ledger.py`, `route_backend_chats.py`, `CHAT_TURN_ORCHESTRATION.md`)
+
 ### **(v0.250.058)**
 
 #### New Features
