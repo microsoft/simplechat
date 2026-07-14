@@ -14,6 +14,7 @@ from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 
 from config import AzureOpenAI, cognitive_services_scope, cosmos_messages_container
 from functions_appinsights import log_event
+from functions_chat_orchestration import user_requested_image_generation
 from functions_image_messages import build_image_message_documents, decode_image_content
 
 
@@ -58,7 +59,10 @@ def user_request_supports_image_proposals(user_message):
     if not normalized_message:
         return False
 
-    return any(marker in normalized_message for marker in IMAGE_PROPOSAL_REQUEST_MARKERS)
+    return (
+        any(marker in normalized_message for marker in IMAGE_PROPOSAL_REQUEST_MARKERS)
+        or user_requested_image_generation(normalized_message)
+    )
 
 
 def build_image_proposal_guidance_message():
