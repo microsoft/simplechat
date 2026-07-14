@@ -1,6 +1,6 @@
 # Chat Turn Orchestration
 
-Implemented in version: **0.250.060**
+Implemented in version: **0.250.061**
 Associated issue: **[#1021](https://github.com/microsoft/simplechat/issues/1021)**
 
 ## Overview
@@ -99,6 +99,7 @@ Phase 3 adds a generic `EvidenceCollectorResult` contract with these terminal st
 - `succeeded`
 - `partial`
 - `not_found`
+- `not_available`
 - `failed`
 - `unauthorized`
 
@@ -116,6 +117,24 @@ The standard streaming route applies collectors after existing retrieval and aut
 
 Collector application deduplicates facts, citations, and artifacts. Required source failures, authorization denials, skipped attempts, and empty results remain explicit and reconcile the ledger to `partial` or `failed`; unresolved future-phase sources keep it in `collecting`.
 
+## Phase 4 Agent And Action Evidence Contract
+
+Phase 4 adds a connector-neutral `evidence_collection` task for selected agents and actions. The task carries the original request, unresolved evidence requirements, optional executor capability metadata, delegated planned sources, a structured output schema, and policy constraints. Optional metadata can identify capability tags, supported evidence types, required permissions, current-user context support, citation support, and sensitive-data handling without teaching the orchestration core any connector-specific tool names.
+
+The authorization descriptor identifies only the authenticated current user and the authorized scope type. It does not copy user, conversation, group, or public-workspace IDs into model-authored tool arguments. Existing plugins continue to resolve private lookups through the server-authored `g.authorized_chat_context`, and the document-action path now establishes that canonical context before its workflow executes.
+
+Executors are instructed to:
+
+- Attempt relevant governed tools before reporting that evidence is unavailable.
+- Use authenticated request context instead of caller-supplied identity or scope values.
+- Return concise facts, source attempts, citations, artifacts, results, and missing/failure states.
+- Avoid retaining raw sensitive payloads.
+- Leave the final response and `simpleimage` proposal to the orchestration finalizer.
+
+The response adapter normalizes successful per-turn tool invocations and document-action outputs into the shared ledger. It preserves `not_found`, `not_available`, `failed`, and `unauthorized` outcomes; associates facts and gaps with known requirements; resolves inferred planned sources attempted through an executor; and redacts credential-bearing fields before bounded summaries enter the ledger. Agent invocation baselines ensure prior tool calls from the same conversation are not mistaken for current-turn evidence.
+
+Grounded image generation is the first live profile using this mode. Selected-agent output is buffered as internal executor output rather than streamed as the final answer. Image-proposal guidance is withheld from the executor, its tool results are normalized after collection completes, and the route emits a deterministic evidence-status handoff. Phase 5 owns the separate central synthesis call that will turn this completed ledger into evidence-backed proposal cards. Analyze and Compare actions carry the same task, normalize successful results, and persist explicit action failures.
+
 ## Security And Governance
 
 - Caller-supplied IDs are never treated as proof of authorization.
@@ -132,6 +151,9 @@ Collector application deduplicates facts, citations, and artifacts. Required sou
 - HTTP citation and artifact references have query strings and fragments removed so signed URLs are not persisted or sent to a model.
 - Prompt content is not copied into orchestration metadata.
 - Selected capabilities are required attempts, but unavailable or unauthorized sources must be represented explicitly rather than bypassing access controls.
+- Agent/action task payloads describe the principal as `current_user` and omit caller-provided private identity and scope IDs.
+- Only tool invocations created after the current-turn baseline are eligible for executor evidence provenance.
+- Credential-bearing tool result fields and authorization strings are redacted before bounded fact summaries are recorded.
 - Side effects, sensitive access, and budget overflow are marked as approval-required policy classes for later runtime enforcement.
 
 ## Dependencies
@@ -176,15 +198,24 @@ Collector coverage is in `functional_tests/test_chat_evidence_collectors.py` and
 - A coordinated turn populates planned sources and produces bounded finalizer guidance before response generation.
 - Streaming and document-action routes refresh the shared ledger through the generic collector coordinator.
 
+Agent/action contract coverage is in `functional_tests/test_agent_action_evidence_contract.py` and validates:
+
+- A mock profile tool produces source-supported current-user facts.
+- An executor with no matching tool records explicit `not_available` evidence.
+- Generic SQL/action rows become provenance-linked ledger facts without connector-specific handling.
+- Action failures remain explicit without persisting raw error secrets.
+- Final proposal synthesis remains gated while executor evidence sources are pending.
+- Streaming and document-action routes apply the contract before status handoff and persistence.
+
 ## Known Limitations
 
 Phase 1 records and gates plans but does not yet provide the complete orchestration runtime.
 
 - Planned steps are not yet scheduled through a generic execution graph.
 - Arbitrary governed tools are not yet discovered automatically.
-- Selected agent and action execution outputs are not normalized into the ledger until the Phase 4 executor adapters are implemented.
 - The legacy non-streaming compatibility path does not yet use Phase 3 collectors.
-- A selected agent can still own response streaming instead of returning structured evidence to a separate central finalizer.
+- Outside the grounded-image proving profile, selected agents retain their existing response-streaming behavior until central synthesis is generalized.
+- Phase 4 ends with an evidence-status handoff; Phase 5 adds the central synthesis call that produces evidence-backed image proposals.
 - Plan status does not yet provide complete per-step execution reconciliation.
 - The live chat payload does not yet expose a dedicated selected-image-reference list; selected workspace images are represented as documents, and explicit headshot/reference intent can be detected from the message until a reference control is wired.
 

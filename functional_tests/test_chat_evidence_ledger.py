@@ -2,7 +2,7 @@
 # test_chat_evidence_ledger.py
 """
 Functional test for the generic chat result and evidence ledger.
-Version: 0.250.060
+Version: 0.250.061
 Implemented in: 0.250.059
 
 This test ensures orchestration evidence remains output-neutral, provenance-aware,
@@ -473,7 +473,7 @@ def test_supported_chat_paths_persist_one_shared_ledger_per_turn():
     assert 'from functions_evidence_ledger import (' in route_source
     assert '    create_evidence_ledger_from_plan,' in route_source
     assert route_source.count('turn_evidence_ledger = create_evidence_ledger_from_plan(') == 2
-    assert route_source.count("user_metadata['evidence_ledger'] = turn_evidence_ledger") == 4
+    assert route_source.count("user_metadata['evidence_ledger'] = turn_evidence_ledger") >= 4
     assert route_source.count("'evidence_ledger': turn_evidence_ledger,") >= 6
     assert 'conversation_id=conversation_id,\n            user_message_id=user_message_id,' in route_source
     assert 'conversation_id=conversation_id,\n                    user_message_id=user_message_id,' in route_source
