@@ -1,6 +1,6 @@
 # Chat Turn Orchestration
 
-Implemented in version: **0.250.059**
+Implemented in version: **0.250.060**
 Associated issue: **[#1021](https://github.com/microsoft/simplechat/issues/1021)**
 
 ## Overview
@@ -88,7 +88,33 @@ Unsupported statements are stored separately from supported facts. Provenance re
 
 The contract is shared by answer, image-proposal, report, table, and future artifact finalizers. `compact_evidence_ledger_for_model()` returns bounded valid JSON without dangling provenance references, and `build_evidence_ledger_guidance_message()` provides common evidence-before-claims instructions without adding output-specific fields to the core schema.
 
-Phase 2 establishes and persists the contract. The route does not yet inject the initial planned ledger into the finalizer prompt because it contains no normalized live results and must not override evidence supplied through existing context paths. Phase 3 adapts existing conversation, document, workspace, web, research, source-review, and selected-image result structures to populate and inject it before finalization. Phase 4 applies the same contract to selected agents and actions.
+Phase 2 establishes and persists the contract. An initial planned ledger is not injected because it contains no normalized live results and must not override evidence supplied through existing context paths. Phase 3 populates the ledger from those paths before injecting it into streaming finalizer context. Phase 4 applies the same contract to selected agents and actions.
+
+## Phase 3 Source Collectors
+
+Phase 3 adds a generic `EvidenceCollectorResult` contract with these terminal states:
+
+- `not_requested`
+- `skipped`
+- `succeeded`
+- `partial`
+- `not_found`
+- `failed`
+- `unauthorized`
+
+Collectors adapt outputs already produced by existing authorized systems; they do not replace or independently re-query those systems. Initial adapters cover:
+
+- Relevant conversation history, with prior user statements marked `user_provided` and assistant text excluded from supported facts.
+- Prior document/web citations and generated artifact lineage without promoting prior assistant claims.
+- Revalidated selected documents and authorized conversation-upload workspace documents.
+- Workspace search chunks, document metadata, classifications, tags, and citations.
+- Web Search citations and snippets, including separate no-result and execution-failure outcomes.
+- URL Access, Source Review, and Deep Research pages, excerpts, coverage, and skipped-page reasons.
+- Selected workspace or conversation images, including compact image lineage and available vision descriptions, detected objects, visible text, and contextual analysis.
+
+The standard streaming route applies collectors after existing retrieval and authorized conversation-history loading, updates the persisted user-message ledger, and injects a bounded evidence-ledger guidance message before final model or agent invocation. Analyze and Compare update the same ledger after their authorized document results become available so selected-document, upload, workspace-citation, and image lineage persist with the turn.
+
+Collector application deduplicates facts, citations, and artifacts. Required source failures, authorization denials, skipped attempts, and empty results remain explicit and reconcile the ledger to `partial` or `failed`; unresolved future-phase sources keep it in `collecting`.
 
 ## Security And Governance
 
@@ -96,6 +122,12 @@ Phase 2 establishes and persists the contract. The route does not yet inject the
 - Existing conversation, document, group, public workspace, agent, and action authorization remains in force.
 - The plan stores compact metadata rather than raw tool payloads or source content.
 - The ledger records authorization status but never treats that status or a stored scope ID as an access decision; collectors and executors must revalidate access at their own boundaries.
+- Conversation collectors receive messages only after personal-conversation ownership is revalidated.
+- Conversation and lineage collectors retain at most the 24 most recent mappings before ledger compaction.
+- Selected document collectors resolve each document again through the authorized personal, group, or public workspace scope before recording it.
+- Workspace, web, and source-review collectors consume the outputs of their existing permission-aware retrieval boundaries rather than caller-supplied result payloads.
+- Source Review pages flagged by the existing prompt-injection detector retain citation lineage, but their excerpts are omitted from supported ledger facts and recorded as partial evidence.
+- Selected-image collection retains compact IDs, MIME types, scope, and vision metadata without retaining image bytes, data URLs, blob paths, or signed URLs.
 - Raw metadata parameters are not retained in the ledger. Binary values and metadata keys associated with credentials, secrets, tokens, keys, connection strings, or internal endpoints are omitted.
 - HTTP citation and artifact references have query strings and fragments removed so signed URLs are not persisted or sent to a model.
 - Prompt content is not copied into orchestration metadata.
@@ -134,16 +166,26 @@ Ledger coverage is in `functional_tests/test_chat_evidence_ledger.py` and valida
 - Bounded model compaction that remains valid JSON.
 - Standard streaming success, cancellation, and partial-error persistence, plus document-action user and success metadata.
 
+Collector coverage is in `functional_tests/test_chat_evidence_collectors.py` and validates:
+
+- User-provided conversation facts remain separate from assistant-generated text.
+- Selected images produce supported vision facts or explicit partial evidence when vision metadata is absent.
+- Workspace, web, Source Review, selected-document, conversation-upload, prior-citation, and artifact outputs normalize consistently.
+- Web no-result, failed execution, skipped source pages, and unauthorized collection remain distinct.
+- Reapplying a collector result does not duplicate facts or citations.
+- A coordinated turn populates planned sources and produces bounded finalizer guidance before response generation.
+- Streaming and document-action routes refresh the shared ledger through the generic collector coordinator.
+
 ## Known Limitations
 
 Phase 1 records and gates plans but does not yet provide the complete orchestration runtime.
 
 - Planned steps are not yet scheduled through a generic execution graph.
 - Arbitrary governed tools are not yet discovered automatically.
-- Existing capability outputs are not populated into the ledger until the Phase 3 and Phase 4 adapters are implemented; Phase 2 entries therefore begin in planned state.
+- Selected agent and action execution outputs are not normalized into the ledger until the Phase 4 executor adapters are implemented.
+- The legacy non-streaming compatibility path does not yet use Phase 3 collectors.
 - A selected agent can still own response streaming instead of returning structured evidence to a separate central finalizer.
 - Plan status does not yet provide complete per-step execution reconciliation.
-- The legacy non-streaming compatibility path does not yet use the generic plan contract.
 - The live chat payload does not yet expose a dedicated selected-image-reference list; selected workspace images are represented as documents, and explicit headshot/reference intent can be detected from the message until a reference control is wired.
 
 These limitations are addressed by the evidence ledger, capability adapter, executor, central synthesis, and runtime phases.
