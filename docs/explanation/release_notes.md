@@ -2,6 +2,17 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.068)**
+
+#### New Features
+
+*   **Chat Orchestration Evaluation And Quality Gates**
+    *   Added six deterministic golden scenarios covering M365 profile and selected-image grounding, SQL metrics, missing public-profile evidence, selected-image Q&A, current local-rule choices, and governed-agent evidence-only central finalization.
+    *   Added privacy-safe aggregate evaluation events for terminal run/source outcomes, recommendation reason and decision states, decision and incremental latency, citation yield, missing evidence, and unsupported-fact counts without prompts, evidence text, canonical agent metadata, private scope details, endpoints, secrets, or action arguments.
+    *   Added one repeatable compile, functional, security, route-policy, UI-contract, and opt-in controlled live-smoke gate; repaired stale version, Blueprint, helper-dependency, and false-green test assertions found during the Phase 9 audit.
+    *   Generalized output types, complex workflows, Foundry/action-attached discovery, consequential or write approval, and durable in-flight execution remain deferred to Phase 10 or later.
+    *   (Ref: microsoft/simplechat#1021, `functions_orchestration_evaluation.py`, `run_phase9_orchestration_quality_gates.py`, `test_phase9_orchestration_golden_scenarios.py`, `test_phase9_orchestration_observability.py`, `test_phase9_orchestration_live_smoke.py`, `CHAT_ORCHESTRATION_EVALUATION_QUALITY_GATES.md`)
+
 ### **(v0.250.067)**
 
 #### New Features

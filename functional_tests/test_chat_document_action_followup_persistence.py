@@ -1,8 +1,8 @@
 # test_chat_document_action_followup_persistence.py
 """
 Functional test for chat document action follow-up persistence.
-Version: 0.241.023
-Implemented in: 0.241.095
+Version: 0.250.068
+Implemented in: 0.241.095; updated in: 0.250.068
 
 This test ensures new chat conversations started with analysis or
 document comparison update the default title, persist thoughts, and attach
@@ -21,11 +21,7 @@ def _read_workspace_file(*relative_parts: str) -> str:
 
 def test_chat_document_action_followups_are_persisted() -> None:
     route_content = _read_workspace_file('application', 'single_app', 'route_backend_chats.py')
-    config_content = _read_workspace_file('application', 'single_app', 'config.py')
 
-    assert 'VERSION = "0.241.023"' in config_content, (
-        'Expected config.py version 0.241.023 for the chat document action follow-up persistence fix.'
-    )
     assert 'def _build_document_action_hybrid_citations(execution_result):' in route_content, (
         'Expected a helper that synthesizes document citations for chat document actions.'
     )
@@ -48,6 +44,9 @@ def test_chat_document_action_followups_are_persisted() -> None:
     assert "'thoughts_enabled': thought_tracker.enabled," in route_content, (
         'Expected document-action chat responses to report the actual thought-tracker enabled state.'
     )
-    assert "if conversation_item.get('title', 'New Conversation') == 'New Conversation' and user_message:" in route_content, (
-        'Expected document-action chat requests to update default conversation titles from the first user message.'
+    assert 'def _set_initial_conversation_title(conversation_item, user_message):' in route_content, (
+        'Expected one shared helper to derive the initial conversation title.'
+    )
+    assert route_content.count('_set_initial_conversation_title(conversation_item, user_message)') >= 3, (
+        'Expected document-action and streaming paths to use the shared initial-title helper.'
     )

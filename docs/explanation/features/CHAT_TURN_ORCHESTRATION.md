@@ -1,6 +1,6 @@
 # Chat Turn Orchestration
 
-Implemented in version: **0.250.067**
+Implemented in version: **0.250.068**
 Associated issue: **[#1021](https://github.com/microsoft/simplechat/issues/1021)**
 
 ## Overview
@@ -288,6 +288,45 @@ Agent decisions use the existing ETag-protected proposal transition and resume l
 
 After a successful claim, assigned knowledge is read from the refreshed canonical record and action constraints are checked again. Any newly attached action removes the agent from the governed catalog and invalidates the approval. The agent enters the existing selected-agent evidence/runtime node as a required `discovery_approved` source, returns evidence rather than a final answer, and hands the terminal ledger to the central response finalizer. Inherited kernel function choice is disabled at the agent, execution-setting, and service levels for that invocation; raw plugin invocation citations are not persisted. Loader and wrapper telemetry records only bounded scope/type booleans, counts, response lengths, and lifecycle state for the discovered run. Saved toolbar defaults are unchanged. Duplicate decisions, live resume claims, and process-loss reconciliation continue through the Phase 8A idempotency contract, so an approved agent is not invoked twice.
 
+## Phase 9 Evaluation And Quality Gates
+
+Phase 9 adds evaluation coverage without adding orchestration behavior. Six
+deterministic golden scenarios compose the existing planner, governed-choice,
+collector, executor-evidence, runtime, synthesis, approval, and lineage
+contracts for M365 profile plus selected-image grounding, SQL metrics, missing
+public profile evidence, selected-image Q&A, current local-rule choices, and
+governed-agent central finalization.
+
+Terminal runs, recommendation creation, decisions, and resumed outcomes now
+emit fixed-schema evaluation events. Events contain bounded source outcome
+counts, recommendation reason codes, approved capability class, decision and
+incremental latency, citation count and yield, missing-evidence count, and
+unsupported-fact count. Run correlation values are hashed. Governed agents are
+reported only as `governed_agent`; prompts, evidence text, canonical agent IDs,
+private scope details, endpoints, secrets, action arguments, and inaccessible
+catalog counts are not accepted by the event builders.
+
+The repeatable gate command is:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\run_phase9_orchestration_quality_gates.py
+```
+
+The runner selects the repository virtual environment, disables unrelated
+globally installed pytest plugins, compiles the touched runtime modules, and
+runs deterministic orchestration, security, route-policy, UI-contract, and
+stale-gate regression suites. `--junit-xml <path>` writes CI-friendly test
+evidence. `--live-smoke` additionally requires an explicit deployed URL,
+authenticated state, and five-scenario manifest; no live or billable operation
+runs by default.
+
+The detailed matrix, manifest schema, privacy contract, and result artifact are
+documented in
+`docs/explanation/features/CHAT_ORCHESTRATION_EVALUATION_QUALITY_GATES.md`.
+Phase 10 remains responsible for generalized output types, broader multi-agent
+execution, Foundry or action-attached discovery, consequential/write approval,
+durable in-flight execution, and complex workflows.
+
 ## Security And Governance
 
 - Caller-supplied IDs are never treated as proof of authorization.
@@ -433,6 +472,13 @@ Phase 8B agent coverage is in:
 - `functional_tests/test_chat_capability_choice_route.py` for forged payload rejection, exact source-turn authorization, canonical constraint refresh, policy/membership loss, duplicate decision and resume idempotency, final invocation reauthorization, safe message metadata, and process-loss reconciliation.
 - `ui_tests/test_chat_capability_choice_card.py` for inert agent labels, safe scope/risk/sensitivity rendering, minimal browser payloads, pending/failed/invalidated/completed reconstruction, keyboard use, `aria-live`, 44-pixel actions, and desktop/mobile overflow.
 - `ui_tests/test_agent_modal_orchestrator_discovery.py` for closed defaults, explicit opt-in, read-only validation, bounded descriptor serialization, edit reconstruction, keyboard accessibility, and responsive layout.
+
+Phase 9 evaluation coverage is in:
+
+- `functional_tests/test_phase9_orchestration_golden_scenarios.py` for six deterministic cross-contract golden scenarios.
+- `functional_tests/test_phase9_orchestration_observability.py` for bounded run/source outcomes, recommendation states, latency, citation yield, and forbidden-value privacy checks.
+- `ui_tests/test_phase9_orchestration_live_smoke.py` for the validated five-scenario manifest, aggregate result artifact, and opt-in deployed-environment execution.
+- `scripts/run_phase9_orchestration_quality_gates.py` for the repeatable compile, functional, security, route-policy, UI-contract, and optional live-smoke command.
 
 ## Known Limitations
 

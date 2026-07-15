@@ -2,8 +2,8 @@
 # test_document_action_stream_reconnect.py
 """
 Functional test for document action stream reconnect support.
-Version: 0.241.023
-Implemented in: 0.241.090
+Version: 0.250.068
+Implemented in: 0.241.090; updated in: 0.250.068
 
 This test ensures analysis and document comparison streaming
 requests register replayable chat stream sessions so reconnecting to an
@@ -36,27 +36,23 @@ def slice_between(content: str, start_marker: str, end_marker: str) -> str:
 def test_document_action_stream_reconnect_wiring() -> None:
     print("🔍 Testing document action stream reconnect wiring...")
 
-    config_content = read_text("application/single_app/config.py")
     route_content = read_text("application/single_app/route_backend_chats.py")
 
     document_action_stream_block = slice_between(
         route_content,
-        "@app.route('/api/chat/document-action/stream', methods=['POST'])",
-        "@app.route('/api/chat/analyze', methods=['POST'])",
+        "@bp.route('/api/chat/document-action/stream', methods=['POST'])",
+        "@bp.route('/api/chat/analyze', methods=['POST'])",
     )
     analyze_stream_block = slice_between(
         route_content,
-        "@app.route('/api/chat/analyze/stream', methods=['POST'])",
-        "@app.route('/api/chat', methods=['POST'])",
+        "@bp.route('/api/chat/analyze/stream', methods=['POST'])",
+        "@bp.route('/api/chat', methods=['POST'])",
     )
 
-    assert 'VERSION = "0.241.023"' in config_content, (
-        "Expected config.py version 0.241.023 for the document action reconnect fix."
-    )
-    assert "@app.route('/api/chat/stream/status/<conversation_id>', methods=['GET'])" in route_content, (
+    assert "@bp.route('/api/chat/stream/status/<conversation_id>', methods=['GET'])" in route_content, (
         "Expected the shared chat stream status endpoint to exist for reconnect support."
     )
-    assert "@app.route('/api/chat/stream/reattach/<conversation_id>', methods=['GET'])" in route_content, (
+    assert "@bp.route('/api/chat/stream/reattach/<conversation_id>', methods=['GET'])" in route_content, (
         "Expected the shared chat stream reattach endpoint to exist for reconnect support."
     )
 

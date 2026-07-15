@@ -1,8 +1,8 @@
 # test_document_action_token_usage_aggregation.py
 """
 Functional test for document action token usage aggregation.
-Version: 0.241.023
-Implemented in: 0.241.116
+Version: 0.250.068
+Implemented in: 0.241.116; updated in: 0.250.068
 
 This test ensures analysis and comparison aggregate tokens across
 all internal model calls and persist the aggregate usage on assistant metadata.
@@ -16,7 +16,6 @@ import uuid
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WORKFLOW_RUNNER_PATH = os.path.join(REPO_ROOT, 'application', 'single_app', 'functions_workflow_runner.py')
 CHAT_ROUTE_PATH = os.path.join(REPO_ROOT, 'application', 'single_app', 'route_backend_chats.py')
-CONFIG_PATH = os.path.join(REPO_ROOT, 'application', 'single_app', 'config.py')
 
 
 def assert_equal(actual, expected, label):
@@ -138,6 +137,10 @@ def test_document_analysis_token_aggregation():
             )[-1],
             '_resolve_document_action_reply': lambda result: result.get('reply', ''),
             '_extract_message_text': lambda content: content,
+            '_is_per_document_analysis_mode': lambda action_config: False,
+            '_build_workflow_chat_messages': lambda prompt_text, **kwargs: [
+                {'role': 'user', 'content': prompt_text}
+            ],
             'debug_print': lambda *args, **kwargs: None,
         },
     )
@@ -169,7 +172,6 @@ def test_document_analysis_token_aggregation():
         'analysis token aggregation',
     )
     print('Document analysis token aggregation passed.')
-    return True
 
 
 def test_document_comparison_token_aggregation():
@@ -212,6 +214,9 @@ def test_document_comparison_token_aggregation():
             )[-1],
             '_resolve_document_action_reply': lambda result: result.get('reply', ''),
             '_extract_message_text': lambda content: content,
+            '_build_workflow_chat_messages': lambda prompt_text, **kwargs: [
+                {'role': 'user', 'content': prompt_text}
+            ],
             'debug_print': lambda *args, **kwargs: None,
         },
     )
@@ -244,7 +249,6 @@ def test_document_comparison_token_aggregation():
         'document comparison token aggregation',
     )
     print('Document comparison token aggregation passed.')
-    return True
 
 
 def test_workflow_assistant_persists_token_usage():
@@ -260,6 +264,8 @@ def test_workflow_assistant_persists_token_usage():
         extra_globals={
             '_utc_now_iso': lambda: '2025-01-01T00:00:00+00:00',
             '_get_document_action_config': lambda workflow: workflow.get('document_action', {}),
+            '_get_workflow_scope': lambda workflow: 'group' if workflow.get('group_id') else 'personal',
+            '_get_workflow_group_id': lambda workflow: str(workflow.get('group_id') or ''),
             '_persist_agent_citation_artifacts': lambda **kwargs: [],
             'cosmos_messages_container': message_container,
             'cosmos_conversations_container': conversation_container,
@@ -310,7 +316,6 @@ def test_workflow_assistant_persists_token_usage():
     assert_equal(len(logged_usage), 1, 'workflow token usage log count')
     assert_equal(logged_usage[0]['total_tokens'], 240, 'workflow logged token total')
     print('Workflow assistant token usage persistence passed.')
-    return True
 
 
 def test_chat_document_action_persists_token_usage():
@@ -323,18 +328,6 @@ def test_chat_document_action_persists_token_usage():
     assert_in("'document_action_type': normalized_action.get('type')", content, 'chat token usage log context')
     assert_in('log_token_usage(', content, 'chat token usage activity logging')
     print('Chat document action token usage persistence markers passed.')
-    return True
-
-
-def test_version_update():
-    print('Testing version update...')
-
-    with open(CONFIG_PATH, 'r', encoding='utf-8') as handle:
-        content = handle.read()
-
-    assert_in('VERSION = "0.241.023"', content, 'config version update')
-    print('Version update passed.')
-    return True
 
 
 def run_tests():
@@ -346,14 +339,14 @@ def run_tests():
         test_document_comparison_token_aggregation,
         test_workflow_assistant_persists_token_usage,
         test_chat_document_action_persists_token_usage,
-        test_version_update,
     ]
 
     results = []
     for test in tests:
         print(f'\n{test.__name__}:')
         try:
-            results.append(test())
+            test()
+            results.append(True)
         except Exception as exc:
             print(f'FAILED: {exc}')
             results.append(False)

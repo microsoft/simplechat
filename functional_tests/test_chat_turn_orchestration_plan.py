@@ -2,8 +2,8 @@
 # test_chat_turn_orchestration_plan.py
 """
 Functional test for the chat turn orchestration planning foundation.
-Version: 0.250.067
-Implemented in: 0.250.058
+Version: 0.250.068
+Implemented in: 0.250.058; updated in: 0.250.068
 
 This test ensures every turn receives a direct or coordinated plan, selected
 capabilities are required attempts, and grounded image generation remains a
@@ -18,7 +18,6 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SINGLE_APP_ROOT = REPO_ROOT / 'application' / 'single_app'
 ROUTE_BACKEND_CHATS = SINGLE_APP_ROOT / 'route_backend_chats.py'
-CONFIG_FILE = SINGLE_APP_ROOT / 'config.py'
 sys.path.insert(0, str(SINGLE_APP_ROOT))
 
 from functions_chat_orchestration import (  # noqa: E402
@@ -417,9 +416,7 @@ def test_attached_headshot_is_detected_as_requested_image_evidence():
 
 def test_streaming_chat_path_persists_and_applies_plan():
     route_source = ROUTE_BACKEND_CHATS.read_text(encoding='utf-8')
-    config_source = CONFIG_FILE.read_text(encoding='utf-8')
 
-    assert 'VERSION = "0.250.067"' in config_source
     assert 'turn_orchestration_plan = build_turn_orchestration_plan(' in route_source
     assert 'requested_action_document_ids = _normalize_conversation_task_document_ids(' in route_source
     assert 'requested_action_document_ids\n            if requested_action_document_ids' in route_source
