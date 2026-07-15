@@ -1,12 +1,13 @@
 # test_chat_inline_image_proposal_cards.py
 """
 UI test for inline image proposal approval cards in chat.
-Version: 0.241.142
+Version: 0.250.062
 Implemented in: 0.241.137
 
 This test ensures assistant-authored simpleimage blocks render as opt-in image
-proposal cards with clean streaming placeholders, hidden prompts, approve,
-approve-all, edit, cancel, inline result, saved-result hydration, and bulk-action alignment workflows.
+proposal cards with clean streaming placeholders, hidden prompts, provenance
+metadata, approve, approve-all, edit, cancel, inline result, saved-result hydration,
+and bulk-action alignment workflows.
 """
 
 import json
@@ -30,7 +31,7 @@ def _create_context(browser, viewport):
     return browser.new_context(**context_kwargs)
 
 
-def _proposal_block(index, title=None, prompt=None):
+def _proposal_block(index, title=None, prompt=None, metadata=None):
     proposal = {
         'version': 1,
         'visualId': f'proposal_{index}',
@@ -41,6 +42,7 @@ def _proposal_block(index, title=None, prompt=None):
         'slideNumber': index,
         'context': 'UI proposal test',
     }
+    proposal.update(metadata or {})
     return f"```simpleimage\n{json.dumps(proposal)}\n```"
 
 
@@ -177,7 +179,23 @@ def test_chat_inline_image_proposal_cards(viewport):
         _append_custom_ai_message(
             page,
             edit_message_id,
-            'One editable visual.\n\n' + _proposal_block(4, prompt='Original prompt'),
+            'One editable visual.\n\n' + _proposal_block(
+                4,
+                prompt='Original prompt',
+                metadata={
+                    'evidenceIds': [
+                        'fact-profile-role',
+                        'fact profile role',
+                        'fact-profile-role',
+                    ],
+                    'sourceSummary': 'Profile agent\n and selected headshot.',
+                    'missingEvidence': [
+                        'LinkedIn profile was not verified.',
+                        'LinkedIn profile was not verified.',
+                    ],
+                    'referenceImageIds': ['artifact-headshot', '<photo-reference>'],
+                },
+            ),
         )
         edit_message = page.locator(f'[data-message-id="{edit_message_id}"]')
         expect(edit_message.locator('.sc-inline-image-proposal-prompt-editor')).to_be_hidden()
@@ -189,6 +207,18 @@ def test_chat_inline_image_proposal_cards(viewport):
         expect(edit_message.locator('.sc-inline-image-proposal-approved')).to_have_count(1)
         expect(edit_message.locator('.sc-inline-image-proposal-result-image')).to_have_count(1)
         assert requests[-1]['proposal']['prompt'] == 'Edited prompt for approval'
+        assert requests[-1]['proposal']['evidenceIds'] == [
+            'fact-profile-role',
+            'fact_profile_role',
+        ]
+        assert requests[-1]['proposal']['sourceSummary'] == 'Profile agent and selected headshot.'
+        assert requests[-1]['proposal']['missingEvidence'] == [
+            'LinkedIn profile was not verified.',
+        ]
+        assert requests[-1]['proposal']['referenceImageIds'] == [
+            'artifact-headshot',
+            'photo-reference',
+        ]
 
         completed_message_id = 'ui-image-proposal-completed'
         _append_custom_ai_message(

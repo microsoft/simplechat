@@ -1,6 +1,6 @@
 # Chat Turn Orchestration
 
-Implemented in version: **0.250.061**
+Implemented in version: **0.250.062**
 Associated issue: **[#1021](https://github.com/microsoft/simplechat/issues/1021)**
 
 ## Overview
@@ -133,7 +133,37 @@ Executors are instructed to:
 
 The response adapter normalizes successful per-turn tool invocations and document-action outputs into the shared ledger. It preserves `not_found`, `not_available`, `failed`, and `unauthorized` outcomes; associates facts and gaps with known requirements; resolves inferred planned sources attempted through an executor; and redacts credential-bearing fields before bounded summaries enter the ledger. Agent invocation baselines ensure prior tool calls from the same conversation are not mistaken for current-turn evidence.
 
-Grounded image generation is the first live profile using this mode. Selected-agent output is buffered as internal executor output rather than streamed as the final answer. Image-proposal guidance is withheld from the executor, its tool results are normalized after collection completes, and the route emits a deterministic evidence-status handoff. Phase 5 owns the separate central synthesis call that will turn this completed ledger into evidence-backed proposal cards. Analyze and Compare actions carry the same task, normalize successful results, and persist explicit action failures.
+Grounded image generation is the first live profile using this mode. Selected-agent output is buffered as internal executor output rather than streamed as the final answer. Image-proposal guidance is withheld from the executor, its tool results are normalized after collection completes, and the route emits a deterministic evidence-status progress update before central synthesis. Analyze and Compare actions carry the same task, normalize successful results, and persist explicit action failures.
+
+## Phase 5 Central Synthesis Contract
+
+Phase 5 adds a versioned, output-neutral central synthesis request in `functions_central_synthesis.py`. The request binds one coordinated plan to the matching compact evidence ledger and contains:
+
+- The original user request.
+- Requested output, task type, task profile, finalizer, and run linkage.
+- A bounded, model-safe evidence ledger with supported facts, normalized results, citations, artifacts, conflicts, and missing/failure states.
+- A trusted output profile that supplies task-specific instructions and schema without adding image fields to the generic core.
+- Shared policy requiring supported evidence, missing-evidence disclosure, conflict preservation, partial outcomes, executor isolation, and approval before artifact generation.
+
+Synthesis is allowed only when plan and ledger run IDs match, both are coordinated, and evidence has reached `ready`, `partial`, or `failed`. A ledger still marked `collecting`, cancelled, or otherwise nonterminal cannot produce a proposal, and the route fails explicitly rather than falling back to an ungrounded response. Unsupported fact text is removed from the finalizer payload entirely; its omission count remains available while explicit missing and conflict records explain gaps safely.
+
+The finalizer receives an isolated system/user message pair instead of executor prompt history. User and source content remains serialized as data, delimiter characters are escaped, and the system message identifies the model as the single finalizer for that run. The same contract defaults to a normal response profile for non-image answers and can accept future report, table, presentation, or artifact profiles.
+
+### Grounded Image Proving Profile
+
+The grounded-image output profile requires the finalizer to:
+
+- Begin with a concise evidence summary and disclose material gaps.
+- Use only supported or user-provided facts in proposal descriptions and prompts.
+- Omit unsupported details or mark them as explicit placeholders.
+- Use generic person icons for collaborators without verified photo references.
+- Use selected-image features only when supported selected-image evidence contains them.
+- Emit self-contained, provider-ready `simpleimage` proposals without claiming generation has occurred.
+- Produce multiple proposals only when they serve distinct requested purposes.
+
+Model-only grounded-image turns replace legacy augmented history with the isolated central synthesis messages before the existing GPT stream. Selected-agent grounded-image turns first buffer and normalize executor evidence, surface the deterministic handoff as progress, and then call the configured chat model as central finalizer. Synthesis lifecycle metadata records `pending`, `completed`, `failed`, or `cancelled` without retaining raw request or ledger content. Successful synthesis marks the ledger `completed`, combines executor and finalizer token usage, and persists compact central-synthesis metadata beside the plan and evidence ledger.
+
+The `simpleimage` proposal schema now supports optional `evidenceIds`, `sourceSummary`, `missingEvidence`, and `referenceImageIds`. Python and browser normalizers bound and deduplicate these fields. At approval, evidence IDs must exist in the authorized source assistant message's ledger, and reference image IDs must identify `image_reference` artifacts in that ledger. Unbound or invented lineage IDs are removed before generation metadata is persisted. Image generation remains opt-in and starts only after user approval.
 
 ## Security And Governance
 
@@ -149,6 +179,9 @@ Grounded image generation is the first live profile using this mode. Selected-ag
 - Selected-image collection retains compact IDs, MIME types, scope, and vision metadata without retaining image bytes, data URLs, blob paths, or signed URLs.
 - Raw metadata parameters are not retained in the ledger. Binary values and metadata keys associated with credentials, secrets, tokens, keys, connection strings, or internal endpoints are omitted.
 - HTTP citation and artifact references have query strings and fragments removed so signed URLs are not persisted or sent to a model.
+- Unsupported fact text is excluded from central synthesis payloads while explicit missing and conflict records remain available to the finalizer.
+- Central synthesis payload delimiters are escaped and source/user content is treated as data rather than executable instructions.
+- Proposal evidence and reference-image IDs are revalidated against the authorized source assistant message's persisted ledger before approval.
 - Prompt content is not copied into orchestration metadata.
 - Selected capabilities are required attempts, but unavailable or unauthorized sources must be represented explicitly rather than bypassing access controls.
 - Agent/action task payloads describe the principal as `current_user` and omit caller-provided private identity and scope IDs.
@@ -163,6 +196,7 @@ Grounded image generation is the first live profile using this mode. Selected-ag
 - Existing agent selection and assigned knowledge handling.
 - Existing workspace, web, source-review, history, citation, and artifact systems.
 - Existing image proposal finalizer guidance.
+- Generic central synthesis request and output-profile contracts.
 
 ## Testing And Validation
 
@@ -205,7 +239,21 @@ Agent/action contract coverage is in `functional_tests/test_agent_action_evidenc
 - Generic SQL/action rows become provenance-linked ledger facts without connector-specific handling.
 - Action failures remain explicit without persisting raw error secrets.
 - Final proposal synthesis remains gated while executor evidence sources are pending.
-- Streaming and document-action routes apply the contract before status handoff and persistence.
+- Streaming and document-action routes apply the contract before synthesis or status persistence.
+
+Central synthesis coverage is in `functional_tests/test_central_synthesis_contract.py` and validates:
+
+- The generic response profile remains independent of `simpleimage` output rules.
+- Supported profile facts and selected-image evidence reach the compact finalizer request.
+- Unsupported LinkedIn claims are omitted while the missing-evidence state is disclosed.
+- Collaborators without verified photos use generic icons.
+- Verified image references and proposal provenance metadata are retained.
+- Invented evidence and image-reference IDs are removed at the authorized ledger boundary.
+- Collecting ledgers cannot produce central synthesis requests.
+- Finalizer payload delimiters are escaped.
+- Model-only and selected-agent grounded-image paths centralize before persistence.
+
+The existing desktop/mobile Playwright coverage in `ui_tests/test_chat_inline_image_proposal_cards.py` also verifies that normalized provenance metadata survives card rendering, prompt editing, and the approval request.
 
 ## Known Limitations
 
@@ -215,7 +263,8 @@ Phase 1 records and gates plans but does not yet provide the complete orchestrat
 - Arbitrary governed tools are not yet discovered automatically.
 - The legacy non-streaming compatibility path does not yet use Phase 3 collectors.
 - Outside the grounded-image proving profile, selected agents retain their existing response-streaming behavior until central synthesis is generalized.
-- Phase 4 ends with an evidence-status handoff; Phase 5 adds the central synthesis call that produces evidence-backed image proposals.
+- Analyze and Compare actions normalize and persist grounded-image evidence but still return the Phase 4 evidence-status handoff; using that ledger in central synthesis is a later output-profile integration.
+- Central synthesis currently uses a synchronous completion after selected-agent evidence collection; resilient scheduling, retry, cancellation during that finalizer call, and durable resume belong to Phase 6.
 - Plan status does not yet provide complete per-step execution reconciliation.
 - The live chat payload does not yet expose a dedicated selected-image-reference list; selected workspace images are represented as documents, and explicit headshot/reference intent can be detected from the message until a reference control is wired.
 
