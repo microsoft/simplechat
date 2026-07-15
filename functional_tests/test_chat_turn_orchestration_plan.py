@@ -2,7 +2,7 @@
 # test_chat_turn_orchestration_plan.py
 """
 Functional test for the chat turn orchestration planning foundation.
-Version: 0.250.064
+Version: 0.250.065
 Implemented in: 0.250.058
 
 This test ensures every turn receives a direct or coordinated plan, selected
@@ -124,6 +124,11 @@ def test_selected_capabilities_are_required_attempts():
         'prompt_id': 'prompt-1',
     }
     assert 'must not be persisted' not in json.dumps(plan)
+
+    guidance = build_turn_orchestration_guidance_message(plan)
+    assert 'Do not add a source-status note or list sources merely to report successful attempts.' in guidance
+    assert 'Only mention source execution status when a required source was skipped' in guidance
+    assert 'or produced partial results.' in guidance
 
 
 def test_grounded_image_is_a_coordinated_task_profile():
@@ -351,7 +356,7 @@ def test_streaming_chat_path_persists_and_applies_plan():
     route_source = ROUTE_BACKEND_CHATS.read_text(encoding='utf-8')
     config_source = CONFIG_FILE.read_text(encoding='utf-8')
 
-    assert 'VERSION = "0.250.064"' in config_source
+    assert 'VERSION = "0.250.065"' in config_source
     assert 'turn_orchestration_plan = build_turn_orchestration_plan(' in route_source
     assert 'requested_action_document_ids = _normalize_conversation_task_document_ids(' in route_source
     assert 'requested_action_document_ids\n            if requested_action_document_ids' in route_source
