@@ -1,6 +1,6 @@
 # Chat Turn Orchestration
 
-Implemented in version: **0.250.062**
+Implemented in version: **0.250.063**
 Associated issue: **[#1021](https://github.com/microsoft/simplechat/issues/1021)**
 
 ## Overview
@@ -165,6 +165,38 @@ Model-only grounded-image turns replace legacy augmented history with the isolat
 
 The `simpleimage` proposal schema now supports optional `evidenceIds`, `sourceSummary`, `missingEvidence`, and `referenceImageIds`. Python and browser normalizers bound and deduplicate these fields. At approval, evidence IDs must exist in the authorized source assistant message's ledger, and reference image IDs must identify `image_reference` artifacts in that ledger. Unbound or invented lineage IDs are removed before generation metadata is persisted. Image generation remains opt-in and starts only after user approval.
 
+## Phase 6 Request-Scoped Orchestration Runtime
+
+Phase 6 adds `functions_orchestration_runtime.py`, an in-process execution graph that binds one immutable plan to its matching evidence ledger for the lifetime of a chat request. Direct and coordinated turns now share the same `OrchestrationRun` contract. The runtime validates matching run IDs and modes, unique node IDs, known dependencies, acyclic graphs, a single finalizer, and bounded node and replan budgets before execution.
+
+Runtime nodes retain the Phase 1 step fields and add lifecycle metadata for:
+
+- `pending`
+- `running`
+- `succeeded`
+- `partial`
+- `failed`
+- `skipped`
+- `blocked`
+- `cancelled`
+
+The runtime supports two execution modes over the same graph:
+
+- Injected adapters can execute dependency-light operations directly. Sequential execution is the default. Independent adapters run in bounded parallel only when they are explicitly marked read-only, parallel-safe, and independent of Flask request context.
+- Existing chat-route operations continue through their established authorization and request-context boundaries, then reconcile their normalized ledger source states into the same runtime graph. This avoids duplicating retrieval or moving identity-sensitive work into worker threads.
+
+Read-only adapters can opt into at most three cancellation-aware attempts. Write-capable or otherwise non-read-only adapters remain single-attempt even if configured otherwise. Bounded replanning accepts only collection or planning nodes, revalidates the complete graph including finalizer dependencies, enforces the run's replan and node budgets, and records rejected follow-ups as explicit partial warnings.
+
+Required-node failures block dependent finalizers. Optional failures and partial nodes permit a clearly partial run when the finalizer can still produce a supported result. A finalizer cannot start until every dependency is terminal, and selected agents that cannot be resolved no longer silently fall back to the base model. Generic evidence discovery resolves only after authorized collectors have run; it succeeds when usable authorized evidence exists and fails closed with node-linked missing evidence otherwise.
+
+The standard streaming and Analyze/Compare paths persist compact `orchestration_runtime` metadata beside the plan and ledger. Source metadata records the responsible runtime node, and normalized facts, results, citations, artifacts, and gaps receive `step_id` provenance where applicable. Existing thought channels display concise node progress, while Application Insights receives run and node lifecycle, attempt count, status, and compact ledger-size telemetry without raw evidence or sensitive payloads.
+
+### Cancellation And Terminal Cleanup
+
+Standard streaming uses `ActiveConversationStreamSession.is_cancel_requested()` as the runtime cancellation signal. Cancellation marks pending nodes and externally running nodes cancelled, prevents pending synthesis, preserves useful partial evidence, and stores a terminal runtime snapshot even when no assistant content was emitted. A final generator cleanup also fails or cancels any run left active by an early return.
+
+Streaming document actions check cancellation before and after their existing workflow call. The underlying Analyze/Compare workflow remains non-preemptive, so a cancellation received during that call discards its result before assistant persistence and closes the runtime when control returns. Required runtime failures return an explicit conflict response rather than persisting a final document-action answer.
+
 ## Security And Governance
 
 - Caller-supplied IDs are never treated as proof of authorization.
@@ -187,6 +219,10 @@ The `simpleimage` proposal schema now supports optional `evidenceIds`, `sourceSu
 - Agent/action task payloads describe the principal as `current_user` and omit caller-provided private identity and scope IDs.
 - Only tool invocations created after the current-turn baseline are eligible for executor evidence provenance.
 - Credential-bearing tool result fields and authorization strings are redacted before bounded fact summaries are recorded.
+- Runtime adapters receive a copied ledger snapshot and return structured results; they cannot mutate the shared ledger from parallel workers.
+- Parallel execution is opt-in for read-only, request-context-independent adapters. Existing Flask-scoped collectors, agents, and actions remain inside their current authenticated request boundaries.
+- Runtime metadata excludes raw adapter results, raw evidence, debug exception text, and caller-supplied authorization identifiers.
+- Runtime source reconciliation consumes only evidence already normalized by the established authorization-aware collectors and executors.
 - Side effects, sensitive access, and budget overflow are marked as approval-required policy classes for later runtime enforcement.
 
 ## Dependencies
@@ -197,6 +233,8 @@ The `simpleimage` proposal schema now supports optional `evidenceIds`, `sourceSu
 - Existing workspace, web, source-review, history, citation, and artifact systems.
 - Existing image proposal finalizer guidance.
 - Generic central synthesis request and output-profile contracts.
+- Request-scoped `OrchestrationRun` scheduling and lifecycle helpers.
+- Existing `ActiveConversationStreamSession` cancellation, replay, heartbeat, and reattach behavior.
 
 ## Testing And Validation
 
@@ -255,17 +293,34 @@ Central synthesis coverage is in `functional_tests/test_central_synthesis_contra
 
 The existing desktop/mobile Playwright coverage in `ui_tests/test_chat_inline_image_proposal_cards.py` also verifies that normalized provenance metadata survives card rendering, prompt editing, and the approval request.
 
+Runtime coverage is in `functional_tests/test_orchestration_runtime.py` and validates:
+
+- Direct and coordinated turns share one run contract.
+- Dependency ordering and bounded parallel execution for independent read-only collectors.
+- Required versus optional failure behavior and finalizer isolation.
+- Cancellation of pending synthesis, including the final aggregate closure checkpoint.
+- Read-only retry limits and single-attempt write behavior.
+- Bounded replanning, node-budget enforcement, and cycle rejection.
+- Authorized evidence discovery success and fail-closed missing evidence.
+- Runtime-node provenance across normalized ledger entries.
+- Conversation, document, image, workspace, web, source-review, agent, action, response, and image-proposal node categories.
+- Standard streaming and document-action lifecycle, progress, cancellation, terminal cleanup, and metadata persistence wiring.
+
+The stream heartbeat, background execution, lifecycle observability, new-conversation reattach, and stop-control contracts also validate that runtime cancellation preserves the existing SSE protocol and replay behavior.
+
 ## Known Limitations
 
-Phase 1 records and gates plans but does not yet provide the complete orchestration runtime.
+Phase 6 provides the request-scoped in-process runtime, with these deliberate boundaries:
 
-- Planned steps are not yet scheduled through a generic execution graph.
 - Arbitrary governed tools are not yet discovered automatically.
+- Runs are not stored in a durable queue or Cosmos run store and cannot resume after process loss.
+- Parallel runtime adapters must be request-context independent; the live chat route currently reconciles its existing authorized collectors sequentially.
+- Cancellation of synchronous model, agent, and document-action SDK calls is best effort. Pending finalization is prevented, but an in-flight non-cooperative call may return before its result can be discarded.
 - The legacy non-streaming compatibility path does not yet use Phase 3 collectors.
-- Outside the grounded-image proving profile, selected agents retain their existing response-streaming behavior until central synthesis is generalized.
-- Analyze and Compare actions normalize and persist grounded-image evidence but still return the Phase 4 evidence-status handoff; using that ledger in central synthesis is a later output-profile integration.
-- Central synthesis currently uses a synchronous completion after selected-agent evidence collection; resilient scheduling, retry, cancellation during that finalizer call, and durable resume belong to Phase 6.
-- Plan status does not yet provide complete per-step execution reconciliation.
+- Outside the grounded-image proving profile, selected agents retain their existing response-streaming behavior. The runtime records this compatibility finalizer until central synthesis is generalized.
+- Analyze and Compare actions participate in runtime lifecycle and evidence normalization but retain their existing compatibility response finalizer. Grounded-image actions still return the evidence-status handoff rather than invoking central synthesis.
+- Phase 7 review, approval, intervention, and technical-detail UI is not included; Phase 6 reuses concise thought/progress events.
+- Automatic write, sensitive, consequential, or over-budget steps remain prohibited without a later approval runtime.
 - The live chat payload does not yet expose a dedicated selected-image-reference list; selected workspace images are represented as documents, and explicit headshot/reference intent can be detected from the message until a reference control is wired.
 
-These limitations are addressed by the evidence ledger, capability adapter, executor, central synthesis, and runtime phases.
+Durable persistence, intervention UX, broader finalizers, and generalized artifact generation remain later roadmap phases.

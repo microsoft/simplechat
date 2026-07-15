@@ -2,7 +2,7 @@
 # test_chat_stream_new_conversation_reattach.py
 """
 Functional test for new-conversation chat stream reattach support.
-Version: 0.239.191
+Version: 0.250.063
 Implemented in: 0.239.191
 
 This test ensures the streaming chat route finalizes a conversation id before
@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ROUTE_FILE = ROOT / "application" / "single_app" / "route_backend_chats.py"
 STREAMING_FILE = ROOT / "application" / "single_app" / "static" / "js" / "chat" / "chat-streaming.js"
 CONFIG_FILE = ROOT / "application" / "single_app" / "config.py"
-FIX_DOC_FILE = ROOT / "docs" / "explanation" / "fixes" / "CHAT_STREAM_NEW_CONVERSATION_REATTACH_FIX.md"
+FIX_DOC_FILE = ROOT / "docs" / "explanation" / "fixes" / "v0.241.001" / "CHAT_STREAM_NEW_CONVERSATION_REATTACH_FIX.md"
 
 
 def assert_contains(file_path: Path, expected: str) -> None:
@@ -43,7 +43,7 @@ def test_chat_stream_new_conversation_reattach() -> None:
     assert_contains(STREAMING_FILE, "if (allowRecovery) {")
     assert_contains(STREAMING_FILE, "allowRecovery: false,")
 
-    assert_contains(CONFIG_FILE, 'VERSION = "0.239.191"')
+    assert_contains(CONFIG_FILE, 'VERSION = "0.250.063"')
     assert_contains(FIX_DOC_FILE, "Fixed/Implemented in version: **0.239.191**")
     assert_contains(FIX_DOC_FILE, "finalizes a conversation id before registering the stream session")
 

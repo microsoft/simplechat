@@ -2,7 +2,7 @@
 # test_central_synthesis_contract.py
 """
 Functional test for the generic central synthesis contract.
-Version: 0.250.062
+Version: 0.250.063
 Implemented in: 0.250.062
 
 This test ensures grounded image proposals are finalized only from completed,

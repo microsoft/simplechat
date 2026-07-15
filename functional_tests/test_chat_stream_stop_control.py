@@ -2,7 +2,7 @@
 # test_chat_stream_stop_control.py
 """
 Functional test for chat stream stop control.
-Version: 0.241.098
+Version: 0.250.063
 Implemented in: 0.241.097
 
 This test ensures chat streams expose a user-scoped cancellation endpoint,
@@ -35,32 +35,37 @@ def test_chat_stream_stop_control_wiring() -> None:
     route_content = read_text("application/single_app/route_backend_chats.py")
     collaboration_content = read_text("application/single_app/route_backend_collaboration.py")
     streaming_content = read_text("application/single_app/static/js/chat/chat-streaming.js")
+    chats_css_content = read_text("application/single_app/static/css/chats.css")
     collaboration_js_content = read_text("application/single_app/static/js/chat/chat-collaboration.js")
     feature_doc_content = read_text("docs/explanation/features/v0.241.097/CHAT_STREAM_STOP_CONTROL.md")
 
-    assert_contains(config_content, 'VERSION = "0.241.098"', "config version")
+    assert_contains(config_content, 'VERSION = "0.250.063"', "config version")
 
     assert_contains(route_content, "STREAM_STATUS_CANCEL_REQUESTED = 'cancel_requested'", "chat route")
     assert_contains(route_content, "STREAM_STATUS_CANCELED = 'canceled'", "chat route")
     assert_contains(route_content, "def request_cancel(self, reason='user_requested'):", "chat stream session")
     assert_contains(route_content, "def is_cancel_requested(self):", "chat stream session")
     assert_contains(route_content, "def _build_stream_cancel_event(", "cancel event builder")
-    assert_contains(route_content, "@app.route('/api/chat/stream/cancel/<conversation_id>', methods=['POST'])", "chat cancel route")
+    assert_contains(route_content, "@bp.route('/api/chat/stream/cancel/<conversation_id>', methods=['POST'])", "chat cancel route")
     assert_contains(route_content, "if stream_cancel_requested():", "stream cancellation checkpoints")
     assert_contains(route_content, "yield finalize_cancelled_stream_response()", "cancelled stream finalization")
+    assert_contains(route_content, "cancel_orchestration_run(", "orchestration runtime cancellation")
+    assert_contains(route_content, "def persist_cancelled_document_action_runtime():", "document action cancellation persistence")
+    assert_contains(route_content, "stream_session.is_cancel_requested if stream_session else None", "document action cancellation callback")
 
     assert_contains(
         collaboration_content,
-        "@app.route('/api/collaboration/conversations/<conversation_id>/stream/cancel', methods=['POST'])",
+        "@bp.route('/api/collaboration/conversations/<conversation_id>/stream/cancel', methods=['POST'])",
         "collaboration cancel route",
     )
     assert_contains(collaboration_content, "source_conversation_id = str((conversation_doc or {}).get('source_conversation_id')", "source conversation lookup")
     assert_contains(collaboration_content, "CHAT_STREAM_REGISTRY.get_session(", "collaboration source stream lookup")
     assert_contains(collaboration_content, "stream_payload.get('cancelled') or stream_payload.get('canceled')", "collaboration cancel transform")
 
-    assert_contains(streaming_content, "className = 'btn btn-sm btn-danger stream-stop-btn", "message-local Stop button")
+    assert_contains(streaming_content, "className = 'btn btn-sm stream-stop-btn", "message-local Stop button")
     assert_contains(streaming_content, "rounded-circle p-0 border-0", "compact icon-only Stop button")
-    assert_contains(streaming_content, "stopButton.style.width = '1.65rem'", "fixed-size Stop button")
+    assert_contains(chats_css_content, ".stream-stop-btn {", "Stop button styles")
+    assert_contains(chats_css_content, "width: 1.65rem", "fixed-size Stop button")
     assert_contains(streaming_content, "async function requestStreamCancellation", "frontend cancel request")
     assert_contains(streaming_content, "fetch(streamContext.cancelEndpoint", "cancel endpoint POST")
     assert_contains(streaming_content, "finalizeCancelledStreamingMessage", "cancelled UI finalizer")
