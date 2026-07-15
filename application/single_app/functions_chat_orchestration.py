@@ -464,7 +464,8 @@ def build_turn_orchestration_guidance_message(plan):
         f'Required source attempts for this turn: {source_labels or "none"}.',
         f'Evidence requirements inferred from the request: {requirement_labels or "none beyond selected sources"}.',
         'Use the results from every attempted source when producing the final response.',
-        'Do not silently ignore a selected source. If a source was skipped, unavailable, unauthorized, failed, or returned no evidence, state that clearly.',
+        'Do not add a source-status note or list sources merely to report successful attempts.',
+        'Only mention source execution status when a required source was skipped, unavailable, unauthorized, failed, returned no evidence, or produced partial results.',
         'Use only supported facts, preserve material source conflicts, and identify partial results instead of filling evidence gaps with assumptions.',
     ]
 
