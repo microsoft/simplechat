@@ -2,8 +2,8 @@
 # test_agents_catalog_feature.py
 """
 Functional test for the Agents catalog page and agent icon/tag metadata.
-Version: 0.250.067
-Implemented in: 0.242.061; updated in 0.242.064; 0.242.065; 0.242.066; 0.250.067
+Version: 0.250.068
+Implemented in: 0.242.061; updated in 0.242.064; 0.242.065; 0.242.066; 0.250.067; 0.250.068
 
 This test ensures the global Agents page, shared catalog APIs, safe agent
 metadata, and chat handoff contract are present and regression-resistant.
@@ -70,7 +70,7 @@ def test_agents_catalog_routes_and_navigation():
     sidebar = read_repo_file("application/single_app/templates/_sidebar_nav.html")
     short_sidebar = read_repo_file("application/single_app/templates/_sidebar_short_nav.html")
 
-    assert_contains(app_route, "@app.route('/agents'", "Agents page route")
+    assert_contains(app_route, "@bp.route('/agents'", "Agents page Blueprint route")
     assert_contains(app_route, "@swagger_route(security=get_auth_security())", "Agents route swagger security")
     assert_contains(app_route, "@login_required", "Agents route login guard")
     assert_contains(app_route, "@user_required", "Agents route user guard")
@@ -81,9 +81,13 @@ def test_agents_catalog_routes_and_navigation():
     assert_contains(backend_route, "@bpa.route('/api/agents/catalog'", "catalog API route")
     assert_contains(backend_route, "@bpa.route('/api/agents/popular'", "popular API route")
     assert_contains(backend_route, "usage_window = str(request.args.get('usage_window')", "popular API usage-window query")
-    assert_contains(app_py, "register_route_frontend_agents(app)", "Agents route registration")
-    assert_contains(sidebar, "url_for('agents')", "main sidebar Agents link")
-    assert_contains(short_sidebar, "url_for('agents')", "chat sidebar Agents link")
+    assert_contains(
+        app_py,
+        "register_route_blueprint('frontend_agents', register_route_frontend_agents, user_required_blueprint)",
+        "Agents Blueprint registration",
+    )
+    assert_contains(sidebar, "url_for('frontend_agents.agents')", "main sidebar Agents link")
+    assert_contains(short_sidebar, "url_for('frontend_agents.agents')", "chat sidebar Agents link")
     assert_contains(sidebar, "sidebar_settings = settings if settings is defined else app_settings", "main sidebar settings fallback")
     assert_contains(short_sidebar, "sidebar_settings = settings if settings is defined else app_settings", "chat sidebar settings fallback")
     assert_not_contains(sidebar, "{% if settings.enable_semantic_kernel %}", "undefined settings semantic-kernel gate")

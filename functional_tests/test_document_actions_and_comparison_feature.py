@@ -1,8 +1,8 @@
 # test_document_actions_and_comparison_feature.py
 """
 Functional test for document actions and comparison.
-Version: 0.241.023
-Implemented in: 0.241.104
+Version: 0.250.068
+Implemented in: 0.241.104; updated in: 0.250.068
 
 This test ensures chat and workflows share the generic backend document action
 shape, expose Source/Target comparison selectors, and support compact summary
@@ -20,7 +20,6 @@ def read_text(relative_path):
 
 
 def test_document_actions_and_comparison_wiring():
-    config_content = read_text("application/single_app/config.py")
     document_actions_content = read_text("application/single_app/functions_document_actions.py")
     comparison_service_content = read_text("application/single_app/functions_document_comparison.py")
     documents_route_content = read_text("application/single_app/route_backend_documents.py")
@@ -38,9 +37,6 @@ def test_document_actions_and_comparison_wiring():
     search_service_content = read_text("application/single_app/functions_search_service.py")
     latest_feature_doc_content = read_text("docs/explanation/features/v0.241.104/CHAT_COMPARISON_MODAL_SUMMARY.md")
 
-    assert 'VERSION = "0.241.023"' in config_content, (
-        "Expected config.py version 0.241.023 for document actions and comparison."
-    )
     assert "DOCUMENT_ACTION_TYPE_COMPARISON = 'comparison'" in document_actions_content, (
         "Expected shared document action helpers to define the comparison action type."
     )
@@ -119,8 +115,11 @@ def test_document_actions_and_comparison_wiring():
     assert 'workflow-comparison-target-document-ids' in workflow_template_content, (
         "Expected the workflow modal to expose comparison version targets."
     )
-    assert 'Source Version' in workflow_template_content, (
-        "Expected the workflow modal to use Source terminology for the comparison anchor version."
+    assert 'workflow-comparison-source-dropzone' in workflow_template_content, (
+        "Expected the workflow modal to expose one Source dropzone."
+    )
+    assert '<div class="small fw-semibold text-body">Source</div>' in workflow_template_content, (
+        "Expected the workflow modal to label the comparison anchor as Source."
     )
     assert 'DOCUMENT_ACTION_COMPARISON' in workflow_js_content, (
         "Expected the workflow UI to handle the comparison action type."

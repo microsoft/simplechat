@@ -2,27 +2,85 @@
 #!/usr/bin/env python3
 """
 Functional test for personal agent user_id persistence.
-Version: 0.236.050
-Implemented in: 0.236.050
+Version: 0.250.068
+Implemented in: 0.236.050; updated in: 0.250.068
 
-This test ensures personal agent saves assign user_id to the persisted payload.
+This test ensures personal agent create and update operations bind the persisted
+payload to the authorized user instead of trusting caller-supplied ownership.
 """
 
-import os
+import sys
+from pathlib import Path
+from unittest.mock import patch
 
 
-def read_file_text(file_path):
-    with open(file_path, "r", encoding="utf-8") as file:
-        return file.read()
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SINGLE_APP_ROOT = REPO_ROOT / 'application' / 'single_app'
+sys.path.insert(0, str(SINGLE_APP_ROOT))
+
+import functions_personal_agents  # noqa: E402
+
+
+class FakePersonalAgentContainer:
+    def __init__(self):
+        self.existing = None
+        self.saved = []
+
+    def read_item(self, *, item, partition_key):
+        del item, partition_key
+        return dict(self.existing) if self.existing else None
+
+    def upsert_item(self, *, body):
+        saved = dict(body)
+        self.saved.append(saved)
+        return saved
 
 
 def test_personal_agent_user_id_saved():
-    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    file_path = os.path.join(repo_root, "application", "single_app", "functions_personal_agents.py")
-    content = read_file_text(file_path)
+    container = FakePersonalAgentContainer()
+    payload = {
+        'id': 'personal-agent-1',
+        'name': 'personal_agent',
+        'display_name': 'Personal Agent',
+        'description': 'Test agent',
+        'instructions': 'Help the user.',
+        'user_id': 'forged-owner',
+    }
 
-    assert "agent_data['user_id'] = user_id" in content, "Expected user_id to be set on persisted agent payload."
-    assert "agent_data['last_updated']" in content, "Expected last_updated to be set on persisted agent payload."
+    with (
+        patch.object(functions_personal_agents, 'cosmos_personal_agents_container', container),
+        patch.object(functions_personal_agents, 'ensure_governance_access'),
+        patch.object(
+            functions_personal_agents,
+            'sanitize_agent_payload',
+            side_effect=lambda value: dict(value),
+        ),
+        patch.object(
+            functions_personal_agents,
+            'keyvault_agent_save_helper',
+            side_effect=lambda value, *args, **kwargs: dict(value),
+        ),
+        patch.object(functions_personal_agents, 'bump_chat_bootstrap_user_cache_version'),
+    ):
+        created = functions_personal_agents.save_personal_agent(
+            'authorized-owner',
+            payload,
+        )
+        container.existing = dict(created)
+        updated = functions_personal_agents.save_personal_agent(
+            'authorized-owner',
+            {**payload, 'description': 'Updated agent'},
+            actor_user_id='authorized-editor',
+        )
+
+    assert len(container.saved) == 2
+    assert created['user_id'] == 'authorized-owner'
+    assert created['created_by'] == 'authorized-owner'
+    assert created['last_updated']
+    assert updated['user_id'] == 'authorized-owner'
+    assert updated['created_at'] == created['created_at']
+    assert updated['modified_by'] == 'authorized-editor'
+    assert updated['last_updated']
 
     print("✅ Personal agent save user_id persistence verified.")
 

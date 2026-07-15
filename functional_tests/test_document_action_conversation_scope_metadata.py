@@ -2,8 +2,8 @@
 # test_document_action_conversation_scope_metadata.py
 """
 Functional test for document-action conversation scope metadata.
-Version: 0.241.124
-Implemented in: 0.241.124
+Version: 0.250.068
+Implemented in: 0.241.124; updated in: 0.250.068
 
 This test ensures Analyze and tabular document-action results can assign
 conversation workspace metadata from selected document summaries when no
@@ -19,8 +19,6 @@ import sys
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 METADATA_FILE = os.path.join(ROOT_DIR, 'application', 'single_app', 'functions_conversation_metadata.py')
 ROUTE_FILE = os.path.join(ROOT_DIR, 'application', 'single_app', 'route_backend_chats.py')
-CONFIG_FILE = os.path.join(ROOT_DIR, 'application', 'single_app', 'config.py')
-FIX_VERSION = '0.241.124'
 TEST_USER_ID = 'scope-user-1'
 CRIMSON_GROUP_ID = 'crimson-group-1'
 PUBLIC_WORKSPACE_ID = 'public-workspace-1'
@@ -42,13 +40,6 @@ METADATA_TARGET_FUNCTIONS = {
 def read_text(file_path):
     with open(file_path, 'r', encoding='utf-8') as file_handle:
         return file_handle.read()
-
-
-def read_config_version():
-    for line in read_text(CONFIG_FILE).splitlines():
-        if line.startswith('VERSION = '):
-            return line.split('=', 1)[1].strip().strip('"')
-    raise AssertionError('VERSION assignment not found in config.py')
 
 
 def load_metadata_helpers():
@@ -211,19 +202,11 @@ def test_document_action_stream_payload_preserves_metadata_fields():
     print('PASS: document-action stream payload metadata fields')
 
 
-def test_version_bumped_for_fix():
-    """Verify config.py version was bumped for this fix."""
-    print('Testing version bump...')
-    assert read_config_version() == FIX_VERSION
-    print('PASS: version bump')
-
-
 if __name__ == '__main__':
     tests = [
         test_selected_group_document_sets_conversation_primary_context,
         test_assigned_knowledge_personal_agent_keeps_personal_primary_context,
         test_document_action_stream_payload_preserves_metadata_fields,
-        test_version_bumped_for_fix,
     ]
 
     results = []

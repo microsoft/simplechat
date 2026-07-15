@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for the unified chat navigation shell.
-Version: 0.241.023
-Implemented in: 0.241.023
+Version: 0.250.068
+Implemented in: 0.241.023; updated in: 0.250.068
 
 This test ensures that chats in top-nav mode now use a single adaptive rail,
 route the mobile hamburger into that rail, and keep the new inline desktop
@@ -28,7 +28,7 @@ def read_text(relative_path: str) -> str:
     return (ROOT / relative_path).read_text(encoding="utf-8")
 
 
-def test_base_template_marks_chat_top_nav_shell() -> bool:
+def test_base_template_marks_chat_top_nav_shell() -> None:
     """Validate the base template exposes chat shell body classes and desktop-only sidebar padding."""
     print("Testing base template chat shell markers...")
     base_template = read_text("application/single_app/templates/base.html")
@@ -41,20 +41,19 @@ def test_base_template_marks_chat_top_nav_shell() -> bool:
     ]
 
     missing_snippets = [snippet for snippet in required_snippets if snippet not in base_template]
-    if missing_snippets:
-        print(f"Missing base template chat shell snippets: {missing_snippets}")
-        return False
+    assert not missing_snippets, (
+        f"Missing base template chat shell snippets: {missing_snippets}"
+    )
 
     print("Base template chat shell markers found.")
-    return True
 
 
-def test_top_nav_routes_chat_hamburger_to_chat_rail() -> bool:
+def test_top_nav_routes_chat_hamburger_to_chat_rail() -> None:
     """Validate the top nav routes mobile chat into the rail and keeps desktop chat links visible."""
     top_nav_template = read_text("application/single_app/templates/_top_nav.html")
 
     required_snippets = [
-        "{% set is_chat_page = request.endpoint == 'chats' %}",
+        "{% set is_chat_page = request.endpoint == 'frontend_chats.chats' %}",
         "top-nav-chat-nav",
         'data-bs-target="#sidebar-nav"',
         'aria-label="Open chat navigation"',
@@ -63,15 +62,14 @@ def test_top_nav_routes_chat_hamburger_to_chat_rail() -> bool:
     ]
 
     missing_snippets = [snippet for snippet in required_snippets if snippet not in top_nav_template]
-    if missing_snippets:
-        print(f"Missing top nav chat routing snippets: {missing_snippets}")
-        return False
+    assert not missing_snippets, (
+        f"Missing top nav chat routing snippets: {missing_snippets}"
+    )
 
     print("Top nav chat drawer routing found.")
-    return True
 
 
-def test_chat_sidebar_is_adaptive_and_inline_toggle_exists() -> bool:
+def test_chat_sidebar_is_adaptive_and_inline_toggle_exists() -> None:
     """Validate the chat sidebar and scripts implement the adaptive rail pattern."""
     sidebar_template = read_text("application/single_app/templates/_sidebar_short_nav.html")
     chats_template = read_text("application/single_app/templates/chats.html")
@@ -87,12 +85,10 @@ def test_chat_sidebar_is_adaptive_and_inline_toggle_exists() -> bool:
         "chat-sidebar-user-account",
         "chat-sidebar-mobile-sections",
         'top-nav-mobile-section-label">Workspace</div>',
-        "url_for('workspace')",
-        "url_for('group_workspaces')",
-        "url_for('public_directory')",
-    ]
-    required_chat_snippets = [
-        'id="chat-sidebar-inline-toggle"',
+        "url_for('frontend_workspace.workspace')",
+        "url_for('frontend_group_workspaces.group_workspaces')",
+        "url_for('frontend_public_workspaces.public_directory')",
+        'id="sidebar-toggle-btn"',
         'data-sidebar-toggle="toggle"',
     ]
     required_css_snippets = [
@@ -122,43 +118,25 @@ def test_chat_sidebar_is_adaptive_and_inline_toggle_exists() -> bool:
     ]
 
     missing_snippets = [snippet for snippet in required_sidebar_snippets if snippet not in sidebar_template]
-    missing_snippets.extend(snippet for snippet in required_chat_snippets if snippet not in chats_template)
     missing_snippets.extend(snippet for snippet in required_css_snippets if snippet not in sidebar_css)
     missing_snippets.extend(snippet for snippet in required_navigation_css_snippets if snippet not in navigation_css)
     missing_snippets.extend(snippet for snippet in required_navigation_js_snippets if snippet not in navigation_js)
     missing_snippets.extend(snippet for snippet in required_sidebar_js_snippets if snippet not in sidebar_js)
 
-    if missing_snippets:
-        print(f"Missing adaptive chat rail snippets: {missing_snippets}")
-        return False
-
-    if 'id="floating-expand-btn"' in sidebar_template:
-        print("Short chat sidebar still contains the floating expand button markup")
-        return False
-
-    if 'bootstrap.Offcanvas.getOrCreateInstance(sidebar)' in sidebar_js:
-        print("Chat sidebar drawer still creates a duplicate Bootstrap offcanvas instance")
-        return False
-
-    if "if (isChatRailNavigationDrawer(offcanvasElement))" not in navigation_js:
-        print("Generic navigation drawer initialization still attempts to own the chat rail")
-        return False
+    assert not missing_snippets, (
+        f"Missing adaptive chat rail snippets: {missing_snippets}"
+    )
+    assert 'id="floating-expand-btn"' not in sidebar_template, (
+        "Short chat sidebar still contains the floating expand button markup"
+    )
+    assert 'bootstrap.Offcanvas.getOrCreateInstance(sidebar)' not in sidebar_js, (
+        "Chat sidebar drawer still creates a duplicate Bootstrap offcanvas instance"
+    )
+    assert "if (isChatRailNavigationDrawer(offcanvasElement))" in navigation_js, (
+        "Generic navigation drawer initialization still attempts to own the chat rail"
+    )
 
     print("Adaptive chat rail snippets found.")
-    return True
-
-
-def test_config_version_bumped_for_chat_navigation_shell() -> bool:
-    """Validate the repository version bump for the chat navigation shell work."""
-    print("Testing config version bump for chat navigation shell...")
-    config_content = read_text("application/single_app/config.py")
-
-    if 'VERSION = "0.241.023"' not in config_content:
-        print("Config version was not bumped to 0.241.023")
-        return False
-
-    print("Config version bump found.")
-    return True
 
 
 if __name__ == "__main__":
@@ -166,13 +144,17 @@ if __name__ == "__main__":
         test_base_template_marks_chat_top_nav_shell,
         test_top_nav_routes_chat_hamburger_to_chat_rail,
         test_chat_sidebar_is_adaptive_and_inline_toggle_exists,
-        test_config_version_bumped_for_chat_navigation_shell,
     ]
 
     results = []
     for check in checks:
         print(f"\nRunning {check.__name__}...")
-        results.append(check())
+        try:
+            check()
+            results.append(True)
+        except Exception as exc:
+            print(f"Failed: {exc}")
+            results.append(False)
 
     success = all(results)
     print(f"\nResults: {sum(results)}/{len(results)} checks passed")

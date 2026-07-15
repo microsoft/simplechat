@@ -2,8 +2,8 @@
 # test_chat_capability_usage_metadata.py
 """
 Functional test for chat capability usage metadata.
-Version: 0.241.123
-Implemented in: 0.241.123
+Version: 0.250.068
+Implemented in: 0.241.123; updated in: 0.250.068
 
 This test ensures chat user and assistant message metadata explicitly track
 workspace search, Analyze, Compare, Web Search, and Deep Research usage.
@@ -17,7 +17,6 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ROUTE_BACKEND_CHATS = REPO_ROOT / 'application' / 'single_app' / 'route_backend_chats.py'
 CHAT_MESSAGES_JS = REPO_ROOT / 'application' / 'single_app' / 'static' / 'js' / 'chat' / 'chat-messages.js'
-CONFIG_FILE = REPO_ROOT / 'application' / 'single_app' / 'config.py'
 
 HELPER_FUNCTIONS = {
     '_metadata_item_count',
@@ -128,9 +127,7 @@ def test_capability_usage_helper_tracks_analyze_and_compare():
 def test_capability_usage_is_wired_to_chat_paths_and_drawer():
     _, route_source = load_capability_helpers()
     chat_messages_source = read_text(CHAT_MESSAGES_JS)
-    config_source = read_text(CONFIG_FILE)
 
-    assert 'VERSION = "0.241.123"' in config_source
     assert "user_metadata['capability_usage'] = _build_capability_usage_metadata(" in route_source
     assert "'capability_usage': assistant_capability_usage," in route_source
     assert "'capability_usage': document_action_capability_usage," in route_source

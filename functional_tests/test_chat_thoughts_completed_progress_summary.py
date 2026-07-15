@@ -1,8 +1,8 @@
 # test_chat_thoughts_completed_progress_summary.py
 """
 Functional test for completed thought progress summaries.
-Version: 0.241.023
-Implemented in: 0.241.098
+Version: 0.250.068
+Implemented in: 0.241.098; updated in: 0.250.068
 
 This test ensures completed document-action thought histories do not keep
 showing a live progress bar and that reduction activities close cleanly.
@@ -19,16 +19,12 @@ def _read(relative_path: str) -> str:
 
 
 def test_completed_thought_progress_summaries_are_not_live() -> None:
-    config_content = _read('application/single_app/config.py')
     thoughts_content = _read('application/single_app/static/js/chat/chat-thoughts.js')
     workflow_runner_content = _read('application/single_app/functions_workflow_runner.py')
     analysis_content = _read('application/single_app/functions_document_analysis.py')
     comparison_content = _read('application/single_app/functions_document_comparison.py')
     route_content = _read('application/single_app/route_backend_chats.py')
 
-    assert 'VERSION = "0.241.023"' in config_content, (
-        'Expected config.py version 0.241.023 for the completed thought progress summary fix.'
-    )
     assert ': (state.completed || (counters.totalCount > 0 && counters.runningCount === 0));' in thoughts_content, (
         'Expected completed thought histories to derive completion when no activity remains running.'
     )

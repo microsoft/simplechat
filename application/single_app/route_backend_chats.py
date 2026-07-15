@@ -163,6 +163,11 @@ from functions_evidence_ledger import (
     create_evidence_ledger_from_plan,
     set_evidence_ledger_status,
 )
+from functions_orchestration_evaluation import (
+    build_recommendation_created_evaluation_event,
+    build_recommendation_decision_evaluation_event,
+    build_recommendation_outcome_evaluation_event,
+)
 from functions_orchestration_runtime import (
     OrchestrationNodeResult,
     OrchestrationRun,
@@ -13725,6 +13730,14 @@ def register_route_backend_chats(bp):
                     progress_callback=publish_orchestration_runtime_progress,
                 )
             finish_orchestration_run(turn_orchestration_run)
+            if capability_resume_context:
+                log_event(
+                    '[OrchestrationEvaluation] Recommendation outcome',
+                    extra=build_recommendation_outcome_evaluation_event(
+                        turn_orchestration_run,
+                        capability_resume_context,
+                    ),
+                )
         except Exception as runtime_error:
             log_event(
                 '[OrchestrationRuntime] Document action runtime reconciliation failed',
@@ -14406,14 +14419,10 @@ def register_route_backend_chats(bp):
             )
             log_event(
                 '[CapabilityDiscovery] Recommendation decision persisted',
-                extra={
-                    'conversation_id': conversation_id,
-                    'proposal_id': proposal_id,
-                    'run_id': proposal.get('run_id'),
-                    'decision_status': decision.get('status'),
-                    'option_id': decision.get('option_id'),
-                    'idempotent': idempotent,
-                },
+                extra=build_recommendation_decision_evaluation_event(
+                    proposal,
+                    idempotent=idempotent,
+                ),
             )
             return jsonify({
                 'success': True,
@@ -19726,14 +19735,7 @@ def register_route_backend_chats(bp):
                     orchestration_waiting_for_choice = True
                     log_event(
                         '[CapabilityDiscovery] Capability recommendation created',
-                        extra={
-                            'conversation_id': conversation_id,
-                            'proposal_id': proposal.get('proposal_id'),
-                            'run_id': proposal.get('run_id'),
-                            'recommended_option_id': proposal.get('recommended_option_id'),
-                            'option_count': len(proposal.get('options') or []),
-                            'requirement_count': len(proposal.get('requirement_ids') or []),
-                        },
+                        extra=build_recommendation_created_evaluation_event(proposal),
                     )
                     yield f"data: {json.dumps(make_json_serializable({
                         'done': True,
@@ -21937,6 +21939,14 @@ def register_route_backend_chats(bp):
                             progress_callback=queue_orchestration_runtime_progress,
                         )
                     finish_orchestration_run(turn_orchestration_run)
+                    if capability_resume_context:
+                        log_event(
+                            '[OrchestrationEvaluation] Recommendation outcome',
+                            extra=build_recommendation_outcome_evaluation_event(
+                                turn_orchestration_run,
+                                capability_resume_context,
+                            ),
+                        )
                     user_metadata['orchestration_runtime'] = turn_orchestration_run.to_metadata()
                     for runtime_progress_event in drain_orchestration_runtime_progress():
                         yield runtime_progress_event

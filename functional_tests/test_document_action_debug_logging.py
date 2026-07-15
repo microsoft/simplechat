@@ -2,8 +2,8 @@
 # test_document_action_debug_logging.py
 """
 Functional test for document action debug logging.
-Version: 0.241.023
-Implemented in: 0.241.095
+Version: 0.250.068
+Implemented in: 0.241.095; updated in: 0.250.068
 
 This test ensures analysis and document comparison flows emit
 debug_print instrumentation for start, progress, failure, and completion in
@@ -19,7 +19,6 @@ DOCUMENT_ANALYSIS_FILE = ROOT / "application" / "single_app" / "functions_docume
 DOCUMENT_COMPARISON_FILE = ROOT / "application" / "single_app" / "functions_document_comparison.py"
 WORKFLOW_RUNNER_FILE = ROOT / "application" / "single_app" / "functions_workflow_runner.py"
 CHAT_ROUTE_FILE = ROOT / "application" / "single_app" / "route_backend_chats.py"
-CONFIG_FILE = ROOT / "application" / "single_app" / "config.py"
 
 
 def assert_contains(file_path: Path, expected: str) -> None:
@@ -59,8 +58,6 @@ def test_document_action_debug_logging_markers() -> None:
     assert_contains(CHAT_ROUTE_FILE, "[ChatDocumentAction] Executing action | ")
     assert_contains(CHAT_ROUTE_FILE, "[ChatDocumentAction] Execution failed | ")
     assert_contains(CHAT_ROUTE_FILE, "[ChatDocumentAction] Execution completed | ")
-
-    assert_contains(CONFIG_FILE, 'VERSION = "0.241.023"')
 
     print("✅ Document action debug logging markers verified")
 

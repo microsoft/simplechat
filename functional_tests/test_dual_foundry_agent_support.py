@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for dual Foundry agent support.
-Version: 0.239.154
-Implemented in: 0.239.154
+Version: 0.250.068
+Implemented in: 0.239.154; updated in: 0.250.068
 
 This test ensures that classic Foundry and new Foundry agent payloads both
 validate through the backend sanitizer, preserve separate settings, and that
@@ -153,8 +153,8 @@ def test_dual_foundry_runtime_and_modal_hooks_exist():
     required_snippets = [
         (runtime_content, "class AzureAIFoundryNewChatCompletionAgent"),
         (runtime_content, "execute_new_foundry_agent"),
-        (loader_content, 'if agent_type in {"aifoundry", "new_foundry"}:'),
-        (loader_content, '("aoai", "aifoundry", "new_foundry")'),
+        (loader_content, 'if agent_type in {"aifoundry", "new_foundry", "foundry_workflow"}:'),
+        (loader_content, "elif agent_type in ('aifoundry', 'new_foundry', 'foundry_workflow'):"),
         (modal_js_content, "selectedAgentType === 'new_foundry'"),
         (modal_js_content, "getAgentTypeLabel"),
         (modal_html_content, 'value="new_foundry"'),

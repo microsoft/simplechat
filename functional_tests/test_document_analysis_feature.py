@@ -1,8 +1,8 @@
 # test_document_analysis_feature.py
 """
 Functional test for document analysis.
-Version: 0.241.023
-Implemented in: 0.241.069
+Version: 0.250.068
+Implemented in: 0.241.069; updated in: 0.250.068
 
 This test ensures workflows and chat share the deterministic document analysis
 path with structured document targets and coverage metadata.
@@ -19,7 +19,6 @@ def read_text(relative_path):
 
 
 def test_document_analysis_feature_wiring():
-    config_content = read_text("application/single_app/config.py")
     analysis_service_content = read_text("application/single_app/functions_document_analysis.py")
     workflow_store_content = read_text("application/single_app/functions_personal_workflows.py")
     workflow_runner_content = read_text("application/single_app/functions_workflow_runner.py")
@@ -31,9 +30,6 @@ def test_document_analysis_feature_wiring():
     feature_index_content = read_text("docs/explanation/features/index.md")
     feature_doc_content = read_text("docs/explanation/features/v0.241.069/DOCUMENT_ANALYSIS.md")
 
-    assert 'VERSION = "0.241.023"' in config_content, (
-        "Expected config.py version 0.241.023 for document analysis wiring checks."
-    )
     assert 'def normalize_document_analysis_targets(' in analysis_service_content, (
         "Expected functions_document_analysis.py to normalize structured analysis targets."
     )
@@ -67,8 +63,11 @@ def test_document_analysis_feature_wiring():
     assert 'def _execute_document_action_workflow(' in workflow_runner_content, (
         "Expected workflow runner to expose a shared document action execution helper."
     )
-    assert "if document_action.get('type') != DOCUMENT_ACTION_TYPE_NONE:" in workflow_runner_content, (
-        "Expected workflow execution to branch into the shared document action executor when configured."
+    assert "if document_action.get('type') in {DOCUMENT_ACTION_TYPE_ANALYZE, DOCUMENT_ACTION_TYPE_COMPARISON}:" in workflow_runner_content, (
+        "Expected workflow execution to branch into the shared Analyze/Compare executor."
+    )
+    assert 'execution_result = _execute_document_action_workflow(' in workflow_runner_content, (
+        "Expected the Analyze/Compare branch to call the shared document action executor."
     )
     assert "'analysis_coverage': execution_result.get('analysis_coverage') or {}," in workflow_runner_content, (
         "Expected workflow runs to persist analysis coverage metadata."

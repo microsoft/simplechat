@@ -15,6 +15,7 @@ from functions_evidence_ledger import (
     add_execution_failure,
     set_evidence_ledger_status,
 )
+from functions_orchestration_evaluation import build_orchestration_run_evaluation_event
 
 
 ORCHESTRATION_RUNTIME_VERSION = 1
@@ -1081,6 +1082,10 @@ def _finalize_run(run):
             'replan_count': run.replan_count,
             'evidence_ledger_size_bytes': _ledger_size_bytes(run.evidence_ledger),
         },
+    )
+    log_event(
+        '[OrchestrationEvaluation] Run completed',
+        extra=build_orchestration_run_evaluation_event(run),
     )
 
 

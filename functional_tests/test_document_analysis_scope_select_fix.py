@@ -1,8 +1,8 @@
 # test_document_analysis_scope_select_fix.py
 """
 Functional test for document analysis scope select fix.
-Version: 0.241.023
-Implemented in: 0.241.070
+Version: 0.250.068
+Implemented in: 0.241.070; updated in: 0.250.068
 
 This test ensures ordered chunk retrieval only requests the scope field
 available on the active Azure Search index, so analysis works
@@ -20,15 +20,11 @@ def read_text(relative_path):
 
 
 def test_document_analysis_scope_select_fix_wiring():
-    config_content = read_text("application/single_app/config.py")
     documents_content = read_text("application/single_app/functions_documents.py")
     chat_route_content = read_text("application/single_app/route_backend_chats.py")
     workflow_runner_content = read_text("application/single_app/functions_workflow_runner.py")
     fix_doc_content = read_text("docs/explanation/fixes/DOCUMENT_ANALYSIS_SCOPE_SELECT_FIX.md")
 
-    assert 'VERSION = "0.241.023"' in config_content, (
-        "Expected config.py version 0.241.023 for the analysis scope-select fix."
-    )
     assert "scope_field = 'public_workspace_id' if public_workspace_id is not None else ('group_id' if group_id is not None else 'user_id')" in documents_content, (
         "Expected ordered chunk retrieval to choose the scope-specific Azure Search field."
     )
@@ -38,8 +34,11 @@ def test_document_analysis_scope_select_fix_wiring():
     assert "'user_id': result.get('user_id') if scope_field == 'user_id' else document_item.get('user_id')" in documents_content, (
         "Expected missing scope ids to fall back to the resolved document record."
     )
-    assert 'def execute_document_action_chat_request(data=None, publish_background_event=None, forced_action_type=None):' in chat_route_content, (
+    assert 'def execute_document_action_chat_request(' in chat_route_content, (
         "Expected chat document actions to execute through the shared backend helper."
+    )
+    assert 'cancel_requested=None,' in chat_route_content, (
+        "Expected the shared chat document action helper to retain cancellation support."
     )
     assert 'def _execute_document_action_workflow(' in workflow_runner_content, (
         "Expected workflows to continue using the same shared document action executor as chat."

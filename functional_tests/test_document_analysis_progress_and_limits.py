@@ -1,8 +1,8 @@
 # test_document_analysis_progress_and_limits.py
 """
 Functional test for analysis progress and limits.
-Version: 0.241.023
-Implemented in: 0.241.071
+Version: 0.250.068
+Implemented in: 0.241.071; updated in: 0.250.068
 
 This test ensures chat streams structured analysis progress, shows
 per-document progress metadata, and enforces the chat/workflow document caps.
@@ -19,7 +19,6 @@ def read_text(relative_path):
 
 
 def test_document_analysis_progress_and_limits_wiring():
-    config_content = read_text("application/single_app/config.py")
     analysis_service_content = read_text("application/single_app/functions_document_analysis.py")
     chat_route_content = read_text("application/single_app/route_backend_chats.py")
     chat_thoughts_content = read_text("application/single_app/static/js/chat/chat-thoughts.js")
@@ -30,9 +29,6 @@ def test_document_analysis_progress_and_limits_wiring():
     feature_index_content = read_text("docs/explanation/features/index.md")
     feature_doc_content = read_text("docs/explanation/features/v0.241.071/DOCUMENT_ANALYSIS_PROGRESS_AND_LIMITS.md")
 
-    assert 'VERSION = "0.241.023"' in config_content, (
-        "Expected config.py version 0.241.023 for analysis progress improvements."
-    )
     assert 'CHAT_DOCUMENT_ANALYSIS_MAX_DOCUMENTS = 3' in analysis_service_content, (
         "Expected the analysis service to define the chat document cap."
     )
