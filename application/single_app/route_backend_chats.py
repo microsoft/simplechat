@@ -36,6 +36,7 @@ from functions_model_endpoint_runtime import (
 import builtins
 import asyncio, types
 import ast
+import copy
 import csv
 import io
 import inspect
@@ -110,6 +111,26 @@ from functions_conversation_unread import mark_conversation_unread
 from functions_chat_orchestration import (
     build_turn_orchestration_guidance_message,
     build_turn_orchestration_plan,
+)
+from functions_chat_capabilities import (
+    build_governed_capability_inventory,
+    classify_capability_requirements,
+    match_governed_capabilities,
+    normalize_capability_governance_modes,
+)
+from functions_chat_capability_choices import (
+    CapabilityChoiceError,
+    add_sensitive_external_query_options,
+    build_capability_choice_proposal,
+    build_capability_provenance,
+    build_minimized_external_query,
+)
+from functions_chat_capability_persistence import (
+    persist_capability_decision,
+    persist_capability_resume_claim,
+    persist_capability_resume_completion,
+    persist_capability_resume_failure,
+    read_capability_proposal_message,
 )
 from functions_central_synthesis import (
     build_central_synthesis_metadata,
@@ -2419,6 +2440,706 @@ def _authorize_personal_conversation_access(user_id, conversation_id):
         raise PermissionError('You can only access your own conversations')
 
     return conversation_item
+
+
+def _get_selected_builtin_chat_capability_ids(data):
+    """Return submitted built-in selections without treating inactive controls as denials."""
+    data = data if isinstance(data, Mapping) else {}
+    selected = []
+
+    def coerce_bool(value):
+        if isinstance(value, str):
+            return value.strip().lower() == 'true'
+        return bool(value)
+
+    def append_selected(capability_id, value):
+        if coerce_bool(value) and capability_id not in selected:
+            selected.append(capability_id)
+
+    append_selected('workspace_search', data.get('hybrid_search'))
+    append_selected('web_search', data.get('web_search_enabled'))
+    append_selected('url_access', data.get('url_access_enabled'))
+    append_selected(
+        'deep_research',
+        data.get('deep_research_enabled') or data.get('source_review_enabled'),
+    )
+    append_selected('image', data.get('image_generation'))
+
+    document_action = data.get('document_action') if isinstance(data.get('document_action'), Mapping) else {}
+    action_type = str(document_action.get('type') or '').strip().lower()
+    if action_type == DOCUMENT_ACTION_TYPE_ANALYZE:
+        selected.append('analyze')
+    elif action_type == DOCUMENT_ACTION_TYPE_COMPARISON:
+        selected.append('compare')
+    return selected
+
+
+def _get_policy_blocked_selected_capability_ids(settings, data):
+    governance_modes = normalize_capability_governance_modes(settings)
+    return [
+        capability_id
+        for capability_id in _get_selected_builtin_chat_capability_ids(data)
+        if governance_modes.get(capability_id) == 'blocked'
+    ]
+
+
+def _get_rejected_selected_capability_entries(inventory, selected_capability_ids):
+    selected_ids = set(selected_capability_ids or [])
+    entries = inventory.get('capabilities') if isinstance(inventory, Mapping) else []
+    return [
+        entry
+        for entry in entries or []
+        if isinstance(entry, Mapping)
+        and entry.get('id') in selected_ids
+        and entry.get('state') in {'unavailable', 'unauthorized', 'policy_blocked'}
+    ]
+
+
+def _build_selected_capability_rejection_message(entries):
+    capability_labels = [
+        str(entry.get('label') or entry.get('id') or 'Capability').strip()
+        for entry in entries or []
+    ]
+    return (
+        'The selected capability is not currently available or permitted: '
+        f"{', '.join(capability_labels)}."
+    )
+
+
+def _web_search_capability_is_configured(settings):
+    if not settings.get('enable_web_search'):
+        return False
+    web_search_agent = settings.get('web_search_agent')
+    web_search_agent = web_search_agent if isinstance(web_search_agent, Mapping) else {}
+    other_settings = web_search_agent.get('other_settings')
+    other_settings = other_settings if isinstance(other_settings, Mapping) else {}
+    foundry_settings = other_settings.get('azure_ai_foundry')
+    foundry_settings = foundry_settings if isinstance(foundry_settings, Mapping) else {}
+    return bool(str(foundry_settings.get('agent_id') or '').strip())
+
+
+def _resolve_server_chat_capability_inventory(
+    *,
+    settings,
+    user_id,
+    user_email,
+    user_roles,
+    user_message,
+    selected_capability_ids,
+    authorized_document_count=0,
+):
+    """Resolve built-in capability state from trusted configuration and identity context."""
+    governance_modes = normalize_capability_governance_modes(settings)
+    enabled_document_actions = get_enabled_document_action_types(settings=settings)
+    prompt_urls = extract_urls_from_text(user_message)
+    web_search_configured = _web_search_capability_is_configured(settings)
+    url_access_admin_enabled = bool(settings.get('enable_url_access'))
+    url_access_authorized = is_url_access_enabled_for_user(
+        settings,
+        user_roles=user_roles,
+    )
+    deep_research_admin_enabled = bool(
+        settings.get('enable_source_review')
+        and settings.get('enable_deep_source_review', True)
+    )
+    deep_research_authorized = is_source_review_enabled_for_user(
+        settings,
+        user_id,
+        user_email=user_email,
+        user_roles=user_roles,
+    )
+    workspace_search_available = bool(
+        CLIENTS.get('search_client_user')
+        and str(settings.get('azure_ai_search_endpoint') or '').strip()
+    )
+    try:
+        normalized_document_count = max(0, int(authorized_document_count or 0))
+    except (TypeError, ValueError):
+        normalized_document_count = 0
+
+    resolved_capabilities = {
+        'workspace_search': {
+            'enabled': True,
+            'available': workspace_search_available,
+            'authorized': bool(user_id),
+            'governance_mode': governance_modes['workspace_search'],
+            'input_ready': bool(user_id),
+            'reason': 'search_client_unavailable' if not workspace_search_available else None,
+        },
+        'analyze': {
+            'enabled': DOCUMENT_ACTION_TYPE_ANALYZE in enabled_document_actions,
+            'available': DOCUMENT_ACTION_TYPE_ANALYZE in enabled_document_actions,
+            'authorized': bool(user_id),
+            'governance_mode': governance_modes['analyze'],
+            'input_ready': normalized_document_count >= 1,
+            'reason': 'authorized_document_target_required' if normalized_document_count < 1 else None,
+        },
+        'compare': {
+            'enabled': DOCUMENT_ACTION_TYPE_COMPARISON in enabled_document_actions,
+            'available': DOCUMENT_ACTION_TYPE_COMPARISON in enabled_document_actions,
+            'authorized': bool(user_id),
+            'governance_mode': governance_modes['compare'],
+            'input_ready': normalized_document_count >= 2,
+            'reason': 'two_authorized_document_targets_required' if normalized_document_count < 2 else None,
+        },
+        'image': {
+            'enabled': image_generation_is_enabled(settings),
+            'available': image_generation_is_enabled(settings),
+            'authorized': bool(user_id),
+            'governance_mode': governance_modes['image'],
+            'input_ready': True,
+            'reason': 'image_generation_unavailable' if not image_generation_is_enabled(settings) else None,
+        },
+        'web_search': {
+            'enabled': bool(settings.get('enable_web_search')),
+            'available': web_search_configured,
+            'authorized': bool(user_id),
+            'governance_mode': governance_modes['web_search'],
+            'input_ready': True,
+            'reason': 'web_search_not_configured' if not web_search_configured else None,
+        },
+        'url_access': {
+            'enabled': url_access_admin_enabled,
+            'available': url_access_admin_enabled,
+            'authorized': url_access_authorized,
+            'governance_mode': governance_modes['url_access'],
+            'input_ready': bool(prompt_urls),
+            'reason': (
+                'url_access_role_required'
+                if url_access_admin_enabled and not url_access_authorized
+                else 'supplied_url_required'
+                if not prompt_urls
+                else None
+            ),
+        },
+        'deep_research': {
+            'enabled': deep_research_admin_enabled,
+            'available': bool(deep_research_admin_enabled and web_search_configured),
+            'authorized': deep_research_authorized,
+            'governance_mode': governance_modes['deep_research'],
+            'input_ready': True,
+            'reason': (
+                'deep_research_role_required'
+                if deep_research_admin_enabled and not deep_research_authorized
+                else 'deep_research_not_configured'
+                if not (deep_research_admin_enabled and web_search_configured)
+                else None
+            ),
+        },
+    }
+    return build_governed_capability_inventory(
+        selected_capability_ids=selected_capability_ids,
+        resolved_capabilities=resolved_capabilities,
+    )
+
+
+def _build_server_capability_discovery(
+    *,
+    settings,
+    user_id,
+    user_email,
+    user_roles,
+    user_message,
+    selected_capability_ids,
+    authorized_document_count=0,
+):
+    inventory = _resolve_server_chat_capability_inventory(
+        settings=settings,
+        user_id=user_id,
+        user_email=user_email,
+        user_roles=user_roles,
+        user_message=user_message,
+        selected_capability_ids=selected_capability_ids,
+        authorized_document_count=authorized_document_count,
+    )
+    requirements = classify_capability_requirements(
+        user_message,
+        authorized_document_count=authorized_document_count,
+    )
+    match = match_governed_capabilities(inventory, requirements)
+    recommendation = add_sensitive_external_query_options(
+        match.get('recommendation'),
+        user_message,
+    )
+    return {
+        'inventory': inventory,
+        'requirements': requirements,
+        'auto_capability_ids': list(match.get('auto_capability_ids') or []),
+        'recommendation': recommendation,
+    }
+
+
+def _build_capability_resume_request(data, *, canonical_agent=None):
+    """Persist only bounded identifiers needed to reconstruct the authorized turn."""
+    source = data if isinstance(data, Mapping) else {}
+    prompt_info = source.get('prompt_info') if isinstance(source.get('prompt_info'), Mapping) else {}
+    agent_info = canonical_agent if isinstance(canonical_agent, Mapping) else source.get('agent_info')
+    agent_info = agent_info if isinstance(agent_info, Mapping) else {}
+    document_action = source.get('document_action') if isinstance(source.get('document_action'), Mapping) else {}
+
+    def coerce_bool(value):
+        if isinstance(value, str):
+            return value.strip().lower() == 'true'
+        return bool(value)
+
+    return {
+        'hybrid_search': coerce_bool(source.get('hybrid_search')),
+        'user_workspace_context_enabled': coerce_bool(source.get('user_workspace_context_enabled')),
+        'web_search_enabled': coerce_bool(source.get('web_search_enabled')),
+        'url_access_enabled': coerce_bool(source.get('url_access_enabled')),
+        'source_review_enabled': coerce_bool(source.get('source_review_enabled')),
+        'deep_research_enabled': coerce_bool(source.get('deep_research_enabled')),
+        'image_generation': coerce_bool(source.get('image_generation')),
+        'selected_document_id': str(source.get('selected_document_id') or '').strip() or None,
+        'selected_document_ids': _normalize_conversation_task_document_ids(
+            source.get('selected_document_ids')
+        ),
+        'conversation_task_document_ids': _normalize_conversation_task_document_ids(
+            source.get('conversation_task_document_ids')
+        ),
+        'doc_scope': str(source.get('doc_scope') or '').strip() or None,
+        'tags': [
+            str(tag).strip()
+            for tag in (source.get('tags') or [])
+            if str(tag).strip()
+        ][:50],
+        'chat_type': str(source.get('chat_type') or 'user').strip()[:40],
+        'active_group_ids': _normalize_conversation_task_document_ids(
+            source.get('active_group_ids') or source.get('active_group_id')
+        ),
+        'active_public_workspace_ids': _normalize_conversation_task_document_ids(
+            source.get('active_public_workspace_ids') or source.get('active_public_workspace_id')
+        ),
+        'model_deployment': str(source.get('model_deployment') or '').strip() or None,
+        'model_id': str(source.get('model_id') or '').strip() or None,
+        'model_endpoint_id': str(source.get('model_endpoint_id') or '').strip() or None,
+        'model_provider': str(source.get('model_provider') or '').strip() or None,
+        'model_icon': _normalize_model_icon_payload(source.get('model_icon')),
+        'reasoning_effort': str(source.get('reasoning_effort') or '').strip() or None,
+        'prompt_info': (
+            {
+                'id': str(prompt_info.get('id') or '').strip(),
+                'name': str(prompt_info.get('name') or '').strip()[:120],
+            }
+            if str(prompt_info.get('id') or '').strip()
+            else None
+        ),
+        'agent_info': (
+            {
+                'id': str(agent_info.get('id') or agent_info.get('agent_id') or '').strip(),
+                'name': str(agent_info.get('name') or agent_info.get('selected_agent') or '').strip()[:120],
+            }
+            if str(agent_info.get('id') or agent_info.get('agent_id') or '').strip()
+            else None
+        ),
+        'document_action': {
+            'type': str(document_action.get('type') or '').strip().lower(),
+            'document_ids': _normalize_conversation_task_document_ids(document_action.get('document_ids')),
+            'left_document_id': str(document_action.get('left_document_id') or '').strip(),
+            'right_document_ids': _normalize_conversation_task_document_ids(document_action.get('right_document_ids')),
+            'doc_scope': str(document_action.get('doc_scope') or source.get('doc_scope') or '').strip(),
+            'active_group_ids': _normalize_conversation_task_document_ids(document_action.get('active_group_ids')),
+            'active_public_workspace_id': _normalize_conversation_task_document_ids(
+                document_action.get('active_public_workspace_id')
+            ),
+            'window_unit': 'pages',
+            'max_retries_per_window': 1,
+        } if document_action else None,
+    }
+
+
+def _apply_effective_capabilities_to_request(request_data, effective_capability_ids):
+    updated = dict(request_data or {})
+    effective_ids = set(effective_capability_ids or [])
+    if 'workspace_search' in effective_ids:
+        updated['hybrid_search'] = True
+    if 'web_search' in effective_ids:
+        updated['web_search_enabled'] = True
+    if 'url_access' in effective_ids:
+        updated['url_access_enabled'] = True
+        updated['source_review_enabled'] = True
+    if 'deep_research' in effective_ids:
+        updated['web_search_enabled'] = True
+        updated['source_review_enabled'] = True
+        updated['deep_research_enabled'] = True
+    selected_document_ids = _normalize_conversation_task_document_ids(
+        updated.get('selected_document_ids')
+    )
+    if 'analyze' in effective_ids:
+        updated['document_action'] = {
+            'type': DOCUMENT_ACTION_TYPE_ANALYZE,
+            'document_ids': selected_document_ids,
+            'doc_scope': updated.get('doc_scope'),
+            'active_group_ids': updated.get('active_group_ids') or [],
+            'active_public_workspace_id': updated.get('active_public_workspace_ids') or [],
+            'window_unit': 'pages',
+            'max_retries_per_window': 1,
+        }
+    if 'compare' in effective_ids and len(selected_document_ids) >= 2:
+        updated['document_action'] = {
+            'type': DOCUMENT_ACTION_TYPE_COMPARISON,
+            'document_ids': selected_document_ids,
+            'left_document_id': selected_document_ids[0],
+            'right_document_ids': selected_document_ids[1:],
+            'doc_scope': updated.get('doc_scope'),
+            'active_group_ids': updated.get('active_group_ids') or [],
+            'active_public_workspace_id': updated.get('active_public_workspace_ids') or [],
+            'window_unit': 'pages',
+            'max_retries_per_window': 1,
+        }
+    return updated
+
+
+def _load_authorized_capability_proposal_context(
+    *,
+    settings,
+    user_id,
+    user_email,
+    user_roles,
+    conversation_id,
+    proposal_id,
+):
+    """Reauthorize one persisted proposal and rebuild its governed inventory."""
+    conversation_item = _authorize_personal_conversation_access(user_id, conversation_id)
+    proposal_message, proposal = read_capability_proposal_message(
+        cosmos_messages_container,
+        conversation_id=conversation_id,
+        proposal_id=proposal_id,
+    )
+    user_message_id = str(proposal.get('user_message_id') or '').strip()
+    if not user_message_id:
+        raise CapabilityChoiceError(
+            'proposal source user message is missing',
+            code='proposal_user_message_missing',
+        )
+    try:
+        user_message_doc = cosmos_messages_container.read_item(
+            item=user_message_id,
+            partition_key=conversation_id,
+        )
+    except CosmosResourceNotFoundError as exc:
+        raise CapabilityChoiceError(
+            'proposal source user message no longer exists',
+            code='proposal_user_message_missing',
+        ) from exc
+    if (
+        user_message_doc.get('conversation_id') != conversation_id
+        or user_message_doc.get('role') != 'user'
+        or (user_message_doc.get('metadata') or {}).get('is_deleted') is True
+    ):
+        raise CapabilityChoiceError(
+            'proposal source user message is invalid',
+            code='proposal_user_message_invalid',
+        )
+    user_metadata = (
+        user_message_doc.get('metadata')
+        if isinstance(user_message_doc.get('metadata'), Mapping)
+        else {}
+    )
+    original_plan = (
+        user_metadata.get('orchestration')
+        if isinstance(user_metadata.get('orchestration'), Mapping)
+        else {}
+    )
+    source_provenance = (
+        user_metadata.get('capability_provenance')
+        if isinstance(user_metadata.get('capability_provenance'), Mapping)
+        else {}
+    )
+    source_proposal = (
+        source_provenance.get('proposed_capabilities')
+        if isinstance(source_provenance.get('proposed_capabilities'), Mapping)
+        else {}
+    )
+    source_run_id = str(
+        source_proposal.get('run_id')
+        or original_plan.get('run_id')
+        or ''
+    ).strip()
+    if (
+        source_run_id != str(proposal.get('run_id') or '').strip()
+        or (
+            source_proposal
+            and str(source_proposal.get('proposal_id') or '').strip() != proposal_id
+        )
+    ):
+        raise CapabilityChoiceError(
+            'proposal is not linked to the source turn run',
+            code='proposal_run_mismatch',
+        )
+    proposal_metadata = (
+        proposal_message.get('metadata')
+        if isinstance(proposal_message.get('metadata'), Mapping)
+        else {}
+    )
+    resume_request = proposal_metadata.get('capability_resume_request')
+    if not isinstance(resume_request, Mapping):
+        raise CapabilityChoiceError(
+            'proposal resume request is missing',
+            code='proposal_resume_request_missing',
+        )
+    resume_request = copy.deepcopy(dict(resume_request))
+    resume_request['conversation_id'] = conversation_id
+    resume_request['message'] = str(user_message_doc.get('content') or '')
+
+    scope_context = _get_authorized_chat_scope_context(
+        user_id,
+        active_group_ids=resume_request.get('active_group_ids') or [],
+        active_public_workspace_ids=resume_request.get('active_public_workspace_ids') or [],
+    )
+    resume_request['active_group_ids'] = list(scope_context.get('active_group_ids') or [])
+    resume_request['active_group_id'] = scope_context.get('active_group_id')
+    resume_request['active_public_workspace_ids'] = list(
+        scope_context.get('active_public_workspace_ids') or []
+    )
+    resume_request['active_public_workspace_id'] = scope_context.get('active_public_workspace_id')
+
+    authorized_documents = _resolve_authorized_chat_selected_documents(
+        resume_request.get('selected_document_ids') or [],
+        user_id=user_id,
+        document_scope=resume_request.get('doc_scope') or 'all',
+        active_group_ids=resume_request['active_group_ids'],
+        active_public_workspace_ids=resume_request['active_public_workspace_ids'],
+    )
+    conversation_task_document_ids = _normalize_conversation_task_document_ids(
+        resume_request.get('conversation_task_document_ids')
+    )
+    authorized_task_documents = []
+    if conversation_task_document_ids:
+        proposed_capability_ids = {
+            capability_id
+            for option in proposal.get('options') or []
+            if isinstance(option, Mapping)
+            for capability_id in option.get('capability_ids') or []
+        }
+        task_action_type = (
+            DOCUMENT_ACTION_TYPE_COMPARISON
+            if 'compare' in proposed_capability_ids
+            else DOCUMENT_ACTION_TYPE_ANALYZE
+        )
+        task_resolution = _resolve_conversation_task_documents(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            document_action_type=task_action_type,
+            candidate_document_ids=conversation_task_document_ids,
+        )
+        if not task_resolution.get('blocked'):
+            authorized_task_documents = [
+                document
+                for document in task_resolution.get('documents') or []
+                if isinstance(document, Mapping)
+            ]
+            resume_request['conversation_task_document_ids'] = list(
+                task_resolution.get('document_ids') or []
+            )
+            resume_request['doc_scope'] = _merge_document_scope_with_conversation_task_documents(
+                resume_request.get('doc_scope') or 'personal',
+                authorized_task_documents,
+            )
+    authorized_document_ids = {
+        str(document.get('id') or document.get('document_id') or '').strip()
+        for document in authorized_documents
+        if isinstance(document, Mapping)
+    }
+    resume_request['selected_document_ids'] = [
+        document_id
+        for document_id in _normalize_conversation_task_document_ids(
+            resume_request.get('selected_document_ids')
+        )
+        if document_id in authorized_document_ids
+    ]
+    for document_id in resume_request.get('conversation_task_document_ids') or []:
+        if document_id not in resume_request['selected_document_ids']:
+            resume_request['selected_document_ids'].append(document_id)
+    resume_request['selected_document_id'] = (
+        resume_request['selected_document_ids'][0]
+        if len(resume_request['selected_document_ids']) == 1
+        else None
+    )
+    selected_capability_ids = _get_selected_builtin_chat_capability_ids(resume_request)
+    refreshed_inventory = _resolve_server_chat_capability_inventory(
+        settings=settings,
+        user_id=user_id,
+        user_email=user_email,
+        user_roles=user_roles,
+        user_message=resume_request['message'],
+        selected_capability_ids=selected_capability_ids,
+        authorized_document_count=len(authorized_documents) + len(authorized_task_documents),
+    )
+    provenance = (
+        proposal_metadata.get('capability_provenance')
+        if isinstance(proposal_metadata.get('capability_provenance'), Mapping)
+        else {}
+    )
+    return {
+        'conversation_item': conversation_item,
+        'proposal_message': proposal_message,
+        'proposal': proposal,
+        'user_message_doc': user_message_doc,
+        'resume_request': resume_request,
+        'scope_context': scope_context,
+        'authorized_documents': authorized_documents + authorized_task_documents,
+        'inventory': refreshed_inventory,
+        'provenance': copy.deepcopy(dict(provenance)),
+    }
+
+
+def _claim_authorized_capability_resume(
+    *,
+    settings,
+    user_id,
+    user_email,
+    user_roles,
+    conversation_id,
+    proposal_id,
+):
+    """Claim one durable resume and return a server-authored execution request."""
+    context = _load_authorized_capability_proposal_context(
+        settings=settings,
+        user_id=user_id,
+        user_email=user_email,
+        user_roles=user_roles,
+        conversation_id=conversation_id,
+        proposal_id=proposal_id,
+    )
+    pending_decision = (
+        context['proposal'].get('decision')
+        if isinstance(context['proposal'].get('decision'), Mapping)
+        else {}
+    )
+    pending_effective_capability_ids = list(
+        pending_decision.get('effective_capability_ids') or []
+    )
+    authorized_document_count = len(context.get('authorized_documents') or [])
+    if 'analyze' in pending_effective_capability_ids and authorized_document_count < 1:
+        raise CapabilityChoiceError(
+            'Analyze no longer has an authorized document target.',
+            code='capability_input_unavailable',
+        )
+    if 'compare' in pending_effective_capability_ids and authorized_document_count < 2:
+        raise CapabilityChoiceError(
+            'Compare no longer has two authorized document targets.',
+            code='capability_input_unavailable',
+        )
+    stored_resume = (
+        context['proposal'].get('resume')
+        if isinstance(context['proposal'].get('resume'), Mapping)
+        else {}
+    )
+    stored_execution_id = str(stored_resume.get('execution_id') or '').strip()
+    if stored_execution_id and stored_resume.get('status') in {'running', 'failed'}:
+        try:
+            completed_rows = list(cosmos_messages_container.query_items(
+                query=(
+                    'SELECT TOP 1 * FROM c '
+                    'WHERE c.conversation_id = @conversation_id '
+                    'AND c.role = "assistant" '
+                    'AND c.metadata.capability_resume.proposal_id = @proposal_id '
+                    'AND c.metadata.capability_resume.execution_id = @execution_id '
+                    'ORDER BY c.timestamp DESC'
+                ),
+                parameters=[
+                    {'name': '@conversation_id', 'value': conversation_id},
+                    {'name': '@proposal_id', 'value': proposal_id},
+                    {'name': '@execution_id', 'value': stored_execution_id},
+                ],
+                partition_key=conversation_id,
+            ))
+            completed_assistant = next(
+                (
+                    message
+                    for message in completed_rows
+                    if str(message.get('id') or '').strip()
+                ),
+                None,
+            )
+            if completed_assistant:
+                _, completed_proposal, _ = persist_capability_resume_completion(
+                    cosmos_messages_container,
+                    conversation_id=conversation_id,
+                    proposal_id=proposal_id,
+                    execution_id=stored_execution_id,
+                    assistant_message_id=completed_assistant['id'],
+                )
+                context['proposal'] = completed_proposal
+                context['already_completed'] = True
+                return context
+        except CapabilityChoiceError:
+            raise
+        except Exception as reconciliation_error:
+            log_event(
+                '[CapabilityDiscovery] Resume completion reconciliation failed',
+                extra={
+                    'conversation_id': conversation_id,
+                    'proposal_id': proposal_id,
+                    'error_type': type(reconciliation_error).__name__,
+                },
+                level=logging.WARNING,
+            )
+    _, claimed_proposal, idempotent = persist_capability_resume_claim(
+        cosmos_messages_container,
+        conversation_id=conversation_id,
+        proposal_id=proposal_id,
+        refreshed_inventory=context['inventory'],
+    )
+    if idempotent:
+        context['proposal'] = claimed_proposal
+        context['already_completed'] = True
+        return context
+
+    decision = (
+        claimed_proposal.get('decision')
+        if isinstance(claimed_proposal.get('decision'), Mapping)
+        else {}
+    )
+    effective_capability_ids = list(decision.get('effective_capability_ids') or [])
+    request_data = _apply_effective_capabilities_to_request(
+        context['resume_request'],
+        effective_capability_ids,
+    )
+    external_query_mode = str(decision.get('external_query_mode') or 'minimized').strip().lower()
+    if any(
+        capability_id in {'web_search', 'url_access', 'deep_research'}
+        for capability_id in effective_capability_ids
+    ):
+        external_query = build_minimized_external_query(
+            request_data.get('message'),
+            include_sensitive_inputs=(
+                external_query_mode == 'include_approved_sensitive_inputs'
+            ),
+        )
+        request_data['_server_external_query'] = external_query['query']
+
+    capability_origins = {
+        str(item.get('id') or '').strip(): str(item.get('origin') or '').strip()
+        for item in (context['provenance'].get('effective_capabilities') or [])
+        if isinstance(item, Mapping)
+        and str(item.get('origin') or '').strip() == 'discovery_auto'
+    }
+    for capability_id in effective_capability_ids:
+        capability_origins[capability_id] = 'discovery_approved'
+    request_data['_capability_resume_context'] = {
+        'proposal_id': proposal_id,
+        'parent_run_id': claimed_proposal.get('run_id'),
+        'child_run_id': (claimed_proposal.get('resume') or {}).get('child_run_id'),
+        'execution_id': (claimed_proposal.get('resume') or {}).get('execution_id'),
+        'user_message_id': claimed_proposal.get('user_message_id'),
+        'selection_snapshot': copy.deepcopy(
+            context['provenance'].get('selection_snapshot') or {}
+        ),
+        'capability_origins': capability_origins,
+        'capability_inventory': copy.deepcopy(context['inventory']),
+        'decision': copy.deepcopy(decision),
+        'original_proposal': copy.deepcopy(
+            context['provenance'].get('proposed_capabilities') or claimed_proposal
+        ),
+        'effective_capability_ids': effective_capability_ids,
+        'existing_user_message': copy.deepcopy(context['user_message_doc']),
+    }
+    context['proposal'] = claimed_proposal
+    context['request_data'] = request_data
+    context['already_completed'] = False
+    return context
 
 
 def _resolve_or_create_authorized_personal_conversation(user_id, conversation_id):
@@ -11930,6 +12651,24 @@ def register_route_backend_chats(bp):
         if not user_id:
             return {'error': 'User not authenticated'}, 401
 
+        blocked_selected_capabilities = _get_policy_blocked_selected_capability_ids(
+            settings,
+            data,
+        )
+        if blocked_selected_capabilities:
+            return {
+                'error': _build_selected_capability_rejection_message([
+                    {'id': capability_id}
+                    for capability_id in blocked_selected_capabilities
+                ])
+            }, 403
+
+        capability_resume_context = (
+            data.get('_capability_resume_context')
+            if isinstance(data.get('_capability_resume_context'), Mapping)
+            else None
+        )
+
         user_message = str(data.get('message') or '').strip()
         if not user_message:
             return {'error': 'Message is required'}, 400
@@ -12130,8 +12869,67 @@ def register_route_backend_chats(bp):
             assigned_knowledge_filters
             and assigned_knowledge_filters.get('has_workspace_knowledge')
         )
+        authorized_action_documents = _resolve_authorized_chat_selected_documents(
+            selected_document_ids,
+            user_id=user_id,
+            document_scope=document_scope,
+            active_group_ids=active_group_ids,
+            active_public_workspace_ids=active_public_workspace_ids,
+        )
+        selected_builtin_capability_ids = (
+            [
+                capability.get('id')
+                for capability in (
+                    capability_resume_context.get('capability_inventory', {}).get('capabilities', [])
+                    if capability_resume_context
+                    else []
+                )
+                if isinstance(capability, Mapping)
+                and capability.get('state') == 'selected'
+            ]
+            if capability_resume_context
+            else _get_selected_builtin_chat_capability_ids(data)
+        )
+        action_capability_inventory = (
+            copy.deepcopy(capability_resume_context.get('capability_inventory') or {})
+            if capability_resume_context
+            else _resolve_server_chat_capability_inventory(
+                settings=settings,
+                user_id=user_id,
+                user_email=(get_current_user_info() or {}).get('email'),
+                user_roles=(session.get('user') or {}).get('roles', []),
+                user_message=user_message,
+                selected_capability_ids=selected_builtin_capability_ids,
+                authorized_document_count=len(authorized_action_documents),
+            )
+        )
+        rejected_selected_capabilities = _get_rejected_selected_capability_entries(
+            action_capability_inventory,
+            selected_builtin_capability_ids,
+        )
+        if rejected_selected_capabilities:
+            return {
+                'error': _build_selected_capability_rejection_message(
+                    rejected_selected_capabilities
+                )
+            }, 403
+        capability_origins = (
+            dict(capability_resume_context.get('capability_origins') or {})
+            if capability_resume_context
+            else {}
+        )
         turn_orchestration_plan = build_turn_orchestration_plan(
             user_message,
+            run_id=(
+                capability_resume_context.get('child_run_id')
+                if capability_resume_context
+                else None
+            ),
+            parent_run_id=(
+                capability_resume_context.get('parent_run_id')
+                if capability_resume_context
+                else None
+            ),
             conversation_id=conversation_id,
             selected_agent=request_agent_info,
             selected_action=normalized_action,
@@ -12150,6 +12948,41 @@ def register_route_backend_chats(bp):
             model_provider=data.get('model_provider'),
             reasoning_effort=data.get('reasoning_effort'),
             prompt_info=data.get('prompt_info'),
+            capability_origins=capability_origins,
+            selection_snapshot_override=(
+                capability_resume_context.get('selection_snapshot')
+                if capability_resume_context
+                else None
+            ),
+        )
+        effective_capability_entries = [
+            {'id': capability_id, 'origin': 'selection', 'required': True}
+            for capability_id in selected_builtin_capability_ids
+        ]
+        for capability_id, origin in capability_origins.items():
+            if capability_id and not any(
+                entry['id'] == capability_id
+                for entry in effective_capability_entries
+            ):
+                effective_capability_entries.append({
+                    'id': capability_id,
+                    'origin': origin,
+                    'required': True,
+                })
+        turn_capability_provenance = build_capability_provenance(
+            selection_snapshot=turn_orchestration_plan.get('selection_snapshot'),
+            capability_inventory=action_capability_inventory,
+            decisions=(
+                [capability_resume_context.get('decision')]
+                if capability_resume_context
+                else []
+            ),
+            proposal=(
+                capability_resume_context.get('original_proposal')
+                if capability_resume_context
+                else None
+            ),
+            effective_capabilities=effective_capability_entries,
         )
         log_event(
             '[Orchestration] Document action turn plan created',
@@ -12164,9 +12997,39 @@ def register_route_backend_chats(bp):
             },
         )
 
-        previous_thread_id = _get_latest_chat_thread_id(conversation_id)
-        current_thread_id = str(uuid.uuid4())
-        user_message_id = f"{conversation_id}_user_{int(time.time())}_{random.randint(1000,9999)}"
+        existing_user_message = (
+            capability_resume_context.get('existing_user_message')
+            if capability_resume_context
+            else None
+        )
+        existing_user_metadata = (
+            existing_user_message.get('metadata')
+            if isinstance(existing_user_message, Mapping)
+            and isinstance(existing_user_message.get('metadata'), Mapping)
+            else {}
+        )
+        existing_thread_info = (
+            existing_user_metadata.get('thread_info')
+            if isinstance(existing_user_metadata.get('thread_info'), Mapping)
+            else {}
+        )
+        previous_thread_id = (
+            existing_thread_info.get('previous_thread_id')
+            if capability_resume_context
+            else _get_latest_chat_thread_id(conversation_id)
+        )
+        current_thread_id = (
+            str(existing_thread_info.get('thread_id') or '').strip()
+            if capability_resume_context
+            else str(uuid.uuid4())
+        )
+        user_message_id = (
+            str(capability_resume_context.get('user_message_id') or '').strip()
+            if capability_resume_context
+            else f"{conversation_id}_user_{int(time.time())}_{random.randint(1000,9999)}"
+        )
+        if not current_thread_id or not user_message_id:
+            return {'error': 'Capability resume source turn is incomplete.'}, 409
         turn_evidence_ledger = create_evidence_ledger_from_plan(
             turn_orchestration_plan,
             conversation_id=conversation_id,
@@ -12200,7 +13063,7 @@ def register_route_backend_chats(bp):
                     'source_id': 'selected_agent',
                     'requirement_ids': [],
                 })
-        user_metadata = _build_document_action_user_metadata(
+        generated_user_metadata = _build_document_action_user_metadata(
             data=data,
             user_id=user_id,
             conversation_id=conversation_id,
@@ -12211,26 +13074,46 @@ def register_route_backend_chats(bp):
             assigned_knowledge_filters=assigned_knowledge_filters,
             streaming_enabled=callable(publish_background_event),
         )
+        if capability_resume_context:
+            user_metadata = copy.deepcopy(dict(existing_user_metadata))
+            if isinstance(user_metadata.get('orchestration'), Mapping):
+                user_metadata.setdefault(
+                    'orchestration_parent',
+                    copy.deepcopy(dict(user_metadata['orchestration'])),
+                )
+            user_metadata.update(generated_user_metadata)
+        else:
+            user_metadata = generated_user_metadata
         user_metadata['orchestration'] = turn_orchestration_plan
         user_metadata['evidence_ledger'] = turn_evidence_ledger
         user_metadata['orchestration_runtime'] = turn_orchestration_run.to_metadata()
+        user_metadata['capability_provenance'] = turn_capability_provenance
         if auto_linked_chat_upload_document_ids:
             user_metadata['workspace_search']['auto_linked_chat_upload_document_ids'] = auto_linked_chat_upload_document_ids
             user_metadata['workspace_search']['auto_linked_chat_upload_document_count'] = len(auto_linked_chat_upload_document_ids)
             user_metadata['document_action']['auto_linked_chat_upload_document_ids'] = auto_linked_chat_upload_document_ids
-        user_message_doc = make_json_serializable({
-            'id': user_message_id,
-            'conversation_id': conversation_id,
-            'role': 'user',
-            'content': user_message,
-            'timestamp': datetime.utcnow().isoformat(),
-            'model_deployment_name': data.get('model_deployment'),
-            'metadata': user_metadata,
-        })
+        user_message_doc = make_json_serializable(
+            {
+                **(
+                    copy.deepcopy(dict(existing_user_message))
+                    if isinstance(existing_user_message, Mapping)
+                    else {
+                        'id': user_message_id,
+                        'conversation_id': conversation_id,
+                        'role': 'user',
+                        'content': user_message,
+                        'timestamp': datetime.utcnow().isoformat(),
+                        'model_deployment_name': data.get('model_deployment'),
+                    }
+                ),
+                'metadata': user_metadata,
+            }
+        )
         cosmos_messages_container.upsert_item(user_message_doc)
 
-        try:
-            document_action_activity_context = {
+        if not capability_resume_context:
+            try:
+                document_action_activity_context = {
                 key: value
                 for key, value in {
                     'conversation_source': 'document_action_chat',
@@ -12241,24 +13124,27 @@ def register_route_backend_chats(bp):
                 }.items()
                 if value not in (None, '', [])
             }
-            log_chat_activity(
-                user_id=user_id,
-                conversation_id=conversation_id,
-                message_type='user_message',
-                message_length=len(user_message) if user_message else 0,
-                has_document_search=False,
-                has_image_generation=False,
-                document_scope=document_scope,
-                chat_context=(user_metadata.get('chat_context') or {}).get('chat_type'),
-                workspace_type=(user_metadata.get('chat_context') or {}).get('chat_type'),
-                group_id=active_group_ids[0] if document_scope == 'group' and active_group_ids else None,
-                public_workspace_id=active_public_workspace_ids[0] if document_scope == 'public' and active_public_workspace_ids else None,
-                additional_context=document_action_activity_context,
-            )
-        except Exception as e:
-            debug_print(f"Activity logging error: {e}")
+                log_chat_activity(
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    message_type='user_message',
+                    message_length=len(user_message) if user_message else 0,
+                    has_document_search=False,
+                    has_image_generation=False,
+                    document_scope=document_scope,
+                    chat_context=(user_metadata.get('chat_context') or {}).get('chat_type'),
+                    workspace_type=(user_metadata.get('chat_context') or {}).get('chat_type'),
+                    group_id=active_group_ids[0] if document_scope == 'group' and active_group_ids else None,
+                    public_workspace_id=active_public_workspace_ids[0] if document_scope == 'public' and active_public_workspace_ids else None,
+                    additional_context=document_action_activity_context,
+                )
+            except Exception as e:
+                debug_print(f"Activity logging error: {e}")
 
-        title_updated = _set_initial_conversation_title(conversation_item, user_message)
+        title_updated = bool(
+            not capability_resume_context
+            and _set_initial_conversation_title(conversation_item, user_message)
+        )
         if title_updated:
             conversation_item['last_updated'] = datetime.utcnow().isoformat()
             cosmos_conversations_container.upsert_item(conversation_item)
@@ -12658,6 +13544,16 @@ def register_route_backend_chats(bp):
                 'orchestration': turn_orchestration_plan,
                 'orchestration_runtime': turn_orchestration_run.to_metadata(),
                 'evidence_ledger': turn_evidence_ledger,
+                'capability_provenance': turn_capability_provenance,
+                'capability_resume': (
+                    {
+                        'proposal_id': capability_resume_context.get('proposal_id'),
+                        'parent_run_id': capability_resume_context.get('parent_run_id'),
+                        'execution_id': capability_resume_context.get('execution_id'),
+                    }
+                    if capability_resume_context
+                    else None
+                ),
                 'capability_usage': document_action_capability_usage,
                 'thread_info': {
                     'thread_id': response_message_context.get('thread_id'),
@@ -12815,6 +13711,53 @@ def register_route_backend_chats(bp):
             return jsonify({'error': 'User not authenticated'}), 401
 
         data = request.get_json() or {}
+        capability_resume_claim = None
+        capability_resume_proposal_id = str(
+            data.get('capability_resume_proposal_id') or ''
+        ).strip()
+        if capability_resume_proposal_id:
+            resume_conversation_id = str(data.get('conversation_id') or '').strip()
+            if not resume_conversation_id:
+                return jsonify({'error': 'conversation_id is required for capability resume'}), 400
+            current_user_info = get_current_user_info() or {}
+            current_user_roles = (session.get('user') or {}).get('roles', [])
+            try:
+                capability_resume_claim = _claim_authorized_capability_resume(
+                    settings=get_settings(),
+                    user_id=user_id,
+                    user_email=current_user_info.get('email'),
+                    user_roles=current_user_roles,
+                    conversation_id=resume_conversation_id,
+                    proposal_id=capability_resume_proposal_id,
+                )
+                if not capability_resume_claim.get('already_completed'):
+                    data = capability_resume_claim['request_data']
+            except CosmosResourceNotFoundError:
+                return jsonify({'error': 'Capability proposal not found'}), 404
+            except LookupError:
+                return jsonify({'error': 'Conversation not found'}), 404
+            except PermissionError:
+                return jsonify({'error': 'Forbidden'}), 403
+            except CapabilityChoiceError as exc:
+                log_event(
+                    '[CapabilityDiscovery] Document resume rejected',
+                    extra={
+                        'conversation_id': resume_conversation_id,
+                        'proposal_id': capability_resume_proposal_id,
+                        'reason_code': exc.code,
+                    },
+                    level=logging.WARNING,
+                )
+                status_code = 409 if (
+                    exc.code.startswith('capability_')
+                    or exc.code in {
+                        'proposal_expired',
+                        'resume_in_progress',
+                        'resume_not_ready',
+                        'resume_write_conflict',
+                    }
+                ) else 400
+                return jsonify({'error': str(exc), 'code': exc.code}), status_code
         conversation_id = getattr(g, 'conversation_id', None) or data.get('conversation_id')
         if conversation_id is not None:
             conversation_id = str(conversation_id).strip() or None
@@ -12824,9 +13767,46 @@ def register_route_backend_chats(bp):
         g.conversation_id = conversation_id
         stream_session = CHAT_STREAM_REGISTRY.start_session(user_id, conversation_id)
 
+        if capability_resume_claim and capability_resume_claim.get('already_completed'):
+            completed_proposal = capability_resume_claim.get('proposal') or {}
+            completed_resume = completed_proposal.get('resume') or {}
+
+            def replay_completed_document_capability_resume():
+                yield f"data: {json.dumps(make_json_serializable({
+                    'done': True,
+                    'conversation_id': conversation_id,
+                    'message_id': completed_resume.get('assistant_message_id'),
+                    'user_message_id': completed_proposal.get('user_message_id'),
+                    'full_content': '',
+                    'reload_messages': True,
+                    'capability_resume': {
+                        'proposal_id': capability_resume_proposal_id,
+                        'status': 'completed',
+                        'idempotent': True,
+                    },
+                }))}\n\n"
+
+            return build_background_stream_response(
+                replay_completed_document_capability_resume,
+                stream_session=stream_session,
+            )
+
         def generate_document_action_response(publish_background_event=None):
+            resume_context = (
+                data.get('_capability_resume_context')
+                if isinstance(data.get('_capability_resume_context'), Mapping)
+                else None
+            )
             try:
                 if stream_session and stream_session.is_cancel_requested():
+                    if resume_context:
+                        persist_capability_resume_failure(
+                            cosmos_messages_container,
+                            conversation_id=conversation_id,
+                            proposal_id=resume_context.get('proposal_id'),
+                            execution_id=resume_context.get('execution_id'),
+                            error_type='cancelled',
+                        )
                     yield _build_stream_cancel_event(
                         conversation_id,
                         reason=stream_session.get_cancel_reason(),
@@ -12841,6 +13821,14 @@ def register_route_backend_chats(bp):
                     ),
                 )
                 if stream_session and stream_session.is_cancel_requested():
+                    if resume_context:
+                        persist_capability_resume_failure(
+                            cosmos_messages_container,
+                            conversation_id=conversation_id,
+                            proposal_id=resume_context.get('proposal_id'),
+                            execution_id=resume_context.get('execution_id'),
+                            error_type='cancelled',
+                        )
                     yield _build_stream_cancel_event(
                         payload.get('conversation_id') or conversation_id,
                         user_message_id=payload.get('user_message_id'),
@@ -12851,12 +13839,49 @@ def register_route_backend_chats(bp):
                     )
                     return
                 if status_code >= 400:
+                    if resume_context:
+                        persist_capability_resume_failure(
+                            cosmos_messages_container,
+                            conversation_id=conversation_id,
+                            proposal_id=resume_context.get('proposal_id'),
+                            execution_id=resume_context.get('execution_id'),
+                            error_type='document_action_failed',
+                        )
                     error_message = payload.get('error') or f'Document action failed ({status_code})'
                     yield f"data: {json.dumps({'error': error_message, 'conversation_id': payload.get('conversation_id')})}\n\n"
                     return
 
+                if resume_context:
+                    persist_capability_resume_completion(
+                        cosmos_messages_container,
+                        conversation_id=conversation_id,
+                        proposal_id=resume_context.get('proposal_id'),
+                        execution_id=resume_context.get('execution_id'),
+                        assistant_message_id=payload.get('message_id'),
+                    )
+                    log_event(
+                        '[CapabilityDiscovery] Document orchestration resumed',
+                        extra={
+                            'conversation_id': conversation_id,
+                            'proposal_id': resume_context.get('proposal_id'),
+                            'parent_run_id': resume_context.get('parent_run_id'),
+                            'child_run_id': resume_context.get('child_run_id'),
+                        },
+                    )
+
                 yield f"data: {json.dumps(normalize_terminal_chat_payload(payload))}\n\n"
             except Exception as document_action_error:
+                if resume_context:
+                    try:
+                        persist_capability_resume_failure(
+                            cosmos_messages_container,
+                            conversation_id=conversation_id,
+                            proposal_id=resume_context.get('proposal_id'),
+                            execution_id=resume_context.get('execution_id'),
+                            error_type=type(document_action_error).__name__,
+                        )
+                    except Exception:
+                        pass
                 yield f"data: {json.dumps({'error': str(document_action_error), 'conversation_id': conversation_id})}\n\n"
 
         return build_background_stream_response(generate_document_action_response, stream_session=stream_session)
@@ -13061,6 +14086,109 @@ def register_route_backend_chats(bp):
             )
             return jsonify({'error': error_message}), status_code
 
+    @bp.route('/api/chat/capability-proposals/<proposal_id>/decision', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def decide_chat_capability_proposal(proposal_id):
+        """Apply one authenticated turn-scoped capability decision idempotently."""
+        data = request.get_json(silent=True) or {}
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        conversation_id = str(data.get('conversation_id') or '').strip()
+        option_id = str(data.get('option_id') or '').strip()
+        if not conversation_id or not option_id:
+            return jsonify({'error': 'conversation_id and option_id are required'}), 400
+        current_user_info = get_current_user_info() or {}
+        current_user_roles = (session.get('user') or {}).get('roles', [])
+        try:
+            settings = get_settings()
+            context = _load_authorized_capability_proposal_context(
+                settings=settings,
+                user_id=user_id,
+                user_email=current_user_info.get('email'),
+                user_roles=current_user_roles,
+                conversation_id=conversation_id,
+                proposal_id=proposal_id,
+            )
+            _, proposal, idempotent = persist_capability_decision(
+                cosmos_messages_container,
+                conversation_id=conversation_id,
+                proposal_id=proposal_id,
+                option_id=option_id,
+                actor_user_id=user_id,
+                refreshed_inventory=context['inventory'],
+            )
+            decision = proposal.get('decision') or {}
+            effective_capability_ids = list(decision.get('effective_capability_ids') or [])
+            resume_endpoint = (
+                '/api/chat/document-action/stream'
+                if {'analyze', 'compare'}.intersection(effective_capability_ids)
+                else '/api/chat/stream'
+            )
+            log_event(
+                '[CapabilityDiscovery] Recommendation decision persisted',
+                extra={
+                    'conversation_id': conversation_id,
+                    'proposal_id': proposal_id,
+                    'run_id': proposal.get('run_id'),
+                    'decision_status': decision.get('status'),
+                    'option_id': decision.get('option_id'),
+                    'idempotent': idempotent,
+                },
+            )
+            return jsonify({
+                'success': True,
+                'conversation_id': conversation_id,
+                'proposal_id': proposal_id,
+                'status': proposal.get('status'),
+                'decision': {
+                    'option_id': decision.get('option_id'),
+                    'status': decision.get('status'),
+                },
+                'resume_status': (proposal.get('resume') or {}).get('status'),
+                'resume_endpoint': resume_endpoint,
+                'idempotent': idempotent,
+            }), 200
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Capability proposal not found'}), 404
+        except LookupError:
+            return jsonify({'error': 'Conversation not found'}), 404
+        except PermissionError:
+            return jsonify({'error': 'Forbidden'}), 403
+        except CapabilityChoiceError as exc:
+            conflict_codes = {
+                'decision_conflict',
+                'decision_write_conflict',
+                'proposal_expired',
+                'proposal_approved',
+                'proposal_declined',
+            }
+            log_event(
+                '[CapabilityDiscovery] Recommendation decision rejected',
+                extra={
+                    'conversation_id': conversation_id,
+                    'proposal_id': proposal_id,
+                    'reason_code': exc.code,
+                },
+                level=logging.WARNING,
+            )
+            status_code = 409 if exc.code in conflict_codes or exc.code.startswith('capability_') else 400
+            return jsonify({'error': str(exc), 'code': exc.code}), status_code
+        except Exception as exc:
+            log_event(
+                '[CapabilityDiscovery] Proposal decision failed',
+                extra={
+                    'conversation_id': conversation_id,
+                    'proposal_id': proposal_id,
+                    'error_type': type(exc).__name__,
+                },
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Capability decision could not be saved'}), 500
+
     @bp.route('/api/chat', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -13075,6 +14203,18 @@ def register_route_backend_chats(bp):
                 return jsonify({
                     'error': 'User not authenticated'
                 }), 401
+
+            blocked_selected_capabilities = _get_policy_blocked_selected_capability_ids(
+                settings,
+                data,
+            )
+            if blocked_selected_capabilities:
+                return jsonify({
+                    'error': _build_selected_capability_rejection_message([
+                        {'id': capability_id}
+                        for capability_id in blocked_selected_capabilities
+                    ])
+                }), 403
 
             # Extract agent_info early to guide GPT initialization decisions
             request_agent_info = data.get('agent_info')
@@ -13594,6 +14734,71 @@ def register_route_backend_chats(bp):
                 selected_document_id = effective_selected_document_id
                 document_scope = effective_document_scope
 
+            compatibility_selected_capability_ids = _get_selected_builtin_chat_capability_ids(data)
+            compatibility_authorized_documents = _resolve_authorized_chat_selected_documents(
+                selected_document_ids,
+                user_id=user_id,
+                document_scope=document_scope or effective_document_scope or 'all',
+                active_group_ids=active_group_ids,
+                active_public_workspace_ids=active_public_workspace_ids,
+            )
+            compatibility_capability_inventory = _resolve_server_chat_capability_inventory(
+                settings=settings,
+                user_id=user_id,
+                user_email=current_user_email,
+                user_roles=current_user_roles,
+                user_message=user_message,
+                selected_capability_ids=compatibility_selected_capability_ids,
+                authorized_document_count=(
+                    len(compatibility_authorized_documents)
+                    + len(auto_linked_chat_upload_document_ids)
+                ),
+            )
+            compatibility_rejected_capabilities = _get_rejected_selected_capability_entries(
+                compatibility_capability_inventory,
+                compatibility_selected_capability_ids,
+            )
+            if compatibility_rejected_capabilities:
+                return jsonify({
+                    'error': _build_selected_capability_rejection_message(
+                        compatibility_rejected_capabilities
+                    )
+                }), 403
+            compatibility_selection_snapshot = {
+                'conversation_id': conversation_id,
+                'capability_ids': list(compatibility_selected_capability_ids),
+                'selected_document_ids': [
+                    str(document.get('id') or document.get('document_id') or '').strip()
+                    for document in compatibility_authorized_documents
+                    if isinstance(document, Mapping)
+                    and str(document.get('id') or document.get('document_id') or '').strip()
+                ],
+                'conversation_document_ids': list(auto_linked_chat_upload_document_ids),
+                'document_scope': document_scope or effective_document_scope,
+                'active_group_ids': list(active_group_ids or []),
+                'active_public_workspace_ids': list(active_public_workspace_ids or []),
+                'toggles': {
+                    'workspace_search': bool(hybrid_search_enabled),
+                    'web_search': bool(web_search_enabled),
+                    'url_access': bool(url_access_enabled),
+                    'source_review': bool(source_review_enabled),
+                    'deep_research': bool(deep_research_enabled),
+                    'image': bool(image_gen_enabled),
+                },
+            }
+            compatibility_capability_provenance = build_capability_provenance(
+                selection_snapshot=compatibility_selection_snapshot,
+                capability_inventory=compatibility_capability_inventory,
+                effective_capabilities=[
+                    {
+                        'id': capability_id,
+                        'origin': 'selection',
+                        'required': True,
+                    }
+                    for capability_id in compatibility_selected_capability_ids
+                ],
+            )
+
             # Clear plugin invocations at start of message processing to ensure
             # each message only shows citations for tools executed during that specific interaction
             plugin_logger = get_plugin_logger()
@@ -13923,6 +15128,10 @@ def register_route_backend_chats(bp):
                 cosmos_conversations_container.upsert_item(conversation_item) # Update timestamp and potentially title
                 invalidate_conversation_cache_for_item(conversation_item, reason="conversation_title_initialized")
 
+            user_metadata['capability_provenance'] = compatibility_capability_provenance
+            user_message_doc['metadata'] = user_metadata
+            cosmos_messages_container.upsert_item(user_message_doc)
+
             assistant_message_id, thought_tracker, assistant_thread_attempt, response_message_context = _initialize_assistant_response_tracking(
                 conversation_id=conversation_id,
                 user_message_id=user_message_id,
@@ -14024,6 +15233,9 @@ def register_route_backend_chats(bp):
                             content=blocked_msg_content.strip(),
                             response_context=response_message_context,
                             thread_attempt=assistant_thread_attempt,
+                        )
+                        safety_doc.setdefault('metadata', {})['capability_provenance'] = (
+                            compatibility_capability_provenance
                         )
                         cosmos_messages_container.upsert_item(safety_doc)
 
@@ -14804,6 +16016,7 @@ def register_route_backend_chats(bp):
                         'model_deployment_name': image_gen_model,
                         'metadata': {
                             'user_info': user_info_for_image,
+                            'capability_provenance': compatibility_capability_provenance,
                             'thread_info': {
                                 'thread_id': user_thread_id,
                                 'previous_thread_id': user_previous_thread_id,
@@ -14855,7 +16068,10 @@ def register_route_backend_chats(bp):
                         'conversation_title': conversation_item['title'],
                         'model_deployment_name': image_gen_model,
                         'message_id': image_message_id,
-                        'user_message_id': user_message_id
+                        'user_message_id': user_message_id,
+                        'metadata': {
+                            'capability_provenance': compatibility_capability_provenance,
+                        },
                     }), 200
                 except Exception as e:
                     debug_print(f"Image generation error: {str(e)}")
@@ -16343,6 +17559,7 @@ def register_route_backend_chats(bp):
                         'streaming': 'Disabled',
                     },
                     'history_context': history_debug_info,
+                    'capability_provenance': compatibility_capability_provenance,
                     'capability_usage': assistant_capability_usage,
                     'agent_runtime': agent_runtime_metadata or None,
                     'source_review': compact_source_review_result_for_metadata(source_review_result),
@@ -16551,6 +17768,64 @@ def register_route_backend_chats(bp):
         except Exception as e:
             return jsonify({'error': f'Failed to parse request: {str(e)}'}), 400
 
+        blocked_selected_capabilities = _get_policy_blocked_selected_capability_ids(
+            settings,
+            data,
+        )
+        if blocked_selected_capabilities:
+            return jsonify({
+                'error': _build_selected_capability_rejection_message([
+                    {'id': capability_id}
+                    for capability_id in blocked_selected_capabilities
+                ])
+            }), 403
+
+        capability_resume_claim = None
+        capability_resume_proposal_id = str(
+            (data or {}).get('capability_resume_proposal_id') or ''
+        ).strip()
+        if capability_resume_proposal_id:
+            resume_conversation_id = str((data or {}).get('conversation_id') or '').strip()
+            if not resume_conversation_id:
+                return jsonify({'error': 'conversation_id is required for capability resume'}), 400
+            try:
+                capability_resume_claim = _claim_authorized_capability_resume(
+                    settings=settings,
+                    user_id=user_id,
+                    user_email=current_user_email,
+                    user_roles=current_user_roles,
+                    conversation_id=resume_conversation_id,
+                    proposal_id=capability_resume_proposal_id,
+                )
+                if not capability_resume_claim.get('already_completed'):
+                    data = capability_resume_claim['request_data']
+            except CosmosResourceNotFoundError:
+                return jsonify({'error': 'Capability proposal not found'}), 404
+            except LookupError:
+                return jsonify({'error': 'Conversation not found'}), 404
+            except PermissionError:
+                return jsonify({'error': 'Forbidden'}), 403
+            except CapabilityChoiceError as exc:
+                log_event(
+                    '[CapabilityDiscovery] Chat resume rejected',
+                    extra={
+                        'conversation_id': resume_conversation_id,
+                        'proposal_id': capability_resume_proposal_id,
+                        'reason_code': exc.code,
+                    },
+                    level=logging.WARNING,
+                )
+                status_code = 409 if (
+                    exc.code.startswith('capability_')
+                    or exc.code in {
+                        'proposal_expired',
+                        'resume_in_progress',
+                        'resume_not_ready',
+                        'resume_write_conflict',
+                    }
+                ) else 400
+                return jsonify({'error': str(exc), 'code': exc.code}), status_code
+
         retry_user_message_id = data.get('retry_user_message_id') or data.get('edited_user_message_id')
         retry_thread_id = data.get('retry_thread_id')
         retry_thread_attempt = data.get('retry_thread_attempt')
@@ -16586,6 +17861,30 @@ def register_route_backend_chats(bp):
         data['active_public_workspace_ids'] = list(initial_scope_context['active_public_workspace_ids'])
         data['active_public_workspace_id'] = initial_scope_context['active_public_workspace_id']
         stream_session = CHAT_STREAM_REGISTRY.start_session(user_id, finalized_conversation_id)
+
+        if capability_resume_claim and capability_resume_claim.get('already_completed'):
+            completed_proposal = capability_resume_claim.get('proposal') or {}
+            completed_resume = completed_proposal.get('resume') or {}
+
+            def replay_completed_capability_resume():
+                yield f"data: {json.dumps(make_json_serializable({
+                    'done': True,
+                    'conversation_id': finalized_conversation_id,
+                    'message_id': completed_resume.get('assistant_message_id'),
+                    'user_message_id': completed_proposal.get('user_message_id'),
+                    'full_content': '',
+                    'reload_messages': True,
+                    'capability_resume': {
+                        'proposal_id': capability_resume_proposal_id,
+                        'status': 'completed',
+                        'idempotent': True,
+                    },
+                }))}\n\n"
+
+            return build_background_stream_response(
+                replay_completed_capability_resume,
+                stream_session=stream_session,
+            )
 
         request_message = (data.get('message') or '').strip()
         request_preview = request_message[:120] + '...' if len(request_message) > 120 else request_message
@@ -16639,6 +17938,7 @@ def register_route_backend_chats(bp):
                 'kernel_fallback_notice': payload.get('kernel_fallback_notice'),
                 'thoughts_enabled': payload.get('thoughts_enabled', False),
                 'blocked': payload.get('blocked', False),
+                'metadata': payload.get('metadata', {}),
             })
 
         def generate_compatibility_response():
@@ -16713,6 +18013,11 @@ def register_route_backend_chats(bp):
 
                 # Extract request parameters (same as non-streaming endpoint)
                 user_message = data.get('message', '')
+                capability_resume_context = (
+                    data.get('_capability_resume_context')
+                    if isinstance(data.get('_capability_resume_context'), Mapping)
+                    else None
+                )
                 conversation_id = finalized_conversation_id
                 hybrid_search_enabled = data.get('hybrid_search')
                 web_search_enabled = data.get('web_search_enabled')
@@ -16852,7 +18157,10 @@ def register_route_backend_chats(bp):
 
                 # Initialize variables
                 search_query = user_message
-                web_search_query_text = build_web_search_query_text(user_message)
+                external_retrieval_message = str(
+                    data.get('_server_external_query') or user_message
+                ).strip()
+                web_search_query_text = build_web_search_query_text(external_retrieval_message)
                 hybrid_citations_list = []
                 agent_citations_list = []
                 web_search_citations_list = []
@@ -17286,33 +18594,239 @@ def register_route_backend_chats(bp):
                         or assigned_knowledge_deep_research_urls
                     )
                 )
-                turn_orchestration_plan = build_turn_orchestration_plan(
-                    user_message,
-                    conversation_id=conversation_id,
-                    selected_agent=request_agent_info,
-                    selected_action=data.get('document_action'),
-                    selected_document_ids=requested_selected_document_ids,
-                    conversation_document_ids=auto_linked_chat_upload_document_ids,
-                    assigned_knowledge_enabled=assigned_knowledge_planned,
-                    document_scope=requested_document_scope,
+                discovery_authorized_documents = _resolve_authorized_chat_selected_documents(
+                    requested_selected_document_ids,
+                    user_id=user_id,
+                    document_scope=requested_document_scope or effective_document_scope or 'all',
                     active_group_ids=requested_active_group_ids,
                     active_public_workspace_ids=requested_active_public_workspace_ids,
-                    tags=requested_tags_filter,
-                    hybrid_search_enabled=requested_hybrid_search_enabled,
-                    web_search_enabled=requested_web_search_enabled,
-                    url_access_enabled=requested_url_access_enabled,
-                    source_review_enabled=requested_source_review_enabled,
-                    deep_research_enabled=requested_deep_research_enabled,
-                    user_workspace_context_enabled=user_workspace_context_requested,
-                    prior_citation_count=len(prior_grounded_document_refs),
-                    image_generation_available=image_generation_is_enabled(settings),
-                    model_deployment=frontend_gpt_model,
-                    model_id=frontend_model_id,
-                    model_endpoint_id=frontend_model_endpoint_id,
-                    model_provider=frontend_model_provider,
-                    reasoning_effort=reasoning_effort,
-                    prompt_info=data.get('prompt_info'),
                 )
+                discovery_document_ids = {
+                    str(document.get('id') or document.get('document_id') or '').strip()
+                    for document in discovery_authorized_documents
+                    if isinstance(document, Mapping)
+                }
+                for document in task_resolution.get('documents') or []:
+                    if not isinstance(document, Mapping):
+                        continue
+                    document_id = str(document.get('id') or document.get('document_id') or '').strip()
+                    if document_id:
+                        discovery_document_ids.add(document_id)
+
+                selected_builtin_capability_ids = (
+                    [
+                        capability.get('id')
+                        for capability in (
+                            capability_resume_context.get('capability_inventory', {}).get('capabilities', [])
+                            if capability_resume_context
+                            else []
+                        )
+                        if isinstance(capability, Mapping)
+                        and capability.get('state') == 'selected'
+                    ]
+                    if capability_resume_context
+                    else _get_selected_builtin_chat_capability_ids(data)
+                )
+                if capability_resume_context:
+                    capability_discovery = {
+                        'inventory': copy.deepcopy(
+                            capability_resume_context.get('capability_inventory') or {}
+                        ),
+                        'requirements': classify_capability_requirements(
+                            user_message,
+                            authorized_document_count=len(discovery_document_ids),
+                        ),
+                        'auto_capability_ids': [
+                            capability_id
+                            for capability_id, origin in (
+                                capability_resume_context.get('capability_origins') or {}
+                            ).items()
+                            if origin == 'discovery_auto'
+                        ],
+                        'recommendation': None,
+                    }
+                else:
+                    capability_discovery = _build_server_capability_discovery(
+                        settings=settings,
+                        user_id=user_id,
+                        user_email=current_user_email,
+                        user_roles=current_user_roles,
+                        user_message=user_message,
+                        selected_capability_ids=selected_builtin_capability_ids,
+                        authorized_document_count=len(discovery_document_ids),
+                    )
+                inventory_entries = capability_discovery.get('inventory', {}).get('capabilities', [])
+                log_event(
+                    '[CapabilityDiscovery] Governed capability inventory built',
+                    extra={
+                        'conversation_id': conversation_id,
+                        'capability_count': len(inventory_entries),
+                        'selected_count': sum(
+                            capability.get('state') == 'selected'
+                            for capability in inventory_entries
+                            if isinstance(capability, Mapping)
+                        ),
+                        'discoverable_count': sum(
+                            capability.get('discoverable') is True
+                            for capability in inventory_entries
+                            if isinstance(capability, Mapping)
+                        ),
+                        'requirement_count': len(
+                            capability_discovery.get('requirements') or []
+                        ),
+                    },
+                )
+                rejected_selected_capabilities = _get_rejected_selected_capability_entries(
+                    capability_discovery.get('inventory'),
+                    selected_builtin_capability_ids,
+                )
+                if rejected_selected_capabilities:
+                    log_event(
+                        '[CapabilityDiscovery] Selected capability rejected',
+                        extra={
+                            'conversation_id': conversation_id,
+                            'capability_count': len(rejected_selected_capabilities),
+                            'states': sorted({
+                                str(entry.get('state') or '')
+                                for entry in rejected_selected_capabilities
+                            }),
+                        },
+                        level=logging.WARNING,
+                    )
+                    yield f"data: {json.dumps({
+                        'error': _build_selected_capability_rejection_message(
+                            rejected_selected_capabilities
+                        )
+                    })}\n\n"
+                    return
+
+                auto_capability_ids = list(capability_discovery.get('auto_capability_ids') or [])
+                capability_origins = (
+                    dict(capability_resume_context.get('capability_origins') or {})
+                    if capability_resume_context
+                    else {capability_id: 'discovery_auto' for capability_id in auto_capability_ids}
+                )
+                if 'workspace_search' in auto_capability_ids:
+                    hybrid_search_enabled = True
+                if 'web_search' in auto_capability_ids:
+                    web_search_enabled = True
+                if 'url_access' in auto_capability_ids:
+                    url_access_enabled = True
+                    source_review_enabled = True
+                if 'deep_research' in auto_capability_ids:
+                    web_search_enabled = True
+                    source_review_enabled = True
+                    deep_research_enabled = True
+
+                plan_kwargs = {
+                    'conversation_id': conversation_id,
+                    'selected_agent': request_agent_info,
+                    'selected_action': data.get('document_action'),
+                    'selected_document_ids': requested_selected_document_ids,
+                    'conversation_document_ids': auto_linked_chat_upload_document_ids,
+                    'assigned_knowledge_enabled': assigned_knowledge_planned,
+                    'document_scope': requested_document_scope,
+                    'active_group_ids': requested_active_group_ids,
+                    'active_public_workspace_ids': requested_active_public_workspace_ids,
+                    'tags': requested_tags_filter,
+                    'hybrid_search_enabled': (
+                        requested_hybrid_search_enabled or 'workspace_search' in auto_capability_ids
+                    ),
+                    'web_search_enabled': (
+                        requested_web_search_enabled or 'web_search' in auto_capability_ids
+                    ),
+                    'url_access_enabled': (
+                        requested_url_access_enabled or 'url_access' in auto_capability_ids
+                    ),
+                    'source_review_enabled': (
+                        requested_source_review_enabled
+                        or 'url_access' in auto_capability_ids
+                        or 'deep_research' in auto_capability_ids
+                    ),
+                    'deep_research_enabled': (
+                        requested_deep_research_enabled or 'deep_research' in auto_capability_ids
+                    ),
+                    'user_workspace_context_enabled': user_workspace_context_requested,
+                    'prior_citation_count': len(prior_grounded_document_refs),
+                    'image_generation_available': image_generation_is_enabled(settings),
+                    'model_deployment': frontend_gpt_model,
+                    'model_id': frontend_model_id,
+                    'model_endpoint_id': frontend_model_endpoint_id,
+                    'model_provider': frontend_model_provider,
+                    'reasoning_effort': reasoning_effort,
+                    'prompt_info': data.get('prompt_info'),
+                }
+                if capability_resume_context:
+                    turn_orchestration_plan = build_turn_orchestration_plan(
+                        user_message,
+                        run_id=capability_resume_context.get('child_run_id'),
+                        parent_run_id=capability_resume_context.get('parent_run_id'),
+                        capability_origins=capability_origins,
+                        selection_snapshot_override=capability_resume_context.get('selection_snapshot'),
+                        **plan_kwargs,
+                    )
+                else:
+                    if auto_capability_ids:
+                        submitted_plan_kwargs = dict(plan_kwargs)
+                        submitted_plan_kwargs.update({
+                            'hybrid_search_enabled': requested_hybrid_search_enabled,
+                            'web_search_enabled': requested_web_search_enabled,
+                            'url_access_enabled': requested_url_access_enabled,
+                            'source_review_enabled': requested_source_review_enabled,
+                            'deep_research_enabled': requested_deep_research_enabled,
+                        })
+                        submitted_plan = build_turn_orchestration_plan(
+                            user_message,
+                            **submitted_plan_kwargs,
+                        )
+                        turn_orchestration_plan = build_turn_orchestration_plan(
+                            user_message,
+                            run_id=submitted_plan.get('run_id'),
+                            capability_origins=capability_origins,
+                            selection_snapshot_override=submitted_plan.get('selection_snapshot'),
+                            **plan_kwargs,
+                        )
+                    else:
+                        turn_orchestration_plan = build_turn_orchestration_plan(
+                            user_message,
+                            **plan_kwargs,
+                        )
+
+                effective_capability_entries = [
+                    {
+                        'id': capability_id,
+                        'origin': 'selection',
+                        'required': True,
+                    }
+                    for capability_id in selected_builtin_capability_ids
+                ]
+                for capability_id, origin in capability_origins.items():
+                    if not capability_id or any(
+                        entry['id'] == capability_id
+                        for entry in effective_capability_entries
+                    ):
+                        continue
+                    effective_capability_entries.append({
+                        'id': capability_id,
+                        'origin': origin,
+                        'required': True,
+                    })
+                turn_capability_provenance = build_capability_provenance(
+                    selection_snapshot=turn_orchestration_plan.get('selection_snapshot'),
+                    capability_inventory=capability_discovery.get('inventory'),
+                    decisions=(
+                        [capability_resume_context.get('decision')]
+                        if capability_resume_context
+                        else []
+                    ),
+                    proposal=(
+                        capability_resume_context.get('original_proposal')
+                        if capability_resume_context
+                        else None
+                    ),
+                    effective_capabilities=effective_capability_entries,
+                )
+                capability_recommendation = capability_discovery.get('recommendation')
                 log_event(
                     '[Orchestration] Turn plan created',
                     extra={
@@ -17341,7 +18855,11 @@ def register_route_backend_chats(bp):
                     g.conversation_group_id = conversation_group_id
 
                 # Save user message
-                user_message_id = f"{conversation_id}_user_{int(time.time())}_{random.randint(1000,9999)}"
+                user_message_id = (
+                    str(capability_resume_context.get('user_message_id') or '').strip()
+                    if capability_resume_context
+                    else f"{conversation_id}_user_{int(time.time())}_{random.randint(1000,9999)}"
+                )
                 turn_evidence_ledger = create_evidence_ledger_from_plan(
                     turn_orchestration_plan,
                     conversation_id=conversation_id,
@@ -17354,7 +18872,15 @@ def register_route_backend_chats(bp):
                 reconcile_orchestration_run_from_ledger(turn_orchestration_run)
                 orchestration_runtime_progress_events = []
 
-                user_metadata = {}
+                user_metadata = (
+                    copy.deepcopy(
+                        (
+                            capability_resume_context.get('existing_user_message') or {}
+                        ).get('metadata') or {}
+                    )
+                    if capability_resume_context
+                    else {}
+                )
                 current_user = get_current_user_info()
                 if current_user:
                     user_metadata['user_info'] = {
@@ -17365,12 +18891,17 @@ def register_route_backend_chats(bp):
                         'timestamp': datetime.utcnow().isoformat()
                     }
 
+                submitted_toggles = (
+                    turn_orchestration_plan.get('selection_snapshot', {}).get('toggles', {})
+                )
                 user_metadata['button_states'] = {
-                    'image_generation': False,
-                    'document_search': hybrid_search_enabled,
-                    'web_search': bool(web_search_enabled),
-                    'url_access': bool(url_access_enabled),
-                    'deep_research': bool(deep_research_enabled)
+                    'image_generation': bool(
+                        'image' in selected_builtin_capability_ids
+                    ),
+                    'document_search': bool(submitted_toggles.get('workspace_search')),
+                    'web_search': bool(submitted_toggles.get('web_search')),
+                    'url_access': bool(submitted_toggles.get('url_access')),
+                    'deep_research': bool(submitted_toggles.get('deep_research')),
                 }
                 user_metadata['capability_usage'] = _build_capability_usage_metadata(
                     workspace_search_enabled=hybrid_search_enabled,
@@ -17388,7 +18919,8 @@ def register_route_backend_chats(bp):
                 # Document search scope and selections
                 if hybrid_search_enabled:
                     user_metadata['workspace_search'] = {
-                        'search_enabled': True,
+                        'search_enabled': bool(submitted_toggles.get('workspace_search')),
+                        'effective_search_enabled': True,
                         'document_scope': effective_document_scope,
                         'selected_document_id': effective_selected_document_id,
                         'selected_document_ids': effective_selected_document_ids,
@@ -17487,32 +19019,55 @@ def register_route_backend_chats(bp):
                 if agent_selection_metadata:
                     user_metadata['agent_selection'] = agent_selection_metadata
 
+                if capability_resume_context and isinstance(user_metadata.get('orchestration'), Mapping):
+                    user_metadata.setdefault(
+                        'orchestration_parent',
+                        copy.deepcopy(dict(user_metadata['orchestration'])),
+                    )
                 user_metadata['orchestration'] = turn_orchestration_plan
                 user_metadata['evidence_ledger'] = turn_evidence_ledger
                 user_metadata['orchestration_runtime'] = turn_orchestration_run.to_metadata()
+                user_metadata['capability_provenance'] = turn_capability_provenance
                 user_metadata['chat_context'] = {
                     'conversation_id': conversation_id
                 }
 
                 # --- Threading Logic for Streaming ---
-                previous_thread_id = None
-                try:
-                    last_msg_query = f"""
-                        SELECT TOP 1 c.metadata.thread_info.thread_id as thread_id
-                        FROM c
-                        WHERE c.conversation_id = '{conversation_id}'
-                        ORDER BY c.timestamp DESC
-                    """
-                    last_msgs = list(cosmos_messages_container.query_items(
-                        query=last_msg_query,
-                        partition_key=conversation_id
-                    ))
-                    if last_msgs:
-                        previous_thread_id = last_msgs[0].get('thread_id')
-                except Exception as e:
-                    debug_print(f"Error fetching last message for threading: {e}")
+                existing_thread_info = (
+                    (
+                        capability_resume_context.get('existing_user_message') or {}
+                    ).get('metadata', {}).get('thread_info', {})
+                    if capability_resume_context
+                    else {}
+                )
+                previous_thread_id = existing_thread_info.get('previous_thread_id')
+                if not capability_resume_context:
+                    try:
+                        last_msg_query = f"""
+                            SELECT TOP 1 c.metadata.thread_info.thread_id as thread_id
+                            FROM c
+                            WHERE c.conversation_id = '{conversation_id}'
+                            ORDER BY c.timestamp DESC
+                        """
+                        last_msgs = list(cosmos_messages_container.query_items(
+                            query=last_msg_query,
+                            partition_key=conversation_id
+                        ))
+                        if last_msgs:
+                            previous_thread_id = last_msgs[0].get('thread_id')
+                    except Exception as e:
+                        debug_print(f"Error fetching last message for threading: {e}")
 
-                current_user_thread_id = str(uuid.uuid4())
+                current_user_thread_id = (
+                    str(existing_thread_info.get('thread_id') or '').strip()
+                    if capability_resume_context
+                    else str(uuid.uuid4())
+                )
+                if not current_user_thread_id:
+                    raise CapabilityChoiceError(
+                        'source user message thread is missing',
+                        code='proposal_thread_missing',
+                    )
                 latest_thread_id = current_user_thread_id
 
                 # Add thread information to user metadata
@@ -17523,41 +19078,50 @@ def register_route_backend_chats(bp):
                     'thread_attempt': 1
                 }
 
-                user_message_doc = {
-                    'id': user_message_id,
-                    'conversation_id': conversation_id,
-                    'role': 'user',
-                    'content': user_message,
-                    'timestamp': datetime.utcnow().isoformat(),
-                    'model_deployment_name': None,
-                    'metadata': user_metadata
-                }
+                user_message_doc = (
+                    copy.deepcopy(capability_resume_context.get('existing_user_message'))
+                    if capability_resume_context
+                    else {
+                        'id': user_message_id,
+                        'conversation_id': conversation_id,
+                        'role': 'user',
+                        'content': user_message,
+                        'timestamp': datetime.utcnow().isoformat(),
+                        'model_deployment_name': None,
+                    }
+                )
+                user_message_doc['metadata'] = user_metadata
 
                 cosmos_messages_container.upsert_item(user_message_doc)
                 debug_print(
-                    f"[Streaming] Saved user message {user_message_id} | thread_id={current_user_thread_id} | previous_thread_id={previous_thread_id}"
+                    f"[Streaming] {'Updated resumed' if capability_resume_context else 'Saved'} user message "
+                    f"{user_message_id} | thread_id={current_user_thread_id} | previous_thread_id={previous_thread_id}"
                 )
 
                 # Log activity
-                try:
-                    log_chat_activity(
-                        user_id=user_id,
-                        conversation_id=conversation_id,
-                        message_type='user_message',
-                        message_length=len(user_message) if user_message else 0,
-                        has_document_search=hybrid_search_enabled,
-                        has_image_generation=False,
-                        document_scope=effective_document_scope,
-                        chat_context=actual_chat_type,
-                        workspace_type='group' if actual_chat_type == 'group' else 'public' if actual_chat_type == 'public' else 'personal',
-                        group_id=effective_active_group_id if actual_chat_type == 'group' else None,
-                        public_workspace_id=effective_active_public_workspace_id if actual_chat_type == 'public' else None,
-                    )
-                except Exception as e:
-                    debug_print(f"Activity logging error: {e}")
+                if not capability_resume_context:
+                    try:
+                        log_chat_activity(
+                            user_id=user_id,
+                            conversation_id=conversation_id,
+                            message_type='user_message',
+                            message_length=len(user_message) if user_message else 0,
+                            has_document_search=hybrid_search_enabled,
+                            has_image_generation=False,
+                            document_scope=effective_document_scope,
+                            chat_context=actual_chat_type,
+                            workspace_type='group' if actual_chat_type == 'group' else 'public' if actual_chat_type == 'public' else 'personal',
+                            group_id=effective_active_group_id if actual_chat_type == 'group' else None,
+                            public_workspace_id=effective_active_public_workspace_id if actual_chat_type == 'public' else None,
+                        )
+                    except Exception as e:
+                        debug_print(f"Activity logging error: {e}")
 
                 # Update conversation title
-                title_updated = _set_initial_conversation_title(conversation_item, user_message)
+                title_updated = bool(
+                    not capability_resume_context
+                    and _set_initial_conversation_title(conversation_item, user_message)
+                )
 
                 conversation_item['last_updated'] = datetime.utcnow().isoformat()
                 cosmos_conversations_container.upsert_item(conversation_item)
@@ -17781,6 +19345,94 @@ def register_route_backend_chats(bp):
                         debug_print(f"[Content Safety Error - Streaming] {e}")
                     except Exception as ex:
                         debug_print(f"[Content Safety - Streaming] Unexpected error: {ex}")
+
+                if capability_recommendation and not capability_resume_context:
+                    turn_orchestration_run.status = 'awaiting_user_choice'
+                    turn_orchestration_run.started_at = datetime.utcnow().isoformat()
+                    proposal = build_capability_choice_proposal(
+                        capability_recommendation,
+                        run_id=turn_orchestration_plan.get('run_id'),
+                        conversation_id=conversation_id,
+                        user_message_id=user_message_id,
+                        assistant_message_id=assistant_message_id,
+                        ttl_seconds=settings.get('chat_capability_choice_ttl_seconds', 86400),
+                    )
+                    turn_capability_provenance = build_capability_provenance(
+                        selection_snapshot=turn_orchestration_plan.get('selection_snapshot'),
+                        capability_inventory=capability_discovery.get('inventory'),
+                        proposal=proposal,
+                        effective_capabilities=effective_capability_entries,
+                    )
+                    user_metadata['capability_provenance'] = turn_capability_provenance
+                    user_metadata['orchestration_runtime'] = turn_orchestration_run.to_metadata()
+                    user_message_doc['metadata'] = user_metadata
+                    cosmos_messages_container.upsert_item(user_message_doc)
+
+                    proposal_content = (
+                        'An additional capability could materially improve this answer. '
+                        'Choose how you want to continue.'
+                    )
+                    proposal_assistant_doc = make_json_serializable({
+                        'id': assistant_message_id,
+                        'conversation_id': conversation_id,
+                        'role': 'assistant',
+                        'content': proposal_content,
+                        'timestamp': datetime.utcnow().isoformat(),
+                        'augmented': False,
+                        'hybrid_citations': [],
+                        'web_search_citations': [],
+                        'agent_citations': [],
+                        'model_deployment_name': None,
+                        'metadata': {
+                            'awaiting_user_choice': True,
+                            'orchestration': turn_orchestration_plan,
+                            'orchestration_runtime': turn_orchestration_run.to_metadata(),
+                            'evidence_ledger': turn_evidence_ledger,
+                            'capability_proposal': proposal,
+                            'capability_provenance': turn_capability_provenance,
+                            'capability_resume_request': _build_capability_resume_request(
+                                data,
+                                canonical_agent=request_agent_info,
+                            ),
+                            'thread_info': {
+                                'thread_id': user_thread_id,
+                                'previous_thread_id': user_previous_thread_id,
+                                'active_thread': True,
+                                'thread_attempt': assistant_thread_attempt,
+                            },
+                        },
+                    })
+                    cosmos_messages_container.upsert_item(proposal_assistant_doc)
+                    conversation_item['last_updated'] = datetime.utcnow().isoformat()
+                    cosmos_conversations_container.upsert_item(conversation_item)
+                    invalidate_conversation_cache_for_item(
+                        conversation_item,
+                        reason='capability_choice_created',
+                    )
+                    orchestration_waiting_for_choice = True
+                    log_event(
+                        '[CapabilityDiscovery] Capability recommendation created',
+                        extra={
+                            'conversation_id': conversation_id,
+                            'proposal_id': proposal.get('proposal_id'),
+                            'run_id': proposal.get('run_id'),
+                            'recommended_option_id': proposal.get('recommended_option_id'),
+                            'option_count': len(proposal.get('options') or []),
+                            'requirement_count': len(proposal.get('requirement_ids') or []),
+                        },
+                    )
+                    yield f"data: {json.dumps(make_json_serializable({
+                        'done': True,
+                        'awaiting_user_choice': True,
+                        'conversation_id': conversation_id,
+                        'conversation_title': conversation_item.get('title'),
+                        'message_id': assistant_message_id,
+                        'user_message_id': user_message_id,
+                        'full_content': proposal_content,
+                        'metadata': proposal_assistant_doc.get('metadata', {}),
+                        'thoughts_enabled': thought_tracker.enabled,
+                    }))}\n\n"
+                    return
 
                 if not original_hybrid_search_enabled and not explicit_external_retrieval_requested:
                     prior_grounded_document_refs = _normalize_prior_grounded_document_refs(conversation_item)
@@ -18384,7 +20036,7 @@ def register_route_backend_chats(bp):
                         settings=settings,
                         conversation_id=conversation_id,
                         user_id=user_id,
-                        user_message=user_message,
+                        user_message=external_retrieval_message,
                         user_message_id=user_message_id,
                         chat_type=chat_type,
                         document_scope=document_scope,
@@ -18431,7 +20083,7 @@ def register_route_backend_chats(bp):
                         user_id=user_id,
                         user_email=current_user_email,
                         user_roles=current_user_roles,
-                        user_message=user_message,
+                        user_message=external_retrieval_message,
                         web_search_citations=web_search_citations_list if deep_research_enabled else [],
                         conversation_id=conversation_id,
                         source_review_planner_client=gpt_client,
@@ -20005,6 +21657,16 @@ def register_route_backend_chats(bp):
                             'orchestration': turn_orchestration_plan,
                             'orchestration_runtime': turn_orchestration_run.to_metadata(),
                             'evidence_ledger': turn_evidence_ledger,
+                            'capability_provenance': turn_capability_provenance,
+                            'capability_resume': (
+                                {
+                                    'proposal_id': capability_resume_context.get('proposal_id'),
+                                    'parent_run_id': capability_resume_context.get('parent_run_id'),
+                                    'execution_id': capability_resume_context.get('execution_id'),
+                                }
+                                if capability_resume_context
+                                else None
+                            ),
                             'central_synthesis': central_synthesis_metadata,
                             'capability_usage': build_streaming_capability_usage(),
                             'agent_runtime': agent_runtime_metadata or None,
@@ -20021,6 +21683,35 @@ def register_route_backend_chats(bp):
                         }
                     })
                     cosmos_messages_container.upsert_item(assistant_doc)
+                    if capability_resume_context:
+                        try:
+                            persist_capability_resume_completion(
+                                cosmos_messages_container,
+                                conversation_id=conversation_id,
+                                proposal_id=capability_resume_context.get('proposal_id'),
+                                execution_id=capability_resume_context.get('execution_id'),
+                                assistant_message_id=assistant_message_id,
+                            )
+                            log_event(
+                                '[CapabilityDiscovery] Orchestration resumed',
+                                extra={
+                                    'conversation_id': conversation_id,
+                                    'proposal_id': capability_resume_context.get('proposal_id'),
+                                    'parent_run_id': capability_resume_context.get('parent_run_id'),
+                                    'child_run_id': turn_orchestration_plan.get('run_id'),
+                                },
+                            )
+                        except Exception as resume_completion_error:
+                            log_event(
+                                '[CapabilityDiscovery] Resume completion persistence failed',
+                                extra={
+                                    'conversation_id': conversation_id,
+                                    'proposal_id': capability_resume_context.get('proposal_id'),
+                                    'error_type': type(resume_completion_error).__name__,
+                                },
+                                level=logging.ERROR,
+                                exceptionTraceback=True,
+                            )
                     if use_agent_streaming and agent_name_used:
                         agent_scope_for_usage = 'personal'
                         agent_group_id_for_usage = None
@@ -20099,6 +21790,9 @@ def register_route_backend_chats(bp):
                         )
                         if central_synthesis_metadata:
                             user_message_doc.setdefault('metadata', {})['central_synthesis'] = central_synthesis_metadata
+                        user_message_doc.setdefault('metadata', {})['capability_provenance'] = (
+                            turn_capability_provenance
+                        )
                         cosmos_messages_container.upsert_item(user_message_doc)
                     except Exception as e:
                         debug_print(f"Warning: Could not update streaming user message metadata: {e}")
@@ -20193,6 +21887,26 @@ def register_route_backend_chats(bp):
                     error_msg = str(e)
                     debug_print(f"Error during streaming: {error_msg}")
 
+                    if capability_resume_context:
+                        try:
+                            persist_capability_resume_failure(
+                                cosmos_messages_container,
+                                conversation_id=conversation_id,
+                                proposal_id=capability_resume_context.get('proposal_id'),
+                                execution_id=capability_resume_context.get('execution_id'),
+                                error_type=type(e).__name__,
+                            )
+                        except Exception as resume_failure_error:
+                            log_event(
+                                '[CapabilityDiscovery] Resume failure persistence failed',
+                                extra={
+                                    'conversation_id': conversation_id,
+                                    'proposal_id': capability_resume_context.get('proposal_id'),
+                                    'error_type': type(resume_failure_error).__name__,
+                                },
+                                level=logging.ERROR,
+                            )
+
                     if not turn_orchestration_run.completed_at:
                         fail_orchestration_run(
                             turn_orchestration_run,
@@ -20260,6 +21974,7 @@ def register_route_backend_chats(bp):
                                 'orchestration': turn_orchestration_plan,
                                 'orchestration_runtime': turn_orchestration_run.to_metadata(),
                                 'evidence_ledger': turn_evidence_ledger,
+                                'capability_provenance': turn_capability_provenance,
                                 'central_synthesis': central_synthesis_metadata,
                                 'capability_usage': build_streaming_capability_usage(),
                                 'source_review': compact_source_review_result_for_metadata(source_review_result),
@@ -20287,6 +22002,7 @@ def register_route_backend_chats(bp):
                             'orchestration': turn_orchestration_plan,
                             'orchestration_runtime': turn_orchestration_run.to_metadata(),
                             'evidence_ledger': turn_evidence_ledger,
+                            'capability_provenance': turn_capability_provenance,
                             'central_synthesis': central_synthesis_metadata,
                         },
                     }
@@ -20300,7 +22016,11 @@ def register_route_backend_chats(bp):
                 yield f"data: {json.dumps({'error': f'Internal server error: {str(e)}'})}\n\n"
             finally:
                 active_runtime = locals().get('turn_orchestration_run')
-                if active_runtime and not active_runtime.completed_at:
+                if (
+                    active_runtime
+                    and not active_runtime.completed_at
+                    and not locals().get('orchestration_waiting_for_choice')
+                ):
                     try:
                         runtime_progress_callback = locals().get(
                             'queue_orchestration_runtime_progress'

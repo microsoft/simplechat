@@ -2,7 +2,7 @@
 # test_chat_stream_background_execution.py
 """
 Functional test for chat stream background execution.
-Version: 0.250.064
+Version: 0.250.066
 Implemented in: 0.239.129
 
 This test ensures that the streaming chat route runs its SSE generator through
@@ -43,7 +43,7 @@ def test_chat_stream_background_execution() -> None:
     assert_contains(ROUTE_FILE, "return build_background_stream_response(generate_compatibility_response, stream_session=stream_session)")
     assert_contains(ROUTE_FILE, "return build_background_stream_response(generate, stream_session=stream_session)")
 
-    assert_contains(CONFIG_FILE, 'VERSION = "0.250.064"')
+    assert_contains(CONFIG_FILE, 'VERSION = "0.250.066"')
     assert_contains(FIX_DOC_FILE, "Fixed/Implemented in version: **0.239.129**")
 
     print("Chat stream background execution checks passed!")

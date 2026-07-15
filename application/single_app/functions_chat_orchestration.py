@@ -1,6 +1,7 @@
 # functions_chat_orchestration.py
 """Deterministic Phase 1 planning helpers for coordinated chat turns."""
 
+import copy
 import re
 import uuid
 from collections.abc import Mapping
@@ -252,6 +253,9 @@ def build_turn_orchestration_plan(
     model_provider=None,
     reasoning_effort=None,
     prompt_info=None,
+    capability_origins=None,
+    selection_snapshot_override=None,
+    parent_run_id=None,
 ):
     """Build a JSON-serializable, immutable-by-convention plan snapshot for one turn."""
     selected_document_ids = _normalize_ids(selected_document_ids)
@@ -263,28 +267,46 @@ def build_turn_orchestration_plan(
     selected_action_type = _selected_action_type(selected_action)
     selected_prompt_id = _selected_prompt_identifier(prompt_info)
     selected_image_reference_count = _nonnegative_int(selected_image_reference_count)
+    capability_origins = capability_origins if isinstance(capability_origins, Mapping) else {}
     selected_sources = []
+
+    def capability_origin(capability_id):
+        origin = str(capability_origins.get(capability_id) or 'selection').strip().lower()
+        if origin not in {'selection', 'discovery_auto', 'discovery_approved'}:
+            return 'selection'
+        return origin
 
     if selected_agent_id:
         selected_sources.append(_build_source('selected_agent', 'selection', {'agent_id': selected_agent_id}))
     if selected_action_type and selected_action_type != 'none':
+        selected_action_capability = (
+            'compare'
+            if selected_action_type in {'compare', 'comparison'}
+            else 'analyze'
+            if selected_action_type == 'analyze'
+            else 'selected_action'
+        )
         selected_sources.append(
-            _build_source('selected_action', 'selection', {'action_type': selected_action_type})
+            _build_source(
+                'selected_action',
+                capability_origin(selected_action_capability),
+                {'action_type': selected_action_type},
+            )
         )
     if selected_document_ids:
         selected_sources.append(
             _build_source('selected_documents', 'selection', {'count': len(selected_document_ids)})
         )
     if _coerce_bool(hybrid_search_enabled):
-        selected_sources.append(_build_source('workspace_search', 'selection'))
+        selected_sources.append(_build_source('workspace_search', capability_origin('workspace_search')))
     if _coerce_bool(web_search_enabled):
-        selected_sources.append(_build_source('web_search', 'selection'))
+        selected_sources.append(_build_source('web_search', capability_origin('web_search')))
     if _coerce_bool(url_access_enabled):
-        selected_sources.append(_build_source('url_access', 'selection'))
+        selected_sources.append(_build_source('url_access', capability_origin('url_access')))
     if _coerce_bool(source_review_enabled) and not _coerce_bool(deep_research_enabled):
-        selected_sources.append(_build_source('source_review', 'selection'))
+        selected_sources.append(_build_source('source_review', capability_origin('url_access')))
     if _coerce_bool(deep_research_enabled):
-        selected_sources.append(_build_source('deep_research', 'selection'))
+        selected_sources.append(_build_source('deep_research', capability_origin('deep_research')))
     if _coerce_bool(user_workspace_context_enabled):
         selected_sources.append(_build_source('user_workspace_context', 'selection'))
     if selected_image_reference_count:
@@ -298,7 +320,12 @@ def build_turn_orchestration_plan(
 
     requested_source_types = detect_requested_evidence_sources(user_message)
     grounding_language_detected = bool(GROUNDING_REQUEST_PATTERN.search(str(user_message or '')))
-    selected_source_types = [source['id'] for source in selected_sources]
+    selected_source_types = [
+        source['id']
+        for source in selected_sources
+        if source['origin'] == 'selection'
+    ]
+    effective_source_types = [source['id'] for source in selected_sources]
     requested_sources = list(selected_sources)
     if conversation_document_ids:
         requested_sources.append(
@@ -340,8 +367,12 @@ def build_turn_orchestration_plan(
     )
 
     reason_codes = []
-    if selected_sources:
+    if selected_source_types:
         reason_codes.append('selected_capability')
+    if any(source['origin'] == 'discovery_auto' for source in selected_sources):
+        reason_codes.append('governed_capability_discovery')
+    if any(source['origin'] == 'discovery_approved' for source in selected_sources):
+        reason_codes.append('approved_capability_discovery')
     if requested_source_types or grounding_language_detected:
         reason_codes.append('evidence_requested')
     if grounded_image_generation_requested:
@@ -369,11 +400,16 @@ def build_turn_orchestration_plan(
         if image_generation_requested and _coerce_bool(image_generation_available)
         else 'response'
     )
+    image_capability_origin = (
+        capability_origin('image')
+        if image_generation_requested and 'image' in capability_origins
+        else None
+    )
     finalizer_step = {
         'id': f'finalize_{finalizer_capability}',
         'type': 'finalize',
         'capability': finalizer_capability,
-        'origin': 'orchestrator',
+        'origin': image_capability_origin or 'orchestrator',
         'required': True,
         'status': 'pending',
         'depends_on': [step['id'] for step in collection_steps],
@@ -411,8 +447,16 @@ def build_turn_orchestration_plan(
         },
         'prompt_id': selected_prompt_id or None,
     }
+    if isinstance(selection_snapshot_override, Mapping):
+        selection_snapshot = copy.deepcopy(dict(selection_snapshot_override))
 
-    return {
+    effective_capability_types = list(effective_source_types)
+    if image_capability_origin and 'image' not in effective_capability_types:
+        effective_capability_types.append('image')
+    if image_capability_origin == 'selection' and 'image' not in selected_source_types:
+        selected_source_types.append('image')
+
+    plan = {
         'version': ORCHESTRATION_PLAN_VERSION,
         'run_id': str(run_id or uuid.uuid4()),
         'selection_snapshot': selection_snapshot,
@@ -432,6 +476,7 @@ def build_turn_orchestration_plan(
         'requires_evidence_before_finalization': requires_evidence_before_finalization,
         'reason_codes': reason_codes,
         'selected_capabilities': selected_source_types,
+        'effective_capabilities': effective_capability_types,
         'evidence_requirements': requested_source_types,
         'requested_evidence_sources': [source['id'] for source in requested_sources],
         'sources': requested_sources,
@@ -450,6 +495,10 @@ def build_turn_orchestration_plan(
         },
         'warnings': warnings,
     }
+    normalized_parent_run_id = str(parent_run_id or '').strip()
+    if normalized_parent_run_id:
+        plan['parent_run_id'] = normalized_parent_run_id
+    return plan
 
 
 def build_turn_orchestration_guidance_message(plan):

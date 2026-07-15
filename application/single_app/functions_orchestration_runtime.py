@@ -39,6 +39,7 @@ ORCHESTRATION_TERMINAL_NODE_STATUSES = frozenset({
 ORCHESTRATION_RUN_STATUSES = frozenset({
     'pending',
     'running',
+    'awaiting_user_choice',
     'succeeded',
     'partial',
     'failed',

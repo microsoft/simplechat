@@ -2,7 +2,7 @@
 # test_chat_turn_orchestration_plan.py
 """
 Functional test for the chat turn orchestration planning foundation.
-Version: 0.250.065
+Version: 0.250.066
 Implemented in: 0.250.058
 
 This test ensures every turn receives a direct or coordinated plan, selected
@@ -341,6 +341,69 @@ def test_context_sources_are_distinct_from_user_selections():
     }
 
 
+def test_discovered_capabilities_preserve_original_selection_provenance():
+    original_selection = {
+        'conversation_id': 'conversation-1',
+        'toggles': {
+            'workspace_search': False,
+            'web_search': False,
+            'url_access': False,
+            'source_review': False,
+            'deep_research': False,
+        },
+    }
+    plan = build_turn_orchestration_plan(
+        'What are the current county rules?',
+        run_id='child-run',
+        parent_run_id='parent-run',
+        conversation_id='conversation-1',
+        web_search_enabled=True,
+        deep_research_enabled=True,
+        capability_origins={
+            'web_search': 'discovery_approved',
+            'deep_research': 'discovery_approved',
+        },
+        selection_snapshot_override=original_selection,
+    )
+
+    assert plan['selection_snapshot'] == original_selection
+    assert plan['selected_capabilities'] == []
+    assert plan['effective_capabilities'] == ['web_search', 'deep_research']
+    assert {source['origin'] for source in plan['sources']} == {'discovery_approved'}
+    assert all(source['required'] for source in plan['sources'])
+    assert plan['parent_run_id'] == 'parent-run'
+    assert 'approved_capability_discovery' in plan['reason_codes']
+
+    compare_plan = build_turn_orchestration_plan(
+        'Compare the selected documents.',
+        run_id='compare-child-run',
+        selected_action={'type': 'comparison'},
+        selected_document_ids=['doc-1', 'doc-2'],
+        capability_origins={'compare': 'discovery_approved'},
+        selection_snapshot_override=original_selection,
+    )
+    selected_action_source = next(
+        source
+        for source in compare_plan['sources']
+        if source['id'] == 'selected_action'
+    )
+    assert selected_action_source['origin'] == 'discovery_approved'
+    assert selected_action_source['required'] is True
+
+    image_plan = build_turn_orchestration_plan(
+        'Create an infographic about recursion.',
+        run_id='image-child-run',
+        image_generation_available=True,
+        capability_origins={'image': 'discovery_approved'},
+        selection_snapshot_override=original_selection,
+    )
+    assert image_plan['finalizer'] == 'image_proposal'
+    assert image_plan['steps'][-1]['origin'] == 'discovery_approved'
+    assert image_plan['steps'][-1]['required'] is True
+    assert image_plan['effective_capabilities'] == ['image']
+    assert image_plan['selected_capabilities'] == []
+
+
 def test_attached_headshot_is_detected_as_requested_image_evidence():
     plan = build_turn_orchestration_plan(
         'Create a sketch of my role using the attached headshot as a reference.',
@@ -356,20 +419,30 @@ def test_streaming_chat_path_persists_and_applies_plan():
     route_source = ROUTE_BACKEND_CHATS.read_text(encoding='utf-8')
     config_source = CONFIG_FILE.read_text(encoding='utf-8')
 
-    assert 'VERSION = "0.250.065"' in config_source
+    assert 'VERSION = "0.250.066"' in config_source
     assert 'turn_orchestration_plan = build_turn_orchestration_plan(' in route_source
     assert 'requested_action_document_ids = _normalize_conversation_task_document_ids(' in route_source
     assert 'requested_action_document_ids\n            if requested_action_document_ids' in route_source
     assert 'requested_document_scope = document_scope' in route_source
-    assert 'document_scope=requested_document_scope,' in route_source
-    assert 'active_group_ids=requested_active_group_ids,' in route_source
-    assert 'active_public_workspace_ids=requested_active_public_workspace_ids,' in route_source
-    assert 'tags=requested_tags_filter,' in route_source
+    assert "'document_scope': requested_document_scope," in route_source
+    assert "'active_group_ids': requested_active_group_ids," in route_source
+    assert "'active_public_workspace_ids': requested_active_public_workspace_ids," in route_source
+    assert "'tags': requested_tags_filter," in route_source
     assert route_source.count("user_metadata['orchestration'] = turn_orchestration_plan") >= 2
     assert "'orchestration': turn_orchestration_plan," in route_source
     assert 'conversation_history_for_api = maybe_append_turn_orchestration_system_message(' in route_source
     assert "'[Orchestration] Document action turn plan created'" in route_source
     assert "partial_error_payload = {" in route_source
+    assert 'capability_discovery = _build_server_capability_discovery(' in route_source
+    assert "turn_orchestration_run.status = 'awaiting_user_choice'" in route_source
+    assert "'capability_proposal': proposal," in route_source
+    assert "@bp.route('/api/chat/capability-proposals/<proposal_id>/decision'" in route_source
+    assert '_claim_authorized_capability_resume(' in route_source
+    assert 'persist_capability_resume_completion(' in route_source
+    assert "data.get('_server_external_query') or user_message" in route_source
+    assert 'compatibility_capability_inventory = _resolve_server_chat_capability_inventory(' in route_source
+    assert "user_metadata['capability_provenance'] = compatibility_capability_provenance" in route_source
+    assert "'capability_provenance': compatibility_capability_provenance," in route_source
 
 
 if __name__ == '__main__':
@@ -387,6 +460,7 @@ if __name__ == '__main__':
         test_string_zero_image_count_does_not_create_selected_image_source,
         test_plan_is_json_serializable,
         test_context_sources_are_distinct_from_user_selections,
+        test_discovered_capabilities_preserve_original_selection_provenance,
         test_attached_headshot_is_detected_as_requested_image_evidence,
         test_streaming_chat_path_persists_and_applies_plan,
     ]

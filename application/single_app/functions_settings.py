@@ -1155,6 +1155,18 @@ def get_settings(use_cosmos=False, include_source=False):
             }
         },
 
+        # Server-authoritative orchestration discovery policy for built-in chat capabilities
+        'chat_capability_governance': {
+            'workspace_search': 'recommend',
+            'analyze': 'recommend',
+            'compare': 'recommend',
+            'image': 'recommend',
+            'web_search': 'recommend',
+            'url_access': 'recommend',
+            'deep_research': 'recommend',
+        },
+        'chat_capability_choice_ttl_seconds': 86400,
+
         # URL Access and Deep Research (bounded source-page inspection for web evidence)
         'enable_url_access': False,
         'url_access_max_chat_urls_per_turn': 10,

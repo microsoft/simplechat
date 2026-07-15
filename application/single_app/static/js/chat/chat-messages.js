@@ -24,6 +24,7 @@ import { areAgentsEnabled } from './chat-agents.js';
 import { createThoughtsToggleHtml, attachThoughtsToggleListener } from './chat-thoughts.js';
 import { destroyInlineCharts, extractInlineChartBlocks, hydrateInlineCharts, injectInlineChartHtml, restoreInlineChartTokens } from './chat-inline-charts.js';
 import { attachGeneratedImageProposalResults, extractInlineImageProposalBlocks, hydrateInlineImageProposals, injectInlineImageProposalHtml, restoreInlineImageProposalTokens } from './chat-inline-image-proposals.js';
+import { hydrateCapabilityChoice } from './chat-capability-choice.js';
 import { renderInlineVideoGalleries } from './chat-inline-videos.js';
 import { renderInlineImageGalleries } from './chat-inline-images.js';
 import { renderInlineAzureMaps } from './chat-inline-maps.js';
@@ -4964,6 +4965,29 @@ export function appendMessage(
       hydrateInlineCharts(messageDiv);
       hydrateInlineImageProposals(messageDiv, fullMessageObject?.metadata || null);
     }
+    hydrateCapabilityChoice(messageDiv, fullMessageObject?.metadata || null, {
+      onResume: ({ conversationId, proposalId, endpoint }) => new Promise((resolve, reject) => {
+        const started = sendMessageWithStreaming(
+          {
+            conversation_id: conversationId,
+            capability_resume_proposal_id: proposalId,
+          },
+          null,
+          conversationId,
+          {
+            endpoint,
+            allowRecovery: false,
+            onDone: resolve,
+            onError: errorMessage => reject(
+              new Error(errorMessage || 'The resumed chat could not be completed.')
+            ),
+          },
+        );
+        if (!started) {
+          reject(new Error('The resumed chat could not be started.'));
+        }
+      }),
+    });
 
     // --- Attach Event Listeners specifically for AI message ---
     attachCodeBlockCopyButtons(messageDiv.querySelector(".message-text"));

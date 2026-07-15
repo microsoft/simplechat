@@ -2,7 +2,7 @@
 # test_chat_stream_heartbeat_reattach.py
 """
 Functional test for chat stream heartbeat and reattach support.
-Version: 0.250.064
+Version: 0.250.066
 Implemented in: 0.239.183
 
 This test ensures long-running chat streams emit keep-alive heartbeat frames,
@@ -65,7 +65,7 @@ def test_chat_stream_heartbeat_and_reattach() -> None:
     assert_contains(CONVERSATIONS_FILE, "await loadMessages(conversationId);")
     assert_contains(CONVERSATIONS_FILE, "await streamingModule.reattachStreamingConversation(conversationId);")
 
-    assert_contains(CONFIG_FILE, 'VERSION = "0.250.064"')
+    assert_contains(CONFIG_FILE, 'VERSION = "0.250.066"')
     assert_contains(FIX_DOC_FILE, "Fixed/Implemented in version: **0.239.183**")
     assert_contains(FIX_DOC_FILE, "Redis-backed session metadata and event replay")
 

@@ -1,6 +1,6 @@
 # Chat Turn Orchestration
 
-Implemented in version: **0.250.064**
+Implemented in version: **0.250.066**
 Associated issue: **[#1021](https://github.com/microsoft/simplechat/issues/1021)**
 
 ## Overview
@@ -219,6 +219,49 @@ The browser state is explanatory, not authoritative. The generation route reauth
 
 Users can edit or dismiss a proposal before generation, explicitly acknowledge a partial proposal, or stop the active chat stream through the existing cancellation control. These interventions remain scoped to the current request and proposal; Phase 7 does not add an admin approval queue or permit automatic write, sensitive, consequential, or over-budget actions.
 
+## Phase 8A Governed Capability Discovery And User Choice
+
+Phase 8A gives the authenticated server a bounded inventory of built-in chat capabilities before execution. The initial inventory covers Workspace Search, Analyze, Compare, Image, Web Search, URL Access, and Deep Research. It contains only planning metadata such as category, state, governance mode, risk, latency, cost, evidence types, required inputs, and current-user scope. It does not include secrets, connection settings, raw prompt or agent instructions, inaccessible catalog entries, or browser-supplied authorization claims.
+
+Capability states remain distinct:
+
+- `selected` is an explicit submitted mandate and remains a required attempt.
+- `unselected` is available and authorized, so policy may allow deterministic discovery or recommendation.
+- `approved` and `declined` are persisted turn-scoped decisions for a proposal.
+- `unavailable`, `unauthorized`, and `policy_blocked` capabilities are not offered or executed.
+
+An inactive toolbar control is therefore not treated as a denial. Per-capability modes under `chat_capability_governance` are `manual_only`, `recommend`, `auto_read_only`, and `blocked`. Only internal, read-only capabilities can use `auto_read_only`; external retrieval still requires a user choice. Invalid governance values fail closed as blocked. `chat_capability_choice_ttl_seconds` controls the bounded pending-choice lifetime and defaults to one day.
+
+### Deterministic Matching
+
+Common requirements are classified without a planning-model call. Initial classes cover current public information, current official/local rules, user-supplied URLs, workspace evidence, document analysis, multi-document comparison, explicit visual output, and multi-source public research. A recommendation is created only when an eligible capability can materially improve freshness, completeness, confidence, evidence quality, or requested output.
+
+Simple timeless questions keep their direct one-step plan. Analyze requires at least one reauthorized document target, Compare requires at least two, URL Access requires a supplied URL, and Image is proposed only for explicit visual creation intent. Current local-law and official-record requests prefer Deep Research when available and retain Web Search as a bounded alternative. Unselected-agent discovery is intentionally deferred to Phase 8B; selected agents continue through canonical server resolution and the existing required-attempt contract.
+
+### Durable Choice And Resume
+
+When consent is needed, the server persists one normal assistant message with an `awaiting_user_choice` checkpoint and ends SSE. The proposal records its exact conversation, source user message, parent run, requirement/reason codes, allowlisted options, recommendation, creation and expiry times, decision, and resume lease. Refreshing the conversation reconstructs the same card from message metadata; no process-local waiter is required.
+
+The decision route:
+
+1. Reauthorizes personal conversation ownership.
+2. Reads the exact proposal and source user message from the conversation partition.
+3. Validates parent-run and source-turn linkage.
+4. Accepts only a literal option ID present in the persisted proposal.
+5. Rebuilds capability configuration, role authorization, scopes, and document targets.
+6. Uses an ETag conditional replacement so duplicate clicks replay idempotently and conflicting choices cannot both win.
+7. Persists approved, declined, expired, or invalidated terminal state.
+
+Resume requests contain only the conversation and proposal IDs. The server reconstructs the original bounded request, reauthorizes scopes and linked chat-upload documents, applies approved capabilities with `discovery_approved` origin, and creates a child run linked to the parent. A decline creates no capability source and finalizes once without another recommendation loop. Selected, proposed, decided, and effective capability provenance remain separate; approved or automatic discovery is never rewritten as `selection`.
+
+Resume execution uses a conditional lease. A duplicate live claim is rejected, a failed or cancelled claim can be retried, and completed output is replayed without another capability call. If a process stops after persisting the resumed assistant but before marking the proposal complete, the next request reconciles that exact assistant by proposal and execution IDs before considering another claim.
+
+### External Data Minimization
+
+Discovered external retrieval preserves the existing current-message-only boundary. Conversation history, retrieved workspace content, and unrelated context are not appended to Web Search or Deep Research requests. The server removes detected street addresses, email addresses, phone numbers, and account-like identifiers from the default external query. Parcel-specific requests receive a separate, clearly labeled option whose selection explicitly approves including the supplied address for that turn. Capability choices do not change saved toolbar defaults.
+
+The inline choice card renders server fields through DOM text APIs, provides one recommended option, alternatives, and a continue-without-capabilities path, associates external/sensitive notices with the workflow, uses `aria-live` for status, and maintains at least 44-pixel actions on mobile.
+
 ## Security And Governance
 
 - Caller-supplied IDs are never treated as proof of authorization.
@@ -249,6 +292,11 @@ Users can edit or dismiss a proposal before generation, explicitly acknowledge a
 - Runtime metadata excludes raw adapter results, raw evidence, debug exception text, and caller-supplied authorization identifiers.
 - Runtime source reconciliation consumes only evidence already normalized by the established authorization-aware collectors and executors.
 - Side effects, sensitive access, and budget overflow are marked as approval-required policy classes for later runtime enforcement.
+- Capability inventory availability and authorization come from current server configuration, role claims, authorized scopes, and revalidated document targets rather than toolbar state.
+- Pending proposals, decisions, resume leases, parent/child linkage, and effective origins are stored in the authorized conversation partition with ETag concurrency.
+- A proposal approval never substitutes for collector or executor authorization; configuration and object access are checked again immediately before resume and at execution boundaries.
+- Browser decision payloads cannot add capabilities, run IDs, user IDs, document IDs, or scope IDs. Effective execution is reconstructed from the persisted allowlist.
+- Discovered external queries use current-message-only minimized text. Sensitive address use requires selection of the separately labeled sensitive-input option.
 
 ## Dependencies
 
@@ -260,6 +308,8 @@ Users can edit or dismiss a proposal before generation, explicitly acknowledge a
 - Generic central synthesis request and output-profile contracts.
 - Request-scoped `OrchestrationRun` scheduling and lifecycle helpers.
 - Existing `ActiveConversationStreamSession` cancellation, replay, heartbeat, and reattach behavior.
+- Cosmos message ETags for idempotent capability decisions and resume leases.
+- Existing role-aware Web Search, URL Access, Deep Research, image-generation, document-action, and authorized document/scope checks.
 
 ## Testing And Validation
 
@@ -337,12 +387,20 @@ Desktop/mobile coverage in `ui_tests/test_streaming_thought_progression.py` vali
 
 The stream heartbeat, background execution, lifecycle observability, new-conversation reattach, and stop-control contracts also validate that runtime cancellation preserves the existing SSE protocol and replay behavior.
 
+Phase 8A capability coverage is in:
+
+- `functional_tests/test_chat_capability_discovery.py` for inventory states, deterministic matching, target gates, and unavailable/unauthorized/policy-blocked filtering.
+- `functional_tests/test_chat_capability_choice_contract.py` for allowlisted decisions, expiry, decline, external-query minimization, sensitive-input options, provenance, and resume lifecycle.
+- `functional_tests/test_chat_capability_choice_persistence.py` for ETag conflicts, duplicate decisions, single execution claims, and persisted expired/invalidated states.
+- `functional_tests/test_chat_capability_choice_route.py` for conversation ownership, exact source-turn linkage, forged options, post-approval revocation, server request reconstruction, parent/child replay, and process-loss reconciliation.
+- `ui_tests/test_chat_capability_choice_card.py` for persisted rendering, keyboard interaction, external notices, exact decision/resume payloads, `aria-live`, desktop/mobile overflow, and 44-pixel controls.
+
 ## Known Limitations
 
-Phase 7 provides request-scoped progress, review, and image-proposal approval, with these deliberate boundaries:
+Phase 8A adds durable built-in capability choice, with these deliberate boundaries:
 
-- Arbitrary governed tools are not yet discovered automatically.
-- Runs are not stored in a durable queue or Cosmos run store and cannot resume after process loss.
+- Governed discovery of unselected agents is deferred to Phase 8B and will reuse this inventory/proposal contract.
+- Active runs and evidence ledgers are not stored in a durable queue or dedicated run store. Pending capability choices survive process loss, and persisted resumed assistants reconcile safely, but an in-flight model/tool operation still relies on existing stream execution and retry behavior.
 - Parallel runtime adapters must be request-context independent; the live chat route currently reconciles its existing authorized collectors sequentially.
 - Cancellation of synchronous model, agent, and document-action SDK calls is best effort. Pending finalization is prevented, but an in-flight non-cooperative call may return before its result can be discarded.
 - The legacy non-streaming compatibility path does not yet use Phase 3 collectors.
@@ -353,4 +411,4 @@ Phase 7 provides request-scoped progress, review, and image-proposal approval, w
 - Reference thumbnails are shown only for authorized conversation image messages. Document-backed image evidence remains labeled when no existing same-origin preview route applies.
 - The live chat payload does not yet expose a dedicated selected-image-reference list; selected workspace images are represented as documents, and explicit headshot/reference intent can be detected from the message until a reference control is wired.
 
-Durable run persistence, process-loss resume, generalized consequential-action approval, broader finalizers, and generalized artifact generation remain later roadmap phases.
+Generalized durable run execution, consequential/write approval, broader finalizers, and generalized artifact generation remain later roadmap phases.

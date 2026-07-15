@@ -2,7 +2,7 @@
 # test_chat_stream_new_conversation_reattach.py
 """
 Functional test for new-conversation chat stream reattach support.
-Version: 0.250.064
+Version: 0.250.066
 Implemented in: 0.239.191
 
 This test ensures the streaming chat route finalizes a conversation id before
@@ -43,7 +43,7 @@ def test_chat_stream_new_conversation_reattach() -> None:
     assert_contains(STREAMING_FILE, "if (allowRecovery) {")
     assert_contains(STREAMING_FILE, "allowRecovery: false,")
 
-    assert_contains(CONFIG_FILE, 'VERSION = "0.250.064"')
+    assert_contains(CONFIG_FILE, 'VERSION = "0.250.066"')
     assert_contains(FIX_DOC_FILE, "Fixed/Implemented in version: **0.239.191**")
     assert_contains(FIX_DOC_FILE, "finalizes a conversation id before registering the stream session")
 
