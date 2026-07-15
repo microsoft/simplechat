@@ -2,7 +2,7 @@
 # test_chat_stream_lifecycle_observability.py
 """
 Functional test for chat stream lifecycle observability.
-Version: 0.241.111
+Version: 0.250.063
 Implemented in: 0.241.109
 
 This test ensures long-running chat streams persist lifecycle state for
@@ -19,7 +19,7 @@ ROUTE_FILE = ROOT / "application" / "single_app" / "route_backend_chats.py"
 STREAMING_FILE = ROOT / "application" / "single_app" / "static" / "js" / "chat" / "chat-streaming.js"
 CONFIG_FILE = ROOT / "application" / "single_app" / "config.py"
 FIX_DOC_FILE = ROOT / "docs" / "explanation" / "fixes" / "v0.241.109" / "CHAT_STREAM_LIFECYCLE_OBSERVABILITY_FIX.md"
-CURRENT_VERSION = "0.241.111"
+CURRENT_VERSION = "0.250.063"
 
 
 def assert_contains(file_path: Path, expected: str) -> None:
@@ -40,7 +40,7 @@ def test_chat_stream_lifecycle_observability() -> None:
     assert_contains(ROUTE_FILE, "def mark_reattached(self):")
     assert_contains(ROUTE_FILE, "self._stream_session.note_keepalive(source='bridge')")
     assert_contains(ROUTE_FILE, "self.note_keepalive(source='session')")
-    assert_contains(ROUTE_FILE, "@app.route('/api/chat/stream/client-event', methods=['POST'])")
+    assert_contains(ROUTE_FILE, "@bp.route('/api/chat/stream/client-event', methods=['POST'])")
     assert_contains(ROUTE_FILE, "def chat_stream_client_event_api():")
     assert_contains(ROUTE_FILE, "stream_status = stream_session.get_status_snapshot() if stream_session else _build_stream_status_payload(None)")
     assert_contains(ROUTE_FILE, "stream_session.mark_reattached()")

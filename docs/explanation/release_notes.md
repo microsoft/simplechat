@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.063)**
+
+#### New Features
+
+*   **Request-Scoped Chat Orchestration Runtime**
+    *   Added an in-process `OrchestrationRun` execution graph for direct and coordinated turns, with validated dependencies, terminal node lifecycle, required/optional failure policy, finalizer gating, bounded read-only retries, safe parallel adapters, and bounded replanning.
+    *   Existing authorized conversation, document, image, workspace, web, source-review, agent, and action outputs now reconcile into the same graph and retain runtime-node provenance in the shared evidence ledger.
+    *   Standard streaming and document-action paths persist compact runtime metadata, emit concise node progress, fail closed when required steps do not complete, and integrate cancellation with the existing heartbeat, replay, reattach, and stop-control contracts.
+    *   (Ref: microsoft/simplechat#1021, `functions_orchestration_runtime.py`, `route_backend_chats.py`, `test_orchestration_runtime.py`, `CHAT_TURN_ORCHESTRATION.md`)
+
 ### **(v0.250.062)**
 
 #### New Features

@@ -2,7 +2,7 @@
 # test_chat_evidence_collectors.py
 """
 Functional test for generic chat source collectors.
-Version: 0.250.060
+Version: 0.250.063
 Implemented in: 0.250.060
 
 This test ensures existing authorized context and retrieval outputs are normalized

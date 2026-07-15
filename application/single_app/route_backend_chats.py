@@ -131,6 +131,17 @@ from functions_evidence_ledger import (
     create_evidence_ledger_from_plan,
     set_evidence_ledger_status,
 )
+from functions_orchestration_runtime import (
+    OrchestrationNodeResult,
+    OrchestrationRun,
+    cancel_orchestration_run,
+    complete_orchestration_node,
+    fail_orchestration_run,
+    finish_orchestration_run,
+    reconcile_orchestration_run_from_ledger,
+    resolve_orchestration_evidence_discovery,
+    start_orchestration_node,
+)
 from functions_image_messages import build_image_message_documents, decode_image_content
 from functions_icon_utils import normalize_icon_payload
 from functions_image_generation import (
@@ -11852,7 +11863,12 @@ def register_route_backend_chats(bp):
         invalidate_conversation_cache_for_item(conversation_item, reason="conversation_created")
         return conversation_item
 
-    def execute_document_action_chat_request(data=None, publish_background_event=None, forced_action_type=None):
+    def execute_document_action_chat_request(
+        data=None,
+        publish_background_event=None,
+        forced_action_type=None,
+        cancel_requested=None,
+    ):
         settings = get_settings()
         data = data if isinstance(data, dict) else (request.get_json() or {})
         user_id = get_current_user_id()
@@ -12101,31 +12117,34 @@ def register_route_backend_chats(bp):
             conversation_id=conversation_id,
             user_message_id=user_message_id,
         )
-        action_evidence_task = None
-        if turn_orchestration_plan.get('grounded_image_generation_requested'):
-            action_evidence_task = build_agent_action_evidence_task(
-                turn_orchestration_plan,
-                turn_evidence_ledger,
-                user_message,
-                executor_type='selected_action',
-                executor_name=normalized_action.get('type'),
-                capability_metadata=normalized_action,
-                authorization_context=getattr(g, 'authorized_chat_context', None),
+        turn_orchestration_run = OrchestrationRun.from_plan(
+            turn_orchestration_plan,
+            turn_evidence_ledger,
+        )
+        reconcile_orchestration_run_from_ledger(turn_orchestration_run)
+        action_evidence_task = build_agent_action_evidence_task(
+            turn_orchestration_plan,
+            turn_evidence_ledger,
+            user_message,
+            executor_type='selected_action',
+            executor_name=normalized_action.get('type'),
+            capability_metadata=normalized_action,
+            authorization_context=getattr(g, 'authorized_chat_context', None),
+        )
+        if action_evidence_task and request_agent_info:
+            selected_agent_source = next(
+                (
+                    source
+                    for source in turn_evidence_ledger.get('sources', [])
+                    if source.get('id') == 'selected_agent'
+                ),
+                None,
             )
-            if action_evidence_task and request_agent_info:
-                selected_agent_source = next(
-                    (
-                        source
-                        for source in turn_evidence_ledger.get('sources', [])
-                        if source.get('id') == 'selected_agent'
-                    ),
-                    None,
-                )
-                if selected_agent_source:
-                    action_evidence_task['delegated_sources'].append({
-                        'source_id': 'selected_agent',
-                        'requirement_ids': [],
-                    })
+            if selected_agent_source:
+                action_evidence_task['delegated_sources'].append({
+                    'source_id': 'selected_agent',
+                    'requirement_ids': [],
+                })
         user_metadata = _build_document_action_user_metadata(
             data=data,
             user_id=user_id,
@@ -12139,6 +12158,7 @@ def register_route_backend_chats(bp):
         )
         user_metadata['orchestration'] = turn_orchestration_plan
         user_metadata['evidence_ledger'] = turn_evidence_ledger
+        user_metadata['orchestration_runtime'] = turn_orchestration_run.to_metadata()
         if auto_linked_chat_upload_document_ids:
             user_metadata['workspace_search']['auto_linked_chat_upload_document_ids'] = auto_linked_chat_upload_document_ids
             user_metadata['workspace_search']['auto_linked_chat_upload_document_count'] = len(auto_linked_chat_upload_document_ids)
@@ -12213,6 +12233,33 @@ def register_route_backend_chats(bp):
                     f"Queued {normalized_action.get('type').replace('_', ' ')} for {len(selected_document_ids)} selected document{'s' if len(selected_document_ids) != 1 else ''}"
                 )
 
+        def publish_orchestration_runtime_progress(event):
+            if callable(publish_stream_thought):
+                publish_stream_thought(event.get('message') or 'Updating orchestration progress')
+
+        def document_action_cancel_requested():
+            return bool(callable(cancel_requested) and cancel_requested())
+
+        def persist_cancelled_document_action_runtime():
+            cancel_orchestration_run(
+                turn_orchestration_run,
+                progress_callback=publish_orchestration_runtime_progress,
+            )
+            user_metadata['evidence_ledger'] = turn_evidence_ledger
+            user_metadata['orchestration_runtime'] = turn_orchestration_run.to_metadata()
+            user_message_doc['metadata'] = user_metadata
+            cosmos_messages_container.upsert_item(user_message_doc)
+            return {
+                'cancelled': True,
+                'conversation_id': conversation_id,
+                'user_message_id': user_message_id,
+                'metadata': {
+                    'orchestration': turn_orchestration_plan,
+                    'orchestration_runtime': turn_orchestration_run.to_metadata(),
+                    'evidence_ledger': turn_evidence_ledger,
+                },
+            }, 499
+
         assigned_knowledge_action_context = {}
         assigned_context_metadata = {}
         assigned_knowledge_context_citations = []
@@ -12226,6 +12273,16 @@ def register_route_backend_chats(bp):
                 )
             except SemanticSearchQuotaExceededError as exc:
                 debug_print(f'Semantic search quota exceeded during Assigned Knowledge action context search: {exc}')
+                fail_orchestration_run(
+                    turn_orchestration_run,
+                    error_type='assigned_knowledge_quota_exceeded',
+                    user_message='Assigned knowledge could not be searched within the available quota.',
+                    progress_callback=publish_orchestration_runtime_progress,
+                )
+                user_metadata['evidence_ledger'] = turn_evidence_ledger
+                user_metadata['orchestration_runtime'] = turn_orchestration_run.to_metadata()
+                user_message_doc['metadata'] = user_metadata
+                cosmos_messages_container.upsert_item(user_message_doc)
                 return {
                     'error': exc.user_message,
                     'warning_type': SEMANTIC_SEARCH_QUOTA_WARNING_TYPE,
@@ -12233,6 +12290,16 @@ def register_route_backend_chats(bp):
                 }, 503
             except Exception as exc:
                 debug_print(f'[ChatDocumentAction] Assigned Knowledge context search failed: {exc}')
+                fail_orchestration_run(
+                    turn_orchestration_run,
+                    error_type='assigned_knowledge_search_failed',
+                    user_message='Assigned knowledge could not be searched for this action.',
+                    progress_callback=publish_orchestration_runtime_progress,
+                )
+                user_metadata['evidence_ledger'] = turn_evidence_ledger
+                user_metadata['orchestration_runtime'] = turn_orchestration_run.to_metadata()
+                user_message_doc['metadata'] = user_metadata
+                cosmos_messages_container.upsert_item(user_message_doc)
                 return {
                     'error': 'There was an issue searching the assigned knowledge for this agent.'
                 }, 500
@@ -12258,10 +12325,11 @@ def register_route_backend_chats(bp):
             assigned_knowledge_action_context.get('context_block'),
             normalized_action.get('type'),
         )
-        workflow_task_prompt = append_agent_action_evidence_guidance(
-            workflow_task_prompt,
-            action_evidence_task,
-        )
+        if turn_orchestration_plan.get('grounded_image_generation_requested'):
+            workflow_task_prompt = append_agent_action_evidence_guidance(
+                workflow_task_prompt,
+                action_evidence_task,
+            )
 
         workflow_like = {
             'id': f'chat-analyze:{conversation_id}',
@@ -12295,6 +12363,8 @@ def register_route_backend_chats(bp):
         }
 
         try:
+            if document_action_cancel_requested():
+                return persist_cancelled_document_action_runtime()
             debug_print(
                 '[ChatDocumentAction] Executing action | '
                 f'user_id={user_id} | '
@@ -12311,6 +12381,8 @@ def register_route_backend_chats(bp):
                 thought_tracker=thought_tracker,
                 external_activity_callback=stream_activity_callback,
             )
+            if document_action_cancel_requested():
+                return persist_cancelled_document_action_runtime()
         except Exception as exc:
             debug_print(
                 '[ChatDocumentAction] Execution failed | '
@@ -12340,9 +12412,16 @@ def register_route_backend_chats(bp):
                     action_evidence_task,
                     action_failure_result,
                 )
-                user_metadata['evidence_ledger'] = turn_evidence_ledger
-                user_message_doc['metadata'] = user_metadata
-                cosmos_messages_container.upsert_item(user_message_doc)
+            fail_orchestration_run(
+                turn_orchestration_run,
+                error_type='document_action_failed',
+                user_message='The selected document action could not be completed.',
+                progress_callback=publish_orchestration_runtime_progress,
+            )
+            user_metadata['evidence_ledger'] = turn_evidence_ledger
+            user_metadata['orchestration_runtime'] = turn_orchestration_run.to_metadata()
+            user_message_doc['metadata'] = user_metadata
+            cosmos_messages_container.upsert_item(user_message_doc)
             return {'error': str(exc), 'conversation_id': conversation_id, 'user_message_id': user_message_id}, 500
 
         assistant_timestamp = datetime.utcnow().isoformat()
@@ -12397,10 +12476,78 @@ def register_route_backend_chats(bp):
                 action_evidence_task,
                 action_evidence_result,
             )
-            document_action_reply = build_agent_action_evidence_status_message(
-                action_evidence_result
+            if turn_orchestration_plan.get('grounded_image_generation_requested'):
+                document_action_reply = build_agent_action_evidence_status_message(
+                    action_evidence_result
+                )
+        try:
+            resolve_orchestration_evidence_discovery(
+                turn_orchestration_run,
+                progress_callback=publish_orchestration_runtime_progress,
             )
+            reconcile_orchestration_run_from_ledger(
+                turn_orchestration_run,
+                progress_callback=publish_orchestration_runtime_progress,
+            )
+            finalizer_node = next(
+                node for node in turn_orchestration_run.nodes if node.type == 'finalize'
+            )
+            if finalizer_node.status == 'pending':
+                if 'document_action_finalizer_compatibility' not in turn_orchestration_run.warnings:
+                    turn_orchestration_run.warnings.append(
+                        'document_action_finalizer_compatibility'
+                    )
+                start_orchestration_node(
+                    turn_orchestration_run,
+                    finalizer_node.id,
+                    progress_callback=publish_orchestration_runtime_progress,
+                )
+                complete_orchestration_node(
+                    turn_orchestration_run,
+                    finalizer_node.id,
+                    OrchestrationNodeResult(
+                        status='succeeded',
+                        summary='The document action produced the compatibility response.',
+                    ),
+                    progress_callback=publish_orchestration_runtime_progress,
+                )
+            finish_orchestration_run(turn_orchestration_run)
+        except Exception as runtime_error:
+            log_event(
+                '[OrchestrationRuntime] Document action runtime reconciliation failed',
+                extra={
+                    'conversation_id': conversation_id,
+                    'run_id': turn_orchestration_plan.get('run_id'),
+                    'error_type': type(runtime_error).__name__,
+                },
+                level=logging.ERROR,
+            )
+            fail_orchestration_run(
+                turn_orchestration_run,
+                error_type='runtime_reconciliation_failed',
+                user_message='The document action runtime could not reconcile all required steps.',
+                progress_callback=publish_orchestration_runtime_progress,
+            )
+            user_metadata['evidence_ledger'] = turn_evidence_ledger
+            user_metadata['orchestration_runtime'] = turn_orchestration_run.to_metadata()
+            user_message_doc['metadata'] = user_metadata
+            cosmos_messages_container.upsert_item(user_message_doc)
+            return {
+                'error': (
+                    'One or more required orchestration steps did not complete, '
+                    'so no final document-action response was created.'
+                ),
+                'partial_content': document_action_reply,
+                'conversation_id': conversation_id,
+                'user_message_id': user_message_id,
+                'metadata': {
+                    'orchestration': turn_orchestration_plan,
+                    'orchestration_runtime': turn_orchestration_run.to_metadata(),
+                    'evidence_ledger': turn_evidence_ledger,
+                },
+            }, 409
         user_metadata['evidence_ledger'] = turn_evidence_ledger
+        user_metadata['orchestration_runtime'] = turn_orchestration_run.to_metadata()
         user_message_doc['metadata'] = user_metadata
         cosmos_messages_container.upsert_item(user_message_doc)
         prepared_agent_citations = persist_agent_citation_artifacts(
@@ -12453,6 +12600,7 @@ def register_route_backend_chats(bp):
                 'token_usage': execution_result.get('token_usage'),
                 'user_info': response_message_context.get('user_info'),
                 'orchestration': turn_orchestration_plan,
+                'orchestration_runtime': turn_orchestration_run.to_metadata(),
                 'evidence_ledger': turn_evidence_ledger,
                 'capability_usage': document_action_capability_usage,
                 'thread_info': {
@@ -12581,11 +12729,16 @@ def register_route_backend_chats(bp):
             'metadata': assistant_doc.get('metadata', {}),
         }), 200
 
-    def execute_analyze_chat_request(data=None, publish_background_event=None):
+    def execute_analyze_chat_request(
+        data=None,
+        publish_background_event=None,
+        cancel_requested=None,
+    ):
         return execute_document_action_chat_request(
             data=data,
             publish_background_event=publish_background_event,
             forced_action_type=DOCUMENT_ACTION_TYPE_ANALYZE,
+            cancel_requested=cancel_requested,
         )
 
     @bp.route('/api/chat/document-action', methods=['POST'])
@@ -12627,6 +12780,9 @@ def register_route_backend_chats(bp):
                 payload, status_code = execute_document_action_chat_request(
                     data=data,
                     publish_background_event=publish_background_event,
+                    cancel_requested=(
+                        stream_session.is_cancel_requested if stream_session else None
+                    ),
                 )
                 if stream_session and stream_session.is_cancel_requested():
                     yield _build_stream_cancel_event(
@@ -12688,6 +12844,9 @@ def register_route_backend_chats(bp):
                 payload, status_code = execute_analyze_chat_request(
                     data=data,
                     publish_background_event=publish_background_event,
+                    cancel_requested=(
+                        stream_session.is_cancel_requested if stream_session else None
+                    ),
                 )
                 if stream_session and stream_session.is_cancel_requested():
                     yield _build_stream_cancel_event(
@@ -17112,6 +17271,12 @@ def register_route_backend_chats(bp):
                     conversation_id=conversation_id,
                     user_message_id=user_message_id,
                 )
+                turn_orchestration_run = OrchestrationRun.from_plan(
+                    turn_orchestration_plan,
+                    turn_evidence_ledger,
+                )
+                reconcile_orchestration_run_from_ledger(turn_orchestration_run)
+                orchestration_runtime_progress_events = []
 
                 user_metadata = {}
                 current_user = get_current_user_info()
@@ -17248,6 +17413,7 @@ def register_route_backend_chats(bp):
 
                 user_metadata['orchestration'] = turn_orchestration_plan
                 user_metadata['evidence_ledger'] = turn_evidence_ledger
+                user_metadata['orchestration_runtime'] = turn_orchestration_run.to_metadata()
                 user_metadata['chat_context'] = {
                     'conversation_id': conversation_id
                 }
@@ -17358,6 +17524,23 @@ def register_route_backend_chats(bp):
                     """Add a thought to Cosmos and return an SSE event string."""
                     thought_tracker.add_thought(step_type, content, detail)
                     return serialize_thought_event(step_type, content, thought_tracker.current_index - 1, detail=detail)
+
+                def queue_orchestration_runtime_progress(event):
+                    orchestration_runtime_progress_events.append(dict(event))
+
+                def drain_orchestration_runtime_progress():
+                    queued_events = list(orchestration_runtime_progress_events)
+                    orchestration_runtime_progress_events.clear()
+                    return [
+                        emit_thought(
+                            'orchestration',
+                            event.get('message') or 'Updating orchestration progress',
+                            detail=(
+                                f"node={event.get('node_id')}; status={event.get('status')}"
+                            ),
+                        )
+                        for event in queued_events
+                    ]
 
                 def publish_live_plugin_thought(thought_payload):
                     if not callable(publish_background_event):
@@ -18324,9 +18507,20 @@ def register_route_backend_chats(bp):
                         deep_research_enabled=bool(deep_research_enabled),
                         selected_image_references=selected_image_references,
                     )
+                    resolve_orchestration_evidence_discovery(
+                        turn_orchestration_run,
+                        progress_callback=queue_orchestration_runtime_progress,
+                    )
+                    reconcile_orchestration_run_from_ledger(
+                        turn_orchestration_run,
+                        progress_callback=queue_orchestration_runtime_progress,
+                    )
                     user_metadata['evidence_ledger'] = turn_evidence_ledger
+                    user_metadata['orchestration_runtime'] = turn_orchestration_run.to_metadata()
                     user_message_doc['metadata'] = user_metadata
                     cosmos_messages_container.upsert_item(user_message_doc)
+                    for runtime_progress_event in drain_orchestration_runtime_progress():
+                        yield runtime_progress_event
                     history_segments = build_conversation_history_segments(
                         all_messages=all_messages,
                         conversation_history_limit=conversation_history_limit,
@@ -18617,6 +18811,7 @@ def register_route_backend_chats(bp):
                         status,
                     )
                     user_metadata['evidence_ledger'] = turn_evidence_ledger
+                    user_metadata['orchestration_runtime'] = turn_orchestration_run.to_metadata()
                     user_metadata['central_synthesis'] = central_synthesis_metadata
                     user_message_doc['metadata'] = user_metadata
                     cosmos_messages_container.upsert_item(user_message_doc)
@@ -18672,6 +18867,48 @@ def register_route_backend_chats(bp):
 
                 if selected_agent_metadata:
                     user_metadata['agent_selection'] = selected_agent_metadata
+
+                selected_agent_runtime_node = next(
+                    (
+                        node
+                        for node in turn_orchestration_run.nodes
+                        if node.capability == 'selected_agent'
+                    ),
+                    None,
+                )
+                required_selected_agent_unavailable = bool(
+                    _has_chat_agent_selection(request_agent_info)
+                    and not selected_agent
+                    and selected_agent_runtime_node
+                )
+                if (
+                    required_selected_agent_unavailable
+                    and selected_agent_runtime_node.status == 'pending'
+                ):
+                    start_orchestration_node(
+                        turn_orchestration_run,
+                        selected_agent_runtime_node.id,
+                        progress_callback=queue_orchestration_runtime_progress,
+                    )
+                    complete_orchestration_node(
+                        turn_orchestration_run,
+                        selected_agent_runtime_node.id,
+                        OrchestrationNodeResult(
+                            status='failed',
+                            error_type='selected_agent_unavailable',
+                            user_message='The selected agent is unavailable for this turn.',
+                        ),
+                        progress_callback=queue_orchestration_runtime_progress,
+                    )
+                    reconcile_orchestration_run_from_ledger(
+                        turn_orchestration_run,
+                        progress_callback=queue_orchestration_runtime_progress,
+                    )
+                    user_metadata['orchestration_runtime'] = (
+                        turn_orchestration_run.to_metadata()
+                    )
+                    for runtime_progress_event in drain_orchestration_runtime_progress():
+                        yield runtime_progress_event
 
                 if (
                     selected_agent
@@ -18729,6 +18966,15 @@ def register_route_backend_chats(bp):
                 final_model_used = gpt_model  # Default to gpt_model, will be overridden if agent is used
 
                 def finalize_cancelled_stream_response():
+                    if not turn_orchestration_run.completed_at:
+                        cancel_orchestration_run(
+                            turn_orchestration_run,
+                            progress_callback=queue_orchestration_runtime_progress,
+                        )
+                    user_metadata['orchestration_runtime'] = turn_orchestration_run.to_metadata()
+                    user_metadata['evidence_ledger'] = turn_evidence_ledger
+                    user_message_doc['metadata'] = user_metadata
+                    cosmos_messages_container.upsert_item(user_message_doc)
                     if (
                         central_synthesis_metadata
                         and central_synthesis_metadata.get('status') == 'pending'
@@ -18798,6 +19044,7 @@ def register_route_backend_chats(bp):
                                 },
                                 'history_context': history_debug_info,
                                 'orchestration': turn_orchestration_plan,
+                                'orchestration_runtime': turn_orchestration_run.to_metadata(),
                                 'evidence_ledger': turn_evidence_ledger,
                                 'central_synthesis': central_synthesis_metadata,
                                 'capability_usage': build_streaming_capability_usage(),
@@ -18851,6 +19098,7 @@ def register_route_backend_chats(bp):
                             'metadata': {
                                 **cancel_metadata,
                                 'orchestration': turn_orchestration_plan,
+                                'orchestration_runtime': turn_orchestration_run.to_metadata(),
                                 'evidence_ledger': turn_evidence_ledger,
                                 'central_synthesis': central_synthesis_metadata,
                             },
@@ -18878,6 +19126,11 @@ def register_route_backend_chats(bp):
                 )
 
                 try:
+                    if required_selected_agent_unavailable:
+                        raise RuntimeError(
+                            'The selected agent is unavailable, so its required orchestration '
+                            'step could not be completed.'
+                        )
                     if (
                         turn_orchestration_plan.get('grounded_image_generation_requested')
                         and not agent_evidence_task
@@ -18888,6 +19141,17 @@ def register_route_backend_chats(bp):
                             'no image proposal was created.'
                         )
                     if use_agent_streaming and selected_agent:
+                        if (
+                            selected_agent_runtime_node
+                            and selected_agent_runtime_node.status == 'pending'
+                        ):
+                            start_orchestration_node(
+                                turn_orchestration_run,
+                                selected_agent_runtime_node.id,
+                                progress_callback=queue_orchestration_runtime_progress,
+                            )
+                            for runtime_progress_event in drain_orchestration_runtime_progress():
+                                yield runtime_progress_event
                         # Stream from agent using invoke_stream
                         yield emit_thought('agent_tool_call', f"Sending to agent '{agent_display_name_used or agent_name_used}'")
                         yield emit_thought('generation', f"Sending to '{actual_model_used}'")
@@ -19078,9 +19342,16 @@ def register_route_backend_chats(bp):
                                     agent_evidence_task,
                                     agent_failure_result,
                                 )
-                                user_metadata['evidence_ledger'] = turn_evidence_ledger
-                                user_message_doc['metadata'] = user_metadata
-                                cosmos_messages_container.upsert_item(user_message_doc)
+                            fail_orchestration_run(
+                                turn_orchestration_run,
+                                error_type='selected_agent_failed',
+                                user_message='The selected agent could not complete this turn.',
+                                progress_callback=queue_orchestration_runtime_progress,
+                            )
+                            user_metadata['evidence_ledger'] = turn_evidence_ledger
+                            user_metadata['orchestration_runtime'] = turn_orchestration_run.to_metadata()
+                            user_message_doc['metadata'] = user_metadata
+                            cosmos_messages_container.upsert_item(user_message_doc)
                             error_payload = {'error': f'Agent streaming failed: {str(stream_error)}'}
                             if isinstance(stream_error, FoundryAgentUserAuthenticationRequired):
                                 auth_response = getattr(stream_error, 'auth_response', {}) or {}
@@ -19244,6 +19515,43 @@ def register_route_backend_chats(bp):
                                 agent_evidence_task,
                                 agent_evidence_result,
                             )
+                            if (
+                                selected_agent_runtime_node
+                                and selected_agent_runtime_node.status == 'running'
+                            ):
+                                agent_evidence_status = str(
+                                    agent_evidence_result.get('status') or 'failed'
+                                ).strip().lower()
+                                agent_runtime_status = (
+                                    agent_evidence_status
+                                    if agent_evidence_status in {'succeeded', 'partial'}
+                                    else 'failed'
+                                )
+                                complete_orchestration_node(
+                                    turn_orchestration_run,
+                                    selected_agent_runtime_node.id,
+                                    OrchestrationNodeResult(
+                                        status=agent_runtime_status,
+                                        summary=agent_evidence_result.get('summary') or '',
+                                        error_type=(
+                                            agent_evidence_status
+                                            if agent_runtime_status == 'failed'
+                                            else None
+                                        ),
+                                        user_message=(
+                                            'The selected agent did not return the required evidence.'
+                                            if agent_runtime_status == 'failed'
+                                            else None
+                                        ),
+                                    ),
+                                    progress_callback=queue_orchestration_runtime_progress,
+                                )
+                                reconcile_orchestration_run_from_ledger(
+                                    turn_orchestration_run,
+                                    progress_callback=queue_orchestration_runtime_progress,
+                                )
+                                for runtime_progress_event in drain_orchestration_runtime_progress():
+                                    yield runtime_progress_event
                             evidence_status_message = build_agent_action_evidence_status_message(
                                 agent_evidence_result
                             )
@@ -19261,6 +19569,19 @@ def register_route_backend_chats(bp):
                                     'Grounded image evidence did not reach a terminal synthesis state.'
                                 )
                             persist_central_synthesis_state('pending')
+
+                            finalizer_runtime_node = next(
+                                node
+                                for node in turn_orchestration_run.nodes
+                                if node.type == 'finalize'
+                            )
+                            start_orchestration_node(
+                                turn_orchestration_run,
+                                finalizer_runtime_node.id,
+                                progress_callback=queue_orchestration_runtime_progress,
+                            )
+                            for runtime_progress_event in drain_orchestration_runtime_progress():
+                                yield runtime_progress_event
 
                             agent_executor_model_used = actual_model_used
                             yield emit_thought(
@@ -19326,9 +19647,58 @@ def register_route_backend_chats(bp):
 
                         debug_print(f"[Agent Streaming] Captured {len(agent_citations_list)} citations")
                         if not agent_evidence_task:
+                            if (
+                                selected_agent_runtime_node
+                                and selected_agent_runtime_node.status == 'running'
+                            ):
+                                complete_orchestration_node(
+                                    turn_orchestration_run,
+                                    selected_agent_runtime_node.id,
+                                    OrchestrationNodeResult(
+                                        status='succeeded',
+                                        summary='The selected agent completed the compatibility response.',
+                                    ),
+                                    progress_callback=queue_orchestration_runtime_progress,
+                                )
+                            reconcile_orchestration_run_from_ledger(
+                                turn_orchestration_run,
+                                progress_callback=queue_orchestration_runtime_progress,
+                            )
+                            if (
+                                'selected_agent_finalizer_compatibility'
+                                not in turn_orchestration_run.warnings
+                            ):
+                                turn_orchestration_run.warnings.append(
+                                    'selected_agent_finalizer_compatibility'
+                                )
+                            finalizer_runtime_node = next(
+                                node
+                                for node in turn_orchestration_run.nodes
+                                if node.type == 'finalize'
+                            )
+                            if finalizer_runtime_node.status == 'pending':
+                                start_orchestration_node(
+                                    turn_orchestration_run,
+                                    finalizer_runtime_node.id,
+                                    progress_callback=queue_orchestration_runtime_progress,
+                                )
+                            for runtime_progress_event in drain_orchestration_runtime_progress():
+                                yield runtime_progress_event
                             final_model_used = actual_model_used
 
                     else:
+                        finalizer_runtime_node = next(
+                            node
+                            for node in turn_orchestration_run.nodes
+                            if node.type == 'finalize'
+                        )
+                        start_orchestration_node(
+                            turn_orchestration_run,
+                            finalizer_runtime_node.id,
+                            progress_callback=queue_orchestration_runtime_progress,
+                        )
+                        for runtime_progress_event in drain_orchestration_runtime_progress():
+                            yield runtime_progress_event
                         # Stream from regular GPT model (non-agent)
                         yield emit_thought('generation', f"Sending to '{gpt_model}'")
                         debug_print(f"--- Streaming from GPT ({gpt_model}) ---")
@@ -19462,6 +19832,25 @@ def register_route_backend_chats(bp):
                         return
 
                     # Stream complete - save message and send final metadata
+                    finalizer_runtime_node = next(
+                        node
+                        for node in turn_orchestration_run.nodes
+                        if node.type == 'finalize'
+                    )
+                    if finalizer_runtime_node.status == 'running':
+                        complete_orchestration_node(
+                            turn_orchestration_run,
+                            finalizer_runtime_node.id,
+                            OrchestrationNodeResult(
+                                status='succeeded',
+                                summary='The central response finalizer completed.',
+                            ),
+                            progress_callback=queue_orchestration_runtime_progress,
+                        )
+                    finish_orchestration_run(turn_orchestration_run)
+                    user_metadata['orchestration_runtime'] = turn_orchestration_run.to_metadata()
+                    for runtime_progress_event in drain_orchestration_runtime_progress():
+                        yield runtime_progress_event
                     if central_synthesis_context and accumulated_content:
                         set_evidence_ledger_status(turn_evidence_ledger, 'completed')
                         central_synthesis_metadata = build_central_synthesis_metadata(
@@ -19532,6 +19921,7 @@ def register_route_backend_chats(bp):
                             },
                             'history_context': history_debug_info,
                             'orchestration': turn_orchestration_plan,
+                            'orchestration_runtime': turn_orchestration_run.to_metadata(),
                             'evidence_ledger': turn_evidence_ledger,
                             'central_synthesis': central_synthesis_metadata,
                             'capability_usage': build_streaming_capability_usage(),
@@ -19622,6 +20012,9 @@ def register_route_backend_chats(bp):
                         if selected_agent_metadata:
                             user_message_doc.setdefault('metadata', {})['agent_selection'] = selected_agent_metadata
                         user_message_doc.setdefault('metadata', {})['evidence_ledger'] = turn_evidence_ledger
+                        user_message_doc.setdefault('metadata', {})['orchestration_runtime'] = (
+                            turn_orchestration_run.to_metadata()
+                        )
                         if central_synthesis_metadata:
                             user_message_doc.setdefault('metadata', {})['central_synthesis'] = central_synthesis_metadata
                         cosmos_messages_container.upsert_item(user_message_doc)
@@ -19718,6 +20111,18 @@ def register_route_backend_chats(bp):
                     error_msg = str(e)
                     debug_print(f"Error during streaming: {error_msg}")
 
+                    if not turn_orchestration_run.completed_at:
+                        fail_orchestration_run(
+                            turn_orchestration_run,
+                            error_type='stream_execution_failed',
+                            user_message='The orchestration stream could not be completed.',
+                            progress_callback=queue_orchestration_runtime_progress,
+                        )
+                    user_metadata['orchestration_runtime'] = turn_orchestration_run.to_metadata()
+                    user_metadata['evidence_ledger'] = turn_evidence_ledger
+                    user_message_doc['metadata'] = user_metadata
+                    cosmos_messages_container.upsert_item(user_message_doc)
+
                     if (
                         central_synthesis_metadata
                         and central_synthesis_metadata.get('status') == 'pending'
@@ -19771,6 +20176,7 @@ def register_route_backend_chats(bp):
                                 'reasoning_effort': reasoning_effort,
                                 'history_context': history_debug_info,
                                 'orchestration': turn_orchestration_plan,
+                                'orchestration_runtime': turn_orchestration_run.to_metadata(),
                                 'evidence_ledger': turn_evidence_ledger,
                                 'central_synthesis': central_synthesis_metadata,
                                 'capability_usage': build_streaming_capability_usage(),
@@ -19797,6 +20203,7 @@ def register_route_backend_chats(bp):
                             'incomplete': True,
                             'error': error_msg,
                             'orchestration': turn_orchestration_plan,
+                            'orchestration_runtime': turn_orchestration_run.to_metadata(),
                             'evidence_ledger': turn_evidence_ledger,
                             'central_synthesis': central_synthesis_metadata,
                         },
@@ -19809,6 +20216,50 @@ def register_route_backend_chats(bp):
                 debug_print(f"[STREAM API ERROR] Unhandled exception: {str(e)}")
                 debug_print(f"[STREAM API ERROR] Full traceback:\n{error_traceback}")
                 yield f"data: {json.dumps({'error': f'Internal server error: {str(e)}'})}\n\n"
+            finally:
+                active_runtime = locals().get('turn_orchestration_run')
+                if active_runtime and not active_runtime.completed_at:
+                    try:
+                        runtime_progress_callback = locals().get(
+                            'queue_orchestration_runtime_progress'
+                        )
+                        if stream_session and stream_session.is_cancel_requested():
+                            cancel_orchestration_run(
+                                active_runtime,
+                                progress_callback=runtime_progress_callback,
+                            )
+                        else:
+                            fail_orchestration_run(
+                                active_runtime,
+                                error_type='stream_ended_before_runtime_completion',
+                                user_message=(
+                                    'The stream ended before all orchestration steps completed.'
+                                ),
+                                progress_callback=runtime_progress_callback,
+                            )
+                        active_user_metadata = locals().get('user_metadata')
+                        active_user_message_doc = locals().get('user_message_doc')
+                        active_evidence_ledger = locals().get('turn_evidence_ledger')
+                        if (
+                            isinstance(active_user_metadata, dict)
+                            and isinstance(active_user_message_doc, dict)
+                        ):
+                            active_user_metadata['orchestration_runtime'] = (
+                                active_runtime.to_metadata()
+                            )
+                            if active_evidence_ledger is not None:
+                                active_user_metadata['evidence_ledger'] = active_evidence_ledger
+                            active_user_message_doc['metadata'] = active_user_metadata
+                            cosmos_messages_container.upsert_item(active_user_message_doc)
+                    except Exception as runtime_cleanup_error:
+                        log_event(
+                            '[OrchestrationRuntime] Failed to close an incomplete stream run',
+                            extra={
+                                'run_id': active_runtime.run_id,
+                                'error_type': type(runtime_cleanup_error).__name__,
+                            },
+                            level=logging.ERROR,
+                        )
 
         return build_background_stream_response(generate, stream_session=stream_session)
 

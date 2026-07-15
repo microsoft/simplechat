@@ -2,7 +2,7 @@
 # test_chat_stream_background_execution.py
 """
 Functional test for chat stream background execution.
-Version: 0.239.185
+Version: 0.250.063
 Implemented in: 0.239.129
 
 This test ensures that the streaming chat route runs its SSE generator through
@@ -18,7 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 ROUTE_FILE = ROOT / "application" / "single_app" / "route_backend_chats.py"
 CONFIG_FILE = ROOT / "application" / "single_app" / "config.py"
-FIX_DOC_FILE = ROOT / "docs" / "explanation" / "fixes" / "CHAT_STREAM_BACKGROUND_EXECUTION_FIX.md"
+FIX_DOC_FILE = ROOT / "docs" / "explanation" / "fixes" / "v0.241.001" / "CHAT_STREAM_BACKGROUND_EXECUTION_FIX.md"
 
 
 def assert_contains(file_path: Path, expected: str) -> None:
@@ -38,12 +38,12 @@ def test_chat_stream_background_execution() -> None:
     assert_contains(ROUTE_FILE, "def publish_background_event(event_text):")
     assert_contains(ROUTE_FILE, "event_iterator = event_generator_factory(")
     assert_contains(ROUTE_FILE, "for event in event_iterator:")
-    assert_contains(ROUTE_FILE, "stream_bridge.detach_consumer()")
+    assert_contains(ROUTE_FILE, "stream_bridge.detach_consumer(reason='client_disconnect', update_session=True)")
     assert_contains(ROUTE_FILE, "CHAT_STREAM_REGISTRY = ActiveConversationStreamRegistry()")
     assert_contains(ROUTE_FILE, "return build_background_stream_response(generate_compatibility_response, stream_session=stream_session)")
     assert_contains(ROUTE_FILE, "return build_background_stream_response(generate, stream_session=stream_session)")
 
-    assert_contains(CONFIG_FILE, 'VERSION = "0.239.185"')
+    assert_contains(CONFIG_FILE, 'VERSION = "0.250.063"')
     assert_contains(FIX_DOC_FILE, "Fixed/Implemented in version: **0.239.129**")
 
     print("Chat stream background execution checks passed!")
