@@ -277,7 +277,13 @@ def build_turn_orchestration_plan(
         return origin
 
     if selected_agent_id:
-        selected_sources.append(_build_source('selected_agent', 'selection', {'agent_id': selected_agent_id}))
+        selected_sources.append(
+            _build_source(
+                'selected_agent',
+                capability_origin('selected_agent'),
+                {'agent_id': selected_agent_id},
+            )
+        )
     if selected_action_type and selected_action_type != 'none':
         selected_action_capability = (
             'compare'

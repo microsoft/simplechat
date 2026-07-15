@@ -692,6 +692,81 @@
               </div>
             </div>
           </div>
+          <fieldset class="border rounded p-3 mt-3" id="agent-orchestrator-discovery-fieldset">
+            <legend class="float-none w-auto px-2 fs-6">Orchestrator Discovery</legend>
+            <div class="form-check form-switch mb-3">
+              <input
+                class="form-check-input"
+                type="checkbox"
+                id="agent-discoverable-by-orchestrator"
+                aria-controls="agent-orchestrator-descriptor-controls"
+                aria-expanded="false"
+              />
+              <label class="form-check-label" for="agent-discoverable-by-orchestrator">
+                Allow orchestration discovery
+              </label>
+            </div>
+            <div class="d-none" id="agent-orchestrator-descriptor-controls">
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <label for="agent-orchestrator-capability-tags" class="form-label">Capability Tags</label>
+                  <input
+                    type="text"
+                    class="form-control"
+                    id="agent-orchestrator-capability-tags"
+                    placeholder="benefits, policy_lookup"
+                  />
+                </div>
+                <div class="col-md-6">
+                  <label for="agent-orchestrator-evidence-types" class="form-label">Evidence Types</label>
+                  <input
+                    type="text"
+                    class="form-control"
+                    id="agent-orchestrator-evidence-types"
+                    placeholder="policy_documents, business_records"
+                  />
+                </div>
+                <div class="col-md-3">
+                  <label for="agent-orchestrator-risk-class" class="form-label">Risk</label>
+                  <select class="form-select" id="agent-orchestrator-risk-class">
+                    <option value="internal_read" selected>Internal read</option>
+                    <option value="external_read">External read</option>
+                  </select>
+                </div>
+                <div class="col-md-3">
+                  <label for="agent-orchestrator-data-sensitivity" class="form-label">Data Sensitivity</label>
+                  <select class="form-select" id="agent-orchestrator-data-sensitivity">
+                    <option value="internal" selected>Internal</option>
+                    <option value="public">Public</option>
+                  </select>
+                </div>
+                <div class="col-md-3">
+                  <label for="agent-orchestrator-latency-class" class="form-label">Latency</label>
+                  <select class="form-select" id="agent-orchestrator-latency-class">
+                    <option value="seconds" selected>Seconds</option>
+                    <option value="minutes">Minutes</option>
+                  </select>
+                </div>
+                <div class="col-md-3">
+                  <label for="agent-orchestrator-cost-class" class="form-label">Cost</label>
+                  <select class="form-select" id="agent-orchestrator-cost-class">
+                    <option value="low">Low</option>
+                    <option value="standard" selected>Standard</option>
+                  </select>
+                </div>
+              </div>
+              <div class="d-flex flex-wrap gap-4 mt-3">
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" id="agent-orchestrator-read-only" checked />
+                  <label class="form-check-label" for="agent-orchestrator-read-only">Read only</label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" id="agent-orchestrator-external-data" />
+                  <label class="form-check-label" for="agent-orchestrator-external-data">Uses external data</label>
+                </div>
+              </div>
+            </div>
+          </fieldset>
         </div>
 
         <!-- Step 7: Summary -->

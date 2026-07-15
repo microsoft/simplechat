@@ -38,6 +38,21 @@ function normalizeHttpUrl(value) {
   }
 }
 
+function normalizeOrchestratorDescriptorItems(value) {
+  const normalized = [];
+  String(value || '')
+    .split(',')
+    .map(item => item.trim().toLowerCase().replace(/[^a-z0-9_:-]+/g, '_').replace(/^_+|_+$/g, ''))
+    .filter(Boolean)
+    .forEach(item => {
+      const boundedItem = item.slice(0, 64);
+      if (!normalized.includes(boundedItem) && normalized.length < 16) {
+        normalized.push(boundedItem);
+      }
+    });
+  return normalized;
+}
+
 const SIMPLECHAT_CAPABILITY_DEFINITIONS = [
   {
     key: 'create_group',
@@ -246,6 +261,7 @@ export class AgentModalStepper {
     const saveBtn = document.getElementById('agent-modal-save-btn');
     const skipBtn = document.getElementById('agent-modal-skip');
     const powerUserToggle = document.getElementById('agent-power-user-toggle');
+    const orchestratorDiscoveryToggle = document.getElementById('agent-discoverable-by-orchestrator');
     const agentTypeRadios = document.querySelectorAll('input[name="agent-type"]');
     const draftInstructionsBtn = document.getElementById('agent-draft-instructions-btn');
     
@@ -263,6 +279,12 @@ export class AgentModalStepper {
     }
     if (powerUserToggle) {
       powerUserToggle.addEventListener('change', (e) => this.togglePowerUserMode(e.target.checked));
+    }
+    if (orchestratorDiscoveryToggle) {
+      orchestratorDiscoveryToggle.addEventListener(
+        'change',
+        () => this.syncOrchestratorDiscoveryControls()
+      );
     }
     if (draftInstructionsBtn) {
       draftInstructionsBtn.addEventListener('click', () => this.draftInstructions());
@@ -353,6 +375,20 @@ export class AgentModalStepper {
 
   cloneAssignedKnowledge(value) {
     return JSON.parse(JSON.stringify(value || EMPTY_ASSIGNED_KNOWLEDGE));
+  }
+
+  syncOrchestratorDiscoveryControls() {
+    const toggle = document.getElementById('agent-discoverable-by-orchestrator');
+    const controls = document.getElementById('agent-orchestrator-descriptor-controls');
+    if (!toggle || !controls) {
+      return;
+    }
+    const enabled = toggle.checked;
+    controls.classList.toggle('d-none', !enabled);
+    toggle.setAttribute('aria-expanded', enabled ? 'true' : 'false');
+    controls.querySelectorAll('input, select').forEach(control => {
+      control.disabled = !enabled;
+    });
   }
 
   getAssignedKnowledgeAgentScope() {
@@ -1694,6 +1730,8 @@ export class AgentModalStepper {
     const instructionsInput = document.getElementById('agent-instructions');
     const advancedFoundryNote = document.getElementById('agent-advanced-foundry-note');
     const localAgentAdvancedSettings = document.getElementById('local-agent-advanced-settings');
+    const orchestratorDiscoveryFieldset = document.getElementById('agent-orchestrator-discovery-fieldset');
+    const orchestratorDiscoveryToggle = document.getElementById('agent-discoverable-by-orchestrator');
     const foundryModeNote = document.getElementById('agent-foundry-mode-note');
     const foundryFetchBtnLabel = document.getElementById('agent-foundry-fetch-btn-label');
     const foundrySelectLabel = document.getElementById('agent-foundry-select-label');
@@ -1748,6 +1786,13 @@ export class AgentModalStepper {
     if (localAgentAdvancedSettings) {
       localAgentAdvancedSettings.classList.toggle('d-none', isFoundry);
     }
+    if (orchestratorDiscoveryFieldset) {
+      orchestratorDiscoveryFieldset.classList.toggle('d-none', isFoundry);
+    }
+    if (orchestratorDiscoveryToggle && isFoundry) {
+      orchestratorDiscoveryToggle.checked = false;
+    }
+    this.syncOrchestratorDiscoveryControls();
 
     // Update helper text
     const helper = document.getElementById('agent-type-helper');
@@ -1926,6 +1971,7 @@ export class AgentModalStepper {
       this.actionsToSelect = null; // Clear any stored actions for new agent
       this.clearFields();
     }
+    this.syncOrchestratorDiscoveryControls();
     
     // Ensure generated name is populated for both new and existing agents
     this.updateGeneratedName();
@@ -2022,6 +2068,15 @@ export class AgentModalStepper {
     const additionalSettings = document.getElementById('agent-additional-settings');
     const instructionBrief = document.getElementById('agent-instruction-brief');
     const draftStatus = document.getElementById('agent-draft-instructions-status');
+    const orchestratorDiscoveryToggle = document.getElementById('agent-discoverable-by-orchestrator');
+    const orchestratorCapabilityTags = document.getElementById('agent-orchestrator-capability-tags');
+    const orchestratorEvidenceTypes = document.getElementById('agent-orchestrator-evidence-types');
+    const orchestratorReadOnly = document.getElementById('agent-orchestrator-read-only');
+    const orchestratorExternalData = document.getElementById('agent-orchestrator-external-data');
+    const orchestratorRiskClass = document.getElementById('agent-orchestrator-risk-class');
+    const orchestratorDataSensitivity = document.getElementById('agent-orchestrator-data-sensitivity');
+    const orchestratorLatencyClass = document.getElementById('agent-orchestrator-latency-class');
+    const orchestratorCostClass = document.getElementById('agent-orchestrator-cost-class');
     
     if (displayName) displayName.value = '';
     if (generatedName) generatedName.value = '';
@@ -2053,12 +2108,22 @@ export class AgentModalStepper {
     if (additionalSettings) additionalSettings.value = '{}';
     if (instructionBrief) instructionBrief.value = '';
     if (draftStatus) draftStatus.textContent = '';
+    if (orchestratorDiscoveryToggle) orchestratorDiscoveryToggle.checked = false;
+    if (orchestratorCapabilityTags) orchestratorCapabilityTags.value = '';
+    if (orchestratorEvidenceTypes) orchestratorEvidenceTypes.value = '';
+    if (orchestratorReadOnly) orchestratorReadOnly.checked = true;
+    if (orchestratorExternalData) orchestratorExternalData.checked = false;
+    if (orchestratorRiskClass) orchestratorRiskClass.value = 'internal_read';
+    if (orchestratorDataSensitivity) orchestratorDataSensitivity.value = 'internal';
+    if (orchestratorLatencyClass) orchestratorLatencyClass.value = 'seconds';
+    if (orchestratorCostClass) orchestratorCostClass.value = 'standard';
     const iconImageData = document.getElementById('agent-icon-image-data');
     const iconImageFile = document.getElementById('agent-icon-image-file');
     if (iconImageData) iconImageData.value = '';
     if (iconImageFile) iconImageFile.value = '';
     agentsCommon.setIconPayload(document, { kind: 'bootstrap', value: 'bi-robot' });
     this.resetAssignedKnowledgeControls();
+    this.syncOrchestratorDiscoveryControls();
     
     // Clear any selected actions
     this.clearSelectedActions();
@@ -2393,6 +2458,7 @@ export class AgentModalStepper {
     if (agentsCommon && typeof agentsCommon.setAgentModalFields === 'function') {
       agentsCommon.setAgentModalFields(agent);
     }
+    this.syncOrchestratorDiscoveryControls();
     this.setInstructionsValue(agent.instructions || '');
     this.setAssignedKnowledgeControls(agent.other_settings?.[ASSIGNED_KNOWLEDGE_KEY]);
 
@@ -2818,7 +2884,34 @@ export class AgentModalStepper {
         break;
 
       case 6: // Advanced
-        // Advanced settings validation would go here if needed
+        if (document.getElementById('agent-discoverable-by-orchestrator')?.checked) {
+          const capabilityTags = normalizeOrchestratorDescriptorItems(
+            document.getElementById('agent-orchestrator-capability-tags')?.value
+          );
+          const evidenceTypes = normalizeOrchestratorDescriptorItems(
+            document.getElementById('agent-orchestrator-evidence-types')?.value
+          );
+          const readOnly = document.getElementById('agent-orchestrator-read-only');
+          if (capabilityTags.length === 0) {
+            this.showError('Add at least one orchestrator capability tag.');
+            document.getElementById('agent-orchestrator-capability-tags')?.focus();
+            return false;
+          }
+          if (evidenceTypes.length === 0) {
+            this.showError('Add at least one orchestrator evidence type.');
+            document.getElementById('agent-orchestrator-evidence-types')?.focus();
+            return false;
+          }
+          if (!readOnly?.checked) {
+            this.showError('Orchestrator discovery currently supports read-only agents only.');
+            readOnly?.focus();
+            return false;
+          }
+          if (this.getSelectedActionIds().length > 0) {
+            this.showError('Remove attached actions before enabling orchestrator discovery.');
+            return false;
+          }
+        }
         break;
         
       case 7: // Summary
@@ -3282,7 +3375,13 @@ export class AgentModalStepper {
           
           // Create badge content with global tag if needed
           if (isGlobal) {
-            badge.innerHTML = `${actionName} <small class="badge bg-info text-dark ms-1" style="font-size: 0.6em;">global</small>`;
+            badge.textContent = actionName;
+            const globalBadge = document.createElement('small');
+            globalBadge.className = 'badge bg-info text-dark ms-1';
+            globalBadge.style.fontSize = '0.6em';
+            globalBadge.textContent = 'global';
+            badge.appendChild(document.createTextNode(' '));
+            badge.appendChild(globalBadge);
           } else {
             badge.textContent = actionName;
           }
@@ -4205,6 +4304,9 @@ export class AgentModalStepper {
     const modelId = modelIdInput?.value || selectedModelOption?.value || '';
     const modelProvider = modelProviderInput?.value || selectedModelOption?.dataset?.provider || '';
     const foundryAuthenticationType = 'delegated_user';
+    const discoverableByOrchestrator = document.getElementById(
+      'agent-discoverable-by-orchestrator'
+    )?.checked === true;
 
     const formData = {
       display_name: document.getElementById('agent-display-name')?.value || '',
@@ -4225,7 +4327,22 @@ export class AgentModalStepper {
       agent_type: selectedAgentType,
       model_endpoint_id: modelEndpointId,
       model_id: modelId,
-      model_provider: modelProvider
+      model_provider: modelProvider,
+      discoverable_by_orchestrator: discoverableByOrchestrator,
+      orchestrator_descriptor: discoverableByOrchestrator ? {
+        capability_tags: normalizeOrchestratorDescriptorItems(
+          document.getElementById('agent-orchestrator-capability-tags')?.value
+        ),
+        evidence_types: normalizeOrchestratorDescriptorItems(
+          document.getElementById('agent-orchestrator-evidence-types')?.value
+        ),
+        read_only: document.getElementById('agent-orchestrator-read-only')?.checked === true,
+        external_data: document.getElementById('agent-orchestrator-external-data')?.checked === true,
+        risk_class: document.getElementById('agent-orchestrator-risk-class')?.value || 'internal_read',
+        data_sensitivity: document.getElementById('agent-orchestrator-data-sensitivity')?.value || 'internal',
+        latency_class: document.getElementById('agent-orchestrator-latency-class')?.value || 'seconds',
+        cost_class: document.getElementById('agent-orchestrator-cost-class')?.value || 'standard'
+      } : {}
     };
 
     if (selectedAgentType === 'aifoundry') {

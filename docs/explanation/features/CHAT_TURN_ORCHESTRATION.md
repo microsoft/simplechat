@@ -1,6 +1,6 @@
 # Chat Turn Orchestration
 
-Implemented in version: **0.250.066**
+Implemented in version: **0.250.067**
 Associated issue: **[#1021](https://github.com/microsoft/simplechat/issues/1021)**
 
 ## Overview
@@ -236,7 +236,7 @@ An inactive toolbar control is therefore not treated as a denial. Per-capability
 
 Common requirements are classified without a planning-model call. Initial classes cover current public information, current official/local rules, user-supplied URLs, workspace evidence, document analysis, multi-document comparison, explicit visual output, and multi-source public research. A recommendation is created only when an eligible capability can materially improve freshness, completeness, confidence, evidence quality, or requested output.
 
-Simple timeless questions keep their direct one-step plan. Analyze requires at least one reauthorized document target, Compare requires at least two, URL Access requires a supplied URL, and Image is proposed only for explicit visual creation intent. Current local-law and official-record requests prefer Deep Research when available and retain Web Search as a bounded alternative. Unselected-agent discovery is intentionally deferred to Phase 8B; selected agents continue through canonical server resolution and the existing required-attempt contract.
+Simple timeless questions keep their direct one-step plan. Analyze requires at least one reauthorized document target, Compare requires at least two, URL Access requires a supplied URL, and Image is proposed only for explicit visual creation intent. Current local-law and official-record requests prefer Deep Research when available and retain Web Search as a bounded alternative. Selected agents continue through canonical server resolution and the existing required-attempt contract; Phase 8B extends the same inventory and choice protocol to governed unselected agents.
 
 ### Durable Choice And Resume
 
@@ -261,6 +261,32 @@ Resume execution uses a conditional lease. A duplicate live claim is rejected, a
 Discovered external retrieval preserves the existing current-message-only boundary. Conversation history, retrieved workspace content, and unrelated context are not appended to Web Search or Deep Research requests. The server removes detected street addresses, email addresses, phone numbers, and account-like identifiers from the default external query. Parcel-specific requests receive a separate, clearly labeled option whose selection explicitly approves including the supplied address for that turn. Capability choices do not change saved toolbar defaults.
 
 The inline choice card renders server fields through DOM text APIs, provides one recommended option, alternatives, and a continue-without-capabilities path, associates external/sensitive notices with the workflow, uses `aria-live` for status, and maintains at least 44-pixel actions on mobile.
+
+## Phase 8B Governed Agent Discovery And Recommendation
+
+Phase 8B extends the Phase 8A inventory, proposal, decision, and durable resume contracts to authorized unselected personal, global, and group agents. It does not add a second planner or approval route. Selected agents remain required attempts, and an inactive agent selector is not treated as a decline.
+
+Agent discovery is explicitly opt-in through `discoverable_by_orchestrator`, which defaults to `false` for existing and new records. An opted-in record must provide an allowlisted `orchestrator_descriptor` containing nonempty capability tags and evidence types, read-only state, external-data state, risk class, data-sensitivity class, latency class, and cost class. Invalid, incomplete, write-capable, sensitive, disabled, hidden, nonlocal runtime, or action-attached records fail closed. Foundry-backed agents and local agents with attached actions remain available through normal explicit selection but are excluded from Phase 8B discovery because their hidden tools or action arguments cannot yet meet the read-only telemetry boundary.
+
+The server builds the canonical discovery catalog only after current authorization and governance checks:
+
+- Personal records come only from the current user's partition and require personal-agent governance access.
+- Global records require current global-agent feature and per-agent item-policy access, plus availability under the active global/per-user agent mode.
+- Group records come only from the user's current memberships, require group-agent governance access, and exclude groups whose current status does not allow chat.
+
+Only a bounded safe projection enters orchestration metadata: opaque option reference, display label, scope class, capability tags, evidence types, read-only and external-data state, risk, sensitivity, latency, and cost. Raw instructions, internal IDs, group IDs/names, endpoints, keys, connector settings, action IDs/arguments, assigned-knowledge details, hidden tools, and inaccessible catalog entries remain in the server-only canonical catalog. Agent-management and invocation telemetry uses bounded summaries or the opaque reference for discovered runs rather than full canonical records.
+
+### Deterministic Agent Matching
+
+Initial matching recognizes explicit specialized organizational knowledge and business-system evidence requests. A safe descriptor must materially match the current message; the existence of an authorized agent alone is insufficient. At most one agent option is added to the existing Phase 8A proposal. Simple timeless questions stay direct, a selected agent suppresses all second-agent recommendations, and selected Workspace Search, Analyze, or Compare suppresses an organizational-agent recommendation when that selected capability already satisfies the requirement.
+
+Agent option IDs are server-authored HMAC references namespaced by personal, global, or group scope. The reference binds the canonical catalog key and immutable creation timestamp, so duplicate display names remain unambiguous and a deleted/recreated record cannot inherit an old approval. Browser requests still submit only conversation/proposal and persisted option IDs.
+
+### Agent Decision And Resume
+
+Agent decisions use the existing ETag-protected proposal transition and resume lease. At decision, claim, and final canonicalization, the server reauthorizes the personal conversation and exact source turn, rebuilds the current governed catalog, and resolves the approved opaque reference to one canonical record. Material descriptor changes invalidate the prior choice; deletion, disablement, hidden state, policy loss, group-membership revocation, inactive group status, or runtime-type changes remove the option entirely.
+
+After a successful claim, assigned knowledge is read from the refreshed canonical record and action constraints are checked again. Any newly attached action removes the agent from the governed catalog and invalidates the approval. The agent enters the existing selected-agent evidence/runtime node as a required `discovery_approved` source, returns evidence rather than a final answer, and hands the terminal ledger to the central response finalizer. Inherited kernel function choice is disabled at the agent, execution-setting, and service levels for that invocation; raw plugin invocation citations are not persisted. Loader and wrapper telemetry records only bounded scope/type booleans, counts, response lengths, and lifecycle state for the discovered run. Saved toolbar defaults are unchanged. Duplicate decisions, live resume claims, and process-loss reconciliation continue through the Phase 8A idempotency contract, so an approved agent is not invoked twice.
 
 ## Security And Governance
 
@@ -297,6 +323,11 @@ The inline choice card renders server fields through DOM text APIs, provides one
 - A proposal approval never substitutes for collector or executor authorization; configuration and object access are checked again immediately before resume and at execution boundaries.
 - Browser decision payloads cannot add capabilities, run IDs, user IDs, document IDs, or scope IDs. Effective execution is reconstructed from the persisted allowlist.
 - Discovered external queries use current-message-only minimized text. Sensitive address use requires selection of the separately labeled sensitive-input option.
+- Unselected agents default to undiscoverable and enter the catalog only after ownership/membership, group-status, feature, item-policy, enabled, visibility, runtime-type, attached-action, and safe-descriptor checks.
+- Agent option references are opaque, scope-namespaced, bound to immutable stored identity, and resolved only through the current authorized server catalog.
+- Agent decisions revalidate the exact persisted safe descriptor; material policy changes invalidate prior consent while canonical assigned knowledge and action constraints refresh at invocation.
+- Discovered-agent proposal, message, and activity metadata omit canonical IDs, group identifiers/names, ordinary tags, catalog keys, instructions, endpoints, connector settings, action IDs, and hidden tools.
+- Discovered-agent execution disables inherited kernel tools, omits raw plugin invocation citations, and suppresses prompt/response previews in runtime telemetry; normal explicitly selected-agent behavior is restored after the call.
 
 ## Dependencies
 
@@ -310,6 +341,7 @@ The inline choice card renders server fields through DOM text APIs, provides one
 - Existing `ActiveConversationStreamSession` cancellation, replay, heartbeat, and reattach behavior.
 - Cosmos message ETags for idempotent capability decisions and resume leases.
 - Existing role-aware Web Search, URL Access, Deep Research, image-generation, document-action, and authorized document/scope checks.
+- Existing personal/global/group agent stores, agent governance policies, group membership/status checks, assigned-knowledge reconstruction, and action-constraint validation.
 
 ## Testing And Validation
 
@@ -395,11 +427,19 @@ Phase 8A capability coverage is in:
 - `functional_tests/test_chat_capability_choice_route.py` for conversation ownership, exact source-turn linkage, forged options, post-approval revocation, server request reconstruction, parent/child replay, and process-loss reconciliation.
 - `ui_tests/test_chat_capability_choice_card.py` for persisted rendering, keyboard interaction, external notices, exact decision/resume payloads, `aria-live`, desktop/mobile overflow, and 44-pixel controls.
 
+Phase 8B agent coverage is in:
+
+- `functional_tests/test_chat_governed_agent_discovery.py` for opt-in defaults, authorization/governance filtering, inactive groups, local-runtime enforcement, duplicate names, opaque identity, deterministic matching, selected-capability suppression, safe serialization, policy changes, durable decisions, and required `discovery_approved` provenance.
+- `functional_tests/test_chat_capability_choice_route.py` for forged payload rejection, exact source-turn authorization, canonical constraint refresh, policy/membership loss, duplicate decision and resume idempotency, final invocation reauthorization, safe message metadata, and process-loss reconciliation.
+- `ui_tests/test_chat_capability_choice_card.py` for inert agent labels, safe scope/risk/sensitivity rendering, minimal browser payloads, pending/failed/invalidated/completed reconstruction, keyboard use, `aria-live`, 44-pixel actions, and desktop/mobile overflow.
+- `ui_tests/test_agent_modal_orchestrator_discovery.py` for closed defaults, explicit opt-in, read-only validation, bounded descriptor serialization, edit reconstruction, keyboard accessibility, and responsive layout.
+
 ## Known Limitations
 
-Phase 8A adds durable built-in capability choice, with these deliberate boundaries:
+Phase 8A and Phase 8B add durable built-in and governed local-agent choice, with these deliberate boundaries:
 
-- Governed discovery of unselected agents is deferred to Phase 8B and will reuse this inventory/proposal contract.
+- Generalized multi-agent recommendation remains out of scope. When an agent is already selected, Phase 8B does not recommend another agent.
+- Foundry-backed agents and local agents with attached actions remain explicitly selectable but are not discoverable until hidden tools, action arguments, and runtime telemetry have a separately reviewed read-only governance contract.
 - Active runs and evidence ledgers are not stored in a durable queue or dedicated run store. Pending capability choices survive process loss, and persisted resumed assistants reconcile safely, but an in-flight model/tool operation still relies on existing stream execution and retry behavior.
 - Parallel runtime adapters must be request-context independent; the live chat route currently reconciles its existing authorized collectors sequentially.
 - Cancellation of synchronous model, agent, and document-action SDK calls is best effort. Pending finalization is prevented, but an in-flight non-cooperative call may return before its result can be discarded.

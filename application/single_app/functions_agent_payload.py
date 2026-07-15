@@ -2,6 +2,7 @@
 """Utility helpers for normalizing agent payloads before validation and storage."""
 
 from copy import deepcopy
+import re
 from typing import Any, Dict, List
 
 from functions_icon_utils import normalize_icon_payload
@@ -88,6 +89,12 @@ _MAX_FIELD_LENGTHS = {
 }
 _MAX_AGENT_TAGS = 20
 _MAX_AGENT_TAG_LENGTH = 40
+_MAX_ORCHESTRATOR_DESCRIPTOR_ITEMS = 16
+_MAX_ORCHESTRATOR_DESCRIPTOR_ITEM_LENGTH = 64
+_ORCHESTRATOR_RISK_CLASSES = {"internal_read", "external_read"}
+_ORCHESTRATOR_DATA_SENSITIVITY_CLASSES = {"public", "internal"}
+_ORCHESTRATOR_COST_CLASSES = {"low", "standard"}
+_ORCHESTRATOR_LATENCY_CLASSES = {"seconds", "minutes"}
 _FOUNDRY_FIELD_LENGTHS = {
     "agent_id": 128,
     "endpoint": 2048,
@@ -257,6 +264,103 @@ def _coerce_tags(tags: Any) -> List[str]:
     return cleaned
 
 
+def _coerce_bool(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() == "true"
+    return bool(value)
+
+
+def _coerce_orchestrator_descriptor_items(values: Any, field_name: str) -> List[str]:
+    if values in (None, ""):
+        return []
+    if not isinstance(values, list):
+        raise AgentPayloadError(f"orchestrator_descriptor.{field_name} must be an array of strings.")
+
+    cleaned: List[str] = []
+    for value in values:
+        if not isinstance(value, str):
+            raise AgentPayloadError(
+                f"orchestrator_descriptor.{field_name} entries must be strings."
+            )
+        normalized = re.sub(
+            r"[^a-z0-9_:-]+",
+            "_",
+            value.strip().lower(),
+        ).strip("_")[:_MAX_ORCHESTRATOR_DESCRIPTOR_ITEM_LENGTH]
+        if normalized and normalized not in cleaned:
+            cleaned.append(normalized)
+        if len(cleaned) > _MAX_ORCHESTRATOR_DESCRIPTOR_ITEMS:
+            raise AgentPayloadError(
+                f"orchestrator_descriptor.{field_name} supports at most "
+                f"{_MAX_ORCHESTRATOR_DESCRIPTOR_ITEMS} entries."
+            )
+    return cleaned
+
+
+def _normalize_orchestrator_descriptor(value: Any, *, discoverable: bool) -> Dict[str, Any]:
+    if value in (None, ""):
+        value = {}
+    if not isinstance(value, dict):
+        raise AgentPayloadError("orchestrator_descriptor must be an object.")
+
+    capability_tags = _coerce_orchestrator_descriptor_items(
+        value.get("capability_tags"),
+        "capability_tags",
+    )
+    evidence_types = _coerce_orchestrator_descriptor_items(
+        value.get("evidence_types"),
+        "evidence_types",
+    )
+    read_only = _coerce_bool(value.get("read_only"))
+    external_data = _coerce_bool(value.get("external_data"))
+    risk_class = str(value.get("risk_class") or "").strip().lower()
+    data_sensitivity = str(value.get("data_sensitivity") or "").strip().lower()
+    latency_class = str(value.get("latency_class") or "").strip().lower()
+    cost_class = str(value.get("cost_class") or "").strip().lower()
+
+    if discoverable and not read_only:
+        raise AgentPayloadError("Discoverable orchestrator agents must be read-only.")
+
+    enum_values = (
+        ("risk_class", risk_class, _ORCHESTRATOR_RISK_CLASSES),
+        ("data_sensitivity", data_sensitivity, _ORCHESTRATOR_DATA_SENSITIVITY_CLASSES),
+        ("latency_class", latency_class, _ORCHESTRATOR_LATENCY_CLASSES),
+        ("cost_class", cost_class, _ORCHESTRATOR_COST_CLASSES),
+    )
+    for field_name, field_value, allowed_values in enum_values:
+        if field_value and field_value not in allowed_values:
+            raise AgentPayloadError(
+                f"orchestrator_descriptor.{field_name} is not allowed for discovery."
+            )
+
+    if discoverable:
+        if not capability_tags or not evidence_types:
+            raise AgentPayloadError(
+                "Discoverable orchestrator agents require capability tags and evidence types."
+            )
+        if not all((risk_class, data_sensitivity, latency_class, cost_class)):
+            raise AgentPayloadError(
+                "Discoverable orchestrator agents require risk, sensitivity, latency, and cost classes."
+            )
+
+    normalized = {
+        "capability_tags": capability_tags,
+        "evidence_types": evidence_types,
+        "read_only": read_only,
+        "external_data": external_data,
+        "risk_class": risk_class,
+        "data_sensitivity": data_sensitivity,
+        "latency_class": latency_class,
+        "cost_class": cost_class,
+    }
+    if not discoverable and not any(
+        value not in (False, "", [])
+        for value in normalized.values()
+    ):
+        return {}
+    return normalized
+
+
 def _coerce_other_settings(settings: Any) -> Dict[str, Any]:
     if settings in (None, ""):
         return {}
@@ -360,6 +464,21 @@ def sanitize_agent_payload(agent: Dict[str, Any]) -> Dict[str, Any]:
     sanitized["other_settings"] = _coerce_other_settings(sanitized.get("other_settings"))
     sanitized["actions_to_load"] = _coerce_actions(sanitized.get("actions_to_load"))
     sanitized["tags"] = _coerce_tags(sanitized.get("tags"))
+    sanitized["discoverable_by_orchestrator"] = _coerce_bool(
+        sanitized.get("discoverable_by_orchestrator")
+    )
+    sanitized["orchestrator_descriptor"] = _normalize_orchestrator_descriptor(
+        sanitized.get("orchestrator_descriptor"),
+        discoverable=sanitized["discoverable_by_orchestrator"],
+    )
+    if sanitized["discoverable_by_orchestrator"] and agent_type != "local":
+        raise AgentPayloadError(
+            "Orchestrator discovery currently supports local agents only."
+        )
+    if sanitized["discoverable_by_orchestrator"] and sanitized["actions_to_load"]:
+        raise AgentPayloadError(
+            "Orchestrator discovery currently supports agents without attached actions only."
+        )
     try:
         sanitized["icon"] = normalize_icon_payload(sanitized.get("icon"), field_name="icon")
     except ValueError as exc:

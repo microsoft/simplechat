@@ -11,6 +11,8 @@ const REASON_LABELS = Object.freeze({
     multi_document_comparison: 'A document comparison could materially improve the result.',
     visual_output_materially_helpful: 'A visual output would materially help with this request.',
     multi_source_public_research: 'Multiple authoritative sources could materially improve confidence.',
+    specialized_organizational_knowledge: 'A specialized authorized agent could materially improve this answer.',
+    business_system_evidence: 'An authorized business-system agent could materially improve the evidence.',
 });
 
 function normalizeIdentifier(value) {
@@ -28,6 +30,9 @@ function normalizeProposal(metadata) {
     const options = Array.isArray(proposal.options)
         ? proposal.options.slice(0, MAX_OPTIONS).map(option => ({
             id: normalizeIdentifier(option?.id),
+            kind: ['agent', 'capability', 'continue'].includes(normalizeIdentifier(option?.kind).toLowerCase())
+                ? normalizeIdentifier(option?.kind).toLowerCase()
+                : 'capability',
             label: String(option?.label || '').trim().slice(0, 120),
             capabilityIds: Array.isArray(option?.capability_ids)
                 ? option.capability_ids.map(normalizeIdentifier).filter(Boolean).slice(0, 8)
@@ -35,6 +40,12 @@ function normalizeProposal(metadata) {
             latencyClass: normalizeIdentifier(option?.latency_class),
             costClass: normalizeIdentifier(option?.cost_class),
             externalData: option?.external_data === true,
+            scopeClass: ['personal', 'global', 'group'].includes(
+                normalizeIdentifier(option?.scope_class).toLowerCase()
+            ) ? normalizeIdentifier(option?.scope_class).toLowerCase() : '',
+            readOnly: option?.read_only === true,
+            riskClass: normalizeIdentifier(option?.risk_class),
+            dataSensitivity: normalizeIdentifier(option?.data_sensitivity),
             sensitiveInputTypes: Array.isArray(option?.sensitive_input_types)
                 ? option.sensitive_input_types.map(normalizeIdentifier).filter(Boolean).slice(0, 8)
                 : [],
@@ -84,6 +95,21 @@ function createElement(tagName, className = '', text = '') {
 
 function appendOptionMeta(container, option) {
     const parts = [];
+    if (option.kind === 'agent') {
+        parts.push('Agent');
+        if (option.scopeClass) {
+            parts.push(`Scope: ${option.scopeClass}`);
+        }
+        if (option.readOnly) {
+            parts.push('Read only');
+        }
+        if (option.riskClass) {
+            parts.push(`Risk: ${option.riskClass.replaceAll('_', ' ')}`);
+        }
+        if (option.dataSensitivity) {
+            parts.push(`Data: ${option.dataSensitivity.replaceAll('_', ' ')}`);
+        }
+    }
     if (option.latencyClass) {
         parts.push(`Time: ${option.latencyClass}`);
     }
@@ -93,7 +119,11 @@ function appendOptionMeta(container, option) {
     if (parts.length === 0) {
         return;
     }
-    container.appendChild(createElement('span', 'sc-capability-choice-option-meta', parts.join(' | ')));
+    const metadata = createElement('span', 'sc-capability-choice-option-meta', parts.join(' | '));
+    if (option.kind === 'agent') {
+        metadata.dataset.testid = 'agent-option-meta';
+    }
+    container.appendChild(metadata);
 }
 
 function getReasonText(proposal) {
@@ -263,8 +293,10 @@ export function hydrateCapabilityChoice(messageElement, metadata, { onResume } =
     card.appendChild(header);
     card.appendChild(createElement('p', 'sc-capability-choice-reason', getReasonText(proposal)));
 
-    const hasExternalOption = proposal.options.some(option => option.externalData);
-    if (hasExternalOption) {
+    const hasExternalCapabilityOption = proposal.options.some(
+        option => option.externalData && option.kind !== 'agent'
+    );
+    if (hasExternalCapabilityOption) {
         const notice = createElement(
             'p',
             'sc-capability-choice-notice',
@@ -272,6 +304,15 @@ export function hydrateCapabilityChoice(messageElement, metadata, { onResume } =
         );
         notice.dataset.testid = 'capability-external-data-notice';
         card.appendChild(notice);
+    }
+    if (proposal.options.some(option => option.externalData && option.kind === 'agent')) {
+        const agentExternalNotice = createElement(
+            'p',
+            'sc-capability-choice-notice',
+            'A recommended agent may access external data under its saved governance policy.',
+        );
+        agentExternalNotice.dataset.testid = 'agent-external-data-notice';
+        card.appendChild(agentExternalNotice);
     }
     if (proposal.options.some(option => option.sensitiveInputTypes.length > 0)) {
         const sensitiveNotice = createElement(

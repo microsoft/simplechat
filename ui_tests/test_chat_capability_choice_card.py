@@ -1,8 +1,8 @@
 # test_chat_capability_choice_card.py
 """
 UI test for governed capability choice cards in chat.
-Version: 0.250.066
-Implemented in: 0.250.066
+Version: 0.250.067
+Implemented in: 0.250.067
 
 This test ensures persisted capability proposals hydrate on desktop and mobile,
 expose accessible notices and controls, submit only allowlisted identifiers,
@@ -93,6 +93,81 @@ def _proposal_metadata(status='pending', resume_status='not_requested'):
             'resume': {
                 'status': resume_status,
                 'assistant_message_id': None,
+            },
+            'created_at': created_at.isoformat(),
+            'expires_at': (created_at + timedelta(days=1)).isoformat(),
+        },
+    }
+
+
+def _agent_proposal_metadata(
+    proposal_id,
+    *,
+    status='pending',
+    resume_status='not_requested',
+):
+    created_at = datetime.now(timezone.utc)
+    agent_option_id = 'agent:group:0123456789abcdef0123456789abcdef'
+    decision = None
+    if status in {'approved', 'declined'}:
+        decision = {
+            'option_id': agent_option_id,
+            'status': status,
+            'capability_ids': [],
+            'effective_capability_ids': [],
+            'agent_ref': agent_option_id,
+        }
+    return {
+        'awaiting_user_choice': status == 'pending',
+        'capability_proposal': {
+            'version': 1,
+            'proposal_id': proposal_id,
+            'run_id': f'{proposal_id}-run',
+            'conversation_id': 'ui-capability-conversation',
+            'user_message_id': f'{proposal_id}-user',
+            'assistant_message_id': proposal_id,
+            'status': status,
+            'requirement_ids': ['specialized_organizational_knowledge'],
+            'reason_codes': ['specialized_organizational_knowledge'],
+            'recommended_option_id': agent_option_id,
+            'options': [
+                {
+                    'id': agent_option_id,
+                    'kind': 'agent',
+                    'agent_ref': agent_option_id,
+                    'capability_ids': [],
+                    'effective_capability_ids': [],
+                    'label': 'Benefits <img src=x onerror=window.phase8bInjected=true>',
+                    'category': 'specialized_agent',
+                    'scope_class': 'group',
+                    'latency_class': 'seconds',
+                    'cost_class': 'standard',
+                    'external_data': True,
+                    'read_only': True,
+                    'risk_class': 'internal_read',
+                    'data_sensitivity': 'internal',
+                    'capability_tags': ['benefits', 'policy_lookup'],
+                    'evidence_types': ['policy_documents'],
+                },
+                {
+                    'id': 'continue_without_capabilities',
+                    'kind': 'continue',
+                    'capability_ids': [],
+                    'effective_capability_ids': [],
+                    'label': 'Continue without additional capabilities',
+                    'latency_class': 'immediate',
+                    'cost_class': 'none',
+                    'external_data': False,
+                },
+            ],
+            'decision': decision,
+            'resume': {
+                'status': resume_status,
+                'assistant_message_id': (
+                    f'{proposal_id}-completed-assistant'
+                    if resume_status == 'completed'
+                    else None
+                ),
             },
             'created_at': created_at.isoformat(),
             'expires_at': (created_at + timedelta(days=1)).isoformat(),
@@ -334,6 +409,141 @@ def test_capability_choice_card_decision_and_resume(viewport):
         expect(expired_card.get_by_role('status')).to_contain_text(
             'This capability choice has expired.'
         )
+
+        context.close()
+        browser.close()
+
+
+@pytest.mark.ui
+@pytest.mark.parametrize(
+    'viewport',
+    [
+        {'width': 1280, 'height': 900},
+        {'width': 390, 'height': 844},
+    ],
+)
+def test_governed_agent_choice_is_inert_minimal_and_refreshable(viewport):
+    from playwright.sync_api import expect, sync_playwright
+
+    chat_url = _get_chat_test_url()
+    decision_requests = []
+    resume_requests = []
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        context = _create_context(browser, viewport)
+        page = context.new_page()
+
+        def handle_decision(route):
+            decision_requests.append(json.loads(route.request.post_data or '{}'))
+            route.fulfill(
+                status=200,
+                content_type='application/json',
+                body=json.dumps({
+                    'success': True,
+                    'status': 'approved',
+                    'resume_status': 'pending',
+                    'resume_endpoint': '/api/chat/stream',
+                }),
+            )
+
+        def handle_resume(route):
+            resume_requests.append(json.loads(route.request.post_data or '{}'))
+            route.fulfill(
+                status=200,
+                content_type='text/event-stream',
+                body=(
+                    'data: '
+                    + json.dumps({
+                        'done': True,
+                        'message_id': 'ui-agent-resumed-assistant',
+                        'full_content': 'Completed with governed agent evidence.',
+                    })
+                    + '\n\n'
+                ),
+            )
+
+        page.route('**/api/chat/capability-proposals/*/decision', handle_decision)
+        page.route('**/api/chat/stream', handle_resume)
+        page.goto(chat_url, wait_until='domcontentloaded')
+
+        proposal_id = 'ui-agent-proposal-pending'
+        _append_proposal_message(
+            page,
+            proposal_id,
+            _agent_proposal_metadata(proposal_id),
+        )
+        card = page.locator(
+            f'[data-message-id="{proposal_id}"]'
+        ).get_by_test_id('capability-choice-card')
+        agent_button = card.get_by_role('button').filter(has_text='Benefits <img')
+        expect(card).to_be_visible()
+        expect(card.get_by_text('A specialized authorized agent could materially improve this answer.')).to_be_visible()
+        expect(card.get_by_test_id('agent-external-data-notice')).to_be_visible()
+        expect(agent_button).to_be_enabled()
+        expect(agent_button.get_by_test_id('agent-option-meta')).to_contain_text('Agent')
+        expect(agent_button.get_by_test_id('agent-option-meta')).to_contain_text('Scope: group')
+        expect(agent_button.get_by_test_id('agent-option-meta')).to_contain_text('Read only')
+        expect(agent_button.get_by_test_id('agent-option-meta')).to_contain_text('Risk: internal read')
+        expect(agent_button.get_by_test_id('agent-option-meta')).to_contain_text('Data: internal')
+        assert card.locator('img').count() == 0
+        assert page.evaluate('() => window.phase8bInjected === true') is False
+
+        status_id = agent_button.get_attribute('aria-describedby')
+        assert status_id
+        expect(card.locator(f'#{status_id}')).to_have_attribute('aria-live', 'polite')
+        layout = card.evaluate(
+            """
+            element => ({
+                overflows: element.scrollWidth > element.clientWidth,
+                right: element.getBoundingClientRect().right,
+                viewportWidth: window.innerWidth,
+                buttonHeights: Array.from(element.querySelectorAll('button')).map(
+                    button => button.getBoundingClientRect().height
+                )
+            })
+            """
+        )
+        assert layout['overflows'] is False
+        assert layout['right'] <= layout['viewportWidth'] + 1
+        assert all(height >= 44 for height in layout['buttonHeights'])
+
+        agent_button.focus()
+        agent_button.press('Enter')
+        expect(card.get_by_role('status')).to_contain_text('Completed with Benefits <img')
+        assert decision_requests == [{
+            'conversation_id': 'ui-capability-conversation',
+            'option_id': 'agent:group:0123456789abcdef0123456789abcdef',
+        }]
+        assert resume_requests == [{
+            'conversation_id': 'ui-capability-conversation',
+            'capability_resume_proposal_id': proposal_id,
+        }]
+
+        refresh_cases = [
+            ('approved', 'failed', 'Retry resume', 'remains approved for this turn.'),
+            ('approved', 'completed', None, 'Completed with Benefits <img'),
+            ('invalidated', 'failed', None, 'no longer available'),
+        ]
+        for index, (status, resume_status, button_name, status_text) in enumerate(refresh_cases):
+            refresh_id = f'ui-agent-proposal-refresh-{index}'
+            _append_proposal_message(
+                page,
+                refresh_id,
+                _agent_proposal_metadata(
+                    refresh_id,
+                    status=status,
+                    resume_status=resume_status,
+                ),
+            )
+            refreshed_card = page.locator(
+                f'[data-message-id="{refresh_id}"]'
+            ).get_by_test_id('capability-choice-card')
+            expect(refreshed_card.get_by_role('status')).to_contain_text(status_text)
+            if button_name:
+                expect(refreshed_card.get_by_role('button', name=button_name)).to_be_visible()
+            else:
+                expect(refreshed_card.get_by_role('button')).to_have_count(0)
 
         context.close()
         browser.close()

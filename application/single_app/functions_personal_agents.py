@@ -58,6 +58,8 @@ def get_personal_agents(user_id):
             cleaned_agent.setdefault('model_provider', '')
             cleaned_agent.setdefault('tags', [])
             cleaned_agent.setdefault('icon', {})
+            cleaned_agent.setdefault('discoverable_by_orchestrator', False)
+            cleaned_agent.setdefault('orchestrator_descriptor', {})
             # Remove empty reasoning_effort to prevent validation errors
             if cleaned_agent.get('reasoning_effort') == '':
                 cleaned_agent.pop('reasoning_effort', None)
@@ -101,6 +103,8 @@ def get_personal_agent(user_id, agent_id):
         cleaned_agent.setdefault('model_provider', '')
         cleaned_agent.setdefault('tags', [])
         cleaned_agent.setdefault('icon', {})
+        cleaned_agent.setdefault('discoverable_by_orchestrator', False)
+        cleaned_agent.setdefault('orchestrator_descriptor', {})
         # Remove empty reasoning_effort to prevent validation errors
         if cleaned_agent.get('reasoning_effort') == '':
             cleaned_agent.pop('reasoning_effort', None)
@@ -217,6 +221,8 @@ def save_personal_agent(user_id, agent_data, actor_user_id=None):
         cleaned_result.setdefault('agent_type', 'local')
         cleaned_result.setdefault('tags', [])
         cleaned_result.setdefault('icon', {})
+        cleaned_result.setdefault('discoverable_by_orchestrator', False)
+        cleaned_result.setdefault('orchestrator_descriptor', {})
         bump_chat_bootstrap_user_cache_version(user_id, reason="personal_agent_saved")
         return cleaned_result
         

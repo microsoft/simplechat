@@ -129,6 +129,8 @@ def get_global_agents(include_disabled=False):
             agent.setdefault('model_provider', '')
             agent.setdefault('tags', [])
             agent.setdefault('icon', {})
+            agent.setdefault('discoverable_by_orchestrator', False)
+            agent.setdefault('orchestrator_descriptor', {})
             # Remove empty reasoning_effort to prevent validation errors
             if agent.get('reasoning_effort') == '':
                 agent.pop('reasoning_effort', None)
@@ -170,6 +172,8 @@ def get_global_agent(agent_id):
         agent.setdefault('model_provider', '')
         agent.setdefault('tags', [])
         agent.setdefault('icon', {})
+        agent.setdefault('discoverable_by_orchestrator', False)
+        agent.setdefault('orchestrator_descriptor', {})
         # Remove empty reasoning_effort to prevent validation errors
         if agent.get('reasoning_effort') == '':
             agent.pop('reasoning_effort', None)

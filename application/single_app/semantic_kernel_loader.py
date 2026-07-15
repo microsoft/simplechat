@@ -113,6 +113,32 @@ from semantic_kernel_plugins.tableau_plugin_factory import TableauPluginFactory
 from functions_agent_scope import find_agent_by_scope, is_selected_agent_scope_enabled
 import app_settings_cache
 
+
+def _build_agent_loader_log_summary(agent):
+    agent = agent if isinstance(agent, dict) else {}
+    return {
+        "agent_type": str(agent.get("agent_type") or "local").strip().lower()[:40],
+        "is_global": agent.get("is_global") is True,
+        "is_group": agent.get("is_group") is True,
+        "is_enabled": agent.get("is_enabled") is not False,
+        "discoverable_by_orchestrator": agent.get("discoverable_by_orchestrator") is True,
+        "action_count": len(agent.get("actions_to_load") or []),
+    }
+
+
+def _build_agent_connection_log_summary(agent_config):
+    agent_config = agent_config if isinstance(agent_config, dict) else {}
+    return {
+        "endpoint_configured": bool(agent_config.get("endpoint")),
+        "credential_configured": bool(
+            agent_config.get("key") or agent_config.get("token_provider")
+        ),
+        "deployment_configured": bool(agent_config.get("deployment")),
+        "apim_enabled": agent_config.get("enable_agent_gpt_apim") is True,
+        "endpoint_protocol": resolve_agent_endpoint_protocol(agent_config),
+    }
+
+
 # Agent and Azure OpenAI chat service imports
 log_event("[SK Loader] Starting loader imports")
 try:
@@ -1812,15 +1838,19 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
             f"[SK Loader] Registered Foundry agent: {agent_config['name']} ({mode_label})",
             {
                 "agent_name": agent_config["name"],
-                "agent_id": agent_config.get("id"),
                 "is_global": agent_config.get("is_global", False),
+                "is_group": agent_config.get("is_group", False),
                 "agent_type": agent_type,
             },
             level=logging.INFO,
         )
         return kernel, agent_objs
 
-    log_event(f"[SK Loader] Agent config resolved for {agent_cfg.get('name')} - endpoint: {bool(agent_config.get('endpoint'))}, key: {bool(agent_config.get('key'))}, deployment: {agent_config.get('deployment')}, max_completion_tokens: {agent_config.get('max_completion_tokens')}", level=logging.INFO)
+    log_event(
+        f"[SK Loader] Agent config resolved for {agent_cfg.get('name')}",
+        extra=_build_agent_connection_log_summary(agent_config),
+        level=logging.INFO,
+    )
     
     token_provider_present = bool(agent_config.get("token_provider"))
     has_auth = bool(agent_config.get("key")) or token_provider_present
@@ -1830,37 +1860,21 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
         if apim_enabled:
             log_event(
                 f"[SK Loader] Initializing APIM chat completion for agent: {agent_config['name']} ({mode_label})",
-                {
-                    "aoai_endpoint": agent_config["endpoint"],
-                    "aoai_key": f"{agent_config['key'][:3]}..." if agent_config["key"] else None,
-                    "aoai_deployment": agent_config["deployment"],
-                    "agent_name": agent_config["name"],
-                    "endpoint_protocol": resolve_agent_endpoint_protocol(agent_config),
-                },
+                _build_agent_connection_log_summary(agent_config),
                 level=logging.INFO
             )
             chat_service = create_chat_completion_service()
         else:
             log_event(
                 f"[SK Loader] Initializing GPT Direct chat completion for agent: {agent_config['name']} ({mode_label})",
-                {
-                    "aoai_endpoint": agent_config["endpoint"],
-                    "aoai_key": f"{agent_config['key'][:3]}..." if agent_config["key"] else None,
-                    "aoai_deployment": agent_config["deployment"],
-                    "agent_name": agent_config["name"],
-                    "endpoint_protocol": resolve_agent_endpoint_protocol(agent_config),
-                },
+                _build_agent_connection_log_summary(agent_config),
                 level=logging.INFO
             )
             chat_service = create_chat_completion_service()
         if not chat_service:
             log_event(
                 f"[SK Loader] Chat completion service could not be created for agent: {agent_config['name']} ({mode_label})",
-                {
-                    "agent_name": agent_config["name"],
-                    "aoai_endpoint": agent_config.get("endpoint"),
-                    "aoai_deployment": agent_config.get("deployment"),
-                },
+                _build_agent_connection_log_summary(agent_config),
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
@@ -1872,14 +1886,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
         kernel.add_service(chat_service)
         log_event(
             f"[SK Loader] Chat completion service registered for agent: {agent_config['name']} ({mode_label})",
-            {
-                "aoai_endpoint": agent_config["endpoint"],
-                "aoai_key": f"{agent_config['key'][:3]}..." if agent_config["key"] else None,
-                "aoai_deployment": agent_config["deployment"],
-                "agent_name": agent_config["name"],
-                "apim_enabled": agent_config.get("enable_agent_gpt_apim", False),
-                "endpoint_protocol": resolve_agent_endpoint_protocol(agent_config),
-            },
+            _build_agent_connection_log_summary(agent_config),
             level=logging.INFO
         )
     else:
@@ -1892,13 +1899,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
         print(f"  - deployment: {bool(agent_config.get('deployment'))}")
         log_event(
             f"[SK Loader] AzureChatCompletion or configuration not resolved for agent: {agent_config['name']} ({mode_label})",
-            {
-                "agent_name": agent_config["name"],
-                "aoai_endpoint": agent_config["endpoint"],
-                "aoai_key": f"{agent_config['key'][:3]}..." if agent_config["key"] else None,
-                "token_provider": token_provider_present,
-                "aoai_deployment": agent_config["deployment"],
-            },
+            _build_agent_connection_log_summary(agent_config),
             level=logging.ERROR,
             exceptionTraceback=True
         )
@@ -1908,7 +1909,10 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
         print(f"[SK Loader] Creating LoggingChatCompletionAgent for {agent_config['name']}...")
         # Load agent-specific plugins into the kernel before creating the agent
         if agent_config.get("actions_to_load"):
-            print(f"[SK Loader] Loading agent-specific plugins: {agent_config['actions_to_load']}")
+            print(
+                "[SK Loader] Loading agent-specific plugins: "
+                f"count={len(agent_config['actions_to_load'])}"
+            )
             # Determine plugin source based on agent scope
             agent_is_global = agent_config.get("is_global", False)
             agent_is_group = agent_config.get("is_group", False)
@@ -1921,7 +1925,10 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
 
             resolved_user_id = get_current_user_id()
             group_id = agent_config.get("group_id") if agent_is_group else None
-            print(f"[SK Loader] Agent scope - is_global: {agent_is_global}, is_group: {agent_is_group}, plugin_mode: {plugin_mode}, group_id: {group_id}")
+            print(
+                f"[SK Loader] Agent scope - is_global: {agent_is_global}, "
+                f"is_group: {agent_is_group}, plugin_mode: {plugin_mode}"
+            )
             load_agent_specific_plugins(
                 kernel,
                 agent_config["actions_to_load"],
@@ -1998,10 +2005,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
             log_event(
                 f"[SK Loader] ChatCompletionAgent initialized for agent: {agent_config['name']} ({mode_label})",
                 {
-                    "aoai_endpoint": agent_config["endpoint"],
-                    "aoai_key": f"{agent_config['key'][:3]}..." if agent_config["key"] else None,
-                    "aoai_deployment": agent_config["deployment"],
-                    "agent_name": agent_config["name"],
+                    **_build_agent_connection_log_summary(agent_config),
                     "max_completion_tokens": agent_config.get("max_completion_tokens", -1),
                     "agent_type": agent_type,
                 },
@@ -2638,14 +2642,21 @@ def load_user_semantic_kernel(kernel: Kernel, settings, user_id: str, redis_clie
             
         agents_cfg = list(all_agents.values())
         print(f"[SK Loader] After merging: {len(agents_cfg)} total agents")
-        debug_print(f"[SK Loader] Merged agents: {[(a.get('name'), a.get('is_global', False)) for a in agents_cfg]}")
-        log_event(f"[SK Loader] Merged global agents into per-user agents: {[a.get('name') for a in agents_cfg]}", level=logging.INFO)
+        debug_print(f"[SK Loader] Merged agent count: {len(agents_cfg)}")
+        log_event(
+            "[SK Loader] Merged global agents into per-user agents",
+            extra={"agent_count": len(agents_cfg)},
+            level=logging.INFO,
+        )
 
     log_event(f"[SK Loader] Found {len(agents_cfg)} agents for user '{user_id}'.",
         extra={
             "user_id": user_id,
             "agents_count": len(agents_cfg),
-            "agents": agents_cfg
+            "agent_summaries": [
+                _build_agent_loader_log_summary(agent)
+                for agent in agents_cfg
+            ],
         },
         level=logging.INFO)
     # Ensure migration is complete (will migrate any remaining legacy data)
@@ -2897,13 +2908,8 @@ def load_semantic_kernel(kernel: Kernel, settings):
                         log_event(
                             f"[SK Loader] Creating chat completion service {service_id} for agent: {agent_config['name']}",
                             {
-                                "aoai_endpoint": agent_config["endpoint"],
-                                "aoai_key": f"{agent_config['key'][:3]}..." if agent_config["key"] else None,
-                                "aoai_deployment": agent_config["deployment"],
-                                "agent_name": agent_config["name"],
-                                "actions_to_load": agent_config.get("actions_to_load", []),
-                                "apim_enabled": settings.get("enable_gpt_apim", False),
-                                "endpoint_protocol": resolve_agent_endpoint_protocol(agent_config),
+                                **_build_agent_connection_log_summary(agent_config),
+                                "action_count": len(agent_config.get("actions_to_load") or []),
                             },
                             level=logging.INFO
                         )
@@ -2951,12 +2957,8 @@ def load_semantic_kernel(kernel: Kernel, settings):
                     log_event(
                         f"[SK Loader] ChatCompletionAgent initialized for agent: {agent_config['name']}",
                         {
-                            "aoai_endpoint": agent_config["endpoint"],
-                            "aoai_key": f"{agent_config['key'][:3]}..." if agent_config["key"] else None,
-                            "aoai_deployment": agent_config["deployment"],
-                            "agent_name": agent_config["name"],
-                            "description": agent_obj.description,
-                            "id": agent_obj.id
+                            **_build_agent_connection_log_summary(agent_config),
+                            "agent_type": str(agent_config.get("agent_type") or "local"),
                         },
                         level=logging.INFO
                     )
@@ -2995,13 +2997,8 @@ def load_semantic_kernel(kernel: Kernel, settings):
                         log_event(
                             f"[SK Loader] Creating chat completion service {service_id} for orchestrator agent: {orchestrator_config['name']}",
                             {
-                                "aoai_endpoint": orchestrator_config["endpoint"],
-                                "aoai_key": f"{orchestrator_config['key'][:3]}..." if orchestrator_config["key"] else None,
-                                "aoai_deployment": orchestrator_config["deployment"],
-                                "agent_name": orchestrator_config["name"],
+                                **_build_agent_connection_log_summary(orchestrator_config),
                                 "service_id": service_id or None,
-                                "apim_enabled": settings.get("enable_gpt_apim", False),
-                                "endpoint_protocol": resolve_agent_endpoint_protocol(orchestrator_config),
                             },
                             level=logging.INFO
                         )
@@ -3157,11 +3154,10 @@ def load_semantic_kernel(kernel: Kernel, settings):
                 log_event(
                     f"[SK Loader] Azure OpenAI chat completion service registered (kernel-only mode)",
                     {
-                        "aoai_endpoint": endpoint,
-                        "aoai_key": f"{key[:3]}..." if key else None,
-                        "aoai_deployment": deployment,
-                        "agent_name": None,
-                        "apim_enabled": apim_enabled
+                        "endpoint_configured": bool(endpoint),
+                        "credential_configured": bool(key),
+                        "deployment_configured": bool(deployment),
+                        "apim_enabled": apim_enabled,
                     },
                     level=logging.INFO
                 )

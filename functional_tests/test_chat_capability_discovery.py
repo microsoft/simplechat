@@ -2,8 +2,8 @@
 # test_chat_capability_discovery.py
 """
 Functional test for governed chat capability discovery and recommendation.
-Version: 0.250.066
-Implemented in: 0.250.066
+Version: 0.250.067
+Implemented in: 0.250.067
 
 This test ensures server-resolved capability states remain distinct and only
 authorized, available, discoverable capabilities can be recommended.
@@ -17,9 +17,12 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SINGLE_APP_ROOT = REPO_ROOT / 'application' / 'single_app'
 sys.path.insert(0, str(SINGLE_APP_ROOT))
 
+from functions_agent_payload import AgentPayloadError, sanitize_agent_payload  # noqa: E402
+from json_schema_validation import validate_agent  # noqa: E402
 from functions_chat_capabilities import (  # noqa: E402
     CONTINUE_WITHOUT_CAPABILITIES_OPTION_ID,
     build_capability_recommendation,
+    build_governed_agent_capability_inventory,
     build_governed_capability_inventory,
     classify_capability_requirements,
 )
@@ -274,6 +277,186 @@ def test_blocked_and_unauthorized_capabilities_are_never_offered():
     assert blocked_bundle_recommendation is None
 
 
+def test_agent_inventory_defaults_closed_and_exposes_only_safe_descriptors():
+    agents = [
+        {
+            'catalog_key': 'personal:user-1:benefits-agent',
+            'created_at': '2026-07-15T12:00:00+00:00',
+            'display_name': 'Benefits Research',
+            'discoverable_by_orchestrator': True,
+            'orchestrator_descriptor': {
+                'capability_tags': ['benefits', 'policy_lookup'],
+                'evidence_types': ['employee_benefits', 'policy_documents'],
+                'read_only': True,
+                'risk_class': 'internal_read',
+                'data_sensitivity': 'internal',
+                'latency_class': 'seconds',
+                'cost_class': 'standard',
+            },
+            'instructions': 'SECRET instructions must never leave the canonical record.',
+            'actions_to_load': ['hidden_action'],
+            'assigned_knowledge': {'document_ids': ['private-document-id']},
+        },
+        {
+            'catalog_key': 'global::default-closed',
+            'created_at': '2026-07-15T12:00:00+00:00',
+            'display_name': 'Default Closed',
+            'orchestrator_descriptor': {
+                'capability_tags': ['benefits'],
+                'evidence_types': ['policy_documents'],
+                'read_only': True,
+                'risk_class': 'internal_read',
+                'data_sensitivity': 'internal',
+                'latency_class': 'seconds',
+                'cost_class': 'low',
+            },
+        },
+        {
+            'catalog_key': 'group:group-1:write-agent',
+            'created_at': '2026-07-15T12:00:00+00:00',
+            'display_name': 'Write Agent',
+            'discoverable_by_orchestrator': True,
+            'orchestrator_descriptor': {
+                'capability_tags': ['benefits'],
+                'evidence_types': ['policy_documents'],
+                'read_only': False,
+                'risk_class': 'consequential_write',
+                'data_sensitivity': 'internal',
+                'latency_class': 'seconds',
+                'cost_class': 'standard',
+            },
+        },
+    ]
+
+    inventory = build_governed_agent_capability_inventory(
+        agents,
+        reference_secret='phase-8b-test-secret',
+    )
+
+    assert inventory['version'] == 1
+    assert len(inventory['agents']) == 1
+    descriptor = inventory['agents'][0]
+    assert descriptor['id'].startswith('agent:personal:')
+    assert descriptor['label'] == 'Benefits Research'
+    assert descriptor['state'] == 'unselected'
+    assert descriptor['discoverable'] is True
+    assert descriptor['auto_use_allowed'] is False
+    assert descriptor['requires_user_choice'] is True
+    assert descriptor['capability_tags'] == ['benefits', 'policy_lookup']
+    assert descriptor['evidence_types'] == ['employee_benefits', 'policy_documents']
+    assert set(descriptor) == {
+        'id',
+        'kind',
+        'label',
+        'category',
+        'state',
+        'scope',
+        'scope_class',
+        'discoverable',
+        'auto_use_allowed',
+        'requires_user_choice',
+        'read_only',
+        'external_data',
+        'risk_class',
+        'data_sensitivity',
+        'cost_class',
+        'latency_class',
+        'capability_tags',
+        'evidence_types',
+    }
+    serialized = str(inventory)
+    assert 'SECRET instructions' not in serialized
+    assert 'hidden_action' not in serialized
+    assert 'private-document-id' not in serialized
+    assert 'default-closed' not in serialized
+    assert 'write-agent' not in serialized
+
+
+def test_agent_discovery_policy_is_normalized_and_defaults_closed():
+    base_payload = {
+        'name': 'benefits_research',
+        'display_name': 'Benefits Research',
+        'description': 'Looks up employee benefits.',
+        'instructions': 'Canonical instructions.',
+        'actions_to_load': [],
+        'other_settings': {},
+        'max_completion_tokens': -1,
+    }
+
+    default_closed = sanitize_agent_payload(base_payload)
+    assert default_closed['discoverable_by_orchestrator'] is False
+    assert default_closed['orchestrator_descriptor'] == {}
+
+    governed = sanitize_agent_payload({
+        **base_payload,
+        'id': '11111111-1111-4111-8111-111111111111',
+        'discoverable_by_orchestrator': True,
+        'orchestrator_descriptor': {
+            'capability_tags': [' Benefits ', 'benefits', 'Policy Lookup!'],
+            'evidence_types': ['Policy Documents'],
+            'read_only': True,
+            'external_data': False,
+            'risk_class': 'internal_read',
+            'data_sensitivity': 'internal',
+            'latency_class': 'seconds',
+            'cost_class': 'standard',
+            'ignored_secret': 'must not survive normalization',
+        },
+    })
+    assert governed['discoverable_by_orchestrator'] is True
+    assert governed['orchestrator_descriptor'] == {
+        'capability_tags': ['benefits', 'policy_lookup'],
+        'evidence_types': ['policy_documents'],
+        'read_only': True,
+        'external_data': False,
+        'risk_class': 'internal_read',
+        'data_sensitivity': 'internal',
+        'latency_class': 'seconds',
+        'cost_class': 'standard',
+    }
+    assert validate_agent(governed) is None
+
+    try:
+        sanitize_agent_payload({
+            **base_payload,
+            'discoverable_by_orchestrator': True,
+            'orchestrator_descriptor': {
+                'capability_tags': ['benefits'],
+                'evidence_types': ['policy_documents'],
+                'read_only': False,
+                'risk_class': 'consequential_write',
+                'data_sensitivity': 'internal',
+                'latency_class': 'seconds',
+                'cost_class': 'standard',
+            },
+        })
+        raise AssertionError('discoverable write-capable agents must be rejected')
+    except AgentPayloadError as exc:
+        assert 'read-only' in str(exc).lower()
+
+    try:
+        sanitize_agent_payload({
+            **base_payload,
+            'agent_type': 'new_foundry',
+            'discoverable_by_orchestrator': True,
+            'orchestrator_descriptor': governed['orchestrator_descriptor'],
+        })
+        raise AssertionError('Foundry agents must remain outside Phase 8B discovery')
+    except AgentPayloadError as exc:
+        assert 'local agents only' in str(exc).lower()
+
+    try:
+        sanitize_agent_payload({
+            **base_payload,
+            'actions_to_load': ['hidden_action'],
+            'discoverable_by_orchestrator': True,
+            'orchestrator_descriptor': governed['orchestrator_descriptor'],
+        })
+        raise AssertionError('agents with attached actions must remain undiscoverable')
+    except AgentPayloadError as exc:
+        assert 'without attached actions' in str(exc).lower()
+
+
 if __name__ == '__main__':
     tests = [
         test_inventory_preserves_selection_and_governed_states,
@@ -286,6 +469,8 @@ if __name__ == '__main__':
         test_analyze_and_compare_require_authorized_targets,
         test_image_is_recommended_only_for_explicit_visual_output,
         test_blocked_and_unauthorized_capabilities_are_never_offered,
+        test_agent_inventory_defaults_closed_and_exposes_only_safe_descriptors,
+        test_agent_discovery_policy_is_normalized_and_defaults_closed,
     ]
     results = []
 

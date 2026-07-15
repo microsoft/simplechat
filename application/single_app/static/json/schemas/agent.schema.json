@@ -108,6 +108,14 @@
           "description": "False when the agent is hidden from runtime selection but retained for admin management.",
           "default": true
         },
+        "discoverable_by_orchestrator": {
+          "type": "boolean",
+          "description": "Explicitly allow this agent to enter the governed orchestration discovery catalog.",
+          "default": false
+        },
+        "orchestrator_descriptor": {
+          "$ref": "#/definitions/OrchestratorDescriptor"
+        },
         "agent_type": {
           "type": "string",
           "enum": ["local", "aifoundry", "new_foundry", "foundry_workflow"],
@@ -145,6 +153,24 @@
       ],
       "title": "Agent",
       "allOf": [
+        {
+          "if": {
+            "properties": {
+              "discoverable_by_orchestrator": { "const": true }
+            },
+            "required": ["discoverable_by_orchestrator"]
+          },
+          "then": {
+            "properties": {
+              "agent_type": { "const": "local" },
+              "actions_to_load": { "maxItems": 0 },
+              "orchestrator_descriptor": {
+                "$ref": "#/definitions/DiscoverableOrchestratorDescriptor"
+              }
+            },
+            "required": ["orchestrator_descriptor"]
+          }
+        },
         {
           "if": {
             "properties": {
@@ -215,6 +241,68 @@
                 "$ref": "#/definitions/FoundryWorkflowSettingsWrapper"
               }
             }
+          }
+        }
+      ]
+    },
+    "OrchestratorDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "capability_tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9_:-]{1,64}$"
+          },
+          "maxItems": 16
+        },
+        "evidence_types": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9_:-]{1,64}$"
+          },
+          "maxItems": 16
+        },
+        "read_only": { "type": "boolean" },
+        "external_data": { "type": "boolean" },
+        "risk_class": {
+          "type": "string",
+          "enum": ["internal_read", "external_read"]
+        },
+        "data_sensitivity": {
+          "type": "string",
+          "enum": ["public", "internal"]
+        },
+        "latency_class": {
+          "type": "string",
+          "enum": ["seconds", "minutes"]
+        },
+        "cost_class": {
+          "type": "string",
+          "enum": ["low", "standard"]
+        }
+      }
+    },
+    "DiscoverableOrchestratorDescriptor": {
+      "allOf": [
+        { "$ref": "#/definitions/OrchestratorDescriptor" },
+        {
+          "required": [
+            "capability_tags",
+            "evidence_types",
+            "read_only",
+            "external_data",
+            "risk_class",
+            "data_sensitivity",
+            "latency_class",
+            "cost_class"
+          ],
+          "properties": {
+            "capability_tags": { "minItems": 1 },
+            "evidence_types": { "minItems": 1 },
+            "read_only": { "const": true }
           }
         }
       ]

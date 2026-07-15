@@ -1,6 +1,9 @@
 # functions_chat_capabilities.py
-"""Governed built-in capability discovery for chat orchestration."""
+"""Governed built-in and agent capability discovery for chat orchestration."""
 
+import copy
+import hashlib
+import hmac
 import re
 from collections.abc import Mapping
 
@@ -9,7 +12,14 @@ from functions_chat_orchestration import user_requested_image_generation
 
 CAPABILITY_INVENTORY_VERSION = 1
 CAPABILITY_RECOMMENDATION_VERSION = 1
+AGENT_CAPABILITY_INVENTORY_VERSION = 1
 CONTINUE_WITHOUT_CAPABILITIES_OPTION_ID = 'continue_without_capabilities'
+
+AGENT_DISCOVERY_RISK_CLASSES = {'internal_read', 'external_read'}
+AGENT_DISCOVERY_DATA_SENSITIVITY_CLASSES = {'public', 'internal'}
+AGENT_DISCOVERY_COST_CLASSES = {'low', 'standard'}
+AGENT_DISCOVERY_LATENCY_CLASSES = {'seconds', 'minutes'}
+AGENT_DISCOVERY_SCOPE_CLASSES = {'personal', 'global', 'group'}
 
 CAPABILITY_STATES = {
     'selected',
@@ -153,6 +163,16 @@ MULTI_SOURCE_RESEARCH_PATTERN = re.compile(
     r'authoritative\s+sources?|source-intensive|due\s+diligence)\b',
     re.IGNORECASE,
 )
+ORGANIZATIONAL_KNOWLEDGE_PATTERN = re.compile(
+    r'\b(?:our|my|company|corporate|organization|organizational|internal|employee|employees|'
+    r'workplace|benefits?|human\s+resources|hr\b|handbook|intranet)\b',
+    re.IGNORECASE,
+)
+BUSINESS_SYSTEM_EVIDENCE_PATTERN = re.compile(
+    r'\b(?:business\s+system|crm|erp|hris|service\s*tickets?|incidents?|customer\s+records?|'
+    r'account\s+records?|inventory\s+system|case\s+records?|system\s+records?)\b',
+    re.IGNORECASE,
+)
 
 REQUIREMENT_CAPABILITY_PREFERENCES = {
     'current_public_information': ['web_search', 'deep_research'],
@@ -177,6 +197,358 @@ def _coerce_bool(value, default=False):
 def _bounded_reason(value):
     normalized = re.sub(r'[^a-z0-9_]+', '_', str(value or '').strip().lower()).strip('_')
     return normalized[:80] or None
+
+
+def _normalize_agent_descriptor_identifiers(values, *, max_items=16):
+    if not isinstance(values, list):
+        return []
+    normalized = []
+    for value in values:
+        identifier = re.sub(
+            r'[^a-z0-9_:-]+',
+            '_',
+            str(value or '').strip().lower(),
+        ).strip('_')[:64]
+        if identifier and identifier not in normalized:
+            normalized.append(identifier)
+        if len(normalized) >= max_items:
+            break
+    return normalized
+
+
+def _resolve_agent_scope_class(agent, catalog_key):
+    scope_class = str(agent.get('scope_type') or '').strip().lower()
+    if scope_class == 'enterprise':
+        scope_class = 'global'
+    if scope_class not in AGENT_DISCOVERY_SCOPE_CLASSES:
+        scope_class = str(catalog_key or '').partition(':')[0].strip().lower()
+    return scope_class if scope_class in AGENT_DISCOVERY_SCOPE_CLASSES else None
+
+
+def _build_agent_discovery_reference(
+    catalog_key,
+    scope_class,
+    reference_secret,
+    identity_epoch=None,
+):
+    secret = str(reference_secret or '').encode('utf-8')
+    if not secret:
+        return None
+    digest = hmac.new(
+        secret,
+        f"{catalog_key or ''}\n{identity_epoch or ''}".encode('utf-8'),
+        hashlib.sha256,
+    ).hexdigest()[:32]
+    return f'agent:{scope_class}:{digest}'
+
+
+def build_governed_agent_capability_inventory(agents, *, reference_secret):
+    """Build safe descriptors from an already authorized canonical agent catalog."""
+    entries = []
+    seen_references = set()
+    for agent in agents or []:
+        if not isinstance(agent, Mapping):
+            continue
+        if not _coerce_bool(agent.get('discoverable_by_orchestrator'), default=False):
+            continue
+        descriptor = agent.get('orchestrator_descriptor')
+        if not isinstance(descriptor, Mapping):
+            continue
+        if not _coerce_bool(descriptor.get('read_only'), default=False):
+            continue
+
+        risk_class = str(descriptor.get('risk_class') or '').strip().lower()
+        data_sensitivity = str(descriptor.get('data_sensitivity') or '').strip().lower()
+        cost_class = str(descriptor.get('cost_class') or '').strip().lower()
+        latency_class = str(descriptor.get('latency_class') or '').strip().lower()
+        if (
+            risk_class not in AGENT_DISCOVERY_RISK_CLASSES
+            or data_sensitivity not in AGENT_DISCOVERY_DATA_SENSITIVITY_CLASSES
+            or cost_class not in AGENT_DISCOVERY_COST_CLASSES
+            or latency_class not in AGENT_DISCOVERY_LATENCY_CLASSES
+        ):
+            continue
+
+        capability_tags = _normalize_agent_descriptor_identifiers(
+            descriptor.get('capability_tags')
+        )
+        evidence_types = _normalize_agent_descriptor_identifiers(
+            descriptor.get('evidence_types')
+        )
+        if not capability_tags or not evidence_types:
+            continue
+
+        catalog_key = str(agent.get('catalog_key') or '').strip()
+        identity_epoch = str(agent.get('created_at') or '').strip()
+        scope_class = _resolve_agent_scope_class(agent, catalog_key)
+        option_reference = _build_agent_discovery_reference(
+            catalog_key,
+            scope_class,
+            reference_secret,
+            identity_epoch=identity_epoch,
+        )
+        if not catalog_key or not identity_epoch or not scope_class or not option_reference:
+            continue
+        if option_reference in seen_references:
+            continue
+        seen_references.add(option_reference)
+
+        label = ' '.join(
+            str(
+                agent.get('display_name')
+                or agent.get('displayName')
+                or agent.get('name')
+                or 'Specialized agent'
+            ).split()
+        )[:120]
+        entries.append({
+            'id': option_reference,
+            'kind': 'agent',
+            'label': label,
+            'category': 'specialized_agent',
+            'state': 'unselected',
+            'scope': 'current_user',
+            'scope_class': scope_class,
+            'discoverable': True,
+            'auto_use_allowed': False,
+            'requires_user_choice': True,
+            'read_only': True,
+            'external_data': _coerce_bool(descriptor.get('external_data'), default=False),
+            'risk_class': risk_class,
+            'data_sensitivity': data_sensitivity,
+            'cost_class': cost_class,
+            'latency_class': latency_class,
+            'capability_tags': capability_tags,
+            'evidence_types': evidence_types,
+        })
+
+    return {
+        'version': AGENT_CAPABILITY_INVENTORY_VERSION,
+        'agents': entries,
+    }
+
+
+def resolve_governed_agent_capability_reference(agents, option_id, *, reference_secret):
+    """Resolve one opaque option through the current governed canonical catalog."""
+    normalized_option_id = str(option_id or '').strip()
+    if not normalized_option_id.startswith('agent:'):
+        return None
+    for agent in agents or []:
+        if not isinstance(agent, Mapping):
+            continue
+        inventory = build_governed_agent_capability_inventory(
+            [agent],
+            reference_secret=reference_secret,
+        )
+        descriptor = next(iter(inventory.get('agents') or []), None)
+        if descriptor and descriptor.get('id') == normalized_option_id:
+            return dict(agent)
+    return None
+
+
+def classify_agent_capability_requirements(user_message):
+    """Classify only explicit organizational or business-system evidence needs."""
+    message = str(user_message or '').strip()
+    requirements = []
+    if ORGANIZATIONAL_KNOWLEDGE_PATTERN.search(message):
+        requirements.append({
+            'id': 'specialized_organizational_knowledge',
+            'reason_code': 'specialized_organizational_knowledge',
+        })
+    if BUSINESS_SYSTEM_EVIDENCE_PATTERN.search(message):
+        requirements.append({
+            'id': 'business_system_evidence',
+            'reason_code': 'business_system_evidence',
+        })
+    return requirements
+
+
+def _agent_descriptor_match_score(agent, user_message):
+    normalized_message = re.sub(
+        r'[^a-z0-9]+',
+        ' ',
+        str(user_message or '').strip().lower(),
+    ).strip()
+    message_terms = set(normalized_message.split())
+    score = 0
+    for identifier in (
+        list(agent.get('capability_tags') or [])
+        + list(agent.get('evidence_types') or [])
+    ):
+        normalized_identifier = re.sub(
+            r'[^a-z0-9]+',
+            ' ',
+            str(identifier or '').strip().lower(),
+        ).strip()
+        if not normalized_identifier:
+            continue
+        if re.search(rf'\b{re.escape(normalized_identifier)}\b', normalized_message):
+            score += 4
+            continue
+        score += sum(
+            1
+            for term in normalized_identifier.split()
+            if len(term) >= 4 and term in message_terms
+        )
+    return score
+
+
+def build_agent_capability_recommendation(
+    inventory,
+    user_message,
+    *,
+    selected_agent_present=False,
+    selected_capability_ids=None,
+):
+    """Build at most one explicit-choice agent option from safe descriptors."""
+    if selected_agent_present or not isinstance(inventory, Mapping):
+        return None
+    requirements = classify_agent_capability_requirements(user_message)
+    if not requirements:
+        return None
+    selected_capability_ids = {
+        str(capability_id or '').strip().lower()
+        for capability_id in (selected_capability_ids or [])
+        if str(capability_id or '').strip()
+    }
+    requirement_ids = {requirement['id'] for requirement in requirements}
+    if (
+        'specialized_organizational_knowledge' in requirement_ids
+        and selected_capability_ids.intersection({'workspace_search', 'analyze', 'compare'})
+    ):
+        requirements = [
+            requirement
+            for requirement in requirements
+            if requirement['id'] != 'specialized_organizational_knowledge'
+        ]
+    if not requirements:
+        return None
+
+    ranked_candidates = []
+    for agent in inventory.get('agents') or []:
+        if not isinstance(agent, Mapping):
+            continue
+        if not (
+            agent.get('kind') == 'agent'
+            and agent.get('state') == 'unselected'
+            and agent.get('discoverable') is True
+            and agent.get('requires_user_choice') is True
+            and agent.get('read_only') is True
+        ):
+            continue
+        score = _agent_descriptor_match_score(agent, user_message)
+        if score > 0:
+            ranked_candidates.append((score, str(agent.get('id') or ''), agent))
+    if not ranked_candidates:
+        return None
+
+    _, _, agent = sorted(
+        ranked_candidates,
+        key=lambda item: (-item[0], item[1]),
+    )[0]
+    option = {
+        'id': agent['id'],
+        'kind': 'agent',
+        'agent_ref': agent['id'],
+        'capability_ids': [],
+        'effective_capability_ids': [],
+        'label': agent['label'],
+        'category': agent['category'],
+        'scope_class': agent['scope_class'],
+        'latency_class': agent['latency_class'],
+        'cost_class': agent['cost_class'],
+        'external_data': agent['external_data'],
+        'requires_user_choice': True,
+        'read_only': True,
+        'risk_class': agent['risk_class'],
+        'data_sensitivity': agent['data_sensitivity'],
+        'capability_tags': list(agent['capability_tags']),
+        'evidence_types': list(agent['evidence_types']),
+    }
+    return {
+        'version': CAPABILITY_RECOMMENDATION_VERSION,
+        'status': 'pending',
+        'requirement_ids': [requirement['id'] for requirement in requirements],
+        'reason_codes': [requirement['reason_code'] for requirement in requirements],
+        'recommended_option_id': agent['id'],
+        'options': [
+            option,
+            {
+                'id': CONTINUE_WITHOUT_CAPABILITIES_OPTION_ID,
+                'kind': 'continue',
+                'capability_ids': [],
+                'effective_capability_ids': [],
+                'label': 'Continue without additional capabilities',
+                'latency_class': 'immediate',
+                'cost_class': 'none',
+                'external_data': False,
+                'requires_user_choice': True,
+            },
+        ],
+        'required_inputs': [],
+    }
+
+
+def merge_capability_recommendations(primary, secondary):
+    """Merge built-in and agent options into one bounded Phase 8A proposal."""
+    recommendations = [
+        recommendation
+        for recommendation in (primary, secondary)
+        if isinstance(recommendation, Mapping)
+    ]
+    if not recommendations:
+        return None
+    if len(recommendations) == 1:
+        return copy.deepcopy(dict(recommendations[0]))
+
+    options = []
+    continue_option = None
+    seen_option_ids = set()
+    for recommendation in recommendations:
+        for option in recommendation.get('options') or []:
+            if not isinstance(option, Mapping):
+                continue
+            option_id = str(option.get('id') or '').strip()
+            if not option_id:
+                continue
+            if option_id == CONTINUE_WITHOUT_CAPABILITIES_OPTION_ID:
+                continue_option = continue_option or copy.deepcopy(dict(option))
+                continue
+            if option_id in seen_option_ids or len(options) >= 11:
+                continue
+            seen_option_ids.add(option_id)
+            options.append(copy.deepcopy(dict(option)))
+    if continue_option:
+        options.append(continue_option)
+
+    def merge_identifiers(field_name, max_items=16):
+        merged = []
+        for recommendation in recommendations:
+            for value in recommendation.get(field_name) or []:
+                normalized = str(value or '').strip()
+                if normalized and normalized not in merged:
+                    merged.append(normalized)
+                if len(merged) >= max_items:
+                    return merged
+        return merged
+
+    secondary_recommended_id = str(
+        recommendations[-1].get('recommended_option_id') or ''
+    ).strip()
+    recommended_option_id = (
+        secondary_recommended_id
+        if secondary_recommended_id in seen_option_ids
+        else str(recommendations[0].get('recommended_option_id') or '').strip()
+    )
+    return {
+        'version': CAPABILITY_RECOMMENDATION_VERSION,
+        'status': 'pending',
+        'requirement_ids': merge_identifiers('requirement_ids'),
+        'reason_codes': merge_identifiers('reason_codes'),
+        'recommended_option_id': recommended_option_id,
+        'options': options,
+        'required_inputs': merge_identifiers('required_inputs'),
+    }
 
 
 def _normalize_governance_mode(value):

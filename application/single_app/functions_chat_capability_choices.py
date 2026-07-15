@@ -106,21 +106,43 @@ def _normalize_options(options):
         if option_id in seen_option_ids:
             raise CapabilityChoiceError('proposal option IDs must be unique', code='duplicate_option_id')
         seen_option_ids.add(option_id)
+        option_kind = str(raw_option.get('kind') or 'capability').strip().lower()
+        if option_id == CONTINUE_WITHOUT_CAPABILITIES_OPTION_ID:
+            option_kind = 'continue'
+        if option_kind not in {'capability', 'agent', 'continue'}:
+            raise CapabilityChoiceError('proposal option kind is invalid', code='invalid_option_kind')
         capability_ids = _normalize_identifiers(raw_option.get('capability_ids'), max_items=8)
         effective_ids = _normalize_identifiers(
             raw_option.get('effective_capability_ids') or capability_ids,
             max_items=8,
         )
-        if option_id == CONTINUE_WITHOUT_CAPABILITIES_OPTION_ID:
+        agent_ref = str(raw_option.get('agent_ref') or '').strip()
+        if option_kind == 'continue':
             capability_ids = []
             effective_ids = []
+            agent_ref = ''
+        elif option_kind == 'agent':
+            if capability_ids or effective_ids:
+                raise CapabilityChoiceError(
+                    'agent options cannot name built-in capabilities',
+                    code='invalid_agent_option_capability',
+                )
+            if agent_ref != option_id or not re.fullmatch(
+                r'agent:(?:personal|global|group):[a-f0-9]{32}',
+                agent_ref,
+            ):
+                raise CapabilityChoiceError(
+                    'agent option reference is invalid',
+                    code='invalid_agent_option_reference',
+                )
         elif not capability_ids:
             raise CapabilityChoiceError(
                 'capability options must name at least one capability',
                 code='missing_option_capability',
             )
-        normalized_options.append({
+        normalized_option = {
             'id': option_id,
+            'kind': option_kind,
             'capability_ids': capability_ids,
             'effective_capability_ids': effective_ids,
             'label': ' '.join(str(raw_option.get('label') or option_id).split())[:120],
@@ -135,7 +157,37 @@ def _normalize_options(options):
                 raw_option.get('sensitive_input_types'),
                 max_items=8,
             ),
-        })
+        }
+        if option_kind == 'agent':
+            normalized_option.update({
+                'agent_ref': agent_ref,
+                'category': str(raw_option.get('category') or 'specialized_agent').strip()[:40],
+                'scope_class': str(raw_option.get('scope_class') or '').strip().lower()[:20],
+                'read_only': raw_option.get('read_only') is True,
+                'risk_class': str(raw_option.get('risk_class') or '').strip().lower()[:40],
+                'data_sensitivity': str(
+                    raw_option.get('data_sensitivity') or ''
+                ).strip().lower()[:40],
+                'capability_tags': _normalize_identifiers(
+                    raw_option.get('capability_tags'),
+                    max_items=16,
+                ),
+                'evidence_types': _normalize_identifiers(
+                    raw_option.get('evidence_types'),
+                    max_items=16,
+                ),
+            })
+            if (
+                normalized_option['scope_class'] not in {'personal', 'global', 'group'}
+                or normalized_option['read_only'] is not True
+                or not normalized_option['capability_tags']
+                or not normalized_option['evidence_types']
+            ):
+                raise CapabilityChoiceError(
+                    'agent option descriptor is incomplete',
+                    code='invalid_agent_option_descriptor',
+                )
+        normalized_options.append(normalized_option)
     if not normalized_options:
         raise CapabilityChoiceError('proposal options are required', code='missing_options')
     return normalized_options
@@ -323,13 +375,15 @@ def apply_capability_choice_decision(proposal, option_id, *, actor_user_id, now=
             code='option_not_allowlisted',
         )
     capability_ids = list(option.get('capability_ids') or [])
-    decision_status = 'declined' if not capability_ids else 'approved'
+    agent_ref = str(option.get('agent_ref') or '').strip() or None
+    decision_status = 'declined' if not capability_ids and not agent_ref else 'approved'
     updated['status'] = decision_status
     updated['decision'] = {
         'option_id': normalized_option_id,
         'status': decision_status,
         'capability_ids': capability_ids,
         'effective_capability_ids': list(option.get('effective_capability_ids') or capability_ids),
+        'agent_ref': agent_ref,
         'external_query_mode': option.get('external_query_mode') or 'minimized',
         'sensitive_input_types': list(option.get('sensitive_input_types') or []),
         'actor_user_id': actor_user_id,
@@ -389,6 +443,68 @@ def revalidate_capability_choice(proposal, inventory):
             raise CapabilityChoiceError(
                 'an approved capability is no longer discoverable',
                 code='capability_policy_blocked',
+            )
+    agent_ref = str(decision.get('agent_ref') or '').strip()
+    if agent_ref:
+        agent_entries = (
+            inventory.get('agents')
+            if isinstance(inventory, Mapping)
+            else None
+        )
+        agent_entry = next(
+            (
+                entry
+                for entry in (agent_entries or [])
+                if isinstance(entry, Mapping) and entry.get('id') == agent_ref
+            ),
+            None,
+        )
+        if not agent_entry:
+            raise CapabilityChoiceError(
+                'the approved agent is no longer in the governed catalog',
+                code='agent_missing',
+            )
+        if not (
+            agent_entry.get('state') == 'unselected'
+            and agent_entry.get('discoverable') is True
+            and agent_entry.get('requires_user_choice') is True
+            and agent_entry.get('read_only') is True
+        ):
+            raise CapabilityChoiceError(
+                'the approved agent is no longer governed for discovery',
+                code='agent_policy_blocked',
+            )
+        approved_option = get_capability_choice_option(
+            proposal,
+            decision.get('option_id'),
+        )
+        if not approved_option or approved_option.get('agent_ref') != agent_ref:
+            raise CapabilityChoiceError(
+                'the approved agent option is no longer valid',
+                code='agent_option_invalid',
+            )
+        scalar_descriptor_fields = (
+            'scope_class',
+            'read_only',
+            'external_data',
+            'risk_class',
+            'data_sensitivity',
+            'cost_class',
+            'latency_class',
+        )
+        list_descriptor_fields = ('capability_tags', 'evidence_types')
+        descriptor_changed = any(
+            approved_option.get(field_name) != agent_entry.get(field_name)
+            for field_name in scalar_descriptor_fields
+        ) or any(
+            list(approved_option.get(field_name) or [])
+            != list(agent_entry.get(field_name) or [])
+            for field_name in list_descriptor_fields
+        )
+        if descriptor_changed:
+            raise CapabilityChoiceError(
+                'the approved agent discovery policy has changed',
+                code='agent_policy_changed',
             )
     return True
 
