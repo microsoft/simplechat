@@ -1,15 +1,16 @@
 # test_chat_inline_image_proposal_cards.py
 """
 UI test for inline image proposal approval cards in chat.
-Version: 0.250.062
-Implemented in: 0.241.137
+Version: 0.250.064
+Implemented in: 0.250.064
 
 This test ensures assistant-authored simpleimage blocks render as opt-in image
-proposal cards with clean streaming placeholders, hidden prompts, provenance
-metadata, approve, approve-all, edit, cancel, inline result, saved-result hydration,
-and bulk-action alignment workflows.
+proposal cards with clean streaming placeholders, evidence review, approval
+gating, hidden prompts, approve-all, edit, cancel, inline result, saved-result
+hydration, and responsive bulk-action alignment workflows.
 """
 
+import base64
 import json
 import os
 
@@ -46,39 +47,85 @@ def _proposal_block(index, title=None, prompt=None, metadata=None):
     return f"```simpleimage\n{json.dumps(proposal)}\n```"
 
 
-def _append_custom_ai_message(page, message_id, content, generated_image_proposals=None):
+def _append_custom_ai_message(page, message_id, content, generated_image_proposals=None, metadata=None):
     page.evaluate(
-        """
-        async ({ messageId, content, generatedImageProposals }) => {
-            const chatMessages = window.chatMessages && typeof window.chatMessages.appendMessage === 'function'
-                ? window.chatMessages
-                : await import('/static/js/chat/chat-messages.js');
-            chatMessages.appendMessage(
-                'AI',
-                content,
-                'image-proposal-ui-test',
-                messageId,
-                false,
-                [],
-                [],
-                [],
-                null,
-                null,
-                {
-                    id: messageId,
-                    role: 'assistant',
+        r"""
+        async ({ messageId, content, generatedImageProposals, metadata }) => {
+            if (document.getElementById('chatbox')) {
+                const chatMessages = window.chatMessages && typeof window.chatMessages.appendMessage === 'function'
+                    ? window.chatMessages
+                    : await import('/static/js/chat/chat-messages.js');
+                chatMessages.appendMessage(
+                    'AI',
                     content,
-                    conversation_id: 'ui-image-proposal-conversation',
-                    generated_image_proposals: generatedImageProposals || []
-                },
-                false
+                    'image-proposal-ui-test',
+                    messageId,
+                    false,
+                    [],
+                    [],
+                    [],
+                    null,
+                    null,
+                    {
+                        id: messageId,
+                        role: 'assistant',
+                        content,
+                        conversation_id: 'ui-image-proposal-conversation',
+                        generated_image_proposals: generatedImageProposals || [],
+                        metadata: metadata || {}
+                    },
+                    false
+                );
+                return;
+            }
+
+            const proposals = await import('/static/js/chat/chat-inline-image-proposals.js');
+            let harness = document.getElementById('phase7-chat-harness');
+            if (!harness) {
+                harness = document.createElement('main');
+                harness.id = 'phase7-chat-harness';
+                harness.className = 'container py-3';
+                document.body.replaceChildren(harness);
+            }
+
+            const messageElement = document.createElement('article');
+            messageElement.className = 'message ai-message';
+            messageElement.dataset.messageId = messageId;
+            messageElement.dataset.conversationId = 'ui-image-proposal-conversation';
+            messageElement.dataset.messageComplete = 'true';
+            const messageText = document.createElement('div');
+            messageText.className = 'message-text';
+            const extracted = proposals.extractInlineImageProposalBlocks(content);
+            const escapedMarkdown = extracted.markdown
+                .replace(/[&<>"']/g, character => ({
+                    '&': '&amp;',
+                    '<': '&lt;',
+                    '>': '&gt;',
+                    '"': '&quot;',
+                    "'": '&#39;'
+                })[character])
+                .replace(/\n/g, '<br>');
+            const safeProposalHtml = DOMPurify.sanitize(
+                proposals.injectInlineImageProposalHtml(
+                    escapedMarkdown,
+                    extracted.blocks,
+                ),
             );
+            messageText.innerHTML = safeProposalHtml;
+            messageElement.appendChild(messageText);
+            harness.appendChild(messageElement);
+            proposals.attachGeneratedImageProposalResults(
+                messageElement,
+                generatedImageProposals || [],
+            );
+            proposals.hydrateInlineImageProposals(messageElement, metadata || {});
         }
         """,
         {
             'messageId': message_id,
             'content': content,
             'generatedImageProposals': generated_image_proposals or [],
+            'metadata': metadata or {},
         },
     )
 
@@ -118,6 +165,77 @@ def _install_approval_route(page, requests):
     page.route('**/api/chat/image-proposals/generate', handle_approval)
 
 
+def _install_image_route(page):
+    transparent_png = base64.b64decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
+    )
+
+    def handle_image(route):
+        route.fulfill(status=200, content_type='image/png', body=transparent_png)
+
+    page.route('**/api/image/*', handle_image)
+
+
+def _orchestration_metadata(status='ready', runtime_status='succeeded'):
+    requirement_status = 'satisfied' if status == 'ready' else 'unsatisfied'
+    return {
+        'evidence_ledger': {
+            'version': 1,
+            'status': status,
+            'requirements': [
+                {
+                    'id': 'profile_evidence',
+                    'description': 'Verified profile evidence',
+                    'required': True,
+                    'status': requirement_status,
+                },
+            ],
+            'sources': [
+                {
+                    'id': 'selected_agent',
+                    'type': 'selected_agent',
+                    'status': 'succeeded' if status == 'ready' else 'partial',
+                    'required': True,
+                },
+                {
+                    'id': 'web_search',
+                    'type': 'web_search',
+                    'status': 'not_found' if status == 'partial' else 'succeeded',
+                    'required': status == 'partial',
+                },
+            ],
+            'facts': [
+                {
+                    'id': 'fact-profile-role',
+                    'source_ids': ['selected_agent'],
+                },
+            ],
+            'results': [],
+            'citations': [],
+            'artifacts': [
+                {
+                    'id': 'artifact-headshot',
+                    'type': 'image_reference',
+                    'name': 'Selected headshot',
+                    'reference': 'ui-image-proposal-conversation_image_1_2_3',
+                    'message_id': 'ui-image-proposal-conversation_image_1_2_3',
+                    'source_ids': ['selected_agent'],
+                },
+            ],
+            'missing_or_failed': ([
+                {
+                    'status': 'not_found',
+                    'message': 'LinkedIn profile was requested but not verified. <img src=x onerror=fail()>',
+                },
+            ] if status == 'partial' else []),
+        },
+        'orchestration_runtime': {
+            'version': 1,
+            'status': runtime_status,
+        },
+    }
+
+
 @pytest.mark.ui
 @pytest.mark.parametrize('viewport', [{'width': 1440, 'height': 900}, {'width': 390, 'height': 844}])
 def test_chat_inline_image_proposal_cards(viewport):
@@ -133,7 +251,12 @@ def test_chat_inline_image_proposal_cards(viewport):
         context = _create_context(browser, viewport)
         page = context.new_page()
         _install_approval_route(page, requests)
+        _install_image_route(page)
         page.goto(chat_url, wait_until='domcontentloaded')
+        if page.locator('link[href="/static/css/chats.css"]').count() == 0:
+            page.add_style_tag(url='/static/css/chats.css')
+        if page.evaluate("typeof window.DOMPurify === 'undefined'"):
+            page.add_script_tag(url='/static/js/chat/purify.min.js')
 
         bulk_message_id = 'ui-image-proposal-bulk'
         _append_custom_ai_message(
@@ -219,6 +342,93 @@ def test_chat_inline_image_proposal_cards(viewport):
             'artifact-headshot',
             'photo-reference',
         ]
+
+        partial_message_id = 'ui-image-proposal-partial-evidence'
+        _append_custom_ai_message(
+            page,
+            partial_message_id,
+            'A grounded visual with partial evidence.\n\n' + _proposal_block(
+                7,
+                metadata={
+                    'evidenceIds': ['fact-profile-role'],
+                    'sourceSummary': 'Selected agent evidence and an authorized headshot.',
+                    'missingEvidence': ['A public profile could not be verified.'],
+                    'referenceImageIds': ['artifact-headshot'],
+                },
+            ),
+            metadata=_orchestration_metadata(status='partial', runtime_status='partial'),
+        )
+        partial_message = page.locator(f'[data-message-id="{partial_message_id}"]')
+        expect(partial_message.locator('.sc-inline-image-proposal-source-badge')).to_contain_text([
+            'Selected Agent · used',
+            'Web Search · unavailable',
+        ])
+        expect(partial_message.locator('.sc-inline-image-proposal-missing')).to_contain_text(
+            'LinkedIn profile was requested but not verified.'
+        )
+        expect(partial_message.locator('.sc-inline-image-proposal-reference-image')).to_have_attribute(
+            'src',
+            '/api/image/ui-image-proposal-conversation_image_1_2_3',
+        )
+        expect(partial_message.locator('.sc-inline-image-proposal-reference-image')).to_have_attribute(
+            'alt',
+            'Reference image: Selected headshot',
+        )
+        expect(partial_message.locator('img[src="x"]')).to_have_count(0)
+        expect(partial_message.locator('.sc-inline-image-proposal-evidence-details')).to_contain_text(
+            'Review evidence details'
+        )
+        partial_approve = partial_message.locator('.sc-inline-image-proposal-approve')
+        expect(partial_approve).to_be_disabled()
+        partial_message.locator('.sc-inline-image-proposal-confirm-partial').check()
+        expect(partial_approve).to_be_enabled()
+        expect(partial_approve).to_have_attribute('aria-disabled', 'false')
+        notice_id = partial_approve.get_attribute('aria-describedby')
+        assert notice_id
+        expect(partial_message.locator(f'#{notice_id}')).to_have_attribute('aria-live', 'polite')
+        expect(partial_message.locator('.sc-inline-image-proposal-approval-live')).to_contain_text(
+            'Approval is now available'
+        )
+        partial_layout = partial_message.locator('.sc-inline-image-proposal-card').evaluate(
+            """
+            element => ({
+                overflows: element.scrollWidth > element.clientWidth,
+                right: element.getBoundingClientRect().right,
+                viewportWidth: window.innerWidth,
+                actionOverflows: element.querySelector('.sc-inline-image-proposal-actions').scrollWidth
+                    > element.querySelector('.sc-inline-image-proposal-actions').clientWidth,
+                actionHeights: Array.from(
+                    element.querySelectorAll('.sc-inline-image-proposal-actions .btn')
+                ).map(button => button.getBoundingClientRect().height)
+            })
+            """
+        )
+        assert partial_layout['overflows'] is False
+        assert partial_layout['actionOverflows'] is False
+        assert partial_layout['right'] <= partial_layout['viewportWidth'] + 1
+        if viewport['width'] <= 575:
+            assert all(height >= 44 for height in partial_layout['actionHeights'])
+        partial_approve.click()
+        expect(partial_message.locator('.sc-inline-image-proposal-approved')).to_have_count(1)
+        assert requests[-1]['confirm_partial'] is True
+
+        blocked_message_id = 'ui-image-proposal-blocked-evidence'
+        blocked_metadata = _orchestration_metadata(status='collecting', runtime_status='running')
+        blocked_metadata['evidence_ledger']['requirements'][0]['status'] = 'pending'
+        blocked_metadata['evidence_ledger']['sources'][0]['status'] = 'running'
+        _append_custom_ai_message(
+            page,
+            blocked_message_id,
+            'A proposal waiting for evidence.\n\n' + _proposal_block(8),
+            metadata=blocked_metadata,
+        )
+        blocked_message = page.locator(f'[data-message-id="{blocked_message_id}"]')
+        expect(blocked_message.locator('.sc-inline-image-proposal-approve')).to_be_disabled()
+        expect(blocked_message.locator('.sc-inline-image-proposal-approval-notice')).to_contain_text(
+            'Evidence collection is still in progress.'
+        )
+        expect(blocked_message.locator('.sc-inline-image-proposal-confirm-partial')).to_have_count(0)
+        expect(blocked_message.locator('.sc-inline-image-proposal-reference')).to_have_count(0)
 
         completed_message_id = 'ui-image-proposal-completed'
         _append_custom_ai_message(

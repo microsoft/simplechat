@@ -25,6 +25,25 @@ IMAGE_PROPOSAL_TEXT_MAX_LENGTH = 600
 IMAGE_PROPOSAL_ID_MAX_LENGTH = 120
 IMAGE_PROPOSAL_METADATA_ID_MAX_LENGTH = 160
 IMAGE_PROPOSAL_METADATA_MAX_ITEMS = 24
+IMAGE_PROPOSAL_APPROVAL_REVIEW_VERSION = 1
+
+IMAGE_PROPOSAL_SOURCE_LABELS = {
+    'assigned_knowledge': 'Assigned Knowledge',
+    'conversation_documents': 'Conversation Documents',
+    'conversation_history': 'Conversation History',
+    'deep_research': 'Deep Research',
+    'document_action': 'Selected Action',
+    'prior_citations': 'Prior Citations',
+    'selected_action': 'Selected Action',
+    'selected_agent': 'Selected Agent',
+    'selected_documents': 'Selected Documents',
+    'selected_image': 'Selected Image',
+    'selected_images': 'Selected Image',
+    'source_review': 'Source Review',
+    'user_message': 'User Provided',
+    'web_search': 'Web Search',
+    'workspace_search': 'Workspace Search',
+}
 
 IMAGE_PROPOSAL_REQUEST_MARKERS = (
     'image',
@@ -290,6 +309,210 @@ def constrain_image_proposal_to_evidence_ledger(proposal, evidence_ledger):
         normalized_proposal.pop('referenceImageIds', None)
 
     return normalized_proposal
+
+
+def _image_proposal_source_label(source_type):
+    normalized_type = _normalize_metadata_id(source_type).lower()
+    if normalized_type in IMAGE_PROPOSAL_SOURCE_LABELS:
+        return IMAGE_PROPOSAL_SOURCE_LABELS[normalized_type]
+    return _trim_text(normalized_type.replace('_', ' ').title(), 80) or 'Evidence Source'
+
+
+def _image_proposal_entry_source_ids(entry):
+    source_ids = _normalize_metadata_list(entry.get('source_ids'), identifiers=True)
+    source_id = _normalize_metadata_id(entry.get('source_id'))
+    if source_id and source_id not in source_ids:
+        source_ids.append(source_id)
+    return source_ids
+
+
+def build_image_proposal_approval_review(
+    evidence_ledger,
+    orchestration_runtime=None,
+    proposal=None,
+):
+    """Build a bounded user-facing approval state from authorized turn metadata."""
+    if not isinstance(evidence_ledger, dict):
+        return {
+            'version': IMAGE_PROPOSAL_APPROVAL_REVIEW_VERSION,
+            'state': 'ready',
+            'can_approve': True,
+            'requires_confirmation': False,
+            'ledger_status': 'unavailable',
+            'runtime_status': 'unavailable',
+            'message': 'Review the image proposal before generation.',
+            'sources': [],
+            'missing_evidence': [],
+            'reference_images': [],
+        }
+
+    runtime = orchestration_runtime if isinstance(orchestration_runtime, dict) else {}
+    normalized_proposal = proposal if isinstance(proposal, dict) else {}
+    ledger_status = _normalize_metadata_id(evidence_ledger.get('status')).lower() or 'unknown'
+    runtime_status = _normalize_metadata_id(runtime.get('status')).lower() or 'unavailable'
+    requirements = [
+        entry
+        for entry in (evidence_ledger.get('requirements') or [])
+        if isinstance(entry, dict)
+    ]
+    sources = [
+        entry
+        for entry in (evidence_ledger.get('sources') or [])
+        if isinstance(entry, dict)
+    ]
+
+    retained_evidence_ids = set(_normalize_metadata_list(
+        normalized_proposal.get('evidenceIds', normalized_proposal.get('evidence_ids')),
+        identifiers=True,
+    ))
+    retained_reference_ids = set(_normalize_metadata_list(
+        normalized_proposal.get('referenceImageIds', normalized_proposal.get('reference_image_ids')),
+        identifiers=True,
+    ))
+    supported_entries = []
+    for section in ('facts', 'citations', 'artifacts'):
+        supported_entries.extend(
+            entry
+            for entry in (evidence_ledger.get(section) or [])
+            if isinstance(entry, dict)
+        )
+    supported_entries.extend(
+        entry
+        for entry in (evidence_ledger.get('results') or [])
+        if isinstance(entry, dict) and entry.get('status') in {'succeeded', 'partial'}
+    )
+
+    selected_entry_ids = retained_evidence_ids | retained_reference_ids
+    used_source_ids = {
+        source_id
+        for entry in supported_entries
+        if selected_entry_ids and _normalize_metadata_id(entry.get('id')) in selected_entry_ids
+        for source_id in _image_proposal_entry_source_ids(entry)
+    }
+    source_summaries = []
+    for source in sources[:IMAGE_PROPOSAL_METADATA_MAX_ITEMS]:
+        source_id = _normalize_metadata_id(source.get('id'))
+        source_type = _normalize_metadata_id(source.get('type')).lower() or 'evidence_source'
+        source_status = _normalize_metadata_id(source.get('status')).lower() or 'unknown'
+        source_summaries.append({
+            'id': source_id,
+            'type': source_type,
+            'label': _image_proposal_source_label(source_type),
+            'status': source_status,
+            'required': bool(source.get('required')),
+            'used': source_id in used_source_ids,
+        })
+
+    missing_evidence = []
+    for gap in evidence_ledger.get('missing_or_failed') or []:
+        if not isinstance(gap, dict):
+            continue
+        message = _trim_text(gap.get('message'), IMAGE_PROPOSAL_TEXT_MAX_LENGTH)
+        if message and message not in missing_evidence:
+            missing_evidence.append(message)
+        if len(missing_evidence) >= IMAGE_PROPOSAL_METADATA_MAX_ITEMS:
+            break
+    for requirement in requirements:
+        requirement_status = _normalize_metadata_id(requirement.get('status')).lower()
+        if requirement_status not in {'pending', 'partial', 'unsatisfied'}:
+            continue
+        description = _trim_text(requirement.get('description'), IMAGE_PROPOSAL_TEXT_MAX_LENGTH)
+        if description and description not in missing_evidence:
+            missing_evidence.append(description)
+        if len(missing_evidence) >= IMAGE_PROPOSAL_METADATA_MAX_ITEMS:
+            break
+
+    reference_images = []
+    for artifact in evidence_ledger.get('artifacts') or []:
+        if not isinstance(artifact, dict) or artifact.get('type') != 'image_reference':
+            continue
+        artifact_id = _normalize_metadata_id(artifact.get('id'))
+        if artifact_id not in retained_reference_ids:
+            continue
+        reference_images.append({
+            'id': artifact_id,
+            'name': _trim_text(artifact.get('name'), 160) or 'Selected image',
+            'reference_id': _normalize_metadata_id(artifact.get('reference')),
+            'document_id': _normalize_metadata_id(artifact.get('document_id')),
+            'message_id': _normalize_metadata_id(artifact.get('message_id')),
+        })
+        if len(reference_images) >= IMAGE_PROPOSAL_METADATA_MAX_ITEMS:
+            break
+
+    blocking_reasons = []
+    confirmation_reasons = []
+    if ledger_status in {'collecting', 'pending', 'running'}:
+        blocking_reasons.append('Evidence collection is still in progress.')
+    elif ledger_status == 'cancelled':
+        blocking_reasons.append('The evidence review was cancelled.')
+    elif ledger_status not in {'ready', 'partial', 'completed'}:
+        blocking_reasons.append('The evidence review did not complete successfully.')
+
+    if runtime_status in {'pending', 'running'}:
+        blocking_reasons.append('The orchestration workflow is still running.')
+    elif runtime_status == 'cancelled':
+        blocking_reasons.append('The orchestration workflow was cancelled.')
+    elif runtime_status == 'failed':
+        blocking_reasons.append('The orchestration workflow failed.')
+    elif runtime_status not in {'unavailable', 'succeeded', 'partial'}:
+        blocking_reasons.append('The orchestration workflow is not ready for approval.')
+
+    required_pending = any(
+        bool(requirement.get('required'))
+        and _normalize_metadata_id(requirement.get('status')).lower() == 'pending'
+        for requirement in requirements
+    )
+    if required_pending:
+        blocking_reasons.append('Required evidence is still pending.')
+
+    required_cancelled = any(
+        bool(source.get('required'))
+        and _normalize_metadata_id(source.get('status')).lower() == 'cancelled'
+        for source in sources
+    )
+    if required_cancelled:
+        blocking_reasons.append('A required evidence source was cancelled.')
+
+    has_supported_evidence = bool(supported_entries)
+    required_incomplete = any(
+        bool(requirement.get('required'))
+        and _normalize_metadata_id(requirement.get('status')).lower() in {'partial', 'unsatisfied'}
+        for requirement in requirements
+    )
+    if ledger_status == 'partial' or runtime_status == 'partial' or required_incomplete:
+        if (
+            has_supported_evidence
+            and ledger_status in {'ready', 'partial', 'completed'}
+            and not blocking_reasons
+        ):
+            confirmation_reasons.append(
+                'Some requested evidence was not available. Review the missing evidence before continuing.'
+            )
+        elif not blocking_reasons:
+            blocking_reasons.append('Required evidence is incomplete and cannot be approved.')
+
+    if blocking_reasons:
+        state = 'blocked'
+        message = blocking_reasons[0]
+    elif confirmation_reasons:
+        state = 'confirmation_required'
+        message = confirmation_reasons[0]
+    else:
+        state = 'ready'
+        message = 'Evidence review complete. Review the image proposal before generation.'
+
+    return {
+        'version': IMAGE_PROPOSAL_APPROVAL_REVIEW_VERSION,
+        'state': state,
+        'can_approve': state != 'blocked',
+        'requires_confirmation': state == 'confirmation_required',
+        'ledger_status': ledger_status,
+        'runtime_status': runtime_status,
+        'message': message,
+        'sources': source_summaries,
+        'missing_evidence': missing_evidence,
+        'reference_images': reference_images,
+    }
 
 
 def resolve_image_generation_client(settings):

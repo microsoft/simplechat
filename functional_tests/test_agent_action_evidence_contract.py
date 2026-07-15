@@ -2,7 +2,7 @@
 # test_agent_action_evidence_contract.py
 """
 Functional test for the generic agent/action evidence collection contract.
-Version: 0.250.063
+Version: 0.250.064
 Implemented in: 0.250.061
 
 This test ensures selected agents and actions collect governed evidence into the

@@ -10,6 +10,7 @@ let activeStreamingThoughtTargetId = null;
 let activeStreamingServerMessageId = null;
 const streamingAgentActivityStates = new Map();
 const streamingSourceReviewStates = new Map();
+const streamingOrchestrationProgressStates = new Map();
 const progressDetailsExpandedStates = new Map();
 let progressDetailsToggleListenerAttached = false;
 
@@ -27,10 +28,216 @@ function getThoughtIcon(stepType) {
         'url_access': 'bi-link-45deg',
         'document_analysis': 'bi-journal-richtext',
         'agent_tool_call': 'bi-robot',
+        'orchestration_progress': 'bi-diagram-3',
+        'approval_required': 'bi-person-check',
         'generation': 'bi-lightning',
         'content_safety': 'bi-shield-check'
     };
     return iconMap[stepType] || 'bi-stars';
+}
+
+const ORCHESTRATION_CAPABILITY_PRESENTATION = Object.freeze({
+    approval_required: { label: 'Awaiting approval', icon: 'bi-person-check' },
+    conversation_evidence: { label: 'Reviewing conversation evidence', icon: 'bi-chat-square-text' },
+    deep_research: { label: 'Reviewing sources', icon: 'bi-binoculars' },
+    evidence_discovery: { label: 'Planning evidence workflow', icon: 'bi-diagram-3' },
+    image_proposal: { label: 'Building image proposal', icon: 'bi-image' },
+    response: { label: 'Building response', icon: 'bi-lightning' },
+    selected_action: { label: 'Calling selected action', icon: 'bi-lightning-charge' },
+    selected_agent: { label: 'Calling selected agent', icon: 'bi-robot' },
+    selected_documents: { label: 'Reviewing selected documents', icon: 'bi-files' },
+    selected_image: { label: 'Reviewing selected image', icon: 'bi-image' },
+    selected_images: { label: 'Reviewing selected image', icon: 'bi-image' },
+    source_review: { label: 'Reviewing sources', icon: 'bi-journal-check' },
+    web_search: { label: 'Searching public web', icon: 'bi-globe' },
+    workspace_search: { label: 'Searching workspace documents', icon: 'bi-search' },
+});
+
+const ORCHESTRATION_TERMINAL_STATUSES = new Set([
+    'succeeded',
+    'partial',
+    'failed',
+    'skipped',
+    'blocked',
+    'cancelled',
+]);
+
+function createOrchestrationProgressState() {
+    return {
+        runId: '',
+        totalCount: 0,
+        nodes: new Map(),
+        latestNodeId: '',
+    };
+}
+
+function resetStreamingOrchestrationProgressState(targetMessageId = null) {
+    if (targetMessageId) {
+        streamingOrchestrationProgressStates.delete(targetMessageId);
+    }
+}
+
+function getStreamingOrchestrationProgressState(targetMessageId) {
+    if (!targetMessageId) {
+        return null;
+    }
+    if (!streamingOrchestrationProgressStates.has(targetMessageId)) {
+        streamingOrchestrationProgressStates.set(targetMessageId, createOrchestrationProgressState());
+    }
+    return streamingOrchestrationProgressStates.get(targetMessageId);
+}
+
+function isOrchestrationProgressThought(thoughtData) {
+    return thoughtData?.activity?.kind === 'orchestration_node';
+}
+
+function getOrchestrationCapabilityPresentation(capability) {
+    const normalizedCapability = String(capability || '').trim().toLowerCase();
+    if (ORCHESTRATION_CAPABILITY_PRESENTATION[normalizedCapability]) {
+        return ORCHESTRATION_CAPABILITY_PRESENTATION[normalizedCapability];
+    }
+    const label = normalizedCapability
+        .replaceAll('_', ' ')
+        .replace(/\b\w/g, character => character.toUpperCase());
+    return {
+        label: label || 'Processing request',
+        icon: 'bi-stars',
+    };
+}
+
+function updateOrchestrationProgressState(state, thoughtData) {
+    if (!state || !isOrchestrationProgressThought(thoughtData)) {
+        return state;
+    }
+
+    const activity = thoughtData.activity;
+    const runId = String(activity.run_id || '').trim();
+    if (state.runId && runId && state.runId !== runId) {
+        state.nodes.clear();
+        state.latestNodeId = '';
+        state.totalCount = 0;
+    }
+    if (runId) {
+        state.runId = runId;
+    }
+
+    const nodeId = String(activity.node_id || `step-${thoughtData.step_index ?? state.nodes.size}`).trim();
+    const previousNode = state.nodes.get(nodeId) || {};
+    const nodeIndex = Number(activity.node_index);
+    const nodeCount = Number(activity.node_count);
+    state.nodes.set(nodeId, {
+        ...previousNode,
+        id: nodeId,
+        order: Number.isFinite(nodeIndex) && nodeIndex >= 0
+            ? nodeIndex
+            : previousNode.order ?? state.nodes.size,
+        type: String(activity.node_type || previousNode.type || '').trim().toLowerCase(),
+        capability: String(activity.capability || previousNode.capability || '').trim().toLowerCase(),
+        status: String(activity.status || previousNode.status || 'pending').trim().toLowerCase(),
+        required: Boolean(activity.required ?? previousNode.required),
+        content: String(thoughtData.content || previousNode.content || '').trim(),
+        detail: String(thoughtData.detail || previousNode.detail || '').trim(),
+    });
+    if (Number.isFinite(nodeCount) && nodeCount > 0) {
+        state.totalCount = Math.max(state.totalCount, Math.round(nodeCount));
+    }
+    state.totalCount = Math.max(state.totalCount, state.nodes.size);
+    state.latestNodeId = nodeId;
+    return state;
+}
+
+function buildOrchestrationProgressStateFromThoughts(thoughts) {
+    const state = createOrchestrationProgressState();
+    (thoughts || []).forEach(thought => updateOrchestrationProgressState(state, thought));
+    return state;
+}
+
+function hasOrchestrationProgress(state) {
+    return Boolean(state && state.nodes.size > 0);
+}
+
+function getOrchestrationStatusPresentation(status) {
+    const statusMap = {
+        blocked: { label: 'Blocked', icon: 'bi-slash-circle text-danger' },
+        cancelled: { label: 'Cancelled', icon: 'bi-x-circle text-muted' },
+        failed: { label: 'Failed', icon: 'bi-x-circle-fill text-danger' },
+        partial: { label: 'Partial', icon: 'bi-exclamation-circle-fill text-warning' },
+        pending: { label: 'Pending', icon: 'bi-circle text-muted' },
+        running: { label: 'In progress', icon: 'bi-arrow-repeat text-info' },
+        skipped: { label: 'Skipped', icon: 'bi-dash-circle text-muted' },
+        succeeded: { label: 'Complete', icon: 'bi-check-circle-fill text-success' },
+    };
+    return statusMap[status] || statusMap.pending;
+}
+
+function renderOrchestrationProgress(state) {
+    const nodes = Array.from(state.nodes.values()).sort((left, right) => left.order - right.order);
+    const totalCount = Math.max(state.totalCount, nodes.length);
+    const finishedCount = nodes.filter(node => ORCHESTRATION_TERMINAL_STATUSES.has(node.status)).length;
+    const failedCount = nodes.filter(node => ['failed', 'blocked', 'cancelled'].includes(node.status)).length;
+    const partialCount = nodes.filter(node => node.status === 'partial').length;
+    const awaitingApproval = nodes.some(node => node.capability === 'approval_required' && node.status === 'running');
+    const isCompleted = totalCount > 0 && nodes.length >= totalCount && finishedCount === totalCount;
+    const percent = awaitingApproval
+        ? 95
+        : isCompleted
+            ? 100
+            : Math.max(8, Math.min(94, Math.round((finishedCount / Math.max(totalCount, 1)) * 100)));
+    const currentNode = [...nodes].reverse().find(node => node.status === 'running')
+        || state.nodes.get(state.latestNodeId)
+        || nodes[nodes.length - 1];
+    const currentPresentation = getOrchestrationCapabilityPresentation(currentNode?.capability);
+    const summaryParts = [`${finishedCount}/${totalCount} steps finished`];
+    if (partialCount > 0) {
+        summaryParts.push(`${partialCount} partial`);
+    }
+    if (failedCount > 0) {
+        summaryParts.push(`${failedCount} unavailable`);
+    }
+
+    const overallStatus = awaitingApproval
+        ? 'awaiting_approval'
+        : isCompleted
+            ? (failedCount > 0 || partialCount > 0 ? 'completed_with_failures' : 'completed')
+            : 'running';
+    const badgeClass = awaitingApproval
+        ? 'text-bg-warning'
+        : isCompleted
+            ? (failedCount > 0 || partialCount > 0 ? 'text-bg-warning' : 'text-bg-success')
+            : 'text-bg-light border';
+    const badgeText = awaitingApproval ? 'Approval' : isCompleted ? 'Complete' : `${percent}%`;
+    const rows = nodes.map(node => {
+        const capabilityPresentation = getOrchestrationCapabilityPresentation(node.capability);
+        const statusPresentation = getOrchestrationStatusPresentation(node.status);
+        return `<li class="orchestration-progress-step d-flex align-items-start gap-2 py-1" data-orchestration-node-id="${escapeHtml(node.id)}" data-orchestration-node-status="${escapeHtml(node.status)}">
+            <i class="bi ${statusPresentation.icon} mt-1" aria-hidden="true"></i>
+            <div class="flex-grow-1 min-w-0">
+                <div class="small fw-semibold text-body">${escapeHtml(capabilityPresentation.label)}</div>
+                <div class="small text-muted">${escapeHtml(statusPresentation.label)}</div>
+            </div>
+            <i class="bi ${capabilityPresentation.icon} text-muted" aria-hidden="true"></i>
+        </li>`;
+    }).join('');
+
+    return `<div class="streaming-thought-display orchestration-progress-card" data-orchestration-progress-state="${escapeHtml(overallStatus)}" data-orchestration-progress-percent="${percent}" role="status" aria-live="polite" aria-atomic="true">
+        <div class="card border-info-subtle shadow-sm">
+            <div class="card-body py-3 px-3">
+                <div class="d-flex align-items-start justify-content-between gap-2 mb-2">
+                    <div class="d-flex align-items-start gap-2 min-w-0">
+                        <i class="bi bi-diagram-3 text-info mt-1" aria-hidden="true"></i>
+                        <div class="min-w-0">
+                            <div class="small fw-semibold text-body">Orchestration progress</div>
+                            <div class="small text-muted orchestration-progress-current">${escapeHtml(currentPresentation.label)}</div>
+                        </div>
+                    </div>
+                    <span class="badge ${badgeClass}">${escapeHtml(badgeText)}</span>
+                </div>
+                <div class="small text-muted mb-2">${escapeHtml(summaryParts.join(' | '))}</div>
+                ${renderProgressBar(percent, isCompleted ? overallStatus : 'running', failedCount + partialCount, 'Orchestration progress')}
+                <ol class="orchestration-progress-steps list-unstyled mb-0 mt-2">${rows}</ol>
+            </div>
+        </div>
+    </div>`;
 }
 
 function normalizeProgressPercent(value) {
@@ -418,6 +625,9 @@ function hasAgentActivity(state) {
 
 function updateAgentActivityState(state, thoughtData, preserveMaxPercent = true) {
     if (!state || !thoughtData) {
+        return state;
+    }
+    if (isOrchestrationProgressThought(thoughtData)) {
         return state;
     }
 
@@ -995,6 +1205,7 @@ export function beginStreamingThoughtSession(targetMessageId) {
 
     resetStreamingAgentActivityState(activeStreamingThoughtTargetId);
     resetStreamingSourceReviewState(activeStreamingThoughtTargetId);
+    resetStreamingOrchestrationProgressState(activeStreamingThoughtTargetId);
     resetStreamingPlaceholderState(getStreamingMessageElement(activeStreamingThoughtTargetId));
 }
 
@@ -1006,6 +1217,7 @@ export function clearStreamingThoughtSession(targetMessageId = null) {
     const messageIdToReset = targetMessageId || activeStreamingThoughtTargetId;
     resetStreamingAgentActivityState(messageIdToReset);
     resetStreamingSourceReviewState(messageIdToReset);
+    resetStreamingOrchestrationProgressState(messageIdToReset);
     resetStreamingPlaceholderState(getStreamingMessageElement(messageIdToReset));
 
     activeStreamingThoughtTargetId = null;
@@ -1020,6 +1232,7 @@ export function markStreamingThoughtContentStarted(targetMessageId) {
 
     resetStreamingAgentActivityState(targetMessageId);
     resetStreamingSourceReviewState(targetMessageId);
+    resetStreamingOrchestrationProgressState(targetMessageId);
     messageElement.dataset.streamingHasContent = 'true';
     delete messageElement.dataset.streamingThoughtIndex;
     delete messageElement.dataset.streamingThoughtSignature;
@@ -1110,6 +1323,21 @@ export function handleStreamingThought(thoughtData, targetMessageId = null) {
     const contentElement = messageElement.querySelector('.message-text');
     if (!contentElement) return;
 
+    if (isOrchestrationProgressThought(thoughtData)) {
+        const orchestrationState = getStreamingOrchestrationProgressState(activeStreamingThoughtTargetId);
+        updateOrchestrationProgressState(orchestrationState, thoughtData);
+        if (hasOrchestrationProgress(orchestrationState)) {
+            if (typeof DOMPurify === 'undefined') {
+                return;
+            }
+            const safeOrchestrationProgressHtml = DOMPurify.sanitize(
+                renderOrchestrationProgress(orchestrationState),
+            );
+            contentElement.innerHTML = safeOrchestrationProgressHtml;
+            return;
+        }
+    }
+
     if (thoughtData.progress && typeof thoughtData.progress === 'object') {
         contentElement.innerHTML = renderDocumentAnalysisProgress(thoughtData);
         return;
@@ -1132,12 +1360,17 @@ export function handleStreamingThought(thoughtData, targetMessageId = null) {
     }
 
     const icon = getThoughtIcon(thoughtData.step_type);
+    if (typeof DOMPurify === 'undefined') {
+        contentElement.textContent = String(thoughtData.content || 'Processing request');
+        return;
+    }
     // Replace entire content with styled thought indicator (visually distinct from AI response)
-    contentElement.innerHTML = `<div class="streaming-thought-display">
+    const safeStreamingThoughtHtml = DOMPurify.sanitize(`<div class="streaming-thought-display">
         <span class="badge bg-info bg-opacity-10 text-info border border-info-subtle px-3 py-2 animate-pulse" style="font-size: 0.85rem; font-weight: 500;">
             <i class="bi ${icon} me-2"></i>${escapeHtml(thoughtData.content)}
         </span>
-    </div>`;
+    </div>`);
+    contentElement.innerHTML = safeStreamingThoughtHtml;
 }
 
 // ---------------------------------------------------------------------------
@@ -1252,6 +1485,11 @@ function renderThoughtsList(thoughts) {
     const latestProgressThought = [...thoughts].reverse().find(thought => thought.progress && typeof thought.progress === 'object');
     const sourceReviewState = buildSourceReviewProgressStateFromThoughts(thoughts);
     const agentActivityState = buildAgentActivityStateFromThoughts(thoughts);
+    const orchestrationState = buildOrchestrationProgressStateFromThoughts(thoughts);
+
+    if (hasOrchestrationProgress(orchestrationState)) {
+        summaryCards.push(renderOrchestrationProgress(orchestrationState));
+    }
 
     if (hasSourceReviewProgress(sourceReviewState)) {
         summaryCards.push(renderSourceReviewProgress(sourceReviewState));
@@ -1270,6 +1508,9 @@ function renderThoughtsList(thoughts) {
     }
 
     thoughts.forEach(t => {
+        if (hasOrchestrationProgress(orchestrationState) && isOrchestrationProgressThought(t)) {
+            return;
+        }
         const icon = getThoughtIcon(t.step_type);
         const durationStr = t.duration_ms != null ? `<span class="text-muted ms-2">(${t.duration_ms}ms)</span>` : '';
         html += `<div class="thought-step small py-1">

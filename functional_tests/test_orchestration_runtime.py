@@ -2,12 +2,13 @@
 # test_orchestration_runtime.py
 """
 Functional test for the request-scoped orchestration runtime.
-Version: 0.250.063
+Version: 0.250.064
 Implemented in: 0.250.063
 
 This test ensures direct and coordinated plans execute through one bounded graph
 with dependency ordering, safe parallelism, cancellation, failure policy,
-replanning, finalizer isolation, and runtime-node evidence provenance.
+replanning, finalizer isolation, runtime-node evidence provenance, and bounded
+structured progress for the chat UI.
 """
 
 import json
@@ -90,6 +91,27 @@ def test_direct_and_coordinated_turns_share_run_contract():
     assert run.to_metadata()['mode'] == 'direct'
     assert _node(run, 'finalize_response').status == 'succeeded'
     assert [event['status'] for event in progress_events] == ['running', 'succeeded']
+    assert all(event['required'] is True for event in progress_events)
+    assert [event['node_index'] for event in progress_events] == [0, 0]
+    assert [event['node_count'] for event in progress_events] == [1, 1]
+
+
+def test_chat_streams_preserve_structured_orchestration_progress():
+    """Validate both stream paths retain bounded node progress and approval state."""
+    route_source = ROUTE_BACKEND_CHATS.read_text(encoding='utf-8')
+
+    assert "'kind': 'orchestration_node'" in route_source
+    assert "'step_type': 'orchestration_progress'" in route_source
+    assert "'capability': capability" in route_source
+    assert "'node_index': node_index" in route_source
+    assert "'node_count': visible_node_count" in route_source
+    assert "'required': bool(event.get('required'))" in route_source
+    assert "'step_type': 'approval_required'" in route_source
+    assert "'capability': 'approval_required'" in route_source
+    assert route_source.count(
+        'for thought_payload in _build_orchestration_stream_thought_payloads(event):'
+    ) == 2
+    assert 'thought_tracker.add_thought(step_type, content, detail, activity=activity)' in route_source
 
 
 def test_dependencies_parallel_collectors_and_node_provenance():

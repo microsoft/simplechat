@@ -2,6 +2,17 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.064)**
+
+#### User Interface Enhancements
+
+*   **Chat Orchestration Progress, Evidence Review, And Approval**
+    *   Added ordered, accessible chat progress for orchestration planning, selected sources, workspace and web evidence, agents/actions, source review, image proposal synthesis, and approval waiting.
+    *   Grounded image proposal cards now show canonical source badges, missing-evidence notes, linked evidence details, and authorized reference-image previews on desktop and mobile.
+    *   Approval is blocked while evidence is active, cancelled, failed, or unsupported; terminal partial outcomes require an explicit acknowledgment that is revalidated against the authorized source assistant message before generation.
+    *   Existing prompt editing, proposal dismissal, and stream cancellation provide request-scoped intervention without exposing chain-of-thought, raw evidence, or arbitrary image URLs.
+    *   (Ref: microsoft/simplechat#1021, `chat-thoughts.js`, `chat-inline-image-proposals.js`, `functions_image_generation.py`, `route_backend_chats.py`, `CHAT_TURN_ORCHESTRATION.md`)
+
 ### **(v0.250.063)**
 
 #### New Features
