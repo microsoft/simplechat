@@ -5,6 +5,8 @@ const INLINE_IMAGE_PROPOSAL_REGEX = new RegExp(`\`\`\`${INLINE_IMAGE_PROPOSAL_LA
 const INLINE_IMAGE_PROPOSAL_PENDING_REGEX = new RegExp(`\`\`\`${INLINE_IMAGE_PROPOSAL_LANGUAGE}\\b[\\s\\S]*$`, 'i');
 const IMAGE_PROPOSAL_PROMPT_MAX_LENGTH = 4000;
 const IMAGE_PROPOSAL_TEXT_MAX_LENGTH = 600;
+const IMAGE_PROPOSAL_METADATA_ID_MAX_LENGTH = 160;
+const IMAGE_PROPOSAL_METADATA_MAX_ITEMS = 24;
 const IMAGE_PROPOSAL_TOKEN_PREFIX = '@@SC_INLINE_IMAGE_PROPOSAL_';
 const imageProposalQueue = [];
 const imageProposalQueuePromises = new WeakMap();
@@ -30,6 +32,27 @@ function sanitizePrompt(value) {
 
 function sanitizeVisualId(value) {
     return sanitizeText(value, 120).replace(/[^a-zA-Z0-9_.-]+/g, '_').replace(/^[_\-.]+|[_\-.]+$/g, '');
+}
+
+function sanitizeMetadataId(value) {
+    return sanitizeText(value, IMAGE_PROPOSAL_METADATA_ID_MAX_LENGTH)
+        .replace(/[^a-zA-Z0-9_.:-]+/g, '_')
+        .replace(/^[_.:-]+|[_.:-]+$/g, '');
+}
+
+function sanitizeMetadataList(values, sanitizer) {
+    if (!Array.isArray(values)) {
+        return [];
+    }
+
+    const normalizedValues = [];
+    values.forEach(value => {
+        const normalizedValue = sanitizer(value);
+        if (normalizedValue && !normalizedValues.includes(normalizedValue)) {
+            normalizedValues.push(normalizedValue);
+        }
+    });
+    return normalizedValues.slice(0, IMAGE_PROPOSAL_METADATA_MAX_ITEMS);
 }
 
 function sanitizeImageSource(value) {
@@ -102,6 +125,35 @@ function normalizeImageProposalSpec(rawSpec) {
         spec.slideNumber = Number.isFinite(numericSlide)
             ? numericSlide
             : sanitizeText(slideNumber, 40);
+    }
+
+    const evidenceIds = sanitizeMetadataList(
+        rawSpec.evidenceIds || rawSpec.evidence_ids,
+        sanitizeMetadataId,
+    );
+    if (evidenceIds.length > 0) {
+        spec.evidenceIds = evidenceIds;
+    }
+
+    const sourceSummary = sanitizeText(rawSpec.sourceSummary || rawSpec.source_summary);
+    if (sourceSummary) {
+        spec.sourceSummary = sourceSummary;
+    }
+
+    const missingEvidence = sanitizeMetadataList(
+        rawSpec.missingEvidence || rawSpec.missing_evidence,
+        value => sanitizeText(value),
+    );
+    if (missingEvidence.length > 0) {
+        spec.missingEvidence = missingEvidence;
+    }
+
+    const referenceImageIds = sanitizeMetadataList(
+        rawSpec.referenceImageIds || rawSpec.reference_image_ids,
+        sanitizeMetadataId,
+    );
+    if (referenceImageIds.length > 0) {
+        spec.referenceImageIds = referenceImageIds;
     }
 
     return spec;

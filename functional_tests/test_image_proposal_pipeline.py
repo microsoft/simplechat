@@ -2,7 +2,7 @@
 # test_image_proposal_pipeline.py
 """
 Functional test for opt-in chat image proposal pipeline.
-Version: 0.250.058
+Version: 0.250.062
 Implemented in: 0.241.138
 
 This test ensures the reusable image proposal helpers normalize model-authored
@@ -38,6 +38,10 @@ def test_normalize_image_proposal():
         'visualType': 'timeline',
         'slideNumber': '9',
         'context': 'Major events',
+        'evidenceIds': ['fact-timeline', 'fact timeline', 'fact-timeline'],
+        'sourceSummary': 'Workspace plan and selected image.',
+        'missingEvidence': ['Public launch date was not verified.'],
+        'referenceImageIds': ['artifact-reference-image'],
     })
 
     assert proposal['version'] == 1
@@ -45,6 +49,10 @@ def test_normalize_image_proposal():
     assert proposal['prompt'].startswith('Create a horizontal')
     assert proposal['slideNumber'] == 9
     assert proposal['visualType'] == 'timeline'
+    assert proposal['evidenceIds'] == ['fact-timeline', 'fact_timeline']
+    assert proposal['sourceSummary'] == 'Workspace plan and selected image.'
+    assert proposal['missingEvidence'] == ['Public launch date was not verified.']
+    assert proposal['referenceImageIds'] == ['artifact-reference-image']
 
 
 def test_image_proposal_guidance_and_gating():
@@ -59,6 +67,8 @@ def test_image_proposal_guidance_and_gating():
     assert 'Prefer 1 proposal' not in guidance
     assert 'Use up to 4' not in guidance
     assert '"prompt"' in guidance
+    assert '"evidenceIds"' in guidance
+    assert '"referenceImageIds"' in guidance
     assert image_generation_is_enabled({'enable_image_generation': True}) is True
     assert image_generation_is_enabled({'enable_image_generation': False}) is False
     assert user_request_supports_image_proposals('Create a classroom timeline slide deck') is True

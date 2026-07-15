@@ -111,6 +111,12 @@ from functions_chat_orchestration import (
     build_turn_orchestration_guidance_message,
     build_turn_orchestration_plan,
 )
+from functions_central_synthesis import (
+    build_central_synthesis_metadata,
+    build_central_synthesis_messages,
+    central_synthesis_is_ready,
+    create_central_synthesis_request,
+)
 from functions_agent_action_evidence import (
     append_agent_action_evidence_guidance,
     apply_agent_action_evidence_to_ledger,
@@ -123,11 +129,14 @@ from functions_evidence_collectors import populate_evidence_ledger_from_chat_sou
 from functions_evidence_ledger import (
     build_evidence_ledger_guidance_message,
     create_evidence_ledger_from_plan,
+    set_evidence_ledger_status,
 )
 from functions_image_messages import build_image_message_documents, decode_image_content
 from functions_icon_utils import normalize_icon_payload
 from functions_image_generation import (
+    build_grounded_image_synthesis_profile,
     build_image_proposal_guidance_message,
+    constrain_image_proposal_to_evidence_ledger,
     generate_chat_image_message,
     image_generation_is_enabled,
     normalize_image_proposal,
@@ -5011,6 +5020,27 @@ def build_chart_tool_usage_system_message():
 def build_image_proposal_system_message():
     """Instruct final generation to emit opt-in image proposal cards."""
     return build_image_proposal_guidance_message()
+
+
+def build_grounded_image_central_synthesis_context(user_message, orchestration_plan, evidence_ledger):
+    """Build isolated finalizer messages for a completed grounded image run."""
+    if not (
+        isinstance(orchestration_plan, Mapping)
+        and orchestration_plan.get('grounded_image_generation_requested')
+        and central_synthesis_is_ready(orchestration_plan, evidence_ledger)
+    ):
+        return None
+
+    synthesis_request = create_central_synthesis_request(
+        user_message,
+        orchestration_plan,
+        evidence_ledger,
+        output_profile=build_grounded_image_synthesis_profile(),
+    )
+    return {
+        'request': synthesis_request,
+        'messages': build_central_synthesis_messages(synthesis_request),
+    }
 
 
 def insert_system_message_after_existing_system_messages(conversation_history, system_message_content):
@@ -12713,6 +12743,7 @@ def register_route_backend_chats(bp):
                 or data.get('source_assistant_message_id')
                 or ''
             ).strip()
+            source_evidence_ledger = None
             if source_assistant_message_id:
                 try:
                     source_message = cosmos_messages_container.read_item(
@@ -12723,8 +12754,18 @@ def register_route_backend_chats(bp):
                         return jsonify({'error': 'Source message does not belong to this conversation'}), 403
                     if source_message.get('role') != 'assistant':
                         return jsonify({'error': 'Source message must be an assistant message'}), 400
+                    source_metadata = (
+                        source_message.get('metadata')
+                        if isinstance(source_message.get('metadata'), dict)
+                        else {}
+                    )
+                    source_evidence_ledger = source_metadata.get('evidence_ledger')
                 except CosmosResourceNotFoundError:
                     source_assistant_message_id = ''
+            proposal = constrain_image_proposal_to_evidence_ledger(
+                proposal,
+                source_evidence_ledger,
+            )
 
             image_result = generate_chat_image_message(
                 settings=settings,
@@ -18557,11 +18598,29 @@ def register_route_backend_chats(bp):
                 selected_agent = None
                 selected_agent_metadata = None
                 agent_evidence_task = None
+                central_synthesis_context = None
+                central_synthesis_metadata = None
                 agent_name_used = None
                 agent_display_name_used = None
                 agent_icon_used = None
                 agent_tags_used = []
+                agent_executor_model_used = None
                 use_agent_streaming = False
+
+                def persist_central_synthesis_state(status):
+                    """Persist compact synthesis state and the latest evidence ledger."""
+                    nonlocal central_synthesis_metadata
+                    if not central_synthesis_context:
+                        return None
+                    central_synthesis_metadata = build_central_synthesis_metadata(
+                        central_synthesis_context['request'],
+                        status,
+                    )
+                    user_metadata['evidence_ledger'] = turn_evidence_ledger
+                    user_metadata['central_synthesis'] = central_synthesis_metadata
+                    user_message_doc['metadata'] = user_metadata
+                    cosmos_messages_container.upsert_item(user_message_doc)
+                    return central_synthesis_metadata
 
                 if enable_semantic_kernel and user_enable_agents:
                     # Agent selection logic (similar to non-streaming)
@@ -18652,6 +18711,15 @@ def register_route_backend_chats(bp):
                     selected_agent,
                     evidence_collection_task=agent_evidence_task,
                 )
+                if not agent_evidence_task:
+                    central_synthesis_context = build_grounded_image_central_synthesis_context(
+                        user_message,
+                        turn_orchestration_plan,
+                        turn_evidence_ledger,
+                    )
+                    if central_synthesis_context:
+                        conversation_history_for_api = central_synthesis_context['messages']
+                        persist_central_synthesis_state('pending')
 
                 # Stream the response
                 accumulated_content = ""
@@ -18661,6 +18729,22 @@ def register_route_backend_chats(bp):
                 final_model_used = gpt_model  # Default to gpt_model, will be overridden if agent is used
 
                 def finalize_cancelled_stream_response():
+                    if (
+                        central_synthesis_metadata
+                        and central_synthesis_metadata.get('status') == 'pending'
+                    ):
+                        try:
+                            persist_central_synthesis_state('cancelled')
+                        except Exception as synthesis_state_error:
+                            log_event(
+                                '[CentralSynthesis] Failed to persist cancelled synthesis state',
+                                extra={
+                                    'conversation_id': conversation_id,
+                                    'run_id': turn_orchestration_plan.get('run_id'),
+                                    'error': str(synthesis_state_error),
+                                },
+                                level=logging.WARNING,
+                            )
                     cancel_reason = stream_session.get_cancel_reason() if stream_session else 'user_requested'
                     partial_content = accumulated_content.strip()
                     message_persisted = False
@@ -18715,6 +18799,7 @@ def register_route_backend_chats(bp):
                                 'history_context': history_debug_info,
                                 'orchestration': turn_orchestration_plan,
                                 'evidence_ledger': turn_evidence_ledger,
+                                'central_synthesis': central_synthesis_metadata,
                                 'capability_usage': build_streaming_capability_usage(),
                                 'source_review': compact_source_review_result_for_metadata(source_review_result),
                                 'deep_research': deep_research_result,
@@ -18767,6 +18852,7 @@ def register_route_backend_chats(bp):
                                 **cancel_metadata,
                                 'orchestration': turn_orchestration_plan,
                                 'evidence_ledger': turn_evidence_ledger,
+                                'central_synthesis': central_synthesis_metadata,
                             },
                             'thoughts_enabled': thought_tracker.enabled,
                         },
@@ -18792,6 +18878,15 @@ def register_route_backend_chats(bp):
                 )
 
                 try:
+                    if (
+                        turn_orchestration_plan.get('grounded_image_generation_requested')
+                        and not agent_evidence_task
+                        and not central_synthesis_context
+                    ):
+                        raise RuntimeError(
+                            'Grounded image evidence collection did not reach a terminal state; '
+                            'no image proposal was created.'
+                        )
                     if use_agent_streaming and selected_agent:
                         # Stream from agent using invoke_stream
                         yield emit_thought('agent_tool_call', f"Sending to agent '{agent_display_name_used or agent_name_used}'")
@@ -19149,14 +19244,89 @@ def register_route_backend_chats(bp):
                                 agent_evidence_task,
                                 agent_evidence_result,
                             )
-                            accumulated_content = build_agent_action_evidence_status_message(
+                            evidence_status_message = build_agent_action_evidence_status_message(
                                 agent_evidence_result
                             )
-                            yield f"data: {json.dumps({'content': accumulated_content})}\n\n"
+                            yield emit_thought('evidence_collection', evidence_status_message)
                             user_metadata['evidence_ledger'] = turn_evidence_ledger
+                            central_synthesis_context = build_grounded_image_central_synthesis_context(
+                                user_message,
+                                turn_orchestration_plan,
+                                turn_evidence_ledger,
+                            )
+                            if not central_synthesis_context:
+                                user_message_doc['metadata'] = user_metadata
+                                cosmos_messages_container.upsert_item(user_message_doc)
+                                raise RuntimeError(
+                                    'Grounded image evidence did not reach a terminal synthesis state.'
+                                )
+                            persist_central_synthesis_state('pending')
+
+                            agent_executor_model_used = actual_model_used
+                            yield emit_thought(
+                                'generation',
+                                f"Finalizing collected evidence with '{gpt_model}'",
+                            )
+                            synthesis_params = {
+                                'model': gpt_model,
+                                'messages': central_synthesis_context['messages'],
+                            }
+                            synthesis_reasoning_effort = _resolve_reasoning_effort_for_model(
+                                reasoning_effort,
+                                gpt_model,
+                                provider=gpt_provider,
+                                endpoint=gpt_endpoint,
+                            )
+                            if synthesis_reasoning_effort:
+                                synthesis_params['reasoning_effort'] = synthesis_reasoning_effort
+
+                            try:
+                                synthesis_response = gpt_client.chat.completions.create(**synthesis_params)
+                            except Exception as synthesis_error:
+                                synthesis_error_text = str(synthesis_error).lower()
+                                if synthesis_reasoning_effort and (
+                                    'reasoning_effort' in synthesis_error_text
+                                    or 'unrecognized request argument' in synthesis_error_text
+                                    or 'invalid_request_error' in synthesis_error_text
+                                ):
+                                    synthesis_params.pop('reasoning_effort', None)
+                                    synthesis_response = gpt_client.chat.completions.create(**synthesis_params)
+                                else:
+                                    raise
+
+                            synthesis_content = extract_chat_completion_response_text(synthesis_response)
+                            if not synthesis_content:
+                                raise RuntimeError('Central synthesis returned an empty response.')
+                            accumulated_content = synthesis_content
+                            yield f"data: {json.dumps({'content': synthesis_content})}\n\n"
+                            final_model_used = gpt_model
+
+                            synthesis_usage = getattr(synthesis_response, 'usage', None)
+                            if synthesis_usage:
+                                prior_usage = token_usage_data or {}
+                                synthesis_prompt_tokens = int(
+                                    getattr(synthesis_usage, 'prompt_tokens', 0) or 0
+                                )
+                                synthesis_completion_tokens = int(
+                                    getattr(synthesis_usage, 'completion_tokens', 0) or 0
+                                )
+                                synthesis_total_tokens = int(
+                                    getattr(synthesis_usage, 'total_tokens', 0)
+                                    or synthesis_prompt_tokens + synthesis_completion_tokens
+                                )
+                                token_usage_data = {
+                                    'prompt_tokens': int(prior_usage.get('prompt_tokens') or 0)
+                                    + synthesis_prompt_tokens,
+                                    'completion_tokens': int(prior_usage.get('completion_tokens') or 0)
+                                    + synthesis_completion_tokens,
+                                    'total_tokens': int(prior_usage.get('total_tokens') or 0)
+                                    + synthesis_total_tokens,
+                                    'captured_at': datetime.utcnow().isoformat(),
+                                }
 
                         debug_print(f"[Agent Streaming] Captured {len(agent_citations_list)} citations")
-                        final_model_used = actual_model_used
+                        if not agent_evidence_task:
+                            final_model_used = actual_model_used
 
                     else:
                         # Stream from regular GPT model (non-agent)
@@ -19292,6 +19462,12 @@ def register_route_backend_chats(bp):
                         return
 
                     # Stream complete - save message and send final metadata
+                    if central_synthesis_context and accumulated_content:
+                        set_evidence_ledger_status(turn_evidence_ledger, 'completed')
+                        central_synthesis_metadata = build_central_synthesis_metadata(
+                            central_synthesis_context['request'],
+                            'completed',
+                        )
                     accumulated_content_before_chart_append = accumulated_content
                     accumulated_content = _append_inline_chart_blocks_to_message(accumulated_content, agent_citations_list)
                     appended_chart_content = _get_appended_inline_chart_content_delta(
@@ -19357,6 +19533,7 @@ def register_route_backend_chats(bp):
                             'history_context': history_debug_info,
                             'orchestration': turn_orchestration_plan,
                             'evidence_ledger': turn_evidence_ledger,
+                            'central_synthesis': central_synthesis_metadata,
                             'capability_usage': build_streaming_capability_usage(),
                             'agent_runtime': agent_runtime_metadata or None,
                             'source_review': compact_source_review_result_for_metadata(source_review_result),
@@ -19392,7 +19569,7 @@ def register_route_backend_chats(bp):
                             group_id=agent_group_id_for_usage,
                             conversation_id=conversation_id,
                             message_id=assistant_message_id,
-                            model=final_model_used if use_agent_streaming else gpt_model,
+                            model=agent_executor_model_used or final_model_used,
                             agent_catalog_key=agent_catalog_key_for_usage,
                         )
 
@@ -19445,6 +19622,8 @@ def register_route_backend_chats(bp):
                         if selected_agent_metadata:
                             user_message_doc.setdefault('metadata', {})['agent_selection'] = selected_agent_metadata
                         user_message_doc.setdefault('metadata', {})['evidence_ledger'] = turn_evidence_ledger
+                        if central_synthesis_metadata:
+                            user_message_doc.setdefault('metadata', {})['central_synthesis'] = central_synthesis_metadata
                         cosmos_messages_container.upsert_item(user_message_doc)
                     except Exception as e:
                         debug_print(f"Warning: Could not update streaming user message metadata: {e}")
@@ -19539,6 +19718,23 @@ def register_route_backend_chats(bp):
                     error_msg = str(e)
                     debug_print(f"Error during streaming: {error_msg}")
 
+                    if (
+                        central_synthesis_metadata
+                        and central_synthesis_metadata.get('status') == 'pending'
+                    ):
+                        try:
+                            persist_central_synthesis_state('failed')
+                        except Exception as synthesis_state_error:
+                            log_event(
+                                '[CentralSynthesis] Failed to persist failed synthesis state',
+                                extra={
+                                    'conversation_id': conversation_id,
+                                    'run_id': turn_orchestration_plan.get('run_id'),
+                                    'error': str(synthesis_state_error),
+                                },
+                                level=logging.WARNING,
+                            )
+
                     # Save partial response if we have content
                     if accumulated_content:
                         current_assistant_thread_id = str(uuid.uuid4())
@@ -19576,6 +19772,7 @@ def register_route_backend_chats(bp):
                                 'history_context': history_debug_info,
                                 'orchestration': turn_orchestration_plan,
                                 'evidence_ledger': turn_evidence_ledger,
+                                'central_synthesis': central_synthesis_metadata,
                                 'capability_usage': build_streaming_capability_usage(),
                                 'source_review': compact_source_review_result_for_metadata(source_review_result),
                                 'deep_research': deep_research_result,
@@ -19601,6 +19798,7 @@ def register_route_backend_chats(bp):
                             'error': error_msg,
                             'orchestration': turn_orchestration_plan,
                             'evidence_ledger': turn_evidence_ledger,
+                            'central_synthesis': central_synthesis_metadata,
                         },
                     }
                     yield f"data: {json.dumps(partial_error_payload)}\n\n"

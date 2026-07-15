@@ -2,7 +2,7 @@
 # test_agent_action_evidence_contract.py
 """
 Functional test for the generic agent/action evidence collection contract.
-Version: 0.250.061
+Version: 0.250.062
 Implemented in: 0.250.061
 
 This test ensures selected agents and actions collect governed evidence into the
@@ -315,7 +315,10 @@ def test_streaming_and_document_action_paths_apply_contract_before_persistence()
     assert 'baseline_agent_invocation_count = len(' in route_source
     assert 'agent_plugin_invocations = get_new_plugin_invocations(' in route_source
     assert 'executor_evidence_content += chunk_content' in route_source
-    assert 'accumulated_content = build_agent_action_evidence_status_message(' in route_source
+    assert 'evidence_status_message = build_agent_action_evidence_status_message(' in route_source
+    assert "yield emit_thought('evidence_collection', evidence_status_message)" in route_source
+    assert 'central_synthesis_context = build_grounded_image_central_synthesis_context(' in route_source
+    assert 'synthesis_response = gpt_client.chat.completions.create(**synthesis_params)' in route_source
     assert 'evidence_collection_task=agent_evidence_task' in route_source
     assert "'evidence_collection': action_evidence_task," in route_source
     assert '_set_authorized_chat_request_context(user_id, conversation_id, action_scope_context)' in route_source
@@ -327,11 +330,19 @@ def test_streaming_and_document_action_paths_apply_contract_before_persistence()
         route_source.index('if agent_evidence_task:'),
     )
     status_message_index = route_source.index(
-        'accumulated_content = build_agent_action_evidence_status_message(',
+        'evidence_status_message = build_agent_action_evidence_status_message(',
         apply_index,
     )
-    persist_index = route_source.index("'evidence_ledger': turn_evidence_ledger,", status_message_index)
-    assert apply_index < status_message_index < persist_index
+    central_synthesis_index = route_source.index(
+        'central_synthesis_context = build_grounded_image_central_synthesis_context(',
+        status_message_index,
+    )
+    finalizer_index = route_source.index(
+        'synthesis_response = gpt_client.chat.completions.create(**synthesis_params)',
+        central_synthesis_index,
+    )
+    persist_index = route_source.index("'evidence_ledger': turn_evidence_ledger,", finalizer_index)
+    assert apply_index < status_message_index < central_synthesis_index < finalizer_index < persist_index
 
 
 if __name__ == '__main__':

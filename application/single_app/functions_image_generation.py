@@ -23,6 +23,8 @@ IMAGE_PROPOSAL_GUIDANCE_MARKER = '[Opt-in Image Generation Proposal Guidance]'
 IMAGE_PROPOSAL_PROMPT_MAX_LENGTH = 4000
 IMAGE_PROPOSAL_TEXT_MAX_LENGTH = 600
 IMAGE_PROPOSAL_ID_MAX_LENGTH = 120
+IMAGE_PROPOSAL_METADATA_ID_MAX_LENGTH = 160
+IMAGE_PROPOSAL_METADATA_MAX_ITEMS = 24
 
 IMAGE_PROPOSAL_REQUEST_MARKERS = (
     'image',
@@ -80,7 +82,11 @@ Use this exact fenced block shape and valid JSON only:
   "prompt": "Detailed image-generation prompt with subject, composition, labels, style, accessibility/readability constraints, and any source context needed.",
   "visualType": "timeline|diagram|illustration|infographic|map|scene|other",
   "slideNumber": 9,
-  "context": "Brief source context"
+    "context": "Brief source context",
+    "evidenceIds": ["fact_or_result_id"],
+    "sourceSummary": "Friendly summary of the sources used",
+    "missingEvidence": ["Requested evidence that was not verified"],
+    "referenceImageIds": ["verified_image_reference_id"]
 }}
 ```
 
@@ -96,6 +102,60 @@ Rules:
 """.strip()
 
 
+def build_grounded_image_synthesis_profile():
+    """Return image-specific output rules for the generic central finalizer."""
+    return {
+        'type': 'image_proposal',
+        'instructions': [
+            'Start with a brief evidence summary and disclose material missing evidence in prose.',
+            'Emit simpleimage proposals only when supported evidence is sufficient for a useful visual.',
+            'Return every proposal as valid JSON inside its own fenced simpleimage block.',
+            'Use only supported or user-provided facts from the evidence ledger in proposal descriptions and prompts.',
+            'Omit unsupported details or label them explicitly as placeholders; never turn unsupported facts into claims.',
+            'Use generic person icons for collaborators unless the ledger contains verified photo references for them.',
+            'Use selected-image visual features only when they appear in supported selected-image evidence.',
+            'Keep every image prompt self-contained, provider-ready, and under 4000 characters.',
+            'Keep proposals user-approvable and never claim image generation already happened.',
+            'Reference only evidence, result, artifact, or image IDs retained in the compact evidence ledger.',
+            'Use multiple proposals only for distinct requested purposes, not decorative duplicates.',
+        ],
+        'schema': {
+            'format': 'assistant_text_with_fenced_blocks',
+            'block_language': INLINE_IMAGE_PROPOSAL_BLOCK_LANGUAGE,
+            'proposal_version': 1,
+            'required_fields': [
+                'version',
+                'visualId',
+                'title',
+                'description',
+                'prompt',
+                'visualType',
+                'context',
+            ],
+            'optional_fields': [
+                'slideNumber',
+                'evidenceIds',
+                'sourceSummary',
+                'missingEvidence',
+                'referenceImageIds',
+            ],
+            'proposal_shape': {
+                'version': 1,
+                'visualId': 'short_stable_id',
+                'title': 'Short image title',
+                'description': 'One sentence describing the proposed image.',
+                'prompt': 'Self-contained provider-ready image prompt.',
+                'visualType': 'illustration|infographic|diagram|timeline|map|scene|other',
+                'context': 'Brief grounded source context.',
+                'evidenceIds': ['retained_fact_or_result_id'],
+                'sourceSummary': 'Friendly summary of sources used.',
+                'missingEvidence': ['Material requested evidence that was not verified.'],
+                'referenceImageIds': ['retained_image_reference_artifact_id'],
+            },
+        },
+    }
+
+
 def _trim_text(value, max_length):
     normalized_value = re.sub(r'\s+', ' ', str(value or '').strip())
     if len(normalized_value) <= max_length:
@@ -107,6 +167,28 @@ def _normalize_visual_id(value):
     normalized_value = re.sub(r'[^a-zA-Z0-9_.-]+', '_', str(value or '').strip())
     normalized_value = normalized_value.strip('._-')
     return normalized_value[:IMAGE_PROPOSAL_ID_MAX_LENGTH]
+
+
+def _normalize_metadata_id(value):
+    normalized_value = re.sub(r'[^a-zA-Z0-9_.:-]+', '_', str(value or '').strip())
+    return normalized_value.strip('._:-')[:IMAGE_PROPOSAL_METADATA_ID_MAX_LENGTH]
+
+
+def _normalize_metadata_list(values, *, identifiers=False):
+    if not isinstance(values, (list, tuple, set)):
+        return []
+    normalized_values = []
+    for value in values:
+        normalized_value = (
+            _normalize_metadata_id(value)
+            if identifiers
+            else _trim_text(value, IMAGE_PROPOSAL_TEXT_MAX_LENGTH)
+        )
+        if normalized_value and normalized_value not in normalized_values:
+            normalized_values.append(normalized_value)
+        if len(normalized_values) >= IMAGE_PROPOSAL_METADATA_MAX_ITEMS:
+            break
+    return normalized_values
 
 
 def normalize_image_proposal(raw_proposal):
@@ -134,6 +216,78 @@ def normalize_image_proposal(raw_proposal):
             normalized_proposal['slideNumber'] = int(slide_number)
         except (TypeError, ValueError):
             normalized_proposal['slideNumber'] = _trim_text(slide_number, 40)
+
+    evidence_ids = _normalize_metadata_list(
+        raw_proposal.get('evidenceIds', raw_proposal.get('evidence_ids')),
+        identifiers=True,
+    )
+    if evidence_ids:
+        normalized_proposal['evidenceIds'] = evidence_ids
+
+    source_summary = _trim_text(
+        raw_proposal.get('sourceSummary', raw_proposal.get('source_summary')),
+        IMAGE_PROPOSAL_TEXT_MAX_LENGTH,
+    )
+    if source_summary:
+        normalized_proposal['sourceSummary'] = source_summary
+
+    missing_evidence = _normalize_metadata_list(
+        raw_proposal.get('missingEvidence', raw_proposal.get('missing_evidence')),
+    )
+    if missing_evidence:
+        normalized_proposal['missingEvidence'] = missing_evidence
+
+    reference_image_ids = _normalize_metadata_list(
+        raw_proposal.get('referenceImageIds', raw_proposal.get('reference_image_ids')),
+        identifiers=True,
+    )
+    if reference_image_ids:
+        normalized_proposal['referenceImageIds'] = reference_image_ids
+
+    return normalized_proposal
+
+
+def constrain_image_proposal_to_evidence_ledger(proposal, evidence_ledger):
+    """Retain proposal lineage IDs only when the source ledger proves them."""
+    normalized_proposal = normalize_image_proposal(proposal)
+    if not isinstance(evidence_ledger, dict):
+        normalized_proposal.pop('evidenceIds', None)
+        normalized_proposal.pop('referenceImageIds', None)
+        return normalized_proposal
+
+    known_evidence_ids = {
+        str(entry.get('id'))
+        for section in ('facts', 'results', 'citations', 'artifacts')
+        for entry in (evidence_ledger.get(section) or [])
+        if isinstance(entry, dict) and entry.get('id')
+    }
+    known_reference_image_ids = {
+        str(artifact.get('id'))
+        for artifact in (evidence_ledger.get('artifacts') or [])
+        if isinstance(artifact, dict)
+        and artifact.get('id')
+        and artifact.get('type') == 'image_reference'
+    }
+
+    retained_evidence_ids = [
+        evidence_id
+        for evidence_id in normalized_proposal.get('evidenceIds') or []
+        if evidence_id in known_evidence_ids
+    ]
+    if retained_evidence_ids:
+        normalized_proposal['evidenceIds'] = retained_evidence_ids
+    else:
+        normalized_proposal.pop('evidenceIds', None)
+
+    retained_reference_image_ids = [
+        reference_id
+        for reference_id in normalized_proposal.get('referenceImageIds') or []
+        if reference_id in known_reference_image_ids
+    ]
+    if retained_reference_image_ids:
+        normalized_proposal['referenceImageIds'] = retained_reference_image_ids
+    else:
+        normalized_proposal.pop('referenceImageIds', None)
 
     return normalized_proposal
 

@@ -2,6 +2,17 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.062)**
+
+#### New Features
+
+*   **Chat Orchestration Central Synthesis Contract**
+    *   Added a generic central finalizer contract that combines a completed compact evidence ledger, original request, missing/conflicting evidence, and an output profile into one coherent response or artifact proposal.
+    *   Grounded image requests now prove the contract end to end: selected agents collect evidence without owning the answer, and the configured chat model produces user-approvable `simpleimage` proposals only after evidence reaches a terminal state.
+    *   Image proposals can retain bounded evidence IDs, friendly source summaries, missing-evidence notes, and verified reference-image IDs; approval revalidates lineage against the authorized source message ledger before generation.
+    *   Unsupported fact text is excluded from synthesis inputs, unresolved evidence fails closed instead of falling back to an ungrounded response, and synthesis lifecycle metadata preserves pending, completed, failed, or cancelled outcomes.
+    *   (Ref: microsoft/simplechat#1021, `functions_central_synthesis.py`, `functions_image_generation.py`, `route_backend_chats.py`, `chat-inline-image-proposals.js`, `CHAT_TURN_ORCHESTRATION.md`)
+
 ### **(v0.250.061)**
 
 #### New Features
