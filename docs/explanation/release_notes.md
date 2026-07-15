@@ -2,6 +2,17 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.066)**
+
+#### New Features
+
+*   **Governed Chat Capability Discovery And User Choice**
+    *   Added a server-authoritative inventory and deterministic requirement matching for Workspace Search, Analyze, Compare, Image, Web Search, URL Access, and Deep Research while keeping simple timeless questions on the direct path.
+    *   Unselected authorized capabilities can now be recommended through one persisted inline choice card; selected capabilities remain required, declined capabilities are prohibited for the turn, and unavailable, unauthorized, or policy-blocked capabilities are never offered.
+    *   Capability decisions and resume claims are authenticated, ETag-protected, idempotent, linked to the exact source turn, and revalidated against current configuration, roles, scopes, and document access before child-run execution.
+    *   External discovery sends a minimized current-message-only query, omits detected personal identifiers by default, and requires a separately labeled choice before including a supplied address for parcel-specific research.
+    *   (Ref: microsoft/simplechat#1021, `functions_chat_capabilities.py`, `functions_chat_capability_choices.py`, `functions_chat_capability_persistence.py`, `route_backend_chats.py`, `chat-capability-choice.js`, `CHAT_TURN_ORCHESTRATION.md`)
+
 ### **(v0.250.064)**
 
 #### User Interface Enhancements

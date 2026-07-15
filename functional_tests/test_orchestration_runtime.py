@@ -2,7 +2,7 @@
 # test_orchestration_runtime.py
 """
 Functional test for the request-scoped orchestration runtime.
-Version: 0.250.064
+Version: 0.250.066
 Implemented in: 0.250.063
 
 This test ensures direct and coordinated plans execute through one bounded graph
@@ -710,7 +710,9 @@ def test_chat_routes_persist_and_gate_request_scoped_runtime():
     assert 'fail_orchestration_run(' in route_source
     assert 'stream_session.is_cancel_requested if stream_session else None' in route_source
     assert "error_type='stream_ended_before_runtime_completion'" in route_source
-    assert 'active_runtime and not active_runtime.completed_at' in route_source
+    assert 'and not active_runtime.completed_at' in route_source
+    assert "and not locals().get('orchestration_waiting_for_choice')" in route_source
+    assert "turn_orchestration_run.status = 'awaiting_user_choice'" in route_source
     assert "'partial_content': document_action_reply," in route_source
     assert "}, 409" in route_source
     assert route_source.count("user_message_doc['metadata'] = user_metadata") >= 8

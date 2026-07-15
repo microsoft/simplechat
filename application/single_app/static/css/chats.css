@@ -1,5 +1,97 @@
 /* chats.css */
 
+.sc-capability-choice-card {
+  margin-top: 0.85rem;
+  padding: 0.9rem;
+  border: 1px solid rgba(13, 110, 253, 0.24);
+  border-left: 4px solid #0d6efd;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bs-body-bg) 94%, #0d6efd 6%);
+  color: var(--bs-body-color);
+  overflow-wrap: anywhere;
+}
+
+.sc-capability-choice-header {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin-bottom: 0.45rem;
+}
+
+.sc-capability-choice-title {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.35;
+  font-weight: 650;
+}
+
+.sc-capability-choice-reason,
+.sc-capability-choice-notice,
+.sc-capability-choice-sensitive-notice {
+  margin: 0 0 0.65rem;
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+
+.sc-capability-choice-notice,
+.sc-capability-choice-sensitive-notice {
+  padding: 0.55rem 0.65rem;
+  border-radius: 4px;
+}
+
+.sc-capability-choice-notice {
+  border: 1px solid rgba(13, 202, 240, 0.28);
+  background: rgba(13, 202, 240, 0.08);
+}
+
+.sc-capability-choice-sensitive-notice {
+  border: 1px solid rgba(255, 193, 7, 0.35);
+  background: rgba(255, 193, 7, 0.1);
+}
+
+.sc-capability-choice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.sc-capability-choice-button {
+  min-height: 44px;
+  max-width: 100%;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  white-space: normal;
+  text-align: center;
+}
+
+.sc-capability-choice-option-meta {
+  flex-basis: 100%;
+  font-size: 0.75rem;
+  line-height: 1.25;
+  opacity: 0.82;
+}
+
+.sc-capability-choice-status {
+  min-height: 1.35rem;
+  margin-top: 0.65rem;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+@media (max-width: 575.98px) {
+  .sc-capability-choice-actions {
+    flex-direction: column;
+  }
+
+  .sc-capability-choice-button {
+    width: 100%;
+  }
+}
+/* chats.css */
+
 /* Prevent initial layout shift by disabling transitions on page load */
 .no-transitions *,
 .no-transitions #left-pane,
