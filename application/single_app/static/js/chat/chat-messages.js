@@ -4962,7 +4962,7 @@ export function appendMessage(
       applyMaskedState(messageDiv, fullMessageObject.metadata);
     } else {
       hydrateInlineCharts(messageDiv);
-      hydrateInlineImageProposals(messageDiv);
+      hydrateInlineImageProposals(messageDiv, fullMessageObject?.metadata || null);
     }
 
     // --- Attach Event Listeners specifically for AI message ---
@@ -8013,7 +8013,7 @@ function applyMaskedState(messageDiv, metadata = {}) {
   }
 
   hydrateInlineCharts(messageDiv);
-  hydrateInlineImageProposals(messageDiv);
+  hydrateInlineImageProposals(messageDiv, nextMetadata);
   updateMaskControls(messageDiv, nextMetadata);
 }
 

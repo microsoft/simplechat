@@ -2,7 +2,7 @@
 # test_chat_stream_stop_control.py
 """
 Functional test for chat stream stop control.
-Version: 0.250.063
+Version: 0.250.064
 Implemented in: 0.241.097
 
 This test ensures chat streams expose a user-scoped cancellation endpoint,
@@ -39,7 +39,7 @@ def test_chat_stream_stop_control_wiring() -> None:
     collaboration_js_content = read_text("application/single_app/static/js/chat/chat-collaboration.js")
     feature_doc_content = read_text("docs/explanation/features/v0.241.097/CHAT_STREAM_STOP_CONTROL.md")
 
-    assert_contains(config_content, 'VERSION = "0.250.063"', "config version")
+    assert_contains(config_content, 'VERSION = "0.250.064"', "config version")
 
     assert_contains(route_content, "STREAM_STATUS_CANCEL_REQUESTED = 'cancel_requested'", "chat route")
     assert_contains(route_content, "STREAM_STATUS_CANCELED = 'canceled'", "chat route")

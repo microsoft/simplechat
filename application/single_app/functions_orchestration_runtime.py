@@ -605,12 +605,20 @@ def _progress_message(node, status):
 def _emit_progress(run, node, progress_callback):
     if progress_callback is None:
         return
+    node_index = next(
+        index
+        for index, runtime_node in enumerate(run.nodes)
+        if runtime_node.id == node.id
+    )
     event = {
         'version': ORCHESTRATION_RUNTIME_VERSION,
         'run_id': run.run_id,
         'node_id': node.id,
+        'node_index': node_index,
+        'node_count': len(run.nodes),
         'node_type': node.type,
         'capability': node.capability,
+        'required': node.required,
         'status': node.status,
         'message': _progress_message(node, node.status),
     }

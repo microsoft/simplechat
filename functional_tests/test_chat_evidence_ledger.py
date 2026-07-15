@@ -2,7 +2,7 @@
 # test_chat_evidence_ledger.py
 """
 Functional test for the generic chat result and evidence ledger.
-Version: 0.250.063
+Version: 0.250.064
 Implemented in: 0.250.059
 
 This test ensures orchestration evidence remains output-neutral, provenance-aware,

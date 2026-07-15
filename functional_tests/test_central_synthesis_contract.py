@@ -2,7 +2,7 @@
 # test_central_synthesis_contract.py
 """
 Functional test for the generic central synthesis contract.
-Version: 0.250.063
+Version: 0.250.064
 Implemented in: 0.250.062
 
 This test ensures grounded image proposals are finalized only from completed,
@@ -346,6 +346,10 @@ def test_streaming_route_centralizes_both_grounded_image_paths():
     assert 'synthesis_response = gpt_client.chat.completions.create(**synthesis_params)' in route_source
     assert "set_evidence_ledger_status(turn_evidence_ledger, 'completed')" in route_source
     assert 'constrain_image_proposal_to_evidence_ledger(' in route_source
+    assert 'approval_review = build_image_proposal_approval_review(' in route_source
+    assert "if approval_review['state'] == 'blocked':" in route_source
+    assert "data.get('confirm_partial') is not True" in route_source
+    assert "return jsonify({'error': 'Source assistant message not found'}), 404" in route_source
     assert "persist_central_synthesis_state('pending')" in route_source
     assert "persist_central_synthesis_state('failed')" in route_source
     assert "persist_central_synthesis_state('cancelled')" in route_source

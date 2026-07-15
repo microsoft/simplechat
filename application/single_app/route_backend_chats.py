@@ -145,6 +145,7 @@ from functions_orchestration_runtime import (
 from functions_image_messages import build_image_message_documents, decode_image_content
 from functions_icon_utils import normalize_icon_payload
 from functions_image_generation import (
+    build_image_proposal_approval_review,
     build_grounded_image_synthesis_profile,
     build_image_proposal_guidance_message,
     constrain_image_proposal_to_evidence_ledger,
@@ -11747,6 +11748,60 @@ def register_route_backend_chats(bp):
 
         return user_metadata
 
+    def _build_orchestration_stream_thought_payloads(event):
+        event = event if isinstance(event, dict) else {}
+        node_id = str(event.get('node_id') or '').strip()[:160]
+        node_type = str(event.get('node_type') or '').strip()[:80]
+        capability = str(event.get('capability') or '').strip()[:120]
+        status = str(event.get('status') or '').strip().lower()[:40]
+        run_id = str(event.get('run_id') or '').strip()[:160]
+        message = str(event.get('message') or 'Updating orchestration progress').strip()[:1000]
+        try:
+            node_index = max(0, min(int(event.get('node_index') or 0), 1000))
+        except (TypeError, ValueError):
+            node_index = 0
+        try:
+            node_count = max(node_index + 1, min(int(event.get('node_count') or 0), 1000))
+        except (TypeError, ValueError):
+            node_count = node_index + 1
+        approval_required = capability == 'image_proposal' and status == 'succeeded'
+        visible_node_count = node_count + 1 if approval_required else node_count
+        activity = {
+            'kind': 'orchestration_node',
+            'run_id': run_id,
+            'node_id': node_id,
+            'node_index': node_index,
+            'node_count': visible_node_count,
+            'node_type': node_type,
+            'capability': capability,
+            'status': status,
+            'required': bool(event.get('required')),
+        }
+        payloads = [{
+            'step_type': 'orchestration_progress',
+            'content': message,
+            'detail': f'node={node_id}; status={status}',
+            'activity': activity,
+        }]
+        if approval_required:
+            payloads.append({
+                'step_type': 'approval_required',
+                'content': 'Awaiting image proposal approval',
+                'detail': 'Review the evidence and proposal before generation.',
+                'activity': {
+                    'kind': 'orchestration_node',
+                    'run_id': run_id,
+                    'node_id': f'{node_id}:approval',
+                    'node_index': node_count,
+                    'node_count': visible_node_count,
+                    'node_type': 'approval',
+                    'capability': 'approval_required',
+                    'status': 'running',
+                    'required': True,
+                },
+            })
+        return payloads
+
     def _build_document_action_stream_activity_callback(publish_background_event, assistant_message_id):
         if not callable(publish_background_event) or not assistant_message_id:
             return None, None
@@ -12234,8 +12289,9 @@ def register_route_backend_chats(bp):
                 )
 
         def publish_orchestration_runtime_progress(event):
-            if callable(publish_stream_thought):
-                publish_stream_thought(event.get('message') or 'Updating orchestration progress')
+            if callable(stream_activity_callback):
+                for thought_payload in _build_orchestration_stream_thought_payloads(event):
+                    stream_activity_callback(thought_payload)
 
         def document_action_cancel_requested():
             return bool(callable(cancel_requested) and cancel_requested())
@@ -12903,6 +12959,7 @@ def register_route_backend_chats(bp):
                 or ''
             ).strip()
             source_evidence_ledger = None
+            source_orchestration_runtime = None
             if source_assistant_message_id:
                 try:
                     source_message = cosmos_messages_container.read_item(
@@ -12919,12 +12976,28 @@ def register_route_backend_chats(bp):
                         else {}
                     )
                     source_evidence_ledger = source_metadata.get('evidence_ledger')
+                    source_orchestration_runtime = source_metadata.get('orchestration_runtime')
                 except CosmosResourceNotFoundError:
-                    source_assistant_message_id = ''
+                    return jsonify({'error': 'Source assistant message not found'}), 404
             proposal = constrain_image_proposal_to_evidence_ledger(
                 proposal,
                 source_evidence_ledger,
             )
+            approval_review = build_image_proposal_approval_review(
+                source_evidence_ledger,
+                source_orchestration_runtime,
+                proposal,
+            )
+            if approval_review['state'] == 'blocked':
+                return jsonify({
+                    'error': approval_review['message'],
+                    'approval_review': approval_review,
+                }), 409
+            if approval_review['requires_confirmation'] and data.get('confirm_partial') is not True:
+                return jsonify({
+                    'error': approval_review['message'],
+                    'approval_review': approval_review,
+                }), 409
 
             image_result = generate_chat_image_message(
                 settings=settings,
@@ -12948,6 +13021,7 @@ def register_route_backend_chats(bp):
                 response_metadata['image_proposal'] = image_doc_metadata['image_proposal']
             image_result.update({
                 'conversation_title': conversation_item.get('title'),
+                'approval_review': approval_review,
                 'image_message': {
                     'id': image_doc.get('id') or image_result.get('message_id'),
                     'conversation_id': conversation_id,
@@ -12964,6 +13038,8 @@ def register_route_backend_chats(bp):
             return jsonify(image_result), 200
         except CosmosResourceNotFoundError:
             return jsonify({'error': 'Conversation or source message not found'}), 404
+        except LookupError:
+            return jsonify({'error': 'Conversation not found'}), 404
         except PermissionError as exc:
             return jsonify({'error': str(exc)}), 403
         except ValueError as exc:
@@ -17520,10 +17596,16 @@ def register_route_backend_chats(bp):
 
                     return f"data: {json.dumps(payload)}\n\n"
 
-                def emit_thought(step_type, content, detail=None):
+                def emit_thought(step_type, content, detail=None, activity=None):
                     """Add a thought to Cosmos and return an SSE event string."""
-                    thought_tracker.add_thought(step_type, content, detail)
-                    return serialize_thought_event(step_type, content, thought_tracker.current_index - 1, detail=detail)
+                    thought_tracker.add_thought(step_type, content, detail, activity=activity)
+                    return serialize_thought_event(
+                        step_type,
+                        content,
+                        thought_tracker.current_index - 1,
+                        detail=detail,
+                        activity=activity,
+                    )
 
                 def queue_orchestration_runtime_progress(event):
                     orchestration_runtime_progress_events.append(dict(event))
@@ -17531,16 +17613,16 @@ def register_route_backend_chats(bp):
                 def drain_orchestration_runtime_progress():
                     queued_events = list(orchestration_runtime_progress_events)
                     orchestration_runtime_progress_events.clear()
-                    return [
-                        emit_thought(
-                            'orchestration',
-                            event.get('message') or 'Updating orchestration progress',
-                            detail=(
-                                f"node={event.get('node_id')}; status={event.get('status')}"
-                            ),
-                        )
-                        for event in queued_events
-                    ]
+                    thought_events = []
+                    for event in queued_events:
+                        for thought_payload in _build_orchestration_stream_thought_payloads(event):
+                            thought_events.append(emit_thought(
+                                thought_payload['step_type'],
+                                thought_payload['content'],
+                                detail=thought_payload.get('detail'),
+                                activity=thought_payload.get('activity'),
+                            ))
+                    return thought_events
 
                 def publish_live_plugin_thought(thought_payload):
                     if not callable(publish_background_event):

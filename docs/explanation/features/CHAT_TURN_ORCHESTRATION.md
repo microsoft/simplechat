@@ -1,6 +1,6 @@
 # Chat Turn Orchestration
 
-Implemented in version: **0.250.063**
+Implemented in version: **0.250.064**
 Associated issue: **[#1021](https://github.com/microsoft/simplechat/issues/1021)**
 
 ## Overview
@@ -197,6 +197,28 @@ Standard streaming uses `ActiveConversationStreamSession.is_cancel_requested()` 
 
 Streaming document actions check cancellation before and after their existing workflow call. The underlying Analyze/Compare workflow remains non-preemptive, so a cancellation received during that call discards its result before assistant persistence and closes the runtime when control returns. Required runtime failures return an explicit conflict response rather than persisting a final document-action answer.
 
+## Phase 7 Progress, Evidence Review, And Approval
+
+Phase 7 keeps orchestration inside the existing chat experience. Runtime node events now retain bounded `run_id`, `node_id`, node type, capability, required state, and lifecycle status in the existing thought stream. The browser groups updates for the same node, preserves first-seen execution order, and presents capability-specific labels for planning, selected images, workspace evidence, public web, selected agents/actions, source review, finalization, and image approval. Live progress uses `role="status"` and `aria-live="polite"`; completed progress remains available behind the existing collapsed Thoughts control without exposing model reasoning, raw evidence, or debug details.
+
+Grounded image proposal cards now derive a compact review from authorized assistant-message metadata and show:
+
+- Canonical source badges with used, reviewed, partial, reviewing, or unavailable state.
+- Concise source summaries and linked evidence-record counts.
+- Explicit missing-evidence notes, including requested sources that returned no usable evidence.
+- Selected reference-image previews when an authorized conversation image message can be served through the existing same-origin image route.
+- Responsive evidence and approval controls for desktop and mobile layouts.
+
+Approval has three states:
+
+- `ready`: evidence and runtime state are terminal and the proposal can be approved normally.
+- `confirmation_required`: a terminal partial outcome still contains supported evidence; the user must acknowledge that generation will use only the available evidence.
+- `blocked`: evidence or orchestration is active, cancelled, failed, or lacks usable support.
+
+The browser state is explanatory, not authoritative. The generation route reauthorizes the personal conversation, reads the exact source assistant message from that conversation, constrains proposal evidence and reference IDs to its persisted ledger, rebuilds the approval review, and validates the literal partial-confirmation boolean immediately before generation. A supplied source message that cannot be read from the authorized conversation fails instead of silently creating an unbound request. Model-authored source labels and arbitrary image URLs are not trusted.
+
+Users can edit or dismiss a proposal before generation, explicitly acknowledge a partial proposal, or stop the active chat stream through the existing cancellation control. These interventions remain scoped to the current request and proposal; Phase 7 does not add an admin approval queue or permit automatic write, sensitive, consequential, or over-budget actions.
+
 ## Security And Governance
 
 - Caller-supplied IDs are never treated as proof of authorization.
@@ -214,6 +236,9 @@ Streaming document actions check cancellation before and after their existing wo
 - Unsupported fact text is excluded from central synthesis payloads while explicit missing and conflict records remain available to the finalizer.
 - Central synthesis payload delimiters are escaped and source/user content is treated as data rather than executable instructions.
 - Proposal evidence and reference-image IDs are revalidated against the authorized source assistant message's persisted ledger before approval.
+- Approval state is recalculated from the authorized source ledger and runtime immediately before generation; a browser acknowledgment cannot override active, failed, cancelled, or supportless evidence.
+- Evidence badges use canonical server-known source types, and reference previews use only the existing authenticated same-origin image route for message-backed references.
+- Evidence summaries and missing-evidence notes are rendered as text, so source or model content cannot create executable markup.
 - Prompt content is not copied into orchestration metadata.
 - Selected capabilities are required attempts, but unavailable or unauthorized sources must be represented explicitly rather than bypassing access controls.
 - Agent/action task payloads describe the principal as `current_user` and omit caller-provided private identity and scope IDs.
@@ -293,6 +318,8 @@ Central synthesis coverage is in `functional_tests/test_central_synthesis_contra
 
 The existing desktop/mobile Playwright coverage in `ui_tests/test_chat_inline_image_proposal_cards.py` also verifies that normalized provenance metadata survives card rendering, prompt editing, and the approval request.
 
+Phase 7 proposal coverage additionally validates canonical source badges, missing-evidence disclosure, same-origin reference previews, inert markup-like evidence, normal approval, explicit partial-evidence acknowledgment, blocked approval, live accessibility state, 44px mobile actions, and responsive desktop/mobile behavior. `functional_tests/test_image_proposal_pipeline.py` validates the matching server review contract for ready, terminal-partial, active, cancelled, failed, and supportless states. `functional_tests/test_image_proposal_approval_route.py` directly validates owner access, foreign and missing conversations, cross-partition source messages, cross-turn and forged lineage removal, strict partial confirmation, and legacy no-ledger compatibility. `functional_tests/test_central_synthesis_contract.py` verifies that the authorized generation route wires the review after lineage constraints.
+
 Runtime coverage is in `functional_tests/test_orchestration_runtime.py` and validates:
 
 - Direct and coordinated turns share one run contract.
@@ -304,13 +331,15 @@ Runtime coverage is in `functional_tests/test_orchestration_runtime.py` and vali
 - Authorized evidence discovery success and fail-closed missing evidence.
 - Runtime-node provenance across normalized ledger entries.
 - Conversation, document, image, workspace, web, source-review, agent, action, response, and image-proposal node categories.
-- Standard streaming and document-action lifecycle, progress, cancellation, terminal cleanup, and metadata persistence wiring.
+- Standard streaming and document-action lifecycle, structured progress, cancellation, terminal cleanup, and metadata persistence wiring.
+
+Desktop/mobile coverage in `ui_tests/test_streaming_thought_progression.py` validates ordered node updates, capability labels, approval waiting, `aria-live` semantics, session isolation, and the existing collapsed completed-thought behavior.
 
 The stream heartbeat, background execution, lifecycle observability, new-conversation reattach, and stop-control contracts also validate that runtime cancellation preserves the existing SSE protocol and replay behavior.
 
 ## Known Limitations
 
-Phase 6 provides the request-scoped in-process runtime, with these deliberate boundaries:
+Phase 7 provides request-scoped progress, review, and image-proposal approval, with these deliberate boundaries:
 
 - Arbitrary governed tools are not yet discovered automatically.
 - Runs are not stored in a durable queue or Cosmos run store and cannot resume after process loss.
@@ -319,8 +348,9 @@ Phase 6 provides the request-scoped in-process runtime, with these deliberate bo
 - The legacy non-streaming compatibility path does not yet use Phase 3 collectors.
 - Outside the grounded-image proving profile, selected agents retain their existing response-streaming behavior. The runtime records this compatibility finalizer until central synthesis is generalized.
 - Analyze and Compare actions participate in runtime lifecycle and evidence normalization but retain their existing compatibility response finalizer. Grounded-image actions still return the evidence-status handoff rather than invoking central synthesis.
-- Phase 7 review, approval, intervention, and technical-detail UI is not included; Phase 6 reuses concise thought/progress events.
-- Automatic write, sensitive, consequential, or over-budget steps remain prohibited without a later approval runtime.
+- Approval review currently governs the grounded-image proving profile. Automatic write, sensitive, consequential, or over-budget steps remain prohibited until a generalized approval runtime is added.
+- Progress is live before response content begins and remains available through the collapsed Thoughts view after completion; it does not expose chain-of-thought or adapter debug details.
+- Reference thumbnails are shown only for authorized conversation image messages. Document-backed image evidence remains labeled when no existing same-origin preview route applies.
 - The live chat payload does not yet expose a dedicated selected-image-reference list; selected workspace images are represented as documents, and explicit headshot/reference intent can be detected from the message until a reference control is wired.
 
-Durable persistence, intervention UX, broader finalizers, and generalized artifact generation remain later roadmap phases.
+Durable run persistence, process-loss resume, generalized consequential-action approval, broader finalizers, and generalized artifact generation remain later roadmap phases.
