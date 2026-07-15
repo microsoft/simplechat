@@ -65,6 +65,25 @@ AGENT_INSTRUCTION_FIELD_LIMIT = 6000
 AGENT_INSTRUCTION_OUTPUT_TOKEN_LIMIT = 1400
 
 
+def _build_agent_log_summary(agent):
+    agent = agent if isinstance(agent, dict) else {}
+    descriptor = (
+        agent.get('orchestrator_descriptor')
+        if isinstance(agent.get('orchestrator_descriptor'), dict)
+        else {}
+    )
+    return {
+        'agent_type': str(agent.get('agent_type') or 'local').strip().lower()[:40],
+        'is_global': agent.get('is_global') is True,
+        'is_group': agent.get('is_group') is True,
+        'is_enabled': agent.get('is_enabled') is not False,
+        'discoverable_by_orchestrator': agent.get('discoverable_by_orchestrator') is True,
+        'action_count': len(agent.get('actions_to_load') or []),
+        'capability_tag_count': len(descriptor.get('capability_tags') or []),
+        'evidence_type_count': len(descriptor.get('evidence_types') or []),
+    }
+
+
 def _redact_catalog_agent_instructions(catalog):
     redacted_catalog = []
     for agent in catalog or []:
@@ -1645,11 +1664,11 @@ def add_agent():
             return jsonify({'error': str(exc)}), 400
         validation_error = validate_agent(cleaned_agent)
         if validation_error:
-            log_event("Add agent failed: validation error", level=logging.WARNING, extra={"action": "add", "agent": cleaned_agent, "error": validation_error})
+            log_event("Add agent failed: validation error", level=logging.WARNING, extra={"action": "add", "agent_summary": _build_agent_log_summary(cleaned_agent), "error": validation_error})
             return jsonify({'error': validation_error}), 400
         # Prevent duplicate names (case-insensitive)
         if any(a['name'].lower() == cleaned_agent['name'].lower() for a in agents):
-            log_event("Add agent failed: duplicate name", level=logging.WARNING, extra={"action": "add", "agent": cleaned_agent})
+            log_event("Add agent failed: duplicate name", level=logging.WARNING, extra={"action": "add", "agent_summary": _build_agent_log_summary(cleaned_agent)})
             return jsonify({'error': 'Agent with this name already exists.'}), 400
         # Assign a new GUID as id unless this is the default agent (which should have a static GUID)
         if not cleaned_agent.get('default_agent', False):
@@ -1674,7 +1693,7 @@ def add_agent():
             )
 
         log_agent_creation(user_id=str(get_current_user_id()), agent_id=cleaned_agent.get('id', ''), agent_name=cleaned_agent.get('name', ''), agent_display_name=cleaned_agent.get('display_name', ''), scope='global')
-        log_event("Agent added", extra={"action": "add", "agent": {k: v for k, v in cleaned_agent.items() if k != 'id'}, "user": str(get_current_user_id())})
+        log_event("Agent added", extra={"action": "add", "agent_summary": _build_agent_log_summary(cleaned_agent), "user": str(get_current_user_id())})
         # --- HOT RELOAD TRIGGER ---
         setattr(builtins, "kernel_reload_needed", True)
         return jsonify({'success': True})
@@ -1772,11 +1791,11 @@ def edit_agent(agent_name):
             return jsonify({'error': str(exc)}), 400
         validation_error = validate_agent(cleaned_agent)
         if validation_error:
-            log_event("Edit agent failed: validation error", level=logging.WARNING, extra={"action": "edit", "agent": cleaned_agent, "error": validation_error})
+            log_event("Edit agent failed: validation error", level=logging.WARNING, extra={"action": "edit", "agent_summary": _build_agent_log_summary(cleaned_agent), "error": validation_error})
             return jsonify({'error': validation_error}), 400
         # --- Require at least one deployment field ---
         if not (cleaned_agent.get('azure_openai_gpt_deployment') or cleaned_agent.get('azure_agent_apim_gpt_deployment')):
-            log_event("Edit agent failed: missing deployment field", level=logging.WARNING, extra={"action": "edit", "agent": cleaned_agent})
+            log_event("Edit agent failed: missing deployment field", level=logging.WARNING, extra={"action": "edit", "agent_summary": _build_agent_log_summary(cleaned_agent)})
             return jsonify({'error': 'Agent must have either azure_openai_gpt_deployment or azure_agent_apim_gpt_deployment set.'}), 400
         
         # Find the agent to update

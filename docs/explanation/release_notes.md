@@ -2,6 +2,17 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.067)**
+
+#### New Features
+
+*   **Governed Chat Agent Discovery And Recommendation**
+    *   Added explicit opt-in discovery for authorized unselected personal, global, and group local agents without attached actions, using bounded read-only descriptors and the existing Phase 8A capability-choice card, decision, and resume contracts.
+    *   Catalog construction now filters current ownership, global policy, group membership/status, enabled/hidden state, runtime type, and safe policy before any agent can reach proposal metadata; duplicate names use opaque scope-namespaced references.
+    *   Approved agents are canonically reauthorized at decision, resume, and invocation, refresh assigned knowledge, invalidate if actions are attached, and execute once as required `discovery_approved` evidence sources before central finalization without changing saved toolbar selection.
+    *   Agent instructions, secrets, endpoints, connector settings, hidden tools, action arguments, canonical IDs, and inaccessible catalog details remain outside planner, proposal, browser, citation, and discovered-run telemetry surfaces; inherited tools are disabled for the approved evidence call.
+    *   (Ref: microsoft/simplechat#1021, `functions_chat_capabilities.py`, `functions_agent_catalog.py`, `functions_chat_capability_choices.py`, `route_backend_chats.py`, `chat-capability-choice.js`, `CHAT_TURN_ORCHESTRATION.md`)
+
 ### **(v0.250.066)**
 
 #### New Features

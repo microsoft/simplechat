@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
+# test_agent_stream_tool_retry_fallback.py
 """
 Functional test for agent streaming tool fallback.
-Version: 0.239.201
+Version: 0.250.067
 Implemented in: 0.239.201
 
 This test ensures Semantic Kernel agent streaming retries once with tool
@@ -40,7 +41,9 @@ def test_agent_stream_retry_wiring() -> None:
     chats_path = ROOT / "application" / "single_app" / "route_backend_chats.py"
 
     assert_contains(chats_path, "candidate_retry_plan = classify_agent_stream_retry_mode(stream_error)")
-    assert_contains(chats_path, "if candidate_retry_plan and not accumulated_content and attempt_number == 0:")
+    assert_contains(chats_path, "and not accumulated_content")
+    assert_contains(chats_path, "and not executor_evidence_content")
+    assert_contains(chats_path, "and attempt_number == 0")
     assert_contains(chats_path, "retry_state = apply_agent_stream_retry_mode(")
     assert_contains(chats_path, "restore_agent_stream_retry_state(selected_agent, retry_state)")
     assert_contains(chats_path, "Retrying agent stream without tool calling")

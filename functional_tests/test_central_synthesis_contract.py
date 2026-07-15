@@ -2,7 +2,7 @@
 # test_central_synthesis_contract.py
 """
 Functional test for the generic central synthesis contract.
-Version: 0.250.064
+Version: 0.250.067
 Implemented in: 0.250.062
 
 This test ensures grounded image proposals are finalized only from completed,
@@ -341,7 +341,10 @@ def test_streaming_route_centralizes_both_grounded_image_paths():
 
     assert route_source.count(
         'central_synthesis_context = build_grounded_image_central_synthesis_context('
-    ) == 2
+    ) == 1
+    assert route_source.count(
+        'central_synthesis_context = build_agent_evidence_central_synthesis_context('
+    ) == 1
     assert "conversation_history_for_api = central_synthesis_context['messages']" in route_source
     assert 'synthesis_response = gpt_client.chat.completions.create(**synthesis_params)' in route_source
     assert "set_evidence_ledger_status(turn_evidence_ledger, 'completed')" in route_source
@@ -360,7 +363,7 @@ def test_streaming_route_centralizes_both_grounded_image_paths():
         route_source.index('if agent_evidence_task:'),
     )
     selected_agent_synthesis_index = route_source.index(
-        'central_synthesis_context = build_grounded_image_central_synthesis_context(',
+        'central_synthesis_context = build_agent_evidence_central_synthesis_context(',
         apply_index,
     )
     finalizer_index = route_source.index(

@@ -53,7 +53,7 @@ from urllib.parse import urlparse
 import threading
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 from config import *
-from flask import Response, copy_current_request_context, g, has_request_context, stream_with_context
+from flask import Response, copy_current_request_context, current_app, g, has_request_context, stream_with_context
 from functions_authentication import *
 from functions_search import *
 from functions_service_health import (
@@ -91,7 +91,12 @@ from functions_source_review import (
     URL_ACCESS_CONTEXT_CHAT,
 )
 from functions_agents import get_agent_id_by_name
-from functions_group import find_group_by_id, get_group_model_endpoints, get_user_role_in_group
+from functions_group import (
+    find_group_by_id,
+    get_group_model_endpoints,
+    get_user_role_in_group,
+    require_active_group,
+)
 from functions_chat import *
 from functions_content import generate_embedding, generate_embeddings_batch
 from functions_assistant_table_exports import (
@@ -113,11 +118,17 @@ from functions_chat_orchestration import (
     build_turn_orchestration_plan,
 )
 from functions_chat_capabilities import (
+    build_agent_capability_recommendation,
+    build_governed_agent_capability_inventory,
     build_governed_capability_inventory,
+    classify_agent_capability_requirements,
     classify_capability_requirements,
     match_governed_capabilities,
+    merge_capability_recommendations,
     normalize_capability_governance_modes,
+    resolve_governed_agent_capability_reference,
 )
+from functions_agent_catalog import build_authorized_agent_discovery_catalog
 from functions_chat_capability_choices import (
     CapabilityChoiceError,
     add_sensitive_external_query_options,
@@ -2003,6 +2014,24 @@ def _resolve_canonical_chat_agent(user_id, settings, requested_agent):
     if not isinstance(requested_agent, dict) or not requested_agent:
         return None
 
+    discovery_reference = str(
+        requested_agent.get('_orchestration_discovery_ref') or ''
+    ).strip()
+    if discovery_reference:
+        catalog = build_authorized_agent_discovery_catalog(
+            user_id,
+            settings=settings,
+        )
+        canonical_agent = resolve_governed_agent_capability_reference(
+            catalog,
+            discovery_reference,
+            reference_secret=_get_agent_discovery_reference_secret(),
+        )
+        if not canonical_agent:
+            return None
+        canonical_agent['_orchestration_discovery_ref'] = discovery_reference
+        return canonical_agent
+
     requested_id = str(requested_agent.get('id') or '').strip()
     requested_name = str(requested_agent.get('name') or '').strip()
     if not requested_id and not requested_name:
@@ -2110,18 +2139,69 @@ def _build_agent_selection_metadata(agent_info, assigned_knowledge_filters=None)
         }
         assigned_knowledge_enabled = bool(assigned_knowledge_filters)
     elif isinstance(agent_info, dict):
-        metadata = {
-            'selected_agent': agent_info.get('name') or agent_info.get('selected_agent'),
-            'agent_display_name': agent_info.get('display_name') or agent_info.get('agent_display_name'),
-            'is_global': agent_info.get('is_global', False),
-            'is_group': agent_info.get('is_group', False),
-            'group_id': agent_info.get('group_id'),
-            'group_name': agent_info.get('group_name'),
-            'agent_id': agent_info.get('id') or agent_info.get('agent_id'),
-            'agent_icon': agent_info.get('icon') or agent_info.get('agent_icon'),
-            'agent_tags': agent_info.get('tags') or agent_info.get('agent_tags') or [],
-            'catalog_key': agent_info.get('catalog_key'),
-        }
+        discovery_reference = str(
+            agent_info.get('_orchestration_discovery_ref') or ''
+        ).strip()
+        if discovery_reference:
+            descriptor = (
+                agent_info.get('orchestrator_descriptor')
+                if isinstance(agent_info.get('orchestrator_descriptor'), Mapping)
+                else {}
+            )
+            scope_class = str(agent_info.get('scope_type') or '').strip().lower()
+            if scope_class not in {'personal', 'global', 'group'}:
+                scope_class = (
+                    'group'
+                    if agent_info.get('is_group')
+                    else 'global'
+                    if agent_info.get('is_global')
+                    else 'personal'
+                )
+            display_name = str(
+                agent_info.get('display_name')
+                or agent_info.get('agent_display_name')
+                or agent_info.get('name')
+                or 'Specialized agent'
+            ).strip()[:120]
+            metadata = {
+                'selected_agent': display_name,
+                'agent_display_name': display_name,
+                'is_global': scope_class == 'global',
+                'is_group': scope_class == 'group',
+                'group_id': None,
+                'group_name': None,
+                'agent_id': discovery_reference,
+                'agent_icon': None,
+                'agent_tags': list(descriptor.get('capability_tags') or []),
+                'catalog_key': None,
+                'selection_origin': 'discovery_approved',
+                'scope_class': scope_class,
+                'discovery_descriptor': {
+                    'read_only': descriptor.get('read_only') is True,
+                    'external_data': descriptor.get('external_data') is True,
+                    'risk_class': str(descriptor.get('risk_class') or '').strip()[:40],
+                    'data_sensitivity': str(
+                        descriptor.get('data_sensitivity') or ''
+                    ).strip()[:40],
+                    'latency_class': str(descriptor.get('latency_class') or '').strip()[:40],
+                    'cost_class': str(descriptor.get('cost_class') or '').strip()[:40],
+                    'capability_tags': list(descriptor.get('capability_tags') or [])[:16],
+                    'evidence_types': list(descriptor.get('evidence_types') or [])[:16],
+                },
+            }
+        else:
+            metadata = {
+                'selected_agent': agent_info.get('name') or agent_info.get('selected_agent'),
+                'agent_display_name': agent_info.get('display_name') or agent_info.get('agent_display_name'),
+                'is_global': agent_info.get('is_global', False),
+                'is_group': agent_info.get('is_group', False),
+                'group_id': agent_info.get('group_id'),
+                'group_name': agent_info.get('group_name'),
+                'agent_id': agent_info.get('id') or agent_info.get('agent_id'),
+                'agent_icon': agent_info.get('icon') or agent_info.get('agent_icon'),
+                'agent_tags': agent_info.get('tags') or agent_info.get('agent_tags') or [],
+                'catalog_key': agent_info.get('catalog_key'),
+            }
         assigned_knowledge_enabled = bool(
             assigned_knowledge_filters
             or agent_info.get('assigned_knowledge_enabled')
@@ -2633,6 +2713,52 @@ def _resolve_server_chat_capability_inventory(
     )
 
 
+def _get_agent_discovery_reference_secret():
+    try:
+        configured_secret = current_app.config.get('SECRET_KEY')
+    except RuntimeError:
+        configured_secret = None
+    return configured_secret or SECRET_KEY
+
+
+def _build_server_agent_discovery_inventory(*, settings, user_id):
+    try:
+        catalog = build_authorized_agent_discovery_catalog(
+            user_id,
+            settings=settings,
+        )
+        inventory = build_governed_agent_capability_inventory(
+            catalog,
+            reference_secret=_get_agent_discovery_reference_secret(),
+        )
+        return catalog, inventory
+    except Exception as exc:
+        log_event(
+            '[AgentDiscovery] Governed catalog unavailable',
+            extra={'error_type': type(exc).__name__},
+            level=logging.WARNING,
+        )
+        return [], {'version': 1, 'agents': []}
+
+
+def _attach_governed_agent_inventory(
+    inventory,
+    *,
+    settings,
+    user_id,
+    selected_agent_present=False,
+):
+    updated_inventory = copy.deepcopy(dict(inventory or {}))
+    agent_inventory = {'version': 1, 'agents': []}
+    if not selected_agent_present:
+        _, agent_inventory = _build_server_agent_discovery_inventory(
+            settings=settings,
+            user_id=user_id,
+        )
+    updated_inventory['agents'] = copy.deepcopy(agent_inventory.get('agents') or [])
+    return updated_inventory
+
+
 def _build_server_capability_discovery(
     *,
     settings,
@@ -2642,6 +2768,7 @@ def _build_server_capability_discovery(
     user_message,
     selected_capability_ids,
     authorized_document_count=0,
+    selected_agent_present=False,
 ):
     inventory = _resolve_server_chat_capability_inventory(
         settings=settings,
@@ -2657,13 +2784,33 @@ def _build_server_capability_discovery(
         authorized_document_count=authorized_document_count,
     )
     match = match_governed_capabilities(inventory, requirements)
+    agent_requirements = classify_agent_capability_requirements(user_message)
+    inventory = _attach_governed_agent_inventory(
+        inventory,
+        settings=settings,
+        user_id=user_id,
+        selected_agent_present=selected_agent_present,
+    )
+    agent_inventory = {
+        'version': 1,
+        'agents': copy.deepcopy(inventory.get('agents') or []),
+    }
+    agent_recommendation = build_agent_capability_recommendation(
+        agent_inventory,
+        user_message,
+        selected_agent_present=selected_agent_present,
+        selected_capability_ids=selected_capability_ids,
+    )
     recommendation = add_sensitive_external_query_options(
-        match.get('recommendation'),
+        merge_capability_recommendations(
+            match.get('recommendation'),
+            agent_recommendation,
+        ),
         user_message,
     )
     return {
         'inventory': inventory,
-        'requirements': requirements,
+        'requirements': requirements + agent_requirements,
         'auto_capability_ids': list(match.get('auto_capability_ids') or []),
         'recommendation': recommendation,
     }
@@ -2966,6 +3113,12 @@ def _load_authorized_capability_proposal_context(
         selected_capability_ids=selected_capability_ids,
         authorized_document_count=len(authorized_documents) + len(authorized_task_documents),
     )
+    agent_catalog, agent_inventory = _build_server_agent_discovery_inventory(
+        settings=settings,
+        user_id=user_id,
+    )
+    refreshed_inventory = copy.deepcopy(refreshed_inventory)
+    refreshed_inventory['agents'] = copy.deepcopy(agent_inventory.get('agents') or [])
     provenance = (
         proposal_metadata.get('capability_provenance')
         if isinstance(proposal_metadata.get('capability_provenance'), Mapping)
@@ -2980,6 +3133,7 @@ def _load_authorized_capability_proposal_context(
         'scope_context': scope_context,
         'authorized_documents': authorized_documents + authorized_task_documents,
         'inventory': refreshed_inventory,
+        'agent_catalog': agent_catalog,
         'provenance': copy.deepcopy(dict(provenance)),
     }
 
@@ -3010,6 +3164,14 @@ def _claim_authorized_capability_resume(
     pending_effective_capability_ids = list(
         pending_decision.get('effective_capability_ids') or []
     )
+    pending_agent_ref = str(pending_decision.get('agent_ref') or '').strip()
+    canonical_discovered_agent = None
+    if pending_agent_ref:
+        canonical_discovered_agent = resolve_governed_agent_capability_reference(
+            context.get('agent_catalog') or [],
+            pending_agent_ref,
+            reference_secret=_get_agent_discovery_reference_secret(),
+        )
     authorized_document_count = len(context.get('authorized_documents') or [])
     if 'analyze' in pending_effective_capability_ids and authorized_document_count < 1:
         raise CapabilityChoiceError(
@@ -3097,6 +3259,21 @@ def _claim_authorized_capability_resume(
         context['resume_request'],
         effective_capability_ids,
     )
+    agent_ref = str(decision.get('agent_ref') or '').strip()
+    if agent_ref:
+        canonical_discovered_agent = resolve_governed_agent_capability_reference(
+            context.get('agent_catalog') or [],
+            agent_ref,
+            reference_secret=_get_agent_discovery_reference_secret(),
+        )
+        if not canonical_discovered_agent:
+            raise CapabilityChoiceError(
+                'the approved agent is no longer in the governed catalog',
+                code='agent_missing',
+            )
+        canonical_discovered_agent = copy.deepcopy(canonical_discovered_agent)
+        canonical_discovered_agent['_orchestration_discovery_ref'] = agent_ref
+        request_data['agent_info'] = canonical_discovered_agent
     external_query_mode = str(decision.get('external_query_mode') or 'minimized').strip().lower()
     if any(
         capability_id in {'web_search', 'url_access', 'deep_research'}
@@ -3118,6 +3295,8 @@ def _claim_authorized_capability_resume(
     }
     for capability_id in effective_capability_ids:
         capability_origins[capability_id] = 'discovery_approved'
+    if agent_ref:
+        capability_origins['selected_agent'] = 'discovery_approved'
     request_data['_capability_resume_context'] = {
         'proposal_id': proposal_id,
         'parent_run_id': claimed_proposal.get('run_id'),
@@ -3134,6 +3313,8 @@ def _claim_authorized_capability_resume(
             context['provenance'].get('proposed_capabilities') or claimed_proposal
         ),
         'effective_capability_ids': effective_capability_ids,
+        'agent_ref': agent_ref or None,
+        'agent_origin': 'discovery_approved' if agent_ref else None,
         'existing_user_message': copy.deepcopy(context['user_message_doc']),
     }
     context['proposal'] = claimed_proposal
@@ -5773,6 +5954,58 @@ def build_grounded_image_central_synthesis_context(user_message, orchestration_p
     return {
         'request': synthesis_request,
         'messages': build_central_synthesis_messages(synthesis_request),
+    }
+
+
+def build_agent_evidence_central_synthesis_context(
+    user_message,
+    orchestration_plan,
+    evidence_ledger,
+):
+    """Build the existing central-finalizer handoff for approved agent evidence."""
+    if not central_synthesis_is_ready(orchestration_plan, evidence_ledger):
+        return None
+    output_profile = (
+        build_grounded_image_synthesis_profile()
+        if orchestration_plan.get('grounded_image_generation_requested')
+        else None
+    )
+    synthesis_request = create_central_synthesis_request(
+        user_message,
+        orchestration_plan,
+        evidence_ledger,
+        output_profile=output_profile,
+    )
+    return {
+        'request': synthesis_request,
+        'messages': build_central_synthesis_messages(synthesis_request),
+    }
+
+
+def _requires_agent_evidence_collection(orchestration_plan, resume_context):
+    return bool(
+        orchestration_plan.get('grounded_image_generation_requested')
+        or (
+            isinstance(resume_context, Mapping)
+            and resume_context.get('agent_origin') == 'discovery_approved'
+        )
+    )
+
+
+def _build_discovered_agent_evidence_capability_metadata(agent_info):
+    descriptor = (
+        agent_info.get('orchestrator_descriptor')
+        if isinstance(agent_info, Mapping)
+        and isinstance(agent_info.get('orchestrator_descriptor'), Mapping)
+        else {}
+    )
+    return {
+        'capability_tags': list(descriptor.get('capability_tags') or [])[:16],
+        'evidence_types': list(descriptor.get('evidence_types') or [])[:16],
+        'required_permissions': [],
+        'uses_current_user_context': True,
+        'returns_citations': True,
+        'may_include_sensitive_data': False,
     }
 
 
@@ -11853,6 +12086,37 @@ def restore_agent_stream_retry_state(agent, retry_state):
         settings.function_choice_behavior = original_behavior
 
 
+def apply_discovered_agent_invocation_policy(agent, resume_context):
+    """Disable inherited tools and verbose telemetry for an approved discovered agent."""
+    if not (
+        agent
+        and isinstance(resume_context, Mapping)
+        and resume_context.get('agent_origin') == 'discovery_approved'
+    ):
+        return None
+    policy_state = {
+        'tool_state': apply_agent_stream_retry_mode(agent, 'disable_tools'),
+        'minimize_telemetry': bool(
+            getattr(agent, 'orchestration_minimize_telemetry', False)
+        ),
+    }
+    if hasattr(agent, 'orchestration_minimize_telemetry'):
+        agent.orchestration_minimize_telemetry = True
+    return policy_state
+
+
+def restore_discovered_agent_invocation_policy(agent, policy_state):
+    """Restore the selected-agent runtime after a governed discovered invocation."""
+    if not agent or not policy_state:
+        return
+    restore_agent_stream_retry_state(agent, policy_state.get('tool_state'))
+    if hasattr(agent, 'orchestration_minimize_telemetry'):
+        agent.orchestration_minimize_telemetry = policy_state.get(
+            'minimize_telemetry',
+            False,
+        )
+
+
 def register_route_backend_chats(bp):
     def build_background_stream_response(event_generator_factory, stream_session=None):
         """Run SSE generation in background execution so it survives disconnects."""
@@ -12903,6 +13167,13 @@ def register_route_backend_chats(bp):
                 authorized_document_count=len(authorized_action_documents),
             )
         )
+        if not capability_resume_context:
+            action_capability_inventory = _attach_governed_agent_inventory(
+                action_capability_inventory,
+                settings=settings,
+                user_id=user_id,
+                selected_agent_present=_has_chat_agent_selection(request_agent_info),
+            )
         rejected_selected_capabilities = _get_rejected_selected_capability_entries(
             action_capability_inventory,
             selected_builtin_capability_ids,
@@ -14112,6 +14383,12 @@ def register_route_backend_chats(bp):
                 conversation_id=conversation_id,
                 proposal_id=proposal_id,
             )
+            if option_id.startswith('agent:'):
+                resolve_governed_agent_capability_reference(
+                    context.get('agent_catalog') or [],
+                    option_id,
+                    reference_secret=_get_agent_discovery_reference_secret(),
+                )
             _, proposal, idempotent = persist_capability_decision(
                 cosmos_messages_container,
                 conversation_id=conversation_id,
@@ -14174,7 +14451,11 @@ def register_route_backend_chats(bp):
                 },
                 level=logging.WARNING,
             )
-            status_code = 409 if exc.code in conflict_codes or exc.code.startswith('capability_') else 400
+            status_code = 409 if (
+                exc.code in conflict_codes
+                or exc.code.startswith('capability_')
+                or exc.code.startswith('agent_')
+            ) else 400
             return jsonify({'error': str(exc), 'code': exc.code}), status_code
         except Exception as exc:
             log_event(
@@ -14753,6 +15034,12 @@ def register_route_backend_chats(bp):
                     len(compatibility_authorized_documents)
                     + len(auto_linked_chat_upload_document_ids)
                 ),
+            )
+            compatibility_capability_inventory = _attach_governed_agent_inventory(
+                compatibility_capability_inventory,
+                settings=settings,
+                user_id=user_id,
+                selected_agent_present=_has_chat_agent_selection(request_agent_info),
             )
             compatibility_rejected_capabilities = _get_rejected_selected_capability_entries(
                 compatibility_capability_inventory,
@@ -17465,6 +17752,9 @@ def register_route_backend_chats(bp):
             agent_scope_for_usage = 'personal'
             agent_group_id_for_usage = None
             agent_catalog_key_for_usage = None
+            agent_id_for_usage = getattr(selected_agent, 'id', None) if selected_agent else None
+            agent_name_for_usage = agent_name
+            agent_display_name_for_usage = agent_display_name
             if selected_agent:
                 selection_metadata = user_metadata.get('agent_selection') if isinstance(user_metadata, dict) else None
                 if isinstance(selection_metadata, dict):
@@ -17476,6 +17766,16 @@ def register_route_backend_chats(bp):
                     agent_catalog_key_for_usage = selection_metadata.get('catalog_key')
                     agent_icon = selection_metadata.get('agent_icon')
                     agent_tags = selection_metadata.get('agent_tags') or []
+                    if selection_metadata.get('selection_origin') == 'discovery_approved':
+                        agent_id_for_usage = selection_metadata.get('agent_id')
+                        agent_name_for_usage = (
+                            selection_metadata.get('agent_display_name')
+                            or selection_metadata.get('selected_agent')
+                            or 'Specialized agent'
+                        )
+                        agent_display_name_for_usage = agent_name_for_usage
+                        agent_group_id_for_usage = None
+                        agent_catalog_key_for_usage = None
 
             # assistant_message_id was generated earlier for thought tracking
 
@@ -17586,9 +17886,9 @@ def register_route_backend_chats(bp):
             if selected_agent and agent_name:
                 log_agent_run(
                     user_id=get_current_user_id(),
-                    agent_id=getattr(selected_agent, 'id', None),
-                    agent_name=agent_name,
-                    agent_display_name=agent_display_name,
+                    agent_id=agent_id_for_usage,
+                    agent_name=agent_name_for_usage,
+                    agent_display_name=agent_display_name_for_usage,
                     scope=agent_scope_for_usage,
                     group_id=agent_group_id_for_usage,
                     conversation_id=conversation_id,
@@ -18654,6 +18954,7 @@ def register_route_backend_chats(bp):
                         user_message=user_message,
                         selected_capability_ids=selected_builtin_capability_ids,
                         authorized_document_count=len(discovery_document_ids),
+                        selected_agent_present=_has_chat_agent_selection(request_agent_info),
                     )
                 inventory_entries = capability_discovery.get('inventory', {}).get('capabilities', [])
                 log_event(
@@ -18720,7 +19021,11 @@ def register_route_backend_chats(bp):
 
                 plan_kwargs = {
                     'conversation_id': conversation_id,
-                    'selected_agent': request_agent_info,
+                    'selected_agent': (
+                        {'id': capability_resume_context.get('agent_ref')}
+                        if capability_resume_context and capability_resume_context.get('agent_ref')
+                        else request_agent_info
+                    ),
                     'selected_action': data.get('document_action'),
                     'selected_document_ids': requested_selected_document_ids,
                     'conversation_document_ids': auto_linked_chat_upload_document_ids,
@@ -18801,6 +19106,8 @@ def register_route_backend_chats(bp):
                     for capability_id in selected_builtin_capability_ids
                 ]
                 for capability_id, origin in capability_origins.items():
+                    if capability_id == 'selected_agent':
+                        continue
                     if not capability_id or any(
                         entry['id'] == capability_id
                         for entry in effective_capability_entries
@@ -18809,6 +19116,13 @@ def register_route_backend_chats(bp):
                     effective_capability_entries.append({
                         'id': capability_id,
                         'origin': origin,
+                        'required': True,
+                    })
+                if capability_resume_context and capability_resume_context.get('agent_ref'):
+                    effective_capability_entries.append({
+                        'id': capability_resume_context.get('agent_ref'),
+                        'kind': 'agent',
+                        'origin': 'discovery_approved',
                         'required': True,
                     })
                 turn_capability_provenance = build_capability_provenance(
@@ -20595,6 +20909,16 @@ def register_route_backend_chats(bp):
                             if isinstance(selected_agent_metadata, dict):
                                 agent_icon_used = selected_agent_metadata.get('agent_icon')
                                 agent_tags_used = selected_agent_metadata.get('agent_tags') or []
+                                if (
+                                    selected_agent_metadata.get('selection_origin')
+                                    == 'discovery_approved'
+                                ):
+                                    agent_display_name_used = (
+                                        selected_agent_metadata.get('agent_display_name')
+                                        or selected_agent_metadata.get('selected_agent')
+                                        or 'Specialized agent'
+                                    )
+                                    agent_name_used = agent_display_name_used
                             debug_print(f"--- Streaming from Agent: {agent_name_used} (model: {actual_model_used}) ---")
                         else:
                             debug_print(f"[Streaming] ⚠️ No agent selected, falling back to GPT")
@@ -20644,17 +20968,25 @@ def register_route_backend_chats(bp):
                     for runtime_progress_event in drain_orchestration_runtime_progress():
                         yield runtime_progress_event
 
-                if (
-                    selected_agent
-                    and turn_orchestration_plan.get('grounded_image_generation_requested')
+                if selected_agent and _requires_agent_evidence_collection(
+                    turn_orchestration_plan,
+                    capability_resume_context,
                 ):
+                    evidence_capability_metadata = (
+                        _build_discovered_agent_evidence_capability_metadata(
+                            request_agent_info
+                        )
+                        if capability_resume_context
+                        and capability_resume_context.get('agent_origin') == 'discovery_approved'
+                        else selected_agent
+                    )
                     agent_evidence_task = build_agent_action_evidence_task(
                         turn_orchestration_plan,
                         turn_evidence_ledger,
                         user_message,
                         executor_type='selected_agent',
                         executor_name=agent_display_name_used or agent_name_used,
-                        capability_metadata=selected_agent,
+                        capability_metadata=evidence_capability_metadata,
                         authorization_context=getattr(g, 'authorized_chat_context', None),
                     )
 
@@ -20875,6 +21207,8 @@ def register_route_backend_chats(bp):
                             'no image proposal was created.'
                         )
                     if use_agent_streaming and selected_agent:
+                        if hasattr(selected_agent, 'tool_invocations'):
+                            selected_agent.tool_invocations = []
                         if (
                             selected_agent_runtime_node
                             and selected_agent_runtime_node.status == 'pending'
@@ -20944,6 +21278,12 @@ def register_route_backend_chats(bp):
 
                         agent_retry_plan = None
                         retry_state = None
+                        discovery_invocation_policy = (
+                            apply_discovered_agent_invocation_policy(
+                                selected_agent,
+                                capability_resume_context,
+                            )
+                        )
 
                         try:
                             for attempt_number in range(2):
@@ -21101,6 +21441,10 @@ def register_route_backend_chats(bp):
                             return
                         finally:
                             restore_agent_stream_retry_state(selected_agent, retry_state)
+                            restore_discovered_agent_invocation_policy(
+                                selected_agent,
+                                discovery_invocation_policy,
+                            )
 
                         actual_model_used = (
                             getattr(selected_agent, 'last_run_model', None)
@@ -21179,7 +21523,18 @@ def register_route_backend_chats(bp):
                         all_invocations = plugin_logger.get_recent_invocations()
                         debug_print(f"[Agent Streaming] Total plugin invocations logged: {len(all_invocations)}")
 
-                        plugin_invocations = plugin_logger.get_invocations_for_conversation(user_id, conversation_id)
+                        discovered_agent_run = bool(
+                            capability_resume_context
+                            and capability_resume_context.get('agent_origin') == 'discovery_approved'
+                        )
+                        plugin_invocations = (
+                            []
+                            if discovered_agent_run
+                            else plugin_logger.get_invocations_for_conversation(
+                                user_id,
+                                conversation_id,
+                            )
+                        )
                         debug_print(f"[Agent Streaming] Found {len(plugin_invocations)} plugin invocations for user {user_id}, conversation {conversation_id}")
 
                         # If no invocations found, check if plugins were called at all
@@ -21291,7 +21646,7 @@ def register_route_backend_chats(bp):
                             )
                             yield emit_thought('evidence_collection', evidence_status_message)
                             user_metadata['evidence_ledger'] = turn_evidence_ledger
-                            central_synthesis_context = build_grounded_image_central_synthesis_context(
+                            central_synthesis_context = build_agent_evidence_central_synthesis_context(
                                 user_message,
                                 turn_orchestration_plan,
                                 turn_evidence_ledger,
@@ -21300,7 +21655,7 @@ def register_route_backend_chats(bp):
                                 user_message_doc['metadata'] = user_metadata
                                 cosmos_messages_container.upsert_item(user_message_doc)
                                 raise RuntimeError(
-                                    'Grounded image evidence did not reach a terminal synthesis state.'
+                                    'Agent evidence did not reach a terminal synthesis state.'
                                 )
                             persist_central_synthesis_state('pending')
 
@@ -21716,6 +22071,9 @@ def register_route_backend_chats(bp):
                         agent_scope_for_usage = 'personal'
                         agent_group_id_for_usage = None
                         agent_catalog_key_for_usage = None
+                        agent_id_for_usage = getattr(selected_agent, 'id', None) if selected_agent else None
+                        agent_name_for_usage = agent_name_used
+                        agent_display_name_for_usage = agent_display_name_used
                         if isinstance(selected_agent_metadata, dict):
                             if selected_agent_metadata.get('is_global'):
                                 agent_scope_for_usage = 'global'
@@ -21723,11 +22081,21 @@ def register_route_backend_chats(bp):
                                 agent_scope_for_usage = 'group'
                                 agent_group_id_for_usage = selected_agent_metadata.get('group_id')
                             agent_catalog_key_for_usage = selected_agent_metadata.get('catalog_key')
+                            if selected_agent_metadata.get('selection_origin') == 'discovery_approved':
+                                agent_id_for_usage = selected_agent_metadata.get('agent_id')
+                                agent_name_for_usage = (
+                                    selected_agent_metadata.get('agent_display_name')
+                                    or selected_agent_metadata.get('selected_agent')
+                                    or 'Specialized agent'
+                                )
+                                agent_display_name_for_usage = agent_name_for_usage
+                                agent_group_id_for_usage = None
+                                agent_catalog_key_for_usage = None
                         log_agent_run(
                             user_id=user_id,
-                            agent_id=getattr(selected_agent, 'id', None) if selected_agent else None,
-                            agent_name=agent_name_used,
-                            agent_display_name=agent_display_name_used,
+                            agent_id=agent_id_for_usage,
+                            agent_name=agent_name_for_usage,
+                            agent_display_name=agent_display_name_for_usage,
                             scope=agent_scope_for_usage,
                             group_id=agent_group_id_for_usage,
                             conversation_id=conversation_id,

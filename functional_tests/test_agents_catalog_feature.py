@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
+# test_agents_catalog_feature.py
 """
 Functional test for the Agents catalog page and agent icon/tag metadata.
-Version: 0.242.072
-Implemented in: 0.242.061; updated in 0.242.064; 0.242.065; 0.242.066
+Version: 0.250.067
+Implemented in: 0.242.061; updated in 0.242.064; 0.242.065; 0.242.066; 0.250.067
 
 This test ensures the global Agents page, shared catalog APIs, safe agent
 metadata, and chat handoff contract are present and regression-resistant.
@@ -349,10 +350,15 @@ def test_agent_catalog_usage_windows_rank_independently():
         "functions_assigned_knowledge": {"get_agent_assigned_knowledge": lambda *args, **kwargs: {}},
         "functions_global_actions": {"get_global_actions": lambda *args, **kwargs: []},
         "functions_global_agents": {"get_global_agents": lambda *args, **kwargs: []},
-        "functions_group": {"get_group_model_endpoints": lambda *args, **kwargs: [], "get_user_groups": lambda *args, **kwargs: []},
+        "functions_group": {
+            "check_group_status_allows_operation": lambda *args, **kwargs: (True, ""),
+            "get_group_model_endpoints": lambda *args, **kwargs: [],
+            "get_user_groups": lambda *args, **kwargs: [],
+        },
         "functions_group_actions": {"get_group_actions": lambda *args, **kwargs: []},
         "functions_group_agents": {"get_group_agents": lambda *args, **kwargs: []},
         "functions_governance": {
+                "ensure_governance_access": lambda *args, **kwargs: None,
             "filter_actions_by_action_type_access": lambda _user_id, actions, _feature_key, _scope: actions or [],
             "filter_governed_global_actions_for_user": lambda _user_id, actions: actions or [],
         },

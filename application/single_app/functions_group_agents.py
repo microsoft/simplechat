@@ -241,6 +241,8 @@ def _clean_agent(agent: Dict[str, Any]) -> Dict[str, Any]:
     cleaned.setdefault("model_provider", "")
     cleaned.setdefault("tags", [])
     cleaned.setdefault("icon", {})
+    cleaned.setdefault("discoverable_by_orchestrator", False)
+    cleaned.setdefault("orchestrator_descriptor", {})
     # Remove empty reasoning_effort to prevent validation errors
     if cleaned.get("reasoning_effort") == "":
         cleaned.pop("reasoning_effort", None)

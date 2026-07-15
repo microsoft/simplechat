@@ -2,7 +2,7 @@
 # test_agent_action_evidence_contract.py
 """
 Functional test for the generic agent/action evidence collection contract.
-Version: 0.250.064
+Version: 0.250.067
 Implemented in: 0.250.061
 
 This test ensures selected agents and actions collect governed evidence into the
@@ -318,6 +318,7 @@ def test_streaming_and_document_action_paths_apply_contract_before_persistence()
     assert 'evidence_status_message = build_agent_action_evidence_status_message(' in route_source
     assert "yield emit_thought('evidence_collection', evidence_status_message)" in route_source
     assert 'central_synthesis_context = build_grounded_image_central_synthesis_context(' in route_source
+    assert 'central_synthesis_context = build_agent_evidence_central_synthesis_context(' in route_source
     assert 'synthesis_response = gpt_client.chat.completions.create(**synthesis_params)' in route_source
     assert 'evidence_collection_task=agent_evidence_task' in route_source
     assert "'evidence_collection': action_evidence_task," in route_source
@@ -334,7 +335,7 @@ def test_streaming_and_document_action_paths_apply_contract_before_persistence()
         apply_index,
     )
     central_synthesis_index = route_source.index(
-        'central_synthesis_context = build_grounded_image_central_synthesis_context(',
+        'central_synthesis_context = build_agent_evidence_central_synthesis_context(',
         status_message_index,
     )
     finalizer_index = route_source.index(

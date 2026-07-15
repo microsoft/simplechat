@@ -10,10 +10,18 @@ from functions_appinsights import log_event
 from functions_assigned_knowledge import get_agent_assigned_knowledge
 from functions_global_actions import get_global_actions
 from functions_global_agents import get_global_agents
-from functions_group import get_group_model_endpoints, get_user_groups
+from functions_group import (
+    check_group_status_allows_operation,
+    get_group_model_endpoints,
+    get_user_groups,
+)
 from functions_group_actions import get_group_actions
 from functions_group_agents import get_group_agents
-from functions_governance import filter_actions_by_action_type_access, filter_governed_global_actions_for_user
+from functions_governance import (
+    ensure_governance_access,
+    filter_actions_by_action_type_access,
+    filter_governed_global_actions_for_user,
+)
 from functions_keyvault import SecretReturnType
 from functions_personal_actions import get_governed_personal_actions
 from functions_personal_agents import ensure_migration_complete, get_personal_agents
@@ -270,6 +278,155 @@ def _serialize_catalog_agent(
 
 def _should_include_global_agents(settings: Dict[str, Any]) -> bool:
     return bool(settings.get("enable_semantic_kernel", False))
+
+
+def _should_include_global_agents_for_discovery(settings: Dict[str, Any]) -> bool:
+    if not _should_include_global_agents(settings):
+        return False
+    return bool(
+        not settings.get("per_user_semantic_kernel", False)
+        or settings.get("merge_global_semantic_kernel_with_workspace", False)
+    )
+
+
+def _is_agent_currently_discoverable(agent: Dict[str, Any]) -> bool:
+    if not isinstance(agent, dict):
+        return False
+    if str(agent.get("agent_type") or "local").strip().lower() != "local":
+        return False
+    if not str(agent.get("created_at") or "").strip():
+        return False
+    if any(
+        str(action_id or "").strip()
+        for action_id in (agent.get("actions_to_load") or [])
+    ):
+        return False
+    if agent.get("is_enabled") is False:
+        return False
+    if agent.get("hidden") is True or agent.get("is_hidden") is True:
+        return False
+    if str(agent.get("visibility") or "").strip().lower() == "hidden":
+        return False
+    if str(agent.get("status") or "").strip().lower() in {"disabled", "inactive", "hidden"}:
+        return False
+    discoverable = agent.get("discoverable_by_orchestrator", False)
+    if isinstance(discoverable, str):
+        discoverable = discoverable.strip().lower() == "true"
+    return bool(discoverable and isinstance(agent.get("orchestrator_descriptor"), dict))
+
+
+def _is_agent_allowed_by_governance(user_id: str, agent: Dict[str, Any], scope_type: str) -> bool:
+    try:
+        if scope_type == "global":
+            ensure_governance_access(
+                "governance_global_agents_usage",
+                user_id,
+                item_entity_type="global_agent",
+                item_id=str(agent.get("id") or agent.get("name") or ""),
+            )
+        elif scope_type == "group":
+            ensure_governance_access("governance_group_agents", user_id)
+        else:
+            ensure_governance_access("governance_user_agents", user_id)
+        return True
+    except PermissionError:
+        return False
+
+
+def _build_authorized_discovery_candidate(
+    agent: Dict[str, Any],
+    *,
+    scope_type: str,
+    scope_id: Optional[str],
+    scope_name: str,
+    user_id: str,
+) -> Optional[Dict[str, Any]]:
+    if not _is_agent_currently_discoverable(agent):
+        return None
+    if not _is_agent_allowed_by_governance(user_id, agent, scope_type):
+        return None
+
+    candidate = dict(agent)
+    candidate.update({
+        "scope_type": scope_type,
+        "scope_id": scope_id,
+        "scope_name": scope_name,
+        "is_global": scope_type == "global",
+        "is_group": scope_type == "group",
+        "group_id": scope_id if scope_type == "group" else None,
+        "group_name": scope_name if scope_type == "group" else None,
+    })
+    if scope_type == "personal":
+        candidate["user_id"] = user_id
+    candidate["catalog_key"] = build_agent_catalog_key(candidate)
+    return candidate if candidate["catalog_key"] else None
+
+
+def build_authorized_agent_discovery_catalog(
+    user_id: str,
+    *,
+    settings: Optional[Dict[str, Any]] = None,
+    user_groups: Optional[Iterable[Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
+    """Build a server-only canonical catalog after current auth and policy checks."""
+    resolved_settings = settings or get_settings()
+    resolved_groups = list(user_groups) if user_groups is not None else get_user_groups(user_id)
+    catalog: List[Dict[str, Any]] = []
+
+    def append_candidate(agent, *, scope_type, scope_id, scope_name):
+        candidate = _build_authorized_discovery_candidate(
+            agent,
+            scope_type=scope_type,
+            scope_id=scope_id,
+            scope_name=scope_name,
+            user_id=user_id,
+        )
+        if candidate:
+            catalog.append(candidate)
+
+    if resolved_settings.get("allow_user_agents", False):
+        ensure_migration_complete(user_id)
+        for agent in get_personal_agents(user_id):
+            append_candidate(
+                agent,
+                scope_type="personal",
+                scope_id=user_id,
+                scope_name="Personal",
+            )
+
+    if _should_include_global_agents_for_discovery(resolved_settings):
+        for agent in get_global_agents():
+            append_candidate(
+                agent,
+                scope_type="global",
+                scope_id=None,
+                scope_name="Global",
+            )
+
+    if (
+        resolved_settings.get("enable_group_workspaces", False)
+        and resolved_settings.get("allow_group_agents", False)
+    ):
+        for group_doc in resolved_groups:
+            group_id = str((group_doc or {}).get("id") or "").strip()
+            if not group_id:
+                continue
+            group_chat_allowed, _ = check_group_status_allows_operation(
+                group_doc,
+                "chat",
+            )
+            if not group_chat_allowed:
+                continue
+            group_name = str((group_doc or {}).get("name") or "Unnamed Group").strip()
+            for agent in get_group_agents(group_id):
+                append_candidate(
+                    agent,
+                    scope_type="group",
+                    scope_id=group_id,
+                    scope_name=group_name,
+                )
+
+    return catalog
 
 
 def build_accessible_agent_catalog(

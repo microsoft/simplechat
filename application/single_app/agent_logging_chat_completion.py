@@ -1,4 +1,4 @@
-
+# agent_logging_chat_completion.py
 import json
 import logging
 from pydantic import Field
@@ -15,6 +15,7 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
     deployment_name: str | None = Field(default=None)
     azure_endpoint: str | None = Field(default=None)
     api_version: str | None = Field(default=None)
+    orchestration_minimize_telemetry: bool = Field(default=False, exclude=True)
 
     def __init__(self, *args, display_name=None, default_agent=False, deployment_name=None, azure_endpoint=None, api_version=None, **kwargs):
         # Remove these from kwargs so the base class doesn't see them
@@ -33,10 +34,11 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
 
     def log_tool_execution(self, tool_name, arguments=None, result=None):
         """Manual method to log tool executions. Can be called by plugins."""
+        minimize_telemetry = self.orchestration_minimize_telemetry
         tool_citation = {
             "tool_name": tool_name,
-            "function_arguments": str(arguments) if arguments else "",
-            "function_result": str(result)[:500] if result else "",
+            "function_arguments": "" if minimize_telemetry else str(arguments) if arguments else "",
+            "function_result": "" if minimize_telemetry else str(result)[:500] if result else "",
             "timestamp": datetime.datetime.utcnow().isoformat()
         }
         self.tool_invocations.append(tool_citation)
@@ -136,11 +138,15 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
         self.tool_invocations = []
         
         # Log the prompt/messages before sending to LLM
+        minimize_telemetry = self.orchestration_minimize_telemetry
+        prompt_messages = args[0] if args and isinstance(args[0], (list, tuple)) else []
         log_event(
             "[Logging Agent Request] Agent LLM prompt",
             extra={
                 "agent": self.name,
-                "prompt": [m.content[:30] for m in args[0]] if args else None
+                "prompt": None if minimize_telemetry else [m.content[:30] for m in prompt_messages],
+                "prompt_message_count": len(prompt_messages),
+                "telemetry_minimized": minimize_telemetry,
             }
         )
 
@@ -180,7 +186,13 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
                 extra={
                     "agent": self.name,
                     "response_type": type(response).__name__,
-                    "response_preview": str(response)[:100] if response else None
+                    "response_preview": (
+                        None
+                        if minimize_telemetry
+                        else str(response)[:100] if response else None
+                    ),
+                    "response_length": len(str(response)) if response else 0,
+                    "telemetry_minimized": minimize_telemetry,
                 },
                 level=logging.DEBUG
             )
@@ -188,7 +200,8 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
             # Store the response for analysis
             self._last_response = response
             # Simplified citation capture - primary citations come from plugin invocation logger
-            self._capture_tool_invocations_simplified(args, response)
+            if not minimize_telemetry:
+                self._capture_tool_invocations_simplified(args, response)
             
             return response
         finally:
@@ -197,7 +210,13 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
                 "[Logging Agent Response][Usage] Agent LLM response",
                 extra={
                     "agent": self.name,
-                    "response": str(response)[:100] if response else None,
+                    "response": (
+                        None
+                        if minimize_telemetry
+                        else str(response)[:100] if response else None
+                    ),
+                    "response_length": len(str(response)) if response else 0,
+                    "telemetry_minimized": minimize_telemetry,
                     "prompt_tokens": getattr(usage, "prompt_tokens", None),
                     "completion_tokens": getattr(usage, "completion_tokens", None),
                     "total_tokens": getattr(usage, "total_tokens", None),

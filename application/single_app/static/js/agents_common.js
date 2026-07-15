@@ -353,6 +353,28 @@ export function setAgentModalFields(agent, opts = {}) {
 		agent.other_settings ? JSON.stringify(agent.other_settings, null, 2) : '{}'
 	);
 	setValue('agent-max-completion-tokens', agent.max_completion_tokens || '');
+	const orchestratorDescriptor = agent.orchestrator_descriptor && typeof agent.orchestrator_descriptor === 'object'
+		? agent.orchestrator_descriptor
+		: {};
+	setChecked('agent-discoverable-by-orchestrator', agent.discoverable_by_orchestrator === true);
+	setValue(
+		'agent-orchestrator-capability-tags',
+		Array.isArray(orchestratorDescriptor.capability_tags)
+			? orchestratorDescriptor.capability_tags.join(', ')
+			: ''
+	);
+	setValue(
+		'agent-orchestrator-evidence-types',
+		Array.isArray(orchestratorDescriptor.evidence_types)
+			? orchestratorDescriptor.evidence_types.join(', ')
+			: ''
+	);
+	setChecked('agent-orchestrator-read-only', orchestratorDescriptor.read_only !== false);
+	setChecked('agent-orchestrator-external-data', orchestratorDescriptor.external_data === true);
+	setValue('agent-orchestrator-risk-class', orchestratorDescriptor.risk_class || 'internal_read');
+	setValue('agent-orchestrator-data-sensitivity', orchestratorDescriptor.data_sensitivity || 'internal');
+	setValue('agent-orchestrator-latency-class', orchestratorDescriptor.latency_class || 'seconds');
+	setValue('agent-orchestrator-cost-class', orchestratorDescriptor.cost_class || 'standard');
 	
 	// Set reasoning effort if available
 	const reasoningEffortSelect = root.getElementById('agent-reasoning-effort');
@@ -376,6 +398,20 @@ export function getAgentModalFields(opts = {}) {
 	const getChecked = (id) => {
 		const el = root.getElementById(id);
 		return el ? el.checked : false;
+	};
+	const getDescriptorItems = (id) => {
+		const values = [];
+		getValue(id)
+			.split(',')
+			.map(value => value.trim().toLowerCase().replace(/[^a-z0-9_:-]+/g, '_').replace(/^_+|_+$/g, ''))
+			.filter(Boolean)
+			.forEach(value => {
+				const boundedValue = value.slice(0, 64);
+				if (!values.includes(boundedValue) && values.length < 16) {
+					values.push(boundedValue);
+				}
+			});
+		return values;
 	};
 	let additionalSettings = {};
 	try {
@@ -401,6 +437,7 @@ export function getAgentModalFields(opts = {}) {
 		}).filter(Boolean);
 	}
 
+	const discoverableByOrchestrator = getChecked('agent-discoverable-by-orchestrator');
 	return {
 		name: getValue('agent-name'),
 		display_name: getValue('agent-display-name'),
@@ -426,7 +463,18 @@ export function getAgentModalFields(opts = {}) {
 		max_completion_tokens: parseInt(getValue('agent-max-completion-tokens')) || null,
 		actions_to_load: actions_to_load,
 		other_settings: additionalSettings,
-		agent_type: (opts.agent && opts.agent.agent_type) || 'local'
+		agent_type: (opts.agent && opts.agent.agent_type) || 'local',
+		discoverable_by_orchestrator: discoverableByOrchestrator,
+		orchestrator_descriptor: discoverableByOrchestrator ? {
+			capability_tags: getDescriptorItems('agent-orchestrator-capability-tags'),
+			evidence_types: getDescriptorItems('agent-orchestrator-evidence-types'),
+			read_only: getChecked('agent-orchestrator-read-only'),
+			external_data: getChecked('agent-orchestrator-external-data'),
+			risk_class: getValue('agent-orchestrator-risk-class') || 'internal_read',
+			data_sensitivity: getValue('agent-orchestrator-data-sensitivity') || 'internal',
+			latency_class: getValue('agent-orchestrator-latency-class') || 'seconds',
+			cost_class: getValue('agent-orchestrator-cost-class') || 'standard'
+		} : {}
 	};
 }
 /**
