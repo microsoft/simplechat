@@ -1,5 +1,5 @@
 # run_phase9_orchestration_quality_gates.py
-"""Run deterministic and optional live Phase 9 orchestration quality gates."""
+"""Run deterministic Phase 9/10A and optional live orchestration gates."""
 
 import argparse
 import os
@@ -10,11 +10,17 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 COMPILE_TARGETS = (
+    'application/single_app/functions_chat_capability_planner.py',
+    'application/single_app/functions_chat_capabilities.py',
     'application/single_app/functions_orchestration_evaluation.py',
     'application/single_app/functions_orchestration_runtime.py',
+    'application/single_app/functions_settings.py',
+    'application/single_app/model_endpoint_clients.py',
     'application/single_app/route_backend_chats.py',
 )
 AUTOMATED_TEST_TARGETS = (
+    'functional_tests/test_chat_capability_model_planner.py',
+    'functional_tests/test_chat_capability_planner_route.py',
     'functional_tests/test_phase9_orchestration_golden_scenarios.py',
     'functional_tests/test_phase9_orchestration_observability.py',
     'functional_tests/test_chat_turn_orchestration_plan.py',
@@ -95,7 +101,7 @@ def _validate_live_environment(environment):
 
 def build_argument_parser():
     parser = argparse.ArgumentParser(
-        description='Run Phase 9 orchestration compile, functional, security, UI-contract, and optional live-smoke gates.',
+        description='Run Phase 9/10A orchestration compile, functional, security, UI-contract, and optional live-smoke gates.',
     )
     parser.add_argument(
         '--live-smoke',
@@ -147,6 +153,22 @@ def main(argv=None):
     compile_exit_code = _run(compile_command, environment=environment)
     if compile_exit_code:
         return compile_exit_code
+
+    for security_checker in (
+        'scripts/check_broken_access_control.py',
+        'scripts/check_xss_sinks.py',
+    ):
+        security_exit_code = _run(
+            [
+                python_executable,
+                security_checker,
+                '--full-file',
+                *COMPILE_TARGETS,
+            ],
+            environment=environment,
+        )
+        if security_exit_code:
+            return security_exit_code
 
     pytest_command = [
         python_executable,

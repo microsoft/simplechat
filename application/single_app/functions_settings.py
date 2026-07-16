@@ -58,6 +58,16 @@ ADMIN_SETTINGS_FORM_SECRET_FIELDS = (
 ADMIN_SETTINGS_NESTED_SECRET_FIELDS = (
     "web_search_agent.other_settings.azure_ai_foundry.client_secret",
 )
+CHAT_CAPABILITY_PLANNER_DEFAULTS = {
+    'chat_capability_planner_mode': 'off',
+    'chat_capability_planner_timeout_ms': 5000,
+    'chat_capability_planner_max_completion_tokens': 300,
+    'chat_capability_planner_max_candidate_plans': 3,
+    'chat_capability_planner_max_capabilities_per_plan': 4,
+    'chat_capability_planner_model_source': 'same_as_chat',
+    'chat_capability_planner_model_endpoint_id': '',
+    'chat_capability_planner_model_id': '',
+}
 
 
 def is_admin_settings_redacted_secret(value):
@@ -107,6 +117,75 @@ def normalize_document_access_index_required_settings(settings):
             settings[key] = required_value
             changed = True
     return changed
+
+
+def normalize_chat_capability_planner_settings(settings):
+    """Normalize Phase 10A planner settings to bounded off/shadow values."""
+    source = settings if isinstance(settings, dict) else {}
+
+    def bounded_int(key, *, minimum, maximum):
+        try:
+            value = int(source.get(key, CHAT_CAPABILITY_PLANNER_DEFAULTS[key]))
+        except (TypeError, ValueError):
+            value = CHAT_CAPABILITY_PLANNER_DEFAULTS[key]
+        return min(maximum, max(minimum, value))
+
+    mode = str(
+        source.get(
+            'chat_capability_planner_mode',
+            CHAT_CAPABILITY_PLANNER_DEFAULTS['chat_capability_planner_mode'],
+        )
+        or ''
+    ).strip().lower()
+    if mode not in {'off', 'shadow'}:
+        mode = 'off'
+
+    model_source = str(
+        source.get(
+            'chat_capability_planner_model_source',
+            CHAT_CAPABILITY_PLANNER_DEFAULTS['chat_capability_planner_model_source'],
+        )
+        or ''
+    ).strip().lower()
+    if model_source not in {'same_as_chat', 'configured'}:
+        model_source = 'same_as_chat'
+        mode = 'off'
+
+    model_endpoint_id = str(
+        source.get('chat_capability_planner_model_endpoint_id') or ''
+    ).strip()[:256]
+    model_id = str(
+        source.get('chat_capability_planner_model_id') or ''
+    ).strip()[:256]
+    if model_source == 'configured' and not (model_endpoint_id and model_id):
+        mode = 'off'
+
+    return {
+        'chat_capability_planner_mode': mode,
+        'chat_capability_planner_timeout_ms': bounded_int(
+            'chat_capability_planner_timeout_ms',
+            minimum=250,
+            maximum=10000,
+        ),
+        'chat_capability_planner_max_completion_tokens': bounded_int(
+            'chat_capability_planner_max_completion_tokens',
+            minimum=64,
+            maximum=1000,
+        ),
+        'chat_capability_planner_max_candidate_plans': bounded_int(
+            'chat_capability_planner_max_candidate_plans',
+            minimum=1,
+            maximum=5,
+        ),
+        'chat_capability_planner_max_capabilities_per_plan': bounded_int(
+            'chat_capability_planner_max_capabilities_per_plan',
+            minimum=1,
+            maximum=8,
+        ),
+        'chat_capability_planner_model_source': model_source,
+        'chat_capability_planner_model_endpoint_id': model_endpoint_id,
+        'chat_capability_planner_model_id': model_id,
+    }
 
 
 def redact_admin_settings_secrets_for_form(settings):
@@ -1166,6 +1245,7 @@ def get_settings(use_cosmos=False, include_source=False):
             'deep_research': 'recommend',
         },
         'chat_capability_choice_ttl_seconds': 86400,
+        **CHAT_CAPABILITY_PLANNER_DEFAULTS,
 
         # URL Access and Deep Research (bounded source-page inspection for web evidence)
         'enable_url_access': False,
@@ -2417,6 +2497,8 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
     sanitized = {}
 
     for k, v in full_settings.items():
+        if k.startswith('chat_capability_planner_'):
+            continue
         if k == 'support_feedback_recipient_email':
             continue
         if k == 'agents_page_promoted_popular_agents':

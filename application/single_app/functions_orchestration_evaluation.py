@@ -5,6 +5,12 @@ import hashlib
 from collections.abc import Mapping
 from datetime import datetime, timezone
 
+from functions_chat_capability_planner import (
+    CAPABILITY_PLANNER_DECISIONS,
+    CAPABILITY_PLANNER_FAILURE_CODES,
+    CAPABILITY_PLANNER_REASON_CODES,
+)
+
 
 ORCHESTRATION_EVALUATION_VERSION = 1
 MAX_EVALUATION_COUNT = 10000
@@ -56,6 +62,30 @@ SAFE_TASK_PROFILES = frozenset({
     'grounded_answer',
     'grounded_image_generation',
     'image_generation',
+})
+SAFE_PLANNER_CAPABILITY_CLASSES = SAFE_CAPABILITY_IDS | {'governed_agent'}
+SAFE_PLANNER_PROVIDER_CLASSES = frozenset({
+    'anthropic',
+    'azure_openai',
+    'openai_style',
+})
+SAFE_PLANNER_MODEL_CLASSES = frozenset({
+    'claude',
+    'gpt',
+    'openai_reasoning',
+})
+SAFE_PLANNER_STATUSES = frozenset({
+    'discarded',
+    'rejected',
+    'timed_out',
+    'valid',
+})
+SAFE_PLANNER_AGREEMENT_CATEGORIES = frozenset({
+    'decision_agreement_capability_difference',
+    'decision_agreement_direct',
+    'decision_and_capability_agreement',
+    'decision_disagreement',
+    'not_compared',
 })
 
 
@@ -116,6 +146,78 @@ def _safe_reason_codes(values):
         if len(normalized) >= MAX_EVALUATION_REASON_CODES:
             break
     return normalized
+
+
+def _safe_planner_reason_codes(values):
+    normalized = []
+    for value in values or []:
+        reason_code = _safe_enum(
+            value,
+            CAPABILITY_PLANNER_REASON_CODES,
+            fallback='',
+        )
+        if reason_code and reason_code not in normalized:
+            normalized.append(reason_code)
+        if len(normalized) >= MAX_EVALUATION_REASON_CODES:
+            break
+    return normalized
+
+
+def _safe_planner_capability_classes(values):
+    normalized = []
+    for value in values or []:
+        capability_class = _safe_enum(
+            value,
+            SAFE_PLANNER_CAPABILITY_CLASSES,
+            fallback='',
+        )
+        if capability_class and capability_class not in normalized:
+            normalized.append(capability_class)
+        if len(normalized) >= MAX_EVALUATION_REASON_CODES:
+            break
+    return normalized
+
+
+def _planner_model_class(model_name):
+    normalized = str(model_name or '').strip().lower()
+    if 'claude' in normalized:
+        return 'claude'
+    if normalized.startswith(('o1', 'o3', 'o4')):
+        return 'openai_reasoning'
+    if normalized.startswith('gpt'):
+        return 'gpt'
+    return 'other'
+
+
+def _planner_event_fields(run_id, metadata, *, provider_class, model_name):
+    summary = metadata if isinstance(metadata, Mapping) else {}
+    return {
+        'run_correlation_id': _correlation_id(run_id),
+        'planner_mode': _safe_enum(summary.get('mode'), {'shadow'}),
+        'provider_class': _safe_enum(
+            provider_class,
+            SAFE_PLANNER_PROVIDER_CLASSES,
+        ),
+        'model_class': _safe_enum(
+            _planner_model_class(model_name),
+            SAFE_PLANNER_MODEL_CLASSES,
+        ),
+        'status': _safe_enum(summary.get('status'), SAFE_PLANNER_STATUSES),
+        'decision': _safe_enum(
+            summary.get('decision'),
+            CAPABILITY_PLANNER_DECISIONS,
+        ),
+        'candidate_count': _bounded_count(summary.get('candidate_count')),
+        'capability_count': _bounded_count(
+            len(summary.get('recommended_capability_classes') or [])
+        ),
+        'capability_classes': _safe_planner_capability_classes(
+            summary.get('recommended_capability_classes')
+        ),
+        'reason_codes': _safe_planner_reason_codes(summary.get('reason_codes')),
+        'latency_ms': _bounded_count(summary.get('latency_ms')),
+        'fallback_used': bool(summary.get('fallback_used')),
+    }
 
 
 def _proposal_option(proposal, option_id):
@@ -273,5 +375,105 @@ def build_recommendation_outcome_evaluation_event(run, resume_context):
         'incremental_latency_ms': _latency_ms(
             decision.get('decided_at'),
             _field(run, 'completed_at'),
+        ),
+    }
+
+
+def build_planner_completed_evaluation_event(
+    run_id,
+    metadata,
+    *,
+    provider_class,
+    model_name,
+):
+    """Summarize one valid shadow result without planner payload content."""
+    return {
+        **_base_event('orchestration_planner_completed'),
+        **_planner_event_fields(
+            run_id,
+            metadata,
+            provider_class=provider_class,
+            model_name=model_name,
+        ),
+    }
+
+
+def build_planner_rejected_evaluation_event(
+    run_id,
+    metadata,
+    *,
+    provider_class,
+    model_name,
+):
+    """Summarize one rejected or cancelled shadow result."""
+    summary = metadata if isinstance(metadata, Mapping) else {}
+    return {
+        **_base_event('orchestration_planner_rejected'),
+        **_planner_event_fields(
+            run_id,
+            summary,
+            provider_class=provider_class,
+            model_name=model_name,
+        ),
+        'failure_code': _safe_enum(
+            summary.get('failure_code'),
+            CAPABILITY_PLANNER_FAILURE_CODES,
+        ),
+    }
+
+
+def build_planner_timed_out_evaluation_event(
+    run_id,
+    metadata,
+    *,
+    provider_class,
+    model_name,
+):
+    """Summarize one transport-bounded shadow timeout."""
+    summary = metadata if isinstance(metadata, Mapping) else {}
+    return {
+        **_base_event('orchestration_planner_timed_out'),
+        **_planner_event_fields(
+            run_id,
+            summary,
+            provider_class=provider_class,
+            model_name=model_name,
+        ),
+        'failure_code': _safe_enum(
+            summary.get('failure_code'),
+            {'transport_timeout'},
+        ),
+    }
+
+
+def build_planner_shadow_compared_evaluation_event(
+    run_id,
+    metadata,
+    comparison,
+    *,
+    provider_class,
+    model_name,
+):
+    """Compare planner and deterministic decisions using fixed safe classes."""
+    compared = comparison if isinstance(comparison, Mapping) else {}
+    return {
+        **_base_event('orchestration_planner_shadow_compared'),
+        **_planner_event_fields(
+            run_id,
+            metadata,
+            provider_class=provider_class,
+            model_name=model_name,
+        ),
+        'planner_decision': _safe_enum(
+            compared.get('planner_decision'),
+            CAPABILITY_PLANNER_DECISIONS | {'unavailable'},
+        ),
+        'deterministic_decision': _safe_enum(
+            compared.get('deterministic_decision'),
+            {'direct', 'propose'},
+        ),
+        'agreement_category': _safe_enum(
+            compared.get('agreement_category'),
+            SAFE_PLANNER_AGREEMENT_CATEGORIES,
         ),
     }
