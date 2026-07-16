@@ -2,6 +2,17 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.071)**
+
+#### Bug Fixes
+
+*   **Model Planner Live Contract Alignment And Controlled Shadow Gate**
+    *   Aligned structured planner output with the strict server validator by enumerating request-specific requirement aliases, candidate aliases, eligible unselected capability IDs, evidence types, and exact plan budgets in both the prompt and provider response schema.
+    *   Prevented selected-only and input-not-ready recommendations while preserving selected mandates as server-owned required context; clarified that additions are appropriate only for materially missing evidence classes.
+    *   Raised the default planner completion budget to 600 tokens after controlled reasoning-model calls showed that the former 300-token budget could return no visible output.
+    *   Added a realistic, non-executing 19-scenario controlled-shadow runner and source-bound privacy-safe evidence artifact with explicit semantic, end-to-end, strict-schema, timeout, operational-failure, invalid-output, false-proposal, leakage, execution-surface, and latency thresholds.
+    *   (Ref: microsoft/simplechat#1021, `functions_chat_capability_planner.py`, `functions_settings.py`, `run_phase10a_controlled_shadow.py`, `test_phase10a_controlled_shadow_runner.py`, `CHAT_CAPABILITY_MODEL_PLANNER.md`)
+
 ### **(v0.250.069)**
 
 #### New Features

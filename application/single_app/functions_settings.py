@@ -61,7 +61,7 @@ ADMIN_SETTINGS_NESTED_SECRET_FIELDS = (
 CHAT_CAPABILITY_PLANNER_DEFAULTS = {
     'chat_capability_planner_mode': 'off',
     'chat_capability_planner_timeout_ms': 5000,
-    'chat_capability_planner_max_completion_tokens': 300,
+    'chat_capability_planner_max_completion_tokens': 600,
     'chat_capability_planner_max_candidate_plans': 3,
     'chat_capability_planner_max_capabilities_per_plan': 4,
     'chat_capability_planner_model_source': 'same_as_chat',
