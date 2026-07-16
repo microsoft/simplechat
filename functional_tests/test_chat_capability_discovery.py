@@ -2,7 +2,7 @@
 # test_chat_capability_discovery.py
 """
 Functional test for governed chat capability discovery and recommendation.
-Version: 0.250.067
+Version: 0.250.069
 Implemented in: 0.250.067
 
 This test ensures server-resolved capability states remain distinct and only
@@ -93,11 +93,13 @@ def test_inventory_preserves_selection_and_governed_states():
 
     assert _entry(inventory, 'workspace_search')['state'] == 'selected'
     assert _entry(inventory, 'workspace_search')['selected'] is True
+    assert _entry(inventory, 'workspace_search')['read_only'] is True
     assert _entry(inventory, 'web_search')['state'] == 'unselected'
     assert _entry(inventory, 'web_search')['discoverable'] is True
     assert _entry(inventory, 'compare')['state'] == 'unauthorized'
     assert _entry(inventory, 'compare')['discoverable'] is False
     assert _entry(inventory, 'image')['state'] == 'policy_blocked'
+    assert _entry(inventory, 'image')['read_only'] is False
     assert _entry(inventory, 'url_access')['state'] == 'unavailable'
 
 

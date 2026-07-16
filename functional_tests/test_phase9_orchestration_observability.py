@@ -2,7 +2,7 @@
 # test_phase9_orchestration_observability.py
 """
 Functional test for Phase 9 orchestration observability and privacy.
-Version: 0.250.068
+Version: 0.250.069
 Implemented in: 0.250.068
 
 This test ensures evaluation events expose only bounded aggregate run,
@@ -21,6 +21,10 @@ sys.path.insert(0, str(SINGLE_APP_ROOT))
 
 from functions_orchestration_evaluation import (  # noqa: E402
     build_orchestration_run_evaluation_event,
+    build_planner_completed_evaluation_event,
+    build_planner_rejected_evaluation_event,
+    build_planner_shadow_compared_evaluation_event,
+    build_planner_timed_out_evaluation_event,
     build_recommendation_created_evaluation_event,
     build_recommendation_decision_evaluation_event,
     build_recommendation_outcome_evaluation_event,
@@ -35,6 +39,8 @@ PRIVATE_VALUES = (
     'https://private-endpoint.example.test',
     'private-secret-value',
     'write_customer_record',
+    'private-model-id',
+    'agent:group:canonical-agent-private-id',
 )
 
 
@@ -190,6 +196,94 @@ def test_resumed_outcome_reports_incremental_latency_and_citation_yield():
     assert outcome['citation_yield'] == 1.0
     assert outcome['parent_run_correlation_id'] != 'parent-run-private-id'
     _assert_private_values_absent(outcome)
+
+
+def test_planner_events_use_fixed_privacy_safe_dimensions():
+    metadata = {
+        'version': 1,
+        'mode': 'shadow',
+        'status': 'valid',
+        'decision': 'propose',
+        'candidate_count': 2,
+        'recommended_capability_classes': [
+            'web_search',
+            'governed_agent',
+            'agent:group:canonical-agent-private-id',
+        ],
+        'reason_codes': [
+            'public_source_archive_research',
+            'private prompt text',
+        ],
+        'latency_ms': 412,
+        'fallback_used': False,
+        'raw_response': 'private evidence text',
+    }
+    completed = build_planner_completed_evaluation_event(
+        'private-planner-run-id',
+        metadata,
+        provider_class='azure_openai',
+        model_name='private-model-id-gpt-4o',
+    )
+    compared = build_planner_shadow_compared_evaluation_event(
+        'private-planner-run-id',
+        metadata,
+        {
+            'planner_decision': 'propose',
+            'deterministic_decision': 'direct',
+            'agreement_category': 'decision_disagreement',
+            'raw_difference': 'private prompt text',
+        },
+        provider_class='azure_openai',
+        model_name='private-model-id-gpt-4o',
+    )
+
+    assert completed['event_type'] == 'orchestration_planner_completed'
+    assert completed['run_correlation_id'] != 'private-planner-run-id'
+    assert completed['provider_class'] == 'azure_openai'
+    assert completed['model_class'] == 'other'
+    assert completed['capability_classes'] == ['web_search', 'governed_agent']
+    assert completed['reason_codes'] == ['public_source_archive_research']
+    assert compared['event_type'] == 'orchestration_planner_shadow_compared'
+    assert compared['agreement_category'] == 'decision_disagreement'
+    _assert_private_values_absent(completed)
+    _assert_private_values_absent(compared)
+
+
+def test_planner_rejection_and_timeout_events_expose_only_bounded_failures():
+    rejected_metadata = {
+        'mode': 'shadow',
+        'status': 'rejected',
+        'failure_code': 'unknown_capability',
+        'latency_ms': 25,
+        'fallback_used': True,
+        'raw_error': 'private-secret-value',
+    }
+    timed_out_metadata = {
+        **rejected_metadata,
+        'status': 'timed_out',
+        'failure_code': 'transport_timeout',
+        'latency_ms': 5000,
+    }
+    rejected = build_planner_rejected_evaluation_event(
+        'private-planner-run-id',
+        rejected_metadata,
+        provider_class='openai_style',
+        model_name='private-model-id',
+    )
+    timed_out = build_planner_timed_out_evaluation_event(
+        'private-planner-run-id',
+        timed_out_metadata,
+        provider_class='anthropic',
+        model_name='private-model-id-claude',
+    )
+
+    assert rejected['event_type'] == 'orchestration_planner_rejected'
+    assert rejected['failure_code'] == 'unknown_capability'
+    assert timed_out['event_type'] == 'orchestration_planner_timed_out'
+    assert timed_out['failure_code'] == 'transport_timeout'
+    assert timed_out['model_class'] == 'claude'
+    _assert_private_values_absent(rejected)
+    _assert_private_values_absent(timed_out)
 
 
 if __name__ == '__main__':

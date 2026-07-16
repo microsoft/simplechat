@@ -243,6 +243,12 @@ class OpenAIStyleChatCompletionClient:
         request_kwargs.pop("stream_options", None)
         return self._client.chat.completions.create(**request_kwargs)
 
+    def with_options(self, **kwargs: Any):
+        """Clone the wrapped OpenAI client with request policy overrides."""
+        return OpenAIStyleChatCompletionClient(
+            self._client.with_options(**kwargs)
+        )
+
 
 def build_anthropic_chat_client(
     *,
@@ -273,11 +279,24 @@ class AnthropicChatCompletionClient:
     def create(self, **kwargs: Any):
         payload = self._build_payload(kwargs)
         stream = bool(kwargs.get("stream"))
+        request_timeout = kwargs.get("timeout")
+        if request_timeout is None:
+            transport_timeout = (30, self.timeout)
+        else:
+            try:
+                normalized_timeout = max(0.25, float(request_timeout))
+            except (TypeError, ValueError):
+                normalized_timeout = float(self.timeout)
+            connect_timeout = min(1.0, max(0.1, normalized_timeout / 4))
+            transport_timeout = (
+                connect_timeout,
+                max(0.15, normalized_timeout - connect_timeout),
+            )
         response = requests.post(
             self.endpoint,
             headers=self._build_headers(stream=stream),
             json=payload,
-            timeout=(30, self.timeout),
+            timeout=transport_timeout,
             stream=stream,
         )
         if response.status_code >= 400:

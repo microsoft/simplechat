@@ -117,6 +117,13 @@ from functions_chat_orchestration import (
     build_turn_orchestration_guidance_message,
     build_turn_orchestration_plan,
 )
+from functions_chat_capability_planner import (
+    build_capability_planner_request,
+    build_capability_planner_shadow_metadata,
+    capability_planner_shadow_is_eligible,
+    compare_capability_planner_shadow,
+    invoke_capability_planner,
+)
 from functions_chat_capabilities import (
     build_agent_capability_recommendation,
     build_governed_agent_capability_inventory,
@@ -164,6 +171,10 @@ from functions_evidence_ledger import (
     set_evidence_ledger_status,
 )
 from functions_orchestration_evaluation import (
+    build_planner_completed_evaluation_event,
+    build_planner_rejected_evaluation_event,
+    build_planner_shadow_compared_evaluation_event,
+    build_planner_timed_out_evaluation_event,
     build_recommendation_created_evaluation_event,
     build_recommendation_decision_evaluation_event,
     build_recommendation_outcome_evaluation_event,
@@ -2819,6 +2830,112 @@ def _build_server_capability_discovery(
         'auto_capability_ids': list(match.get('auto_capability_ids') or []),
         'recommendation': recommendation,
     }
+
+
+def _resolve_chat_capability_planner_runtime(
+    *,
+    settings,
+    planner_settings,
+    user_id,
+    active_group_ids,
+    same_chat_client,
+    same_chat_model,
+    same_chat_provider,
+    same_chat_endpoint,
+):
+    """Resolve a planner model only from server-authoritative endpoint policy."""
+    if planner_settings.get('chat_capability_planner_model_source') == 'same_as_chat':
+        return {
+            'client': same_chat_client,
+            'model': same_chat_model,
+            'runtime_protocol': infer_model_endpoint_protocol(
+                same_chat_provider,
+                same_chat_endpoint,
+                same_chat_model,
+            ),
+        }
+
+    configured_runtime = resolve_streaming_multi_endpoint_gpt_config(
+        settings,
+        {
+            'model_endpoint_id': planner_settings.get(
+                'chat_capability_planner_model_endpoint_id'
+            ),
+            'model_id': planner_settings.get('chat_capability_planner_model_id'),
+        },
+        user_id,
+        active_group_ids=active_group_ids,
+        allow_default_selection=False,
+        required_endpoint_scope='global',
+    )
+    if not configured_runtime:
+        return {
+            'client': None,
+            'model': '',
+            'runtime_protocol': 'other',
+        }
+    (
+        planner_client,
+        planner_model,
+        planner_provider,
+        planner_endpoint,
+        _planner_auth,
+        _planner_api_version,
+        _planner_endpoint_id,
+        _planner_model_id,
+        _planner_icon,
+    ) = configured_runtime
+    return {
+        'client': planner_client,
+        'model': planner_model,
+        'runtime_protocol': infer_model_endpoint_protocol(
+            planner_provider,
+            planner_endpoint,
+            planner_model,
+        ),
+    }
+
+
+def _build_capability_planner_shadow_evaluation_events(
+    *,
+    run_id,
+    metadata,
+    comparison,
+    provider_class,
+    model_name,
+):
+    status = str((metadata or {}).get('status') or '').strip().lower()
+    if status == 'valid':
+        result_event = build_planner_completed_evaluation_event(
+            run_id,
+            metadata,
+            provider_class=provider_class,
+            model_name=model_name,
+        )
+    elif status == 'timed_out':
+        result_event = build_planner_timed_out_evaluation_event(
+            run_id,
+            metadata,
+            provider_class=provider_class,
+            model_name=model_name,
+        )
+    else:
+        result_event = build_planner_rejected_evaluation_event(
+            run_id,
+            metadata,
+            provider_class=provider_class,
+            model_name=model_name,
+        )
+    return [
+        result_event,
+        build_planner_shadow_compared_evaluation_event(
+            run_id,
+            metadata,
+            comparison,
+            provider_class=provider_class,
+            model_name=model_name,
+        ),
+    ]
 
 
 def _build_capability_resume_request(data, *, canonical_agent=None):
@@ -11856,7 +11973,14 @@ def get_streaming_model_endpoint_candidates(settings, user_id, active_group_ids=
     return endpoints
 
 
-def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_group_ids=None, allow_default_selection=False):
+def resolve_streaming_multi_endpoint_gpt_config(
+    settings,
+    data,
+    user_id,
+    active_group_ids=None,
+    allow_default_selection=False,
+    required_endpoint_scope=None,
+):
     """Resolve a streaming GPT config from explicit or default multi-endpoint selections."""
     if not settings.get('enable_multi_model_endpoints', False):
         return None
@@ -11894,7 +12018,25 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         user_id,
         active_group_ids=active_group_ids,
     )
-    endpoint_cfg = next((endpoint for endpoint in endpoint_candidates if endpoint.get('id') == requested_endpoint_id), None)
+    normalized_required_scope = str(required_endpoint_scope or '').strip().lower()
+    if normalized_required_scope and normalized_required_scope not in {
+        'global',
+        'group',
+        'user',
+    }:
+        raise ValueError('Selected model endpoint scope is invalid.')
+    endpoint_cfg = next(
+        (
+            endpoint
+            for endpoint in endpoint_candidates
+            if endpoint.get('id') == requested_endpoint_id
+            and (
+                not normalized_required_scope
+                or endpoint.get('_endpoint_scope') == normalized_required_scope
+            )
+        ),
+        None,
+    )
 
     if not endpoint_cfg:
         if selection_source == 'request':
@@ -19010,6 +19152,107 @@ def register_route_backend_chats(bp):
                     })}\n\n"
                     return
 
+                capability_recommendation = capability_discovery.get('recommendation')
+                capability_planner_shadow_metadata = None
+                capability_planner_shadow_comparison = None
+                capability_planner_provider_class = 'other'
+                capability_planner_model_name = ''
+                planner_settings = normalize_chat_capability_planner_settings(settings)
+                if (
+                    planner_settings.get('chat_capability_planner_mode') == 'shadow'
+                    and not capability_resume_context
+                    and not stream_cancel_requested()
+                ):
+                    capability_planner_request = build_capability_planner_request(
+                        user_message,
+                        capability_discovery.get('inventory'),
+                        max_candidate_plans=planner_settings.get(
+                            'chat_capability_planner_max_candidate_plans'
+                        ),
+                        max_capabilities_per_plan=planner_settings.get(
+                            'chat_capability_planner_max_capabilities_per_plan'
+                        ),
+                        additional_selected_mandate_ids=(
+                            ['selected_agent']
+                            if _has_chat_agent_selection(request_agent_info)
+                            else []
+                        ),
+                    )
+                    if capability_planner_shadow_is_eligible(
+                        planner_settings,
+                        capability_planner_request,
+                        is_resume=False,
+                        cancel_requested=stream_cancel_requested(),
+                    ):
+                        try:
+                            capability_planner_runtime = (
+                                _resolve_chat_capability_planner_runtime(
+                                    settings=settings,
+                                    planner_settings=planner_settings,
+                                    user_id=user_id,
+                                    active_group_ids=active_group_ids,
+                                    same_chat_client=gpt_client,
+                                    same_chat_model=gpt_model,
+                                    same_chat_provider=gpt_provider,
+                                    same_chat_endpoint=gpt_endpoint,
+                                )
+                            )
+                        except Exception as planner_model_error:
+                            capability_planner_runtime = {
+                                'client': None,
+                                'model': '',
+                                'runtime_protocol': 'other',
+                            }
+                            log_event(
+                                '[CapabilityPlanner] Planner model resolution failed',
+                                extra={
+                                    'error_type': type(planner_model_error).__name__,
+                                },
+                                level=logging.WARNING,
+                            )
+                        capability_planner_provider_class = (
+                            capability_planner_runtime.get('runtime_protocol') or 'other'
+                        )
+                        capability_planner_model_name = (
+                            capability_planner_runtime.get('model') or ''
+                        )
+                        capability_planner_shadow_result = invoke_capability_planner(
+                            planner_client=capability_planner_runtime.get('client'),
+                            planner_model=capability_planner_model_name,
+                            planner_request=capability_planner_request,
+                            runtime_protocol=capability_planner_provider_class,
+                            timeout_ms=planner_settings.get(
+                                'chat_capability_planner_timeout_ms'
+                            ),
+                            max_completion_tokens=planner_settings.get(
+                                'chat_capability_planner_max_completion_tokens'
+                            ),
+                            cancel_requested=stream_cancel_requested,
+                        )
+                        if stream_cancel_requested():
+                            cancel_reason = (
+                                stream_session.get_cancel_reason()
+                                if stream_session
+                                else 'user_requested'
+                            )
+                            yield _build_stream_cancel_event(
+                                conversation_id,
+                                reason=cancel_reason,
+                                message_persisted=False,
+                            )
+                            return
+                        capability_planner_shadow_metadata = (
+                            build_capability_planner_shadow_metadata(
+                                capability_planner_shadow_result
+                            )
+                        )
+                        capability_planner_shadow_comparison = (
+                            compare_capability_planner_shadow(
+                                capability_planner_shadow_result,
+                                capability_recommendation,
+                            )
+                        )
+
                 auto_capability_ids = list(capability_discovery.get('auto_capability_ids') or [])
                 capability_origins = (
                     dict(capability_resume_context.get('capability_origins') or {})
@@ -19149,7 +19392,6 @@ def register_route_backend_chats(bp):
                     ),
                     effective_capabilities=effective_capability_entries,
                 )
-                capability_recommendation = capability_discovery.get('recommendation')
                 log_event(
                     '[Orchestration] Turn plan created',
                     extra={
@@ -19161,6 +19403,21 @@ def register_route_backend_chats(bp):
                         'source_count': len(turn_orchestration_plan.get('sources') or []),
                     },
                 )
+                if capability_planner_shadow_metadata:
+                    planner_evaluation_events = (
+                        _build_capability_planner_shadow_evaluation_events(
+                            run_id=turn_orchestration_plan.get('run_id'),
+                            metadata=capability_planner_shadow_metadata,
+                            comparison=capability_planner_shadow_comparison,
+                            provider_class=capability_planner_provider_class,
+                            model_name=capability_planner_model_name,
+                        )
+                    )
+                    for planner_evaluation_event in planner_evaluation_events:
+                        log_event(
+                            '[CapabilityPlanner] Shadow evaluation recorded',
+                            extra=planner_evaluation_event,
+                        )
 
                 # Determine chat type
                 actual_chat_type = 'personal_single_user'
@@ -19351,6 +19608,10 @@ def register_route_backend_chats(bp):
                 user_metadata['evidence_ledger'] = turn_evidence_ledger
                 user_metadata['orchestration_runtime'] = turn_orchestration_run.to_metadata()
                 user_metadata['capability_provenance'] = turn_capability_provenance
+                if capability_planner_shadow_metadata:
+                    user_metadata['capability_planner_shadow'] = copy.deepcopy(
+                        capability_planner_shadow_metadata
+                    )
                 user_metadata['chat_context'] = {
                     'conversation_id': conversation_id
                 }

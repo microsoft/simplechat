@@ -1,6 +1,6 @@
 # Chat Turn Orchestration
 
-Implemented in version: **0.250.068**
+Implemented in version: **0.250.069**
 Associated issue: **[#1021](https://github.com/microsoft/simplechat/issues/1021)**
 
 ## Overview
@@ -323,9 +323,70 @@ runs by default.
 The detailed matrix, manifest schema, privacy contract, and result artifact are
 documented in
 `docs/explanation/features/CHAT_ORCHESTRATION_EVALUATION_QUALITY_GATES.md`.
-Phase 10 remains responsible for generalized output types, broader multi-agent
-execution, Foundry or action-attached discovery, consequential/write approval,
-durable in-flight execution, and complex workflows.
+Phase 10A adds model-assisted capability planning in non-executing shadow mode.
+Phase 10B and 10C remain responsible for governed activation and contextual
+clarification. Generalized output types move to Phase 11.
+
+## Phase 10A Model-Assisted Planner Shadow Mode
+
+Phase 10A adds a versioned, provider-compatible model planner after the server
+has authorized the conversation, selected controls, active scopes, document
+inputs, chat model, and safe governed capability inventory. The planner sees
+only the bounded current user request, selected mandate IDs, and safe built-in
+or opaque governed-agent descriptors. It does not receive conversation history,
+retrieved evidence, canonical object IDs, instructions, tools, endpoints,
+credentials, inaccessible entries, or inaccessible counts.
+
+The planner returns one strict JSON decision:
+
+- `direct` when no additional capability is materially useful.
+- `propose` with up to the configured number of bounded candidate plans.
+- `clarify` when materially different interpretations would change the plan.
+
+Model output is treated as untrusted. The server rejects unknown fields,
+versions, decisions, IDs, reason codes, evidence types, confidence classes, and
+ineligible capabilities. Candidate IDs must exist in the exact request
+inventory, selected mandates are restored deterministically, duplicate plans
+collapse, and selected-only proposals are rejected because they add no work.
+The model cannot author option IDs, grant access, change policy, execute tools,
+alter toggles, or claim execution occurred.
+
+### Off And Shadow Modes
+
+`chat_capability_planner_mode` accepts only `off` and `shadow` in Phase 10A and
+defaults to `off`. Invalid settings normalize to `off`. Shadow planning runs
+only for a new, uncancelled turn with at least one safe unselected discoverable
+capability and a server-resolved model. Capability resumes never call the
+planner.
+
+Shadow output cannot create a choice card or clarification, modify automatic or
+effective capability IDs, change the deterministic recommendation, add runtime
+nodes, select a finalizer, or alter the response. The existing deterministic
+plan remains the only behavioral input.
+
+The planner uses the already resolved chat model by default. Administrators may
+configure a saved global endpoint/model pair; the server resolves it through
+global endpoint and item governance and ignores colliding personal or group
+endpoint IDs. Browser model values are not consulted. Azure OpenAI uses strict
+JSON schema when supported, OpenAI-style providers use bounded compatibility
+variants, and Anthropic-compatible models receive the exact schema in JSON-only
+prompting. Calls are non-streaming, tool-free, single-result, disable SDK retries,
+and share one real transport deadline that defaults to five seconds and cannot
+exceed ten seconds.
+
+### Shadow Metadata And Evaluation
+
+The user turn may retain a compact `capability_planner_shadow` summary containing
+only version, mode, status, decision, candidate count, safe capability classes,
+allowlisted reason codes, bounded latency, fallback state, and a bounded failure
+code. Planner requests, responses, prompts, opaque agent references, labels,
+model text, endpoint/model IDs, and raw errors are not persisted.
+
+Fixed evaluation events record completed, rejected, timed-out, and
+planner-versus-control outcomes. Run IDs are hashed; providers and models are
+bucketed into safe classes. The events cannot accept prompt text, evidence,
+canonical agent metadata, private scopes, secrets, endpoints, action arguments,
+or inaccessible counts.
 
 ## Security And Governance
 
@@ -480,9 +541,18 @@ Phase 9 evaluation coverage is in:
 - `ui_tests/test_phase9_orchestration_live_smoke.py` for the validated five-scenario manifest, aggregate result artifact, and opt-in deployed-environment execution.
 - `scripts/run_phase9_orchestration_quality_gates.py` for the repeatable compile, functional, security, route-policy, UI-contract, and optional live-smoke command.
 
+Phase 10A planner coverage is in:
+
+- `functional_tests/test_chat_capability_model_planner.py` for safe request projection, strict direct/propose/clarify validation, selected-mandate preservation, provider variants, transport timeout, cancellation, privacy, the 139-row deterministic evaluation dataset, and required semantic fixtures.
+- `functional_tests/test_chat_capability_planner_route.py` for off/shadow eligibility, resume isolation, server-owned configured model selection, route ordering, deterministic control isolation, and user-turn-only metadata.
+- `functional_tests/test_phase9_orchestration_observability.py` for the four fixed planner event types and forbidden-value checks.
+- `scripts/run_phase9_orchestration_quality_gates.py` for the combined Phase 9/10A repeatable gate.
+
 ## Known Limitations
 
-Phase 8A and Phase 8B add durable built-in and governed local-agent choice, with these deliberate boundaries:
+Phase 8A, Phase 8B, and Phase 10A add durable governed choice and observational model planning, with these deliberate boundaries:
+
+- Model planner output is shadow-only. It cannot create user-visible proposals or clarifications, execute capabilities, or change the deterministic response path until a separately reviewed Phase 10B activation contract is implemented.
 
 - Generalized multi-agent recommendation remains out of scope. When an agent is already selected, Phase 8B does not recommend another agent.
 - Foundry-backed agents and local agents with attached actions remain explicitly selectable but are not discoverable until hidden tools, action arguments, and runtime telemetry have a separately reviewed read-only governance contract.

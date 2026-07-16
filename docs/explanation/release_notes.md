@@ -2,6 +2,17 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.069)**
+
+#### New Features
+
+*   **Model-Assisted Capability Planner Shadow Mode**
+    *   Added a strict non-executing planner contract that evaluates the current request against only the safe authorized built-in and governed-agent inventory, with selected mandates preserved by deterministic server validation.
+    *   Added backend `off` and `shadow` modes, server-governed same-chat or configured model resolution, provider-compatible JSON handling, a real 5-second transport timeout with a 10-second ceiling, and compact failure fallback that leaves normal chat unchanged.
+    *   Added privacy-safe shadow metadata and fixed completed, rejected, timed-out, and planner-versus-control evaluation events without prompts, raw responses, opaque agent references, canonical IDs, endpoints, secrets, or inaccessible counts.
+    *   Shadow results cannot create choices, clarification UI, capability execution, toggle changes, runtime nodes, or final-response changes; activation remains deferred to a separately reviewed Phase 10B contract.
+    *   (Ref: microsoft/simplechat#1021, `functions_chat_capability_planner.py`, `route_backend_chats.py`, `functions_orchestration_evaluation.py`, `test_chat_capability_model_planner.py`, `test_chat_capability_planner_route.py`, `CHAT_CAPABILITY_MODEL_PLANNER.md`)
+
 ### **(v0.250.068)**
 
 #### New Features

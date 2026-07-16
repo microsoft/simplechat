@@ -636,6 +636,7 @@ def build_governed_capability_inventory(*, selected_capability_ids=None, resolve
             'discoverable': discoverable,
             'auto_use_allowed': auto_use_allowed,
             'requires_user_choice': requires_user_choice,
+            'read_only': definition['read_only'],
             'external_data': definition['external_data'],
             'risk_class': definition['risk_class'],
             'cost_class': definition['cost_class'],
