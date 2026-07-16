@@ -37,7 +37,7 @@ MAX_AVAILABLE_CAPABILITIES = 64
 DEFAULT_PLANNER_TIMEOUT_MS = 5000
 MAX_PLANNER_TIMEOUT_MS = 10000
 MIN_PLANNER_TIMEOUT_MS = 250
-DEFAULT_PLANNER_MAX_COMPLETION_TOKENS = 300
+DEFAULT_PLANNER_MAX_COMPLETION_TOKENS = 600
 MAX_PLANNER_COMPLETION_TOKENS = 1000
 MIN_PLANNER_COMPLETION_TOKENS = 64
 
@@ -47,9 +47,27 @@ CAPABILITY_PLANNER_SYSTEM_PROMPT = (
     'Selected mandates cannot be removed. Do not call tools, grant access, alter policy, '
     'or claim that work ran. Recommend capabilities only when they materially improve '
     'completeness, freshness, evidence quality, confidence, or the requested output. '
+    'When selected mandates already cover the requested source and no distinct evidence '
+    'class is requested, choose direct and do not propose a redundant specialist, '
+    'retrieval source, or analysis capability. '
+    'When the request explicitly asks to analyze or compare ready selected documents, '
+    'recommend only the needed analysis capability unless the user also requests a '
+    'distinct external, workspace, or specialist evidence class. '
+    'For broad, exhaustive, or multi-year public archive collection, prefer Deep '
+    'Research and optionally offer Web Search as a faster alternative. For one named '
+    'or narrowly scoped current public item, prefer Web Search. '
     'Prefer direct for simple timeless requests. Use additive plans only when sources are '
     'complementary. Use clarify only when interpretations materially change the required '
-    'plan. Return the exact JSON schema with no prose, markup, or private reasoning.'
+    'plan. Requirement IDs must use requirement_1, requirement_2, and so on. Candidate '
+    'plan IDs must use candidate_1, candidate_2, and so on. Candidate capability IDs '
+    'must contain only unselected additions; never repeat selected mandates in a '
+    'candidate. Copy capability IDs and evidence types exactly from the provided '
+    'inventory. For direct, return empty '
+    'requirements and candidate_plans with both nullable fields set to null. For clarify, '
+    'return no candidate plans, a null recommended_plan_id, and material_ambiguity as the '
+    'clarification_code. For propose, return at least one candidate plan, recommend one '
+    'returned candidate ID, and set clarification_code to null. Return the exact JSON '
+    'schema with no prose, markup, or private reasoning.'
 )
 
 _PLANNER_RESULT_FIELDS = frozenset({
@@ -71,8 +89,8 @@ _PLANNER_CANDIDATE_FIELDS = frozenset({
     'reason_code',
     'confidence',
 })
-_REQUIREMENT_ID_PATTERN = re.compile(r'^requirement_[1-9][0-9]{0,2}$')
-_CANDIDATE_ID_PATTERN = re.compile(r'^candidate_[1-9][0-9]{0,2}$')
+_REQUIREMENT_ID_PATTERN = re.compile(r'^requirement_[1-8]$')
+_CANDIDATE_ID_PATTERN = re.compile(r'^candidate_[1-5]$')
 _SAFE_IDENTIFIER_PATTERN = re.compile(r'^[a-z0-9][a-z0-9_:-]{0,255}$')
 _SAFE_BUILTIN_CAPABILITY_CLASSES = frozenset({
     'analyze',
@@ -387,6 +405,9 @@ def _normalize_candidates(
         capability_ids = candidate.get('capability_ids')
         if not _CANDIDATE_ID_PATTERN.fullmatch(candidate_id):
             return None, None, 'invalid_candidate_id'
+        candidate_number = int(candidate_id.rsplit('_', 1)[-1])
+        if candidate_number > max_candidates:
+            return None, None, 'invalid_candidate_id'
         if candidate_id in seen_candidate_ids:
             return None, None, 'duplicate_candidate_id'
         if reason_code not in CAPABILITY_PLANNER_REASON_CODES:
@@ -404,29 +425,18 @@ def _normalize_candidates(
             capability = capabilities_by_id.get(normalized_id)
             if not capability:
                 return None, None, 'unknown_capability'
+            if capability.get('state') == 'selected':
+                return None, None, 'invalid_capability_ids'
             if not (
-                capability.get('state') == 'selected'
-                or (
-                    capability.get('state') == 'unselected'
-                    and capability.get('discoverable') is True
-                    and capability.get('input_ready') is True
-                )
+                capability.get('state') == 'unselected'
+                and capability.get('discoverable') is True
+                and capability.get('input_ready') is True
             ):
                 return None, None, 'ineligible_capability'
             if normalized_id not in normalized_capability_ids:
                 normalized_capability_ids.append(normalized_id)
 
-        if not any(
-            capabilities_by_id[capability_id].get('state') == 'unselected'
-            for capability_id in normalized_capability_ids
-        ):
-            return None, None, 'no_additional_capability'
-
-        additional_capability_ids = sorted(
-            capability_id
-            for capability_id in normalized_capability_ids
-            if capability_id not in selected_ids
-        )
+        additional_capability_ids = sorted(normalized_capability_ids)
         effective_capability_ids = list(selected_ids)
         for capability_id in additional_capability_ids:
             if capability_id not in effective_capability_ids:
@@ -553,8 +563,103 @@ def validate_capability_planner_result(raw_result, planner_request):
     }
 
 
-def _planner_result_json_schema():
+def _planner_result_json_schema(planner_request=None):
     identifier_schema = {'type': 'string', 'minLength': 1, 'maxLength': 256}
+    request = planner_request if isinstance(planner_request, Mapping) else {}
+    policy = request.get('policy') if isinstance(request.get('policy'), Mapping) else {}
+    max_candidate_plans = _bounded_int(
+        policy.get('max_candidate_plans'),
+        default=DEFAULT_MAX_CANDIDATE_PLANS,
+        minimum=1,
+        maximum=MAX_CANDIDATE_PLANS,
+    )
+    max_capabilities_per_plan = _bounded_int(
+        policy.get('max_capabilities_per_plan'),
+        default=DEFAULT_MAX_CAPABILITIES_PER_PLAN,
+        minimum=1,
+        maximum=MAX_CAPABILITIES_PER_PLAN,
+    )
+    available_capabilities = [
+        capability
+        for capability in request.get('available_capabilities') or []
+        if isinstance(capability, Mapping)
+    ]
+    selected_ids = {
+        str(mandate.get('id') or '').strip()
+        for mandate in request.get('selected_mandates') or []
+        if isinstance(mandate, Mapping)
+        and _SAFE_IDENTIFIER_PATTERN.fullmatch(
+            str(mandate.get('id') or '').strip()
+        )
+    }
+    selected_ids.update(
+        str(capability.get('id') or '').strip()
+        for capability in available_capabilities
+        if capability.get('state') == 'selected'
+        and _SAFE_IDENTIFIER_PATTERN.fullmatch(
+            str(capability.get('id') or '').strip()
+        )
+    )
+    additional_capability_ids = {
+        str(capability.get('id') or '').strip()
+        for capability in available_capabilities
+        if capability.get('state') == 'unselected'
+        and capability.get('discoverable') is True
+        and capability.get('input_ready') is True
+        if _SAFE_IDENTIFIER_PATTERN.fullmatch(
+            str(capability.get('id') or '').strip()
+        )
+    }
+    max_additional_capabilities = max(
+        0,
+        max_capabilities_per_plan - len(selected_ids),
+    )
+    proposal_is_available = bool(
+        additional_capability_ids and max_additional_capabilities
+    )
+    evidence_types = sorted({
+        evidence_type
+        for capability in available_capabilities
+        for evidence_type in (
+            _safe_identifier(value)
+            for value in capability.get('evidence_types') or []
+        )
+        if evidence_type
+    })
+    requirement_id_schema = {
+        'type': 'string',
+        'enum': [
+            f'requirement_{index}'
+            for index in range(1, MAX_PLANNER_REQUIREMENTS + 1)
+        ],
+        'description': 'Sequential requirement alias; use requirement_1 first.',
+    }
+    candidate_id_schema = {
+        'type': 'string',
+        'enum': [
+            f'candidate_{index}'
+            for index in range(1, max_candidate_plans + 1)
+        ],
+        'description': 'Sequential candidate alias; use candidate_1 first.',
+    }
+    capability_id_schema = (
+        {
+            'type': 'string',
+            'enum': sorted(additional_capability_ids),
+            'description': 'Exact capability ID copied from the request inventory.',
+        }
+        if additional_capability_ids
+        else identifier_schema
+    )
+    evidence_type_schema = (
+        {
+            'type': 'string',
+            'enum': evidence_types,
+            'description': 'Exact evidence type copied from the request inventory.',
+        }
+        if evidence_types
+        else identifier_schema
+    )
     return {
         'name': 'chat_capability_planner_result',
         'strict': True,
@@ -565,7 +670,11 @@ def _planner_result_json_schema():
                 'version': {'type': 'integer', 'enum': [CAPABILITY_PLANNER_CONTRACT_VERSION]},
                 'decision': {
                     'type': 'string',
-                    'enum': sorted(CAPABILITY_PLANNER_DECISIONS),
+                    'enum': sorted(
+                        CAPABILITY_PLANNER_DECISIONS
+                        if proposal_is_available
+                        else CAPABILITY_PLANNER_DECISIONS - {'propose'}
+                    ),
                 },
                 'requirements': {
                     'type': 'array',
@@ -574,11 +683,11 @@ def _planner_result_json_schema():
                         'type': 'object',
                         'additionalProperties': False,
                         'properties': {
-                            'id': identifier_schema,
+                            'id': requirement_id_schema,
                             'evidence_types': {
                                 'type': 'array',
                                 'maxItems': MAX_EVIDENCE_TYPES_PER_REQUIREMENT,
-                                'items': identifier_schema,
+                                'items': evidence_type_schema,
                             },
                             'reason_code': {
                                 'type': 'string',
@@ -590,17 +699,17 @@ def _planner_result_json_schema():
                 },
                 'candidate_plans': {
                     'type': 'array',
-                    'maxItems': MAX_CANDIDATE_PLANS,
+                    'maxItems': max_candidate_plans if proposal_is_available else 0,
                     'items': {
                         'type': 'object',
                         'additionalProperties': False,
                         'properties': {
-                            'id': identifier_schema,
+                            'id': candidate_id_schema,
                             'capability_ids': {
                                 'type': 'array',
                                 'minItems': 1,
-                                'maxItems': MAX_CAPABILITIES_PER_PLAN,
-                                'items': identifier_schema,
+                                'maxItems': max(1, max_additional_capabilities),
+                                'items': capability_id_schema,
                             },
                             'reason_code': {
                                 'type': 'string',
@@ -620,7 +729,11 @@ def _planner_result_json_schema():
                     },
                 },
                 'recommended_plan_id': {
-                    'anyOf': [identifier_schema, {'type': 'null'}],
+                    'anyOf': (
+                        [candidate_id_schema, {'type': 'null'}]
+                        if proposal_is_available
+                        else [{'type': 'null'}]
+                    ),
                 },
                 'clarification_code': {
                     'anyOf': [
@@ -641,7 +754,11 @@ def _planner_result_json_schema():
     }
 
 
-def _model_request_variants(runtime_protocol, max_completion_tokens):
+def _model_request_variants(
+    runtime_protocol,
+    max_completion_tokens,
+    result_schema_format=None,
+):
     token_limit = _bounded_int(
         max_completion_tokens,
         default=DEFAULT_PLANNER_MAX_COMPLETION_TOKENS,
@@ -656,7 +773,11 @@ def _model_request_variants(runtime_protocol, max_completion_tokens):
 
     schema_format = {
         'type': 'json_schema',
-        'json_schema': _planner_result_json_schema(),
+        'json_schema': (
+            result_schema_format
+            if isinstance(result_schema_format, Mapping)
+            else _planner_result_json_schema()
+        ),
     }
     return [
         {
@@ -666,16 +787,16 @@ def _model_request_variants(runtime_protocol, max_completion_tokens):
         },
         {
             'response_format': schema_format,
-            'temperature': 0,
+            'max_completion_tokens': token_limit,
+        },
+        {
+            'response_format': schema_format,
             'max_tokens': token_limit,
         },
         {
             'response_format': {'type': 'json_object'},
-            'temperature': 0,
             'max_completion_tokens': token_limit,
         },
-        {'temperature': 0, 'max_completion_tokens': token_limit},
-        {'temperature': 0, 'max_tokens': token_limit},
         {'max_completion_tokens': token_limit},
         {'max_tokens': token_limit},
     ]
@@ -829,7 +950,8 @@ def invoke_capability_planner(
             started_at=started_at,
         )
 
-    result_schema = _planner_result_json_schema()['schema']
+    result_schema_format = _planner_result_json_schema(planner_request)
+    result_schema = result_schema_format['schema']
     base_payload = {
         'model': str(planner_model).strip(),
         'messages': [
@@ -848,7 +970,11 @@ def invoke_capability_planner(
         ],
         'stream': False,
     }
-    variants = _model_request_variants(runtime_protocol, max_completion_tokens)
+    variants = _model_request_variants(
+        runtime_protocol,
+        max_completion_tokens,
+        result_schema_format,
+    )
     for variant_index, request_variant in enumerate(variants):
         if callable(cancel_requested) and cancel_requested():
             return _invocation_failure('discarded', 'cancelled', started_at=started_at)
@@ -909,6 +1035,14 @@ def invoke_capability_planner(
         result['fallback_used'] = bool(
             result.get('status') != 'valid' or variant_index > 0
         )
+        response_format = request_variant.get('response_format')
+        if isinstance(response_format, Mapping):
+            response_format_class = str(response_format.get('type') or 'none')
+        elif str(runtime_protocol or '').strip().lower() == 'anthropic':
+            response_format_class = 'prompt_schema'
+        else:
+            response_format_class = 'none'
+        result['response_format_class'] = response_format_class
         return result
 
     return _invocation_failure('rejected', 'client_error', started_at=started_at)

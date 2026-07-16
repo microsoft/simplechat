@@ -17,10 +17,12 @@ COMPILE_TARGETS = (
     'application/single_app/functions_settings.py',
     'application/single_app/model_endpoint_clients.py',
     'application/single_app/route_backend_chats.py',
+    'scripts/run_phase10a_controlled_shadow.py',
 )
 AUTOMATED_TEST_TARGETS = (
     'functional_tests/test_chat_capability_model_planner.py',
     'functional_tests/test_chat_capability_planner_route.py',
+    'functional_tests/test_phase10a_controlled_shadow_runner.py',
     'functional_tests/test_phase9_orchestration_golden_scenarios.py',
     'functional_tests/test_phase9_orchestration_observability.py',
     'functional_tests/test_chat_turn_orchestration_plan.py',

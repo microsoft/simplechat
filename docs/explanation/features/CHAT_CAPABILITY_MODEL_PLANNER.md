@@ -2,6 +2,8 @@
 
 Implemented in version: **0.250.069**
 
+Hardened in version: **0.250.071**
+
 Associated issue: **[#1021](https://github.com/microsoft/simplechat/issues/1021)**
 
 ## Overview
@@ -78,6 +80,15 @@ unknown fields, unsupported versions, unknown IDs, unavailable entries,
 selected-only proposals, over-budget collections, invalid decision shapes, and
 recommendations that do not identify a validated candidate.
 
+The structured-output schema is rebuilt from each safe planner request. It
+enumerates only `requirement_1` through `requirement_8`, candidate aliases within
+the current policy budget, exact eligible unselected capability IDs, and exact
+safe evidence types. Selected mandates remain visible as required context but
+are excluded from candidate additions. When no eligible addition exists,
+`propose` is removed from the decision enum and candidate plans are bounded to
+zero. The same request-specific schema is sent in both the prompt and provider
+`response_format`.
+
 Selected mandates are restored from the request rather than trusted from model
 output. Candidate members and equivalent candidate sets are deduplicated.
 Duplicate candidates cannot create a second execution option, and no validation
@@ -114,7 +125,7 @@ Backend settings and defaults are:
 {
   "chat_capability_planner_mode": "off",
   "chat_capability_planner_timeout_ms": 5000,
-  "chat_capability_planner_max_completion_tokens": 300,
+  "chat_capability_planner_max_completion_tokens": 600,
   "chat_capability_planner_max_candidate_plans": 3,
   "chat_capability_planner_max_capabilities_per_plan": 4,
   "chat_capability_planner_model_source": "same_as_chat",
@@ -157,6 +168,14 @@ selected-mandate, clarify, and governed-agent scenarios.
 off/resume/cancellation gates, server-owned model selection, deterministic
 control isolation, and user-turn-only shadow metadata.
 
+`functional_tests/test_phase10a_controlled_shadow_runner.py` validates the
+realistic controlled manifest, unavailable and input-not-ready filtering,
+additive scoring, explicit acceptance thresholds, and privacy-safe result
+artifacts. The manifest covers direct, public archive, named public source,
+workspace, selected-plus-additive, selected-mandate, governed-agent,
+clarification, prompt-injection, unavailable, unauthorized, and policy-blocked
+behavior.
+
 Run the combined deterministic gate with:
 
 ```powershell
@@ -164,6 +183,25 @@ Run the combined deterministic gate with:
 ```
 
 No live or billable planner call is required by the test suite.
+
+After deterministic gates pass, run the opt-in controlled live matrix with a
+known test deployment:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\run_phase10a_controlled_shadow.py `
+  --auth azure_cli `
+  --repetitions 3
+```
+
+The command never executes a capability. It writes bounded decisions,
+capability classes, reason codes, failure codes, and latency aggregates to
+`artifacts/phase10a_controlled_shadow_report.json`. Prompts, raw responses,
+deployment names, endpoint hosts, credentials, canonical IDs, and evidence are
+not persisted. Version 0.250.071 was accepted against the controlled
+`gpt-5.6-terra` deployment with 57 of 57 end-to-end samples, 100% semantic
+accuracy and strict JSON-schema use in every category, zero timeouts,
+operational failures, invalid outputs, false proposals, capability leakage, or
+prohibited execution-surface imports, and p50/p95 latency of 1.67/2.65 seconds.
 
 ## Known Limitations
 

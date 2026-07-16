@@ -1,7 +1,7 @@
 # test_chat_capability_model_planner.py
 """
 Functional test for the model-assisted chat capability planner contract.
-Version: 0.250.069
+Version: 0.250.071
 Implemented in: 0.250.069
 
 This test ensures planner requests expose only safe authorized capability
@@ -278,7 +278,7 @@ def test_valid_proposal_preserves_selected_mandates_and_deduplicates():
                 },
                 {
                     'id': 'candidate_2',
-                    'capability_ids': ['workspace_search', 'web_search'],
+                    'capability_ids': ['web_search'],
                     'reason_code': 'cross_source_evidence',
                     'confidence': 'medium',
                 },
@@ -457,7 +457,27 @@ def test_selected_only_and_oversized_proposals_fail_closed():
         },
         _request(),
     )
-    assert selected_only['failure_code'] == 'no_additional_capability'
+    assert selected_only['failure_code'] == 'invalid_capability_ids'
+
+    out_of_budget_alias = validate_capability_planner_result(
+        {
+            'version': 1,
+            'decision': 'propose',
+            'requirements': [],
+            'candidate_plans': [
+                {
+                    'id': 'candidate_4',
+                    'capability_ids': ['web_search'],
+                    'reason_code': 'public_source_retrieval',
+                    'confidence': 'high',
+                }
+            ],
+            'recommended_plan_id': 'candidate_4',
+            'clarification_code': None,
+        },
+        _request(),
+    )
+    assert out_of_budget_alias['failure_code'] == 'invalid_candidate_id'
 
     oversized = _proposal_payload()
     oversized['candidate_plans'] = [
@@ -481,11 +501,12 @@ def test_selected_only_and_oversized_proposals_fail_closed():
 
 def test_azure_invocation_uses_schema_and_transport_timeout():
     client = _fake_client(_completion_response(_proposal_payload()))
+    planner_request = _request()
 
     result = invoke_capability_planner(
         planner_client=client,
         planner_model='planner-model',
-        planner_request=_request(),
+        planner_request=planner_request,
         runtime_protocol='azure_openai',
         timeout_ms=5000,
         max_completion_tokens=300,
@@ -502,6 +523,29 @@ def test_azure_invocation_uses_schema_and_transport_timeout():
     assert request_payload['temperature'] == 0
     assert request_payload['max_completion_tokens'] == 300
     assert request_payload['response_format']['type'] == 'json_schema'
+    result_schema = request_payload['response_format']['json_schema']['schema']
+    requirement_schema = result_schema['properties']['requirements']['items']
+    candidate_schema = result_schema['properties']['candidate_plans']['items']
+    assert requirement_schema['properties']['id']['enum'] == [
+        f'requirement_{index}' for index in range(1, 9)
+    ]
+    assert candidate_schema['properties']['id']['enum'] == [
+        f'candidate_{index}' for index in range(1, 4)
+    ]
+    assert candidate_schema['properties']['capability_ids']['items']['enum'] == [
+        'agent:personal:opaque-reference',
+        'web_search',
+    ]
+    assert requirement_schema['properties']['evidence_types']['items']['enum'] == sorted({
+        evidence_type
+        for capability in planner_request['available_capabilities']
+        for evidence_type in capability['evidence_types']
+    })
+    assert result_schema['properties']['recommended_plan_id']['anyOf'][0][
+        'enum'
+    ] == [f'candidate_{index}' for index in range(1, 4)]
+    assert result_schema['properties']['candidate_plans']['maxItems'] == 3
+    assert candidate_schema['properties']['capability_ids']['maxItems'] == 3
     assert 'Output JSON Schema:' in request_payload['messages'][0]['content']
     assert 'public_source_archive_research' in (
         request_payload['messages'][0]['content']
@@ -515,6 +559,7 @@ def test_protocol_fallback_is_bounded_and_arbitrary_failures_are_not_retried():
         TypeError("unexpected keyword argument 'response_format'"),
         TypeError("unexpected keyword argument 'response_format'"),
         TypeError("unsupported parameter: response_format"),
+        TypeError("unsupported parameter: response_format"),
         _completion_response(_proposal_payload()),
     )
     fallback_result = invoke_capability_planner(
@@ -526,7 +571,7 @@ def test_protocol_fallback_is_bounded_and_arbitrary_failures_are_not_retried():
     assert fallback_result['status'] == 'valid'
     assert fallback_result['fallback_used'] is True
     assert fallback_client.options == [{'timeout': 5.0, 'max_retries': 0}]
-    assert len(fallback_client.requests) == 4
+    assert len(fallback_client.requests) == 5
     assert 'response_format' not in fallback_client.requests[-1]
 
     failed_client = _fake_client(RuntimeError('quota exceeded'))
@@ -552,10 +597,7 @@ def test_protocol_fallback_is_bounded_and_arbitrary_failures_are_not_retried():
     assert len(misleading_error_client.requests) == 1
 
     reasoning_client = _fake_client(
-        *[
-            TypeError('unsupported parameter: temperature')
-            for _ in range(5)
-        ],
+        TypeError('unsupported parameter: temperature'),
         _completion_response(_proposal_payload()),
     )
     reasoning_result = invoke_capability_planner(
@@ -564,9 +606,11 @@ def test_protocol_fallback_is_bounded_and_arbitrary_failures_are_not_retried():
         planner_request=_request(),
     )
     assert reasoning_result['status'] == 'valid'
-    assert len(reasoning_client.requests) == 6
-    assert reasoning_client.requests[-1]['max_completion_tokens'] == 300
+    assert reasoning_result['response_format_class'] == 'json_schema'
+    assert len(reasoning_client.requests) == 2
+    assert reasoning_client.requests[-1]['max_completion_tokens'] == 600
     assert 'temperature' not in reasoning_client.requests[-1]
+    assert reasoning_client.requests[-1]['response_format']['type'] == 'json_schema'
 
     unsupported_transport = SimpleNamespace(chat=reasoning_client.chat)
     unsupported_result = invoke_capability_planner(
@@ -663,7 +707,8 @@ def test_anthropic_fallback_uses_json_only_payload_and_transport_timeout():
     )
 
     assert planner_result['status'] == 'valid'
-    assert planner_client.requests[0]['max_tokens'] == 300
+    assert planner_result['response_format_class'] == 'prompt_schema'
+    assert planner_client.requests[0]['max_tokens'] == 600
     assert 0 < planner_client.requests[0]['timeout'] <= 5.0
     assert planner_client.options == []
     assert 'response_format' not in planner_client.requests[0]
@@ -836,7 +881,7 @@ def test_planner_settings_normalize_closed_and_stay_backend_only():
     assert defaults == {
         'chat_capability_planner_mode': 'off',
         'chat_capability_planner_timeout_ms': 5000,
-        'chat_capability_planner_max_completion_tokens': 300,
+        'chat_capability_planner_max_completion_tokens': 600,
         'chat_capability_planner_max_candidate_plans': 3,
         'chat_capability_planner_max_capabilities_per_plan': 4,
         'chat_capability_planner_model_source': 'same_as_chat',
