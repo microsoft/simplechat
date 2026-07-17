@@ -724,7 +724,7 @@ def _build_argument_parser():
     parser.add_argument(
         '--timeout-ms',
         type=int,
-        default=int(os.getenv('SIMPLECHAT_PHASE10A_SHADOW_TIMEOUT_MS', '5000')),
+        default=int(os.getenv('SIMPLECHAT_PHASE10A_SHADOW_TIMEOUT_MS', '10000')),
     )
     parser.add_argument(
         '--max-completion-tokens',
@@ -773,8 +773,8 @@ def main(argv=None):
         ]
     if args.repetitions < 1 or args.repetitions > 10:
         raise ValueError('repetitions must be between 1 and 10.')
-    if args.timeout_ms < 250 or args.timeout_ms > 10000:
-        raise ValueError('timeout-ms must be between 250 and 10000.')
+    if args.timeout_ms < 250 or args.timeout_ms > 20000:
+        raise ValueError('timeout-ms must be between 250 and 20000.')
     if args.dry_run:
         print(f'Validated {len(scenarios)} controlled-shadow scenarios:')
         for scenario in scenarios:

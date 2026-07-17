@@ -565,6 +565,9 @@ def register_route_frontend_admin_settings(bp):
             user_id = get_current_user_id()
             user_settings = get_user_settings(user_id)
             settings_for_template = dict(settings)
+            settings_for_template.update(
+                normalize_chat_capability_planner_settings(settings_for_template)
+            )
             settings_for_template['model_endpoints'] = frontend_model_endpoints
             audio_runtime_capabilities = get_audio_runtime_capabilities()
             source_review_runtime_capabilities = get_source_review_runtime_capabilities()
@@ -651,6 +654,55 @@ def register_route_frontend_admin_settings(bp):
                     )
 
                 return parsed_value
+
+            submitted_planner_settings = dict(settings)
+            submitted_planner_settings.update({
+                'chat_capability_planner_mode': form_data.get(
+                    'chat_capability_planner_mode',
+                    'assist',
+                ),
+                'chat_capability_planner_timeout_ms': parse_admin_int(
+                    form_data.get('chat_capability_planner_timeout_ms'),
+                    settings.get('chat_capability_planner_timeout_ms', 10000),
+                    'chat_capability_planner_timeout_ms',
+                    10000,
+                ),
+                'chat_capability_planner_max_completion_tokens': parse_admin_int(
+                    form_data.get('chat_capability_planner_max_completion_tokens'),
+                    settings.get('chat_capability_planner_max_completion_tokens', 600),
+                    'chat_capability_planner_max_completion_tokens',
+                    600,
+                ),
+                'chat_capability_planner_max_candidate_plans': parse_admin_int(
+                    form_data.get('chat_capability_planner_max_candidate_plans'),
+                    settings.get('chat_capability_planner_max_candidate_plans', 3),
+                    'chat_capability_planner_max_candidate_plans',
+                    3,
+                ),
+                'chat_capability_planner_max_capabilities_per_plan': parse_admin_int(
+                    form_data.get('chat_capability_planner_max_capabilities_per_plan'),
+                    settings.get('chat_capability_planner_max_capabilities_per_plan', 4),
+                    'chat_capability_planner_max_capabilities_per_plan',
+                    4,
+                ),
+                'chat_capability_planner_model_source': form_data.get(
+                    'chat_capability_planner_model_source',
+                    'same_as_chat',
+                ),
+                'chat_capability_planner_model_endpoint_id': form_data.get(
+                    'chat_capability_planner_model_endpoint_id',
+                    '',
+                ),
+                'chat_capability_planner_model_id': form_data.get(
+                    'chat_capability_planner_model_id',
+                    '',
+                ),
+            })
+            chat_capability_planner_settings = (
+                normalize_chat_capability_planner_settings(
+                    submitted_planner_settings
+                )
+            )
 
             # --- Fetch all other form data as before ---
             app_title = form_data.get('app_title', 'AI Chat Application')
@@ -1913,6 +1965,7 @@ def register_route_frontend_admin_settings(bp):
                 'default_model_selection': normalized_default_model_selection,
                 'multi_endpoint_migrated_at': migrated_at,
                 'multi_endpoint_migration_notice': migration_notice,
+                **chat_capability_planner_settings,
                 'azure_apim_gpt_endpoint': form_data.get('azure_apim_gpt_endpoint', '').strip(),
                 'azure_apim_gpt_subscription_key': admin_secret('azure_apim_gpt_subscription_key'),
                 'azure_apim_gpt_deployment': form_data.get('azure_apim_gpt_deployment', '').strip(),

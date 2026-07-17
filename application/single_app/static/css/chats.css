@@ -11,6 +11,67 @@
   overflow-wrap: anywhere;
 }
 
+.sc-capability-choice-card.is-compact {
+  align-self: flex-start;
+  width: min(100%, 32rem);
+  min-width: min(20rem, calc(100vw - 3rem));
+  padding: 0.65rem 0.75rem;
+  border-left-width: 3px;
+}
+
+.sc-capability-choice-compact-summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.65rem;
+  align-items: center;
+  min-width: 0;
+}
+
+.sc-capability-choice-compact-icon {
+  color: var(--bs-primary);
+  font-size: 1.15rem;
+}
+
+.sc-capability-choice-compact-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.sc-capability-choice-compact-label {
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.sc-capability-choice-compact-detail {
+  color: var(--bs-secondary-color);
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
+.sc-capability-choice-compact-trailing,
+.sc-capability-choice-compact-state {
+  display: inline-flex;
+  align-items: center;
+}
+
+.sc-capability-choice-compact-trailing {
+  gap: 0.65rem;
+}
+
+.sc-capability-choice-compact-state {
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.sc-capability-choice-compact-action {
+  min-height: 44px;
+  white-space: nowrap;
+}
+
 .sc-capability-choice-header {
   display: flex;
   align-items: center;
@@ -33,6 +94,12 @@
   line-height: 1.45;
 }
 
+.sc-capability-choice-selected-context {
+  margin: 0 0 0.65rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
 .sc-capability-choice-notice,
 .sc-capability-choice-sensitive-notice {
   padding: 0.55rem 0.65rem;
@@ -51,27 +118,194 @@
 
 .sc-capability-choice-actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.55rem;
+  flex-direction: column;
+  gap: 0.75rem;
 }
 
-.sc-capability-choice-button {
-  min-height: 44px;
-  max-width: 100%;
+.sc-capability-choice-option-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+  gap: 0.85rem;
+  align-items: stretch;
+}
+
+.sc-capability-choice-option-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+  min-width: 0;
+  min-height: 11rem;
+  padding: 1rem;
+  overflow: hidden;
+  color: var(--bs-body-color);
+  text-align: left;
+  background: var(--bs-body-bg);
+  border: 1px solid var(--bs-border-color);
+  border-radius: 8px;
+  transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+}
+
+.sc-capability-choice-option-card:hover,
+.sc-capability-choice-option-card:focus-visible {
+  border-color: rgba(var(--bs-primary-rgb), 0.75);
+  box-shadow: 0 0 0 3px rgba(var(--bs-primary-rgb), 0.12);
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.sc-capability-choice-option-card.is-recommended {
+  border: 2px solid rgba(var(--bs-primary-rgb), 0.5);
+}
+
+.sc-capability-choice-option-card.is-selected {
+  border-color: var(--bs-primary);
+  background: rgba(var(--bs-primary-rgb), 0.06);
+}
+
+.sc-capability-choice-recommended-ribbon {
+  position: absolute;
+  top: 0;
+  right: 0;
+  padding: 0.35rem 0.75rem;
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: 0;
+  background: var(--bs-primary);
+  border-radius: 0 0 0 6px;
+}
+
+.sc-capability-choice-option-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+  padding-right: 5.25rem;
+}
+
+.sc-capability-choice-option-card:not(.is-recommended) .sc-capability-choice-option-heading {
+  padding-right: 0;
+}
+
+.sc-capability-choice-selection-marker {
   display: inline-flex;
-  flex-wrap: wrap;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  color: #fff;
+  border: 1.5px solid var(--bs-secondary-color);
+  border-radius: 50%;
+}
+
+.sc-capability-choice-selection-marker.is-combined {
+  border-radius: 4px;
+}
+
+.sc-capability-choice-selection-marker i {
+  font-size: 0.8rem;
+  opacity: 0;
+}
+
+.sc-capability-choice-option-card:hover .sc-capability-choice-selection-marker i,
+.sc-capability-choice-option-card:focus-visible .sc-capability-choice-selection-marker i,
+.sc-capability-choice-option-card.is-selected .sc-capability-choice-selection-marker i {
+  opacity: 1;
+}
+
+.sc-capability-choice-option-card.is-selected .sc-capability-choice-selection-marker {
+  background: var(--bs-primary);
+  border-color: var(--bs-primary);
+}
+
+.sc-capability-choice-option-icon {
+  flex: 0 0 auto;
+  color: var(--bs-primary);
+  font-size: 1.3rem;
+}
+
+.sc-capability-choice-option-label {
+  min-width: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.sc-capability-choice-option-description {
+  display: block;
+  margin-top: 0.8rem;
+  color: var(--bs-secondary-color);
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.sc-capability-choice-includes {
+  margin-top: 0.75rem;
+  font-size: 0.78rem;
+}
+
+.sc-capability-choice-includes-label {
+  color: var(--bs-secondary-color);
+  font-weight: 600;
+}
+
+.sc-capability-choice-includes-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.8rem;
+  padding: 0;
+  margin: 0.3rem 0 0;
+  list-style: none;
+}
+
+.sc-capability-choice-includes-item {
+  display: inline-flex;
+  align-items: center;
   gap: 0.25rem;
-  white-space: normal;
+}
+
+.sc-capability-choice-includes-item i {
+  color: var(--bs-success);
+}
+
+.sc-capability-choice-option-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 1rem;
+  margin-top: auto;
+  padding-top: 0.9rem;
+  color: var(--bs-secondary-color);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.sc-capability-choice-option-summary-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.sc-capability-choice-continue,
+.sc-capability-choice-resume-button {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
   text-align: center;
 }
 
-.sc-capability-choice-option-meta {
-  flex-basis: 100%;
-  font-size: 0.75rem;
-  line-height: 1.25;
-  opacity: 0.82;
+.sc-capability-choice-continue {
+  color: var(--bs-secondary-color);
+  text-decoration: none;
+  border-top: 1px solid var(--bs-border-color);
+  border-radius: 0;
 }
 
 .sc-capability-choice-status {
@@ -82,12 +316,26 @@
 }
 
 @media (max-width: 575.98px) {
-  .sc-capability-choice-actions {
-    flex-direction: column;
+  .sc-capability-choice-option-grid {
+    grid-template-columns: 1fr;
   }
 
-  .sc-capability-choice-button {
-    width: 100%;
+  .sc-capability-choice-option-card {
+    min-height: 0;
+  }
+
+  .sc-capability-choice-option-card.is-recommended .sc-capability-choice-option-heading {
+    padding-top: 1.25rem;
+    padding-right: 0;
+  }
+
+  .sc-capability-choice-compact-summary.has-action {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .sc-capability-choice-compact-summary.has-action .sc-capability-choice-compact-trailing {
+    grid-column: 2;
+    justify-content: space-between;
   }
 }
 /* chats.css */

@@ -2,8 +2,8 @@
 # test_document_action_stream_reconnect.py
 """
 Functional test for document action stream reconnect support.
-Version: 0.250.068
-Implemented in: 0.241.090; updated in: 0.250.068
+Version: 0.250.072
+Implemented in: 0.241.090; updated in: 0.250.068 and 0.250.072
 
 This test ensures analysis and document comparison streaming
 requests register replayable chat stream sessions so reconnecting to an
@@ -59,11 +59,14 @@ def test_document_action_stream_reconnect_wiring() -> None:
     assert "user_id = get_current_user_id()" in document_action_stream_block, (
         "Expected the document action streaming route to resolve the current user before creating a reconnectable stream session."
     )
-    assert "stream_session = CHAT_STREAM_REGISTRY.start_session(user_id, conversation_id)" in document_action_stream_block, (
+    assert "stream_session = CHAT_STREAM_REGISTRY.start_session(" in document_action_stream_block, (
         "Expected the document action streaming route to register a replayable stream session."
     )
-    assert "return build_background_stream_response(generate_document_action_response, stream_session=stream_session)" in document_action_stream_block, (
+    assert "generate_document_action_response," in document_action_stream_block, (
         "Expected the document action streaming route to publish events through the reconnectable stream session."
+    )
+    assert "_release_capability_resume_claim_context(" in document_action_stream_block, (
+        "Expected failed pre-handoff document resumes to release only their exact stream claim."
     )
 
     assert "user_id = get_current_user_id()" in analyze_stream_block, (

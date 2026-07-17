@@ -2,7 +2,55 @@
 
 const CONTINUE_OPTION_ID = 'continue_without_capabilities';
 const MAX_OPTIONS = 12;
+const CAPABILITY_LABELS = Object.freeze({
+    analyze: 'Analyze',
+    compare: 'Compare',
+    deep_research: 'Deep Research',
+    image: 'Image',
+    url_access: 'URL Access',
+    web_search: 'Web Search',
+    workspace_search: 'Workspace Search',
+});
+const CAPABILITY_ICONS = Object.freeze({
+    analyze: 'bi-bar-chart-line',
+    compare: 'bi-layout-split',
+    deep_research: 'bi-database',
+    image: 'bi-image',
+    url_access: 'bi-link-45deg',
+    web_search: 'bi-search',
+    workspace_search: 'bi-collection',
+});
+const CAPABILITY_DESCRIPTIONS = Object.freeze({
+    analyze: 'Analyze authorized documents and return structured findings.',
+    compare: 'Compare authorized documents for differences and consistency.',
+    deep_research: 'Exhaustive public-source research for broad coverage.',
+    image: 'Create a visual output for this request.',
+    url_access: 'Review the supplied links and use their contents.',
+    web_search: 'Focused current web results for a faster answer.',
+    workspace_search: 'Search authorized workspace knowledge and documents.',
+});
+const LATENCY_LABELS = Object.freeze({
+    immediate: 'Immediate',
+    seconds: 'Seconds',
+    minutes: 'Minutes',
+});
+const COST_LABELS = Object.freeze({
+    none: 'None',
+    low: 'Low',
+    standard: 'Standard',
+    extended: 'Extended',
+});
 const REASON_LABELS = Object.freeze({
+    fresh_public_information: 'Fresh public information could materially improve this answer.',
+    public_source_retrieval: 'Public source retrieval could materially improve this answer.',
+    public_source_archive_research: 'Broader public archive research could materially improve coverage.',
+    multi_source_research: 'Multiple public sources could materially improve confidence.',
+    authorized_workspace_evidence: 'Authorized workspace evidence could materially improve this answer.',
+    cross_source_evidence: 'Workspace and public evidence could materially improve completeness.',
+    document_analysis: 'Structured document analysis could materially improve the findings.',
+    document_comparison: 'A document comparison could materially improve the result.',
+    visual_output: 'A visual output would materially help with this request.',
+    specialized_authorized_agent: 'A specialized authorized agent could materially improve this answer.',
     current_authoritative_sources: 'Current official sources could materially improve accuracy.',
     current_public_information: 'Current public information could materially improve freshness.',
     user_supplied_url_requires_review: 'The supplied links need review to answer from their contents.',
@@ -37,6 +85,9 @@ function normalizeProposal(metadata) {
             capabilityIds: Array.isArray(option?.capability_ids)
                 ? option.capability_ids.map(normalizeIdentifier).filter(Boolean).slice(0, 8)
                 : [],
+            effectiveCapabilityIds: Array.isArray(option?.effective_capability_ids)
+                ? option.effective_capability_ids.map(normalizeIdentifier).filter(Boolean).slice(0, 8)
+                : [],
             latencyClass: normalizeIdentifier(option?.latency_class),
             costClass: normalizeIdentifier(option?.cost_class),
             externalData: option?.external_data === true,
@@ -63,6 +114,12 @@ function normalizeProposal(metadata) {
         recommendedOptionId: normalizeIdentifier(proposal.recommended_option_id),
         reasonCodes: Array.isArray(proposal.reason_codes)
             ? proposal.reason_codes.map(normalizeIdentifier).filter(Boolean).slice(0, 12)
+            : [],
+        selectedContextLabels: Array.isArray(proposal.selected_context_labels)
+            ? proposal.selected_context_labels
+                .map(label => String(label || '').trim().slice(0, 120))
+                .filter(Boolean)
+                .slice(0, 8)
             : [],
         options,
         decision: proposal.decision && typeof proposal.decision === 'object'
@@ -93,37 +150,113 @@ function createElement(tagName, className = '', text = '') {
     return element;
 }
 
-function appendOptionMeta(container, option) {
-    const parts = [];
+function normalizeClassLabel(value, labels) {
+    const normalizedValue = normalizeIdentifier(value).toLowerCase();
+    if (!normalizedValue) {
+        return '';
+    }
+    return labels[normalizedValue]
+        || normalizedValue.replaceAll('_', ' ').replace(/\b\w/g, character => character.toUpperCase());
+}
+
+function getOptionCapabilityLabels(option) {
+    return option.effectiveCapabilityIds
+        .map(capabilityId => CAPABILITY_LABELS[capabilityId])
+        .filter(Boolean);
+}
+
+function getOptionDescription(option) {
     if (option.kind === 'agent') {
-        parts.push('Agent');
-        if (option.scopeClass) {
-            parts.push(`Scope: ${option.scopeClass}`);
-        }
-        if (option.readOnly) {
-            parts.push('Read only');
-        }
-        if (option.riskClass) {
-            parts.push(`Risk: ${option.riskClass.replaceAll('_', ' ')}`);
-        }
-        if (option.dataSensitivity) {
-            parts.push(`Data: ${option.dataSensitivity.replaceAll('_', ' ')}`);
-        }
+        const scope = option.scopeClass
+            ? `${normalizeClassLabel(option.scopeClass, {})} governed agent`
+            : 'Governed specialized agent';
+        return `${scope} for the requested evidence.`;
     }
-    if (option.latencyClass) {
-        parts.push(`Time: ${option.latencyClass}`);
+    const effectiveIds = new Set(option.effectiveCapabilityIds);
+    if (effectiveIds.has('deep_research') && effectiveIds.has('web_search')) {
+        return 'Exhaustive archive research with supporting current web search.';
     }
-    if (option.costClass) {
-        parts.push(`Cost: ${option.costClass}`);
+    if (effectiveIds.has('workspace_search') && effectiveIds.has('web_search')) {
+        return 'Search authorized workspace knowledge and current public sources together.';
     }
-    if (parts.length === 0) {
+    if (option.effectiveCapabilityIds.length > 1) {
+        return 'Run the included governed capabilities together for broader evidence coverage.';
+    }
+    const primaryCapabilityId = option.capabilityIds[0] || option.effectiveCapabilityIds[0];
+    return CAPABILITY_DESCRIPTIONS[primaryCapabilityId]
+        || 'Use this governed capability to improve the response.';
+}
+
+function getOptionIconClass(option) {
+    if (option.kind === 'agent') {
+        return 'bi-robot';
+    }
+    const primaryCapabilityId = option.capabilityIds[0] || option.effectiveCapabilityIds[0];
+    return CAPABILITY_ICONS[primaryCapabilityId] || 'bi-stars';
+}
+
+function appendOptionSummary(container, option) {
+    const summary = createElement('span', 'sc-capability-choice-option-summary');
+    summary.dataset.testid = 'capability-option-summary';
+    const latencyLabel = normalizeClassLabel(option.latencyClass, LATENCY_LABELS);
+    const costLabel = normalizeClassLabel(option.costClass, COST_LABELS);
+
+    if (latencyLabel) {
+        const latency = createElement('span', 'sc-capability-choice-option-summary-item');
+        const icon = createElement('i', 'bi bi-clock');
+        icon.setAttribute('aria-hidden', 'true');
+        latency.appendChild(icon);
+        latency.appendChild(createElement('span', '', latencyLabel));
+        summary.appendChild(latency);
+    }
+    if (costLabel) {
+        const cost = createElement('span', 'sc-capability-choice-option-summary-item');
+        const icon = createElement('i', 'bi bi-box-seam');
+        icon.setAttribute('aria-hidden', 'true');
+        cost.appendChild(icon);
+        cost.appendChild(createElement('span', '', costLabel));
+        summary.appendChild(cost);
+    }
+    if (summary.childElementCount > 0) {
+        container.appendChild(summary);
+    }
+}
+
+function appendCapabilityChecklist(container, option) {
+    if (option.kind !== 'capability') {
         return;
     }
-    const metadata = createElement('span', 'sc-capability-choice-option-meta', parts.join(' | '));
-    if (option.kind === 'agent') {
-        metadata.dataset.testid = 'agent-option-meta';
+    const labels = getOptionCapabilityLabels(option);
+    if (labels.length < 2) {
+        return;
     }
-    container.appendChild(metadata);
+    const includes = createElement('div', 'sc-capability-choice-includes');
+    includes.dataset.testid = 'capability-option-includes';
+    includes.appendChild(createElement('span', 'sc-capability-choice-includes-label', 'Includes'));
+    const list = createElement('ul', 'sc-capability-choice-includes-list');
+    labels.forEach(label => {
+        const item = createElement('li', 'sc-capability-choice-includes-item');
+        const check = createElement('i', 'bi bi-check2');
+        check.setAttribute('aria-hidden', 'true');
+        item.appendChild(check);
+        item.appendChild(createElement('span', '', label));
+        list.appendChild(item);
+    });
+    includes.appendChild(list);
+    container.appendChild(includes);
+}
+
+function appendSelectedContext(card, proposal) {
+    if (proposal.selectedContextLabels.length === 0) {
+        return;
+    }
+    const context = createElement(
+        'div',
+        'sc-capability-choice-selected-context',
+        `Already included: ${proposal.selectedContextLabels.join(', ')}`,
+    );
+    context.dataset.testid = 'capability-selected-context';
+    card.appendChild(context);
 }
 
 function getReasonText(proposal) {
@@ -143,10 +276,99 @@ function updateStatus(statusElement, message, tone = 'muted') {
     statusElement.textContent = message;
 }
 
+function getCompactOptionDetail(option) {
+    if (option.id === CONTINUE_OPTION_ID) {
+        return '';
+    }
+    const capabilityLabels = getOptionCapabilityLabels(option);
+    if (capabilityLabels.length > 1) {
+        return `Includes ${capabilityLabels.join(' + ')}`;
+    }
+    if (option.kind === 'agent') {
+        return getOptionDescription(option);
+    }
+    return '';
+}
+
+function renderCompactSelection(
+    card,
+    option,
+    statusElement,
+    {
+        state = 'completed',
+        statusMessage = '',
+        actionLabel = '',
+        onAction = null,
+    } = {},
+) {
+    const stateConfig = {
+        completed: { label: 'Completed', tone: 'success', icon: 'bi-check-circle-fill' },
+        failed: { label: 'Needs attention', tone: 'warning', icon: 'bi-exclamation-circle' },
+        running: { label: 'Running...', tone: 'primary', icon: 'bi-arrow-repeat' },
+        saved: { label: 'Saved', tone: 'muted', icon: 'bi-check-circle' },
+    }[state] || { label: 'Saved', tone: 'muted', icon: 'bi-check-circle' };
+
+    card.replaceChildren();
+    card.classList.add('is-compact');
+
+    const summary = createElement('div', 'sc-capability-choice-compact-summary');
+    summary.dataset.testid = 'capability-choice-compact-summary';
+    const icon = createElement('i', `bi ${getOptionIconClass(option)} sc-capability-choice-compact-icon`);
+    icon.setAttribute('aria-hidden', 'true');
+    summary.appendChild(icon);
+
+    const copy = createElement('div', 'sc-capability-choice-compact-copy');
+    const label = createElement('span', 'sc-capability-choice-compact-label', option.label);
+    label.id = `${statusElement.id}-selection`;
+    copy.appendChild(label);
+    const detailText = getCompactOptionDetail(option);
+    if (detailText) {
+        copy.appendChild(createElement('span', 'sc-capability-choice-compact-detail', detailText));
+    }
+    summary.appendChild(copy);
+    card.setAttribute('aria-labelledby', label.id);
+
+    const trailing = createElement('div', 'sc-capability-choice-compact-trailing');
+    const stateIndicator = createElement(
+        'span',
+        `sc-capability-choice-compact-state text-${stateConfig.tone}`,
+    );
+    stateIndicator.dataset.testid = 'capability-choice-compact-state';
+    const stateIcon = createElement('i', `bi ${stateConfig.icon}`);
+    stateIcon.setAttribute('aria-hidden', 'true');
+    stateIndicator.appendChild(stateIcon);
+    stateIndicator.appendChild(createElement('span', '', stateConfig.label));
+    trailing.appendChild(stateIndicator);
+
+    if (actionLabel && typeof onAction === 'function') {
+        summary.classList.add('has-action');
+        const actionButton = createElement(
+            'button',
+            'btn btn-sm btn-outline-primary sc-capability-choice-compact-action',
+            actionLabel,
+        );
+        actionButton.type = 'button';
+        actionButton.setAttribute('aria-describedby', statusElement.id);
+        actionButton.addEventListener('click', onAction);
+        trailing.appendChild(actionButton);
+    }
+    summary.appendChild(trailing);
+    card.appendChild(summary);
+
+    updateStatus(statusElement, statusMessage || stateConfig.label, stateConfig.tone);
+    statusElement.classList.add('visually-hidden');
+    card.appendChild(statusElement);
+}
+
 async function submitDecision(card, proposal, option, statusElement, onResume) {
     if (card.dataset.submitting === 'true') {
         return;
     }
+    let decisionSaved = false;
+    card.querySelectorAll('.sc-capability-choice-option-card').forEach(optionCard => {
+        const isSelected = optionCard.dataset.optionId === option.id;
+        optionCard.classList.toggle('is-selected', isSelected);
+    });
     setCardBusy(card, true);
     updateStatus(statusElement, 'Saving your choice...', 'primary');
     try {
@@ -166,13 +388,13 @@ async function submitDecision(card, proposal, option, statusElement, onResume) {
         if (!response.ok) {
             throw new Error(result.error || 'Your capability choice could not be saved.');
         }
-        updateStatus(
-            statusElement,
-            option.id === CONTINUE_OPTION_ID
+        decisionSaved = true;
+        renderCompactSelection(card, option, statusElement, {
+            state: 'running',
+            statusMessage: option.id === CONTINUE_OPTION_ID
                 ? 'Continuing without additional capabilities...'
                 : `Approved ${option.label}. Resuming...`,
-            'primary',
-        );
+        });
         if (typeof onResume !== 'function') {
             throw new Error('Chat resume is not available. Refresh this conversation to continue.');
         }
@@ -181,15 +403,26 @@ async function submitDecision(card, proposal, option, statusElement, onResume) {
             proposalId: proposal.proposalId,
             endpoint: result.resume_endpoint || '/api/chat/stream',
         });
-        updateStatus(
-            statusElement,
-            option.id === CONTINUE_OPTION_ID
+        setCardBusy(card, false);
+        renderCompactSelection(card, option, statusElement, {
+            state: 'completed',
+            statusMessage: option.id === CONTINUE_OPTION_ID
                 ? 'Completed without additional capabilities.'
                 : `Completed with ${option.label}.`,
-            'success',
-        );
+        });
     } catch (error) {
         setCardBusy(card, false);
+        if (decisionSaved) {
+            renderCompactSelection(card, option, statusElement, {
+                state: 'failed',
+                statusMessage: error?.message || 'The resume attempt failed.',
+                actionLabel: 'Retry resume',
+                onAction: () => {
+                    void submitDecision(card, proposal, option, statusElement, onResume);
+                },
+            });
+            return;
+        }
         updateStatus(
             statusElement,
             error?.message || 'Your capability choice could not be saved.',
@@ -199,67 +432,115 @@ async function submitDecision(card, proposal, option, statusElement, onResume) {
 }
 
 function renderPendingOptions(card, proposal, actions, statusElement, onResume) {
-    proposal.options.forEach(option => {
+    const optionGrid = createElement('div', 'sc-capability-choice-option-grid');
+    const selectableOptions = proposal.options.filter(option => option.id !== CONTINUE_OPTION_ID);
+    const continueOption = proposal.options.find(option => option.id === CONTINUE_OPTION_ID);
+
+    selectableOptions.forEach(option => {
         const isRecommended = option.id === proposal.recommendedOptionId;
-        const isContinue = option.id === CONTINUE_OPTION_ID;
         const button = createElement(
             'button',
-            isContinue
-                ? 'btn btn-outline-secondary sc-capability-choice-button'
-                : isRecommended
-                ? 'btn btn-primary sc-capability-choice-button'
-                : 'btn btn-outline-primary sc-capability-choice-button',
+            `sc-capability-choice-option-card${isRecommended ? ' is-recommended' : ''}`,
         );
         button.type = 'button';
         button.dataset.optionId = option.id;
+        button.dataset.testid = 'capability-option-card';
         button.setAttribute('aria-describedby', statusElement.id);
+        button.setAttribute(
+            'aria-label',
+            `${isRecommended ? 'Recommended: ' : ''}${option.label}`,
+        );
 
-        const label = createElement('span', 'sc-capability-choice-option-label', option.label);
-        button.appendChild(label);
         if (isRecommended) {
-            button.appendChild(createElement('span', 'badge text-bg-light ms-2', 'Recommended'));
+            const ribbon = createElement('span', 'sc-capability-choice-recommended-ribbon', 'Recommended');
+            ribbon.dataset.testid = 'capability-recommended-ribbon';
+            button.appendChild(ribbon);
         }
-        appendOptionMeta(button, option);
+
+        const heading = createElement('span', 'sc-capability-choice-option-heading');
+        const selectionMarker = createElement(
+            'span',
+            `sc-capability-choice-selection-marker${option.effectiveCapabilityIds.length > 1 ? ' is-combined' : ''}`,
+        );
+        selectionMarker.setAttribute('aria-hidden', 'true');
+        selectionMarker.appendChild(createElement('i', 'bi bi-check2'));
+        heading.appendChild(selectionMarker);
+        const optionIcon = createElement('i', `bi ${getOptionIconClass(option)} sc-capability-choice-option-icon`);
+        optionIcon.setAttribute('aria-hidden', 'true');
+        heading.appendChild(optionIcon);
+        heading.appendChild(createElement('span', 'sc-capability-choice-option-label', option.label));
+        button.appendChild(heading);
+
+        const description = createElement(
+            'span',
+            'sc-capability-choice-option-description',
+            getOptionDescription(option),
+        );
+        description.dataset.testid = 'capability-option-description';
+        button.appendChild(description);
+        appendCapabilityChecklist(button, option);
+        appendOptionSummary(button, option);
         button.addEventListener('click', () => {
             void submitDecision(card, proposal, option, statusElement, onResume);
         });
-        actions.appendChild(button);
+        optionGrid.appendChild(button);
     });
+    actions.appendChild(optionGrid);
+
+    if (continueOption) {
+        const continueButton = createElement(
+            'button',
+            'btn btn-link sc-capability-choice-continue',
+        );
+        continueButton.type = 'button';
+        continueButton.dataset.optionId = continueOption.id;
+        continueButton.setAttribute('aria-describedby', statusElement.id);
+        continueButton.appendChild(createElement('span', '', continueOption.label));
+        const arrow = createElement('i', 'bi bi-arrow-right ms-2');
+        arrow.setAttribute('aria-hidden', 'true');
+        continueButton.appendChild(arrow);
+        continueButton.addEventListener('click', () => {
+            void submitDecision(card, proposal, continueOption, statusElement, onResume);
+        });
+        actions.appendChild(continueButton);
+    }
 }
 
-function renderResolvedAction(card, proposal, actions, statusElement, onResume) {
+function renderResolvedAction(card, proposal, statusElement, onResume) {
     const selectedOption = proposal.options.find(option => option.id === proposal.decision?.optionId);
     const selectedLabel = selectedOption?.label || 'saved choice';
-    if (proposal.resume.status === 'completed') {
-        updateStatus(statusElement, `Completed with ${selectedLabel}.`, 'success');
-        return;
-    }
-    if (proposal.resume.status === 'running') {
-        updateStatus(statusElement, `Resuming with ${selectedLabel}...`, 'primary');
-        return;
-    }
     if (!selectedOption) {
         updateStatus(statusElement, 'This capability choice is no longer available.', 'danger');
-        return;
+        return false;
     }
-    const resumeButton = createElement(
-        'button',
-        'btn btn-primary sc-capability-choice-button',
-        proposal.resume.status === 'failed' ? 'Retry resume' : 'Resume',
-    );
-    resumeButton.type = 'button';
-    resumeButton.setAttribute('aria-describedby', statusElement.id);
-    resumeButton.addEventListener('click', () => {
-        void submitDecision(card, proposal, selectedOption, statusElement, onResume);
-    });
-    actions.appendChild(resumeButton);
-    updateStatus(
-        statusElement,
-        proposal.resume.status === 'failed'
+    if (proposal.resume.status === 'completed') {
+        renderCompactSelection(card, selectedOption, statusElement, {
+            state: 'completed',
+            statusMessage: selectedOption.id === CONTINUE_OPTION_ID
+                ? 'Completed without additional capabilities.'
+                : `Completed with ${selectedLabel}.`,
+        });
+        return true;
+    }
+    if (proposal.resume.status === 'running') {
+        renderCompactSelection(card, selectedOption, statusElement, {
+            state: 'running',
+            statusMessage: `Resuming with ${selectedLabel}...`,
+        });
+        return true;
+    }
+    const resumeFailed = proposal.resume.status === 'failed';
+    renderCompactSelection(card, selectedOption, statusElement, {
+        state: resumeFailed ? 'failed' : 'saved',
+        statusMessage: resumeFailed
             ? `The previous resume attempt failed. ${selectedLabel} remains approved for this turn.`
             : `${selectedLabel} is saved and ready to resume.`,
-        proposal.resume.status === 'failed' ? 'warning' : 'muted',
-    );
+        actionLabel: resumeFailed ? 'Retry resume' : 'Resume',
+        onAction: () => {
+            void submitDecision(card, proposal, selectedOption, statusElement, onResume);
+        },
+    });
+    return true;
 }
 
 export function hydrateCapabilityChoice(messageElement, metadata, { onResume } = {}) {
@@ -287,11 +568,12 @@ export function hydrateCapabilityChoice(messageElement, metadata, { onResume } =
     const icon = createElement('i', 'bi bi-signpost-split');
     icon.setAttribute('aria-hidden', 'true');
     header.appendChild(icon);
-    const title = createElement('h3', 'sc-capability-choice-title', 'Choose how to continue');
+    const title = createElement('h3', 'sc-capability-choice-title', 'How would you like to continue?');
     title.id = titleId;
     header.appendChild(title);
     card.appendChild(header);
     card.appendChild(createElement('p', 'sc-capability-choice-reason', getReasonText(proposal)));
+    appendSelectedContext(card, proposal);
 
     const hasExternalCapabilityOption = proposal.options.some(
         option => option.externalData && option.kind !== 'agent'
@@ -330,16 +612,19 @@ export function hydrateCapabilityChoice(messageElement, metadata, { onResume } =
     statusElement.setAttribute('role', 'status');
     statusElement.setAttribute('aria-live', 'polite');
     statusElement.textContent = 'Waiting for your choice.';
+    let compactSelectionRendered = false;
     if (proposal.status === 'pending' && proposal.expired) {
         updateStatus(statusElement, 'This capability choice has expired.', 'muted');
     } else if (proposal.status === 'pending') {
         renderPendingOptions(card, proposal, actions, statusElement, onResume);
     } else if (proposal.status === 'approved' || proposal.status === 'declined') {
-        renderResolvedAction(card, proposal, actions, statusElement, onResume);
+        compactSelectionRendered = renderResolvedAction(card, proposal, statusElement, onResume);
     } else {
         updateStatus(statusElement, 'This capability choice is no longer available.', 'muted');
     }
-    card.appendChild(actions);
-    card.appendChild(statusElement);
+    if (!compactSelectionRendered) {
+        card.appendChild(actions);
+        card.appendChild(statusElement);
+    }
     messageText.insertAdjacentElement('afterend', card);
 }

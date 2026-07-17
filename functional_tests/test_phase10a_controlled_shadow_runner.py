@@ -1,8 +1,8 @@
 # test_phase10a_controlled_shadow_runner.py
 """
 Functional test for the Phase 10A controlled-shadow evaluation runner.
-Version: 0.250.071
-Implemented in: 0.250.071
+Version: 0.250.073
+Implemented in: 0.250.071; planner deadline ceiling updated in 0.250.073
 
 This test ensures realistic live planner scenarios are validated and scored
 without persisting prompts, raw model responses, endpoints, or private IDs.

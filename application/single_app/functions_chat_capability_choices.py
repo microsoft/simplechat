@@ -7,11 +7,18 @@ import uuid
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 
-from functions_chat_capabilities import CONTINUE_WITHOUT_CAPABILITIES_OPTION_ID
+from functions_chat_capabilities import (
+    CONTINUE_WITHOUT_CAPABILITIES_OPTION_ID,
+    PLANNER_DOCUMENT_ACTION_CAPABILITY_IDS,
+    PLANNER_IMAGE_CAPABILITY_ID,
+    PLANNER_RETRIEVAL_CAPABILITY_IDS,
+    expand_governed_capability_baseline_ids,
+    get_capability_option_revalidation_error,
+)
 
 
-CAPABILITY_CHOICE_VERSION = 1
-CAPABILITY_PROVENANCE_VERSION = 1
+CAPABILITY_CHOICE_VERSION = 2
+CAPABILITY_PROVENANCE_VERSION = 2
 DEFAULT_CAPABILITY_CHOICE_TTL_SECONDS = 86400
 MAX_CAPABILITY_CHOICE_TTL_SECONDS = 604800
 CAPABILITY_RESUME_LEASE_SECONDS = 1800
@@ -96,6 +103,17 @@ def _normalize_identifiers(values, *, max_items=16):
     return normalized
 
 
+def _normalize_labels(values, *, max_items=8):
+    normalized = []
+    for value in values or []:
+        label = ' '.join(str(value or '').split())[:120]
+        if label and label not in normalized:
+            normalized.append(label)
+        if len(normalized) >= max_items:
+            break
+    return normalized
+
+
 def _normalize_options(options):
     normalized_options = []
     seen_option_ids = set()
@@ -140,6 +158,11 @@ def _normalize_options(options):
                 'capability options must name at least one capability',
                 code='missing_option_capability',
             )
+        elif not set(capability_ids).issubset(effective_ids):
+            raise CapabilityChoiceError(
+                'effective capabilities must include every approved capability',
+                code='invalid_option_effective_capabilities',
+            )
         normalized_option = {
             'id': option_id,
             'kind': option_kind,
@@ -150,6 +173,11 @@ def _normalize_options(options):
             'cost_class': str(raw_option.get('cost_class') or 'unknown').strip()[:40],
             'external_data': bool(raw_option.get('external_data')),
             'requires_user_choice': True,
+            'read_only': raw_option.get('read_only') is True,
+            'risk_class': str(raw_option.get('risk_class') or '').strip().lower()[:40],
+            'data_sensitivity': str(
+                raw_option.get('data_sensitivity') or ''
+            ).strip().lower()[:40],
             'external_query_mode': str(
                 raw_option.get('external_query_mode') or 'minimized'
             ).strip().lower()[:40],
@@ -193,21 +221,34 @@ def _normalize_options(options):
     return normalized_options
 
 
-def build_minimized_external_query(user_message, *, include_sensitive_inputs=False):
+def build_minimized_external_query(
+    user_message,
+    *,
+    include_sensitive_inputs=False,
+    approved_sensitive_input_types=None,
+):
     """Build a current-message-only query while omitting unnecessary personal data."""
     query = ' '.join(str(user_message or '').split())
     omitted_types = []
+    approved_types = {
+        str(value or '').strip().lower()
+        for value in (approved_sensitive_input_types or [])
+        if str(value or '').strip().lower() == 'street_address'
+    }
+    if include_sensitive_inputs:
+        approved_types.add('street_address')
     replacements = (
         (STREET_ADDRESS_PATTERN, 'street_address'),
         (EMAIL_PATTERN, 'email_address'),
         (PHONE_PATTERN, 'phone_number'),
         (ACCOUNT_IDENTIFIER_PATTERN, 'account_identifier'),
     )
-    if not include_sensitive_inputs:
-        for pattern, sensitive_type in replacements:
-            if pattern.search(query):
-                query = pattern.sub(' ', query)
-                omitted_types.append(sensitive_type)
+    for pattern, sensitive_type in replacements:
+        if sensitive_type in approved_types:
+            continue
+        if pattern.search(query):
+            query = pattern.sub(' ', query)
+            omitted_types.append(sensitive_type)
     query = re.sub(r'\s+([,.;:!?])', r'\1', query)
     query = re.sub(r'\s{2,}', ' ', query).strip(' ,;:-')
     return {
@@ -220,7 +261,47 @@ def build_minimized_external_query(user_message, *, include_sensitive_inputs=Fal
     }
 
 
-def add_sensitive_external_query_options(recommendation, user_message):
+def resolve_external_retrieval_message(request_data, user_message):
+    """Preserve an explicitly empty server-minimized query without raw fallback."""
+    source = request_data if isinstance(request_data, Mapping) else {}
+    if '_server_external_query' in source:
+        return str(source.get('_server_external_query') or '').strip()
+    return str(user_message or '').strip()
+
+
+def build_resumed_external_query(
+    user_message,
+    execution_capability_ids,
+    *,
+    external_query_mode='minimized',
+    approved_sensitive_input_types=None,
+):
+    """Build a marker value when resumed Web Search or Deep Research will execute."""
+    execution_ids = {
+        str(capability_id or '').strip().lower()
+        for capability_id in execution_capability_ids or []
+        if str(capability_id or '').strip()
+    }
+    if not execution_ids.intersection({'web_search', 'deep_research'}):
+        return None
+    external_query = build_minimized_external_query(
+        user_message,
+        approved_sensitive_input_types=(
+            approved_sensitive_input_types
+            if str(external_query_mode or '').strip().lower()
+            == 'include_approved_sensitive_inputs'
+            else []
+        ),
+    )
+    return external_query['query']
+
+
+def add_sensitive_external_query_options(
+    recommendation,
+    user_message,
+    *,
+    max_actionable_options=None,
+):
     """Add explicit address-bearing alternatives only for parcel-specific requests."""
     if not isinstance(recommendation, Mapping):
         return recommendation
@@ -254,6 +335,29 @@ def add_sensitive_external_query_options(recommendation, user_message):
     updated['options'] = updated_options
     if sensitive_recommended_option_id:
         updated['recommended_option_id'] = sensitive_recommended_option_id
+    if max_actionable_options is not None:
+        try:
+            option_limit = max(1, min(int(max_actionable_options), 11))
+        except (TypeError, ValueError):
+            option_limit = 1
+        continue_options = [
+            option
+            for option in updated_options
+            if option.get('id') == CONTINUE_WITHOUT_CAPABILITIES_OPTION_ID
+        ]
+        actionable_options = [
+            option
+            for option in updated_options
+            if option.get('id') != CONTINUE_WITHOUT_CAPABILITIES_OPTION_ID
+        ]
+        recommended_option_id = updated.get('recommended_option_id')
+        actionable_options.sort(
+            key=lambda option: option.get('id') != recommended_option_id
+        )
+        updated['options'] = (
+            actionable_options[:option_limit]
+            + continue_options[:1]
+        )
     updated['sensitive_data_notice_required'] = True
     return updated
 
@@ -299,8 +403,19 @@ def build_capability_choice_proposal(
         'user_message_id': _normalize_identifier(user_message_id, 'user_message_id'),
         'assistant_message_id': proposal_id,
         'status': 'pending',
+        'recommendation_source': (
+            'planner'
+            if recommendation.get('source') == 'planner'
+            else 'deterministic'
+        ),
         'requirement_ids': _normalize_identifiers(recommendation.get('requirement_ids')),
         'reason_codes': _normalize_identifiers(recommendation.get('reason_codes')),
+        'selected_context_labels': _normalize_labels(
+            recommendation.get('selected_context_labels')
+        ),
+        'sensitive_data_notice_required': bool(
+            recommendation.get('sensitive_data_notice_required')
+        ),
         'recommended_option_id': recommended_option_id,
         'options': options,
         'created_at': current_time.isoformat(),
@@ -423,6 +538,26 @@ def revalidate_capability_choice(proposal, inventory):
     effective_capability_ids = set(
         decision.get('effective_capability_ids') or approved_capability_ids
     )
+    approved_option = get_capability_choice_option(
+        proposal,
+        decision.get('option_id'),
+    )
+    if not approved_option:
+        raise CapabilityChoiceError(
+            'the approved option is no longer present in the proposal',
+            code='capability_option_invalid',
+        )
+    if (
+        set(approved_option.get('capability_ids') or []) != approved_capability_ids
+        or set(approved_option.get('effective_capability_ids') or [])
+        != effective_capability_ids
+        or str(approved_option.get('agent_ref') or '').strip()
+        != str(decision.get('agent_ref') or '').strip()
+    ):
+        raise CapabilityChoiceError(
+            'the approved decision no longer matches its server-authored option',
+            code='capability_decision_mismatch',
+        )
     for capability_id in effective_capability_ids:
         entry = entries_by_id.get(capability_id)
         if not entry:
@@ -436,14 +571,35 @@ def revalidate_capability_choice(proposal, inventory):
                 code=f"capability_{entry.get('state') or 'invalid'}",
             )
         if (
-            capability_id in approved_capability_ids
-            and entry.get('state') == 'unselected'
+            entry.get('state') == 'unselected'
             and entry.get('discoverable') is not True
         ):
             raise CapabilityChoiceError(
                 'an approved capability is no longer discoverable',
                 code='capability_policy_blocked',
             )
+        if entry.get('input_ready') is not True:
+            raise CapabilityChoiceError(
+                'an approved capability no longer has its required input',
+                code='capability_input_unavailable',
+            )
+        if (
+            str(approved_option.get('id') or '').startswith('plan:')
+            and entry.get('read_only') is not True
+        ):
+            raise CapabilityChoiceError(
+                'an approved capability is no longer read only',
+                code='capability_policy_blocked',
+            )
+    bundle_error = get_capability_option_revalidation_error(
+        approved_option,
+        inventory,
+    )
+    if bundle_error:
+        raise CapabilityChoiceError(
+            'the approved capability plan no longer matches current policy',
+            code=bundle_error,
+        )
     agent_ref = str(decision.get('agent_ref') or '').strip()
     if agent_ref:
         agent_entries = (
@@ -474,10 +630,6 @@ def revalidate_capability_choice(proposal, inventory):
                 'the approved agent is no longer governed for discovery',
                 code='agent_policy_blocked',
             )
-        approved_option = get_capability_choice_option(
-            proposal,
-            decision.get('option_id'),
-        )
         if not approved_option or approved_option.get('agent_ref') != agent_ref:
             raise CapabilityChoiceError(
                 'the approved agent option is no longer valid',
@@ -507,6 +659,334 @@ def revalidate_capability_choice(proposal, inventory):
                 code='agent_policy_changed',
             )
     return True
+
+
+def revalidate_capability_execution_baseline(
+    inventory,
+    *,
+    selected_capability_ids=None,
+    prior_effective_capabilities=None,
+    automatic_capability_root_ids=None,
+    automatic_capability_effective_ids=None,
+    baseline_error_code=None,
+):
+    """Revalidate selected mandates and prior automatic discovery as server state."""
+    if str(baseline_error_code or '').strip():
+        raise CapabilityChoiceError(
+            'the submitted capability baseline is no longer authorized',
+            code=str(baseline_error_code).strip()[:120],
+        )
+    inventory_entries = (
+        inventory.get('capabilities')
+        if isinstance(inventory, Mapping)
+        else None
+    )
+    entries_by_id = {
+        str(entry.get('id') or '').strip(): entry
+        for entry in (inventory_entries or [])
+        if isinstance(entry, Mapping) and str(entry.get('id') or '').strip()
+    }
+
+    def require_entry(capability_id):
+        entry = entries_by_id.get(capability_id)
+        if not entry:
+            raise CapabilityChoiceError(
+                'a baseline capability is no longer in the governed inventory',
+                code='capability_missing',
+            )
+        return entry
+
+    selected_root_ids = []
+    for raw_capability_id in selected_capability_ids or []:
+        capability_id = str(raw_capability_id or '').strip()
+        if not capability_id:
+            continue
+        selected_root_ids.append(capability_id)
+        entry = require_entry(capability_id)
+        state = str(entry.get('state') or '').strip().lower()
+        if state != 'selected':
+            code = (
+                f'capability_{state}'
+                if state in {'unavailable', 'unauthorized', 'policy_blocked'}
+                else 'capability_selection_changed'
+            )
+            raise CapabilityChoiceError(
+                'a selected capability is no longer available or authorized',
+                code=code,
+            )
+        if entry.get('input_ready') is not True:
+            raise CapabilityChoiceError(
+                'a selected capability no longer has its required input',
+                code='capability_input_unavailable',
+            )
+
+    try:
+        expanded_selected_ids = expand_governed_capability_baseline_ids(
+            inventory,
+            selected_root_ids,
+        )
+    except ValueError as bundle_error:
+        raise CapabilityChoiceError(
+            'a selected capability bundle is no longer valid',
+            code='capability_bundle_changed',
+        ) from bundle_error
+    for capability_id in expanded_selected_ids:
+        if capability_id in selected_root_ids:
+            continue
+        entry = require_entry(capability_id)
+        state = str(entry.get('state') or '').strip().lower()
+        if state not in {'selected', 'unselected'}:
+            code = (
+                f'capability_{state}'
+                if state in {'unavailable', 'unauthorized', 'policy_blocked'}
+                else 'capability_bundle_changed'
+            )
+            raise CapabilityChoiceError(
+                'a selected capability dependency is no longer authorized',
+                code=code,
+            )
+        if entry.get('input_ready') is not True:
+            raise CapabilityChoiceError(
+                'a selected capability dependency no longer has its required input',
+                code='capability_input_unavailable',
+            )
+        if entry.get('read_only') is not True:
+            raise CapabilityChoiceError(
+                'a selected capability dependency is no longer read-only',
+                code='capability_policy_blocked',
+            )
+
+    prior_selection_ids = {
+        str(item.get('id') or '').strip()
+        for item in prior_effective_capabilities or []
+        if isinstance(item, Mapping)
+        and str(item.get('origin') or '').strip() == 'selection'
+        and str(item.get('id') or '').strip()
+    }
+    if prior_selection_ids and prior_selection_ids != set(expanded_selected_ids):
+        raise CapabilityChoiceError(
+            'the selected capability bundle has changed',
+            code='capability_bundle_changed',
+        )
+
+    prior_automatic_ids = {
+        str(item.get('id') or '').strip()
+        for item in prior_effective_capabilities or []
+        if isinstance(item, Mapping)
+        and str(item.get('id') or '').strip()
+        and str(item.get('origin') or '').strip() == 'discovery_auto'
+    }
+    has_bound_automatic_roots = automatic_capability_root_ids is not None
+    if not has_bound_automatic_roots and len(prior_automatic_ids) > 1:
+        raise CapabilityChoiceError(
+            'the legacy automatic capability bundle cannot be reconstructed safely',
+            code='capability_bundle_changed',
+        )
+    automatic_root_ids = {
+        str(capability_id or '').strip()
+        for capability_id in (
+            automatic_capability_root_ids
+            if has_bound_automatic_roots
+            else prior_automatic_ids
+        ) or []
+        if str(capability_id or '').strip()
+    }
+    expected_automatic_ids = {
+        str(capability_id or '').strip()
+        for capability_id in (
+            automatic_capability_effective_ids
+            if automatic_capability_effective_ids is not None
+            else prior_automatic_ids
+        ) or []
+        if str(capability_id or '').strip()
+    }
+    try:
+        expanded_automatic_ids = expand_governed_capability_baseline_ids(
+            inventory,
+            automatic_root_ids,
+        )
+    except ValueError as bundle_error:
+        raise CapabilityChoiceError(
+            'an automatically discovered capability bundle is no longer valid',
+            code='capability_bundle_changed',
+        ) from bundle_error
+    if set(expanded_automatic_ids) != expected_automatic_ids:
+        raise CapabilityChoiceError(
+            'the automatically discovered capability bundle has changed',
+            code='capability_bundle_changed',
+        )
+    for capability_id in expanded_automatic_ids:
+        entry = require_entry(capability_id)
+        state = str(entry.get('state') or '').strip().lower()
+        if state == 'selected':
+            if entry.get('input_ready') is not True:
+                raise CapabilityChoiceError(
+                    'an automatic bundle dependency no longer has its required input',
+                    code='capability_input_unavailable',
+                )
+            if entry.get('read_only') is not True:
+                raise CapabilityChoiceError(
+                    'an automatic bundle dependency is no longer read-only',
+                    code='capability_policy_blocked',
+                )
+            continue
+        if state != 'unselected':
+            code = (
+                f'capability_{state}'
+                if state in {'unavailable', 'unauthorized', 'policy_blocked'}
+                else 'capability_policy_blocked'
+            )
+            raise CapabilityChoiceError(
+                'an automatically discovered capability is no longer eligible',
+                code=code,
+            )
+        if entry.get('input_ready') is not True:
+            raise CapabilityChoiceError(
+                'an automatically discovered capability no longer has its required input',
+                code='capability_input_unavailable',
+            )
+        if not (
+            entry.get('discoverable') is True
+            and entry.get('auto_use_allowed') is True
+            and entry.get('read_only') is True
+        ):
+            raise CapabilityChoiceError(
+                'an automatically discovered capability is no longer policy approved',
+                code='capability_policy_blocked',
+            )
+    return True
+
+
+def revalidate_capability_execution_compatibility(
+    proposal,
+    *,
+    selected_capability_ids=None,
+    prior_effective_capabilities=None,
+    selected_agent_present=False,
+):
+    """Reject persisted combinations unsupported by compatibility executors."""
+    decision = proposal.get('decision') if isinstance(proposal, Mapping) else None
+    if not isinstance(decision, Mapping) or decision.get('status') == 'declined':
+        return True
+    execution_ids = {
+        str(capability_id or '').strip().lower()
+        for capability_id in selected_capability_ids or []
+        if str(capability_id or '').strip()
+    }
+    execution_ids.update(
+        str(item.get('id') or '').strip().lower()
+        for item in prior_effective_capabilities or []
+        if isinstance(item, Mapping)
+        and str(item.get('origin') or '').strip() == 'discovery_auto'
+        and str(item.get('id') or '').strip()
+    )
+    execution_ids.update(
+        str(capability_id or '').strip().lower()
+        for capability_id in decision.get('effective_capability_ids') or []
+        if str(capability_id or '').strip()
+    )
+    if selected_agent_present or str(decision.get('agent_ref') or '').strip():
+        execution_ids.add('selected_agent')
+    if (
+        execution_ids.intersection(PLANNER_DOCUMENT_ACTION_CAPABILITY_IDS)
+        and execution_ids.intersection(PLANNER_RETRIEVAL_CAPABILITY_IDS)
+    ) or (
+        PLANNER_IMAGE_CAPABILITY_ID in execution_ids
+        and len(execution_ids) > 1
+    ):
+        raise CapabilityChoiceError(
+            'this capability combination is not supported by the current executor',
+            code='capability_combination_unsupported',
+        )
+    return True
+
+
+def build_capability_resume_origins(
+    capability_inventory,
+    effective_capability_ids,
+    *,
+    prior_effective_capabilities=None,
+    automatic_capability_root_ids=None,
+    approved_agent_ref=None,
+):
+    """Rebuild execution origins without rewriting selected mandates as approvals."""
+    selected_root_ids = {
+        str(entry.get('id') or '').strip()
+        for entry in (
+            capability_inventory.get('capabilities')
+            if isinstance(capability_inventory, Mapping)
+            else []
+        ) or []
+        if isinstance(entry, Mapping)
+        and entry.get('state') == 'selected'
+        and str(entry.get('id') or '').strip()
+    }
+    entries_by_id = {
+        str(entry.get('id') or '').strip(): entry
+        for entry in (
+            capability_inventory.get('capabilities')
+            if isinstance(capability_inventory, Mapping)
+            else []
+        ) or []
+        if isinstance(entry, Mapping) and str(entry.get('id') or '').strip()
+    }
+    try:
+        selected_ids = set(
+            expand_governed_capability_baseline_ids(
+                capability_inventory,
+                selected_root_ids,
+            )
+        )
+    except ValueError:
+        selected_ids = selected_root_ids
+    origins = {
+        capability_id: 'selection'
+        for capability_id in selected_ids
+    }
+    prior_automatic_ids = {
+        str(item.get('id') or '').strip()
+        for item in prior_effective_capabilities or []
+        if isinstance(item, Mapping)
+        and str(item.get('origin') or '').strip() == 'discovery_auto'
+        and str(item.get('id') or '').strip()
+    }
+    automatic_root_ids = {
+        str(capability_id or '').strip()
+        for capability_id in (
+            automatic_capability_root_ids
+            if automatic_capability_root_ids is not None
+            else prior_automatic_ids
+        ) or []
+        if str(capability_id or '').strip()
+    }
+    try:
+        automatic_ids = expand_governed_capability_baseline_ids(
+            capability_inventory,
+            automatic_root_ids,
+        )
+    except ValueError:
+        automatic_ids = list(automatic_root_ids)
+    for capability_id in automatic_ids:
+        entry = entries_by_id.get(capability_id)
+        if (
+            entry
+            and entry.get('state') == 'unselected'
+            and entry.get('discoverable') is True
+            and entry.get('auto_use_allowed') is True
+            and entry.get('input_ready') is True
+            and entry.get('read_only') is True
+            and capability_id not in origins
+        ):
+            origins[capability_id] = 'discovery_auto'
+    for raw_capability_id in effective_capability_ids or []:
+        capability_id = str(raw_capability_id or '').strip()
+        if not capability_id:
+            continue
+        if capability_id not in origins:
+            origins[capability_id] = 'discovery_approved'
+    if str(approved_agent_ref or '').strip():
+        origins['selected_agent'] = 'discovery_approved'
+    return origins
 
 
 def claim_capability_choice_resume(proposal, *, now=None, execution_id=None, child_run_id=None):
@@ -568,7 +1048,10 @@ def complete_capability_choice_resume(
         if resume.get('assistant_message_id') == assistant_message_id:
             return updated, True
         raise CapabilityChoiceError('resume already completed', code='resume_completed')
-    if resume.get('status') != 'running' or resume.get('execution_id') != execution_id:
+    if (
+        resume.get('status') not in {'running', 'failed'}
+        or resume.get('execution_id') != execution_id
+    ):
         raise CapabilityChoiceError('resume claim does not match', code='resume_claim_mismatch')
     current_time = now or _utc_now()
     if current_time.tzinfo is None:
@@ -617,6 +1100,8 @@ def build_capability_provenance(
     proposal=None,
     decisions=None,
     effective_capabilities=None,
+    automatic_capability_root_ids=None,
+    automatic_capability_effective_ids=None,
 ):
     """Keep submitted, proposed, decided, and effective capability facts separate."""
     return {
@@ -631,6 +1116,16 @@ def build_capability_provenance(
             for decision in (decisions or [])
             if isinstance(decision, Mapping)
         ],
+        'automatic_capability_root_ids': list(dict.fromkeys(
+            str(capability_id or '').strip()
+            for capability_id in (automatic_capability_root_ids or [])
+            if str(capability_id or '').strip()
+        ))[:8],
+        'automatic_capability_effective_ids': list(dict.fromkeys(
+            str(capability_id or '').strip()
+            for capability_id in (automatic_capability_effective_ids or [])
+            if str(capability_id or '').strip()
+        ))[:8],
         'effective_capabilities': [
             {
                 'id': str(item.get('id') or '').strip(),

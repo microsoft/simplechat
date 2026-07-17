@@ -1,8 +1,8 @@
 # test_chat_capability_choice_card.py
 """
 UI test for governed capability choice cards in chat.
-Version: 0.250.067
-Implemented in: 0.250.067
+Version: 0.250.075
+Implemented in: 0.250.067; resolved state compacted in 0.250.075
 
 This test ensures persisted capability proposals hydrate on desktop and mobile,
 expose accessible notices and controls, submit only allowlisted identifiers,
@@ -19,6 +19,8 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CHAT_MESSAGES_FILE = REPO_ROOT / 'application' / 'single_app' / 'static' / 'js' / 'chat' / 'chat-messages.js'
+CAPABILITY_CHOICE_FILE = REPO_ROOT / 'application' / 'single_app' / 'static' / 'js' / 'chat' / 'chat-capability-choice.js'
+CHAT_STYLES_FILE = REPO_ROOT / 'application' / 'single_app' / 'static' / 'css' / 'chats.css'
 
 
 def _get_chat_test_url():
@@ -41,7 +43,7 @@ def _proposal_metadata(status='pending', resume_status='not_requested'):
     return {
         'awaiting_user_choice': status == 'pending',
         'capability_proposal': {
-            'version': 1,
+            'version': 2,
             'proposal_id': 'ui-capability-proposal-1',
             'run_id': 'ui-parent-run-1',
             'conversation_id': 'ui-capability-conversation',
@@ -50,6 +52,10 @@ def _proposal_metadata(status='pending', resume_status='not_requested'):
             'status': status,
             'requirement_ids': ['current_authoritative_sources'],
             'reason_codes': ['current_authoritative_sources'],
+            'selected_context_labels': [
+                'Workspace Search',
+                'Selected <img src=x onerror=window.phase10bInjected=true>',
+            ],
             'recommended_option_id': 'deep_research',
             'options': [
                 {
@@ -60,6 +66,9 @@ def _proposal_metadata(status='pending', resume_status='not_requested'):
                     'latency_class': 'minutes',
                     'cost_class': 'extended',
                     'external_data': True,
+                    'read_only': True,
+                    'risk_class': 'external_read',
+                    'data_sensitivity': 'public',
                 },
                 {
                     'id': 'web_search',
@@ -267,6 +276,23 @@ def test_capability_resume_waits_for_stream_terminal_event():
     assert "onError: errorMessage => reject(" in source
 
 
+def test_capability_choice_uses_server_plan_option_grid_contract():
+    choice_source = CAPABILITY_CHOICE_FILE.read_text(encoding='utf-8')
+    style_source = CHAT_STYLES_FILE.read_text(encoding='utf-8')
+
+    assert 'sc-capability-choice-option-grid' in choice_source
+    assert 'sc-capability-choice-recommended-ribbon' in choice_source
+    assert 'sc-capability-choice-includes-list' in choice_source
+    assert 'sc-capability-choice-compact-summary' in choice_source
+    assert '_complete_correlated_capability_resume_output' not in choice_source
+    assert 'option_id: option.id' in choice_source
+    assert 'selectedOptionIds' not in choice_source
+    assert 'grid-template-columns: repeat(auto-fit' in style_source
+    assert '.sc-capability-choice-option-card.is-recommended' in style_source
+    assert '.sc-capability-choice-card.is-compact' in style_source
+    assert '.sc-capability-choice-continue' in style_source
+
+
 @pytest.mark.ui
 @pytest.mark.parametrize(
     'viewport',
@@ -337,11 +363,36 @@ def test_capability_choice_card_decision_and_resume(viewport):
         message = page.locator('[data-message-id="ui-capability-proposal-1"]')
         card = message.get_by_test_id('capability-choice-card')
         expect(card).to_be_visible()
-        expect(card.get_by_role('heading', name='Choose how to continue')).to_be_visible()
+        expect(card.get_by_role('heading', name='How would you like to continue?')).to_be_visible()
         expect(card.get_by_test_id('capability-external-data-notice')).to_contain_text(
             'Conversation history and workspace content are not included.'
         )
-        expect(card.get_by_role('button', name='Deep Research')).to_contain_text('Recommended')
+        expect(card.get_by_test_id('capability-selected-context')).to_contain_text(
+            'Already included'
+        )
+        expect(card.get_by_test_id('capability-selected-context')).to_contain_text(
+            'Workspace Search'
+        )
+        expect(card.get_by_test_id('capability-option-includes').first).to_contain_text(
+            'Deep Research'
+        )
+        expect(card.get_by_test_id('capability-option-includes').first).to_contain_text(
+            'Web Search'
+        )
+        expect(card.get_by_test_id('capability-recommended-ribbon')).to_have_text('Recommended')
+        expect(card.get_by_test_id('capability-option-description').first).to_contain_text(
+            'Exhaustive archive research'
+        )
+        expect(card.get_by_test_id('capability-option-summary').first).to_contain_text(
+            'Minutes'
+        )
+        expect(card.get_by_test_id('capability-option-summary').first).to_contain_text(
+            'Extended'
+        )
+        expect(card.locator('.sc-capability-choice-option-grid .badge')).to_have_count(0)
+        assert card.locator('img').count() == 0
+        assert page.evaluate('() => window.phase10bInjected === true') is False
+        expect(card.get_by_role('button', name='Recommended: Deep Research')).to_be_enabled()
         expect(card.get_by_role('button', name='Web Search')).to_be_enabled()
         expect(card.get_by_role('button', name='Continue without additional capabilities')).to_be_enabled()
         status_id = card.get_by_role('button', name='Deep Research').get_attribute('aria-describedby')
@@ -354,16 +405,23 @@ def test_capability_choice_card_decision_and_resume(viewport):
                 overflows: element.scrollWidth > element.clientWidth,
                 right: element.getBoundingClientRect().right,
                 viewportWidth: window.innerWidth,
-                buttonHeights: Array.from(element.querySelectorAll('button')).map(
-                    button => button.getBoundingClientRect().height
-                )
+                buttonHeights: Array.from(element.querySelectorAll('button')).map(button => button.getBoundingClientRect().height),
+                optionWidths: Array.from(element.querySelectorAll('.sc-capability-choice-option-card')).map(option => option.getBoundingClientRect().width),
+                optionHeights: Array.from(element.querySelectorAll('.sc-capability-choice-option-card')).map(option => option.getBoundingClientRect().height),
+                continueWidth: element.querySelector('.sc-capability-choice-continue')?.getBoundingClientRect().width || 0,
+                gridWidth: element.querySelector('.sc-capability-choice-option-grid')?.getBoundingClientRect().width || 0
             })
             """
         )
         assert layout['overflows'] is False
         assert layout['right'] <= layout['viewportWidth'] + 1
         assert all(height >= 44 for height in layout['buttonHeights'])
+        assert max(layout['optionWidths']) - min(layout['optionWidths']) <= 1
+        if viewport['width'] >= 576:
+            assert max(layout['optionHeights']) - min(layout['optionHeights']) <= 1
+        assert abs(layout['continueWidth'] - layout['gridWidth']) <= 1
 
+        expanded_height = card.evaluate('element => element.getBoundingClientRect().height')
         deep_research_button = card.get_by_role('button', name='Deep Research')
         deep_research_button.focus()
         deep_research_button.press('Enter')
@@ -371,6 +429,17 @@ def test_capability_choice_card_decision_and_resume(viewport):
             'Resumed with current official sources.'
         )
         expect(card.get_by_role('status')).to_contain_text('Completed with Deep Research.')
+        compact_summary = card.get_by_test_id('capability-choice-compact-summary')
+        expect(compact_summary).to_be_visible()
+        expect(compact_summary).to_contain_text('Deep Research')
+        expect(compact_summary).to_contain_text('Includes Deep Research + Web Search')
+        expect(card.get_by_test_id('capability-choice-compact-state')).to_have_text('Completed')
+        expect(card.get_by_role('heading')).to_have_count(0)
+        expect(card.get_by_test_id('capability-external-data-notice')).to_have_count(0)
+        expect(card.get_by_test_id('capability-option-card')).to_have_count(0)
+        compact_height = card.evaluate('element => element.getBoundingClientRect().height')
+        assert compact_height < expanded_height * 0.4
+        assert compact_height <= 100
         assert decision_requests == [{
             'conversation_id': 'ui-capability-conversation',
             'option_id': 'deep_research',
@@ -412,6 +481,7 @@ def test_capability_choice_card_decision_and_resume(viewport):
 
         context.close()
         browser.close()
+
 
 
 @pytest.mark.ui
@@ -481,11 +551,13 @@ def test_governed_agent_choice_is_inert_minimal_and_refreshable(viewport):
         expect(card.get_by_text('A specialized authorized agent could materially improve this answer.')).to_be_visible()
         expect(card.get_by_test_id('agent-external-data-notice')).to_be_visible()
         expect(agent_button).to_be_enabled()
-        expect(agent_button.get_by_test_id('agent-option-meta')).to_contain_text('Agent')
-        expect(agent_button.get_by_test_id('agent-option-meta')).to_contain_text('Scope: group')
-        expect(agent_button.get_by_test_id('agent-option-meta')).to_contain_text('Read only')
-        expect(agent_button.get_by_test_id('agent-option-meta')).to_contain_text('Risk: internal read')
-        expect(agent_button.get_by_test_id('agent-option-meta')).to_contain_text('Data: internal')
+        expect(agent_button.get_by_test_id('capability-option-description')).to_contain_text(
+            'Group governed agent'
+        )
+        expect(agent_button.get_by_test_id('capability-option-summary')).to_contain_text('Seconds')
+        expect(agent_button.get_by_test_id('capability-option-summary')).to_contain_text('Standard')
+        expect(agent_button).not_to_contain_text('Risk:')
+        expect(agent_button).not_to_contain_text('Data:')
         assert card.locator('img').count() == 0
         assert page.evaluate('() => window.phase8bInjected === true') is False
 
@@ -498,15 +570,17 @@ def test_governed_agent_choice_is_inert_minimal_and_refreshable(viewport):
                 overflows: element.scrollWidth > element.clientWidth,
                 right: element.getBoundingClientRect().right,
                 viewportWidth: window.innerWidth,
-                buttonHeights: Array.from(element.querySelectorAll('button')).map(
-                    button => button.getBoundingClientRect().height
-                )
+                buttonHeights: Array.from(element.querySelectorAll('button')).map(button => button.getBoundingClientRect().height),
+                optionWidths: Array.from(element.querySelectorAll('.sc-capability-choice-option-card')).map(option => option.getBoundingClientRect().width),
+                continueWidth: element.querySelector('.sc-capability-choice-continue')?.getBoundingClientRect().width || 0,
+                gridWidth: element.querySelector('.sc-capability-choice-option-grid')?.getBoundingClientRect().width || 0
             })
             """
         )
         assert layout['overflows'] is False
         assert layout['right'] <= layout['viewportWidth'] + 1
         assert all(height >= 44 for height in layout['buttonHeights'])
+        assert abs(layout['continueWidth'] - layout['gridWidth']) <= 1
 
         agent_button.focus()
         agent_button.press('Enter')
@@ -544,6 +618,8 @@ def test_governed_agent_choice_is_inert_minimal_and_refreshable(viewport):
                 expect(refreshed_card.get_by_role('button', name=button_name)).to_be_visible()
             else:
                 expect(refreshed_card.get_by_role('button')).to_have_count(0)
+            if status in {'approved', 'declined'}:
+                expect(refreshed_card.get_by_test_id('capability-choice-compact-summary')).to_be_visible()
 
         context.close()
         browser.close()

@@ -298,6 +298,8 @@ def test_external_query_omits_unapproved_personal_data():
     assert minimized['workspace_content_included'] is False
     assert 'street_address' in minimized['omitted_sensitive_input_types']
     assert '1234 Main Street' in approved['query']
+    assert 'person@example.com' not in approved['query']
+    assert 'email_address' in approved['omitted_sensitive_input_types']
 
 
 def test_parcel_lookup_adds_explicit_sensitive_option():
@@ -343,6 +345,9 @@ def test_provenance_keeps_each_stage_separate():
     )
 
     assert provenance['selection_snapshot']['toggles']['web_search'] is False
+    assert provenance['version'] == 2
+    assert provenance['automatic_capability_root_ids'] == []
+    assert provenance['automatic_capability_effective_ids'] == []
     assert provenance['proposed_capabilities']['status'] == 'pending'
     assert provenance['capability_decisions'][0]['status'] == 'approved'
     assert provenance['effective_capabilities'] == [{

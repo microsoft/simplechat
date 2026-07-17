@@ -87,6 +87,41 @@ SAFE_PLANNER_AGREEMENT_CATEGORIES = frozenset({
     'decision_disagreement',
     'not_compared',
 })
+SAFE_CAPABILITY_COMBINATIONS = frozenset({
+    'analyze',
+    'compare',
+    'deep_research+web_search',
+    'governed_agent',
+    'image',
+    'url_access',
+    'web_search',
+    'web_search+workspace_search',
+    'workspace_search',
+})
+SAFE_PLANNER_ACTIVATION_STATUSES = frozenset({'materialized', 'suppressed'})
+SAFE_RECOMMENDATION_SOURCES = frozenset({'deterministic', 'direct', 'planner'})
+SAFE_PLANNER_SUPPRESSION_REASONS = frozenset({
+    'deterministic_conflict',
+    'planner_not_materialized',
+})
+SAFE_REVALIDATION_PHASES = frozenset({'decision', 'execution', 'resume'})
+SAFE_REVALIDATION_STATUSES = frozenset({
+    'expired',
+    'invalidated',
+    'rejected',
+    'succeeded',
+})
+SAFE_REVALIDATION_REASON_CLASSES = frozenset({
+    'agent',
+    'authorization',
+    'availability',
+    'bundle',
+    'conflict',
+    'expired',
+    'input',
+    'lease',
+    'policy',
+})
 
 
 def _field(value, name, default=None):
@@ -140,7 +175,11 @@ def _correlation_id(value):
 def _safe_reason_codes(values):
     normalized = []
     for value in values or []:
-        reason_code = _safe_enum(value, SAFE_REASON_CODES, fallback='')
+        reason_code = _safe_enum(
+            value,
+            SAFE_REASON_CODES | CAPABILITY_PLANNER_REASON_CODES,
+            fallback='',
+        )
         if reason_code and reason_code not in normalized:
             normalized.append(reason_code)
         if len(normalized) >= MAX_EVALUATION_REASON_CODES:
@@ -193,7 +232,7 @@ def _planner_event_fields(run_id, metadata, *, provider_class, model_name):
     summary = metadata if isinstance(metadata, Mapping) else {}
     return {
         'run_correlation_id': _correlation_id(run_id),
-        'planner_mode': _safe_enum(summary.get('mode'), {'shadow'}),
+        'planner_mode': _safe_enum(summary.get('mode'), {'shadow', 'assist'}),
         'provider_class': _safe_enum(
             provider_class,
             SAFE_PLANNER_PROVIDER_CLASSES,
@@ -218,6 +257,39 @@ def _planner_event_fields(run_id, metadata, *, provider_class, model_name):
         'latency_ms': _bounded_count(summary.get('latency_ms')),
         'fallback_used': bool(summary.get('fallback_used')),
     }
+
+
+def _safe_capability_combination(capability_classes):
+    safe_classes = sorted(set(_safe_planner_capability_classes(capability_classes)))
+    combination = '+'.join(safe_classes)
+    if combination in SAFE_CAPABILITY_COMBINATIONS:
+        return combination
+    if len(safe_classes) > 1:
+        return 'multiple_safe_capabilities'
+    return safe_classes[0] if safe_classes else 'unknown'
+
+
+def _revalidation_reason_class(error_code):
+    normalized = str(error_code or '').strip().lower()
+    if normalized == 'proposal_expired':
+        return 'expired'
+    if normalized.startswith('agent_'):
+        return 'agent'
+    if 'unauthorized' in normalized or 'forbidden' in normalized:
+        return 'authorization'
+    if any(value in normalized for value in ('missing', 'unavailable')):
+        return 'availability'
+    if any(value in normalized for value in ('bundle', 'plan_', 'decision_mismatch')):
+        return 'bundle'
+    if 'input' in normalized:
+        return 'input'
+    if any(value in normalized for value in ('policy', 'blocked', 'discoverable', 'read_only')):
+        return 'policy'
+    if any(value in normalized for value in ('resume_', 'lease')):
+        return 'lease'
+    if any(value in normalized for value in ('conflict', 'write_conflict')):
+        return 'conflict'
+    return 'other'
 
 
 def _proposal_option(proposal, option_id):
@@ -247,6 +319,18 @@ def _capability_class(option):
     if not option.get('capability_ids') and not option.get('agent_ref'):
         return 'continue_without_capabilities'
     return 'unknown'
+
+
+def _capability_classes(option):
+    if not isinstance(option, Mapping):
+        return []
+    if option.get('kind') == 'agent' or option.get('agent_ref'):
+        return ['governed_agent']
+    return _safe_planner_capability_classes(
+        option.get('effective_capability_ids')
+        or option.get('capability_ids')
+        or []
+    )
 
 
 def _base_event(event_type):
@@ -321,6 +405,15 @@ def build_recommendation_created_evaluation_event(proposal):
         **_base_event('orchestration_recommendation_created'),
         'run_correlation_id': _correlation_id(_field(proposal, 'run_id')),
         'recommended_capability': _capability_class(recommended_option),
+        'capability_count': _bounded_count(len(_capability_classes(recommended_option))),
+        'capability_combination': _safe_capability_combination(
+            _capability_classes(recommended_option)
+        ),
+        'recommendation_source': _safe_enum(
+            _field(proposal, 'recommendation_source'),
+            {'deterministic', 'planner'},
+            fallback='deterministic',
+        ),
         'reason_codes': _safe_reason_codes(_field(proposal, 'reason_codes', [])),
         'option_count': _bounded_count(len(_field(proposal, 'options', []) or [])),
         'requirement_count': _bounded_count(len(_field(proposal, 'requirement_ids', []) or [])),
@@ -344,6 +437,15 @@ def build_recommendation_decision_evaluation_event(proposal, *, idempotent=False
             {'approved', 'declined'},
         ),
         'selected_capability': _capability_class(selected_option),
+        'capability_count': _bounded_count(len(_capability_classes(selected_option))),
+        'capability_combination': _safe_capability_combination(
+            _capability_classes(selected_option)
+        ),
+        'recommendation_source': _safe_enum(
+            _field(proposal, 'recommendation_source'),
+            {'deterministic', 'planner'},
+            fallback='deterministic',
+        ),
         'reason_codes': _safe_reason_codes(_field(proposal, 'reason_codes', [])),
         'decision_latency_ms': _latency_ms(
             _field(proposal, 'created_at'),
@@ -371,6 +473,15 @@ def build_recommendation_outcome_evaluation_event(run, resume_context):
             {'approved', 'declined'},
         ),
         'selected_capability': _capability_class(selected_option),
+        'capability_count': _bounded_count(len(_capability_classes(selected_option))),
+        'capability_combination': _safe_capability_combination(
+            _capability_classes(selected_option)
+        ),
+        'recommendation_source': _safe_enum(
+            proposal.get('recommendation_source'),
+            {'deterministic', 'planner'},
+            fallback='deterministic',
+        ),
         'reason_codes': _safe_reason_codes(proposal.get('reason_codes') or []),
         'incremental_latency_ms': _latency_ms(
             decision.get('decided_at'),
@@ -386,7 +497,7 @@ def build_planner_completed_evaluation_event(
     provider_class,
     model_name,
 ):
-    """Summarize one valid shadow result without planner payload content."""
+    """Summarize one valid planner result without planner payload content."""
     return {
         **_base_event('orchestration_planner_completed'),
         **_planner_event_fields(
@@ -405,7 +516,7 @@ def build_planner_rejected_evaluation_event(
     provider_class,
     model_name,
 ):
-    """Summarize one rejected or cancelled shadow result."""
+    """Summarize one rejected or cancelled planner result."""
     summary = metadata if isinstance(metadata, Mapping) else {}
     return {
         **_base_event('orchestration_planner_rejected'),
@@ -429,7 +540,7 @@ def build_planner_timed_out_evaluation_event(
     provider_class,
     model_name,
 ):
-    """Summarize one transport-bounded shadow timeout."""
+    """Summarize one transport-bounded planner timeout."""
     summary = metadata if isinstance(metadata, Mapping) else {}
     return {
         **_base_event('orchestration_planner_timed_out'),
@@ -475,5 +586,96 @@ def build_planner_shadow_compared_evaluation_event(
         'agreement_category': _safe_enum(
             compared.get('agreement_category'),
             SAFE_PLANNER_AGREEMENT_CATEGORIES,
+        ),
+    }
+
+
+def build_planner_activation_evaluation_event(
+    run_id,
+    metadata,
+    *,
+    provider_class,
+    model_name,
+):
+    """Summarize governed assist activation without planner or option payloads."""
+    summary = metadata if isinstance(metadata, Mapping) else {}
+    capability_classes = _safe_planner_capability_classes(
+        summary.get('recommended_capability_classes')
+    )
+    return {
+        **_base_event('orchestration_planner_activation'),
+        **_planner_event_fields(
+            run_id,
+            summary,
+            provider_class=provider_class,
+            model_name=model_name,
+        ),
+        'activation_status': _safe_enum(
+            summary.get('activation_status'),
+            SAFE_PLANNER_ACTIVATION_STATUSES,
+        ),
+        'recommendation_source': _safe_enum(
+            summary.get('recommendation_source'),
+            SAFE_RECOMMENDATION_SOURCES,
+        ),
+        'suppression_reason': _safe_enum(
+            summary.get('suppression_reason'),
+            SAFE_PLANNER_SUPPRESSION_REASONS,
+            fallback='none',
+        ),
+        'capability_combination': _safe_capability_combination(capability_classes),
+    }
+
+
+def build_recommendation_revalidation_evaluation_event(
+    correlation_value,
+    *,
+    phase,
+    proposal=None,
+    error_code=None,
+):
+    """Record bounded additive-member revalidation without object identifiers."""
+    proposal_value = proposal if isinstance(proposal, Mapping) else {}
+    decision = proposal_value.get('decision')
+    decision = decision if isinstance(decision, Mapping) else {}
+    selected_option = _proposal_option(
+        proposal_value,
+        decision.get('option_id') or proposal_value.get('recommended_option_id'),
+    )
+    reason_class = _revalidation_reason_class(error_code)
+    if not error_code:
+        status = 'succeeded'
+    elif reason_class == 'expired':
+        status = 'expired'
+    elif reason_class in {
+        'agent',
+        'authorization',
+        'availability',
+        'bundle',
+        'input',
+        'policy',
+    }:
+        status = 'invalidated'
+    else:
+        status = 'rejected'
+    capability_classes = _capability_classes(selected_option)
+    return {
+        **_base_event('orchestration_recommendation_revalidated'),
+        'run_correlation_id': _correlation_id(
+            proposal_value.get('run_id') or correlation_value
+        ),
+        'phase': _safe_enum(phase, SAFE_REVALIDATION_PHASES),
+        'status': _safe_enum(status, SAFE_REVALIDATION_STATUSES),
+        'reason_class': _safe_enum(
+            reason_class,
+            SAFE_REVALIDATION_REASON_CLASSES,
+            fallback='other',
+        ),
+        'capability_count': _bounded_count(len(capability_classes)),
+        'capability_combination': _safe_capability_combination(capability_classes),
+        'recommendation_source': _safe_enum(
+            proposal_value.get('recommendation_source'),
+            {'deterministic', 'planner'},
+            fallback='deterministic',
         ),
     }

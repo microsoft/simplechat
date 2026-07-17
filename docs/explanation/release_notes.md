@@ -2,6 +2,62 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.075)**
+
+#### User Interface Enhancements
+
+*   **Compact Completed Capability Selection**
+    *   Condensed the expanded capability chooser into one compact selected-plan summary as soon as the decision is saved, preserving only the plan name, included capabilities, and lifecycle state while the resumed answer runs and completes.
+    *   Kept saved Resume and failed Retry actions available in the compact state, while decision failures continue to expose the original choices for another attempt.
+    *   Reduced the completed card below 100 pixels and below 40 percent of its expanded height across validated desktop and mobile layouts.
+    *   (Ref: microsoft/simplechat#1021, `chat-capability-choice.js`, `chats.css`, `test_chat_capability_choice_card.py`)
+
+### **(v0.250.074)**
+
+#### User Interface Enhancements
+
+*   **Governed Capability Plan Selection**
+    *   Replaced uneven, badge-heavy capability actions with equal-width selectable plan cards, concise purpose text, compact time/cost summaries, and a top-right Recommended ribbon.
+    *   Multi-capability plans now show a clear Includes checklist while remaining one server-authored selection; one card click submits only its persisted option ID and immediately resumes execution.
+    *   Moved the continue-without-capabilities path to a full-width secondary action and validated keyboard interaction, inert text, overflow, and responsive desktop/mobile layouts with the real browser module and styles.
+    *   (Ref: microsoft/simplechat#1021, `chat-capability-choice.js`, `chats.css`, `test_chat_capability_choice_card.py`, `CHAT_TURN_ORCHESTRATION.md`)
+
+### **(v0.250.073)**
+
+#### User Interface Enhancements
+
+*   **Capability Planner Administration Guidance**
+    *   Added clear definitions for Off, Shadow, and Assist, with Assist identified as the recommended mode for normal multi-stage planning.
+    *   Added keyboard-accessible information tooltips for planner mode, model source, global endpoint ID, model ID, timeout, completion budget, candidate plans, and capabilities per plan.
+    *   Replaced numeric timeout and completion fields with synchronized sliders, changed candidate plans to a bounded dropdown, and changed capabilities per plan to a slider with visible recommended values and limits.
+    *   Expanded bounded administrator headroom to 20 seconds, 1,200 completion tokens, six candidate plans, and eight capabilities per plan while retaining server-side normalization and authorization.
+    *   (Ref: microsoft/simplechat#1021, `admin_settings.html`, `admin_settings.js`, `functions_chat_capability_planner.py`, `functions_settings.py`)
+
+### **(v0.250.072)**
+
+#### New Features
+
+*   **Governed Additive Capability Plan Activation**
+    *   Added an administrator-controlled `assist` planner mode, enabled by default, that can turn validated high-confidence plans into one durable, server-authored capability choice while preserving explicit `off` and `shadow` controls.
+    *   Increased the default bounded planner deadline to 10 seconds so transient model latency does not unnecessarily bypass governed planning and fall through to a tool-blind answer.
+    *   Added bounded read-only plans such as Workspace Search plus Web Search and Deep Research plus its Web Search dependency; selected and automatically discovered bundles are recursively expanded as already effective, and only true additions require approval.
+    *   Planner options reuse the existing persisted choice, ETag decision, idempotent resume, process-recovery, evidence-ledger, and central-finalization lifecycle. Every selected, automatic, approved, and inherited member is revalidated against current authorization, input readiness, bundle definitions, and policy before child-run execution; provenance v2 binds automatic roots and exact closure separately so any closure change invalidates the proposal.
+    *   Planner failures, low confidence, material disagreement, invalid bundles, revocation, and policy changes fail back to deterministic behavior without granting model execution authority. External retrieval remains limited to minimized current-turn text, with separate approval for detected sensitive address input.
+    *   Unsupported compatibility combinations are suppressed and revalidated server-side, including Image with another capability or selected/approved agent and Analyze or Compare with retrieval.
+    *   Hardened resume execution so browser payloads recursively discard server-only fields, including nested agent discovery references, capability context, and minimized-query overrides; authorized resume state now travels through a separate trusted internal channel.
+    *   Unified deterministic and planner bundle handling so selected dependencies are never re-offered, deterministic options are rebound to their exact current closure, and streaming, non-streaming, and document-action provenance retain the same expanded selected origins.
+    *   Native streaming now terminalizes every claimed resume lease: correlated complete, partial, and content-safety output completes and reconciles after process loss, while post-claim setup and other no-output failures release only the exact owned execution immediately for retry.
+    *   Cancellation partials and Analyze/Compare output produced before runtime reconciliation failure are persisted with exact resume correlation and cannot be duplicated by retrying the proposal.
+    *   Correlated output remains authoritative across transient proposal completion-write failures; restart reconciliation can complete the same exact running or failed execution without reopening it for duplicate work.
+    *   (Ref: microsoft/simplechat#1021, `functions_chat_capabilities.py`, `functions_chat_capability_choices.py`, `route_backend_chats.py`, `CHAT_CAPABILITY_MODEL_PLANNER.md`)
+
+#### User Interface Enhancements
+
+*   **Additive Plan Choice And Planner Administration**
+    *   Choice cards now show server-owned badges for multi-capability plans and identify submitted selections as already included context without sending capability or authorization claims from the browser.
+    *   Added Admin Settings controls for `Off`, `Shadow`, and `Assist`, planner model source, timeout, completion budget, candidate count, and per-plan capability limits. Invalid or incomplete values normalize safely, and administrators retain an explicit kill switch while governed assistance is active by default.
+    *   (Ref: `admin_settings.html`, `chat-capability-choice.js`, `chats.css`, `test_chat_capability_choice_card.py`, `test_admin_capability_planner_settings.py`)
+
 ### **(v0.250.071)**
 
 #### Bug Fixes

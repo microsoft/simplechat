@@ -59,8 +59,8 @@ ADMIN_SETTINGS_NESTED_SECRET_FIELDS = (
     "web_search_agent.other_settings.azure_ai_foundry.client_secret",
 )
 CHAT_CAPABILITY_PLANNER_DEFAULTS = {
-    'chat_capability_planner_mode': 'off',
-    'chat_capability_planner_timeout_ms': 5000,
+    'chat_capability_planner_mode': 'assist',
+    'chat_capability_planner_timeout_ms': 10000,
     'chat_capability_planner_max_completion_tokens': 600,
     'chat_capability_planner_max_candidate_plans': 3,
     'chat_capability_planner_max_capabilities_per_plan': 4,
@@ -120,7 +120,7 @@ def normalize_document_access_index_required_settings(settings):
 
 
 def normalize_chat_capability_planner_settings(settings):
-    """Normalize Phase 10A planner settings to bounded off/shadow values."""
+    """Normalize planner settings to bounded off, shadow, or assist values."""
     source = settings if isinstance(settings, dict) else {}
 
     def bounded_int(key, *, minimum, maximum):
@@ -137,7 +137,7 @@ def normalize_chat_capability_planner_settings(settings):
         )
         or ''
     ).strip().lower()
-    if mode not in {'off', 'shadow'}:
+    if mode not in {'off', 'shadow', 'assist'}:
         mode = 'off'
 
     model_source = str(
@@ -165,17 +165,17 @@ def normalize_chat_capability_planner_settings(settings):
         'chat_capability_planner_timeout_ms': bounded_int(
             'chat_capability_planner_timeout_ms',
             minimum=250,
-            maximum=10000,
+            maximum=20000,
         ),
         'chat_capability_planner_max_completion_tokens': bounded_int(
             'chat_capability_planner_max_completion_tokens',
             minimum=64,
-            maximum=1000,
+            maximum=1200,
         ),
         'chat_capability_planner_max_candidate_plans': bounded_int(
             'chat_capability_planner_max_candidate_plans',
             minimum=1,
-            maximum=5,
+            maximum=6,
         ),
         'chat_capability_planner_max_capabilities_per_plan': bounded_int(
             'chat_capability_planner_max_capabilities_per_plan',

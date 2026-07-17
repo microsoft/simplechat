@@ -436,7 +436,7 @@ def test_streaming_chat_path_persists_and_applies_plan():
     assert "@bp.route('/api/chat/capability-proposals/<proposal_id>/decision'" in route_source
     assert '_claim_authorized_capability_resume(' in route_source
     assert 'persist_capability_resume_completion(' in route_source
-    assert "data.get('_server_external_query') or user_message" in route_source
+    assert 'resolve_external_retrieval_message(' in route_source
     assert 'compatibility_capability_inventory = _resolve_server_chat_capability_inventory(' in route_source
     assert "user_metadata['capability_provenance'] = compatibility_capability_provenance" in route_source
     assert "'capability_provenance': compatibility_capability_provenance," in route_source

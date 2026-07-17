@@ -28,17 +28,17 @@ CAPABILITY_PLANNER_REASON_CODES = frozenset({
 
 DEFAULT_MAX_CANDIDATE_PLANS = 3
 DEFAULT_MAX_CAPABILITIES_PER_PLAN = 4
-MAX_CANDIDATE_PLANS = 5
+MAX_CANDIDATE_PLANS = 6
 MAX_CAPABILITIES_PER_PLAN = 8
 MAX_PLANNER_REQUIREMENTS = 8
 MAX_EVIDENCE_TYPES_PER_REQUIREMENT = 8
 MAX_USER_REQUEST_CHARS = 16000
 MAX_AVAILABLE_CAPABILITIES = 64
-DEFAULT_PLANNER_TIMEOUT_MS = 5000
-MAX_PLANNER_TIMEOUT_MS = 10000
+DEFAULT_PLANNER_TIMEOUT_MS = 10000
+MAX_PLANNER_TIMEOUT_MS = 20000
 MIN_PLANNER_TIMEOUT_MS = 250
 DEFAULT_PLANNER_MAX_COMPLETION_TOKENS = 600
-MAX_PLANNER_COMPLETION_TOKENS = 1000
+MAX_PLANNER_COMPLETION_TOKENS = 1200
 MIN_PLANNER_COMPLETION_TOKENS = 64
 
 CAPABILITY_PLANNER_SYSTEM_PROMPT = (
@@ -90,7 +90,7 @@ _PLANNER_CANDIDATE_FIELDS = frozenset({
     'confidence',
 })
 _REQUIREMENT_ID_PATTERN = re.compile(r'^requirement_[1-8]$')
-_CANDIDATE_ID_PATTERN = re.compile(r'^candidate_[1-5]$')
+_CANDIDATE_ID_PATTERN = re.compile(r'^candidate_[1-6]$')
 _SAFE_IDENTIFIER_PATTERN = re.compile(r'^[a-z0-9][a-z0-9_:-]{0,255}$')
 _SAFE_BUILTIN_CAPABILITY_CLASSES = frozenset({
     'analyze',
@@ -286,18 +286,18 @@ def build_capability_planner_request(
     }
 
 
-def capability_planner_shadow_is_eligible(
+def capability_planner_is_eligible(
     planner_settings,
     planner_request,
     *,
     is_resume=False,
     cancel_requested=False,
 ):
-    """Return whether one new turn may perform an observational planner call."""
+    """Return whether one new turn may perform a governed planner call."""
     settings = planner_settings if isinstance(planner_settings, Mapping) else {}
     request = planner_request if isinstance(planner_request, Mapping) else {}
     if (
-        settings.get('chat_capability_planner_mode') != 'shadow'
+        settings.get('chat_capability_planner_mode') not in {'shadow', 'assist'}
         or is_resume
         or cancel_requested
     ):
@@ -308,6 +308,26 @@ def capability_planner_shadow_is_eligible(
         and capability.get('discoverable') is True
         and capability.get('input_ready') is True
         for capability in request.get('available_capabilities') or []
+    )
+
+
+def capability_planner_shadow_is_eligible(
+    planner_settings,
+    planner_request,
+    *,
+    is_resume=False,
+    cancel_requested=False,
+):
+    """Retain the Phase 10A shadow-only eligibility contract."""
+    settings = planner_settings if isinstance(planner_settings, Mapping) else {}
+    return (
+        settings.get('chat_capability_planner_mode') == 'shadow'
+        and capability_planner_is_eligible(
+            settings,
+            planner_request,
+            is_resume=is_resume,
+            cancel_requested=cancel_requested,
+        )
     )
 
 
@@ -1055,15 +1075,18 @@ def _capability_class(capability_id):
     return normalized if normalized in _SAFE_BUILTIN_CAPABILITY_CLASSES else None
 
 
-def build_capability_planner_shadow_metadata(planner_result):
+def build_capability_planner_metadata(planner_result, *, mode='shadow'):
     """Build the only planner summary permitted in persisted turn metadata."""
     result = planner_result if isinstance(planner_result, Mapping) else {}
     status = str(result.get('status') or 'rejected').strip().lower()
     if status not in {'valid', 'rejected', 'timed_out', 'discarded'}:
         status = 'rejected'
+    normalized_mode = str(mode or '').strip().lower()
+    if normalized_mode not in {'shadow', 'assist'}:
+        normalized_mode = 'shadow'
     metadata = {
         'version': CAPABILITY_PLANNER_CONTRACT_VERSION,
-        'mode': 'shadow',
+        'mode': normalized_mode,
         'status': status,
         'candidate_count': min(
             len(result.get('candidate_plans') or []),
@@ -1111,6 +1134,11 @@ def build_capability_planner_shadow_metadata(planner_result):
     if status != 'valid' and failure_code in CAPABILITY_PLANNER_FAILURE_CODES:
         metadata['failure_code'] = failure_code
     return metadata
+
+
+def build_capability_planner_shadow_metadata(planner_result):
+    """Build the Phase 10A observational planner metadata contract."""
+    return build_capability_planner_metadata(planner_result, mode='shadow')
 
 
 def compare_capability_planner_shadow(planner_result, deterministic_recommendation):
