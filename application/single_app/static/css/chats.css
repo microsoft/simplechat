@@ -33,6 +33,27 @@
   line-height: 1.45;
 }
 
+.sc-capability-choice-selected-context {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0 0 0.65rem;
+  font-size: 0.8rem;
+}
+
+.sc-capability-choice-selected-label {
+  font-weight: 600;
+}
+
+.sc-capability-choice-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.25rem;
+  max-width: 100%;
+}
+
 .sc-capability-choice-notice,
 .sc-capability-choice-sensitive-notice {
   padding: 0.55rem 0.65rem;
@@ -72,6 +93,10 @@
   font-size: 0.75rem;
   line-height: 1.25;
   opacity: 0.82;
+}
+
+.sc-capability-choice-button > .sc-capability-choice-badges {
+  flex-basis: 100%;
 }
 
 .sc-capability-choice-status {

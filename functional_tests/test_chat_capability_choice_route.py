@@ -2,8 +2,8 @@
 # test_chat_capability_choice_route.py
 """
 Functional test for authenticated chat capability decisions.
-Version: 0.250.067
-Implemented in: 0.250.067
+Version: 0.250.072
+Implemented in: 0.250.067; additive baseline coverage added in 0.250.072
 
 This test ensures proposal decisions reauthorize the exact personal
 conversation and source turn, reject forged or stale choices, revalidate
@@ -116,7 +116,7 @@ class FakeMessageContainer:
             resume = metadata.get('capability_resume') if isinstance(metadata.get('capability_resume'), dict) else {}
             if (
                 conversation_id == partition_key
-                and message.get('role') == 'assistant'
+                and message.get('role') in {'assistant', 'image', 'safety'}
                 and resume.get('proposal_id') == proposal_id
                 and resume.get('execution_id') == execution_id
             ):
@@ -131,7 +131,7 @@ class FakeMessageContainer:
         self.items[key] = stored
 
 
-def _inventory(*, web_authorized=True):
+def _inventory(*, web_authorized=True, selected_capability_ids=None):
     resolved = {
         capability_id: {
             'enabled': True,
@@ -145,7 +145,10 @@ def _inventory(*, web_authorized=True):
         )
     }
     resolved['web_search']['authorized'] = web_authorized
-    return build_governed_capability_inventory(resolved_capabilities=resolved)
+    return build_governed_capability_inventory(
+        selected_capability_ids=selected_capability_ids,
+        resolved_capabilities=resolved,
+    )
 
 
 def _proposal_documents(*, expires_at=None):
@@ -391,7 +394,10 @@ def capability_route_app(monkeypatch):
     monkeypatch.setattr(
         route_backend_chats,
         '_resolve_server_chat_capability_inventory',
-        lambda **kwargs: _inventory(web_authorized=inventory_state['web_authorized']),
+        lambda **kwargs: _inventory(
+            web_authorized=inventory_state['web_authorized'],
+            selected_capability_ids=kwargs.get('selected_capability_ids'),
+        ),
     )
     monkeypatch.setattr(route_backend_chats, 'log_event', lambda *args, **kwargs: None)
 
@@ -447,6 +453,48 @@ def _decision(client, option_id='web_search', conversation_id='conversation-owne
             **extra,
         },
     )
+
+
+def _replace_builtin_proposal_option(state, capability_id):
+    proposal_key = ('conversation-owner', 'proposal-1')
+    proposal_message = copy.deepcopy(state['messages'].items[proposal_key])
+    proposal = proposal_message['metadata']['capability_proposal']
+    proposal['recommended_option_id'] = capability_id
+    proposal['options'] = [
+        {
+            'id': capability_id,
+            'kind': 'capability',
+            'capability_ids': [capability_id],
+            'effective_capability_ids': [capability_id],
+            'label': capability_id.replace('_', ' ').title(),
+            'latency_class': 'seconds',
+            'cost_class': 'standard',
+            'external_data': False,
+            'requires_user_choice': True,
+            'read_only': capability_id != 'image',
+            'risk_class': 'internal_read',
+            'data_sensitivity': 'internal',
+            'external_query_mode': 'minimized',
+            'sensitive_input_types': [],
+        },
+        {
+            'id': 'continue_without_capabilities',
+            'kind': 'continue',
+            'capability_ids': [],
+            'effective_capability_ids': [],
+            'label': 'Continue without additional capabilities',
+            'latency_class': 'immediate',
+            'cost_class': 'none',
+            'external_data': False,
+            'requires_user_choice': True,
+            'external_query_mode': 'minimized',
+            'sensitive_input_types': [],
+        },
+    ]
+    proposal_message['metadata']['capability_provenance'][
+        'proposed_capabilities'
+    ] = copy.deepcopy(proposal)
+    state['messages'].set_item(proposal_message)
 
 
 def test_owner_decision_is_idempotent_and_ignores_capability_claims(capability_route_app):
@@ -548,7 +596,8 @@ def test_resume_claim_reconstructs_effective_capabilities_server_side(capability
         proposal_id='proposal-1',
     )
     request_data = context['request_data']
-    resume_context = request_data['_capability_resume_context']
+    resume_context = context['capability_resume_context']
+    assert '_capability_resume_context' not in request_data
     assert request_data['web_search_enabled'] is True
     assert request_data['deep_research_enabled'] is False
     assert request_data['_server_external_query'] == 'What are the current county rules?'
@@ -588,6 +637,462 @@ def test_resume_revalidates_revocation_after_approval(capability_route_app):
             proposal_id='proposal-1',
         )
     assert revoked_claim.value.code == 'capability_unauthorized'
+
+
+def test_missing_document_action_target_is_atomically_invalidated_on_resume(
+    capability_route_app,
+):
+    state = capability_route_app.config['capability_route_state']
+    route_backend_chats = state['route_module']
+    _replace_builtin_proposal_option(state, 'analyze')
+    with capability_route_app.test_client() as client:
+        approved = _decision(client, option_id='analyze')
+    assert approved.status_code == 200
+    assert approved.get_json()['resume_endpoint'] == '/api/chat/document-action/stream'
+
+    with pytest.raises(route_backend_chats.CapabilityChoiceError) as missing_target:
+        route_backend_chats._claim_authorized_capability_resume(
+            settings={},
+            user_id='user-owner',
+            user_email='owner@example.com',
+            user_roles=[],
+            conversation_id='conversation-owner',
+            proposal_id='proposal-1',
+        )
+
+    assert missing_target.value.code == 'capability_input_unavailable'
+    stored = state['messages'].items[('conversation-owner', 'proposal-1')]
+    proposal = stored['metadata']['capability_proposal']
+    assert proposal['status'] == 'invalidated'
+    assert proposal['resume']['status'] == 'failed'
+    assert proposal['invalidation_reason'] == 'capability_input_unavailable'
+
+
+def test_compare_requires_two_distinct_authorized_targets(
+    capability_route_app,
+    monkeypatch,
+):
+    state = capability_route_app.config['capability_route_state']
+    route_backend_chats = state['route_module']
+    _replace_builtin_proposal_option(state, 'compare')
+    with capability_route_app.test_client() as client:
+        approved = _decision(client, option_id='compare')
+    assert approved.status_code == 200
+
+    original_loader = route_backend_chats._load_authorized_capability_proposal_context
+
+    def load_with_duplicate_target(**kwargs):
+        context = original_loader(**kwargs)
+        context['authorized_documents'] = [
+            {'id': 'document-1'},
+            {'document_id': 'document-1'},
+        ]
+        context['baseline_error_code'] = None
+        return context
+
+    monkeypatch.setattr(
+        route_backend_chats,
+        '_load_authorized_capability_proposal_context',
+        load_with_duplicate_target,
+    )
+
+    with pytest.raises(route_backend_chats.CapabilityChoiceError) as missing_target:
+        route_backend_chats._claim_authorized_capability_resume(
+            settings={},
+            user_id='user-owner',
+            user_email='owner@example.com',
+            user_roles=[],
+            conversation_id='conversation-owner',
+            proposal_id='proposal-1',
+        )
+
+    assert missing_target.value.code == 'capability_input_unavailable'
+    assert route_backend_chats._distinct_authorized_document_ids(
+        [{'id': 'document-1'}, {'document_id': 'document-1'}]
+    ) == {'document-1'}
+    stored = state['messages'].items[('conversation-owner', 'proposal-1')]
+    assert stored['metadata']['capability_proposal']['status'] == 'invalidated'
+
+
+def test_image_resume_reconstructs_server_request_and_additive_origin(
+    capability_route_app,
+):
+    state = capability_route_app.config['capability_route_state']
+    route_backend_chats = state['route_module']
+    _replace_builtin_proposal_option(state, 'image')
+    with capability_route_app.test_client() as client:
+        approved = _decision(client, option_id='image')
+    assert approved.status_code == 200
+    assert approved.get_json()['resume_endpoint'] == '/api/chat/stream'
+
+    context = route_backend_chats._claim_authorized_capability_resume(
+        settings={},
+        user_id='user-owner',
+        user_email='owner@example.com',
+        user_roles=[],
+        conversation_id='conversation-owner',
+        proposal_id='proposal-1',
+    )
+    request_data = context['request_data']
+    resume_context = context['capability_resume_context']
+    assert request_data['image_generation'] is True
+    assert request_data['retry_user_message_id'] == 'user-message-1'
+    assert request_data['retry_thread_id'] == 'thread-1'
+    assert resume_context['capability_origins']['image'] == 'discovery_approved'
+    assert resume_context['selection_snapshot']['toggles'].get('image') is not True
+
+    route_source = (
+        REPO_ROOT / 'application' / 'single_app' / 'route_backend_chats.py'
+    ).read_text(encoding='utf-8')
+    assert (
+        'def chat_api(server_request_data=None, server_resume_context=None):'
+        in route_source
+    )
+    assert 'legacy_result = chat_api(data, resume_context)' in route_source
+    compatibility_start = route_source.index(
+        'def generate_compatibility_response():'
+    )
+    compatibility_end = route_source.index(
+        'if compatibility_mode:',
+        compatibility_start,
+    )
+    compatibility_source = route_source[compatibility_start:compatibility_end]
+    assert '_complete_correlated_capability_resume_output(' in compatibility_source
+    assert 'if resume_context and not correlated_output_persisted:' in (
+        compatibility_source
+    )
+    assert 'persist_capability_resume_failure(' in compatibility_source
+    assert 'external_retrieval_message = resolve_external_retrieval_message(' in route_source
+    assert 'user_message=external_retrieval_message' in route_source
+
+    state['messages'].set_item({
+        'id': 'resumed-image-1',
+        'conversation_id': 'conversation-owner',
+        'role': 'image',
+        'content': 'generated-image',
+        'timestamp': datetime.now(timezone.utc).isoformat(),
+        'metadata': {
+            'capability_resume': {
+                'proposal_id': 'proposal-1',
+                'execution_id': resume_context['execution_id'],
+            },
+        },
+    })
+    reconciled = route_backend_chats._claim_authorized_capability_resume(
+        settings={},
+        user_id='user-owner',
+        user_email='owner@example.com',
+        user_roles=[],
+        conversation_id='conversation-owner',
+        proposal_id='proposal-1',
+    )
+    assert reconciled['already_completed'] is True
+    assert reconciled['proposal']['resume']['status'] == 'completed'
+    assert reconciled['proposal']['resume']['assistant_message_id'] == 'resumed-image-1'
+
+
+def test_selected_deep_research_resume_enables_web_with_selection_origin(
+    capability_route_app,
+):
+    state = capability_route_app.config['capability_route_state']
+    route_backend_chats = state['route_module']
+    user_message, proposal_message = _proposal_documents()
+    for message in (user_message, proposal_message):
+        provenance = message['metadata']['capability_provenance']
+        provenance['selection_snapshot']['toggles'].update({
+            'deep_research': True,
+            'source_review': True,
+            'web_search': False,
+        })
+        provenance['effective_capabilities'] = [
+            {'id': 'deep_research', 'origin': 'selection', 'required': True},
+            {'id': 'web_search', 'origin': 'selection', 'required': True},
+        ]
+    proposal_message['metadata']['capability_resume_request'].update({
+        'deep_research_enabled': True,
+        'source_review_enabled': True,
+        'web_search_enabled': False,
+    })
+    state['messages'].set_item(user_message)
+    state['messages'].set_item(proposal_message)
+
+    with capability_route_app.test_client() as client:
+        response = _decision(
+            client,
+            option_id='continue_without_capabilities',
+        )
+    assert response.status_code == 200
+
+    context = route_backend_chats._claim_authorized_capability_resume(
+        settings={},
+        user_id='user-owner',
+        user_email='owner@example.com',
+        user_roles=[],
+        conversation_id='conversation-owner',
+        proposal_id='proposal-1',
+    )
+    request_data = context['request_data']
+    resume_context = context['capability_resume_context']
+    assert request_data['deep_research_enabled'] is True
+    assert request_data['source_review_enabled'] is True
+    assert request_data['web_search_enabled'] is True
+    assert resume_context['capability_origins']['deep_research'] == 'selection'
+    assert resume_context['capability_origins']['web_search'] == 'selection'
+    assert resume_context['selection_snapshot']['toggles']['deep_research'] is True
+    assert resume_context['selection_snapshot']['toggles']['web_search'] is False
+
+
+def test_automatic_deep_research_resume_uses_persisted_root_closure(
+    capability_route_app,
+    monkeypatch,
+):
+    state = capability_route_app.config['capability_route_state']
+    route_backend_chats = state['route_module']
+    user_message, proposal_message = _proposal_documents()
+    for message in (user_message, proposal_message):
+        provenance = message['metadata']['capability_provenance']
+        provenance['automatic_capability_root_ids'] = ['deep_research']
+        provenance['automatic_capability_effective_ids'] = [
+            'deep_research',
+            'web_search',
+        ]
+        provenance['effective_capabilities'] = [
+            {'id': 'deep_research', 'origin': 'discovery_auto', 'required': True},
+            {'id': 'web_search', 'origin': 'discovery_auto', 'required': True},
+        ]
+    state['messages'].set_item(user_message)
+    state['messages'].set_item(proposal_message)
+
+    def automatic_inventory(**kwargs):
+        inventory = _inventory(
+            selected_capability_ids=kwargs.get('selected_capability_ids'),
+        )
+        for capability_id in ('deep_research', 'web_search'):
+            capability = next(
+                entry
+                for entry in inventory['capabilities']
+                if entry['id'] == capability_id
+            )
+            capability.update({
+                'auto_use_allowed': True,
+                'requires_user_choice': False,
+                'governance_mode': 'auto_read_only',
+            })
+        return inventory
+
+    monkeypatch.setattr(
+        route_backend_chats,
+        '_resolve_server_chat_capability_inventory',
+        automatic_inventory,
+    )
+    with capability_route_app.test_client() as client:
+        response = _decision(
+            client,
+            option_id='continue_without_capabilities',
+        )
+    assert response.status_code == 200
+
+    context = route_backend_chats._claim_authorized_capability_resume(
+        settings={},
+        user_id='user-owner',
+        user_email='owner@example.com',
+        user_roles=[],
+        conversation_id='conversation-owner',
+        proposal_id='proposal-1',
+    )
+    request_data = context['request_data']
+    resume_context = context['capability_resume_context']
+    assert request_data['deep_research_enabled'] is True
+    assert request_data['source_review_enabled'] is True
+    assert request_data['web_search_enabled'] is True
+    assert resume_context['capability_origins']['deep_research'] == 'discovery_auto'
+    assert resume_context['capability_origins']['web_search'] == 'discovery_auto'
+    assert resume_context['automatic_capability_root_ids'] == ['deep_research']
+    assert resume_context['automatic_capability_effective_ids'] == [
+        'deep_research',
+        'web_search',
+    ]
+    assert resume_context['selection_snapshot']['toggles']['deep_research'] is False
+    assert resume_context['selection_snapshot']['toggles']['web_search'] is False
+
+
+def test_selected_agent_invalidates_stale_image_option(
+    capability_route_app,
+    monkeypatch,
+):
+    state = capability_route_app.config['capability_route_state']
+    route_backend_chats = state['route_module']
+    canonical_agent = _governed_agent('selected-agent-id')
+    user_message, proposal_message = _proposal_documents()
+    _replace_builtin_proposal_option(state, 'image')
+    proposal_message = copy.deepcopy(
+        state['messages'].items[('conversation-owner', 'proposal-1')]
+    )
+    with capability_route_app.app_context():
+        binding = route_backend_chats._build_selected_agent_resume_binding(
+            canonical_agent
+        )
+    user_message['metadata']['capability_provenance']['selection_snapshot'][
+        'agent_id'
+    ] = canonical_agent['id']
+    proposal_message['metadata']['capability_provenance']['selection_snapshot'][
+        'agent_id'
+    ] = canonical_agent['id']
+    proposal_message['metadata']['capability_resume_request']['agent_info'] = binding
+    state['messages'].set_item(user_message)
+    state['messages'].set_item(proposal_message)
+    monkeypatch.setattr(
+        route_backend_chats,
+        '_build_user_accessible_chat_agents',
+        lambda *args, **kwargs: [canonical_agent],
+    )
+
+    with capability_route_app.test_client() as client:
+        response = _decision(client, option_id='image')
+
+    assert response.status_code == 409
+    assert response.get_json()['code'] == 'capability_combination_unsupported'
+    stored = state['messages'].items[('conversation-owner', 'proposal-1')]
+    proposal = stored['metadata']['capability_proposal']
+    assert proposal['status'] == 'invalidated'
+    assert proposal['invalidation_reason'] == 'capability_combination_unsupported'
+
+
+def test_execution_reauthorization_invalidates_revocation_after_claim(
+    capability_route_app,
+    monkeypatch,
+):
+    state = capability_route_app.config['capability_route_state']
+    route_backend_chats = state['route_module']
+    with capability_route_app.test_client() as client:
+        approved = _decision(client)
+    assert approved.status_code == 200
+
+    original_loader = route_backend_chats._load_authorized_capability_proposal_context
+    load_count = {'value': 0}
+
+    def load_with_execution_revocation(**kwargs):
+        context = original_loader(**kwargs)
+        load_count['value'] += 1
+        if load_count['value'] == 2:
+            context['baseline_error_code'] = 'agent_missing'
+        return context
+
+    monkeypatch.setattr(
+        route_backend_chats,
+        '_load_authorized_capability_proposal_context',
+        load_with_execution_revocation,
+    )
+
+    with pytest.raises(route_backend_chats.CapabilityChoiceError) as revoked:
+        route_backend_chats._claim_authorized_capability_resume(
+            settings={},
+            user_id='user-owner',
+            user_email='owner@example.com',
+            user_roles=[],
+            conversation_id='conversation-owner',
+            proposal_id='proposal-1',
+        )
+
+    assert revoked.value.code == 'agent_missing'
+    assert load_count['value'] == 2
+    stored = state['messages'].items[('conversation-owner', 'proposal-1')]
+    proposal = stored['metadata']['capability_proposal']
+    assert proposal['status'] == 'invalidated'
+    assert proposal['resume']['status'] == 'failed'
+    assert proposal['invalidation_reason'] == 'agent_missing'
+
+
+def test_execution_reauthorization_rejects_changed_claim_without_invalidation(
+    capability_route_app,
+    monkeypatch,
+):
+    state = capability_route_app.config['capability_route_state']
+    route_backend_chats = state['route_module']
+    with capability_route_app.test_client() as client:
+        approved = _decision(client)
+    assert approved.status_code == 200
+
+    original_loader = route_backend_chats._load_authorized_capability_proposal_context
+    load_count = {'value': 0}
+
+    def load_with_reclaimed_execution(**kwargs):
+        context = original_loader(**kwargs)
+        load_count['value'] += 1
+        if load_count['value'] == 2:
+            context['proposal']['resume']['execution_id'] = 'newer-execution-id'
+            stored = state['messages'].items[
+                ('conversation-owner', 'proposal-1')
+            ]
+            stored['metadata']['capability_proposal']['resume'][
+                'execution_id'
+            ] = 'newer-execution-id'
+        return context
+
+    monkeypatch.setattr(
+        route_backend_chats,
+        '_load_authorized_capability_proposal_context',
+        load_with_reclaimed_execution,
+    )
+
+    with pytest.raises(route_backend_chats.CapabilityChoiceError) as mismatch:
+        route_backend_chats._claim_authorized_capability_resume(
+            settings={},
+            user_id='user-owner',
+            user_email='owner@example.com',
+            user_roles=[],
+            conversation_id='conversation-owner',
+            proposal_id='proposal-1',
+        )
+
+    assert mismatch.value.code == 'resume_claim_mismatch'
+    assert load_count['value'] == 2
+    stored = state['messages'].items[('conversation-owner', 'proposal-1')]
+    proposal = stored['metadata']['capability_proposal']
+    assert proposal['status'] == 'approved'
+    assert proposal['resume']['status'] == 'running'
+    assert proposal.get('invalidation_reason') is None
+
+
+def test_post_claim_context_failure_releases_exact_resume_lease(
+    capability_route_app,
+    monkeypatch,
+):
+    state = capability_route_app.config['capability_route_state']
+    route_backend_chats = state['route_module']
+    with capability_route_app.test_client() as client:
+        approved = _decision(client)
+    assert approved.status_code == 200
+
+    original_loader = route_backend_chats._load_authorized_capability_proposal_context
+    load_count = {'value': 0}
+
+    def fail_second_context_load(**kwargs):
+        load_count['value'] += 1
+        if load_count['value'] == 2:
+            raise RuntimeError('simulated post-claim context failure')
+        return original_loader(**kwargs)
+
+    monkeypatch.setattr(
+        route_backend_chats,
+        '_load_authorized_capability_proposal_context',
+        fail_second_context_load,
+    )
+    with pytest.raises(RuntimeError, match='post-claim context failure'):
+        route_backend_chats._claim_authorized_capability_resume(
+            settings={},
+            user_id='user-owner',
+            user_email='owner@example.com',
+            user_roles=[],
+            conversation_id='conversation-owner',
+            proposal_id='proposal-1',
+        )
+
+    stored = state['messages'].items[('conversation-owner', 'proposal-1')]
+    resume = stored['metadata']['capability_proposal']['resume']
+    assert resume['status'] == 'failed'
+    assert resume['lease_expires_at'] is None
+    assert resume['error_type'] == 'runtimeerror'
 
 
 def test_parent_proposal_linkage_survives_child_run_metadata(capability_route_app):
@@ -635,7 +1140,7 @@ def test_persisted_assistant_reconciles_process_loss_without_duplicate_execution
         conversation_id='conversation-owner',
         proposal_id='proposal-1',
     )
-    resume_context = claimed['request_data']['_capability_resume_context']
+    resume_context = claimed['capability_resume_context']
     state['messages'].set_item({
         'id': 'resumed-assistant-1',
         'conversation_id': 'conversation-owner',
@@ -663,6 +1168,303 @@ def test_persisted_assistant_reconciles_process_loss_without_duplicate_execution
     assert reconciled['proposal']['resume']['assistant_message_id'] == 'resumed-assistant-1'
 
 
+def test_stream_model_setup_failure_releases_resume_lease(
+    capability_route_app,
+    monkeypatch,
+):
+    state = capability_route_app.config['capability_route_state']
+    route_backend_chats = state['route_module']
+    with capability_route_app.test_client() as client:
+        approved = _decision(client)
+    assert approved.status_code == 200
+
+    monkeypatch.setattr(
+        route_backend_chats,
+        'get_settings',
+        lambda: {
+            'enable_gpt_apim': True,
+            'azure_apim_gpt_deployment': '',
+        },
+    )
+    stream_metadata = {}
+    stream_events = {}
+
+    def initialize_stream_cache(cache_key, metadata, ttl_seconds=None):
+        del ttl_seconds
+        stream_metadata[cache_key] = copy.deepcopy(metadata)
+        stream_events[cache_key] = []
+
+    def set_stream_meta(cache_key, metadata, ttl_seconds=None):
+        del ttl_seconds
+        stream_metadata[cache_key] = copy.deepcopy(metadata)
+
+    def append_stream_event(cache_key, event_text, ttl_seconds=None):
+        del ttl_seconds
+        stream_events.setdefault(cache_key, []).append(event_text)
+
+    monkeypatch.setattr(
+        route_backend_chats.app_settings_cache,
+        'initialize_stream_session_cache',
+        initialize_stream_cache,
+    )
+    monkeypatch.setattr(
+        route_backend_chats.app_settings_cache,
+        'get_stream_session_meta',
+        lambda cache_key: copy.deepcopy(stream_metadata.get(cache_key)),
+    )
+    monkeypatch.setattr(
+        route_backend_chats.app_settings_cache,
+        'set_stream_session_meta',
+        set_stream_meta,
+    )
+    monkeypatch.setattr(
+        route_backend_chats.app_settings_cache,
+        'append_stream_session_event',
+        append_stream_event,
+    )
+    monkeypatch.setattr(
+        route_backend_chats.app_settings_cache,
+        'get_stream_session_events',
+        lambda cache_key, start_index=0: list(
+            stream_events.get(cache_key, [])[start_index:]
+        ),
+    )
+    with capability_route_app.test_client() as client:
+        response = client.post(
+            '/api/chat/stream',
+            json={
+                'conversation_id': 'conversation-owner',
+                'capability_resume_proposal_id': 'proposal-1',
+            },
+            buffered=True,
+        )
+        response_text = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert 'APIM deployment not configured' in response_text
+    stored = state['messages'].items[('conversation-owner', 'proposal-1')]
+    resume = stored['metadata']['capability_proposal']['resume']
+    assert resume['status'] == 'failed'
+    assert resume['lease_expires_at'] is None
+    assert resume['error_type'] == 'stream_ended_before_resume_completion'
+
+
+def test_stream_session_initialization_failure_releases_resume_lease(
+    capability_route_app,
+    monkeypatch,
+):
+    state = capability_route_app.config['capability_route_state']
+    route_backend_chats = state['route_module']
+    with capability_route_app.test_client() as client:
+        approved = _decision(client)
+    assert approved.status_code == 200
+
+    monkeypatch.setattr(
+        route_backend_chats.CHAT_STREAM_REGISTRY,
+        'start_session',
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            RuntimeError('simulated stream-session failure')
+        ),
+    )
+    with capability_route_app.test_client() as client:
+        response = client.post(
+            '/api/chat/stream',
+            json={
+                'conversation_id': 'conversation-owner',
+                'capability_resume_proposal_id': 'proposal-1',
+            },
+        )
+
+    assert response.status_code == 500
+    assert response.get_json()['error'] == 'Failed to initialize chat stream'
+    stored = state['messages'].items[('conversation-owner', 'proposal-1')]
+    resume = stored['metadata']['capability_proposal']['resume']
+    assert resume['status'] == 'failed'
+    assert resume['lease_expires_at'] is None
+    assert resume['error_type'] == 'runtimeerror'
+
+
+def test_persisted_safety_reconciles_process_loss_without_reexecution(
+    capability_route_app,
+):
+    state = capability_route_app.config['capability_route_state']
+    route_backend_chats = state['route_module']
+    with capability_route_app.test_client() as client:
+        approved = _decision(client)
+    assert approved.status_code == 200
+
+    claimed = route_backend_chats._claim_authorized_capability_resume(
+        settings={},
+        user_id='user-owner',
+        user_email='owner@example.com',
+        user_roles=[],
+        conversation_id='conversation-owner',
+        proposal_id='proposal-1',
+    )
+    resume_context = claimed['capability_resume_context']
+    state['messages'].set_item({
+        'id': 'resumed-safety-1',
+        'conversation_id': 'conversation-owner',
+        'role': 'safety',
+        'content': 'Blocked by content safety.',
+        'timestamp': datetime.now(timezone.utc).isoformat(),
+        'metadata': {
+            'capability_resume': {
+                'proposal_id': 'proposal-1',
+                'execution_id': resume_context['execution_id'],
+            },
+        },
+    })
+
+    reconciled = route_backend_chats._claim_authorized_capability_resume(
+        settings={},
+        user_id='user-owner',
+        user_email='owner@example.com',
+        user_roles=[],
+        conversation_id='conversation-owner',
+        proposal_id='proposal-1',
+    )
+    assert reconciled['already_completed'] is True
+    assert reconciled['proposal']['resume']['status'] == 'completed'
+    assert reconciled['proposal']['resume']['assistant_message_id'] == 'resumed-safety-1'
+
+    route_source = (
+        REPO_ROOT / 'application' / 'single_app' / 'route_backend_chats.py'
+    ).read_text(encoding='utf-8')
+    safety_start = route_source.index("if blocked:\n                            # Upsert to safety container")
+    safety_end = route_source.index(
+        'except HttpResponseError as e:',
+        safety_start,
+    )
+    safety_source = route_source[safety_start:safety_end]
+    assert "['capability_resume']" in safety_source
+    assert 'complete_stream_capability_resume(assistant_message_id)' in safety_source
+
+    compatibility_safety_start = route_source.index(
+        "safety_doc.setdefault('metadata', {})['capability_provenance']"
+    )
+    compatibility_safety_end = route_source.index(
+        'cosmos_messages_container.upsert_item(safety_doc)',
+        compatibility_safety_start,
+    )
+    compatibility_safety_source = route_source[
+        compatibility_safety_start:compatibility_safety_end
+    ]
+    assert "safety_doc['metadata']['capability_resume']" in (
+        compatibility_safety_source
+    )
+
+    partial_failure_start = route_source.index(
+        'except Exception as e:\n                    error_msg = str(e)'
+    )
+    partial_failure_end = route_source.index(
+        'partial_error_payload = {',
+        partial_failure_start,
+    )
+    partial_failure_source = route_source[
+        partial_failure_start:partial_failure_end
+    ]
+    assert "'capability_resume': (" in partial_failure_source
+    assert 'cosmos_messages_container.upsert_item(assistant_doc)' in (
+        partial_failure_source
+    )
+    assert 'complete_stream_capability_resume(assistant_message_id)' in (
+        partial_failure_source
+    )
+    assert 'fail_stream_capability_resume(type(e).__name__)' not in (
+        partial_failure_source
+    )
+
+    cancellation_start = route_source.index(
+        'def finalize_cancelled_stream_response():'
+    )
+    cancellation_end = route_source.index(
+        'if stream_cancel_requested():',
+        cancellation_start,
+    )
+    cancellation_source = route_source[cancellation_start:cancellation_end]
+    cancellation_correlation_index = cancellation_source.index(
+        "'capability_resume': ("
+    )
+    cancellation_upsert_index = cancellation_source.index(
+        'cosmos_messages_container.upsert_item(assistant_doc)'
+    )
+    cancellation_completion_index = cancellation_source.index(
+        'complete_stream_capability_resume(assistant_message_id)'
+    )
+    assert cancellation_correlation_index < cancellation_upsert_index
+    assert cancellation_upsert_index < cancellation_completion_index
+
+    document_runtime_start = route_source.index(
+        'except Exception as runtime_error:',
+        route_source.index("document_action_reply = execution_result.get('reply', '')"),
+    )
+    document_runtime_end = route_source.index(
+        "prepared_agent_citations = persist_agent_citation_artifacts(",
+        route_source.index('}, 409', document_runtime_start),
+    )
+    document_runtime_source = route_source[
+        document_runtime_start:document_runtime_end
+    ]
+    assert "'capability_resume': (" in document_runtime_source
+    assert 'cosmos_messages_container.upsert_item(partial_assistant_doc)' in (
+        document_runtime_source
+    )
+    assert "'message_id': partial_message_id" in document_runtime_source
+
+    document_stream_start = route_source.index(
+        "@bp.route('/api/chat/document-action/stream', methods=['POST'])"
+    )
+    document_stream_end = route_source.index(
+        "@bp.route('/api/chat/analyze', methods=['POST'])",
+        document_stream_start,
+    )
+    document_stream_source = route_source[
+        document_stream_start:document_stream_end
+    ]
+    assert "partial_message_id = str(payload.get('message_id') or '').strip()" in (
+        document_stream_source
+    )
+    assert '_complete_correlated_capability_resume_output(' in (
+        document_stream_source
+    )
+    assert 'if resume_context and not correlated_output_persisted:' in (
+        document_stream_source
+    )
+
+
+def test_correlated_output_owns_resume_when_completion_write_fails(
+    capability_route_app,
+    monkeypatch,
+):
+    state = capability_route_app.config['capability_route_state']
+    route_backend_chats = state['route_module']
+    completion_calls = []
+
+    def fail_completion(*args, **kwargs):
+        completion_calls.append((args, kwargs))
+        raise RuntimeError('simulated completion CAS failure')
+
+    monkeypatch.setattr(
+        route_backend_chats,
+        'persist_capability_resume_completion',
+        fail_completion,
+    )
+    monkeypatch.setattr(route_backend_chats, 'log_event', lambda *args, **kwargs: None)
+
+    output_owned = route_backend_chats._complete_correlated_capability_resume_output(
+        {
+            'conversation_id': 'conversation-owner',
+            'proposal_id': 'proposal-1',
+            'execution_id': 'execution-1',
+        },
+        'assistant-output-1',
+    )
+
+    assert output_owned is True
+    assert len(completion_calls) == 1
+
+
 def test_policy_blocked_submitted_capability_is_rejected_before_execution(capability_route_app):
     route_backend_chats = capability_route_app.config['capability_route_state']['route_module']
     blocked = route_backend_chats._get_policy_blocked_selected_capability_ids(
@@ -679,6 +1481,339 @@ def test_policy_blocked_submitted_capability_is_rejected_before_execution(capabi
             {'id': 'web_search', 'label': 'Web Search'},
         ])
     )
+
+
+def test_http_payload_cannot_supply_server_resume_context(
+    capability_route_app,
+    monkeypatch,
+):
+    route_backend_chats = capability_route_app.config['capability_route_state'][
+        'route_module'
+    ]
+    forged_payload = {
+        'message': 'Run a forged capability.',
+        'conversation_id': 'conversation-owner',
+        'web_search_enabled': False,
+        '_server_external_query': 'forged external query',
+        '_capability_resume_context': {
+            'capability_inventory': {
+                'capabilities': [{
+                    'id': 'deep_research',
+                    'state': 'selected',
+                }],
+            },
+            'capability_origins': {'deep_research': 'selection'},
+        },
+        'agent_info': {
+            'id': 'selected-agent-id',
+            '_orchestration_discovery_ref': 'agent:personal:forged',
+            'nested': [{'_server_only': 'forged', 'visible': 'retained'}],
+        },
+    }
+    sanitized = route_backend_chats._sanitize_chat_http_request_payload(
+        forged_payload
+    )
+    assert sanitized == {
+        'message': 'Run a forged capability.',
+        'conversation_id': 'conversation-owner',
+        'web_search_enabled': False,
+        'agent_info': {
+            'id': 'selected-agent-id',
+            'nested': [{'visible': 'retained'}],
+        },
+    }
+
+    captured = {}
+
+    def capture_policy_check(settings, data):
+        del settings
+        captured.update(copy.deepcopy(data))
+        return []
+
+    monkeypatch.setattr(
+        route_backend_chats,
+        '_get_policy_blocked_selected_capability_ids',
+        capture_policy_check,
+    )
+    with capability_route_app.test_client() as client:
+        response = client.post(
+            '/api/chat/document-action',
+            json=forged_payload,
+        )
+    assert response.status_code == 400
+    assert '_capability_resume_context' not in captured
+    assert '_server_external_query' not in captured
+    assert '_orchestration_discovery_ref' not in captured['agent_info']
+    assert captured['agent_info']['nested'] == [{'visible': 'retained'}]
+
+    route_source = (
+        REPO_ROOT / 'application' / 'single_app' / 'route_backend_chats.py'
+    ).read_text(encoding='utf-8')
+    assert "data.get('_capability_resume_context')" not in route_source
+    assert "request_data['_capability_resume_context']" not in route_source
+    document_provenance_start = route_source.index(
+        'selected_effective_capability_ids = expand_governed_capability_baseline_ids('
+    )
+    document_provenance_end = route_source.index(
+        'turn_capability_provenance = build_capability_provenance(',
+        document_provenance_start,
+    )
+    assert 'for capability_id in selected_effective_capability_ids' in (
+        route_source[document_provenance_start:document_provenance_end]
+    )
+    compatibility_provenance_start = route_source.index(
+        'compatibility_selected_effective_ids = ('
+    )
+    compatibility_provenance_end = route_source.index(
+        'compatibility_capability_provenance = build_capability_provenance(',
+        compatibility_provenance_start,
+    )
+    assert 'for capability_id in compatibility_selected_effective_ids' in (
+        route_source[
+            compatibility_provenance_start:compatibility_provenance_end
+        ]
+    )
+
+
+def test_selected_agent_binding_is_exact_and_detects_identity_change(
+    capability_route_app,
+    monkeypatch,
+):
+    route_backend_chats = capability_route_app.config['capability_route_state']['route_module']
+    canonical_agent = _governed_agent('selected-agent-id')
+    binding = route_backend_chats._build_selected_agent_resume_binding(
+        canonical_agent
+    )
+
+    assert route_backend_chats._selected_agent_baseline_error(
+        binding,
+        canonical_agent,
+    ) is None
+    legacy_binding = {
+        key: value
+        for key, value in binding.items()
+        if key != 'identity_ref'
+    }
+    assert route_backend_chats._selected_agent_baseline_error(
+        legacy_binding,
+        canonical_agent,
+    ) == 'agent_binding_missing'
+    replacement = copy.deepcopy(canonical_agent)
+    replacement['created_at'] = '2026-07-16T12:00:00+00:00'
+    assert route_backend_chats._selected_agent_baseline_error(
+        binding,
+        replacement,
+    ) == 'agent_policy_changed'
+    disabled = copy.deepcopy(canonical_agent)
+    disabled['is_enabled'] = False
+    assert route_backend_chats._selected_agent_baseline_error(
+        binding,
+        disabled,
+    ) == 'agent_policy_blocked'
+
+    same_name_different_id = copy.deepcopy(canonical_agent)
+    same_name_different_id['id'] = 'different-agent-id'
+    monkeypatch.setattr(
+        route_backend_chats,
+        '_build_user_accessible_chat_agents',
+        lambda *args, **kwargs: [same_name_different_id],
+    )
+    assert route_backend_chats._resolve_canonical_chat_agent(
+        'user-owner',
+        {},
+        binding,
+    ) is None
+
+    monkeypatch.setattr(
+        route_backend_chats,
+        '_build_user_accessible_chat_agents',
+        lambda *args, **kwargs: [canonical_agent],
+    )
+    monkeypatch.setattr(
+        route_backend_chats,
+        'ensure_governance_access',
+        lambda *args, **kwargs: (_ for _ in ()).throw(PermissionError('blocked')),
+    )
+    assert route_backend_chats._resolve_canonical_chat_agent(
+        'user-owner',
+        {},
+        binding,
+    ) is None
+
+
+def test_selected_agent_deletion_atomically_invalidates_decision(
+    capability_route_app,
+    monkeypatch,
+):
+    state = capability_route_app.config['capability_route_state']
+    route_backend_chats = state['route_module']
+    canonical_agent = _governed_agent('selected-agent-id')
+    user_message, proposal_message = _proposal_documents()
+    with capability_route_app.app_context():
+        proposal_message['metadata']['capability_resume_request']['agent_info'] = (
+            route_backend_chats._build_selected_agent_resume_binding(
+                canonical_agent
+            )
+        )
+    state['messages'].set_item(user_message)
+    state['messages'].set_item(proposal_message)
+    monkeypatch.setattr(
+        route_backend_chats,
+        '_build_user_accessible_chat_agents',
+        lambda *args, **kwargs: [],
+    )
+
+    with capability_route_app.test_client() as client:
+        response = _decision(client)
+
+    assert response.status_code == 409
+    assert response.get_json()['code'] == 'agent_missing'
+    stored = state['messages'].items[('conversation-owner', 'proposal-1')]
+    proposal = stored['metadata']['capability_proposal']
+    assert proposal['status'] == 'invalidated'
+    assert proposal['invalidation_reason'] == 'agent_missing'
+
+
+def test_selected_agent_snapshot_without_binding_atomically_invalidates(
+    capability_route_app,
+):
+    state = capability_route_app.config['capability_route_state']
+    user_message, proposal_message = _proposal_documents()
+    user_message['metadata']['capability_provenance']['selection_snapshot'][
+        'agent_id'
+    ] = 'legacy-selected-agent'
+    proposal_message['metadata']['capability_provenance']['selection_snapshot'][
+        'agent_id'
+    ] = 'legacy-selected-agent'
+    proposal_message['metadata']['capability_resume_request']['agent_info'] = None
+    state['messages'].set_item(user_message)
+    state['messages'].set_item(proposal_message)
+
+    with capability_route_app.test_client() as client:
+        response = _decision(client)
+
+    assert response.status_code == 409
+    assert response.get_json()['code'] == 'agent_binding_missing'
+    stored = state['messages'].items[('conversation-owner', 'proposal-1')]
+    proposal = stored['metadata']['capability_proposal']
+    assert proposal['status'] == 'invalidated'
+    assert proposal['invalidation_reason'] == 'agent_binding_missing'
+
+
+def test_selected_scope_and_document_drift_atomically_invalidate_decision(
+    capability_route_app,
+):
+    state = capability_route_app.config['capability_route_state']
+    user_message, scoped_proposal = _proposal_documents()
+    scoped_proposal['metadata']['capability_resume_request']['active_group_ids'] = [
+        'group-1'
+    ]
+    state['messages'].set_item(user_message)
+    state['messages'].set_item(scoped_proposal)
+
+    with capability_route_app.test_client() as client:
+        scope_response = _decision(client)
+
+    assert scope_response.status_code == 409
+    assert scope_response.get_json()['code'] == 'capability_scope_unauthorized'
+    stored_scope = state['messages'].items[('conversation-owner', 'proposal-1')]
+    assert stored_scope['metadata']['capability_proposal']['status'] == 'invalidated'
+
+    user_message, document_proposal = _proposal_documents()
+    document_proposal['metadata']['capability_resume_request'][
+        'selected_document_ids'
+    ] = ['document-1']
+    state['messages'].set_item(user_message)
+    state['messages'].set_item(document_proposal)
+
+    with capability_route_app.test_client() as client:
+        document_response = _decision(client)
+
+    assert document_response.status_code == 409
+    assert document_response.get_json()['code'] == 'capability_document_unauthorized'
+    stored_document = state['messages'].items[('conversation-owner', 'proposal-1')]
+    assert stored_document['metadata']['capability_proposal']['status'] == 'invalidated'
+
+
+def test_public_scope_requires_current_workspace_and_chat_status(
+    capability_route_app,
+    monkeypatch,
+):
+    route_backend_chats = capability_route_app.config['capability_route_state']['route_module']
+    workspace_docs = {
+        'public-active': {'id': 'public-active', 'status': 'active'},
+        'public-inactive': {'id': 'public-inactive', 'status': 'inactive'},
+        'public-unknown': {'id': 'public-unknown', 'status': 'unexpected'},
+    }
+    monkeypatch.setattr(
+        route_backend_chats,
+        'get_user_visible_public_workspace_ids_from_settings',
+        lambda user_id: [
+            'public-active',
+            'public-inactive',
+            'public-unknown',
+            'public-deleted',
+        ],
+    )
+    monkeypatch.setattr(
+        route_backend_chats,
+        'find_public_workspace_by_id',
+        lambda workspace_id: copy.deepcopy(workspace_docs.get(workspace_id)),
+    )
+
+    allowed_workspace_ids = route_backend_chats._get_chat_allowed_public_workspace_ids(
+        'user-owner',
+        [
+            'public-active',
+            'public-inactive',
+            'public-unknown',
+            'public-deleted',
+        ],
+    )
+
+    assert allowed_workspace_ids == ['public-active']
+
+
+def test_group_scope_and_group_agent_require_current_chat_status(
+    capability_route_app,
+    monkeypatch,
+):
+    route_backend_chats = capability_route_app.config['capability_route_state']['route_module']
+    groups = {
+        'group-active': {'id': 'group-active', 'status': 'active', 'name': 'Active'},
+        'group-inactive': {'id': 'group-inactive', 'status': 'inactive', 'name': 'Inactive'},
+        'group-unknown': {'id': 'group-unknown', 'status': 'unexpected', 'name': 'Unknown'},
+    }
+    monkeypatch.setattr(
+        route_backend_chats,
+        'find_group_by_id',
+        lambda group_id: copy.deepcopy(groups.get(group_id)),
+    )
+    monkeypatch.setattr(
+        route_backend_chats,
+        'get_user_role_in_group',
+        lambda group_doc, user_id: 'User' if group_doc else None,
+    )
+    monkeypatch.setattr(
+        route_backend_chats,
+        'get_group_agents',
+        lambda group_id: [_governed_group_agent()],
+    )
+
+    assert route_backend_chats._get_chat_allowed_group_ids(
+        'user-owner',
+        ['group-active', 'group-inactive', 'group-unknown', 'group-deleted'],
+    ) == ['group-active']
+    candidates = route_backend_chats._build_user_accessible_chat_agents(
+        'user-owner',
+        {},
+        requested_agent={
+            'id': 'group-benefits-agent',
+            'is_group': True,
+            'group_id': 'group-inactive',
+        },
+    )
+    assert all(not candidate.get('is_group') for candidate in candidates)
 
 
 def test_effective_capabilities_reconstruct_each_execution_mode(capability_route_app):
@@ -747,7 +1882,7 @@ def test_agent_decision_and_resume_refresh_canonical_constraints(governed_agent_
         proposal_id='proposal-1',
     )
     request_agent = context['request_data']['agent_info']
-    resume_context = context['request_data']['_capability_resume_context']
+    resume_context = context['capability_resume_context']
     public_metadata = route_backend_chats._build_agent_selection_metadata(request_agent)
 
     assert request_agent['id'] == 'benefits-agent'
@@ -875,7 +2010,7 @@ def test_agent_resume_reconciles_process_restart(governed_agent_route_app):
         conversation_id='conversation-owner',
         proposal_id='proposal-1',
     )
-    resume_context = claimed['request_data']['_capability_resume_context']
+    resume_context = claimed['capability_resume_context']
     state['messages'].set_item({
         'id': 'resumed-agent-assistant-1',
         'conversation_id': 'conversation-owner',

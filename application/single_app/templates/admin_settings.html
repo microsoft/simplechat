@@ -4088,6 +4088,64 @@
                     </div>
                 </div>
 
+                <!-- Capability Planner Section -->
+                <div class="card p-3 mb-4" id="chat-capability-planner-section" data-testid="chat-capability-planner-settings">
+                    <h5 class="card-title">
+                        <i class="bi bi-signpost-split me-2"></i>Capability Planner
+                    </h5>
+                    <p class="text-muted small">
+                        Control model-assisted capability recommendations. Execution and authorization remain server-governed in every mode.
+                    </p>
+
+                    <fieldset class="mb-3">
+                        <legend class="form-label fs-6">Planner mode</legend>
+                        <div class="btn-group" role="group" aria-label="Capability planner mode">
+                            <input type="radio" class="btn-check" name="chat_capability_planner_mode" id="chat_capability_planner_mode_off" value="off" autocomplete="off" {% if settings.chat_capability_planner_mode|default('off') == 'off' %}checked{% endif %} />
+                            <label class="btn btn-outline-secondary" for="chat_capability_planner_mode_off">Off</label>
+
+                            <input type="radio" class="btn-check" name="chat_capability_planner_mode" id="chat_capability_planner_mode_shadow" value="shadow" autocomplete="off" {% if settings.chat_capability_planner_mode == 'shadow' %}checked{% endif %} />
+                            <label class="btn btn-outline-secondary" for="chat_capability_planner_mode_shadow">Shadow</label>
+
+                            <input type="radio" class="btn-check" name="chat_capability_planner_mode" id="chat_capability_planner_mode_assist" value="assist" autocomplete="off" {% if settings.chat_capability_planner_mode == 'assist' %}checked{% endif %} />
+                            <label class="btn btn-outline-primary" for="chat_capability_planner_mode_assist">Assist</label>
+                        </div>
+                    </fieldset>
+
+                    <div class="row g-3">
+                        <div class="col-lg-4">
+                            <label class="form-label" for="chat_capability_planner_model_source">Planner model source</label>
+                            <select class="form-select" id="chat_capability_planner_model_source" name="chat_capability_planner_model_source">
+                                <option value="same_as_chat" {% if settings.chat_capability_planner_model_source|default('same_as_chat') == 'same_as_chat' %}selected{% endif %}>Same as chat</option>
+                                <option value="configured" {% if settings.chat_capability_planner_model_source == 'configured' %}selected{% endif %}>Configured global model</option>
+                            </select>
+                        </div>
+                        <div class="col-lg-4">
+                            <label class="form-label" for="chat_capability_planner_model_endpoint_id">Global endpoint ID</label>
+                            <input type="text" class="form-control" id="chat_capability_planner_model_endpoint_id" name="chat_capability_planner_model_endpoint_id" maxlength="256" value="{{ settings.chat_capability_planner_model_endpoint_id|default('') }}" autocomplete="off" />
+                        </div>
+                        <div class="col-lg-4">
+                            <label class="form-label" for="chat_capability_planner_model_id">Model ID</label>
+                            <input type="text" class="form-control" id="chat_capability_planner_model_id" name="chat_capability_planner_model_id" maxlength="256" value="{{ settings.chat_capability_planner_model_id|default('') }}" autocomplete="off" />
+                        </div>
+                        <div class="col-sm-6 col-xl-3">
+                            <label class="form-label" for="chat_capability_planner_timeout_ms">Timeout (ms)</label>
+                            <input type="number" class="form-control" id="chat_capability_planner_timeout_ms" name="chat_capability_planner_timeout_ms" min="250" max="10000" step="50" value="{{ settings.chat_capability_planner_timeout_ms|default(5000) }}" />
+                        </div>
+                        <div class="col-sm-6 col-xl-3">
+                            <label class="form-label" for="chat_capability_planner_max_completion_tokens">Completion tokens</label>
+                            <input type="number" class="form-control" id="chat_capability_planner_max_completion_tokens" name="chat_capability_planner_max_completion_tokens" min="64" max="1000" step="1" value="{{ settings.chat_capability_planner_max_completion_tokens|default(600) }}" />
+                        </div>
+                        <div class="col-sm-6 col-xl-3">
+                            <label class="form-label" for="chat_capability_planner_max_candidate_plans">Candidate plans</label>
+                            <input type="number" class="form-control" id="chat_capability_planner_max_candidate_plans" name="chat_capability_planner_max_candidate_plans" min="1" max="5" step="1" value="{{ settings.chat_capability_planner_max_candidate_plans|default(3) }}" />
+                        </div>
+                        <div class="col-sm-6 col-xl-3">
+                            <label class="form-label" for="chat_capability_planner_max_capabilities_per_plan">Capabilities per plan</label>
+                            <input type="number" class="form-control" id="chat_capability_planner_max_capabilities_per_plan" name="chat_capability_planner_max_capabilities_per_plan" min="1" max="8" step="1" value="{{ settings.chat_capability_planner_max_capabilities_per_plan|default(4) }}" />
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Embeddings Configuration Section -->
                 <div class="card p-3 mb-4" id="embeddings-configuration">
                     <h5 class="card-title">

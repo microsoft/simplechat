@@ -4,18 +4,23 @@ Implemented in version: **0.250.069**
 
 Hardened in version: **0.250.071**
 
+Governed activation implemented in version: **0.250.072**
+
 Associated issue: **[#1021](https://github.com/microsoft/simplechat/issues/1021)**
 
 ## Overview
 
-The chat capability model planner is a bounded, non-executing planning layer for
-SimpleChat orchestration. It evaluates the current user request against the
+The chat capability model planner is a bounded planning layer for SimpleChat
+orchestration. It evaluates the current user request against the
 server-authorized capability inventory and returns a strict `direct`, `propose`,
-or `clarify` result.
+or `clarify` result. The model never receives execution authority.
 
-Phase 10A ships only `off` and `shadow` modes. Shadow results are measured but
-cannot change a recommendation, toolbar state, capability choice, runtime plan,
-finalizer, response, or external query.
+Phase 10A introduced `off` and observational `shadow` modes. Phase 10B adds a
+conservative `assist` mode: a validated high-confidence `propose` result may
+become one durable server-authored choice card. The existing deterministic
+recommendation wins material conflicts, and planner failure always falls back
+to deterministic or direct behavior. `clarify` remains observational until
+Phase 10C.
 
 ## Dependencies
 
@@ -32,14 +37,100 @@ The streaming path performs these operations in order:
 1. Authorize the user, conversation, active scopes, selected controls, and input readiness.
 2. Resolve the chat model through existing endpoint governance.
 3. Build the safe capability inventory and deterministic control recommendation.
-4. When eligible, invoke and validate the non-executing shadow planner.
-5. Compare safe planner classes with the deterministic control.
-6. Build and persist the unchanged deterministic orchestration plan.
-7. Continue through the existing proposal, runtime, evidence, and finalization paths.
+4. When eligible, invoke and strictly validate the planner.
+5. In `shadow`, compare safe planner classes with the unchanged deterministic control.
+6. In `assist`, materialize high-confidence candidates from the current server inventory and arbitrate them against the deterministic recommendation.
+7. Persist at most one recommendation through the existing capability proposal contract, or continue directly when no material valid proposal remains.
+8. Recursively expand selected, automatic, and approved bundles, then reauthorize every effective member at decision, resume, and immediately before child-run execution.
+9. Continue through the existing runtime, evidence-ledger, and central-finalization paths.
 
 The planner is a normal synchronous chat-completion call. It does not initialize
 Semantic Kernel, expose plugins, provide tools, enable automatic function
 selection, or create an execution route.
+
+## Governed Additive Activation
+
+`assist` activation accepts only a valid `propose` result whose recommended
+candidate has `high` confidence. Built-in candidates must remain read-only,
+authorized, available, discoverable, input-ready, and approval-eligible.
+Governed-agent candidates must resolve to a current Phase 8B opaque read-only
+descriptor. Mixed agent/built-in options, write capabilities, unknown IDs,
+cyclic bundles, missing members, and over-budget plans fail closed.
+
+The server, not the model, owns option IDs, labels, risk, sensitivity, latency,
+cost, external-data state, and approval requirements. Built-in option IDs use a
+stable opaque `plan:` digest bound to sorted approved IDs, recursively expanded
+effective IDs, inventory version, and safe policy state. The same binding is
+recomputed from a fresh inventory before execution.
+
+The additive fields have distinct meanings:
+
+- `capability_ids` contains only unselected additions approved by the option.
+- `effective_capability_ids` contains those additions plus current server-owned bundle dependencies.
+- Submitted selections and their inherited dependencies remain in the immutable selection snapshot with origin `selection`.
+- Policy-approved automatic discovery stores bounded server-authored root IDs and its exact effective closure in provenance v2; independently auto-approved dependencies retain origin `discovery_auto`, selected dependencies retain `selection`, and neither is requested for approval again.
+- Only newly approved additions use origin `discovery_approved`.
+
+Deep Research expands to Deep Research plus Web Search. An explicit Deep
+Research plus Web Search candidate collapses to that same plan. Workspace
+Search plus Web Search may appear as one option when both are true additions;
+if Workspace Search was submitted or automatically discovered, the option is
+instead labeled `Add Web Search`. A card contains one recommendation, at most
+two alternatives, and one Continue option, including after sensitive-input
+variants are added.
+
+Compatibility execution remains conservative. Image cannot be combined with
+another built-in or selected/approved agent mandate, and Analyze or Compare
+cannot be combined with retrieval until those compatibility executors can
+satisfy the complete union. Such options are suppressed before display and
+rejected again during durable decision, resume, and pre-execution validation.
+Automatic roots and their effective closure are persisted separately. A fresh
+closure must exactly match the persisted `discovery_auto` members, so a bundle
+member added, removed, or replaced after proposal creation invalidates the
+proposal with `capability_bundle_changed` instead of changing execution.
+Rootless legacy state remains compatible only when one unchanged unbundled
+automatic capability can be reconstructed; ambiguous multi-member state fails
+closed.
+
+Resume execution context is never accepted from browser JSON or embedded back
+into reconstructed request data. HTTP chat and document-action boundaries strip
+underscore-prefixed server fields recursively, including nested agent fields,
+while authorized resume claims pass their context through a separate internal
+parameter. Browser decisions remain limited to conversation, proposal, and
+persisted option IDs.
+
+Native streaming owns one terminalization guard for each claimed resume lease.
+Normal, partial, and terminal safety output persist exact resume correlation
+and complete the claim; setup failure, cancellation, and any other no-output
+exit release it for retry. Safety messages from native and compatibility paths
+carry the same bounded correlation as assistant and image output and
+participate in process-loss reconciliation. Exact-owner guards cover both
+post-claim reauthorization and route setup before background-worker handoff, so
+a failed setup cannot strand the lease or release a newer execution.
+Cancellation partials and document-action results produced before runtime
+reconciliation failure are persisted as incomplete correlated assistant output
+and complete the exact execution. Cancellation or reconciliation paths reopen
+the lease only when they produced no durable output.
+Once correlated output is durable, it remains authoritative even if the
+proposal completion write transiently fails. Wrappers do not downgrade that
+execution to retryable failure, and restart reconciliation may complete the
+same exact running or failed execution without accepting a newer claim.
+
+Deterministic recommendations use the same recursive baseline semantics as
+planner options. Selected bundle dependencies are treated as already effective
+and cannot be offered again. Deterministic built-in options are rebound to the
+fresh recursive closure and safe policy fields at decision and resume, so a
+bundle member added, removed, or replaced invalidates the stored option.
+Streaming, non-streaming, and document-action provenance all record the same
+expanded selected closure while preserving only explicit roots in the immutable
+selection snapshot.
+
+Material arbitration is deliberately conservative. A planner plan may augment
+the deterministic recommendation only when it contains the deterministic
+plan's effective capability set. If it omits or conflicts with that material
+source, the deterministic recommendation remains authoritative. Low confidence,
+invalid output, timeout, refusal, filtering, provider failure, materialization
+failure, or persistence failure grants no new capability.
 
 ## Request Contract
 
@@ -134,9 +225,13 @@ Backend settings and defaults are:
 }
 ```
 
-Phase 10A does not expose an Admin UI control. Planner settings are removed from
-ordinary sanitized frontend settings. Administrators may set them through the
-existing backend configuration store in controlled environments.
+Admin Settings exposes `Off`, `Shadow`, and `Assist` modes plus model source,
+global endpoint/model IDs, timeout, completion budget, candidate count, and
+per-plan capability limits. Server normalization accepts only
+`off | shadow | assist`, clamps every numeric value to the documented bounds,
+and forces incomplete configured-model selections back to `off`. The shipped
+default remains `off`; administrators may return to `shadow` without altering
+already persisted proposals awaiting a decision.
 
 ## Privacy And Observability
 
@@ -155,6 +250,21 @@ Evaluation emits fixed events:
 Events hash run correlation, bucket provider/model classes, and omit raw model
 or user content. Opaque agent references become `governed_agent`; unknown
 classes are dropped.
+
+In `assist`, the source user turn stores a separate bounded
+`capability_planner_activation` summary with materialized/suppressed status,
+planner-versus-deterministic source, and an allowlisted suppression reason. It
+does not store planner rationale, prompt, response, option labels, opaque agent
+references, object IDs, or authorization claims.
+
+Phase 10B additionally emits fixed activation and recommendation-revalidation
+events. Capability combinations use a small allowlist such as
+`web_search+workspace_search` or `deep_research+web_search`; other combinations
+collapse to fixed buckets. Decision, resume, and execution revalidation events
+contain only hashed correlation, fixed phase/status/reason classes, safe
+capability count/combination, and recommendation source. Existing recommendation
+events provide approval/decline, latency, downstream run status, and citation
+yield without raw IDs or content.
 
 ## Testing And Validation
 
@@ -175,6 +285,25 @@ artifacts. The manifest covers direct, public archive, named public source,
 workspace, selected-plus-additive, selected-mandate, governed-agent,
 clarification, prompt-injection, unavailable, unauthorized, and policy-blocked
 behavior.
+
+`functional_tests/test_phase10b_governed_additive_plan_activation.py` validates
+assist normalization and eligibility, high-confidence activation, deterministic
+conflict precedence, Workspace plus Web and selected/automatic additive cases,
+Deep Research expansion, deterministic and planner selected/automatic bundle
+subtraction, root-to-closure drift, deterministic option rebinding, dependency
+policy drift, equivalent-plan collapse, governed agents, Image/agent exclusion,
+unknown/revoked/write/cyclic/input/policy failures, opaque plan binding,
+sensitive current-turn options, actionable-option limits, origin separation,
+admin controls, and privacy-safe activation/revalidation events.
+
+The existing choice contract, persistence, authenticated route, orchestration,
+and Phase 9 observability suites validate exact source-turn ownership, ETag
+decisions, duplicate resume protection, process-loss reconciliation, bundle
+revocation, current-turn-only external queries, child-run provenance, and
+downstream outcome metrics. Desktop/mobile Azure Playwright coverage validates
+multi-capability badges, selected context, inert text rendering, keyboard use,
+44-pixel controls, refresh reconstruction, no overflow, and minimal browser
+payloads. Live browser cases remain explicitly environment-gated.
 
 Run the combined deterministic gate with:
 
@@ -205,8 +334,8 @@ prohibited execution-surface imports, and p50/p95 latency of 1.67/2.65 seconds.
 
 ## Known Limitations
 
-- Shadow output is observational and cannot create a choice or clarification UI.
-- Only the current user request is available; prior-turn goal resolution is deferred to Phase 10C.
-- Phase 10A does not activate additive plans or expand bundles into executable options.
-- Consequential, write, sensitive, or over-budget approval remains outside this phase.
+- `shadow` remains observational; only `assist` can materialize a proposal.
+- `clarify` is still observational and cannot create a conversational checkpoint until Phase 10C.
+- Only the current user request is available. Prior-turn goal resolution and prior-user-text external queries are deferred to Phase 10C.
+- Planner activation is limited to read-only built-ins and Phase 8B governed agents. Consequential, write, action-attached, sensitive-by-policy, and over-budget tools remain prohibited.
 - Generalized document, presentation, data, export, and workflow finalizers remain Phase 11 work.

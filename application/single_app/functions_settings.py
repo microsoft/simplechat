@@ -120,7 +120,7 @@ def normalize_document_access_index_required_settings(settings):
 
 
 def normalize_chat_capability_planner_settings(settings):
-    """Normalize Phase 10A planner settings to bounded off/shadow values."""
+    """Normalize planner settings to bounded off, shadow, or assist values."""
     source = settings if isinstance(settings, dict) else {}
 
     def bounded_int(key, *, minimum, maximum):
@@ -137,7 +137,7 @@ def normalize_chat_capability_planner_settings(settings):
         )
         or ''
     ).strip().lower()
-    if mode not in {'off', 'shadow'}:
+    if mode not in {'off', 'shadow', 'assist'}:
         mode = 'off'
 
     model_source = str(

@@ -1,8 +1,8 @@
 # test_chat_capability_choice_card.py
 """
 UI test for governed capability choice cards in chat.
-Version: 0.250.067
-Implemented in: 0.250.067
+Version: 0.250.072
+Implemented in: 0.250.067; additive plan coverage added in 0.250.072
 
 This test ensures persisted capability proposals hydrate on desktop and mobile,
 expose accessible notices and controls, submit only allowlisted identifiers,
@@ -41,7 +41,7 @@ def _proposal_metadata(status='pending', resume_status='not_requested'):
     return {
         'awaiting_user_choice': status == 'pending',
         'capability_proposal': {
-            'version': 1,
+            'version': 2,
             'proposal_id': 'ui-capability-proposal-1',
             'run_id': 'ui-parent-run-1',
             'conversation_id': 'ui-capability-conversation',
@@ -50,6 +50,10 @@ def _proposal_metadata(status='pending', resume_status='not_requested'):
             'status': status,
             'requirement_ids': ['current_authoritative_sources'],
             'reason_codes': ['current_authoritative_sources'],
+            'selected_context_labels': [
+                'Workspace Search',
+                'Selected <img src=x onerror=window.phase10bInjected=true>',
+            ],
             'recommended_option_id': 'deep_research',
             'options': [
                 {
@@ -60,6 +64,9 @@ def _proposal_metadata(status='pending', resume_status='not_requested'):
                     'latency_class': 'minutes',
                     'cost_class': 'extended',
                     'external_data': True,
+                    'read_only': True,
+                    'risk_class': 'external_read',
+                    'data_sensitivity': 'public',
                 },
                 {
                     'id': 'web_search',
@@ -341,6 +348,20 @@ def test_capability_choice_card_decision_and_resume(viewport):
         expect(card.get_by_test_id('capability-external-data-notice')).to_contain_text(
             'Conversation history and workspace content are not included.'
         )
+        expect(card.get_by_test_id('capability-selected-context')).to_contain_text(
+            'Already included'
+        )
+        expect(card.get_by_test_id('capability-selected-context')).to_contain_text(
+            'Workspace Search'
+        )
+        expect(card.get_by_test_id('capability-option-badges').first).to_contain_text(
+            'Deep Research'
+        )
+        expect(card.get_by_test_id('capability-option-badges').first).to_contain_text(
+            'Web Search'
+        )
+        assert card.locator('img').count() == 0
+        assert page.evaluate('() => window.phase10bInjected === true') is False
         expect(card.get_by_role('button', name='Deep Research')).to_contain_text('Recommended')
         expect(card.get_by_role('button', name='Web Search')).to_be_enabled()
         expect(card.get_by_role('button', name='Continue without additional capabilities')).to_be_enabled()

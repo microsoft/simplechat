@@ -15,6 +15,8 @@ from functions_chat_capability_choices import (
     complete_capability_choice_resume,
     fail_capability_choice_resume,
     revalidate_capability_choice,
+    revalidate_capability_execution_baseline,
+    revalidate_capability_execution_compatibility,
 )
 
 
@@ -106,6 +108,12 @@ def persist_capability_decision(
     option_id,
     actor_user_id,
     refreshed_inventory,
+    selected_capability_ids=None,
+    prior_effective_capabilities=None,
+    automatic_capability_root_ids=None,
+    automatic_capability_effective_ids=None,
+    selected_agent_present=False,
+    baseline_error_code=None,
     now=None,
 ):
     """Persist one allowlisted decision using optimistic concurrency."""
@@ -139,6 +147,20 @@ def persist_capability_decision(
             now=now,
         )
         try:
+            revalidate_capability_execution_baseline(
+                refreshed_inventory,
+                selected_capability_ids=selected_capability_ids,
+                prior_effective_capabilities=prior_effective_capabilities,
+                automatic_capability_root_ids=automatic_capability_root_ids,
+                automatic_capability_effective_ids=automatic_capability_effective_ids,
+                baseline_error_code=baseline_error_code,
+            )
+            revalidate_capability_execution_compatibility(
+                updated,
+                selected_capability_ids=selected_capability_ids,
+                prior_effective_capabilities=prior_effective_capabilities,
+                selected_agent_present=selected_agent_present,
+            )
             revalidate_capability_choice(updated, refreshed_inventory)
         except CapabilityChoiceError as validation_error:
             invalidated = _build_invalidated_proposal(updated, validation_error.code, now=now)
@@ -171,6 +193,12 @@ def persist_capability_resume_claim(
     conversation_id,
     proposal_id,
     refreshed_inventory,
+    selected_capability_ids=None,
+    prior_effective_capabilities=None,
+    automatic_capability_root_ids=None,
+    automatic_capability_effective_ids=None,
+    selected_agent_present=False,
+    baseline_error_code=None,
     now=None,
     execution_id=None,
     child_run_id=None,
@@ -201,6 +229,20 @@ def persist_capability_resume_claim(
                 code='proposal_expired',
             )
         try:
+            revalidate_capability_execution_baseline(
+                refreshed_inventory,
+                selected_capability_ids=selected_capability_ids,
+                prior_effective_capabilities=prior_effective_capabilities,
+                automatic_capability_root_ids=automatic_capability_root_ids,
+                automatic_capability_effective_ids=automatic_capability_effective_ids,
+                baseline_error_code=baseline_error_code,
+            )
+            revalidate_capability_execution_compatibility(
+                proposal,
+                selected_capability_ids=selected_capability_ids,
+                prior_effective_capabilities=prior_effective_capabilities,
+                selected_agent_present=selected_agent_present,
+            )
             revalidate_capability_choice(proposal, refreshed_inventory)
         except CapabilityChoiceError as validation_error:
             invalidated = _build_invalidated_proposal(proposal, validation_error.code, now=now)
@@ -279,6 +321,51 @@ def persist_capability_resume_failure(
         ),
         conflict_code='resume_failure_write_conflict',
     )
+
+
+def persist_capability_invalidation(
+    container,
+    *,
+    conversation_id,
+    proposal_id,
+    reason,
+    expected_execution_id=None,
+    now=None,
+):
+    """Conditionally invalidate a proposal after fresh execution reauthorization."""
+    last_conflict = None
+    for _ in range(MAX_CONDITIONAL_WRITE_ATTEMPTS):
+        message, proposal = read_capability_proposal_message(
+            container,
+            conversation_id=conversation_id,
+            proposal_id=proposal_id,
+        )
+        resume = proposal.get('resume') if isinstance(proposal.get('resume'), Mapping) else {}
+        if (
+            expected_execution_id
+            and str(resume.get('execution_id') or '').strip()
+            != str(expected_execution_id).strip()
+        ):
+            raise CapabilityChoiceError(
+                'resume claim does not match invalidation request',
+                code='resume_claim_mismatch',
+            )
+        invalidated = _build_invalidated_proposal(proposal, reason, now=now)
+        try:
+            saved_message = _replace_proposal_message(
+                container,
+                message,
+                invalidated,
+            )
+            return saved_message, invalidated, False
+        except Exception as exc:
+            if not _is_conditional_conflict(exc):
+                raise
+            last_conflict = exc
+    raise CapabilityChoiceError(
+        'the capability proposal changed while it was being invalidated',
+        code='invalidation_write_conflict',
+    ) from last_conflict
 
 
 def _persist_resume_transition(

@@ -2,7 +2,26 @@
 
 const CONTINUE_OPTION_ID = 'continue_without_capabilities';
 const MAX_OPTIONS = 12;
+const CAPABILITY_LABELS = Object.freeze({
+    analyze: 'Analyze',
+    compare: 'Compare',
+    deep_research: 'Deep Research',
+    image: 'Image',
+    url_access: 'URL Access',
+    web_search: 'Web Search',
+    workspace_search: 'Workspace Search',
+});
 const REASON_LABELS = Object.freeze({
+    fresh_public_information: 'Fresh public information could materially improve this answer.',
+    public_source_retrieval: 'Public source retrieval could materially improve this answer.',
+    public_source_archive_research: 'Broader public archive research could materially improve coverage.',
+    multi_source_research: 'Multiple public sources could materially improve confidence.',
+    authorized_workspace_evidence: 'Authorized workspace evidence could materially improve this answer.',
+    cross_source_evidence: 'Workspace and public evidence could materially improve completeness.',
+    document_analysis: 'Structured document analysis could materially improve the findings.',
+    document_comparison: 'A document comparison could materially improve the result.',
+    visual_output: 'A visual output would materially help with this request.',
+    specialized_authorized_agent: 'A specialized authorized agent could materially improve this answer.',
     current_authoritative_sources: 'Current official sources could materially improve accuracy.',
     current_public_information: 'Current public information could materially improve freshness.',
     user_supplied_url_requires_review: 'The supplied links need review to answer from their contents.',
@@ -37,6 +56,9 @@ function normalizeProposal(metadata) {
             capabilityIds: Array.isArray(option?.capability_ids)
                 ? option.capability_ids.map(normalizeIdentifier).filter(Boolean).slice(0, 8)
                 : [],
+            effectiveCapabilityIds: Array.isArray(option?.effective_capability_ids)
+                ? option.effective_capability_ids.map(normalizeIdentifier).filter(Boolean).slice(0, 8)
+                : [],
             latencyClass: normalizeIdentifier(option?.latency_class),
             costClass: normalizeIdentifier(option?.cost_class),
             externalData: option?.external_data === true,
@@ -63,6 +85,12 @@ function normalizeProposal(metadata) {
         recommendedOptionId: normalizeIdentifier(proposal.recommended_option_id),
         reasonCodes: Array.isArray(proposal.reason_codes)
             ? proposal.reason_codes.map(normalizeIdentifier).filter(Boolean).slice(0, 12)
+            : [],
+        selectedContextLabels: Array.isArray(proposal.selected_context_labels)
+            ? proposal.selected_context_labels
+                .map(label => String(label || '').trim().slice(0, 120))
+                .filter(Boolean)
+                .slice(0, 8)
             : [],
         options,
         decision: proposal.decision && typeof proposal.decision === 'object'
@@ -109,6 +137,13 @@ function appendOptionMeta(container, option) {
         if (option.dataSensitivity) {
             parts.push(`Data: ${option.dataSensitivity.replaceAll('_', ' ')}`);
         }
+    } else if (option.kind === 'capability') {
+        if (option.readOnly) {
+            parts.push('Read only');
+        }
+        if (option.riskClass) {
+            parts.push(`Risk: ${option.riskClass.replaceAll('_', ' ')}`);
+        }
     }
     if (option.latencyClass) {
         parts.push(`Time: ${option.latencyClass}`);
@@ -124,6 +159,44 @@ function appendOptionMeta(container, option) {
         metadata.dataset.testid = 'agent-option-meta';
     }
     container.appendChild(metadata);
+}
+
+function appendCapabilityBadges(container, option) {
+    if (option.kind !== 'capability') {
+        return;
+    }
+    const labels = option.effectiveCapabilityIds
+        .map(capabilityId => CAPABILITY_LABELS[capabilityId])
+        .filter(Boolean);
+    if (labels.length < 2) {
+        return;
+    }
+    const badges = createElement('span', 'sc-capability-choice-badges');
+    badges.dataset.testid = 'capability-option-badges';
+    badges.setAttribute('aria-hidden', 'true');
+    labels.forEach(label => {
+        badges.appendChild(createElement('span', 'badge text-bg-light border', label));
+    });
+    container.appendChild(badges);
+}
+
+function appendSelectedContext(card, proposal) {
+    if (proposal.selectedContextLabels.length === 0) {
+        return;
+    }
+    const context = createElement('div', 'sc-capability-choice-selected-context');
+    context.dataset.testid = 'capability-selected-context';
+    context.appendChild(createElement(
+        'span',
+        'sc-capability-choice-selected-label',
+        'Already included',
+    ));
+    const badges = createElement('span', 'sc-capability-choice-badges');
+    proposal.selectedContextLabels.forEach(label => {
+        badges.appendChild(createElement('span', 'badge text-bg-secondary', label));
+    });
+    context.appendChild(badges);
+    card.appendChild(context);
 }
 
 function getReasonText(proposal) {
@@ -219,6 +292,7 @@ function renderPendingOptions(card, proposal, actions, statusElement, onResume) 
         if (isRecommended) {
             button.appendChild(createElement('span', 'badge text-bg-light ms-2', 'Recommended'));
         }
+        appendCapabilityBadges(button, option);
         appendOptionMeta(button, option);
         button.addEventListener('click', () => {
             void submitDecision(card, proposal, option, statusElement, onResume);
@@ -292,6 +366,7 @@ export function hydrateCapabilityChoice(messageElement, metadata, { onResume } =
     header.appendChild(title);
     card.appendChild(header);
     card.appendChild(createElement('p', 'sc-capability-choice-reason', getReasonText(proposal)));
+    appendSelectedContext(card, proposal);
 
     const hasExternalCapabilityOption = proposal.options.some(
         option => option.externalData && option.kind !== 'agent'

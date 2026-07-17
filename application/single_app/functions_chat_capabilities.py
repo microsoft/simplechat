@@ -4,6 +4,7 @@
 import copy
 import hashlib
 import hmac
+import json
 import re
 from collections.abc import Mapping
 
@@ -14,6 +15,17 @@ CAPABILITY_INVENTORY_VERSION = 1
 CAPABILITY_RECOMMENDATION_VERSION = 1
 AGENT_CAPABILITY_INVENTORY_VERSION = 1
 CONTINUE_WITHOUT_CAPABILITIES_OPTION_ID = 'continue_without_capabilities'
+PLANNER_PLAN_MAX_BUNDLE_DEPTH = 4
+PLANNER_PLAN_MAX_EFFECTIVE_CAPABILITIES = 8
+PLANNER_PLAN_MAX_ACTIONABLE_OPTIONS = 3
+PLANNER_DOCUMENT_ACTION_CAPABILITY_IDS = frozenset({'analyze', 'compare'})
+PLANNER_IMAGE_CAPABILITY_ID = 'image'
+PLANNER_RETRIEVAL_CAPABILITY_IDS = frozenset({
+    'workspace_search',
+    'web_search',
+    'url_access',
+    'deep_research',
+})
 
 AGENT_DISCOVERY_RISK_CLASSES = {'internal_read', 'external_read'}
 AGENT_DISCOVERY_DATA_SENSITIVITY_CLASSES = {'public', 'internal'}
@@ -183,6 +195,18 @@ REQUIREMENT_CAPABILITY_PREFERENCES = {
     'multi_document_comparison': ['compare'],
     'visual_output': ['image'],
     'multi_source_public_research': ['deep_research', 'web_search'],
+}
+
+_PLANNER_PLAN_LATENCY_ORDER = {
+    'immediate': 0,
+    'seconds': 1,
+    'minutes': 2,
+}
+_PLANNER_PLAN_COST_ORDER = {
+    'none': 0,
+    'low': 1,
+    'standard': 2,
+    'extended': 3,
 }
 
 
@@ -551,6 +575,61 @@ def merge_capability_recommendations(primary, secondary):
     }
 
 
+def filter_unsupported_document_action_recommendation(
+    recommendation,
+    baseline_capability_ids,
+    *,
+    selected_agent_present=False,
+):
+    """Remove choices that the document-action compatibility executor cannot fulfill."""
+    if not isinstance(recommendation, Mapping):
+        return recommendation
+    baseline_ids = {
+        str(capability_id or '').strip().lower()
+        for capability_id in baseline_capability_ids or []
+        if str(capability_id or '').strip()
+    }
+    if selected_agent_present:
+        baseline_ids.add('selected_agent')
+    filtered = copy.deepcopy(dict(recommendation))
+    filtered_options = []
+    for option in filtered.get('options') or []:
+        if not isinstance(option, Mapping):
+            continue
+        option_id = str(option.get('id') or '').strip()
+        if option_id == CONTINUE_WITHOUT_CAPABILITIES_OPTION_ID:
+            filtered_options.append(copy.deepcopy(dict(option)))
+            continue
+        execution_ids = baseline_ids | {
+            str(capability_id or '').strip().lower()
+            for capability_id in (
+                option.get('effective_capability_ids')
+                or option.get('capability_ids')
+                or []
+            )
+            if str(capability_id or '').strip()
+        }
+        if str(option.get('agent_ref') or '').strip():
+            execution_ids.add('selected_agent')
+        if (
+            execution_ids.intersection(PLANNER_DOCUMENT_ACTION_CAPABILITY_IDS)
+            and execution_ids.intersection(PLANNER_RETRIEVAL_CAPABILITY_IDS)
+        ) or (
+            PLANNER_IMAGE_CAPABILITY_ID in execution_ids
+            and len(execution_ids) > 1
+        ):
+            continue
+        filtered_options.append(copy.deepcopy(dict(option)))
+    recommended_option_id = str(filtered.get('recommended_option_id') or '').strip()
+    if not any(
+        str(option.get('id') or '').strip() == recommended_option_id
+        for option in filtered_options
+    ):
+        return None
+    filtered['options'] = filtered_options
+    return filtered
+
+
 def _normalize_governance_mode(value):
     normalized = str(value or 'recommend').strip().lower()
     return normalized if normalized in GOVERNANCE_MODES else 'blocked'
@@ -732,6 +811,15 @@ def build_capability_recommendation(inventory, requirements):
         for capability_id, entry in entries_by_id.items()
         if entry.get('state') == 'selected'
     }
+    try:
+        selected_effective_ids = set(
+            expand_governed_capability_baseline_ids(
+                inventory,
+                selected_ids,
+            )
+        )
+    except ValueError:
+        return None
     option_ids = []
     requirement_ids = []
     reason_codes = []
@@ -743,11 +831,23 @@ def build_capability_recommendation(inventory, requirements):
             entry
             and entry.get('state') == 'unselected'
             and entry.get('discoverable') is True
+            and capability_id not in selected_effective_ids
         ):
             return False
-        for effective_capability_id in entry.get('bundle') or []:
+        try:
+            effective_capability_ids = expand_governed_capability_baseline_ids(
+                inventory,
+                [capability_id],
+            )
+        except ValueError:
+            return False
+        for effective_capability_id in effective_capability_ids:
             effective_entry = entries_by_id.get(effective_capability_id)
-            if not effective_entry or effective_entry.get('state') not in {'selected', 'unselected'}:
+            if not (
+                effective_entry
+                and effective_entry.get('state') in {'selected', 'unselected'}
+                and effective_entry.get('input_ready') is True
+            ):
                 return False
         return True
 
@@ -756,7 +856,7 @@ def build_capability_recommendation(inventory, requirements):
             continue
         requirement_id = str(requirement.get('id') or '').strip()
         preferences = REQUIREMENT_CAPABILITY_PREFERENCES.get(requirement_id, [])
-        if not preferences or selected_ids.intersection(preferences):
+        if not preferences or selected_effective_ids.intersection(preferences):
             continue
 
         eligible_ids = [
@@ -801,8 +901,12 @@ def build_capability_recommendation(inventory, requirements):
             'external_data': entry['external_data'],
             'requires_user_choice': entry['requires_user_choice'],
         }
-        if entry.get('bundle'):
-            option['effective_capability_ids'] = list(entry['bundle'])
+        effective_capability_ids = expand_governed_capability_baseline_ids(
+            inventory,
+            [capability_id],
+        )
+        if effective_capability_ids != [capability_id]:
+            option['effective_capability_ids'] = effective_capability_ids
         options.append(option)
 
     options.append({
@@ -823,6 +927,654 @@ def build_capability_recommendation(inventory, requirements):
         'recommended_option_id': option_ids[0],
         'options': options,
         'required_inputs': required_inputs,
+    }
+
+
+def _selected_planner_capability_ids(inventory, selection_snapshot):
+    selected_ids = {
+        str(entry.get('id') or '').strip().lower()
+        for entry in (inventory.get('capabilities') or [])
+        if isinstance(entry, Mapping) and entry.get('state') == 'selected'
+    }
+    snapshot_values = selection_snapshot
+    if isinstance(selection_snapshot, Mapping):
+        snapshot_values = (
+            selection_snapshot.get('selected_capability_ids')
+            or selection_snapshot.get('capability_ids')
+            or []
+        )
+    if not isinstance(snapshot_values, (list, tuple, set, frozenset)):
+        snapshot_values = []
+    for raw_capability_id in snapshot_values:
+        capability_id = str(raw_capability_id or '').strip().lower()
+        if capability_id in CAPABILITY_DEFINITIONS or capability_id == 'selected_agent':
+            selected_ids.add(capability_id)
+    entries_by_id = {
+        str(entry.get('id') or '').strip().lower(): entry
+        for entry in (inventory.get('capabilities') or [])
+        if isinstance(entry, Mapping) and str(entry.get('id') or '').strip()
+    }
+    for capability_id in list(selected_ids):
+        entry = entries_by_id.get(capability_id)
+        if capability_id not in CAPABILITY_DEFINITIONS or not (entry or {}).get('bundle'):
+            continue
+        selected_ids.update(
+            _expand_planner_capability_bundle(capability_id, entries_by_id)
+        )
+    return selected_ids
+
+
+def _expand_planner_capability_bundle(
+    capability_id,
+    entries_by_id,
+    *,
+    path=(),
+    depth=0,
+):
+    if depth > PLANNER_PLAN_MAX_BUNDLE_DEPTH or capability_id in path:
+        raise ValueError('planner capability bundle is cyclic or too deep')
+    entry = entries_by_id.get(capability_id)
+    if not entry or capability_id not in CAPABILITY_DEFINITIONS:
+        raise ValueError('planner capability bundle member is missing')
+    if not (
+        entry.get('state') in {'selected', 'unselected'}
+        and entry.get('input_ready') is True
+        and entry.get('read_only') is True
+    ):
+        raise ValueError('planner capability bundle member is ineligible')
+    if entry.get('state') == 'unselected' and entry.get('discoverable') is not True:
+        raise ValueError('planner capability bundle member is not discoverable')
+
+    expanded_ids = [capability_id]
+    raw_bundle = entry.get('bundle') or []
+    if not isinstance(raw_bundle, list):
+        raise ValueError('planner capability bundle is invalid')
+    for raw_member_id in raw_bundle:
+        member_id = str(raw_member_id or '').strip().lower()
+        if member_id == capability_id:
+            continue
+        for expanded_id in _expand_planner_capability_bundle(
+            member_id,
+            entries_by_id,
+            path=path + (capability_id,),
+            depth=depth + 1,
+        ):
+            if expanded_id not in expanded_ids:
+                expanded_ids.append(expanded_id)
+        if len(expanded_ids) > PLANNER_PLAN_MAX_EFFECTIVE_CAPABILITIES:
+            raise ValueError('planner capability bundle is too large')
+    return expanded_ids
+
+
+def expand_governed_capability_baseline_ids(inventory, capability_ids):
+    """Expand server-defined built-in bundle dependencies without changing origin."""
+    entries_by_id = {
+        str(entry.get('id') or '').strip().lower(): entry
+        for entry in (
+            inventory.get('capabilities')
+            if isinstance(inventory, Mapping)
+            else []
+        ) or []
+        if isinstance(entry, Mapping) and str(entry.get('id') or '').strip()
+    }
+
+    def expand(capability_id, *, path=(), depth=0):
+        if depth > PLANNER_PLAN_MAX_BUNDLE_DEPTH or capability_id in path:
+            raise ValueError('capability baseline bundle is cyclic or too deep')
+        entry = entries_by_id.get(capability_id)
+        if not entry or capability_id not in CAPABILITY_DEFINITIONS:
+            raise ValueError('capability baseline bundle member is missing')
+        expanded_ids = [capability_id]
+        raw_bundle = entry.get('bundle') or []
+        if not isinstance(raw_bundle, list):
+            raise ValueError('capability baseline bundle is invalid')
+        for raw_member_id in raw_bundle:
+            member_id = str(raw_member_id or '').strip().lower()
+            if member_id == capability_id:
+                continue
+            for expanded_id in expand(
+                member_id,
+                path=path + (capability_id,),
+                depth=depth + 1,
+            ):
+                if expanded_id not in expanded_ids:
+                    expanded_ids.append(expanded_id)
+            if len(expanded_ids) > PLANNER_PLAN_MAX_EFFECTIVE_CAPABILITIES:
+                raise ValueError('capability baseline bundle is too large')
+        return expanded_ids
+
+    expanded_baseline_ids = []
+    for raw_capability_id in capability_ids or []:
+        capability_id = str(raw_capability_id or '').strip().lower()
+        if not capability_id or capability_id == 'selected_agent':
+            continue
+        for expanded_id in expand(capability_id):
+            if expanded_id not in expanded_baseline_ids:
+                expanded_baseline_ids.append(expanded_id)
+    return expanded_baseline_ids
+
+
+def _planner_plan_label(approved_ids, entries_by_id):
+    approved_set = set(approved_ids)
+    if approved_set == {'workspace_search', 'web_search'}:
+        return 'Search workspace and web'
+    if approved_ids == ['deep_research']:
+        return 'Run Deep Research'
+    labels = [entries_by_id[capability_id]['label'] for capability_id in approved_ids]
+    if len(labels) == 1:
+        return f'Add {labels[0]}'
+    return f"Add {', '.join(labels[:-1])} and {labels[-1]}"
+
+
+def _planner_plan_aggregate_class(entries, field_name, order, default):
+    return max(
+        (str(entry.get(field_name) or default).strip().lower() for entry in entries),
+        key=lambda value: order.get(value, len(order)),
+        default=default,
+    )
+
+
+def _build_planner_builtin_option(candidate, entries_by_id, selected_ids, inventory_version):
+    candidate_ids = []
+    for raw_capability_id in candidate.get('capability_ids') or []:
+        capability_id = str(raw_capability_id or '').strip().lower()
+        if capability_id in selected_ids:
+            continue
+        if capability_id not in candidate_ids:
+            candidate_ids.append(capability_id)
+    if not candidate_ids:
+        return None
+
+    expanded_by_root = {}
+    try:
+        for capability_id in candidate_ids:
+            entry = entries_by_id.get(capability_id)
+            if not (
+                entry
+                and entry.get('state') == 'unselected'
+                and entry.get('discoverable') is True
+                and entry.get('input_ready') is True
+                and entry.get('read_only') is True
+                and entry.get('requires_user_choice') is True
+            ):
+                return None
+            expanded_by_root[capability_id] = _expand_planner_capability_bundle(
+                capability_id,
+                entries_by_id,
+            )
+    except ValueError:
+        return None
+
+    approved_ids = sorted(
+        capability_id
+        for capability_id in candidate_ids
+        if not any(
+            capability_id in expanded_ids
+            for other_id, expanded_ids in expanded_by_root.items()
+            if other_id != capability_id
+        )
+    )
+    effective_ids = sorted({
+        effective_id
+        for capability_id in approved_ids
+        for effective_id in expanded_by_root[capability_id]
+    })
+    if not approved_ids or len(effective_ids) > PLANNER_PLAN_MAX_EFFECTIVE_CAPABILITIES:
+        return None
+
+    effective_entries = [entries_by_id[capability_id] for capability_id in effective_ids]
+    policy_binding = [
+        {
+            'id': entry['id'],
+            'state': entry.get('state'),
+            'discoverable': entry.get('discoverable') is True,
+            'input_ready': entry.get('input_ready') is True,
+            'read_only': entry.get('read_only') is True,
+            'requires_user_choice': entry.get('requires_user_choice') is True,
+            'risk_class': entry.get('risk_class'),
+            'latency_class': entry.get('latency_class'),
+            'cost_class': entry.get('cost_class'),
+            'external_data': entry.get('external_data') is True,
+        }
+        for entry in effective_entries
+    ]
+    option_digest = hashlib.sha256(
+        json.dumps(
+            {
+                'inventory_version': inventory_version,
+                'approved_ids': approved_ids,
+                'effective_ids': effective_ids,
+                'policy': policy_binding,
+            },
+            sort_keys=True,
+            separators=(',', ':'),
+        ).encode('utf-8')
+    ).hexdigest()[:32]
+    risk_order = {
+        'internal_read': 0,
+        'external_read': 1,
+    }
+    risk_class = _planner_plan_aggregate_class(
+        effective_entries,
+        'risk_class',
+        risk_order,
+        'internal_read',
+    )
+    data_sensitivity = (
+        'internal'
+        if any(
+            str(entry.get('risk_class') or '').strip().lower() == 'internal_read'
+            for entry in effective_entries
+        )
+        else 'public'
+    )
+    return {
+        'id': f'plan:{option_digest}',
+        'kind': 'capability',
+        'capability_ids': approved_ids,
+        'effective_capability_ids': effective_ids,
+        'label': _planner_plan_label(approved_ids, entries_by_id),
+        'latency_class': _planner_plan_aggregate_class(
+            effective_entries,
+            'latency_class',
+            _PLANNER_PLAN_LATENCY_ORDER,
+            'seconds',
+        ),
+        'cost_class': _planner_plan_aggregate_class(
+            effective_entries,
+            'cost_class',
+            _PLANNER_PLAN_COST_ORDER,
+            'standard',
+        ),
+        'external_data': any(entry.get('external_data') is True for entry in effective_entries),
+        'requires_user_choice': True,
+        'read_only': True,
+        'risk_class': risk_class,
+        'data_sensitivity': data_sensitivity,
+    }
+
+
+def get_capability_option_revalidation_error(option, inventory):
+    """Return a bounded error when a built-in option no longer matches server policy."""
+    if not isinstance(option, Mapping) or not isinstance(inventory, Mapping):
+        return 'capability_plan_invalid'
+    if str(option.get('kind') or 'capability').strip().lower() != 'capability':
+        return None
+    option_id = str(option.get('id') or '').strip()
+    approved_ids = [
+        str(capability_id or '').strip().lower()
+        for capability_id in (option.get('capability_ids') or [])
+        if str(capability_id or '').strip()
+    ]
+    if not approved_ids:
+        return 'capability_plan_invalid'
+    entries_by_id = {
+        str(entry.get('id') or '').strip().lower(): entry
+        for entry in (inventory.get('capabilities') or [])
+        if isinstance(entry, Mapping) and str(entry.get('id') or '').strip()
+    }
+    try:
+        rebuilt_effective_ids = set(
+            expand_governed_capability_baseline_ids(
+                inventory,
+                approved_ids,
+            )
+        )
+    except ValueError:
+        return 'capability_plan_invalid'
+    if rebuilt_effective_ids != set(
+        option.get('effective_capability_ids') or approved_ids
+    ):
+        return 'capability_bundle_changed'
+    if not option_id.startswith('plan:'):
+        if len(approved_ids) != 1:
+            return 'capability_plan_invalid'
+        root_entry = entries_by_id.get(approved_ids[0])
+        if not root_entry:
+            return 'capability_plan_invalid'
+        for field_name in ('latency_class', 'cost_class', 'external_data'):
+            if option.get(field_name) != root_entry.get(field_name):
+                return 'capability_plan_policy_changed'
+        if root_entry.get('requires_user_choice') is not True:
+            return 'capability_plan_policy_changed'
+        return None
+    selected_ids = _selected_planner_capability_ids(inventory, None)
+    rebuilt_option = _build_planner_builtin_option(
+        {'capability_ids': approved_ids},
+        entries_by_id,
+        selected_ids,
+        inventory.get('version'),
+    )
+    if not rebuilt_option:
+        return 'capability_plan_invalid'
+    if (
+        set(rebuilt_option.get('capability_ids') or []) != set(approved_ids)
+        or set(rebuilt_option.get('effective_capability_ids') or [])
+        != set(option.get('effective_capability_ids') or approved_ids)
+    ):
+        return 'capability_bundle_changed'
+
+    expected_option_id = rebuilt_option['id']
+    if option_id.endswith('_with_sensitive_inputs'):
+        expected_option_id = f'{expected_option_id}_with_sensitive_inputs'
+        if not (
+            option.get('external_query_mode') == 'include_approved_sensitive_inputs'
+            and 'street_address' in (option.get('sensitive_input_types') or [])
+        ):
+            return 'capability_plan_policy_changed'
+    if option_id != expected_option_id:
+        return 'capability_plan_policy_changed'
+    for field_name in (
+        'latency_class',
+        'cost_class',
+        'external_data',
+        'read_only',
+        'risk_class',
+        'data_sensitivity',
+    ):
+        if option.get(field_name) != rebuilt_option.get(field_name):
+            return 'capability_plan_policy_changed'
+    return None
+
+
+def _build_planner_agent_option(candidate, agents_by_id, selected_ids):
+    candidate_ids = [
+        str(capability_id or '').strip()
+        for capability_id in (candidate.get('capability_ids') or [])
+        if str(capability_id or '').strip() not in selected_ids
+    ]
+    if len(candidate_ids) != 1:
+        return None
+    agent = agents_by_id.get(candidate_ids[0])
+    if not (
+        agent
+        and agent.get('kind') == 'agent'
+        and agent.get('state') == 'unselected'
+        and agent.get('discoverable') is True
+        and agent.get('requires_user_choice') is True
+        and agent.get('read_only') is True
+        and agent.get('scope_class') in AGENT_DISCOVERY_SCOPE_CLASSES
+        and agent.get('risk_class') in AGENT_DISCOVERY_RISK_CLASSES
+        and agent.get('data_sensitivity') in AGENT_DISCOVERY_DATA_SENSITIVITY_CLASSES
+    ):
+        return None
+    return {
+        'id': agent['id'],
+        'kind': 'agent',
+        'agent_ref': agent['id'],
+        'capability_ids': [],
+        'effective_capability_ids': [],
+        'label': agent['label'],
+        'category': agent['category'],
+        'scope_class': agent['scope_class'],
+        'latency_class': agent['latency_class'],
+        'cost_class': agent['cost_class'],
+        'external_data': agent['external_data'],
+        'requires_user_choice': True,
+        'read_only': True,
+        'risk_class': agent['risk_class'],
+        'data_sensitivity': agent['data_sensitivity'],
+        'capability_tags': list(agent['capability_tags']),
+        'evidence_types': list(agent['evidence_types']),
+    }
+
+
+def _planner_option_signature(option):
+    if not isinstance(option, Mapping):
+        return frozenset()
+    agent_ref = str(option.get('agent_ref') or '').strip()
+    if agent_ref:
+        return frozenset({agent_ref})
+    return frozenset(
+        str(capability_id or '').strip().lower()
+        for capability_id in (
+            option.get('effective_capability_ids')
+            or option.get('capability_ids')
+            or []
+        )
+        if str(capability_id or '').strip()
+    )
+
+
+def _recommended_capability_option(recommendation):
+    if not isinstance(recommendation, Mapping):
+        return None
+    recommended_option_id = str(
+        recommendation.get('recommended_option_id') or ''
+    ).strip()
+    return next(
+        (
+            option
+            for option in recommendation.get('options') or []
+            if isinstance(option, Mapping)
+            and str(option.get('id') or '').strip() == recommended_option_id
+        ),
+        None,
+    )
+
+
+def arbitrate_planner_capability_recommendation(
+    planner_recommendation,
+    deterministic_recommendation,
+):
+    """Prefer deterministic control when a planner plan omits its material source."""
+    deterministic = (
+        copy.deepcopy(dict(deterministic_recommendation))
+        if isinstance(deterministic_recommendation, Mapping)
+        else None
+    )
+    planner = (
+        copy.deepcopy(dict(planner_recommendation))
+        if isinstance(planner_recommendation, Mapping)
+        else None
+    )
+    if not planner:
+        return deterministic, {
+            'activation_status': 'suppressed',
+            'recommendation_source': 'deterministic' if deterministic else 'direct',
+            'suppression_reason': 'planner_not_materialized',
+        }
+
+    planner_signature = _planner_option_signature(
+        _recommended_capability_option(planner)
+    )
+    deterministic_signature = _planner_option_signature(
+        _recommended_capability_option(deterministic)
+    )
+    if not planner_signature:
+        return deterministic, {
+            'activation_status': 'suppressed',
+            'recommendation_source': 'deterministic' if deterministic else 'direct',
+            'suppression_reason': 'planner_not_materialized',
+        }
+    if deterministic_signature and not deterministic_signature.issubset(planner_signature):
+        return deterministic, {
+            'activation_status': 'suppressed',
+            'recommendation_source': 'deterministic',
+            'suppression_reason': 'deterministic_conflict',
+        }
+    if deterministic_signature:
+        planner['options'] = [
+            option
+            for option in planner.get('options') or []
+            if (
+                str(option.get('id') or '').strip()
+                == CONTINUE_WITHOUT_CAPABILITIES_OPTION_ID
+                or deterministic_signature.issubset(
+                    _planner_option_signature(option)
+                )
+            )
+        ]
+    return planner, {
+        'activation_status': 'materialized',
+        'recommendation_source': 'planner',
+        'suppression_reason': None,
+    }
+
+
+def build_planner_capability_recommendation(
+    validated_result,
+    inventory,
+    selection_snapshot=None,
+):
+    """Materialize validated high-confidence planner candidates as server-owned options."""
+    if not (
+        isinstance(validated_result, Mapping)
+        and validated_result.get('status') == 'valid'
+        and validated_result.get('decision') == 'propose'
+        and isinstance(inventory, Mapping)
+    ):
+        return None
+    candidates = validated_result.get('candidate_plans')
+    candidates = candidates if isinstance(candidates, list) else []
+    recommended_candidate_id = str(
+        validated_result.get('recommended_plan_id') or ''
+    ).strip().lower()
+    recommended_candidate = next(
+        (
+            candidate
+            for candidate in candidates
+            if isinstance(candidate, Mapping)
+            and str(candidate.get('id') or '').strip().lower() == recommended_candidate_id
+        ),
+        None,
+    )
+    if not recommended_candidate or recommended_candidate.get('confidence') != 'high':
+        return None
+
+    entries_by_id = {
+        str(entry.get('id') or '').strip().lower(): entry
+        for entry in (inventory.get('capabilities') or [])
+        if isinstance(entry, Mapping) and str(entry.get('id') or '').strip()
+    }
+    agents_by_id = {
+        str(entry.get('id') or '').strip(): entry
+        for entry in (inventory.get('agents') or [])
+        if isinstance(entry, Mapping) and str(entry.get('id') or '').strip()
+    }
+    try:
+        selected_ids = _selected_planner_capability_ids(
+            inventory,
+            selection_snapshot,
+        )
+    except ValueError:
+        return None
+    auto_capability_ids = {
+        str(capability_id or '').strip().lower()
+        for capability_id in (
+            selection_snapshot.get('auto_capability_ids')
+            if isinstance(selection_snapshot, Mapping)
+            else []
+        ) or []
+        if str(capability_id or '').strip().lower() in entries_by_id
+    }
+    try:
+        expanded_auto_capability_ids = set(
+            expand_governed_capability_baseline_ids(
+                inventory,
+                auto_capability_ids,
+            )
+        )
+    except ValueError:
+        return None
+    already_effective_ids = selected_ids | expanded_auto_capability_ids
+    ordered_candidates = [recommended_candidate] + [
+        candidate
+        for candidate in candidates
+        if candidate is not recommended_candidate
+    ]
+    options = []
+    option_ids_by_effective_plan = {}
+    recommended_option_id = None
+    reason_codes = []
+    for candidate in ordered_candidates:
+        if not isinstance(candidate, Mapping) or candidate.get('confidence') != 'high':
+            continue
+        candidate_additions = {
+            str(capability_id or '').strip()
+            for capability_id in (candidate.get('capability_ids') or [])
+            if str(capability_id or '').strip() not in already_effective_ids
+        }
+        execution_union = candidate_additions | already_effective_ids
+        if (
+            execution_union.intersection(PLANNER_DOCUMENT_ACTION_CAPABILITY_IDS)
+            and execution_union.intersection(PLANNER_RETRIEVAL_CAPABILITY_IDS)
+        ) or (
+            PLANNER_IMAGE_CAPABILITY_ID in execution_union
+            and len(execution_union) > 1
+        ):
+            continue
+        if candidate_additions and candidate_additions.issubset(agents_by_id):
+            option = _build_planner_agent_option(
+                candidate,
+                agents_by_id,
+                already_effective_ids,
+            )
+        elif candidate_additions and candidate_additions.issubset(entries_by_id):
+            option = _build_planner_builtin_option(
+                candidate,
+                entries_by_id,
+                already_effective_ids,
+                inventory.get('version'),
+            )
+        else:
+            option = None
+        if not option:
+            continue
+        plan_key = tuple(sorted(_planner_option_signature(option)))
+        option_id = option_ids_by_effective_plan.get(plan_key)
+        if not option_id:
+            if len(options) >= PLANNER_PLAN_MAX_ACTIONABLE_OPTIONS:
+                continue
+            option_id = option['id']
+            option_ids_by_effective_plan[plan_key] = option_id
+            options.append(option)
+        candidate_id = str(candidate.get('id') or '').strip().lower()
+        if candidate_id == recommended_candidate_id:
+            recommended_option_id = option_id
+        reason_code = _bounded_reason(candidate.get('reason_code'))
+        if reason_code and reason_code not in reason_codes:
+            reason_codes.append(reason_code)
+
+    if not recommended_option_id:
+        return None
+    options.append({
+        'id': CONTINUE_WITHOUT_CAPABILITIES_OPTION_ID,
+        'kind': 'continue',
+        'capability_ids': [],
+        'effective_capability_ids': [],
+        'label': 'Continue without additional capabilities',
+        'latency_class': 'immediate',
+        'cost_class': 'none',
+        'external_data': False,
+        'requires_user_choice': True,
+    })
+    requirement_ids = [
+        str(requirement.get('id') or '').strip().lower()
+        for requirement in (validated_result.get('requirements') or [])
+        if isinstance(requirement, Mapping) and str(requirement.get('id') or '').strip()
+    ]
+    return {
+        'version': CAPABILITY_RECOMMENDATION_VERSION,
+        'status': 'pending',
+        'source': 'planner',
+        'requirement_ids': requirement_ids,
+        'reason_codes': reason_codes,
+        'recommended_option_id': recommended_option_id,
+        'options': options,
+        'required_inputs': [],
+        'selected_capability_ids': sorted(selected_ids),
+        'selected_context_labels': [
+            entry['label']
+            for entry in (inventory.get('capabilities') or [])
+            if isinstance(entry, Mapping)
+            and entry.get('state') == 'selected'
+            and str(entry.get('label') or '').strip()
+        ] + (
+            ['Selected agent']
+            if 'selected_agent' in selected_ids
+            else []
+        ),
     }
 
 
@@ -854,18 +1606,72 @@ def match_governed_capabilities(inventory, requirements):
                 ),
                 None,
             )
+            auto_bundle_allowed = False
             if entry and entry.get('auto_use_allowed') is True:
+                try:
+                    expanded_ids = expand_governed_capability_baseline_ids(
+                        inventory,
+                        [capability_id],
+                    )
+                except ValueError:
+                    expanded_ids = []
+                expanded_entries = [
+                    next(
+                        (
+                            capability
+                            for capability in inventory_entries
+                            if isinstance(capability, Mapping)
+                            and capability.get('id') == expanded_id
+                        ),
+                        None,
+                    )
+                    for expanded_id in expanded_ids
+                ]
+                auto_bundle_allowed = bool(expanded_entries) and all(
+                    member
+                    and member.get('input_ready') is True
+                    and member.get('read_only') is True
+                    and (
+                        member.get('state') == 'selected'
+                        or member.get('auto_use_allowed') is True
+                    )
+                    for member in expanded_entries
+                )
+            if auto_bundle_allowed:
                 if capability_id not in automatic_ids:
                     automatic_ids.append(capability_id)
                 break
 
+    try:
+        automatic_effective_ids = set(
+            expand_governed_capability_baseline_ids(
+                inventory,
+                automatic_ids,
+            )
+        )
+    except ValueError:
+        automatic_ids = []
+        automatic_effective_ids = set()
     recommendation_inventory = {
         'version': inventory.get('version'),
         'capabilities': [
-            dict(entry)
+            {
+                **dict(entry),
+                **(
+                    {
+                        'state': 'selected',
+                        'selected': True,
+                        'discoverable': False,
+                        'auto_use_allowed': False,
+                        'requires_user_choice': False,
+                    }
+                    if isinstance(entry, Mapping)
+                    and entry.get('id') in automatic_effective_ids
+                    and entry.get('state') != 'selected'
+                    else {}
+                ),
+            }
             for entry in inventory_entries
-            if not isinstance(entry, Mapping)
-            or entry.get('id') not in automatic_ids
         ],
     }
     return {

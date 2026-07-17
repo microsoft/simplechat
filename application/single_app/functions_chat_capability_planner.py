@@ -286,18 +286,18 @@ def build_capability_planner_request(
     }
 
 
-def capability_planner_shadow_is_eligible(
+def capability_planner_is_eligible(
     planner_settings,
     planner_request,
     *,
     is_resume=False,
     cancel_requested=False,
 ):
-    """Return whether one new turn may perform an observational planner call."""
+    """Return whether one new turn may perform a governed planner call."""
     settings = planner_settings if isinstance(planner_settings, Mapping) else {}
     request = planner_request if isinstance(planner_request, Mapping) else {}
     if (
-        settings.get('chat_capability_planner_mode') != 'shadow'
+        settings.get('chat_capability_planner_mode') not in {'shadow', 'assist'}
         or is_resume
         or cancel_requested
     ):
@@ -308,6 +308,26 @@ def capability_planner_shadow_is_eligible(
         and capability.get('discoverable') is True
         and capability.get('input_ready') is True
         for capability in request.get('available_capabilities') or []
+    )
+
+
+def capability_planner_shadow_is_eligible(
+    planner_settings,
+    planner_request,
+    *,
+    is_resume=False,
+    cancel_requested=False,
+):
+    """Retain the Phase 10A shadow-only eligibility contract."""
+    settings = planner_settings if isinstance(planner_settings, Mapping) else {}
+    return (
+        settings.get('chat_capability_planner_mode') == 'shadow'
+        and capability_planner_is_eligible(
+            settings,
+            planner_request,
+            is_resume=is_resume,
+            cancel_requested=cancel_requested,
+        )
     )
 
 
@@ -1055,15 +1075,18 @@ def _capability_class(capability_id):
     return normalized if normalized in _SAFE_BUILTIN_CAPABILITY_CLASSES else None
 
 
-def build_capability_planner_shadow_metadata(planner_result):
+def build_capability_planner_metadata(planner_result, *, mode='shadow'):
     """Build the only planner summary permitted in persisted turn metadata."""
     result = planner_result if isinstance(planner_result, Mapping) else {}
     status = str(result.get('status') or 'rejected').strip().lower()
     if status not in {'valid', 'rejected', 'timed_out', 'discarded'}:
         status = 'rejected'
+    normalized_mode = str(mode or '').strip().lower()
+    if normalized_mode not in {'shadow', 'assist'}:
+        normalized_mode = 'shadow'
     metadata = {
         'version': CAPABILITY_PLANNER_CONTRACT_VERSION,
-        'mode': 'shadow',
+        'mode': normalized_mode,
         'status': status,
         'candidate_count': min(
             len(result.get('candidate_plans') or []),
@@ -1111,6 +1134,11 @@ def build_capability_planner_shadow_metadata(planner_result):
     if status != 'valid' and failure_code in CAPABILITY_PLANNER_FAILURE_CODES:
         metadata['failure_code'] = failure_code
     return metadata
+
+
+def build_capability_planner_shadow_metadata(planner_result):
+    """Build the Phase 10A observational planner metadata contract."""
+    return build_capability_planner_metadata(planner_result, mode='shadow')
 
 
 def compare_capability_planner_shadow(planner_result, deterministic_recommendation):

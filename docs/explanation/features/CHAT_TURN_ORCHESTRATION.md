@@ -1,6 +1,7 @@
 # Chat Turn Orchestration
 
 Implemented in version: **0.250.069**
+Updated for governed planner activation in version: **0.250.072**
 Associated issue: **[#1021](https://github.com/microsoft/simplechat/issues/1021)**
 
 ## Overview
@@ -324,8 +325,10 @@ The detailed matrix, manifest schema, privacy contract, and result artifact are
 documented in
 `docs/explanation/features/CHAT_ORCHESTRATION_EVALUATION_QUALITY_GATES.md`.
 Phase 10A adds model-assisted capability planning in non-executing shadow mode.
-Phase 10B and 10C remain responsible for governed activation and contextual
-clarification. Generalized output types move to Phase 11.
+Phase 10B activates validated high-confidence additive proposals through the
+existing durable choice lifecycle. Phase 10C remains responsible for contextual
+clarification and bounded prior-user-goal references. Generalized output types
+move to Phase 11.
 
 ## Phase 10A Model-Assisted Planner Shadow Mode
 
@@ -387,6 +390,90 @@ planner-versus-control outcomes. Run IDs are hashed; providers and models are
 bucketed into safe classes. The events cannot accept prompt text, evidence,
 canonical agent metadata, private scopes, secrets, endpoints, action arguments,
 or inaccessible counts.
+
+## Phase 10B Governed Additive Plan Activation
+
+Phase 10B extends `chat_capability_planner_mode` to
+`off | shadow | assist`, still defaulting to `off`. A valid `assist` proposal
+activates only when the recommended candidate has high confidence and every
+member is a current read-only built-in or Phase 8B governed agent. The server
+recursively expands bundles with strict limits, removes selected and automatic
+capabilities from the approval set, derives all labels and policy fields, and
+binds built-in `plan:` option IDs to the current safe inventory state.
+Selected and automatic roots are expanded before planning and execution, so a
+selected Deep Research mandate makes Web Search effective with the same
+`selection` origin. Automatic roots activate only when every dependency is
+already selected or independently eligible for automatic read-only use.
+Provenance v2 stores the roots separately from the exact effective closure;
+decision, resume, and post-lease validation require the freshly expanded
+closure to match exactly, preventing policy or deployment changes from
+silently adding, removing, or replacing work in an approved turn. A selected
+dependency keeps `selection` origin while remaining part of the bound closure.
+
+Planner and deterministic recommendations use conservative precedence.
+Submitted selections, explicit declines, current eligibility, and material
+deterministic recommendations remain authoritative. A planner plan can add
+complementary work only when it contains the deterministic effective set;
+otherwise deterministic behavior wins. Planner timeout, invalid output, low
+confidence, provider failure, bundle failure, or proposal persistence failure
+executes no newly proposed capability.
+
+Activated plans reuse the existing `awaiting_user_choice` assistant message,
+allowlisted option decision, conversation/source-turn authorization, ETag
+write, resume lease, parent/child run, process-loss reconciliation, evidence
+ledger, and finalization path. Every approved and effective member is checked
+against a fresh server inventory at decision and resume and is validated again
+immediately before execution. Selected dependencies retain `selection` origin,
+automatic discovery retains `discovery_auto`, and only additions receive
+`discovery_approved`.
+
+The trusted resume context is returned separately from reconstructed request
+data and is passed only through internal executor parameters. Browser HTTP
+payloads are recursively stripped of underscore-prefixed server fields,
+including nested agent metadata, so callers cannot inject capability inventory,
+origins, minimized external queries, discovery references, leases, or execution
+identity.
+
+Every native streaming exit terminalizes the exact resume lease. Persisted
+complete or partial assistant output and native or compatibility safety output
+complete it, while model setup failures, cancellation, and other no-output exits
+release it immediately for retry. Exact-owner guards span post-claim context
+reconstruction, route authorization/scope setup, stream-session creation, and
+background-worker handoff without disturbing a newer claimant. Assistant,
+image, and safety output all participate in restart reconciliation through the
+same bounded proposal and execution correlation.
+Cancellation partials and Analyze/Compare results that exist before a runtime
+reconciliation error are retained as incomplete correlated assistant messages;
+they complete the exact execution and cannot be duplicated by a retry.
+If the output row persists but the proposal completion CAS fails, output
+ownership remains terminal: the wrapper does not release the claim, and restart
+reconciliation completes only the same execution ID from running or failed
+state.
+
+Deterministic and planner recommendation paths both subtract the complete
+selected and automatic closure. Stored deterministic built-in options are also
+rebound to the current recursive closure before resume. Streaming,
+non-streaming, and document-action paths persist the same expanded selected
+members with `selection` origin while retaining only explicit roots in the
+selection snapshot.
+
+Existing compatibility executors remain fail-closed for unions they cannot
+fully satisfy. Image is exclusive of retrieval and selected or approved agent
+mandates, while Analyze and Compare are exclusive of retrieval. The server
+suppresses those choices before display and rechecks persisted proposals at
+decision, resume, and post-lease execution.
+
+External Web Search and Deep Research continue to receive only minimized text
+from the current user message. Conversation history, prior user turns,
+assistant/tool text, workspace content, and planner output are not appended.
+Parcel-specific detected addresses retain the separate sensitive-input option.
+`clarify` remains observational until Phase 10C.
+
+The existing choice card renders server-owned multi-capability badges,
+aggregate time/cost state, external-data notices, and submitted selections as
+already included context. The browser still sends only conversation, proposal,
+and option IDs. Admin Settings exposes the three modes and bounded planner
+runtime controls for staged rollout.
 
 ## Security And Governance
 
@@ -541,18 +628,20 @@ Phase 9 evaluation coverage is in:
 - `ui_tests/test_phase9_orchestration_live_smoke.py` for the validated five-scenario manifest, aggregate result artifact, and opt-in deployed-environment execution.
 - `scripts/run_phase9_orchestration_quality_gates.py` for the repeatable compile, functional, security, route-policy, UI-contract, and optional live-smoke command.
 
-Phase 10A planner coverage is in:
+Phase 10A and 10B planner coverage is in:
 
 - `functional_tests/test_chat_capability_model_planner.py` for safe request projection, strict direct/propose/clarify validation, selected-mandate preservation, provider variants, transport timeout, cancellation, privacy, the 139-row deterministic evaluation dataset, and required semantic fixtures.
 - `functional_tests/test_chat_capability_planner_route.py` for off/shadow eligibility, resume isolation, server-owned configured model selection, route ordering, deterministic control isolation, and user-turn-only metadata.
 - `functional_tests/test_phase9_orchestration_observability.py` for the four fixed planner event types and forbidden-value checks.
-- `scripts/run_phase9_orchestration_quality_gates.py` for the combined Phase 9/10A repeatable gate.
+- `functional_tests/test_phase10b_governed_additive_plan_activation.py` for high-confidence activation, additive bundles, selected and automatic dependency expansion, origin separation, deterministic arbitration, exact plan binding, sensitive current-turn options, governed agents, Image/agent exclusion, failure closure, admin controls, and bounded telemetry.
+- `ui_tests/test_chat_capability_choice_card.py` and `ui_tests/test_admin_capability_planner_settings.py` for additive choice rendering and staged rollout controls across desktop and mobile.
+- `scripts/run_phase9_orchestration_quality_gates.py` for the combined Phase 9/10A/10B repeatable gate.
 
 ## Known Limitations
 
-Phase 8A, Phase 8B, and Phase 10A add durable governed choice and observational model planning, with these deliberate boundaries:
+Phase 8A, Phase 8B, Phase 10A, and Phase 10B add durable governed choice and conservative additive model planning, with these deliberate boundaries:
 
-- Model planner output is shadow-only. It cannot create user-visible proposals or clarifications, execute capabilities, or change the deterministic response path until a separately reviewed Phase 10B activation contract is implemented.
+- `assist` can create one server-authored choice from a validated high-confidence proposal, but the model cannot execute capabilities, author policy fields, bypass deterministic conflict precedence, or create a clarification checkpoint.
 
 - Generalized multi-agent recommendation remains out of scope. When an agent is already selected, Phase 8B does not recommend another agent.
 - Foundry-backed agents and local agents with attached actions remain explicitly selectable but are not discoverable until hidden tools, action arguments, and runtime telemetry have a separately reviewed read-only governance contract.
