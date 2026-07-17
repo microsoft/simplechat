@@ -59,8 +59,8 @@ ADMIN_SETTINGS_NESTED_SECRET_FIELDS = (
     "web_search_agent.other_settings.azure_ai_foundry.client_secret",
 )
 CHAT_CAPABILITY_PLANNER_DEFAULTS = {
-    'chat_capability_planner_mode': 'off',
-    'chat_capability_planner_timeout_ms': 5000,
+    'chat_capability_planner_mode': 'assist',
+    'chat_capability_planner_timeout_ms': 10000,
     'chat_capability_planner_max_completion_tokens': 600,
     'chat_capability_planner_max_candidate_plans': 3,
     'chat_capability_planner_max_capabilities_per_plan': 4,

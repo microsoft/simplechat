@@ -659,13 +659,13 @@ def register_route_frontend_admin_settings(bp):
             submitted_planner_settings.update({
                 'chat_capability_planner_mode': form_data.get(
                     'chat_capability_planner_mode',
-                    'off',
+                    'assist',
                 ),
                 'chat_capability_planner_timeout_ms': parse_admin_int(
                     form_data.get('chat_capability_planner_timeout_ms'),
-                    settings.get('chat_capability_planner_timeout_ms', 5000),
+                    settings.get('chat_capability_planner_timeout_ms', 10000),
                     'chat_capability_planner_timeout_ms',
-                    5000,
+                    10000,
                 ),
                 'chat_capability_planner_max_completion_tokens': parse_admin_int(
                     form_data.get('chat_capability_planner_max_completion_tokens'),

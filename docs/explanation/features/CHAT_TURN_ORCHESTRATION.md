@@ -394,7 +394,7 @@ or inaccessible counts.
 ## Phase 10B Governed Additive Plan Activation
 
 Phase 10B extends `chat_capability_planner_mode` to
-`off | shadow | assist`, still defaulting to `off`. A valid `assist` proposal
+`off | shadow | assist`, defaulting to `assist`. A valid `assist` proposal
 activates only when the recommended candidate has high confidence and every
 member is a current read-only built-in or Phase 8B governed agent. The server
 recursively expands bundles with strict limits, removes selected and automatic

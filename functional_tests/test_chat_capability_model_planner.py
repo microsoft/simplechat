@@ -1,8 +1,8 @@
 # test_chat_capability_model_planner.py
 """
 Functional test for the model-assisted chat capability planner contract.
-Version: 0.250.071
-Implemented in: 0.250.069
+Version: 0.250.072
+Implemented in: 0.250.069; default activation updated in 0.250.072
 
 This test ensures planner requests expose only safe authorized capability
 descriptors and untrusted planner results fail closed before execution.
@@ -879,8 +879,8 @@ def test_shadow_metadata_excludes_prompts_responses_and_opaque_references():
 def test_planner_settings_normalize_closed_and_stay_backend_only():
     defaults = normalize_chat_capability_planner_settings({})
     assert defaults == {
-        'chat_capability_planner_mode': 'off',
-        'chat_capability_planner_timeout_ms': 5000,
+        'chat_capability_planner_mode': 'assist',
+        'chat_capability_planner_timeout_ms': 10000,
         'chat_capability_planner_max_completion_tokens': 600,
         'chat_capability_planner_max_candidate_plans': 3,
         'chat_capability_planner_max_capabilities_per_plan': 4,

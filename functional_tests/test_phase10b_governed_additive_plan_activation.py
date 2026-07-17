@@ -816,6 +816,7 @@ def test_planner_card_is_bounded_to_three_actionable_options_plus_continue():
 
 
 def test_assist_mode_is_normalized_and_uses_new_turn_eligibility():
+    default_settings = normalize_chat_capability_planner_settings({})
     settings = normalize_chat_capability_planner_settings({
         'chat_capability_planner_mode': 'assist',
     })
@@ -824,6 +825,8 @@ def test_assist_mode_is_normalized_and_uses_new_turn_eligibility():
         _build_inventory(),
     )
 
+    assert default_settings['chat_capability_planner_mode'] == 'assist'
+    assert default_settings['chat_capability_planner_timeout_ms'] == 10000
     assert settings['chat_capability_planner_mode'] == 'assist'
     assert capability_planner_is_eligible(settings, planner_request) is True
     assert capability_planner_is_eligible(
@@ -1362,6 +1365,9 @@ def test_admin_settings_expose_and_normalize_governed_activation_modes():
     assert 'value="off"' in template_source
     assert 'value="shadow"' in template_source
     assert 'value="assist"' in template_source
+    assert "chat_capability_planner_mode|default('assist') == 'assist'" in (
+        template_source
+    )
     planner_section = template_source.split(
         'id="chat-capability-planner-section"',
         1,

@@ -214,8 +214,8 @@ Backend settings and defaults are:
 
 ```json
 {
-  "chat_capability_planner_mode": "off",
-  "chat_capability_planner_timeout_ms": 5000,
+  "chat_capability_planner_mode": "assist",
+  "chat_capability_planner_timeout_ms": 10000,
   "chat_capability_planner_max_completion_tokens": 600,
   "chat_capability_planner_max_candidate_plans": 3,
   "chat_capability_planner_max_capabilities_per_plan": 4,
@@ -230,8 +230,8 @@ global endpoint/model IDs, timeout, completion budget, candidate count, and
 per-plan capability limits. Server normalization accepts only
 `off | shadow | assist`, clamps every numeric value to the documented bounds,
 and forces incomplete configured-model selections back to `off`. The shipped
-default remains `off`; administrators may return to `shadow` without altering
-already persisted proposals awaiting a decision.
+default is `assist`; administrators may select `off` as a kill switch or return
+to `shadow` without altering already persisted proposals awaiting a decision.
 
 ## Privacy And Observability
 

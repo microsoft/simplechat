@@ -4100,13 +4100,13 @@
                     <fieldset class="mb-3">
                         <legend class="form-label fs-6">Planner mode</legend>
                         <div class="btn-group" role="group" aria-label="Capability planner mode">
-                            <input type="radio" class="btn-check" name="chat_capability_planner_mode" id="chat_capability_planner_mode_off" value="off" autocomplete="off" {% if settings.chat_capability_planner_mode|default('off') == 'off' %}checked{% endif %} />
+                            <input type="radio" class="btn-check" name="chat_capability_planner_mode" id="chat_capability_planner_mode_off" value="off" autocomplete="off" {% if settings.chat_capability_planner_mode == 'off' %}checked{% endif %} />
                             <label class="btn btn-outline-secondary" for="chat_capability_planner_mode_off">Off</label>
 
                             <input type="radio" class="btn-check" name="chat_capability_planner_mode" id="chat_capability_planner_mode_shadow" value="shadow" autocomplete="off" {% if settings.chat_capability_planner_mode == 'shadow' %}checked{% endif %} />
                             <label class="btn btn-outline-secondary" for="chat_capability_planner_mode_shadow">Shadow</label>
 
-                            <input type="radio" class="btn-check" name="chat_capability_planner_mode" id="chat_capability_planner_mode_assist" value="assist" autocomplete="off" {% if settings.chat_capability_planner_mode == 'assist' %}checked{% endif %} />
+                            <input type="radio" class="btn-check" name="chat_capability_planner_mode" id="chat_capability_planner_mode_assist" value="assist" autocomplete="off" {% if settings.chat_capability_planner_mode|default('assist') == 'assist' %}checked{% endif %} />
                             <label class="btn btn-outline-primary" for="chat_capability_planner_mode_assist">Assist</label>
                         </div>
                     </fieldset>
@@ -4129,7 +4129,7 @@
                         </div>
                         <div class="col-sm-6 col-xl-3">
                             <label class="form-label" for="chat_capability_planner_timeout_ms">Timeout (ms)</label>
-                            <input type="number" class="form-control" id="chat_capability_planner_timeout_ms" name="chat_capability_planner_timeout_ms" min="250" max="10000" step="50" value="{{ settings.chat_capability_planner_timeout_ms|default(5000) }}" />
+                            <input type="number" class="form-control" id="chat_capability_planner_timeout_ms" name="chat_capability_planner_timeout_ms" min="250" max="10000" step="50" value="{{ settings.chat_capability_planner_timeout_ms|default(10000) }}" />
                         </div>
                         <div class="col-sm-6 col-xl-3">
                             <label class="form-label" for="chat_capability_planner_max_completion_tokens">Completion tokens</label>

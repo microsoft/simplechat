@@ -7,7 +7,8 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 #### New Features
 
 *   **Governed Additive Capability Plan Activation**
-    *   Added an administrator-controlled `assist` planner mode that can turn validated high-confidence plans into one durable, server-authored capability choice while keeping `off` as the default and preserving `shadow` evaluation.
+    *   Added an administrator-controlled `assist` planner mode, enabled by default, that can turn validated high-confidence plans into one durable, server-authored capability choice while preserving explicit `off` and `shadow` controls.
+    *   Increased the default bounded planner deadline to 10 seconds so transient model latency does not unnecessarily bypass governed planning and fall through to a tool-blind answer.
     *   Added bounded read-only plans such as Workspace Search plus Web Search and Deep Research plus its Web Search dependency; selected and automatically discovered bundles are recursively expanded as already effective, and only true additions require approval.
     *   Planner options reuse the existing persisted choice, ETag decision, idempotent resume, process-recovery, evidence-ledger, and central-finalization lifecycle. Every selected, automatic, approved, and inherited member is revalidated against current authorization, input readiness, bundle definitions, and policy before child-run execution; provenance v2 binds automatic roots and exact closure separately so any closure change invalidates the proposal.
     *   Planner failures, low confidence, material disagreement, invalid bundles, revocation, and policy changes fail back to deterministic behavior without granting model execution authority. External retrieval remains limited to minimized current-turn text, with separate approval for detected sensitive address input.
@@ -23,7 +24,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 *   **Additive Plan Choice And Planner Administration**
     *   Choice cards now show server-owned badges for multi-capability plans and identify submitted selections as already included context without sending capability or authorization claims from the browser.
-    *   Added Admin Settings controls for `Off`, `Shadow`, and `Assist`, planner model source, timeout, completion budget, candidate count, and per-plan capability limits. Invalid or incomplete values normalize safely, and rollout remains disabled by default.
+    *   Added Admin Settings controls for `Off`, `Shadow`, and `Assist`, planner model source, timeout, completion budget, candidate count, and per-plan capability limits. Invalid or incomplete values normalize safely, and administrators retain an explicit kill switch while governed assistance is active by default.
     *   (Ref: `admin_settings.html`, `chat-capability-choice.js`, `chats.css`, `test_chat_capability_choice_card.py`, `test_admin_capability_planner_settings.py`)
 
 ### **(v0.250.071)**
