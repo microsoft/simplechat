@@ -11,6 +11,67 @@
   overflow-wrap: anywhere;
 }
 
+.sc-capability-choice-card.is-compact {
+  align-self: flex-start;
+  width: min(100%, 32rem);
+  min-width: min(20rem, calc(100vw - 3rem));
+  padding: 0.65rem 0.75rem;
+  border-left-width: 3px;
+}
+
+.sc-capability-choice-compact-summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.65rem;
+  align-items: center;
+  min-width: 0;
+}
+
+.sc-capability-choice-compact-icon {
+  color: var(--bs-primary);
+  font-size: 1.15rem;
+}
+
+.sc-capability-choice-compact-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.sc-capability-choice-compact-label {
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.sc-capability-choice-compact-detail {
+  color: var(--bs-secondary-color);
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
+.sc-capability-choice-compact-trailing,
+.sc-capability-choice-compact-state {
+  display: inline-flex;
+  align-items: center;
+}
+
+.sc-capability-choice-compact-trailing {
+  gap: 0.65rem;
+}
+
+.sc-capability-choice-compact-state {
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.sc-capability-choice-compact-action {
+  min-height: 44px;
+  white-space: nowrap;
+}
+
 .sc-capability-choice-header {
   display: flex;
   align-items: center;
@@ -266,6 +327,15 @@
   .sc-capability-choice-option-card.is-recommended .sc-capability-choice-option-heading {
     padding-top: 1.25rem;
     padding-right: 0;
+  }
+
+  .sc-capability-choice-compact-summary.has-action {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .sc-capability-choice-compact-summary.has-action .sc-capability-choice-compact-trailing {
+    grid-column: 2;
+    justify-content: space-between;
   }
 }
 /* chats.css */

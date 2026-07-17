@@ -4,6 +4,7 @@ Implemented in version: **0.250.069**
 Updated for governed planner activation in version: **0.250.072**
 Updated planner administration in version: **0.250.073**
 Updated governed choice experience in version: **0.250.074**
+Updated resolved choice state in version: **0.250.075**
 Associated issue: **[#1021](https://github.com/microsoft/simplechat/issues/1021)**
 
 ## Overview
@@ -479,7 +480,9 @@ to compose a new bundle. Selecting a card immediately submits its one persisted
 option ID and resumes execution. A full-width secondary action continues
 without additional capabilities. External-data notices and submitted
 selections remain visible as context. Admin Settings exposes the three modes
-and bounded planner runtime controls for staged rollout.
+and bounded planner runtime controls for staged rollout. After a choice is
+saved, the expanded chooser condenses to one inert summary showing the selected
+plan, its included capabilities, and Saved, Running, Completed, or retry state.
 
 ## Security And Governance
 

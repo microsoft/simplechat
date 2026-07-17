@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.075)**
+
+#### User Interface Enhancements
+
+*   **Compact Completed Capability Selection**
+    *   Condensed the expanded capability chooser into one compact selected-plan summary as soon as the decision is saved, preserving only the plan name, included capabilities, and lifecycle state while the resumed answer runs and completes.
+    *   Kept saved Resume and failed Retry actions available in the compact state, while decision failures continue to expose the original choices for another attempt.
+    *   Reduced the completed card below 100 pixels and below 40 percent of its expanded height across validated desktop and mobile layouts.
+    *   (Ref: microsoft/simplechat#1021, `chat-capability-choice.js`, `chats.css`, `test_chat_capability_choice_card.py`)
+
 ### **(v0.250.074)**
 
 #### User Interface Enhancements

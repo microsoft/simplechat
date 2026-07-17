@@ -1,8 +1,8 @@
 # test_chat_capability_choice_card.py
 """
 UI test for governed capability choice cards in chat.
-Version: 0.250.074
-Implemented in: 0.250.067; option grid redesigned in 0.250.074
+Version: 0.250.075
+Implemented in: 0.250.067; resolved state compacted in 0.250.075
 
 This test ensures persisted capability proposals hydrate on desktop and mobile,
 expose accessible notices and controls, submit only allowlisted identifiers,
@@ -283,11 +283,13 @@ def test_capability_choice_uses_server_plan_option_grid_contract():
     assert 'sc-capability-choice-option-grid' in choice_source
     assert 'sc-capability-choice-recommended-ribbon' in choice_source
     assert 'sc-capability-choice-includes-list' in choice_source
+    assert 'sc-capability-choice-compact-summary' in choice_source
     assert '_complete_correlated_capability_resume_output' not in choice_source
     assert 'option_id: option.id' in choice_source
     assert 'selectedOptionIds' not in choice_source
     assert 'grid-template-columns: repeat(auto-fit' in style_source
     assert '.sc-capability-choice-option-card.is-recommended' in style_source
+    assert '.sc-capability-choice-card.is-compact' in style_source
     assert '.sc-capability-choice-continue' in style_source
 
 
@@ -419,6 +421,7 @@ def test_capability_choice_card_decision_and_resume(viewport):
             assert max(layout['optionHeights']) - min(layout['optionHeights']) <= 1
         assert abs(layout['continueWidth'] - layout['gridWidth']) <= 1
 
+        expanded_height = card.evaluate('element => element.getBoundingClientRect().height')
         deep_research_button = card.get_by_role('button', name='Deep Research')
         deep_research_button.focus()
         deep_research_button.press('Enter')
@@ -426,6 +429,17 @@ def test_capability_choice_card_decision_and_resume(viewport):
             'Resumed with current official sources.'
         )
         expect(card.get_by_role('status')).to_contain_text('Completed with Deep Research.')
+        compact_summary = card.get_by_test_id('capability-choice-compact-summary')
+        expect(compact_summary).to_be_visible()
+        expect(compact_summary).to_contain_text('Deep Research')
+        expect(compact_summary).to_contain_text('Includes Deep Research + Web Search')
+        expect(card.get_by_test_id('capability-choice-compact-state')).to_have_text('Completed')
+        expect(card.get_by_role('heading')).to_have_count(0)
+        expect(card.get_by_test_id('capability-external-data-notice')).to_have_count(0)
+        expect(card.get_by_test_id('capability-option-card')).to_have_count(0)
+        compact_height = card.evaluate('element => element.getBoundingClientRect().height')
+        assert compact_height < expanded_height * 0.4
+        assert compact_height <= 100
         assert decision_requests == [{
             'conversation_id': 'ui-capability-conversation',
             'option_id': 'deep_research',
@@ -467,6 +481,7 @@ def test_capability_choice_card_decision_and_resume(viewport):
 
         context.close()
         browser.close()
+
 
 
 @pytest.mark.ui
@@ -603,6 +618,8 @@ def test_governed_agent_choice_is_inert_minimal_and_refreshable(viewport):
                 expect(refreshed_card.get_by_role('button', name=button_name)).to_be_visible()
             else:
                 expect(refreshed_card.get_by_role('button')).to_have_count(0)
+            if status in {'approved', 'declined'}:
+                expect(refreshed_card.get_by_test_id('capability-choice-compact-summary')).to_be_visible()
 
         context.close()
         browser.close()

@@ -276,10 +276,95 @@ function updateStatus(statusElement, message, tone = 'muted') {
     statusElement.textContent = message;
 }
 
+function getCompactOptionDetail(option) {
+    if (option.id === CONTINUE_OPTION_ID) {
+        return '';
+    }
+    const capabilityLabels = getOptionCapabilityLabels(option);
+    if (capabilityLabels.length > 1) {
+        return `Includes ${capabilityLabels.join(' + ')}`;
+    }
+    if (option.kind === 'agent') {
+        return getOptionDescription(option);
+    }
+    return '';
+}
+
+function renderCompactSelection(
+    card,
+    option,
+    statusElement,
+    {
+        state = 'completed',
+        statusMessage = '',
+        actionLabel = '',
+        onAction = null,
+    } = {},
+) {
+    const stateConfig = {
+        completed: { label: 'Completed', tone: 'success', icon: 'bi-check-circle-fill' },
+        failed: { label: 'Needs attention', tone: 'warning', icon: 'bi-exclamation-circle' },
+        running: { label: 'Running...', tone: 'primary', icon: 'bi-arrow-repeat' },
+        saved: { label: 'Saved', tone: 'muted', icon: 'bi-check-circle' },
+    }[state] || { label: 'Saved', tone: 'muted', icon: 'bi-check-circle' };
+
+    card.replaceChildren();
+    card.classList.add('is-compact');
+
+    const summary = createElement('div', 'sc-capability-choice-compact-summary');
+    summary.dataset.testid = 'capability-choice-compact-summary';
+    const icon = createElement('i', `bi ${getOptionIconClass(option)} sc-capability-choice-compact-icon`);
+    icon.setAttribute('aria-hidden', 'true');
+    summary.appendChild(icon);
+
+    const copy = createElement('div', 'sc-capability-choice-compact-copy');
+    const label = createElement('span', 'sc-capability-choice-compact-label', option.label);
+    label.id = `${statusElement.id}-selection`;
+    copy.appendChild(label);
+    const detailText = getCompactOptionDetail(option);
+    if (detailText) {
+        copy.appendChild(createElement('span', 'sc-capability-choice-compact-detail', detailText));
+    }
+    summary.appendChild(copy);
+    card.setAttribute('aria-labelledby', label.id);
+
+    const trailing = createElement('div', 'sc-capability-choice-compact-trailing');
+    const stateIndicator = createElement(
+        'span',
+        `sc-capability-choice-compact-state text-${stateConfig.tone}`,
+    );
+    stateIndicator.dataset.testid = 'capability-choice-compact-state';
+    const stateIcon = createElement('i', `bi ${stateConfig.icon}`);
+    stateIcon.setAttribute('aria-hidden', 'true');
+    stateIndicator.appendChild(stateIcon);
+    stateIndicator.appendChild(createElement('span', '', stateConfig.label));
+    trailing.appendChild(stateIndicator);
+
+    if (actionLabel && typeof onAction === 'function') {
+        summary.classList.add('has-action');
+        const actionButton = createElement(
+            'button',
+            'btn btn-sm btn-outline-primary sc-capability-choice-compact-action',
+            actionLabel,
+        );
+        actionButton.type = 'button';
+        actionButton.setAttribute('aria-describedby', statusElement.id);
+        actionButton.addEventListener('click', onAction);
+        trailing.appendChild(actionButton);
+    }
+    summary.appendChild(trailing);
+    card.appendChild(summary);
+
+    updateStatus(statusElement, statusMessage || stateConfig.label, stateConfig.tone);
+    statusElement.classList.add('visually-hidden');
+    card.appendChild(statusElement);
+}
+
 async function submitDecision(card, proposal, option, statusElement, onResume) {
     if (card.dataset.submitting === 'true') {
         return;
     }
+    let decisionSaved = false;
     card.querySelectorAll('.sc-capability-choice-option-card').forEach(optionCard => {
         const isSelected = optionCard.dataset.optionId === option.id;
         optionCard.classList.toggle('is-selected', isSelected);
@@ -303,13 +388,13 @@ async function submitDecision(card, proposal, option, statusElement, onResume) {
         if (!response.ok) {
             throw new Error(result.error || 'Your capability choice could not be saved.');
         }
-        updateStatus(
-            statusElement,
-            option.id === CONTINUE_OPTION_ID
+        decisionSaved = true;
+        renderCompactSelection(card, option, statusElement, {
+            state: 'running',
+            statusMessage: option.id === CONTINUE_OPTION_ID
                 ? 'Continuing without additional capabilities...'
                 : `Approved ${option.label}. Resuming...`,
-            'primary',
-        );
+        });
         if (typeof onResume !== 'function') {
             throw new Error('Chat resume is not available. Refresh this conversation to continue.');
         }
@@ -318,15 +403,26 @@ async function submitDecision(card, proposal, option, statusElement, onResume) {
             proposalId: proposal.proposalId,
             endpoint: result.resume_endpoint || '/api/chat/stream',
         });
-        updateStatus(
-            statusElement,
-            option.id === CONTINUE_OPTION_ID
+        setCardBusy(card, false);
+        renderCompactSelection(card, option, statusElement, {
+            state: 'completed',
+            statusMessage: option.id === CONTINUE_OPTION_ID
                 ? 'Completed without additional capabilities.'
                 : `Completed with ${option.label}.`,
-            'success',
-        );
+        });
     } catch (error) {
         setCardBusy(card, false);
+        if (decisionSaved) {
+            renderCompactSelection(card, option, statusElement, {
+                state: 'failed',
+                statusMessage: error?.message || 'The resume attempt failed.',
+                actionLabel: 'Retry resume',
+                onAction: () => {
+                    void submitDecision(card, proposal, option, statusElement, onResume);
+                },
+            });
+            return;
+        }
         updateStatus(
             statusElement,
             error?.message || 'Your capability choice could not be saved.',
@@ -410,39 +506,41 @@ function renderPendingOptions(card, proposal, actions, statusElement, onResume) 
     }
 }
 
-function renderResolvedAction(card, proposal, actions, statusElement, onResume) {
+function renderResolvedAction(card, proposal, statusElement, onResume) {
     const selectedOption = proposal.options.find(option => option.id === proposal.decision?.optionId);
     const selectedLabel = selectedOption?.label || 'saved choice';
-    if (proposal.resume.status === 'completed') {
-        updateStatus(statusElement, `Completed with ${selectedLabel}.`, 'success');
-        return;
-    }
-    if (proposal.resume.status === 'running') {
-        updateStatus(statusElement, `Resuming with ${selectedLabel}...`, 'primary');
-        return;
-    }
     if (!selectedOption) {
         updateStatus(statusElement, 'This capability choice is no longer available.', 'danger');
-        return;
+        return false;
     }
-    const resumeButton = createElement(
-        'button',
-        'btn btn-primary sc-capability-choice-resume-button',
-        proposal.resume.status === 'failed' ? 'Retry resume' : 'Resume',
-    );
-    resumeButton.type = 'button';
-    resumeButton.setAttribute('aria-describedby', statusElement.id);
-    resumeButton.addEventListener('click', () => {
-        void submitDecision(card, proposal, selectedOption, statusElement, onResume);
-    });
-    actions.appendChild(resumeButton);
-    updateStatus(
-        statusElement,
-        proposal.resume.status === 'failed'
+    if (proposal.resume.status === 'completed') {
+        renderCompactSelection(card, selectedOption, statusElement, {
+            state: 'completed',
+            statusMessage: selectedOption.id === CONTINUE_OPTION_ID
+                ? 'Completed without additional capabilities.'
+                : `Completed with ${selectedLabel}.`,
+        });
+        return true;
+    }
+    if (proposal.resume.status === 'running') {
+        renderCompactSelection(card, selectedOption, statusElement, {
+            state: 'running',
+            statusMessage: `Resuming with ${selectedLabel}...`,
+        });
+        return true;
+    }
+    const resumeFailed = proposal.resume.status === 'failed';
+    renderCompactSelection(card, selectedOption, statusElement, {
+        state: resumeFailed ? 'failed' : 'saved',
+        statusMessage: resumeFailed
             ? `The previous resume attempt failed. ${selectedLabel} remains approved for this turn.`
             : `${selectedLabel} is saved and ready to resume.`,
-        proposal.resume.status === 'failed' ? 'warning' : 'muted',
-    );
+        actionLabel: resumeFailed ? 'Retry resume' : 'Resume',
+        onAction: () => {
+            void submitDecision(card, proposal, selectedOption, statusElement, onResume);
+        },
+    });
+    return true;
 }
 
 export function hydrateCapabilityChoice(messageElement, metadata, { onResume } = {}) {
@@ -514,16 +612,19 @@ export function hydrateCapabilityChoice(messageElement, metadata, { onResume } =
     statusElement.setAttribute('role', 'status');
     statusElement.setAttribute('aria-live', 'polite');
     statusElement.textContent = 'Waiting for your choice.';
+    let compactSelectionRendered = false;
     if (proposal.status === 'pending' && proposal.expired) {
         updateStatus(statusElement, 'This capability choice has expired.', 'muted');
     } else if (proposal.status === 'pending') {
         renderPendingOptions(card, proposal, actions, statusElement, onResume);
     } else if (proposal.status === 'approved' || proposal.status === 'declined') {
-        renderResolvedAction(card, proposal, actions, statusElement, onResume);
+        compactSelectionRendered = renderResolvedAction(card, proposal, statusElement, onResume);
     } else {
         updateStatus(statusElement, 'This capability choice is no longer available.', 'muted');
     }
-    card.appendChild(actions);
-    card.appendChild(statusElement);
+    if (!compactSelectionRendered) {
+        card.appendChild(actions);
+        card.appendChild(statusElement);
+    }
     messageText.insertAdjacentElement('afterend', card);
 }
