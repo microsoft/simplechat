@@ -3,6 +3,7 @@
 Implemented in version: **0.250.069**
 Updated for governed planner activation in version: **0.250.072**
 Updated planner administration in version: **0.250.073**
+Updated governed choice experience in version: **0.250.074**
 Associated issue: **[#1021](https://github.com/microsoft/simplechat/issues/1021)**
 
 ## Overview
@@ -470,11 +471,15 @@ assistant/tool text, workspace content, and planner output are not appended.
 Parcel-specific detected addresses retain the separate sensitive-input option.
 `clarify` remains observational until Phase 10C.
 
-The existing choice card renders server-owned multi-capability badges,
-aggregate time/cost state, external-data notices, and submitted selections as
-already included context. The browser still sends only conversation, proposal,
-and option IDs. Admin Settings exposes the three modes and bounded planner
-runtime controls for staged rollout.
+The existing choice card renders each server-authored plan as one equal-width
+selectable card with a concise description, aggregate time/cost state, and a
+corner recommendation ribbon. Multi-capability plans show an Includes
+checklist; those checks explain the plan and do not grant the browser authority
+to compose a new bundle. Selecting a card immediately submits its one persisted
+option ID and resumes execution. A full-width secondary action continues
+without additional capabilities. External-data notices and submitted
+selections remain visible as context. Admin Settings exposes the three modes
+and bounded planner runtime controls for staged rollout.
 
 ## Security And Governance
 

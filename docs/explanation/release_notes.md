@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.074)**
+
+#### User Interface Enhancements
+
+*   **Governed Capability Plan Selection**
+    *   Replaced uneven, badge-heavy capability actions with equal-width selectable plan cards, concise purpose text, compact time/cost summaries, and a top-right Recommended ribbon.
+    *   Multi-capability plans now show a clear Includes checklist while remaining one server-authored selection; one card click submits only its persisted option ID and immediately resumes execution.
+    *   Moved the continue-without-capabilities path to a full-width secondary action and validated keyboard interaction, inert text, overflow, and responsive desktop/mobile layouts with the real browser module and styles.
+    *   (Ref: microsoft/simplechat#1021, `chat-capability-choice.js`, `chats.css`, `test_chat_capability_choice_card.py`, `CHAT_TURN_ORCHESTRATION.md`)
+
 ### **(v0.250.073)**
 
 #### User Interface Enhancements

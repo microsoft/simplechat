@@ -11,6 +11,35 @@ const CAPABILITY_LABELS = Object.freeze({
     web_search: 'Web Search',
     workspace_search: 'Workspace Search',
 });
+const CAPABILITY_ICONS = Object.freeze({
+    analyze: 'bi-bar-chart-line',
+    compare: 'bi-layout-split',
+    deep_research: 'bi-database',
+    image: 'bi-image',
+    url_access: 'bi-link-45deg',
+    web_search: 'bi-search',
+    workspace_search: 'bi-collection',
+});
+const CAPABILITY_DESCRIPTIONS = Object.freeze({
+    analyze: 'Analyze authorized documents and return structured findings.',
+    compare: 'Compare authorized documents for differences and consistency.',
+    deep_research: 'Exhaustive public-source research for broad coverage.',
+    image: 'Create a visual output for this request.',
+    url_access: 'Review the supplied links and use their contents.',
+    web_search: 'Focused current web results for a faster answer.',
+    workspace_search: 'Search authorized workspace knowledge and documents.',
+});
+const LATENCY_LABELS = Object.freeze({
+    immediate: 'Immediate',
+    seconds: 'Seconds',
+    minutes: 'Minutes',
+});
+const COST_LABELS = Object.freeze({
+    none: 'None',
+    low: 'Low',
+    standard: 'Standard',
+    extended: 'Extended',
+});
 const REASON_LABELS = Object.freeze({
     fresh_public_information: 'Fresh public information could materially improve this answer.',
     public_source_retrieval: 'Public source retrieval could materially improve this answer.',
@@ -121,81 +150,112 @@ function createElement(tagName, className = '', text = '') {
     return element;
 }
 
-function appendOptionMeta(container, option) {
-    const parts = [];
-    if (option.kind === 'agent') {
-        parts.push('Agent');
-        if (option.scopeClass) {
-            parts.push(`Scope: ${option.scopeClass}`);
-        }
-        if (option.readOnly) {
-            parts.push('Read only');
-        }
-        if (option.riskClass) {
-            parts.push(`Risk: ${option.riskClass.replaceAll('_', ' ')}`);
-        }
-        if (option.dataSensitivity) {
-            parts.push(`Data: ${option.dataSensitivity.replaceAll('_', ' ')}`);
-        }
-    } else if (option.kind === 'capability') {
-        if (option.readOnly) {
-            parts.push('Read only');
-        }
-        if (option.riskClass) {
-            parts.push(`Risk: ${option.riskClass.replaceAll('_', ' ')}`);
-        }
+function normalizeClassLabel(value, labels) {
+    const normalizedValue = normalizeIdentifier(value).toLowerCase();
+    if (!normalizedValue) {
+        return '';
     }
-    if (option.latencyClass) {
-        parts.push(`Time: ${option.latencyClass}`);
-    }
-    if (option.costClass) {
-        parts.push(`Cost: ${option.costClass}`);
-    }
-    if (parts.length === 0) {
-        return;
-    }
-    const metadata = createElement('span', 'sc-capability-choice-option-meta', parts.join(' | '));
-    if (option.kind === 'agent') {
-        metadata.dataset.testid = 'agent-option-meta';
-    }
-    container.appendChild(metadata);
+    return labels[normalizedValue]
+        || normalizedValue.replaceAll('_', ' ').replace(/\b\w/g, character => character.toUpperCase());
 }
 
-function appendCapabilityBadges(container, option) {
+function getOptionCapabilityLabels(option) {
+    return option.effectiveCapabilityIds
+        .map(capabilityId => CAPABILITY_LABELS[capabilityId])
+        .filter(Boolean);
+}
+
+function getOptionDescription(option) {
+    if (option.kind === 'agent') {
+        const scope = option.scopeClass
+            ? `${normalizeClassLabel(option.scopeClass, {})} governed agent`
+            : 'Governed specialized agent';
+        return `${scope} for the requested evidence.`;
+    }
+    const effectiveIds = new Set(option.effectiveCapabilityIds);
+    if (effectiveIds.has('deep_research') && effectiveIds.has('web_search')) {
+        return 'Exhaustive archive research with supporting current web search.';
+    }
+    if (effectiveIds.has('workspace_search') && effectiveIds.has('web_search')) {
+        return 'Search authorized workspace knowledge and current public sources together.';
+    }
+    if (option.effectiveCapabilityIds.length > 1) {
+        return 'Run the included governed capabilities together for broader evidence coverage.';
+    }
+    const primaryCapabilityId = option.capabilityIds[0] || option.effectiveCapabilityIds[0];
+    return CAPABILITY_DESCRIPTIONS[primaryCapabilityId]
+        || 'Use this governed capability to improve the response.';
+}
+
+function getOptionIconClass(option) {
+    if (option.kind === 'agent') {
+        return 'bi-robot';
+    }
+    const primaryCapabilityId = option.capabilityIds[0] || option.effectiveCapabilityIds[0];
+    return CAPABILITY_ICONS[primaryCapabilityId] || 'bi-stars';
+}
+
+function appendOptionSummary(container, option) {
+    const summary = createElement('span', 'sc-capability-choice-option-summary');
+    summary.dataset.testid = 'capability-option-summary';
+    const latencyLabel = normalizeClassLabel(option.latencyClass, LATENCY_LABELS);
+    const costLabel = normalizeClassLabel(option.costClass, COST_LABELS);
+
+    if (latencyLabel) {
+        const latency = createElement('span', 'sc-capability-choice-option-summary-item');
+        const icon = createElement('i', 'bi bi-clock');
+        icon.setAttribute('aria-hidden', 'true');
+        latency.appendChild(icon);
+        latency.appendChild(createElement('span', '', latencyLabel));
+        summary.appendChild(latency);
+    }
+    if (costLabel) {
+        const cost = createElement('span', 'sc-capability-choice-option-summary-item');
+        const icon = createElement('i', 'bi bi-box-seam');
+        icon.setAttribute('aria-hidden', 'true');
+        cost.appendChild(icon);
+        cost.appendChild(createElement('span', '', costLabel));
+        summary.appendChild(cost);
+    }
+    if (summary.childElementCount > 0) {
+        container.appendChild(summary);
+    }
+}
+
+function appendCapabilityChecklist(container, option) {
     if (option.kind !== 'capability') {
         return;
     }
-    const labels = option.effectiveCapabilityIds
-        .map(capabilityId => CAPABILITY_LABELS[capabilityId])
-        .filter(Boolean);
+    const labels = getOptionCapabilityLabels(option);
     if (labels.length < 2) {
         return;
     }
-    const badges = createElement('span', 'sc-capability-choice-badges');
-    badges.dataset.testid = 'capability-option-badges';
-    badges.setAttribute('aria-hidden', 'true');
+    const includes = createElement('div', 'sc-capability-choice-includes');
+    includes.dataset.testid = 'capability-option-includes';
+    includes.appendChild(createElement('span', 'sc-capability-choice-includes-label', 'Includes'));
+    const list = createElement('ul', 'sc-capability-choice-includes-list');
     labels.forEach(label => {
-        badges.appendChild(createElement('span', 'badge text-bg-light border', label));
+        const item = createElement('li', 'sc-capability-choice-includes-item');
+        const check = createElement('i', 'bi bi-check2');
+        check.setAttribute('aria-hidden', 'true');
+        item.appendChild(check);
+        item.appendChild(createElement('span', '', label));
+        list.appendChild(item);
     });
-    container.appendChild(badges);
+    includes.appendChild(list);
+    container.appendChild(includes);
 }
 
 function appendSelectedContext(card, proposal) {
     if (proposal.selectedContextLabels.length === 0) {
         return;
     }
-    const context = createElement('div', 'sc-capability-choice-selected-context');
+    const context = createElement(
+        'div',
+        'sc-capability-choice-selected-context',
+        `Already included: ${proposal.selectedContextLabels.join(', ')}`,
+    );
     context.dataset.testid = 'capability-selected-context';
-    context.appendChild(createElement(
-        'span',
-        'sc-capability-choice-selected-label',
-        'Already included',
-    ));
-    const badges = createElement('span', 'sc-capability-choice-badges');
-    proposal.selectedContextLabels.forEach(label => {
-        badges.appendChild(createElement('span', 'badge text-bg-secondary', label));
-    });
-    context.appendChild(badges);
     card.appendChild(context);
 }
 
@@ -220,6 +280,10 @@ async function submitDecision(card, proposal, option, statusElement, onResume) {
     if (card.dataset.submitting === 'true') {
         return;
     }
+    card.querySelectorAll('.sc-capability-choice-option-card').forEach(optionCard => {
+        const isSelected = optionCard.dataset.optionId === option.id;
+        optionCard.classList.toggle('is-selected', isSelected);
+    });
     setCardBusy(card, true);
     updateStatus(statusElement, 'Saving your choice...', 'primary');
     try {
@@ -272,33 +336,78 @@ async function submitDecision(card, proposal, option, statusElement, onResume) {
 }
 
 function renderPendingOptions(card, proposal, actions, statusElement, onResume) {
-    proposal.options.forEach(option => {
+    const optionGrid = createElement('div', 'sc-capability-choice-option-grid');
+    const selectableOptions = proposal.options.filter(option => option.id !== CONTINUE_OPTION_ID);
+    const continueOption = proposal.options.find(option => option.id === CONTINUE_OPTION_ID);
+
+    selectableOptions.forEach(option => {
         const isRecommended = option.id === proposal.recommendedOptionId;
-        const isContinue = option.id === CONTINUE_OPTION_ID;
         const button = createElement(
             'button',
-            isContinue
-                ? 'btn btn-outline-secondary sc-capability-choice-button'
-                : isRecommended
-                ? 'btn btn-primary sc-capability-choice-button'
-                : 'btn btn-outline-primary sc-capability-choice-button',
+            `sc-capability-choice-option-card${isRecommended ? ' is-recommended' : ''}`,
         );
         button.type = 'button';
         button.dataset.optionId = option.id;
+        button.dataset.testid = 'capability-option-card';
         button.setAttribute('aria-describedby', statusElement.id);
+        button.setAttribute(
+            'aria-label',
+            `${isRecommended ? 'Recommended: ' : ''}${option.label}`,
+        );
 
-        const label = createElement('span', 'sc-capability-choice-option-label', option.label);
-        button.appendChild(label);
         if (isRecommended) {
-            button.appendChild(createElement('span', 'badge text-bg-light ms-2', 'Recommended'));
+            const ribbon = createElement('span', 'sc-capability-choice-recommended-ribbon', 'Recommended');
+            ribbon.dataset.testid = 'capability-recommended-ribbon';
+            button.appendChild(ribbon);
         }
-        appendCapabilityBadges(button, option);
-        appendOptionMeta(button, option);
+
+        const heading = createElement('span', 'sc-capability-choice-option-heading');
+        const selectionMarker = createElement(
+            'span',
+            `sc-capability-choice-selection-marker${option.effectiveCapabilityIds.length > 1 ? ' is-combined' : ''}`,
+        );
+        selectionMarker.setAttribute('aria-hidden', 'true');
+        selectionMarker.appendChild(createElement('i', 'bi bi-check2'));
+        heading.appendChild(selectionMarker);
+        const optionIcon = createElement('i', `bi ${getOptionIconClass(option)} sc-capability-choice-option-icon`);
+        optionIcon.setAttribute('aria-hidden', 'true');
+        heading.appendChild(optionIcon);
+        heading.appendChild(createElement('span', 'sc-capability-choice-option-label', option.label));
+        button.appendChild(heading);
+
+        const description = createElement(
+            'span',
+            'sc-capability-choice-option-description',
+            getOptionDescription(option),
+        );
+        description.dataset.testid = 'capability-option-description';
+        button.appendChild(description);
+        appendCapabilityChecklist(button, option);
+        appendOptionSummary(button, option);
         button.addEventListener('click', () => {
             void submitDecision(card, proposal, option, statusElement, onResume);
         });
-        actions.appendChild(button);
+        optionGrid.appendChild(button);
     });
+    actions.appendChild(optionGrid);
+
+    if (continueOption) {
+        const continueButton = createElement(
+            'button',
+            'btn btn-link sc-capability-choice-continue',
+        );
+        continueButton.type = 'button';
+        continueButton.dataset.optionId = continueOption.id;
+        continueButton.setAttribute('aria-describedby', statusElement.id);
+        continueButton.appendChild(createElement('span', '', continueOption.label));
+        const arrow = createElement('i', 'bi bi-arrow-right ms-2');
+        arrow.setAttribute('aria-hidden', 'true');
+        continueButton.appendChild(arrow);
+        continueButton.addEventListener('click', () => {
+            void submitDecision(card, proposal, continueOption, statusElement, onResume);
+        });
+        actions.appendChild(continueButton);
+    }
 }
 
 function renderResolvedAction(card, proposal, actions, statusElement, onResume) {
@@ -318,7 +427,7 @@ function renderResolvedAction(card, proposal, actions, statusElement, onResume) 
     }
     const resumeButton = createElement(
         'button',
-        'btn btn-primary sc-capability-choice-button',
+        'btn btn-primary sc-capability-choice-resume-button',
         proposal.resume.status === 'failed' ? 'Retry resume' : 'Resume',
     );
     resumeButton.type = 'button';
@@ -361,7 +470,7 @@ export function hydrateCapabilityChoice(messageElement, metadata, { onResume } =
     const icon = createElement('i', 'bi bi-signpost-split');
     icon.setAttribute('aria-hidden', 'true');
     header.appendChild(icon);
-    const title = createElement('h3', 'sc-capability-choice-title', 'Choose how to continue');
+    const title = createElement('h3', 'sc-capability-choice-title', 'How would you like to continue?');
     title.id = titleId;
     header.appendChild(title);
     card.appendChild(header);

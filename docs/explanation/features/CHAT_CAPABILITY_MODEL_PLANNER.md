@@ -8,6 +8,8 @@ Governed activation implemented in version: **0.250.072**
 
 Admin configuration guidance enhanced in version: **0.250.073**
 
+Choice-card experience enhanced in version: **0.250.074**
+
 Associated issue: **[#1021](https://github.com/microsoft/simplechat/issues/1021)**
 
 ## Overview
@@ -322,9 +324,11 @@ and Phase 9 observability suites validate exact source-turn ownership, ETag
 decisions, duplicate resume protection, process-loss reconciliation, bundle
 revocation, current-turn-only external queries, child-run provenance, and
 downstream outcome metrics. Desktop/mobile Azure Playwright coverage validates
-multi-capability badges, selected context, inert text rendering, keyboard use,
-44-pixel controls, refresh reconstruction, no overflow, and minimal browser
-payloads. Live browser cases remain explicitly environment-gated.
+equal-width plan cards, the corner recommendation ribbon, concise descriptions,
+multi-capability Includes checklists, selected context, inert text rendering,
+keyboard use, 44-pixel controls, immediate decision/resume, no overflow, and a
+single server-authored option ID per browser decision. Live browser cases
+remain explicitly environment-gated.
 
 Run the combined deterministic gate with:
 
