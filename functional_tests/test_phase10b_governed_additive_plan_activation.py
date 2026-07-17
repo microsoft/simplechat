@@ -1,8 +1,8 @@
 # test_phase10b_governed_additive_plan_activation.py
 """Functional tests for Phase 10B governed additive plan activation.
 
-Version: 0.250.072
-Implemented in: 0.250.072
+Version: 0.250.073
+Implemented in: 0.250.072; Admin controls enhanced in 0.250.073
 
 This test ensures validated planner candidates become bounded server-owned
 capability options without rewriting selected mandates.
@@ -1389,9 +1389,9 @@ def test_admin_settings_expose_and_normalize_governed_activation_modes():
     })
     assert normalized == {
         'chat_capability_planner_mode': 'assist',
-        'chat_capability_planner_timeout_ms': 10000,
+        'chat_capability_planner_timeout_ms': 20000,
         'chat_capability_planner_max_completion_tokens': 64,
-        'chat_capability_planner_max_candidate_plans': 5,
+        'chat_capability_planner_max_candidate_plans': 6,
         'chat_capability_planner_max_capabilities_per_plan': 1,
         'chat_capability_planner_model_source': 'same_as_chat',
         'chat_capability_planner_model_endpoint_id': '',

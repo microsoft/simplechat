@@ -4090,58 +4090,124 @@
 
                 <!-- Capability Planner Section -->
                 <div class="card p-3 mb-4" id="chat-capability-planner-section" data-testid="chat-capability-planner-settings">
-                    <h5 class="card-title">
+                    <h5 class="card-title d-flex align-items-center">
                         <i class="bi bi-signpost-split me-2"></i>Capability Planner
+                        <button type="button" class="btn btn-link p-0 ms-2 text-secondary lh-1" data-bs-toggle="tooltip" data-bs-trigger="hover focus" title="Runs a separate, non-executing model step that decides whether the current request should answer directly, propose governed capabilities, or ask for clarification. The server still owns authorization, approval, and execution." aria-label="About the capability planner">
+                            <i class="bi bi-info-circle" aria-hidden="true"></i>
+                        </button>
                     </h5>
                     <p class="text-muted small">
                         Control model-assisted capability recommendations. Execution and authorization remain server-governed in every mode.
                     </p>
 
                     <fieldset class="mb-3">
-                        <legend class="form-label fs-6">Planner mode</legend>
+                        <legend class="form-label fs-6 d-flex align-items-center">
+                            Planner mode
+                            <button type="button" class="btn btn-link p-0 ms-2 text-secondary lh-1" data-bs-toggle="tooltip" data-bs-trigger="hover focus" title="Choose Assist for normal multi-stage planning. Shadow evaluates plans without changing the user experience. Off skips the planner model call entirely." aria-label="About planner mode">
+                                <i class="bi bi-info-circle" aria-hidden="true"></i>
+                            </button>
+                        </legend>
+                        <p class="small mb-2"><strong>Use Assist for normal operation.</strong> Shadow is evaluation-only, and Off bypasses model planning.</p>
                         <div class="btn-group" role="group" aria-label="Capability planner mode">
                             <input type="radio" class="btn-check" name="chat_capability_planner_mode" id="chat_capability_planner_mode_off" value="off" autocomplete="off" {% if settings.chat_capability_planner_mode == 'off' %}checked{% endif %} />
-                            <label class="btn btn-outline-secondary" for="chat_capability_planner_mode_off">Off</label>
+                            <label class="btn btn-outline-secondary" for="chat_capability_planner_mode_off" data-bs-toggle="tooltip" data-bs-trigger="hover" title="Do not call the planner model. Only explicitly selected capabilities and deterministic server behavior are available for the turn.">Off <i class="bi bi-info-circle ms-1" aria-hidden="true"></i></label>
 
                             <input type="radio" class="btn-check" name="chat_capability_planner_mode" id="chat_capability_planner_mode_shadow" value="shadow" autocomplete="off" {% if settings.chat_capability_planner_mode == 'shadow' %}checked{% endif %} />
-                            <label class="btn btn-outline-secondary" for="chat_capability_planner_mode_shadow">Shadow</label>
+                            <label class="btn btn-outline-secondary" for="chat_capability_planner_mode_shadow" data-bs-toggle="tooltip" data-bs-trigger="hover" title="Call and evaluate the planner model, but do not show its proposals, change the answer path, or execute its suggested capabilities.">Shadow <i class="bi bi-info-circle ms-1" aria-hidden="true"></i></label>
 
                             <input type="radio" class="btn-check" name="chat_capability_planner_mode" id="chat_capability_planner_mode_assist" value="assist" autocomplete="off" {% if settings.chat_capability_planner_mode|default('assist') == 'assist' %}checked{% endif %} />
-                            <label class="btn btn-outline-primary" for="chat_capability_planner_mode_assist">Assist</label>
+                            <label class="btn btn-outline-primary" for="chat_capability_planner_mode_assist" data-bs-toggle="tooltip" data-bs-trigger="hover" title="Recommended. Call the planner on eligible new turns and show validated high-confidence capability additions for user approval before execution.">Assist <i class="bi bi-info-circle ms-1" aria-hidden="true"></i></label>
+                        </div>
+                        <div class="border rounded p-2 mt-2 bg-body-tertiary" id="chat-capability-planner-mode-description" role="status" aria-live="polite">
+                            <strong id="chat-capability-planner-mode-title">Assist</strong>
+                            <span class="small ms-1" id="chat-capability-planner-mode-text">Calls the planner on eligible new turns. Validated high-confidence additions are shown for approval, then reauthorized and executed before the final response.</span>
                         </div>
                     </fieldset>
 
                     <div class="row g-3">
                         <div class="col-lg-4">
-                            <label class="form-label" for="chat_capability_planner_model_source">Planner model source</label>
+                            <div class="d-flex align-items-center mb-1">
+                                <label class="form-label mb-0" for="chat_capability_planner_model_source">Planner model source</label>
+                                <button type="button" class="btn btn-link p-0 ms-2 text-secondary lh-1" data-bs-toggle="tooltip" data-bs-trigger="hover focus" title="Same as chat uses the model selected for each chat turn. Configured global model always uses the specific global endpoint and model IDs below." aria-label="About planner model source">
+                                    <i class="bi bi-info-circle" aria-hidden="true"></i>
+                                </button>
+                            </div>
                             <select class="form-select" id="chat_capability_planner_model_source" name="chat_capability_planner_model_source">
-                                <option value="same_as_chat" {% if settings.chat_capability_planner_model_source|default('same_as_chat') == 'same_as_chat' %}selected{% endif %}>Same as chat</option>
+                                <option value="same_as_chat" {% if settings.chat_capability_planner_model_source|default('same_as_chat') == 'same_as_chat' %}selected{% endif %}>Same as selected chat model</option>
                                 <option value="configured" {% if settings.chat_capability_planner_model_source == 'configured' %}selected{% endif %}>Configured global model</option>
                             </select>
+                            <div class="form-text">Use a configured model when planning should be independent of the model selected in chat.</div>
                         </div>
                         <div class="col-lg-4">
-                            <label class="form-label" for="chat_capability_planner_model_endpoint_id">Global endpoint ID</label>
+                            <div class="d-flex align-items-center mb-1">
+                                <label class="form-label mb-0" for="chat_capability_planner_model_endpoint_id">Global endpoint ID</label>
+                                <button type="button" class="btn btn-link p-0 ms-2 text-secondary lh-1" data-bs-toggle="tooltip" data-bs-trigger="hover focus" title="The internal ID of an enabled global model endpoint from Admin Settings > AI Models. This is an endpoint catalog ID, not a URL." aria-label="About global endpoint ID">
+                                    <i class="bi bi-info-circle" aria-hidden="true"></i>
+                                </button>
+                            </div>
                             <input type="text" class="form-control" id="chat_capability_planner_model_endpoint_id" name="chat_capability_planner_model_endpoint_id" maxlength="256" value="{{ settings.chat_capability_planner_model_endpoint_id|default('') }}" autocomplete="off" />
                         </div>
                         <div class="col-lg-4">
-                            <label class="form-label" for="chat_capability_planner_model_id">Model ID</label>
+                            <div class="d-flex align-items-center mb-1">
+                                <label class="form-label mb-0" for="chat_capability_planner_model_id">Model ID</label>
+                                <button type="button" class="btn btn-link p-0 ms-2 text-secondary lh-1" data-bs-toggle="tooltip" data-bs-trigger="hover focus" title="The internal model ID inside the selected global endpoint. It is not a candidate plan, capability ID, deployment label, or model display name." aria-label="About planner model ID">
+                                    <i class="bi bi-info-circle" aria-hidden="true"></i>
+                                </button>
+                            </div>
                             <input type="text" class="form-control" id="chat_capability_planner_model_id" name="chat_capability_planner_model_id" maxlength="256" value="{{ settings.chat_capability_planner_model_id|default('') }}" autocomplete="off" />
                         </div>
                         <div class="col-sm-6 col-xl-3">
-                            <label class="form-label" for="chat_capability_planner_timeout_ms">Timeout (ms)</label>
-                            <input type="number" class="form-control" id="chat_capability_planner_timeout_ms" name="chat_capability_planner_timeout_ms" min="250" max="10000" step="50" value="{{ settings.chat_capability_planner_timeout_ms|default(10000) }}" />
+                            <div class="d-flex align-items-center justify-content-between mb-1">
+                                <div class="d-flex align-items-center">
+                                    <label class="form-label mb-0" for="chat_capability_planner_timeout_ms">Planner timeout</label>
+                                    <button type="button" class="btn btn-link p-0 ms-2 text-secondary lh-1" data-bs-toggle="tooltip" data-bs-trigger="hover focus" title="Maximum wall-clock time for the non-executing planner model call. If it expires, the turn continues through the safe fallback path without planner activation." aria-label="About planner timeout">
+                                        <i class="bi bi-info-circle" aria-hidden="true"></i>
+                                    </button>
+                                </div>
+                                <output class="badge text-bg-secondary" id="chat-capability-planner-timeout-value" for="chat_capability_planner_timeout_ms">{{ settings.chat_capability_planner_timeout_ms|default(10000) }} ms</output>
+                            </div>
+                            <input type="range" class="form-range capability-planner-range" id="chat_capability_planner_timeout_ms" name="chat_capability_planner_timeout_ms" min="1000" max="20000" step="500" value="{{ settings.chat_capability_planner_timeout_ms|default(10000) }}" data-value-output="chat-capability-planner-timeout-value" data-value-format="timeout" />
+                            <div class="d-flex justify-content-between small text-muted"><span>1s</span><span>Recommended 10s</span><span>20s</span></div>
                         </div>
                         <div class="col-sm-6 col-xl-3">
-                            <label class="form-label" for="chat_capability_planner_max_completion_tokens">Completion tokens</label>
-                            <input type="number" class="form-control" id="chat_capability_planner_max_completion_tokens" name="chat_capability_planner_max_completion_tokens" min="64" max="1000" step="1" value="{{ settings.chat_capability_planner_max_completion_tokens|default(600) }}" />
+                            <div class="d-flex align-items-center justify-content-between mb-1">
+                                <div class="d-flex align-items-center">
+                                    <label class="form-label mb-0" for="chat_capability_planner_max_completion_tokens">Completion budget</label>
+                                    <button type="button" class="btn btn-link p-0 ms-2 text-secondary lh-1" data-bs-toggle="tooltip" data-bs-trigger="hover focus" title="Maximum tokens the planner may return for its compact structured decision. This does not limit the final answer or tool output." aria-label="About planner completion budget">
+                                        <i class="bi bi-info-circle" aria-hidden="true"></i>
+                                    </button>
+                                </div>
+                                <output class="badge text-bg-secondary" id="chat-capability-planner-token-value" for="chat_capability_planner_max_completion_tokens">{{ settings.chat_capability_planner_max_completion_tokens|default(600) }} tokens</output>
+                            </div>
+                            <input type="range" class="form-range capability-planner-range" id="chat_capability_planner_max_completion_tokens" name="chat_capability_planner_max_completion_tokens" min="64" max="1200" step="8" value="{{ settings.chat_capability_planner_max_completion_tokens|default(600) }}" data-value-output="chat-capability-planner-token-value" data-value-format="tokens" />
+                            <div class="d-flex justify-content-between small text-muted"><span>64</span><span>Recommended 600</span><span>1200</span></div>
                         </div>
                         <div class="col-sm-6 col-xl-3">
-                            <label class="form-label" for="chat_capability_planner_max_candidate_plans">Candidate plans</label>
-                            <input type="number" class="form-control" id="chat_capability_planner_max_candidate_plans" name="chat_capability_planner_max_candidate_plans" min="1" max="5" step="1" value="{{ settings.chat_capability_planner_max_candidate_plans|default(3) }}" />
+                            <div class="d-flex align-items-center mb-1">
+                                <label class="form-label mb-0" for="chat_capability_planner_max_candidate_plans">Candidate plans</label>
+                                <button type="button" class="btn btn-link p-0 ms-2 text-secondary lh-1" data-bs-toggle="tooltip" data-bs-trigger="hover focus" title="Maximum alternative plans the planner may return. Each plan is independently validated; returning more plans does not grant or execute capabilities." aria-label="About candidate plans">
+                                    <i class="bi bi-info-circle" aria-hidden="true"></i>
+                                </button>
+                            </div>
+                            <select class="form-select" id="chat_capability_planner_max_candidate_plans" name="chat_capability_planner_max_candidate_plans">
+                                {% for candidate_count in range(1, 7) %}
+                                <option value="{{ candidate_count }}" {% if settings.chat_capability_planner_max_candidate_plans|default(3)|int == candidate_count %}selected{% endif %}>{{ candidate_count }}</option>
+                                {% endfor %}
+                            </select>
+                            <div class="form-text">Three is recommended; six is the bounded maximum.</div>
                         </div>
                         <div class="col-sm-6 col-xl-3">
-                            <label class="form-label" for="chat_capability_planner_max_capabilities_per_plan">Capabilities per plan</label>
-                            <input type="number" class="form-control" id="chat_capability_planner_max_capabilities_per_plan" name="chat_capability_planner_max_capabilities_per_plan" min="1" max="8" step="1" value="{{ settings.chat_capability_planner_max_capabilities_per_plan|default(4) }}" />
+                            <div class="d-flex align-items-center justify-content-between mb-1">
+                                <div class="d-flex align-items-center">
+                                    <label class="form-label mb-0" for="chat_capability_planner_max_capabilities_per_plan">Capabilities per plan</label>
+                                    <button type="button" class="btn btn-link p-0 ms-2 text-secondary lh-1" data-bs-toggle="tooltip" data-bs-trigger="hover focus" title="Maximum capability additions in one candidate plan. Selected mandates and server-expanded dependencies are still enforced separately." aria-label="About capabilities per plan">
+                                        <i class="bi bi-info-circle" aria-hidden="true"></i>
+                                    </button>
+                                </div>
+                                <output class="badge text-bg-secondary" id="chat-capability-planner-capabilities-value" for="chat_capability_planner_max_capabilities_per_plan">{{ settings.chat_capability_planner_max_capabilities_per_plan|default(4) }}</output>
+                            </div>
+                            <input type="range" class="form-range capability-planner-range" id="chat_capability_planner_max_capabilities_per_plan" name="chat_capability_planner_max_capabilities_per_plan" min="1" max="8" step="1" value="{{ settings.chat_capability_planner_max_capabilities_per_plan|default(4) }}" data-value-output="chat-capability-planner-capabilities-value" data-value-format="capabilities" />
+                            <div class="d-flex justify-content-between small text-muted"><span>1</span><span>Recommended 4</span><span>8</span></div>
                         </div>
                     </div>
                 </div>

@@ -2,6 +2,7 @@
 
 Implemented in version: **0.250.069**
 Updated for governed planner activation in version: **0.250.072**
+Updated planner administration in version: **0.250.073**
 Associated issue: **[#1021](https://github.com/microsoft/simplechat/issues/1021)**
 
 ## Overview

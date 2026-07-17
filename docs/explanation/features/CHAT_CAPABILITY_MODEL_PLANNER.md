@@ -6,6 +6,8 @@ Hardened in version: **0.250.071**
 
 Governed activation implemented in version: **0.250.072**
 
+Admin configuration guidance enhanced in version: **0.250.073**
+
 Associated issue: **[#1021](https://github.com/microsoft/simplechat/issues/1021)**
 
 ## Overview
@@ -232,6 +234,25 @@ per-plan capability limits. Server normalization accepts only
 and forces incomplete configured-model selections back to `off`. The shipped
 default is `assist`; administrators may select `off` as a kill switch or return
 to `shadow` without altering already persisted proposals awaiting a decision.
+
+The Admin panel defines each mode and setting through visible descriptions and
+keyboard-accessible information tooltips:
+
+- `Assist` is the recommended operating mode. Eligible new turns call the
+  planner, and validated high-confidence additions appear as approval choices.
+- `Shadow` calls and evaluates the planner but does not change the answer path,
+  display proposals, or execute suggested capabilities.
+- `Off` skips the planner model call entirely.
+- `Same as selected chat model` plans with the model selected for each turn.
+  `Configured global model` instead requires the internal global endpoint ID
+  and model ID from the Admin model-endpoint catalog; these values are not URLs,
+  deployment labels, candidate plans, or capability IDs.
+- Planner timeout uses a 1-20 second slider with 10 seconds recommended.
+- Completion budget uses a 64-1200 token slider with 600 recommended. It limits
+  only the compact planner JSON, not the final response or tool output.
+- Candidate plans is a 1-6 option set with 3 recommended.
+- Capabilities per plan uses a 1-8 slider with 4 recommended. Selected mandates
+  and server-expanded dependencies remain governed separately.
 
 ## Privacy And Observability
 

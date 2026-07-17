@@ -165,17 +165,17 @@ def normalize_chat_capability_planner_settings(settings):
         'chat_capability_planner_timeout_ms': bounded_int(
             'chat_capability_planner_timeout_ms',
             minimum=250,
-            maximum=10000,
+            maximum=20000,
         ),
         'chat_capability_planner_max_completion_tokens': bounded_int(
             'chat_capability_planner_max_completion_tokens',
             minimum=64,
-            maximum=1000,
+            maximum=1200,
         ),
         'chat_capability_planner_max_candidate_plans': bounded_int(
             'chat_capability_planner_max_candidate_plans',
             minimum=1,
-            maximum=5,
+            maximum=6,
         ),
         'chat_capability_planner_max_capabilities_per_plan': bounded_int(
             'chat_capability_planner_max_capabilities_per_plan',

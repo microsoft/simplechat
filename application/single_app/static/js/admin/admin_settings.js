@@ -4290,6 +4290,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setupFileDownloadAssignments();
     setupLandingPageLogoScaleControl();
     setupDocumentActionCapabilityControls();
+    setupCapabilityPlannerControls();
     setupDeepResearchPolicyEditors();
     setupDeepResearchAllowedUsersManager();
     
@@ -9665,6 +9666,89 @@ function setupDocumentActionCapabilityControls() {
         numberInput.addEventListener('change', () => syncFromNumber(true));
 
         syncFromNumber(true);
+    });
+}
+
+function setupCapabilityPlannerControls() {
+    const panel = document.getElementById('chat-capability-planner-section');
+    if (!panel) {
+        return;
+    }
+
+    const modeDescriptions = {
+        off: {
+            title: 'Off',
+            text: 'Skips the planner model call. Chat uses explicitly selected capabilities and deterministic server behavior only.',
+        },
+        shadow: {
+            title: 'Shadow',
+            text: 'Calls and evaluates the planner, but never shows its proposals, changes the answer path, or executes suggested capabilities.',
+        },
+        assist: {
+            title: 'Assist',
+            text: 'Calls the planner on eligible new turns. Validated high-confidence additions are shown for approval, then reauthorized and executed before the final response.',
+        },
+    };
+    const modeInputs = panel.querySelectorAll('input[name="chat_capability_planner_mode"]');
+    const modeTitle = document.getElementById('chat-capability-planner-mode-title');
+    const modeText = document.getElementById('chat-capability-planner-mode-text');
+
+    const updateModeDescription = () => {
+        const selectedMode = [...modeInputs].find(input => input.checked)?.value || 'assist';
+        const description = modeDescriptions[selectedMode] || modeDescriptions.assist;
+        if (modeTitle) {
+            modeTitle.textContent = description.title;
+        }
+        if (modeText) {
+            modeText.textContent = description.text;
+        }
+    };
+
+    modeInputs.forEach(input => input.addEventListener('change', updateModeDescription));
+    updateModeDescription();
+
+    const modelSource = document.getElementById('chat_capability_planner_model_source');
+    const configuredModelFields = [
+        document.getElementById('chat_capability_planner_model_endpoint_id'),
+        document.getElementById('chat_capability_planner_model_id'),
+    ].filter(Boolean);
+    const updateConfiguredModelFields = () => {
+        const usesConfiguredModel = modelSource?.value === 'configured';
+        configuredModelFields.forEach(field => {
+            field.readOnly = !usesConfiguredModel;
+            field.setAttribute('aria-disabled', `${!usesConfiguredModel}`);
+            field.classList.toggle('bg-body-secondary', !usesConfiguredModel);
+        });
+    };
+
+    modelSource?.addEventListener('change', updateConfiguredModelFields);
+    updateConfiguredModelFields();
+
+    panel.querySelectorAll('.capability-planner-range').forEach(rangeInput => {
+        const outputId = rangeInput.getAttribute('data-value-output');
+        const valueOutput = outputId ? document.getElementById(outputId) : null;
+        const valueFormat = rangeInput.getAttribute('data-value-format');
+
+        const formatValue = () => {
+            const numericValue = Number.parseInt(rangeInput.value, 10);
+            if (Number.isNaN(numericValue) || !valueOutput) {
+                return;
+            }
+            if (valueFormat === 'timeout') {
+                const seconds = numericValue / 1000;
+                valueOutput.textContent = `${seconds.toLocaleString()}s (${numericValue.toLocaleString()} ms)`;
+            } else if (valueFormat === 'tokens') {
+                valueOutput.textContent = `${numericValue.toLocaleString()} tokens`;
+            } else if (valueFormat === 'capabilities') {
+                valueOutput.textContent = `${numericValue} capabilities`;
+            } else {
+                valueOutput.textContent = `${numericValue}`;
+            }
+        };
+
+        rangeInput.addEventListener('input', formatValue);
+        rangeInput.addEventListener('change', formatValue);
+        formatValue();
     });
 }
 

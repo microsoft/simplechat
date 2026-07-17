@@ -1,8 +1,8 @@
 # test_chat_capability_model_planner.py
 """
 Functional test for the model-assisted chat capability planner contract.
-Version: 0.250.072
-Implemented in: 0.250.069; default activation updated in 0.250.072
+Version: 0.250.073
+Implemented in: 0.250.069; Admin bounds updated in 0.250.073
 
 This test ensures planner requests expose only safe authorized capability
 descriptors and untrusted planner results fail closed before execution.
@@ -570,7 +570,7 @@ def test_protocol_fallback_is_bounded_and_arbitrary_failures_are_not_retried():
     )
     assert fallback_result['status'] == 'valid'
     assert fallback_result['fallback_used'] is True
-    assert fallback_client.options == [{'timeout': 5.0, 'max_retries': 0}]
+    assert fallback_client.options == [{'timeout': 10.0, 'max_retries': 0}]
     assert len(fallback_client.requests) == 5
     assert 'response_format' not in fallback_client.requests[-1]
 
@@ -898,10 +898,21 @@ def test_planner_settings_normalize_closed_and_stay_backend_only():
         'chat_capability_planner_model_source': 'same_as_chat',
     })
     assert bounded['chat_capability_planner_mode'] == 'shadow'
-    assert bounded['chat_capability_planner_timeout_ms'] == 10000
+    assert bounded['chat_capability_planner_timeout_ms'] == 20000
     assert bounded['chat_capability_planner_max_completion_tokens'] == 64
-    assert bounded['chat_capability_planner_max_candidate_plans'] == 5
+    assert bounded['chat_capability_planner_max_candidate_plans'] == 6
     assert bounded['chat_capability_planner_max_capabilities_per_plan'] == 1
+
+    upper_bounded = normalize_chat_capability_planner_settings({
+        'chat_capability_planner_timeout_ms': 999999,
+        'chat_capability_planner_max_completion_tokens': 999999,
+        'chat_capability_planner_max_candidate_plans': 999999,
+        'chat_capability_planner_max_capabilities_per_plan': 999999,
+    })
+    assert upper_bounded['chat_capability_planner_timeout_ms'] == 20000
+    assert upper_bounded['chat_capability_planner_max_completion_tokens'] == 1200
+    assert upper_bounded['chat_capability_planner_max_candidate_plans'] == 6
+    assert upper_bounded['chat_capability_planner_max_capabilities_per_plan'] == 8
 
     invalid = normalize_chat_capability_planner_settings({
         'chat_capability_planner_mode': 'assist',

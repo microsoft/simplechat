@@ -2,6 +2,17 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.073)**
+
+#### User Interface Enhancements
+
+*   **Capability Planner Administration Guidance**
+    *   Added clear definitions for Off, Shadow, and Assist, with Assist identified as the recommended mode for normal multi-stage planning.
+    *   Added keyboard-accessible information tooltips for planner mode, model source, global endpoint ID, model ID, timeout, completion budget, candidate plans, and capabilities per plan.
+    *   Replaced numeric timeout and completion fields with synchronized sliders, changed candidate plans to a bounded dropdown, and changed capabilities per plan to a slider with visible recommended values and limits.
+    *   Expanded bounded administrator headroom to 20 seconds, 1,200 completion tokens, six candidate plans, and eight capabilities per plan while retaining server-side normalization and authorization.
+    *   (Ref: microsoft/simplechat#1021, `admin_settings.html`, `admin_settings.js`, `functions_chat_capability_planner.py`, `functions_settings.py`)
+
 ### **(v0.250.072)**
 
 #### New Features
