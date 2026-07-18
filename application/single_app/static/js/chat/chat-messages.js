@@ -25,6 +25,7 @@ import { createThoughtsToggleHtml, attachThoughtsToggleListener } from './chat-t
 import { destroyInlineCharts, extractInlineChartBlocks, hydrateInlineCharts, injectInlineChartHtml, restoreInlineChartTokens } from './chat-inline-charts.js';
 import { attachGeneratedImageProposalResults, extractInlineImageProposalBlocks, hydrateInlineImageProposals, injectInlineImageProposalHtml, restoreInlineImageProposalTokens } from './chat-inline-image-proposals.js';
 import { hydrateCapabilityChoice } from './chat-capability-choice.js';
+import { hydrateChatClarification } from './chat-clarification.js';
 import { renderInlineVideoGalleries } from './chat-inline-videos.js';
 import { renderInlineImageGalleries } from './chat-inline-images.js';
 import { renderInlineAzureMaps } from './chat-inline-maps.js';
@@ -4987,6 +4988,21 @@ export function appendMessage(
           reject(new Error('The resumed chat could not be started.'));
         }
       }),
+    });
+    hydrateChatClarification(messageDiv, fullMessageObject?.metadata || null, {
+      onSubmit: clarificationValue => {
+        if (!userInput || !String(clarificationValue || '').trim()) {
+          return false;
+        }
+        userInput.value = String(clarificationValue).trim();
+        userInput.dispatchEvent(new Event('input', { bubbles: true }));
+        updateSendButtonVisibility();
+        sendMessage();
+        return true;
+      },
+      onFocusInput: () => {
+        userInput?.focus();
+      },
     });
 
     // --- Attach Event Listeners specifically for AI message ---

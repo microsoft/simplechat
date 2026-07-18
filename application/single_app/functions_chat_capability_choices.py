@@ -2,6 +2,9 @@
 """Durable capability proposal, decision, and resume contracts."""
 
 import copy
+import hashlib
+import hmac
+import json
 import re
 import uuid
 from collections.abc import Mapping
@@ -17,8 +20,13 @@ from functions_chat_capabilities import (
 )
 
 
-CAPABILITY_CHOICE_VERSION = 2
+CAPABILITY_CHOICE_VERSION = 3
 CAPABILITY_PROVENANCE_VERSION = 2
+APPROVED_USER_TURN_GOAL_VERSION = 1
+MAX_APPROVED_GOAL_SOURCE_TURNS = 3
+MAX_APPROVED_GOAL_DISPLAY_CHARS = 240
+MAX_CLIENT_CLARIFICATION_OPTIONS = 6
+MAX_CLIENT_CLARIFICATION_OPTION_CHARS = 120
 DEFAULT_CAPABILITY_CHOICE_TTL_SECONDS = 86400
 MAX_CAPABILITY_CHOICE_TTL_SECONDS = 604800
 CAPABILITY_RESUME_LEASE_SECONDS = 1800
@@ -53,6 +61,10 @@ PARCEL_LOOKUP_PATTERN = re.compile(
     r'at\s+the\s+(?:property|address))\b',
     re.IGNORECASE,
 )
+
+_CLIENT_PRIVATE_METADATA_KEYS = frozenset({
+    'capability_resume_request',
+})
 
 
 class CapabilityChoiceError(ValueError):
@@ -114,6 +126,262 @@ def _normalize_labels(values, *, max_items=8):
     return normalized
 
 
+def _goal_source_record(message, *, conversation_id):
+    if not isinstance(message, Mapping):
+        raise CapabilityChoiceError(
+            'goal source message is invalid',
+            code='goal_source_invalid',
+        )
+    message_id = _normalize_identifier(message.get('id'), 'source_user_message_id')
+    if (
+        message.get('conversation_id') != conversation_id
+        or message.get('role') != 'user'
+    ):
+        raise CapabilityChoiceError(
+            'goal source message is outside the authorized conversation',
+            code='goal_source_invalid',
+        )
+    metadata = message.get('metadata') if isinstance(message.get('metadata'), Mapping) else {}
+    thread_info = (
+        metadata.get('thread_info')
+        if isinstance(metadata.get('thread_info'), Mapping)
+        else {}
+    )
+    if (
+        metadata.get('is_deleted') is True
+        or metadata.get('masked') is True
+        or bool(metadata.get('masked_ranges') or [])
+        or metadata.get('is_generated_chat_artifact') is True
+        or thread_info.get('active_thread') is False
+    ):
+        raise CapabilityChoiceError(
+            'goal source message is no longer active',
+            code='goal_source_inactive',
+        )
+    thread_id = str(thread_info.get('thread_id') or '').strip()
+    if not thread_id:
+        raise CapabilityChoiceError(
+            'goal source message has no active thread binding',
+            code='goal_source_thread_invalid',
+        )
+    content = str(message.get('content') or '').strip()
+    if not content:
+        raise CapabilityChoiceError(
+            'goal source message is empty',
+            code='goal_source_invalid',
+        )
+    return {
+        'message_id': message_id,
+        'content_hash': hashlib.sha256(content.encode('utf-8')).hexdigest(),
+        'thread_id': thread_id,
+        'previous_thread_id': str(
+            thread_info.get('previous_thread_id') or ''
+        ).strip(),
+        'thread_attempt': int(thread_info.get('thread_attempt') or 1),
+    }, content
+
+
+def build_approved_user_turn_goal(
+    source_user_messages,
+    *,
+    conversation_id,
+    current_user_message_id,
+    display_summary=None,
+    approved_by_option_id=None,
+    approved_sensitive_input_types=None,
+):
+    """Build a bounded server-owned goal from exact active user documents."""
+    conversation_id = _normalize_identifier(conversation_id, 'conversation_id')
+    current_user_message_id = _normalize_identifier(
+        current_user_message_id,
+        'current_user_message_id',
+    )
+    raw_messages = (
+        source_user_messages
+        if isinstance(source_user_messages, list)
+        else []
+    )
+    if not 1 <= len(raw_messages) <= MAX_APPROVED_GOAL_SOURCE_TURNS:
+        raise CapabilityChoiceError(
+            'approved goal must contain one to three user turns',
+            code='goal_source_count_invalid',
+        )
+    source_records = []
+    source_contents = []
+    for message in raw_messages:
+        source_record, content = _goal_source_record(
+            message,
+            conversation_id=conversation_id,
+        )
+        if source_record['message_id'] in {
+            item['message_id']
+            for item in source_records
+        }:
+            raise CapabilityChoiceError(
+                'approved goal source turns must be unique',
+                code='goal_source_duplicate',
+            )
+        source_records.append(source_record)
+        source_contents.append(content)
+    source_ids = [record['message_id'] for record in source_records]
+    if current_user_message_id not in source_ids:
+        raise CapabilityChoiceError(
+            'approved goal must include the current user turn',
+            code='goal_current_turn_missing',
+        )
+    combined_user_text = '\n'.join(source_contents)
+    contextual_query = ' '.join(combined_user_text.split())[:1000]
+    minimized = build_minimized_external_query(
+        combined_user_text,
+        approved_sensitive_input_types=approved_sensitive_input_types,
+    )
+    prior_user_turn_included = any(
+        message_id != current_user_message_id
+        for message_id in source_ids
+    )
+    if display_summary is None:
+        summary_source = next(
+            (
+                content
+                for message_id, content in zip(source_ids, source_contents)
+                if message_id != current_user_message_id
+            ),
+            source_contents[-1],
+        )
+        display_summary = ' '.join(summary_source.split())
+    normalized_summary = ' '.join(str(display_summary or '').split())[
+        :MAX_APPROVED_GOAL_DISPLAY_CHARS
+    ]
+    return {
+        'version': APPROVED_USER_TURN_GOAL_VERSION,
+        'source': 'approved_user_turn_goal',
+        'conversation_id': conversation_id,
+        'current_user_message_id': current_user_message_id,
+        'source_user_message_ids': source_ids,
+        'source_turn_lineage': source_records,
+        'display_summary': normalized_summary,
+        'contextual_query': contextual_query,
+        'external_query': minimized['query'],
+        'omitted_sensitive_input_types': list(
+            minimized['omitted_sensitive_input_types']
+        ),
+        'prior_user_turn_included': prior_user_turn_included,
+        'assistant_text_included': False,
+        'workspace_content_included': False,
+        'approved_by_option_id': (
+            _normalize_identifier(approved_by_option_id, 'approved_by_option_id')
+            if approved_by_option_id
+            else None
+        ),
+    }
+
+
+def rebuild_approved_user_turn_goal(
+    stored_goal,
+    source_user_messages,
+    *,
+    approved_sensitive_input_types=None,
+):
+    """Rebuild a stored goal from exact documents and reject changed lineage."""
+    if not isinstance(stored_goal, Mapping) or (
+        stored_goal.get('version') != APPROVED_USER_TURN_GOAL_VERSION
+        or stored_goal.get('source') != 'approved_user_turn_goal'
+    ):
+        raise CapabilityChoiceError(
+            'approved goal metadata is invalid',
+            code='goal_metadata_invalid',
+        )
+    rebuilt = build_approved_user_turn_goal(
+        source_user_messages,
+        conversation_id=stored_goal.get('conversation_id'),
+        current_user_message_id=stored_goal.get('current_user_message_id'),
+        display_summary=stored_goal.get('display_summary'),
+        approved_by_option_id=stored_goal.get('approved_by_option_id'),
+        approved_sensitive_input_types=approved_sensitive_input_types,
+    )
+    expected_ids = list(stored_goal.get('source_user_message_ids') or [])
+    if rebuilt['source_user_message_ids'] != expected_ids:
+        raise CapabilityChoiceError(
+            'approved goal source turns changed',
+            code='goal_source_changed',
+        )
+    expected_lineage = stored_goal.get('source_turn_lineage') or []
+    if len(expected_lineage) != len(rebuilt['source_turn_lineage']):
+        raise CapabilityChoiceError(
+            'approved goal lineage changed',
+            code='goal_source_changed',
+        )
+    for expected, actual in zip(expected_lineage, rebuilt['source_turn_lineage']):
+        expected_hash = str(expected.get('content_hash') or '') if isinstance(expected, Mapping) else ''
+        actual_hash = str(actual.get('content_hash') or '')
+        expected_binding = {
+            key: expected.get(key)
+            for key in (
+                'message_id',
+                'thread_id',
+                'previous_thread_id',
+                'thread_attempt',
+            )
+        } if isinstance(expected, Mapping) else {}
+        actual_binding = {
+            key: actual.get(key)
+            for key in expected_binding
+        }
+        if (
+            not expected_hash
+            or not hmac.compare_digest(expected_hash, actual_hash)
+            or expected_binding != actual_binding
+        ):
+            raise CapabilityChoiceError(
+                'approved goal source content or lineage changed',
+                code='goal_source_changed',
+            )
+    return rebuilt
+
+
+def project_chat_metadata_for_client(metadata):
+    """Remove server-only execution and contextual lineage from client metadata."""
+    def project(value, key_name=None):
+        if key_name == 'chat_clarification' and isinstance(value, Mapping):
+            return {
+                'version': value.get('version'),
+                'code': str(value.get('code') or '')[:64],
+                'question': str(value.get('question') or '')[:240],
+                'status': str(value.get('status') or '')[:32],
+                'options': [
+                    str(option or '')[:MAX_CLIENT_CLARIFICATION_OPTION_CHARS]
+                    for option in value.get('options') or []
+                    if str(option or '').strip()
+                ][:MAX_CLIENT_CLARIFICATION_OPTIONS],
+                'created_at': value.get('created_at'),
+                'expires_at': value.get('expires_at'),
+                'resolved_at': value.get('resolved_at'),
+                'response_mode': value.get('response_mode'),
+            }
+        if key_name == 'clarification_response' and isinstance(value, Mapping):
+            return {
+                'version': value.get('version'),
+                'code': str(value.get('code') or '')[:64],
+                'status': str(value.get('status') or '')[:32],
+                'response_mode': str(value.get('response_mode') or '')[:32],
+                'idempotent': value.get('idempotent') is True,
+            }
+        if isinstance(value, Mapping):
+            return {
+                str(key): project(item, str(key))
+                for key, item in value.items()
+                if (
+                    not str(key).startswith('_')
+                    and str(key) not in _CLIENT_PRIVATE_METADATA_KEYS
+                )
+            }
+        if isinstance(value, list):
+            return [project(item) for item in value]
+        return copy.deepcopy(value)
+
+    return project(metadata if isinstance(metadata, Mapping) else {})
+
+
 def _normalize_options(options):
     normalized_options = []
     seen_option_ids = set()
@@ -127,7 +395,7 @@ def _normalize_options(options):
         option_kind = str(raw_option.get('kind') or 'capability').strip().lower()
         if option_id == CONTINUE_WITHOUT_CAPABILITIES_OPTION_ID:
             option_kind = 'continue'
-        if option_kind not in {'capability', 'agent', 'continue'}:
+        if option_kind not in {'capability', 'agent', 'context', 'continue'}:
             raise CapabilityChoiceError('proposal option kind is invalid', code='invalid_option_kind')
         capability_ids = _normalize_identifiers(raw_option.get('capability_ids'), max_items=8)
         effective_ids = _normalize_identifiers(
@@ -152,6 +420,18 @@ def _normalize_options(options):
                 raise CapabilityChoiceError(
                     'agent option reference is invalid',
                     code='invalid_agent_option_reference',
+                )
+        elif option_kind == 'context':
+            if (
+                capability_ids
+                or not effective_ids
+                or agent_ref
+                or raw_option.get('external_data') is not True
+                or raw_option.get('read_only') is not True
+            ):
+                raise CapabilityChoiceError(
+                    'context options must bind read-only external capabilities',
+                    code='invalid_context_option',
                 )
         elif not capability_ids:
             raise CapabilityChoiceError(
@@ -186,6 +466,8 @@ def _normalize_options(options):
                 max_items=8,
             ),
         }
+        if option_kind == 'context':
+            normalized_option['approval_scope'] = 'prior_user_goal_egress'
         if option_kind == 'agent':
             normalized_option.update({
                 'agent_ref': agent_ref,
@@ -319,7 +601,13 @@ def add_sensitive_external_query_options(
         if not isinstance(option, Mapping):
             continue
         normalized_option = dict(option)
-        if normalized_option.get('external_data') and normalized_option.get('capability_ids'):
+        if (
+            normalized_option.get('external_data')
+            and (
+                normalized_option.get('capability_ids')
+                or normalized_option.get('kind') == 'context'
+            )
+        ):
             normalized_option['external_query_mode'] = 'minimized'
             updated_options.append(normalized_option)
             sensitive_option = dict(normalized_option)
@@ -369,6 +657,8 @@ def build_capability_choice_proposal(
     conversation_id,
     user_message_id,
     assistant_message_id=None,
+    approved_user_turn_goal=None,
+    capability_inventory=None,
     now=None,
     ttl_seconds=DEFAULT_CAPABILITY_CHOICE_TTL_SECONDS,
 ):
@@ -384,8 +674,58 @@ def build_capability_choice_proposal(
         normalized_ttl = DEFAULT_CAPABILITY_CHOICE_TTL_SECONDS
     normalized_ttl = max(60, min(normalized_ttl, MAX_CAPABILITY_CHOICE_TTL_SECONDS))
     proposal_id = str(assistant_message_id or uuid.uuid4())
-    options = _normalize_options(recommendation.get('options'))
+    private_goal = (
+        copy.deepcopy(dict(approved_user_turn_goal))
+        if isinstance(approved_user_turn_goal, Mapping)
+        else None
+    )
+    raw_options = copy.deepcopy(list(recommendation.get('options') or []))
+    if private_goal:
+        if (
+            private_goal.get('version') != APPROVED_USER_TURN_GOAL_VERSION
+            or private_goal.get('source') != 'approved_user_turn_goal'
+            or private_goal.get('conversation_id') != conversation_id
+            or private_goal.get('current_user_message_id') != user_message_id
+            or private_goal.get('prior_user_turn_included') is not True
+        ):
+            raise CapabilityChoiceError(
+                'approved prior-user goal is invalid for this proposal',
+                code='goal_metadata_invalid',
+            )
+        for raw_option in raw_options:
+            if (
+                isinstance(raw_option, Mapping)
+                and raw_option.get('external_data') is True
+                and raw_option.get('id') != CONTINUE_WITHOUT_CAPABILITIES_OPTION_ID
+            ):
+                raw_option['prior_goal_included'] = True
+                raw_option['goal_source_count'] = len(
+                    private_goal.get('source_user_message_ids') or []
+                )
+                raw_option['goal_display_summary'] = private_goal.get(
+                    'display_summary'
+                )
+    options = _normalize_options(raw_options)
+    if private_goal and not any(
+        option.get('kind') != 'continue'
+        for option in options
+    ):
+        raise CapabilityChoiceError(
+            'contextual user goal requires an actionable option',
+            code='goal_action_option_missing',
+        )
     option_ids = {option['id'] for option in options}
+    external_capability_ids = sorted({
+        str(entry.get('id') or '').strip()
+        for entry in (
+            capability_inventory.get('capabilities')
+            if isinstance(capability_inventory, Mapping)
+            else []
+        ) or []
+        if isinstance(entry, Mapping)
+        and entry.get('external_data') is True
+        and str(entry.get('id') or '').strip()
+    })[:8]
     recommended_option_id = _normalize_identifier(
         recommendation.get('recommended_option_id'),
         'recommended_option_id',
@@ -416,6 +756,22 @@ def build_capability_choice_proposal(
         'sensitive_data_notice_required': bool(
             recommendation.get('sensitive_data_notice_required')
         ),
+        'prior_goal_included': bool(private_goal),
+        'goal_source_count': min(
+            len(private_goal.get('source_user_message_ids') or [])
+            if private_goal
+            else 0,
+            MAX_APPROVED_GOAL_SOURCE_TURNS,
+        ),
+        'goal_display_summary': (
+            str(private_goal.get('display_summary') or '')[
+                :MAX_APPROVED_GOAL_DISPLAY_CHARS
+            ]
+            if private_goal
+            else ''
+        ),
+        '_external_capability_ids': external_capability_ids,
+        '_approved_user_turn_goal': private_goal,
         'recommended_option_id': recommended_option_id,
         'options': options,
         'created_at': current_time.isoformat(),
@@ -491,9 +847,13 @@ def apply_capability_choice_decision(proposal, option_id, *, actor_user_id, now=
         )
     capability_ids = list(option.get('capability_ids') or [])
     agent_ref = str(option.get('agent_ref') or '').strip() or None
-    decision_status = 'declined' if not capability_ids and not agent_ref else 'approved'
+    decision_status = (
+        'declined'
+        if option.get('kind') == 'continue'
+        else 'approved'
+    )
     updated['status'] = decision_status
-    updated['decision'] = {
+    decision = {
         'option_id': normalized_option_id,
         'status': decision_status,
         'capability_ids': capability_ids,
@@ -504,6 +864,25 @@ def apply_capability_choice_decision(proposal, option_id, *, actor_user_id, now=
         'actor_user_id': actor_user_id,
         'decided_at': current_time.isoformat(),
     }
+    if updated.get('prior_goal_included') is True:
+        decision.update({
+            'approval_scope': (
+                'prior_user_goal_egress_declined'
+                if decision_status == 'declined'
+                else option.get('approval_scope') or 'contextual_capability'
+            ),
+            'contextual_goal_included': decision_status == 'approved',
+            'prior_goal_included': bool(
+                decision_status == 'approved'
+                and option.get('external_data') is True
+            ),
+            'goal_source_count': (
+                updated.get('goal_source_count', 0)
+                if decision_status == 'approved'
+                else 0
+            ),
+        })
+    updated['decision'] = decision
     updated['resume'] = {
         'status': 'pending',
         'execution_id': None,
@@ -514,6 +893,15 @@ def apply_capability_choice_decision(proposal, option_id, *, actor_user_id, now=
         'completed_at': None,
         'error_type': None,
     }
+    private_goal = updated.get('_approved_user_turn_goal')
+    if isinstance(private_goal, Mapping):
+        private_goal = copy.deepcopy(dict(private_goal))
+        private_goal['approved_by_option_id'] = (
+            normalized_option_id
+            if decision_status == 'approved'
+            else None
+        )
+        updated['_approved_user_turn_goal'] = private_goal
     return updated, False
 
 
@@ -557,6 +945,25 @@ def revalidate_capability_choice(proposal, inventory):
         raise CapabilityChoiceError(
             'the approved decision no longer matches its server-authored option',
             code='capability_decision_mismatch',
+        )
+    private_goal = proposal.get('_approved_user_turn_goal')
+    if decision.get('contextual_goal_included') is True:
+        if not (
+            isinstance(private_goal, Mapping)
+            and private_goal.get('approved_by_option_id')
+            == decision.get('option_id')
+        ):
+            raise CapabilityChoiceError(
+                'approved prior-user goal no longer matches the option decision',
+                code='goal_approval_mismatch',
+            )
+    if (
+        decision.get('prior_goal_included') is True
+        and approved_option.get('external_data') is not True
+    ):
+        raise CapabilityChoiceError(
+            'approved external goal no longer matches an external option',
+            code='goal_approval_mismatch',
         )
     for capability_id in effective_capability_ids:
         entry = entries_by_id.get(capability_id)
@@ -855,6 +1262,78 @@ def revalidate_capability_execution_baseline(
                 code='capability_policy_blocked',
             )
     return True
+
+
+def build_decline_aware_execution_baseline(
+    proposal,
+    refreshed_inventory,
+    *,
+    selected_capability_ids=None,
+    prior_effective_capabilities=None,
+    automatic_capability_root_ids=None,
+    automatic_capability_effective_ids=None,
+):
+    """Exclude only proposal-bound external capabilities after explicit decline."""
+    decision = (
+        proposal.get('decision')
+        if isinstance(proposal, Mapping)
+        and isinstance(proposal.get('decision'), Mapping)
+        else {}
+    )
+    if decision.get('approval_scope') != 'prior_user_goal_egress_declined':
+        return {
+            'selected_capability_ids': selected_capability_ids,
+            'prior_effective_capabilities': prior_effective_capabilities,
+            'automatic_capability_root_ids': automatic_capability_root_ids,
+            'automatic_capability_effective_ids': (
+                automatic_capability_effective_ids
+            ),
+        }
+    external_capability_ids = {
+        str(capability_id or '').strip()
+        for capability_id in proposal.get('_external_capability_ids') or []
+        if str(capability_id or '').strip()
+    }
+    if not external_capability_ids:
+        external_capability_ids = {
+            str(entry.get('id') or '').strip()
+            for entry in (
+                refreshed_inventory.get('capabilities')
+                if isinstance(refreshed_inventory, Mapping)
+                else []
+            ) or []
+            if isinstance(entry, Mapping)
+            and entry.get('external_data') is True
+            and str(entry.get('id') or '').strip()
+        }
+
+    def filtered_ids(values):
+        if values is None:
+            return None
+        return [
+            capability_id
+            for capability_id in values
+            if str(capability_id or '').strip() not in external_capability_ids
+        ]
+
+    return {
+        'selected_capability_ids': filtered_ids(selected_capability_ids),
+        'prior_effective_capabilities': [
+            item
+            for item in prior_effective_capabilities or []
+            if not (
+                isinstance(item, Mapping)
+                and str(item.get('id') or '').strip()
+                in external_capability_ids
+            )
+        ],
+        'automatic_capability_root_ids': filtered_ids(
+            automatic_capability_root_ids
+        ),
+        'automatic_capability_effective_ids': filtered_ids(
+            automatic_capability_effective_ids
+        ),
+    }
 
 
 def revalidate_capability_execution_compatibility(

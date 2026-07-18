@@ -22,6 +22,7 @@ from functions_azure_maps import (
 from functions_authentication import *
 from functions_debug import debug_print
 from functions_chat import sort_messages_by_thread
+from functions_chat_capability_choices import project_chat_metadata_for_client
 from functions_collaboration import (
     assert_user_can_view_collaboration_conversation,
     build_collaboration_message_metadata_payload,
@@ -52,6 +53,16 @@ def _authorize_frontend_personal_conversation_access(user_id, conversation_id):
         raise PermissionError('Forbidden')
 
     return conversation_item
+
+
+def _project_message_for_client(message):
+    if not isinstance(message, dict):
+        return message
+    projected = dict(message)
+    projected['metadata'] = project_chat_metadata_for_client(
+        projected.get('metadata')
+    )
+    return projected
 
 def register_route_frontend_conversations(bp):
     def _disable_response_caching(response):
@@ -128,6 +139,7 @@ def register_route_frontend_conversations(bp):
         messages = filter_assistant_artifact_items(messages)
         messages = hydrate_agent_citations_from_artifacts(messages, artifact_payload_map)
         messages = _refresh_azure_maps_message_payloads(messages)
+        messages = [_project_message_for_client(message) for message in messages]
         return render_template('chat.html', conversation_id=conversation_id, messages=messages)
     
     @bp.route('/conversation/<conversation_id>/messages', methods=['GET'])
@@ -205,6 +217,7 @@ def register_route_frontend_conversations(bp):
             all_items,
             image_url_builder=lambda image_id: f"/api/image/{image_id}",
         )
+        messages = [_project_message_for_client(message) for message in messages]
 
         # Remove file content for security
         for m in messages:
@@ -401,11 +414,13 @@ def register_route_frontend_conversations(bp):
             
             if message_role == 'user':
                 # User messages - return nested metadata object
-                metadata = message.get('metadata', {})
+                metadata = project_chat_metadata_for_client(
+                    message.get('metadata', {})
+                )
                 return jsonify(metadata)
             else:
                 # Assistant, image, file messages - return full document
-                return jsonify(message)
+                return jsonify(_project_message_for_client(message))
 
         except CosmosResourceNotFoundError:
             return jsonify({'error': 'Message not found'}), 404

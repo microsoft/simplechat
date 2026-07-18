@@ -8,6 +8,12 @@ from collaboration_models import GROUP_MULTI_USER_CHAT_TYPE, PERSONAL_MULTI_USER
 from config import *
 from functions_appinsights import log_event
 from functions_authentication import *
+from functions_chat_capability_choices import project_chat_metadata_for_client
+from functions_chat_clarifications import (
+    ChatClarificationError,
+    read_chat_clarification_message,
+    validate_chat_clarification_retry,
+)
 from functions_collaboration import (
     assert_user_can_view_collaboration_conversation,
     assert_user_can_participate_in_collaboration_conversation,
@@ -63,6 +69,80 @@ from swagger_wrapper import swagger_route, get_auth_security
 from functions_activity_logging import log_conversation_creation, log_conversation_deletion, log_conversation_archival
 from functions_thoughts import archive_thoughts_for_conversation, delete_thoughts_for_conversation
 from utils_cache import invalidate_personal_search_cache
+
+
+def _project_message_for_client(message):
+    if not isinstance(message, dict):
+        return message
+    projected = dict(message)
+    projected['metadata'] = project_chat_metadata_for_client(
+        projected.get('metadata')
+    )
+    return projected
+
+
+def _find_user_message_for_thread_attempt(
+    conversation_id,
+    thread_id,
+    thread_attempt,
+):
+    """Read the exact user attempt for an authorized conversation thread."""
+    rows = list(cosmos_messages_container.query_items(
+        query=(
+            'SELECT * FROM c '
+            'WHERE c.conversation_id = @conversation_id '
+            'AND c.metadata.thread_info.thread_id = @thread_id '
+            'AND c.metadata.thread_info.thread_attempt = @thread_attempt '
+            'AND c.role = "user" '
+        ),
+        parameters=[
+            {'name': '@conversation_id', 'value': conversation_id},
+            {'name': '@thread_id', 'value': thread_id},
+            {'name': '@thread_attempt', 'value': thread_attempt},
+        ],
+        partition_key=conversation_id,
+    ))
+    return rows[0] if len(rows) == 1 else None
+
+
+def _validate_linked_clarification_retry(
+    conversation_id,
+    response_message,
+    proposed_text,
+):
+    """Validate a clarification-linked response before thread mutation."""
+    metadata = (
+        response_message.get('metadata')
+        if isinstance(response_message, dict)
+        and isinstance(response_message.get('metadata'), dict)
+        else {}
+    )
+    clarification_response = (
+        metadata.get('clarification_response')
+        if isinstance(metadata.get('clarification_response'), dict)
+        else {}
+    )
+    clarification_id = str(
+        clarification_response.get('_clarification_id') or ''
+    ).strip()
+    if not clarification_id:
+        return None
+    try:
+        _, clarification = read_chat_clarification_message(
+            cosmos_messages_container,
+            conversation_id=conversation_id,
+            clarification_id=clarification_id,
+        )
+    except CosmosResourceNotFoundError as exc:
+        raise ChatClarificationError(
+            'linked clarification is no longer available',
+            code='clarification_response_conflict',
+        ) from exc
+    return validate_chat_clarification_retry(
+        clarification,
+        response_message,
+        proposed_text=proposed_text,
+    )
 
 def normalize_chat_type(conversation_item):
     chat_type = conversation_item.get('chat_type')
@@ -935,6 +1015,7 @@ def register_route_backend_conversations(bp):
                 all_items,
                 image_url_builder=lambda image_id: f"/api/image/{image_id}",
             )
+            messages = [_project_message_for_client(message) for message in messages]
 
             return jsonify({'messages': messages})
         except PermissionError:
@@ -2531,6 +2612,57 @@ def register_route_backend_conversations(bp):
             
             if not thread_id:
                 return jsonify({'error': 'Message has no thread_id'}), 400
+
+            requested_thread_attempt = original_msg.get(
+                'metadata', {}
+            ).get('thread_info', {}).get('thread_attempt', 1)
+            original_user_msg = _find_user_message_for_thread_attempt(
+                conversation_id,
+                thread_id,
+                requested_thread_attempt,
+            )
+            if not original_user_msg:
+                return jsonify({'error': 'User message not found in thread'}), 404
+            user_content = original_user_msg.get('content', '')
+            original_metadata = original_user_msg.get('metadata', {})
+            original_thread_info = original_metadata.get('thread_info', {})
+            clarification_retry = _validate_linked_clarification_retry(
+                conversation_id,
+                original_user_msg,
+                user_content,
+            )
+            if clarification_retry:
+                chat_request = {
+                    'message': user_content,
+                    'conversation_id': conversation_id,
+                    'model_deployment': selected_model or original_metadata.get('model_selection', {}).get('selected_model'),
+                    'reasoning_effort': reasoning_effort or original_metadata.get('reasoning_effort'),
+                    'hybrid_search': original_metadata.get('document_search', {}).get('enabled', False),
+                    'selected_document_id': original_metadata.get('document_search', {}).get('document_id'),
+                    'doc_scope': original_metadata.get('document_search', {}).get('scope'),
+                    'top_n': original_metadata.get('document_search', {}).get('top_n'),
+                    'classifications': original_metadata.get('document_search', {}).get('classifications'),
+                    'image_generation': original_metadata.get('image_generation', {}).get('enabled', False),
+                    'active_group_id': original_metadata.get('chat_context', {}).get('group_id'),
+                    'active_public_workspace_id': original_metadata.get('chat_context', {}).get('public_workspace_id'),
+                    'chat_type': original_metadata.get('chat_context', {}).get('type', 'user'),
+                    'retry_user_message_id': clarification_retry['response_user_message_id'],
+                    'retry_thread_id': original_thread_info.get('thread_id'),
+                    'retry_thread_attempt': original_thread_info.get('thread_attempt', 1),
+                }
+                if agent_info:
+                    chat_request['agent_info'] = agent_info
+                elif original_metadata.get('agent_selection'):
+                    chat_request['agent_info'] = original_metadata.get('agent_selection')
+                return jsonify({
+                    'success': True,
+                    'message': 'Clarification retry validated',
+                    'thread_id': original_thread_info.get('thread_id'),
+                    'new_attempt': original_thread_info.get('thread_attempt', 1),
+                    'user_message_id': clarification_retry['response_user_message_id'],
+                    'clarification_retry_mode': clarification_retry['mode'],
+                    'chat_request': chat_request,
+                }), 200
             
             # Find current max thread_attempt for this thread_id
             attempt_query = f"""
@@ -2573,29 +2705,6 @@ def register_route_backend_conversations(bp):
                 cosmos_messages_container.upsert_item(msg)
                 
                 print(f"  ✏️ Deactivated: {msg_id} (role={msg_role}, was_active={old_active}, now_active=False)")
-            
-            # Find the original user message in this thread to get the content
-            # Get the FIRST user message in this thread (attempt=1) to ensure we get the original content
-            user_msg_query = f"""
-                SELECT * FROM c 
-                WHERE c.conversation_id = '{conversation_id}' 
-                AND c.metadata.thread_info.thread_id = '{thread_id}'
-                AND c.role = 'user'
-                ORDER BY c.metadata.thread_info.thread_attempt ASC
-            """
-            user_msg_results = list(cosmos_messages_container.query_items(
-                query=user_msg_query,
-                partition_key=conversation_id
-            ))
-            
-            if not user_msg_results:
-                return jsonify({'error': 'User message not found in thread'}), 404
-            
-            # Get the first user message (attempt 1) to get original content and metadata
-            original_user_msg = user_msg_results[0]
-            user_content = original_user_msg.get('content', '')
-            original_metadata = original_user_msg.get('metadata', {})
-            original_thread_info = original_metadata.get('thread_info', {})
             
             print(f"🔍 Retry - Original user message: {original_user_msg.get('id')}")
             print(f"🔍 Retry - Original thread_id: {original_thread_info.get('thread_id')}")
@@ -2686,6 +2795,8 @@ def register_route_backend_conversations(bp):
                 'chat_request': chat_request
             }), 200
             
+        except ChatClarificationError as e:
+            return jsonify({'error': str(e), 'code': e.code}), 409
         except Exception as e:
             print(f"Error retrying message: {str(e)}")
             import traceback
@@ -2755,6 +2866,64 @@ def register_route_backend_conversations(bp):
             
             if not thread_id:
                 return jsonify({'error': 'Message has no thread_id'}), 400
+
+            requested_thread_attempt = original_msg.get(
+                'metadata', {}
+            ).get('thread_info', {}).get('thread_attempt', 1)
+            original_user_msg = _find_user_message_for_thread_attempt(
+                conversation_id,
+                thread_id,
+                requested_thread_attempt,
+            )
+            if not original_user_msg:
+                return jsonify({'error': 'User message not found in thread'}), 404
+            original_metadata = original_user_msg.get('metadata', {})
+            original_thread_info = original_metadata.get('thread_info', {})
+            clarification_retry = _validate_linked_clarification_retry(
+                conversation_id,
+                original_user_msg,
+                edited_content,
+            )
+            if clarification_retry:
+                chat_request = {
+                    'message': edited_content,
+                    'conversation_id': conversation_id,
+                    'model_deployment': original_metadata.get('model_selection', {}).get('selected_model'),
+                    'reasoning_effort': original_metadata.get('reasoning_effort'),
+                    'hybrid_search': original_metadata.get('document_search', {}).get('enabled', False),
+                    'selected_document_id': original_metadata.get('document_search', {}).get('document_id'),
+                    'doc_scope': original_metadata.get('document_search', {}).get('scope'),
+                    'top_n': original_metadata.get('document_search', {}).get('top_n'),
+                    'classifications': original_metadata.get('document_search', {}).get('classifications'),
+                    'image_generation': original_metadata.get('image_generation', {}).get('enabled', False),
+                    'active_group_id': original_metadata.get('chat_context', {}).get('group_id'),
+                    'active_public_workspace_id': original_metadata.get('chat_context', {}).get('public_workspace_id'),
+                    'chat_type': original_metadata.get('chat_context', {}).get('type', 'user'),
+                    'edited_user_message_id': clarification_retry['response_user_message_id'],
+                    'retry_thread_id': original_thread_info.get('thread_id'),
+                    'retry_thread_attempt': original_thread_info.get('thread_attempt', 1),
+                }
+                if original_metadata.get('agent_selection'):
+                    agent_selection = original_metadata.get('agent_selection')
+                    chat_request['agent_info'] = {
+                        'name': agent_selection.get('selected_agent'),
+                        'display_name': agent_selection.get('agent_display_name'),
+                        'id': agent_selection.get('agent_id'),
+                        'is_global': agent_selection.get('is_global', False),
+                        'is_group': agent_selection.get('is_group', False),
+                        'group_id': agent_selection.get('group_id'),
+                        'group_name': agent_selection.get('group_name'),
+                    }
+                return jsonify({
+                    'success': True,
+                    'message': 'Clarification edit validated',
+                    'thread_id': original_thread_info.get('thread_id'),
+                    'new_attempt': original_thread_info.get('thread_attempt', 1),
+                    'user_message_id': clarification_retry['response_user_message_id'],
+                    'edited': False,
+                    'clarification_retry_mode': clarification_retry['mode'],
+                    'chat_request': chat_request,
+                }), 200
             
             # Find current max thread_attempt for this thread_id
             attempt_query = f"""
@@ -2797,27 +2966,6 @@ def register_route_backend_conversations(bp):
                 cosmos_messages_container.upsert_item(msg)
                 
                 print(f"  ✏️ Deactivated: {msg_id} (role={msg_role}, was_active={old_active}, now_active=False)")
-            
-            # Get the FIRST user message in this thread (attempt=1) to get original metadata
-            user_msg_query = f"""
-                SELECT * FROM c 
-                WHERE c.conversation_id = '{conversation_id}' 
-                AND c.metadata.thread_info.thread_id = '{thread_id}'
-                AND c.role = 'user'
-                ORDER BY c.metadata.thread_info.thread_attempt ASC
-            """
-            user_msg_results = list(cosmos_messages_container.query_items(
-                query=user_msg_query,
-                partition_key=conversation_id
-            ))
-            
-            if not user_msg_results:
-                return jsonify({'error': 'User message not found in thread'}), 404
-            
-            # Get the first user message (attempt 1) to get original metadata
-            original_user_msg = user_msg_results[0]
-            original_metadata = original_user_msg.get('metadata', {})
-            original_thread_info = original_metadata.get('thread_info', {})
             
             print(f"🔍 Edit - Original user message: {original_user_msg.get('id')}")
             print(f"🔍 Edit - Original thread_id: {original_thread_info.get('thread_id')}")
@@ -2910,6 +3058,8 @@ def register_route_backend_conversations(bp):
                 'chat_request': chat_request
             }), 200
             
+        except ChatClarificationError as e:
+            return jsonify({'error': str(e), 'code': e.code}), 409
         except Exception as e:
             print(f"Error editing message: {str(e)}")
             import traceback

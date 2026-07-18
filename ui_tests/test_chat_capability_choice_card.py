@@ -1,8 +1,8 @@
 # test_chat_capability_choice_card.py
 """
 UI test for governed capability choice cards in chat.
-Version: 0.250.075
-Implemented in: 0.250.067; resolved state compacted in 0.250.075
+Version: 0.250.076
+Implemented in: 0.250.067; contextual goal disclosure added in 0.250.076
 
 This test ensures persisted capability proposals hydrate on desktop and mobile,
 expose accessible notices and controls, submit only allowlisted identifiers,
@@ -184,6 +184,47 @@ def _agent_proposal_metadata(
     }
 
 
+def _contextual_proposal_metadata():
+    metadata = _proposal_metadata()
+    proposal = metadata['capability_proposal']
+    proposal.update({
+        'version': 3,
+        'prior_goal_included': True,
+        'goal_source_count': 2,
+        'goal_display_summary': (
+            'Find JPMorgan press releases '
+            '<img src=x onerror=window.phase10cInjected=true>'
+        ),
+        'recommended_option_id': 'context:0123456789abcdef',
+        'options': [
+            {
+                'id': 'context:0123456789abcdef',
+                'kind': 'context',
+                'capability_ids': [],
+                'effective_capability_ids': ['web_search'],
+                'label': 'Search the web using the earlier request',
+                'latency_class': 'seconds',
+                'cost_class': 'standard',
+                'external_data': True,
+                'read_only': True,
+                'risk_class': 'external_read',
+                'data_sensitivity': 'public',
+            },
+            {
+                'id': 'continue_without_capabilities',
+                'kind': 'continue',
+                'capability_ids': [],
+                'effective_capability_ids': [],
+                'label': 'Continue without external retrieval',
+                'latency_class': 'immediate',
+                'cost_class': 'none',
+                'external_data': False,
+            },
+        ],
+    })
+    return metadata
+
+
 def _append_proposal_message(page, message_id, metadata):
     page.evaluate(
         r"""
@@ -291,6 +332,119 @@ def test_capability_choice_uses_server_plan_option_grid_contract():
     assert '.sc-capability-choice-option-card.is-recommended' in style_source
     assert '.sc-capability-choice-card.is-compact' in style_source
     assert '.sc-capability-choice-continue' in style_source
+    assert 'proposal.priorGoalIncluded' in choice_source
+    assert 'sc-capability-choice-context-notice' in choice_source
+    assert 'goalDisplaySummary' in choice_source
+    assert 'innerHTML' not in choice_source
+
+
+@pytest.mark.ui
+@pytest.mark.parametrize(
+    'viewport',
+    [
+        {'width': 1280, 'height': 900},
+        {'width': 390, 'height': 844},
+    ],
+)
+def test_contextual_goal_disclosure_is_inert_and_option_scoped(viewport):
+    from playwright.sync_api import expect, sync_playwright
+
+    chat_url = _get_chat_test_url()
+    decision_requests = []
+    resume_requests = []
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        context = _create_context(browser, viewport)
+        page = context.new_page()
+
+        def handle_decision(route):
+            decision_requests.append(json.loads(route.request.post_data or '{}'))
+            route.fulfill(
+                status=200,
+                content_type='application/json',
+                body=json.dumps({
+                    'success': True,
+                    'status': 'approved',
+                    'resume_endpoint': '/api/chat/stream',
+                }),
+            )
+
+        def handle_resume(route):
+            resume_requests.append(json.loads(route.request.post_data or '{}'))
+            route.fulfill(
+                status=200,
+                content_type='text/event-stream',
+                body=(
+                    'data: '
+                    + json.dumps({
+                        'done': True,
+                        'message_id': 'contextual-result',
+                        'full_content': 'Contextual retrieval completed.',
+                    })
+                    + '\n\n'
+                ),
+            )
+
+        page.route('**/api/chat/capability-proposals/*/decision', handle_decision)
+        page.route('**/api/chat/stream', handle_resume)
+        page.goto(chat_url, wait_until='domcontentloaded')
+        _append_proposal_message(
+            page,
+            'ui-contextual-proposal',
+            _contextual_proposal_metadata(),
+        )
+
+        card = page.locator(
+            '[data-message-id="ui-contextual-proposal"]'
+        ).get_by_test_id('capability-choice-card')
+        disclosure = card.get_by_test_id('capability-prior-goal-notice')
+        expect(disclosure).to_be_visible()
+        expect(disclosure).to_contain_text('Continuing an earlier request')
+        expect(disclosure).to_contain_text('Find JPMorgan press releases')
+        expect(card.get_by_test_id('capability-external-data-notice')).to_contain_text(
+            'Assistant responses and workspace content are not sent.'
+        )
+        assert disclosure.locator('img').count() == 0
+        assert page.evaluate('() => window.phase10cInjected === true') is False
+
+        external_option = card.get_by_role(
+            'button',
+            name='Recommended: Search the web using the earlier request',
+        )
+        described_by = external_option.get_attribute('aria-describedby') or ''
+        assert disclosure.get_attribute('id') in described_by.split()
+        layout = card.evaluate(
+            """
+            element => ({
+                overflows: element.scrollWidth > element.clientWidth,
+                right: element.getBoundingClientRect().right,
+                viewportWidth: window.innerWidth,
+                buttonHeights: Array.from(element.querySelectorAll('button'))
+                    .map(button => button.getBoundingClientRect().height)
+            })
+            """
+        )
+        assert layout['overflows'] is False
+        assert layout['right'] <= layout['viewportWidth'] + 1
+        assert all(height >= 44 for height in layout['buttonHeights'])
+
+        external_option.focus()
+        external_option.press('Enter')
+        expect(page.locator('[data-message-id="contextual-result"]')).to_contain_text(
+            'Contextual retrieval completed.'
+        )
+        assert decision_requests == [{
+            'conversation_id': 'ui-capability-conversation',
+            'option_id': 'context:0123456789abcdef',
+        }]
+        assert resume_requests == [{
+            'conversation_id': 'ui-capability-conversation',
+            'capability_resume_proposal_id': 'ui-capability-proposal-1',
+        }]
+
+        context.close()
+        browser.close()
 
 
 @pytest.mark.ui

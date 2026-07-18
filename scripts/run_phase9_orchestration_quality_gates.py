@@ -1,5 +1,5 @@
 # run_phase9_orchestration_quality_gates.py
-"""Run deterministic Phase 9/10A/10B and optional live orchestration gates."""
+"""Run deterministic Phase 9/10A/10B/10C and optional live orchestration gates."""
 
 import argparse
 import os
@@ -10,26 +10,36 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 COMPILE_TARGETS = (
+    'application/single_app/collaboration_models.py',
+    'application/single_app/functions_collaboration.py',
     'application/single_app/functions_chat_capability_planner.py',
     'application/single_app/functions_chat_capabilities.py',
     'application/single_app/functions_chat_capability_choices.py',
     'application/single_app/functions_chat_capability_persistence.py',
+    'application/single_app/functions_chat_clarifications.py',
+    'application/single_app/functions_chat_contextual_goals.py',
     'application/single_app/functions_orchestration_evaluation.py',
     'application/single_app/functions_orchestration_runtime.py',
     'application/single_app/functions_settings.py',
     'application/single_app/model_endpoint_clients.py',
     'application/single_app/route_backend_chats.py',
+    'application/single_app/route_backend_conversations.py',
+    'application/single_app/route_frontend_conversations.py',
     'application/single_app/route_frontend_admin_settings.py',
     'scripts/run_phase10a_controlled_shadow.py',
 )
 BROWSER_XSS_TARGETS = (
     'application/single_app/static/js/chat/chat-capability-choice.js',
+    'application/single_app/static/js/chat/chat-clarification.js',
 )
 AUTOMATED_TEST_TARGETS = (
     'functional_tests/test_chat_capability_model_planner.py',
     'functional_tests/test_chat_capability_planner_route.py',
     'functional_tests/test_phase10a_controlled_shadow_runner.py',
     'functional_tests/test_phase10b_governed_additive_plan_activation.py',
+    'functional_tests/test_phase10c_contextual_goals.py',
+    'functional_tests/test_phase10c_collaboration_metadata_projection.py',
+    'functional_tests/test_chat_clarification_persistence.py',
     'functional_tests/test_phase9_orchestration_golden_scenarios.py',
     'functional_tests/test_phase9_orchestration_observability.py',
     'functional_tests/test_chat_turn_orchestration_plan.py',
@@ -65,6 +75,7 @@ AUTOMATED_TEST_TARGETS = (
     'functional_tests/route_tests/test_route_unauthenticated_policy_contract.py',
     'functional_tests/route_tests/test_route_policy_test_coverage.py',
     'ui_tests/test_chat_capability_choice_card.py',
+    'ui_tests/test_chat_clarification.py',
     'ui_tests/test_admin_capability_planner_settings.py',
     'ui_tests/test_phase9_orchestration_live_smoke.py',
 )
@@ -111,7 +122,7 @@ def _validate_live_environment(environment):
 
 def build_argument_parser():
     parser = argparse.ArgumentParser(
-        description='Run Phase 9/10A/10B orchestration compile, functional, security, UI-contract, and optional live-smoke gates.',
+        description='Run Phase 9/10A/10B/10C orchestration compile, functional, security, UI-contract, and optional live-smoke gates.',
     )
     parser.add_argument(
         '--live-smoke',

@@ -1,8 +1,8 @@
 # test_phase10b_governed_additive_plan_activation.py
 """Functional tests for Phase 10B governed additive plan activation.
 
-Version: 0.250.073
-Implemented in: 0.250.072; Admin controls enhanced in 0.250.073
+Version: 0.250.076
+Implemented in: 0.250.072; choice contract updated in 0.250.076
 
 This test ensures validated planner candidates become bounded server-owned
 capability options without rewriting selected mandates.
@@ -1001,7 +1001,7 @@ def test_plan_binding_revalidates_exact_bundle_and_policy_state():
     )
     approved = _approved_planner_proposal(recommendation)
 
-    assert approved['version'] == 2
+    assert approved['version'] == 3
     assert approved['recommendation_source'] == 'planner'
     assert revalidate_capability_choice(approved, inventory) is True
 

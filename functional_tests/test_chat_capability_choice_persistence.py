@@ -2,8 +2,8 @@
 # test_chat_capability_choice_persistence.py
 """
 Functional test for conditional capability-choice persistence.
-Version: 0.250.072
-Implemented in: 0.250.066; baseline reauthorization coverage added in 0.250.072
+Version: 0.250.076
+Implemented in: 0.250.066; contextual lineage checks added in 0.250.076
 
 This test ensures persisted decisions and resume claims use exact conversation
 partitions, honor ETags, and cannot execute the same capability choice twice.
@@ -222,6 +222,76 @@ def test_resume_claim_is_single_execution_and_completion_is_durable():
     )
     assert completed['resume']['status'] == 'completed'
     assert completed['resume']['assistant_message_id'] == 'assistant-1'
+
+
+def test_source_lineage_is_revalidated_inside_decision_and_resume_retries():
+    container = _container()
+    container.force_one_conflict = True
+    decision_validations = []
+
+    def validate_decision(proposal):
+        decision_validations.append((
+            proposal.get('status'),
+            (proposal.get('decision') or {}).get('option_id'),
+        ))
+
+    persist_capability_decision(
+        container,
+        conversation_id='conversation-1',
+        proposal_id='proposal-1',
+        option_id='web_search',
+        actor_user_id='user-1',
+        refreshed_inventory=_inventory(),
+        source_lineage_validator=validate_decision,
+        now=NOW,
+    )
+    resume_validations = []
+    persist_capability_resume_claim(
+        container,
+        conversation_id='conversation-1',
+        proposal_id='proposal-1',
+        refreshed_inventory=_inventory(),
+        source_lineage_validator=lambda proposal: resume_validations.append(
+            (proposal.get('decision') or {}).get('option_id')
+        ),
+        now=NOW,
+        execution_id='execution-1',
+    )
+
+    assert decision_validations == [
+        ('approved', 'web_search'),
+        ('approved', 'web_search'),
+    ]
+    assert resume_validations == ['web_search']
+
+
+def test_source_lineage_failure_is_persisted_as_invalidated():
+    container = _container()
+
+    def reject_source(_proposal):
+        raise CapabilityChoiceError(
+            'approved goal source changed',
+            code='goal_source_changed',
+        )
+
+    try:
+        persist_capability_decision(
+            container,
+            conversation_id='conversation-1',
+            proposal_id='proposal-1',
+            option_id='web_search',
+            actor_user_id='user-1',
+            refreshed_inventory=_inventory(),
+            source_lineage_validator=reject_source,
+            now=NOW,
+        )
+        raise AssertionError('changed contextual lineage must fail closed')
+    except CapabilityChoiceError as exc:
+        assert exc.code == 'goal_source_changed'
+
+    stored = container.message['metadata']['capability_proposal']
+    assert stored['status'] == 'invalidated'
+    assert stored['invalidation_reason'] == 'goal_source_changed'
 
 
 def test_failed_exact_execution_reconciles_from_persisted_output():
@@ -514,6 +584,126 @@ def test_automatic_bundle_closure_drift_is_persisted_as_invalidation():
     assert proposal['status'] == 'invalidated'
     assert proposal['resume']['status'] == 'failed'
     assert proposal['invalidation_reason'] == 'capability_bundle_changed'
+
+
+def test_contextual_decline_ignores_revoked_external_baseline_only():
+    selected_inventory = _inventory()
+    selected_web = next(
+        entry
+        for entry in selected_inventory['capabilities']
+        if entry['id'] == 'web_search'
+    )
+    selected_web.update({
+        'state': 'selected',
+        'selected': True,
+        'discoverable': False,
+        'requires_user_choice': False,
+    })
+    prior_effective_capabilities = [{
+        'id': 'web_search',
+        'origin': 'selection',
+        'required': True,
+    }]
+
+    decision_container = _container()
+    decision_proposal = decision_container.message['metadata'][
+        'capability_proposal'
+    ]
+    decision_proposal['prior_goal_included'] = True
+    revoked_inventory = copy.deepcopy(selected_inventory)
+    revoked_web = next(
+        entry
+        for entry in revoked_inventory['capabilities']
+        if entry['id'] == 'web_search'
+    )
+    revoked_web.update({
+        'state': 'unauthorized',
+        'selected': False,
+        'authorized': False,
+        'discoverable': False,
+    })
+    _, declined, _ = persist_capability_decision(
+        decision_container,
+        conversation_id='conversation-1',
+        proposal_id='proposal-1',
+        option_id='continue_without_capabilities',
+        actor_user_id='user-1',
+        refreshed_inventory=revoked_inventory,
+        selected_capability_ids=['web_search'],
+        prior_effective_capabilities=prior_effective_capabilities,
+        now=NOW,
+    )
+    assert declined['status'] == 'declined'
+    assert declined['decision']['approval_scope'] == (
+        'prior_user_goal_egress_declined'
+    )
+
+    resume_container = _container()
+    resume_proposal = resume_container.message['metadata'][
+        'capability_proposal'
+    ]
+    resume_proposal['prior_goal_included'] = True
+    persist_capability_decision(
+        resume_container,
+        conversation_id='conversation-1',
+        proposal_id='proposal-1',
+        option_id='continue_without_capabilities',
+        actor_user_id='user-1',
+        refreshed_inventory=selected_inventory,
+        selected_capability_ids=['web_search'],
+        prior_effective_capabilities=prior_effective_capabilities,
+        now=NOW,
+    )
+    _, claimed, _ = persist_capability_resume_claim(
+        resume_container,
+        conversation_id='conversation-1',
+        proposal_id='proposal-1',
+        refreshed_inventory=revoked_inventory,
+        selected_capability_ids=['web_search'],
+        prior_effective_capabilities=prior_effective_capabilities,
+        now=NOW,
+        execution_id='execution-declined',
+    )
+    assert claimed['resume']['status'] == 'running'
+
+    non_external_container = _container()
+    non_external_proposal = non_external_container.message['metadata'][
+        'capability_proposal'
+    ]
+    non_external_proposal['prior_goal_included'] = True
+    blocked_workspace_inventory = copy.deepcopy(selected_inventory)
+    blocked_workspace = next(
+        entry
+        for entry in blocked_workspace_inventory['capabilities']
+        if entry['id'] == 'workspace_search'
+    )
+    blocked_workspace.update({
+        'state': 'policy_blocked',
+        'selected': False,
+        'discoverable': False,
+    })
+    try:
+        persist_capability_decision(
+            non_external_container,
+            conversation_id='conversation-1',
+            proposal_id='proposal-1',
+            option_id='continue_without_capabilities',
+            actor_user_id='user-1',
+            refreshed_inventory=blocked_workspace_inventory,
+            selected_capability_ids=['workspace_search', 'web_search'],
+            prior_effective_capabilities=[
+                {
+                    'id': 'workspace_search',
+                    'origin': 'selection',
+                    'required': True,
+                },
+                *prior_effective_capabilities,
+            ],
+            now=NOW,
+        )
+        raise AssertionError('contextual decline must still validate workspace')
+    except CapabilityChoiceError as exc:
+        assert exc.code == 'capability_policy_blocked'
 
 
 def test_deterministic_bundle_closure_drift_is_persisted_as_invalidation():

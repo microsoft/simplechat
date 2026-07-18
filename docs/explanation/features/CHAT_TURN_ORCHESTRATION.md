@@ -5,6 +5,7 @@ Updated for governed planner activation in version: **0.250.072**
 Updated planner administration in version: **0.250.073**
 Updated governed choice experience in version: **0.250.074**
 Updated resolved choice state in version: **0.250.075**
+Updated contextual goals and clarification in version: **0.250.076**
 Associated issue: **[#1021](https://github.com/microsoft/simplechat/issues/1021)**
 
 ## Overview
@@ -484,6 +485,58 @@ and bounded planner runtime controls for staged rollout. After a choice is
 saved, the expanded chooser condenses to one inert summary showing the selected
 plan, its included capabilities, and Saved, Running, Completed, or retry state.
 
+## Phase 10C Contextual Goals And Structured Clarification
+
+Phase 10C lets the planner interpret a terse follow-up against a bounded set of
+exact prior user goals. Planning context contains the current user message and
+at most two preceding active user messages from the same thread lineage. The
+server excludes assistant, system, tool, evidence, citation, workspace,
+deleted, fully or partially masked, generated-artifact, inactive, and
+cross-thread content. The planner receives only request-local `turn_0` through
+`turn_2` references; canonical conversation and message IDs remain server-side.
+
+The planner may select supplied goal refs, but it cannot author executable
+combined text. The server maps validated refs back to exact user documents,
+binds their content hashes and thread lineage, and rebuilds the goal in
+deterministic order. Internal retrieval can use the exact combined user goal
+without crossing an external boundary. A proposal using any prior user turn for Web Search, Deep
+Research, or another external source always creates one disclosed durable
+choice, including when the external capability was already selected or
+automatic. The browser still submits only one persisted option ID. Continuing
+without external retrieval suppresses external baseline capabilities for that
+turn without changing toolbar defaults.
+
+Approved contextual retrieval is reauthorized from the exact conversation
+partition during proposal load, inside decision and resume ETag transitions,
+after the resume lease is claimed, and immediately before the first external
+call. Deleted, masked, changed, foreign, inactive, or missing source turns
+invalidate the proposal. The outbound query is reconstructed and minimized
+again from exact user documents; stored query text is audit context rather than
+authorization. Assistant output, planner-composed text, tool/evidence content,
+and workspace text cannot become the external query. Address-bearing variants
+retain a separate explicit sensitive-input option.
+
+Validated planner `clarify` decisions map one of seven allowlisted ambiguity
+codes to a fixed server-authored question. The assistant persists an
+`awaiting_user_clarification` checkpoint and closes the stream. Options submit
+through the normal chat path, while free text uses the normal composer. The
+clarification response claims an ETag-protected lease before the next planner
+call, so an identical concurrent replay cannot create a second child plan. The
+claim completes only after the exact response user turn is persisted. A live
+claim reconstructs as processing; an expired claim can reuse its child linkage,
+and a persisted response turn reconciles completion after process loss. The
+response retains exact parent/source/child linkage on the server and consumes
+the one-clarification budget for the goal. Unknown codes/options, conflicting
+responses, expiry, and source revocation fail closed.
+
+Client metadata projection removes exact source IDs, content hashes, stored
+queries, trusted resume requests, clarification IDs, and run linkage before
+history, metadata, initial-render, or SSE responses reach the browser. The
+choice and clarification modules render all dynamic summaries and option text
+through inert DOM APIs. Fixed-schema evaluation records only bounded turn
+counts, booleans, safe codes/classes, hashes, latency, lifecycle states, and
+outcomes.
+
 ## Security And Governance
 
 - Caller-supplied IDs are never treated as proof of authorization.
@@ -644,13 +697,22 @@ Phase 10A and 10B planner coverage is in:
 - `functional_tests/test_phase9_orchestration_observability.py` for the four fixed planner event types and forbidden-value checks.
 - `functional_tests/test_phase10b_governed_additive_plan_activation.py` for high-confidence activation, additive bundles, selected and automatic dependency expansion, origin separation, deterministic arbitration, exact plan binding, sensitive current-turn options, governed agents, Image/agent exclusion, failure closure, admin controls, and bounded telemetry.
 - `ui_tests/test_chat_capability_choice_card.py` and `ui_tests/test_admin_capability_planner_settings.py` for additive choice rendering and staged rollout controls across desktop and mobile.
-- `scripts/run_phase9_orchestration_quality_gates.py` for the combined Phase 9/10A/10B repeatable gate.
+- `scripts/run_phase9_orchestration_quality_gates.py` for the combined Phase 9/10A/10B/10C repeatable gate.
+
+Phase 10C contextual-goal and clarification coverage is in:
+
+- `functional_tests/test_phase10c_contextual_goals.py` for bounded active user-turn assembly, opaque ref binding, masking/artifact exclusion, exact source rereads, and context-only external choices.
+- `functional_tests/test_chat_capability_model_planner.py` for planner v2 goal refs, current-turn requirements, server-allowlisted clarification codes/options, and clarification budget enforcement.
+- `functional_tests/test_chat_capability_choice_contract.py`, `functional_tests/test_chat_capability_choice_persistence.py`, and `functional_tests/test_chat_capability_choice_route.py` for source hashes/lineage, client projection, option-scoped approval, ETag validation, mutation/revocation failure, exact query reconstruction, and contextual decline.
+- `functional_tests/test_chat_clarification_persistence.py` for fixed questions, option/free-text responses, expiry, ETag retries, duplicate/conflicting responses, and parent/child linkage.
+- `functional_tests/test_phase9_orchestration_observability.py` for bounded context, prior-goal, and clarification lifecycle telemetry with forbidden-value checks.
+- `ui_tests/test_chat_capability_choice_card.py` and `ui_tests/test_chat_clarification.py` for inert disclosures/options, keyboard and screen-reader state, refresh reconstruction, 44-pixel controls, and desktop/mobile overflow.
 
 ## Known Limitations
 
-Phase 8A, Phase 8B, Phase 10A, and Phase 10B add durable governed choice and conservative additive model planning, with these deliberate boundaries:
+Phase 8A, Phase 8B, Phase 10A, Phase 10B, and Phase 10C add durable governed choice, conservative additive model planning, bounded contextual goals, and one structured clarification, with these deliberate boundaries:
 
-- `assist` can create one server-authored choice from a validated high-confidence proposal, but the model cannot execute capabilities, author policy fields, bypass deterministic conflict precedence, or create a clarification checkpoint.
+- `assist` can create one server-authored choice or one server-templated clarification from a validated result, but the model cannot execute capabilities, author query/question text or policy fields, bypass deterministic conflict precedence, approve egress, or create an unbounded clarification loop.
 
 - Generalized multi-agent recommendation remains out of scope. When an agent is already selected, Phase 8B does not recommend another agent.
 - Foundry-backed agents and local agents with attached actions remain explicitly selectable but are not discoverable until hidden tools, action arguments, and runtime telemetry have a separately reviewed read-only governance contract.

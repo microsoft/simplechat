@@ -78,7 +78,7 @@ function normalizeProposal(metadata) {
     const options = Array.isArray(proposal.options)
         ? proposal.options.slice(0, MAX_OPTIONS).map(option => ({
             id: normalizeIdentifier(option?.id),
-            kind: ['agent', 'capability', 'continue'].includes(normalizeIdentifier(option?.kind).toLowerCase())
+            kind: ['agent', 'capability', 'context', 'continue'].includes(normalizeIdentifier(option?.kind).toLowerCase())
                 ? normalizeIdentifier(option?.kind).toLowerCase()
                 : 'capability',
             label: String(option?.label || '').trim().slice(0, 120),
@@ -121,6 +121,12 @@ function normalizeProposal(metadata) {
                 .filter(Boolean)
                 .slice(0, 8)
             : [],
+        priorGoalIncluded: proposal.prior_goal_included === true,
+        goalSourceCount: Math.max(
+            0,
+            Math.min(Number.parseInt(proposal.goal_source_count, 10) || 0, 3),
+        ),
+        goalDisplaySummary: String(proposal.goal_display_summary || '').trim().slice(0, 240),
         options,
         decision: proposal.decision && typeof proposal.decision === 'object'
             ? {
@@ -166,6 +172,9 @@ function getOptionCapabilityLabels(option) {
 }
 
 function getOptionDescription(option) {
+    if (option.kind === 'context') {
+        return 'Continue the earlier request with the listed external sources.';
+    }
     if (option.kind === 'agent') {
         const scope = option.scopeClass
             ? `${normalizeClassLabel(option.scopeClass, {})} governed agent`
@@ -188,6 +197,9 @@ function getOptionDescription(option) {
 }
 
 function getOptionIconClass(option) {
+    if (option.kind === 'context') {
+        return 'bi-chat-left-text';
+    }
     if (option.kind === 'agent') {
         return 'bi-robot';
     }
@@ -286,6 +298,9 @@ function getCompactOptionDetail(option) {
     }
     if (option.kind === 'agent') {
         return getOptionDescription(option);
+    }
+    if (option.kind === 'context') {
+        return 'Earlier request approved for this turn';
     }
     return '';
 }
@@ -431,7 +446,14 @@ async function submitDecision(card, proposal, option, statusElement, onResume) {
     }
 }
 
-function renderPendingOptions(card, proposal, actions, statusElement, onResume) {
+function renderPendingOptions(
+    card,
+    proposal,
+    actions,
+    statusElement,
+    onResume,
+    disclosureId = '',
+) {
     const optionGrid = createElement('div', 'sc-capability-choice-option-grid');
     const selectableOptions = proposal.options.filter(option => option.id !== CONTINUE_OPTION_ID);
     const continueOption = proposal.options.find(option => option.id === CONTINUE_OPTION_ID);
@@ -445,7 +467,10 @@ function renderPendingOptions(card, proposal, actions, statusElement, onResume) 
         button.type = 'button';
         button.dataset.optionId = option.id;
         button.dataset.testid = 'capability-option-card';
-        button.setAttribute('aria-describedby', statusElement.id);
+        button.setAttribute(
+            'aria-describedby',
+            [statusElement.id, disclosureId].filter(Boolean).join(' '),
+        );
         button.setAttribute(
             'aria-label',
             `${isRecommended ? 'Recommended: ' : ''}${option.label}`,
@@ -494,7 +519,10 @@ function renderPendingOptions(card, proposal, actions, statusElement, onResume) 
         );
         continueButton.type = 'button';
         continueButton.dataset.optionId = continueOption.id;
-        continueButton.setAttribute('aria-describedby', statusElement.id);
+        continueButton.setAttribute(
+            'aria-describedby',
+            [statusElement.id, disclosureId].filter(Boolean).join(' '),
+        );
         continueButton.appendChild(createElement('span', '', continueOption.label));
         const arrow = createElement('i', 'bi bi-arrow-right ms-2');
         arrow.setAttribute('aria-hidden', 'true');
@@ -578,11 +606,46 @@ export function hydrateCapabilityChoice(messageElement, metadata, { onResume } =
     const hasExternalCapabilityOption = proposal.options.some(
         option => option.externalData && option.kind !== 'agent'
     );
+    let disclosureId = '';
+    if (proposal.priorGoalIncluded) {
+        disclosureId = `capability-context-notice-${safeId}`;
+        const disclosure = createElement('div', 'sc-capability-choice-context-notice');
+        disclosure.id = disclosureId;
+        disclosure.dataset.testid = 'capability-prior-goal-notice';
+        const disclosureIcon = createElement('i', 'bi bi-chat-left-text');
+        disclosureIcon.setAttribute('aria-hidden', 'true');
+        disclosure.appendChild(disclosureIcon);
+        const disclosureCopy = createElement('div', 'sc-capability-choice-context-copy');
+        disclosureCopy.appendChild(createElement(
+            'span',
+            'sc-capability-choice-context-label',
+            'Continuing an earlier request',
+        ));
+        if (proposal.goalDisplaySummary) {
+            disclosureCopy.appendChild(createElement(
+                'span',
+                'sc-capability-choice-context-summary',
+                proposal.goalDisplaySummary,
+            ));
+        }
+        disclosureCopy.appendChild(createElement(
+            'span',
+            'sc-capability-choice-context-detail',
+            hasExternalCapabilityOption
+                ? 'External retrieval will use the earlier request together with this follow-up only after you choose an external option.'
+                : 'The earlier request will be used with this follow-up only for this turn.',
+        ));
+        disclosure.appendChild(disclosureCopy);
+        card.appendChild(disclosure);
+    }
+
     if (hasExternalCapabilityOption) {
         const notice = createElement(
             'p',
             'sc-capability-choice-notice',
-            'External options send only the current message query. Conversation history and workspace content are not included.',
+            proposal.priorGoalIncluded
+                ? 'Only the disclosed user-authored goal is included. Assistant responses and workspace content are not sent.'
+                : 'External options send only the current message query. Conversation history and workspace content are not included.',
         );
         notice.dataset.testid = 'capability-external-data-notice';
         card.appendChild(notice);
@@ -616,7 +679,14 @@ export function hydrateCapabilityChoice(messageElement, metadata, { onResume } =
     if (proposal.status === 'pending' && proposal.expired) {
         updateStatus(statusElement, 'This capability choice has expired.', 'muted');
     } else if (proposal.status === 'pending') {
-        renderPendingOptions(card, proposal, actions, statusElement, onResume);
+        renderPendingOptions(
+            card,
+            proposal,
+            actions,
+            statusElement,
+            onResume,
+            disclosureId,
+        );
     } else if (proposal.status === 'approved' || proposal.status === 'declined') {
         compactSelectionRendered = renderResolvedAction(card, proposal, statusElement, onResume);
     } else {

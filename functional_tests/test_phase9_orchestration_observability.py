@@ -2,8 +2,8 @@
 # test_phase9_orchestration_observability.py
 """
 Functional test for Phase 9 orchestration observability and privacy.
-Version: 0.250.069
-Implemented in: 0.250.068
+Version: 0.250.076
+Implemented in: 0.250.068; contextual lifecycle added in 0.250.076
 
 This test ensures evaluation events expose only bounded aggregate run,
 recommendation, latency, and citation-yield fields without private payloads.
@@ -20,6 +20,7 @@ SINGLE_APP_ROOT = REPO_ROOT / 'application' / 'single_app'
 sys.path.insert(0, str(SINGLE_APP_ROOT))
 
 from functions_orchestration_evaluation import (  # noqa: E402
+    build_clarification_evaluation_event,
     build_orchestration_run_evaluation_event,
     build_planner_completed_evaluation_event,
     build_planner_rejected_evaluation_event,
@@ -217,6 +218,10 @@ def test_planner_events_use_fixed_privacy_safe_dimensions():
         'latency_ms': 412,
         'fallback_used': False,
         'raw_response': 'private evidence text',
+        'eligible_goal_turn_count': 999,
+        'selected_goal_turn_count': 2,
+        'prior_goal_included': True,
+        'clarification_code': 'jurisdiction_required',
     }
     completed = build_planner_completed_evaluation_event(
         'private-planner-run-id',
@@ -243,6 +248,10 @@ def test_planner_events_use_fixed_privacy_safe_dimensions():
     assert completed['model_class'] == 'other'
     assert completed['capability_classes'] == ['web_search', 'governed_agent']
     assert completed['reason_codes'] == ['public_source_archive_research']
+    assert completed['eligible_goal_turn_count'] == 3
+    assert completed['selected_goal_turn_count'] == 2
+    assert completed['prior_goal_included'] is True
+    assert completed['clarification_code'] == 'jurisdiction_required'
     assert compared['event_type'] == 'orchestration_planner_shadow_compared'
     assert compared['agreement_category'] == 'decision_disagreement'
     _assert_private_values_absent(completed)
@@ -284,6 +293,33 @@ def test_planner_rejection_and_timeout_events_expose_only_bounded_failures():
     assert timed_out['model_class'] == 'claude'
     _assert_private_values_absent(rejected)
     _assert_private_values_absent(timed_out)
+
+
+def test_clarification_event_excludes_question_answer_and_source_lineage():
+    event = build_clarification_evaluation_event(
+        {
+            'parent_run_id': 'private-planner-run-id',
+            'clarification_id': 'canonical-agent-private-id',
+            'code': 'jurisdiction_required',
+            'question': 'private prompt text',
+            'status': 'resolved',
+            'options': ['private-group-name', 'Virginia'],
+            'response_mode': 'free_text',
+            '_source_user_message_id': 'canonical-agent-private-id',
+            '_response_hash': 'private-secret-value',
+        },
+        lifecycle='resolved',
+        idempotent=True,
+    )
+
+    assert event['event_type'] == 'orchestration_clarification_lifecycle'
+    assert event['parent_run_correlation_id'] != 'private-planner-run-id'
+    assert event['lifecycle'] == 'resolved'
+    assert event['clarification_code'] == 'jurisdiction_required'
+    assert event['option_count'] == 2
+    assert event['response_mode'] == 'free_text'
+    assert event['idempotent'] is True
+    _assert_private_values_absent(event)
 
 
 if __name__ == '__main__':
