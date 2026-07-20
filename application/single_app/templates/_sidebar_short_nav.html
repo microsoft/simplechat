@@ -4,6 +4,7 @@
 {% set sidebar_menu_state_raw = user_settings.get('settings', {}).get('sidebarMenuState', {}) %}
 {% set sidebar_menu_state = sidebar_menu_state_raw if sidebar_menu_state_raw is mapping else {} %}
 {% set sidebar_settings = settings if settings is defined else app_settings %}
+{% set latest_features_nav_is_hidden = latest_features_nav_hidden | default(false) %}
 <div id="sidebar-nav" class="d-flex flex-column bg-light border-end sidebar-expanded chat-sidebar-nav offcanvas-lg offcanvas-start" tabindex="-1" aria-labelledby="chatSidebarDrawerLabel" data-navigation-drawer="chat-rail">
 
   <div class="offcanvas-header chat-sidebar-mobile-header">
@@ -114,11 +115,11 @@
     <!-- Support Menu Section - Only show when a signed-in app user can access at least one support destination -->
     {% set support_menu_role_allowed = session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
     {% if support_menu_role_allowed and app_settings.enable_support_menu %}
-    {% set show_support_latest_features = app_settings.enable_support_latest_features and app_settings.support_latest_features_has_visible_items %}
+    {% set show_support_latest_features = app_settings.enable_support_latest_features and app_settings.support_latest_features_has_visible_items and not latest_features_nav_is_hidden %}
     {% set show_support_send_feedback = app_settings.enable_support_send_feedback and app_settings.support_feedback_recipient_configured %}
     {% if show_support_latest_features or show_support_send_feedback %}
     {% set support_menu_expanded = sidebar_menu_state.get('support', true) %}
-    <div class="overflow-auto">
+    <div class="overflow-auto" data-support-menu-nav-section>
       <div id="support-menu-toggle" class="mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center" style="font-weight: 500; letter-spacing: 0.02em; cursor: pointer; user-select: none;" role="button" tabindex="0" aria-controls="support-menu-links-section" aria-expanded="{{ 'true' if support_menu_expanded else 'false' }}" data-sidebar-menu-key="support" data-sidebar-menu-target="support-menu-links-section" data-sidebar-menu-caret="support-menu-caret">
         <span class="nav-text">{{ app_settings.support_menu_name or 'Support' }}</span>
         <i id="support-menu-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;{% if not support_menu_expanded %} transform: rotate(-90deg);{% endif %}"></i>
@@ -126,16 +127,35 @@
       <div id="support-menu-links-section"{% if not support_menu_expanded %} class="d-none"{% endif %} aria-hidden="{{ 'false' if support_menu_expanded else 'true' }}">
         <ul class="nav flex-column mb-2">
           {% if show_support_latest_features %}
-          <li class="nav-item">
-            <a class="nav-link d-flex align-items-center" href="{{ url_for('frontend_support.support_latest_features') }}">
+          <li class="nav-item d-flex align-items-center latest-features-nav-item" data-latest-features-nav-item data-support-menu-destination>
+            <a class="nav-link d-flex align-items-center flex-grow-1" href="{{ url_for('frontend_support.support_latest_features') }}">
               <i class="bi bi-lightning-charge me-2" style="font-size: 0.8em;"></i>
               <span class="nav-text">Latest Features</span>
               <span class="badge bg-warning text-dark text-uppercase ms-2">New</span>
             </a>
+            <div class="dropdown latest-features-hide-menu me-2">
+              <button
+                type="button"
+                class="btn btn-sm btn-link nav-link p-1 latest-features-options-toggle"
+                data-bs-toggle="dropdown"
+                aria-expanded="false"
+                aria-label="Latest Features options"
+                title="Latest Features options"
+              >
+                <i class="bi bi-three-dots" aria-hidden="true"></i>
+              </button>
+              <ul class="dropdown-menu dropdown-menu-end">
+                <li>
+                  <button type="button" class="dropdown-item latest-features-hide-action" data-latest-features-hide-action>
+                    Hide Latest Features
+                  </button>
+                </li>
+              </ul>
+            </div>
           </li>
           {% endif %}
           {% if show_support_send_feedback %}
-          <li class="nav-item">
+          <li class="nav-item" data-support-menu-destination>
             <a class="nav-link d-flex align-items-center" href="{{ url_for('frontend_support.support_send_feedback') }}">
               <i class="bi bi-envelope-paper me-2" style="font-size: 0.8em;"></i>
               <span class="nav-text">Send Feedback</span>

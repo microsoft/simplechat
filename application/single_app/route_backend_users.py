@@ -18,6 +18,10 @@ from functions_group import (
     get_user_role_in_group,
     update_active_group_for_user,
 )
+from functions_latest_features_nav import (
+    LATEST_FEATURES_HIDDEN_VERSION_SETTING,
+    normalize_latest_features_hidden_version,
+)
 from functions_public_workspaces import update_active_public_workspace_for_user
 from functions_settings import *
 from swagger_wrapper import swagger_route, get_auth_security
@@ -503,6 +507,7 @@ def register_route_backend_users(bp):
                     'navbar_layout', 'chatLayout', 'showChatTitle', 'chatSplitSizes',
                     'deepResearchDefaultEnabled',
                     'sidebarToggleStyle', 'sidebarMenuState',
+                    LATEST_FEATURES_HIDDEN_VERSION_SETTING,
                     # Microphone permission settings
                     'microphonePermissionPreference', 'microphonePermissionState',
                     # Text-to-speech settings
@@ -556,6 +561,14 @@ def register_route_backend_users(bp):
                             normalized_sidebar_menu_state[key] = value.strip().lower() == "true"
 
                     settings_to_update["sidebarMenuState"] = normalized_sidebar_menu_state
+
+                if LATEST_FEATURES_HIDDEN_VERSION_SETTING in settings_to_update:
+                    hidden_version = normalize_latest_features_hidden_version(
+                        settings_to_update.get(LATEST_FEATURES_HIDDEN_VERSION_SETTING)
+                    )
+                    if hidden_version is not None and hidden_version != VERSION:
+                        return jsonify({"error": "Invalid Latest Features hidden version"}), 400
+                    settings_to_update[LATEST_FEATURES_HIDDEN_VERSION_SETTING] = hidden_version
 
                 active_group_updated = False
                 active_public_workspace_updated = False

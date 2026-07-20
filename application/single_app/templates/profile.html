@@ -743,6 +743,8 @@
         >
 
     {% set sidebar_toggle_style = user_settings.get('settings', {}).get('sidebarToggleStyle', 'large') %}
+    {% set latest_features_hidden_version = user_settings.get('settings', {}).get('latestFeaturesHiddenVersion') %}
+    {% set latest_features_hidden_for_current_version = latest_features_hidden_version == config['VERSION'] %}
     <div class="section-card" id="navigation-preferences">
         <div class="d-flex flex-column flex-lg-row align-items-lg-start justify-content-between gap-3">
             <div class="d-flex gap-3 align-items-start">
@@ -795,6 +797,60 @@
         </div>
 
         <div id="navigation-preference-status" class="preference-status small mt-3 text-muted"></div>
+    </div>
+
+    <div class="section-card" id="latest-features-nav-preferences">
+        <div class="d-flex flex-column flex-lg-row align-items-lg-start justify-content-between gap-3">
+            <div class="d-flex gap-3 align-items-start">
+                <span class="preference-card-icon">
+                    <i class="bi bi-lightning-charge"></i>
+                </span>
+                <div>
+                    <h5 class="mb-2"><i class="bi bi-stars me-2"></i>Latest Features Navigation</h5>
+                    <p class="text-muted mb-2">Hide or restore Latest Features shortcuts in the left and top navigation for this app version.</p>
+                    <p class="small text-muted mb-0">When SimpleChat updates to a new version, Latest Features is shown again automatically.</p>
+                </div>
+            </div>
+            <span
+                id="latest-features-nav-status-badge"
+                class="badge {% if latest_features_nav_hidden_by_development | default(false) %}bg-warning text-dark{% elif latest_features_hidden_for_current_version %}bg-secondary{% else %}bg-success{% endif %}"
+            >
+                {% if latest_features_nav_hidden_by_development | default(false) %}
+                    Hidden in development
+                {% elif latest_features_hidden_for_current_version %}
+                    Hidden
+                {% else %}
+                    Visible
+                {% endif %}
+            </span>
+        </div>
+
+        <div class="row g-3 align-items-center mt-1">
+            <div class="col-lg-8">
+                <p id="latest-features-nav-status-detail" class="small text-muted mt-3 mb-0">
+                    {% if latest_features_nav_hidden_by_development | default(false) %}
+                        Latest Features navigation is hidden because the is_development environment flag is true.
+                    {% elif latest_features_hidden_for_current_version %}
+                        Latest Features navigation is hidden for version {{ config['VERSION'] }}.
+                    {% elif latest_features_hidden_version %}
+                        Latest Features navigation is visible because your saved hide preference was for version {{ latest_features_hidden_version }}, and the current version is {{ config['VERSION'] }}.
+                    {% else %}
+                        Latest Features navigation is visible for version {{ config['VERSION'] }}.
+                    {% endif %}
+                </p>
+            </div>
+            <div class="col-lg-4 text-lg-end">
+                <button
+                    type="button"
+                    class="btn btn-outline-primary {% if not latest_features_hidden_for_current_version %}d-none{% endif %}"
+                    id="unhide-latest-features-nav-btn"
+                >
+                    <i class="bi bi-eye me-1"></i>Unhide Latest Features
+                </button>
+            </div>
+        </div>
+
+        <div id="latest-features-nav-preference-status" class="preference-status small mt-3 text-muted"></div>
     </div>
 
     <div class="section-card" id="tutorial-preferences">
