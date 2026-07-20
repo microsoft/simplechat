@@ -1,8 +1,8 @@
 # test_latest_features_nav_hide_preference.py
 """
 UI test for Latest Features navigation hide preference.
-Version: 0.250.058
-Implemented in: 0.250.058
+Version: 0.250.059
+Implemented in: 0.250.059
 
 This test ensures an authenticated user can clear a versioned Latest Features
 navigation hide preference from the profile Settings page.
@@ -18,7 +18,7 @@ from playwright.sync_api import expect
 BASE_URL = os.getenv("SIMPLECHAT_UI_BASE_URL", "").rstrip("/")
 STORAGE_STATE = os.getenv("SIMPLECHAT_UI_STORAGE_STATE", "")
 ADMIN_STORAGE_STATE = os.getenv("SIMPLECHAT_UI_ADMIN_STORAGE_STATE", "")
-CURRENT_VERSION = "0.250.058"
+CURRENT_VERSION = "0.250.059"
 
 
 def _require_base_url():
