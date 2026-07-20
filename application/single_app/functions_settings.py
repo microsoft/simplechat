@@ -9,6 +9,7 @@ from functions_appinsights import log_event
 from functions_cosmos_throughput import get_default_cosmos_throughput_settings
 from functions_document_actions import get_default_document_action_capabilities
 from functions_icon_utils import normalize_icon_payload
+from functions_latest_features_nav import LATEST_FEATURES_HIDDEN_VERSION_SETTING
 from functions_service_health import get_default_service_health
 import app_settings_cache
 import inspect
@@ -33,6 +34,7 @@ USER_UI_SETTINGS_KEYS = (
     "notifications_per_page",
     "sidebarToggleStyle",
     "sidebarMenuState",
+    LATEST_FEATURES_HIDDEN_VERSION_SETTING,
 )
 ADMIN_SETTINGS_SECRET_REDACTED_VALUE = "***REDACTED***"
 ADMIN_SETTINGS_FORM_SECRET_FIELDS = (

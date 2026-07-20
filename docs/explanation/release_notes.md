@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.058)**
+
+#### New Features
+
+*   **Versioned Latest Features Navigation Hide Preference**
+    *   Users can now hide Latest Features navigation entries for the current SimpleChat version from the ellipsis action and restore them from Profile Settings.
+    *   The hidden state is version-aware, so Latest Features automatically appears again after the app version changes.
+    *   Added a development-only `is_development=true` environment override that hides Latest Features nav entries without affecting production behavior when unset or false.
+    *   (Ref: microsoft/simplechat#987, `latestFeaturesHiddenVersion`, `_sidebar_nav.html`, `_top_nav.html`, `profile.html`, `latest-features-nav.js`)
+
 ### **(v0.250.057)**
 
 #### Bug Fixes

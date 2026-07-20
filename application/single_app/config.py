@@ -32,6 +32,7 @@ import ffmpeg as ffmpeg_py
 import glob
 import jwt
 import pandas
+from functions_latest_features_nav import is_development_env_enabled
 
 # Add dotenv import
 from dotenv import load_dotenv
@@ -96,7 +97,8 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.250.057"
+VERSION = "0.250.059"
+IS_DEVELOPMENT = is_development_env_enabled()
 
 SESSION_COOKIE_SAMESITE = os.getenv('SESSION_COOKIE_SAMESITE', 'Lax')
 SESSION_COOKIE_HTTPONLY = os.getenv('SESSION_COOKIE_HTTPONLY', 'true').lower() != 'false'
