@@ -650,6 +650,11 @@
     const appSettings = {{ app_settings|tojson }};
     window.appSettings = appSettings;
     window.simplechatUserSettings = {{ user_settings.get('settings', {}) | tojson }};
+    window.simplechatLatestFeaturesNav = {{ {
+      'currentVersion': latest_features_current_version | default(config['VERSION']),
+      'hiddenByDevelopment': latest_features_nav_hidden_by_development | default(false),
+      'settingKey': 'latestFeaturesHiddenVersion'
+    } | tojson }};
   </script>
 
   <!-- Prism.js syntax highlighting script -->
@@ -698,6 +703,7 @@
   <script src="{{ url_for('static', filename='js/navigation.js') }}"></script>
   <script src="{{ url_for('static', filename='js/sidebar.js') }}"></script>
   <script src="{{ url_for('static', filename='js/sidebar-resize.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/latest-features-nav.js') }}?v={{ config['VERSION'] }}"></script>
   <!-- Profile Image JavaScript -->
   <script src="{{ url_for('static', filename='js/profile-image.js') }}"></script>
   {% if session.get('user') %}

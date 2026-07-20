@@ -1,4 +1,5 @@
 {% set is_chat_page = request.endpoint == 'frontend_chats.chats' %}
+{% set latest_features_nav_is_hidden = latest_features_nav_hidden | default(false) %}
 <nav class="navbar navbar-expand-lg navbar-light bg-light fixed-top top-nav-bar{% if is_chat_page %} top-nav-bar-chat{% endif %}">
     <div class="container-fluid top-nav-shell{% if is_chat_page %} top-nav-shell-chat{% endif %}">
         <div class="top-nav-brand">
@@ -94,21 +95,32 @@
             {% if session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
                 {% set support_menu_role_allowed = 'Admin' in session['user']['roles'] or 'User' in session['user']['roles'] %}
                 {% if support_menu_role_allowed and app_settings.enable_support_menu %}
-                    {% set show_support_latest_features = app_settings.enable_support_latest_features and app_settings.support_latest_features_has_visible_items %}
+                    {% set show_support_latest_features = app_settings.enable_support_latest_features and app_settings.support_latest_features_has_visible_items and not latest_features_nav_is_hidden %}
                     {% set show_support_send_feedback = app_settings.enable_support_send_feedback and app_settings.support_feedback_recipient_configured %}
                     {% if show_support_latest_features or show_support_send_feedback %}
-                        <div class="nav-item dropdown">
+                        <div class="nav-item dropdown" data-support-menu-nav-section>
                             <a class="nav-link dropdown-toggle" href="#" id="supportMenuDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
                                 {{ app_settings.support_menu_name or 'Support' }}
                             </a>
                             <div class="dropdown-menu" aria-labelledby="supportMenuDropdown">
                                 {% if show_support_latest_features %}
-                                    <a class="dropdown-item" href="{{ url_for('frontend_support.support_latest_features') }}">
-                                        Latest Features
-                                    </a>
+                                    <div class="d-flex align-items-center latest-features-nav-item" data-latest-features-nav-item data-support-menu-destination>
+                                        <a class="dropdown-item flex-grow-1 pe-2" href="{{ url_for('frontend_support.support_latest_features') }}">
+                                            Latest Features
+                                        </a>
+                                        <button
+                                            type="button"
+                                            class="btn btn-sm btn-link text-muted p-1 me-2 latest-features-hide-action"
+                                            data-latest-features-hide-action
+                                            aria-label="Hide Latest Features"
+                                            title="Hide Latest Features"
+                                        >
+                                            <i class="bi bi-three-dots" aria-hidden="true"></i>
+                                        </button>
+                                    </div>
                                 {% endif %}
                                 {% if show_support_send_feedback %}
-                                    <a class="dropdown-item" href="{{ url_for('frontend_support.support_send_feedback') }}">
+                                    <a class="dropdown-item" href="{{ url_for('frontend_support.support_send_feedback') }}" data-support-menu-destination>
                                         Send Feedback
                                     </a>
                                 {% endif %}
@@ -310,21 +322,34 @@
 
             {% set support_menu_role_allowed = 'Admin' in session['user']['roles'] or 'User' in session['user']['roles'] %}
             {% if support_menu_role_allowed and app_settings.enable_support_menu %}
-                {% set show_support_latest_features = app_settings.enable_support_latest_features and app_settings.support_latest_features_has_visible_items %}
+                {% set show_support_latest_features = app_settings.enable_support_latest_features and app_settings.support_latest_features_has_visible_items and not latest_features_nav_is_hidden %}
                 {% set show_support_send_feedback = app_settings.enable_support_send_feedback and app_settings.support_feedback_recipient_configured %}
                 {% if show_support_latest_features or show_support_send_feedback %}
+                    <div data-support-menu-nav-section>
                     <div class="top-nav-mobile-section-label">{{ app_settings.support_menu_name or 'Support' }}</div>
                     <div class="list-group list-group-flush top-nav-mobile-list">
                         {% if show_support_latest_features %}
-                            <a class="list-group-item list-group-item-action" href="{{ url_for('frontend_support.support_latest_features') }}">
-                                <i class="bi bi-stars me-2"></i>Latest Features
-                            </a>
+                            <div class="list-group-item d-flex align-items-center latest-features-nav-item" data-latest-features-nav-item data-support-menu-destination>
+                                <a class="flex-grow-1 text-decoration-none text-body" href="{{ url_for('frontend_support.support_latest_features') }}">
+                                    <i class="bi bi-stars me-2"></i>Latest Features
+                                </a>
+                                <button
+                                    type="button"
+                                    class="btn btn-sm btn-link text-muted p-1 latest-features-hide-action"
+                                    data-latest-features-hide-action
+                                    aria-label="Hide Latest Features"
+                                    title="Hide Latest Features"
+                                >
+                                    <i class="bi bi-three-dots" aria-hidden="true"></i>
+                                </button>
+                            </div>
                         {% endif %}
                         {% if show_support_send_feedback %}
-                            <a class="list-group-item list-group-item-action" href="{{ url_for('frontend_support.support_send_feedback') }}">
+                            <a class="list-group-item list-group-item-action" href="{{ url_for('frontend_support.support_send_feedback') }}" data-support-menu-destination>
                                 <i class="bi bi-chat-left-text me-2"></i>Send Feedback
                             </a>
                         {% endif %}
+                    </div>
                     </div>
                 {% endif %}
             {% endif %}
