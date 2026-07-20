@@ -488,6 +488,170 @@ function setButtonBusy(button, isBusy, busyText) {
     }
 }
 
+function setupInboundMcpEasyAuthGuard() {
+    const enableToggle = document.getElementById('enable_inbound_mcp_server');
+    const modalElement = document.getElementById('inboundMcpEasyAuthModal');
+    const confirmCheckbox = document.getElementById('inbound-mcp-easy-auth-confirm');
+    const verifyButton = document.getElementById('inbound-mcp-easy-auth-verify');
+    const statusElement = document.getElementById('inbound-mcp-easy-auth-status');
+    const resultsList = document.getElementById('inbound-mcp-easy-auth-results');
+    const copyScriptButton = document.getElementById('inbound-mcp-copy-script');
+    const scriptCodeElement = document.getElementById('inbound-mcp-easy-auth-script-code');
+
+    if (!enableToggle || !modalElement || !confirmCheckbox || !verifyButton) {
+        return;
+    }
+
+    const modal = bootstrap.Modal.getOrCreateInstance(modalElement);
+    const wasEnabledOnLoad = enableToggle.checked;
+    let easyAuthVerified = wasEnabledOnLoad;
+
+    const setStatus = (message, variant = 'info') => {
+        if (!statusElement) {
+            return;
+        }
+        statusElement.textContent = message || '';
+        statusElement.className = `alert alert-${variant}${message ? '' : ' d-none'}`;
+    };
+
+    const renderResults = endpoints => {
+        if (!resultsList) {
+            return;
+        }
+        resultsList.replaceChildren();
+        if (!Array.isArray(endpoints) || endpoints.length === 0) {
+            resultsList.classList.add('d-none');
+            return;
+        }
+        endpoints.forEach(endpoint => {
+            const item = document.createElement('li');
+            const statusBadge = document.createElement('span');
+            const path = document.createElement('code');
+            const message = document.createElement('span');
+
+            item.className = 'list-group-item d-flex flex-column flex-lg-row gap-2 justify-content-between';
+            statusBadge.className = `badge align-self-start ${endpoint.success ? 'text-bg-success' : 'text-bg-danger'}`;
+            statusBadge.textContent = endpoint.success ? 'OK' : 'Needs fix';
+            path.textContent = endpoint.path || 'Unknown endpoint';
+            message.textContent = endpoint.message || 'No details returned.';
+
+            item.append(statusBadge, path, message);
+            resultsList.append(item);
+        });
+        resultsList.classList.remove('d-none');
+    };
+
+    const resetModalState = () => {
+        confirmCheckbox.checked = false;
+        setButtonBusy(verifyButton, false);
+        verifyButton.disabled = true;
+        setStatus('', 'info');
+        renderResults([]);
+    };
+
+    confirmCheckbox.addEventListener('change', () => {
+        verifyButton.disabled = !confirmCheckbox.checked;
+    });
+
+    copyScriptButton?.addEventListener('click', async () => {
+        const scriptText = scriptCodeElement?.textContent || '';
+        if (!scriptText) {
+            showToast('No PowerShell script was available to copy.', 'warning');
+            return;
+        }
+
+        try {
+            if (navigator.clipboard?.writeText) {
+                await navigator.clipboard.writeText(scriptText);
+            } else {
+                const fallbackTextarea = document.createElement('textarea');
+                fallbackTextarea.value = scriptText;
+                fallbackTextarea.setAttribute('readonly', 'readonly');
+                fallbackTextarea.classList.add('visually-hidden');
+                document.body.append(fallbackTextarea);
+                try {
+                    fallbackTextarea.focus();
+                    fallbackTextarea.select();
+                    if (!document.execCommand('copy')) {
+                        throw new Error('Clipboard copy command was not available.');
+                    }
+                } finally {
+                    fallbackTextarea.remove();
+                }
+            }
+            showToast('PowerShell script copied to clipboard.', 'success');
+        } catch (error) {
+            showToast(error.message || 'Could not copy the PowerShell script.', 'danger');
+        }
+    });
+
+    enableToggle.addEventListener('change', event => {
+        if (!enableToggle.checked || easyAuthVerified) {
+            return;
+        }
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        enableToggle.checked = false;
+        resetModalState();
+        modal.show();
+    });
+
+    verifyButton.addEventListener('click', async () => {
+        if (!confirmCheckbox.checked) {
+            return;
+        }
+
+        setButtonBusy(verifyButton, true, 'Verifying endpoints...');
+        setStatus('Checking unauthenticated access to the inbound MCP endpoints...', 'info');
+        renderResults([]);
+
+        try {
+            const response = await fetch('/api/admin/settings/inbound-mcp/easy-auth-check', {
+                method: 'POST',
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json'
+                },
+                credentials: 'same-origin'
+            });
+            const payload = await response.json();
+            renderResults(payload.endpoints);
+
+            if (!response.ok || payload.success !== true) {
+                setStatus(payload.message || 'Easy Auth exclusion verification failed.', 'danger');
+                enableToggle.checked = false;
+                easyAuthVerified = false;
+                return;
+            }
+
+            easyAuthVerified = true;
+            enableToggle.checked = true;
+            setStatus(payload.message || 'Easy Auth exclusions verified.', 'success');
+            markFormAsModified();
+            modal.hide();
+            showToast('Inbound MCP endpoint exclusions verified. Save settings to enable the server.', 'success');
+        } catch (error) {
+            setStatus(error.message || 'Easy Auth exclusion verification failed.', 'danger');
+            enableToggle.checked = false;
+            easyAuthVerified = false;
+        } finally {
+            setButtonBusy(verifyButton, false);
+            verifyButton.disabled = !confirmCheckbox.checked;
+        }
+    });
+
+    adminForm?.addEventListener('submit', event => {
+        if (!enableToggle.checked || easyAuthVerified) {
+            return;
+        }
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        resetModalState();
+        modal.show();
+        showToast('Verify the inbound MCP Easy Auth exclusions before saving.', 'warning');
+    });
+}
+
 function setElementText(elementId, value) {
     const element = document.getElementById(elementId);
     if (element) {
@@ -4345,6 +4509,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setupCosmosMaintenanceControls();
     setupDocumentAccessIndexControls();
     setupCosmosThroughputControls();
+    setupInboundMcpEasyAuthGuard();
     
     // --- Setup form change tracking ---
     setupFormChangeTracking();

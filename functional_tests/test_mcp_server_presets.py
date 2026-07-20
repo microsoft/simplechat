@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for declarative MCP server presets.
-Version: 0.250.062
+Version: 0.250.068
 Implemented in: 0.250.062
 
 This test ensures MCP server presets are loaded from validated JSON definitions,
@@ -48,6 +48,9 @@ def test_builtin_mcp_server_presets():
     assert splunk["displayName"] == "Splunk MCP Server"
     assert splunk["defaults"]["transport"] == "streamable_http"
     assert splunk["defaults"]["auth_method"] == "bearer"
+    assert splunk["implementation"]["id"] == "splunk"
+    assert splunk["additionalSettings"]["compatibilityProfile"] == "splunk_mcp"
+    assert splunk["additionalSettings"]["customHeaderValueHandling"] == "secret"
     assert "custom_headers" not in splunk["defaults"]
 
     response = build_mcp_server_presets_response()
@@ -66,6 +69,23 @@ def test_custom_mcp_server_preset_path_loading():
     """Validate org-authored presets can be loaded from configured directories."""
     previous_paths = os.environ.get(MCP_PRESET_PATHS_ENV)
     with tempfile.TemporaryDirectory() as temp_dir:
+        implementation_dir = Path(temp_dir, "implementation_schemas")
+        implementation_dir.mkdir()
+        Path(implementation_dir, "contoso.preset.schema.json").write_text(
+            json.dumps({
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["routingMode"],
+                "properties": {
+                    "routingMode": {
+                        "type": "string",
+                        "enum": ["contoso_gateway"],
+                    },
+                },
+            }, indent=4),
+            encoding="utf-8",
+        )
         custom_preset = {
             "id": "contoso",
             "version": "1.0.0",
@@ -98,10 +118,28 @@ def test_custom_mcp_server_preset_path_loading():
                 "customHeadersAllowed": True,
                 "stdioAllowed": False,
             },
+            "implementation": {
+                "id": "contoso",
+                "schemaVersion": "1.0.0",
+            },
+            "additionalSettings": {
+                "routingMode": "contoso_gateway",
+            },
             "suggestedHeaders": [],
             "warnings": [],
         }
         Path(temp_dir, "contoso.json").write_text(json.dumps(custom_preset, indent=4), encoding="utf-8")
+        invalid_preset = dict(custom_preset)
+        invalid_preset["id"] = "invalid_contoso"
+        invalid_preset["additionalSettings"] = {"routingMode": "unsafe_mode"}
+        Path(temp_dir, "invalid_contoso.json").write_text(json.dumps(invalid_preset, indent=4), encoding="utf-8")
+        unknown_schema_preset = dict(custom_preset)
+        unknown_schema_preset["id"] = "unknown_schema"
+        unknown_schema_preset["implementation"] = {
+            "id": "missing_schema",
+            "schemaVersion": "1.0.0",
+        }
+        Path(temp_dir, "unknown_schema.json").write_text(json.dumps(unknown_schema_preset, indent=4), encoding="utf-8")
 
         os.environ[MCP_PRESET_PATHS_ENV] = temp_dir
         clear_mcp_server_preset_cache()
@@ -109,7 +147,10 @@ def test_custom_mcp_server_preset_path_loading():
             presets = load_mcp_server_presets()
             preset_ids = {preset["id"] for preset in presets}
             assert "contoso" in preset_ids
+            assert "invalid_contoso" not in preset_ids
+            assert "unknown_schema" not in preset_ids
             assert get_mcp_server_preset("contoso")["defaults"]["auth_method"] == "api_key"
+            assert get_mcp_server_preset("contoso")["additionalSettings"]["routingMode"] == "contoso_gateway"
             assert normalize_mcp_server_profile("contoso") == "contoso"
         finally:
             if previous_paths is None:

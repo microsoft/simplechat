@@ -4,13 +4,37 @@ Architecture recorded in version: **0.250.062**
 
 Disabled shell implemented in version: **0.250.063**
 
-Runtime implementation: **Disabled inbound MCP shell implemented; no inbound MCP tools are exposed.**
+Planned base inbound action set updated in version: **0.250.069**
+
+First governed tool slice implemented in version: **0.250.070**
+
+App-settings and minimal admin UI slice implemented in version: **0.250.071**
+
+Easy Auth enablement guard implemented in version: **0.250.072**
+
+Cloud-aware Easy Auth script implemented in version: **0.250.073**
+
+Script copy and authsettingsV2 read fix implemented in version: **0.250.074**
+
+Delegated scope default and setup preflight implemented in version: **0.250.075**
+
+OAuth protected-resource discovery header implemented in version: **0.250.076**
+
+Inbound MCP governance UI implemented in version: **0.250.077**
+
+Inbound MCP user/app role split implemented in version: **0.250.078**
+
+MCP governance help modal implemented in version: **0.250.079**
+
+Simplified inbound MCP access/source governance implemented in version: **0.250.080**
+
+Runtime implementation: **Inbound MCP shell supports minimal streamable HTTP JSON-RPC (`initialize`, `tools/list`, `tools/call`) and exposes personal delegated tools only when explicit personal access and source governance policies allow the delegated user. Mutable inbound MCP runtime settings are stored in the Cosmos-backed `app_settings` document. Admin enablement is blocked until the required App Service Authentication excluded paths are verified. The Easy Auth setup script is generated from SimpleChat deployment hints, supports public/government/custom Resource Manager endpoints, attempts to verify that the SimpleChat API app exposes the delegated scope plus required inbound MCP user/app roles, creates a backup before changing `authsettingsV2`, and can be copied from the modal. Inbound MCP 401 responses advertise the PRM endpoint through `WWW-Authenticate` so OAuth-capable MCP clients discover Entra instead of falling back to `/authorize` on the SimpleChat host. Admin Settings now exposes quick-create governance controls and reusable policy-help modals for the two current inbound MCP policy types: personal access and source.**
 
 ## Overview
 
 This document records Track B Phase B0 and B1 decisions for the inbound SimpleChat Model Context Protocol (MCP) server. The goal is to expose a small, governed set of SimpleChat capabilities to approved MCP clients without weakening SimpleChat's existing authentication, authorization, workspace, governance, observability, and data-protection boundaries.
 
-This phase is intentionally an architecture and auth-foundation slice. It does **not** expose inbound MCP tools yet.
+This document began as the architecture and auth-foundation slice. As of version **0.250.080**, the first governed personal read tool is implemented, the mutable runtime settings are app-settings backed, a minimal Admin Settings panel exists behind an OS-only UI feature flag, enabling the server requires a verified Easy Auth exclusion check, the default delegated scope is `DelegatedMcpServerAccess`, delegated personal tools require the `InboundMCPUserAccess` user-assignable app role by default, `InboundMCPAppAccess` is reserved for future app-only tools, OAuth clients receive the PRM discovery challenge on bearer-token 401 responses, and admins can create inbound MCP personal access and source policies from the Governance tab with per-button help guidance. The rest of the initial tool set remains planned and disabled.
 
 ## Dependencies
 
@@ -20,7 +44,7 @@ This phase is intentionally an architecture and auth-foundation slice. It does *
 - Existing governance helpers in `functions_governance.py`.
 - Existing group/public workspace authorization helpers.
 - Existing `log_event` telemetry pattern.
-- Disabled streamable HTTP route shell in `route_inbound_mcp.py`; full MCP protocol/tool execution remains future work.
+- Streamable HTTP JSON-RPC route shell in `route_inbound_mcp.py`; broader MCP protocol surfaces beyond `initialize`, `tools/list`, and `tools/call` remain future work.
 
 ## Phase B0 Architecture Decisions
 
@@ -111,28 +135,31 @@ The guard must validate:
 - Issuer matches expected Entra issuer forms for the configured tenant.
 - Audience is the SimpleChat API resource.
 - Caller application ID is allowlisted.
-- Required app role or delegated scope is present.
+- Delegated tokens include the required delegated scope and at least one required delegated user role.
+- App-only tokens include at least one required app-only role, but are not sufficient for personal tools.
 - Token type is understood: delegated user token vs app-only token.
 - User-data tools receive a delegated user identity.
 
-Do not reuse the current external `ExternalApi` role implicitly. Use a dedicated app role or scope unless an admin deliberately maps it.
+Do not reuse the current external `ExternalApi` role implicitly. Use dedicated inbound MCP scope and role values unless an admin deliberately maps them.
 
-Recommended default app role/scope:
+Recommended defaults:
 
 ```text
-McpServerAccess
+Delegated user role: InboundMCPUserAccess
+Future app-only role: InboundMCPAppAccess
+Delegated scope: DelegatedMcpServerAccess
 ```
 
 ### App-Only vs Delegated Access
 
-Initial read-only personal tools require delegated user access.
+Initial personal tools require delegated user access. A delegated scope is the best default for VS Code and other interactive MCP clients because the request is bound to the represented user and can safely evaluate personal workspace authorization. Read operations remain list/retrieve/search only; `execute_workflow` requires separate execution governance because it can create workflow runs, messages, model calls, and audit records.
 
 Policy:
 
 | Token type | Initial personal tools | Future admin tools | Notes |
 | --- | --- | --- | --- |
-| Delegated user token | Allowed after all auth/governance checks | Not applicable | Tool execution is bound to represented user. |
-| App-only token | Rejected | Possible future separate design | Never map app-only identity to arbitrary user data. |
+| Delegated user token | Allowed after all auth/governance checks | Not applicable | Tool execution is bound to represented user and requires the configured delegated scope plus at least one configured user-assignable app role. |
+| App-only token | Rejected by personal tool governance | Possible future separate design | App role claims are consumed for future app-only MCP access, but must not be mapped to arbitrary user data. |
 | Browser session cookie | Rejected for MCP API | Not applicable | MCP clients use bearer tokens, not browser session auth. |
 
 The auth context should include:
@@ -157,21 +184,39 @@ Do not expose raw token claims to tools by default.
 
 ### Configuration Contract
 
-Add configuration through settings/env first, then admin UI later.
+Mutable runtime configuration is stored in the Cosmos-backed `app_settings` document so Azure deployments can change inbound MCP enablement and auth/source allowlists without editing code or restarting solely to change environment variables.
 
-Proposed settings:
+Implemented `app_settings` keys:
 
 ```text
-ENABLE_INBOUND_MCP_SERVER=false
-INBOUND_MCP_REQUIRED_ROLE=McpServerAccess
-INBOUND_MCP_REQUIRED_SCOPE=McpServerAccess
-INBOUND_MCP_ALLOWED_CLIENT_APP_IDS=
-INBOUND_MCP_ALLOWED_TENANT_IDS=
-INBOUND_MCP_ALLOWED_SOURCE_IDS=*
-INBOUND_MCP_SOURCE_HEADER=X-SimpleChat-MCP-Source
-INBOUND_MCP_RESOURCE_PATH=/api/mcp
-INBOUND_MCP_PRM_PATH=/.well-known/oauth-protected-resource/mcp
+enable_inbound_mcp_server=false
+inbound_mcp_required_user_roles=["InboundMCPUserAccess"]
+inbound_mcp_required_app_roles=["InboundMCPAppAccess"]
+inbound_mcp_required_scope=DelegatedMcpServerAccess
+inbound_mcp_allowed_client_app_ids=[]
+inbound_mcp_allowed_tenant_ids=[]
+inbound_mcp_allowed_source_ids=["*"]
+inbound_mcp_source_header=X-SimpleChat-MCP-Source
 ```
+
+The inbound MCP endpoint paths remain fixed in application routing for this slice:
+
+```text
+/api/mcp
+/.well-known/oauth-protected-resource/mcp
+```
+
+The minimal Admin Settings panel is gated by the OS/App Service environment feature flag `ENABLE_MCP_UI`. That flag is not stored in `app_settings`, not rendered as an editable UI control, and only controls whether the admin panel and left-nav jump link are visible.
+
+When App Service Authentication is configured to redirect unauthenticated callers, admins must exclude the MCP discovery and endpoint paths at the App Service Authentication layer before enabling inbound MCP. The Admin Settings modal provides Azure Cloud Shell-compatible PowerShell/az CLI guidance and verifies that these public unauthenticated requests reach SimpleChat JSON handlers rather than Microsoft sign-in HTML:
+
+```text
+/.well-known/oauth-protected-resource/mcp
+/api/mcp
+/api/mcp/health
+```
+
+Excluding `/api/mcp` and `/api/mcp/health` from Easy Auth does not make MCP unauthenticated because SimpleChat still enforces its dedicated bearer-token guard on those routes.
 
 Default behavior must be deny-by-default:
 
@@ -191,6 +236,14 @@ GET /.well-known/oauth-protected-resource/mcp
 
 The response should be derived from safe configuration only.
 
+Bearer-token 401 responses from `/api/mcp` should include a protected-resource discovery challenge:
+
+```http
+WWW-Authenticate: Bearer resource_metadata="https://<public-simplechat-host>/.well-known/oauth-protected-resource/mcp"
+```
+
+Without this challenge, some OAuth-capable MCP clients may infer the SimpleChat host itself is the authorization server and redirect users to a non-existent `/authorize` route. The intended authorization server is the configured Entra authority returned by PRM.
+
 Proposed response shape:
 
 ```json
@@ -200,7 +253,7 @@ Proposed response shape:
         "https://login.microsoftonline.com/<tenant-id>/v2.0"
     ],
     "scopes_supported": [
-        "McpServerAccess"
+        "DelegatedMcpServerAccess"
     ],
     "bearer_methods_supported": [
         "header"
@@ -229,13 +282,12 @@ Recommended responses:
 | Missing bearer token | 401 | `bearer_token_required` |
 | Invalid/expired token | 401 | `invalid_token` |
 | Wrong audience/issuer/tenant | 401 | `invalid_token` |
-| Missing role/scope | 403 | `insufficient_mcp_permissions` |
+| Missing delegated scope, delegated user role, or app-only role | 403 | `insufficient_mcp_permissions` |
 | Disallowed client app | 403 | `mcp_client_not_allowed` |
 | Disallowed source | 403 | `mcp_source_not_allowed` |
 | Inbound MCP disabled | 404 or 403 | `inbound_mcp_disabled` |
-| Tool disabled by governance | 403 | `mcp_tool_not_allowed` |
-| Scope disabled by governance | 403 | `mcp_scope_not_allowed` |
-| Resource operation disabled | 403 | `mcp_resource_operation_not_allowed` |
+| Personal access disabled by governance | 403 | `mcp_access_not_allowed` |
+| Future capability disabled by governance | 403 | capability-specific error |
 
 Log internal detail with `log_event`, but never return raw token or policy internals to the caller.
 
@@ -243,23 +295,19 @@ Log internal detail with `log_event`, but never return raw token or policy inter
 
 Use a combined model:
 
-1. **Entra app role/scope**: coarse gate to reach inbound MCP.
-2. **Client app allowlist**: caller application must be approved.
-3. **Source allowlist**: optional approved connection/source policy for where approved clients may connect from.
-4. **SimpleChat governance**: tools, resources, operations, users, groups, and scopes are enabled explicitly.
+1. **Entra scope plus role**: coarse gate to reach inbound MCP; delegated tools require both the configured delegated scope and a configured user-assignable app role.
+2. **Client app allowlist**: caller application must be approved in inbound MCP runtime configuration.
+3. **Source governance**: approved source signals are allowed through `inbound_mcp_source` policies.
+4. **SimpleChat governance**: users and groups are allowed through `inbound_mcp_access/personal` policies.
 5. **Workspace authorization**: the represented user must already have access to the target data.
 
-Initial governance dimensions:
+Current required governance dimensions:
 
 ```text
 global inbound MCP enabled
 client app id enabled
-source id enabled or wildcard "*"
-tool id enabled
-resource family enabled: profile, conversations, documents, prompts, agent_templates, chat
-resource operation enabled: list, retrieve, search, write
-scope enabled: personal, group, public, all
-target scope id enabled: user id, group id, public workspace id, or wildcard "*"
+source policy enabled: inbound_mcp_source item "*" or a resolved source id
+personal access policy enabled: inbound_mcp_access item "personal"
 identity type allowed: delegated, app-only
 optional per-client/user rate limit
 ```
@@ -268,26 +316,23 @@ Recommended default:
 
 ```text
 inbound MCP: disabled
-personal scope: disabled until B3
+personal access: disabled until an explicit inbound_mcp_access/personal policy allows users or groups
 group scope: disabled
 public scope: disabled
 all scope: disabled
-all tools: disabled
-all resource operations: disabled
-source allowlist: "*" until admins opt into source filtering
+source governance: disabled until an explicit inbound_mcp_source policy allows "*" or a resolved source id
 ```
 
 ### Fine-Grained Resource Exposure
 
-Fine-grained resource exposure is a required design constraint for the first implementation, even if the first executable slice only ships a disabled shell.
+Fine-grained resource exposure is still a required future design constraint, but it should not make the first production governance UI harder to understand. The current implemented path uses personal access plus source governance. Future capability-level controls should use admin-facing capability names rather than raw tool ids or resource-operation strings.
 
-Admins must be able to independently toggle exposed MCP resources and operations by:
+Future policy surfaces may independently toggle exposed MCP resources and operations by:
 
-- tool id,
+- capability such as `personal_read`, `personal_search`, `workflow_execute`, or `group_read`,
 - resource family,
 - operation,
 - caller user or caller group segment,
-- client application id,
 - target workspace scope,
 - specific target group or public workspace,
 - wildcard target such as all groups or all public workspaces.
@@ -298,7 +343,7 @@ Examples:
 | --- | --- |
 | Disable document listing for every group | `scope=group`, `resource_family=documents`, `operation=list`, `target_scope_id=*`, `effect=deny` |
 | Disable document retrieval for one group only | `scope=group`, `resource_family=documents`, `operation=retrieve`, `target_scope_id=<group_id>`, `effect=deny` |
-| Allow one client to search personal documents only | `client_app_id=<app_id>`, `scope=personal`, `resource_family=documents`, `operation=search`, `effect=allow` |
+| Allow personal search only for one approved user segment | `capability=personal_search`, `allowed_groups=[<group_id>]`, `effect=allow` |
 | Disable prompt retrieval for a user segment | `caller_segment=<group_or_policy_id>`, `resource_family=prompts`, `operation=retrieve`, `effect=deny` |
 
 Policy evaluation should follow these rules:
@@ -309,7 +354,7 @@ Policy evaluation should follow these rules:
 4. Workspace authorization is always evaluated after governance allows the operation.
 5. Governance allow never grants access to data the delegated user cannot already access.
 
-This is intentionally similar to item-delegation governance: every exposed MCP resource operation should have an explicit policy surface, not just a broad "MCP enabled" toggle.
+This should remain compatible with item-delegation governance: every future exposed MCP capability should have an explicit, understandable policy surface, not just a broad "MCP enabled" toggle.
 
 ### Source Allowlisting
 
@@ -365,17 +410,17 @@ Suggested registry record:
 }
 ```
 
-Initial candidate read-only personal tools remain planned, not exposed:
+Initial candidate personal tools are explicit and data-driven. Most are read-only; `execute_workflow` is a governed execution operation and must not share the same lightweight policy path as list/retrieve/search actions.
 
 | Tool | Scope | Identity | Initial status |
 | --- | --- | --- | --- |
-| `show_user_profile` | personal | delegated | Planned |
 | `list_conversations` | personal | delegated | Planned |
 | `get_conversation_messages` | personal | delegated | Planned |
 | `list_personal_documents` | personal | delegated | Planned |
 | `list_personal_prompts` | personal | delegated | Planned |
+| `list_personal_tags` | personal | delegated | Implemented in v0.250.070; exposed only when explicit personal access and source governance allow the delegated user |
 | `search_personal_documents` | personal | delegated | Planned |
-| `list_agent_template_tags` | personal | delegated | Planned |
+| `execute_workflow` | personal | delegated | Planned with explicit execution governance |
 
 Deferred tools:
 
@@ -441,7 +486,9 @@ Auth contract tests before tools:
 - Invalid issuer.
 - Invalid audience.
 - Invalid tenant.
-- Missing required role/scope.
+- Missing required delegated scope.
+- Missing required delegated user role.
+- Missing required app-only role for app-only MCP access.
 - Disallowed caller app ID.
 - Disallowed source when source allowlist is not wildcard `*`.
 - Wildcard source `*` permits source-agnostic access only after identity/client/governance checks pass.
@@ -451,6 +498,7 @@ Auth contract tests before tools:
 PRM tests:
 
 - Metadata endpoint returns expected resource shape.
+- Bearer-token 401 responses include a `WWW-Authenticate` challenge with `resource_metadata`.
 - Metadata derives authorization server from safe tenant configuration.
 - Metadata does not expose secrets or internal endpoints.
 - Metadata remains available when tools are disabled, if inbound MCP metadata is enabled.
@@ -458,20 +506,19 @@ PRM tests:
 Governance tests:
 
 - Inbound MCP disabled.
-- Client disabled.
-- Tool disabled.
-- Scope disabled.
-- Resource family disabled.
-- Resource operation disabled.
-- Specific group target disabled while other groups remain governed independently.
-- Wildcard all-groups policy applies to group resources unless a more specific policy overrides it.
+- Disallowed client application ID is rejected by MCP runtime configuration before governance.
+- Missing personal access policy denies personal tools.
+- Missing source policy denies inbound calls.
+- Personal access item `personal` allows only users or groups on the policy, unless the policy's own allow-all toggle is enabled.
+- Source item `*` allows any source signal only for principals allowed by that source policy.
+- Legacy `inbound_mcp_scope` and `inbound_mcp_target` policies are accepted only as a temporary compatibility fallback for personal access.
 - Personal scope allowed only for delegated users.
 - Group/public/all scopes remain disabled by default.
 - Explicit deny wins over allow.
 
 Source allowlist tests:
 
-- `INBOUND_MCP_ALLOWED_SOURCE_IDS=*` does not block otherwise-authorized requests.
+- `app_settings.inbound_mcp_allowed_source_ids=["*"]` does not block otherwise-authorized requests.
 - Non-wildcard source allowlist rejects unknown source.
 - Trusted proxy-injected source id is preferred over caller-supplied advisory headers.
 - Raw custom source header is treated as advisory unless configured as trusted through infrastructure or signed attestation.
@@ -494,8 +541,8 @@ Phase B0/B1 is complete when:
 5. Dedicated auth guard contract is defined.
 6. App-only vs delegated user policy is defined.
 7. PRM metadata contract is defined.
-8. Governance dimensions and deny-by-default posture are defined.
-9. Fine-grained resource family and operation governance requirements are defined.
+8. Personal access and source governance plus deny-by-default posture are defined.
+9. Future fine-grained resource family, operation, and capability governance requirements are defined separately from the first personal-access slice.
 10. Source allowlisting requirements and trust limitations are defined.
 11. Initial tool registry shape is defined.
 12. Test plan for the first executable inbound slice is defined.
@@ -519,17 +566,80 @@ Implemented files:
 
 ```text
 application\single_app\route_inbound_mcp.py
+application\single_app\functions_mcp_server_config.py
 application\single_app\functions_mcp_server_auth.py
 application\single_app\functions_mcp_server_governance.py
 application\single_app\functions_mcp_server_registry.py
 functional_tests\test_inbound_mcp_server_shell.py
+functional_tests\test_inbound_mcp_admin_ui.py
 ```
 
-The shell is disabled by default through `ENABLE_INBOUND_MCP_SERVER=false`. The public PRM endpoint returns safe metadata only. The `/api/mcp` and `/api/mcp/health` routes use the dedicated inbound MCP bearer-token guard when enabled, and return no tools.
+The shell is disabled by default through `app_settings.enable_inbound_mcp_server=false`. The public PRM endpoint returns safe metadata only. The `/api/mcp` and `/api/mcp/health` routes use the dedicated inbound MCP bearer-token guard when enabled.
+
+## First Governed Tool Slice
+
+Version **0.250.070** adds the first executable inbound MCP tool slice:
+
+1. `route_inbound_mcp.py` handles minimal streamable HTTP JSON-RPC methods:
+   - `initialize`
+   - `notifications/initialized`
+   - `tools/list`
+   - `tools/call`
+2. `functions_mcp_server_governance.py` evaluates explicit item policies for:
+   - `inbound_mcp_access` with item `personal`
+   - `inbound_mcp_source` with item `*` or a resolved source id
+3. Missing explicit policy denies access.
+4. Matching explicit deny policies win over matching allow policies.
+5. `functions_mcp_server_registry.py` distinguishes planned tools from implemented tools.
+6. `functions_mcp_server_tools.py` implements `list_personal_tags` using the delegated user identity from the inbound MCP auth context.
+
+To expose personal inbound MCP tools, an admin must enable the global inbound MCP feature and configure the bearer-token delegated scope, delegated user role, tenant allowlist, and client allowlist. Client trust belongs to the Inbound MCP runtime configuration. SimpleChat governance decides which users/groups may use personal MCP and which source signals are allowed. Version **0.250.080** simplifies the required item policy shape to:
+
+| Entity type | Item id example |
+| --- | --- |
+| `inbound_mcp_access` | `personal` |
+| `inbound_mcp_source` | `*` or a resolved source id such as `https://agent.fedorg.gov` |
+
+The allow-all toggle, allowed users, and allowed groups on each policy remain the only user/group authorization controls. Do not encode user authorization into item ids such as `personal:*`; use delegated item `personal` and then choose allow-all or explicit users/groups. Legacy client, tool, scope, resource-operation, and target policy types remain readable for compatibility, but the Admin Settings quick-create experience no longer creates them for the current personal MCP slice.
+
+The first tool intentionally returns only tag metadata: tag name, count, color, scope, count, and limit. It does not accept a caller-supplied `user_id`.
+
+## App Settings And Minimal Admin UI Slice
+
+Version **0.250.071** moves mutable inbound MCP runtime settings from static OS environment variables into the Cosmos-backed `app_settings` document and adds a minimal Admin Settings panel under **Agents and Actions**.
+
+Implemented behavior:
+
+1. `functions_mcp_server_config.py` centralizes defaults, list normalization, boolean normalization, and OS-only UI gate evaluation.
+2. `functions_settings.py` persists default inbound MCP runtime settings into `app_settings` and normalizes updates.
+3. `functions_mcp_server_auth.py` and `route_inbound_mcp.py` resolve runtime config per request instead of importing static env constants for enablement, delegated scope, delegated user roles, app-only roles, client allowlist, tenant allowlist, source allowlist, or source-header behavior.
+4. `app.py` injects `mcp_ui_enabled` into templates without adding `enable_mcp_ui` to sanitized or persisted app settings.
+5. `templates\admin_settings.html` renders the minimal inbound MCP panel only when `mcp_ui_enabled` is true.
+6. `templates\_sidebar_nav.html` renders the left-nav **Inbound MCP** jump link only when `mcp_ui_enabled` is true.
+
+The UI intentionally exposes only mutable runtime settings. Endpoint route paths stay fixed for this slice, and `ENABLE_MCP_UI` remains an OS/App Service environment setting rather than an editable SimpleChat setting.
+
+## Easy Auth Enablement Guard
+
+Version **0.250.072** adds an admin enablement guard for Azure App Service Authentication deployments that redirect unauthenticated requests. Version **0.250.073** upgrades the setup script to be generated from SimpleChat deployment hints instead of assuming public Azure. Version **0.250.074** adds a copy-to-clipboard button and fixes the script to read `authsettingsV2` with the resource GET endpoint before creating a backup. Version **0.250.075** changes the default delegated scope to `DelegatedMcpServerAccess` and adds a best-effort setup-script check that the SimpleChat API app registration exposes that enabled delegated scope. Version **0.250.078** adds preflight checks for the `InboundMCPUserAccess` user role and `InboundMCPAppAccess` app-only role.
+
+Implemented behavior:
+
+1. The inbound MCP admin panel opens a Bootstrap modal when an admin attempts to enable the server from a disabled state.
+2. The modal provides PowerShell/az CLI instructions for adding the three required `authsettingsV2.properties.globalValidation.excludedPaths` values.
+3. The admin must confirm that the App Service Authentication exclusions were applied.
+4. SimpleChat then probes the public PRM, MCP JSON-RPC, and MCP health endpoints without following redirects or adding browser credentials.
+5. The UI keeps inbound MCP disabled when the probe sees a sign-in redirect, sign-in HTML, non-JSON response, or unexpected status.
+6. The Admin Settings POST path repeats the server-side probe before saving a false-to-true enablement transition, so browser bypasses cannot enable inbound MCP while Easy Auth is still intercepting the endpoints.
+7. The generated script derives tenant, Azure environment, Resource Manager endpoint, App Service name, resource group, and subscription hints from SimpleChat/App Service environment values.
+8. The generated script selects the Azure CLI cloud before login, logs into the configured tenant, validates the active Resource Manager endpoint, and matches custom clouds by registered Azure CLI cloud endpoint.
+9. The generated script writes a timestamped `simplechat-authsettingsV2-backup-*.json` file before applying the PUT update.
+10. The generated script reads the current resource with `GET .../config/authsettingsV2` and only creates the backup after that read succeeds.
+11. The modal exposes a small copy button for the generated PowerShell script.
 
 ## Next Executable Slice
 
-Only after the disabled shell is reviewed should Phase B2/B3 expose read-only personal tools. The next implementation slice should add durable governance policy storage/evaluation and one read-only personal tool behind:
+After the first governed tool slice, the next implementation slice should add another low-risk personal read tool behind the same controls:
 
 1. delegated-user token validation,
 2. client app allowlisting,

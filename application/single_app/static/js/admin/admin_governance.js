@@ -22,6 +22,13 @@ const GOVERNANCE_ITEM_ENTITY_LABELS = {
     mcp_personal_destination: 'MCP Personal Destination',
     mcp_group_destination: 'MCP Group Destination',
     mcp_global_destination: 'MCP Global Destination',
+    inbound_mcp_access: 'Inbound MCP Access',
+    inbound_mcp_source: 'Inbound MCP Source',
+    inbound_mcp_client: 'Inbound MCP Client (Legacy)',
+    inbound_mcp_tool: 'Inbound MCP Tool (Legacy)',
+    inbound_mcp_scope: 'Inbound MCP Scope (Legacy)',
+    inbound_mcp_resource_operation: 'Inbound MCP Resource Operation (Legacy)',
+    inbound_mcp_target: 'Inbound MCP Target (Legacy)',
 };
 
 const GOVERNANCE_ITEM_LOOKUP_HINTS = {
@@ -34,12 +41,83 @@ const GOVERNANCE_ITEM_LOOKUP_HINTS = {
     mcp_personal_destination: 'Enter a personal MCP destination pattern such as preconfiguration:microsoft_learn, *.contoso.com, or *.',
     mcp_group_destination: 'Enter a group MCP destination pattern. Use group:<group-id>::<pattern> for a specific group override.',
     mcp_global_destination: 'Enter a global/admin MCP destination pattern such as preconfiguration:github, https://example.com/mcp*, or *.',
+    inbound_mcp_access: 'Enter the inbound MCP access scope such as personal.',
+    inbound_mcp_source: 'Enter the inbound MCP source ID, origin, configured source header value, or *.',
+    inbound_mcp_client: 'Legacy policy type. Client allowlisting now lives in Inbound MCP configuration.',
+    inbound_mcp_tool: 'Legacy policy type. Tool-level inbound MCP governance is not required for the current personal access model.',
+    inbound_mcp_scope: 'Legacy policy type. Use inbound_mcp_access with item personal for new policies.',
+    inbound_mcp_resource_operation: 'Legacy policy type. Operation-level inbound MCP governance is not required for the current personal access model.',
+    inbound_mcp_target: 'Legacy policy type. Personal access should use item personal with the standard user/group allowlist.',
+};
+
+const GOVERNANCE_POLICY_HELP_CONTENT = {
+    mcp_personal_destination: {
+        title: 'Personal MCP destination policy',
+        purpose: 'Use this when you want to allow a remote outbound MCP destination for personal workspaces.',
+        configuration: [
+            'Entity type: mcp_personal_destination.',
+            'Item ID examples: preconfiguration:microsoft_learn, preset:generic, *.fedorg.gov, https://mcp.fedorg.gov/mcp*, or * for any remote destination after identity and auth checks.',
+            'Keep "Allow all users" off unless every user with MCP action access should be able to use that destination.',
+        ],
+    },
+    mcp_group_destination: {
+        title: 'Group MCP destination policy',
+        purpose: 'Use this when a destination should be allowed for group workspace actions.',
+        configuration: [
+            'Entity type: mcp_group_destination.',
+            'Item ID examples: preconfiguration:github for all governed groups, or group:<group-id>::https://mcp.fedorg.gov/mcp* for one group-specific override.',
+            'Use allowed users or groups to restrict who can use this destination from group workflows.',
+        ],
+    },
+    mcp_global_destination: {
+        title: 'Global MCP destination policy',
+        purpose: 'Use this for admin-managed or enterprise-wide MCP destinations that are configured centrally.',
+        configuration: [
+            'Entity type: mcp_global_destination.',
+            'Item ID examples: preconfiguration:github, preset:generic, transport:streamable-http, *.fedorg.gov, or * for any governed global destination.',
+            'Prefer specific preconfiguration, preset, host, or transport patterns before using the broad * wildcard.',
+        ],
+    },
+    inbound_mcp_access: {
+        title: 'Inbound MCP personal access policy',
+        purpose: 'Use this to allow specific users or groups to use SimpleChat inbound MCP for their personal workspace data.',
+        configuration: [
+            'Entity type: inbound_mcp_access.',
+            'Item ID: personal.',
+            'Keep "Allow all users" off unless every user with the required Entra role and delegated scope should be able to use personal inbound MCP tools.',
+        ],
+    },
+    inbound_mcp_source: {
+        title: 'Inbound MCP source policy',
+        purpose: 'Use this to allow calls from an approved source signal after the caller has passed MCP app/client configuration and user access governance.',
+        configuration: [
+            'Entity type: inbound_mcp_source.',
+            'Item ID examples: *, https://agent.fedorg.gov, https://copilot.fedorg.gov, or the value supplied by the configured X-SimpleChat-MCP-Source header.',
+            'The source header is advisory unless trusted infrastructure controls it, so prefer specific origins or use * only when MCP app/client configuration and user governance are sufficient.',
+        ],
+    },
 };
 
 const GOVERNANCE_MCP_DESTINATION_ENTITY_TYPES = new Set([
     'mcp_personal_destination',
     'mcp_group_destination',
     'mcp_global_destination',
+]);
+
+const GOVERNANCE_INBOUND_MCP_QUICK_CREATE_ENTITY_TYPES = new Set([
+    'inbound_mcp_access',
+    'inbound_mcp_source',
+]);
+
+const GOVERNANCE_CUSTOM_ITEM_ID_ENTITY_TYPES = new Set([
+    ...GOVERNANCE_MCP_DESTINATION_ENTITY_TYPES,
+    'inbound_mcp_access',
+    'inbound_mcp_source',
+    'inbound_mcp_client',
+    'inbound_mcp_tool',
+    'inbound_mcp_scope',
+    'inbound_mcp_resource_operation',
+    'inbound_mcp_target',
 ]);
 
 const GOVERNANCE_ACTION_TYPE_ALIASES = {
@@ -110,6 +188,7 @@ let governanceAllowListEditorContext = null;
 let governanceItemPolicyDeleteModal = null;
 let governanceItemPolicyDeleteContext = null;
 let governanceItemPolicyEditorModal = null;
+let governancePolicyHelpModal = null;
 const governanceItemLookupState = {
     global_endpoint: [],
     global_agent: [],
@@ -120,6 +199,13 @@ const governanceItemLookupState = {
     mcp_personal_destination: [],
     mcp_group_destination: [],
     mcp_global_destination: [],
+    inbound_mcp_access: [],
+    inbound_mcp_client: [],
+    inbound_mcp_source: [],
+    inbound_mcp_tool: [],
+    inbound_mcp_scope: [],
+    inbound_mcp_resource_operation: [],
+    inbound_mcp_target: [],
 };
 
 const governanceAllowListSelectionViewState = {
@@ -506,7 +592,7 @@ function renderGovernanceItemLookupOptions(entityType, preferredValue = '') {
 
 async function refreshGovernanceItemLookup(entityType, forceReload = false, preferredValue = '') {
     const normalizedEntityType = normalizeGovernanceItemEntityType(entityType);
-    if (isGovernanceMcpDestinationEntityType(normalizedEntityType)) {
+    if (isGovernanceCustomItemIdEntityType(normalizedEntityType)) {
         syncGovernanceItemIdMode(normalizedEntityType, preferredValue);
         return;
     }
@@ -653,9 +739,13 @@ function isGovernanceMcpDestinationEntityType(entityType) {
     return GOVERNANCE_MCP_DESTINATION_ENTITY_TYPES.has(normalizeGovernanceItemEntityType(entityType));
 }
 
+function isGovernanceCustomItemIdEntityType(entityType) {
+    return GOVERNANCE_CUSTOM_ITEM_ID_ENTITY_TYPES.has(normalizeGovernanceItemEntityType(entityType));
+}
+
 function getCurrentGovernanceItemIdValue() {
     const entityType = normalizeGovernanceItemEntityType(getItemEntityTypeInput()?.value || '');
-    if (isGovernanceMcpDestinationEntityType(entityType)) {
+    if (isGovernanceCustomItemIdEntityType(entityType)) {
         return String(getItemIdCustomInput()?.value || '').trim();
     }
     return String(getItemIdInput()?.value || '').trim();
@@ -663,7 +753,7 @@ function getCurrentGovernanceItemIdValue() {
 
 function syncGovernanceItemIdMode(entityType, preferredValue = '') {
     const normalizedEntityType = normalizeGovernanceItemEntityType(entityType);
-    const isMcpDestination = isGovernanceMcpDestinationEntityType(normalizedEntityType);
+    const usesCustomItemId = isGovernanceCustomItemIdEntityType(normalizedEntityType);
     const lookupControls = getItemIdLookupControls();
     const itemIdInput = getItemIdInput();
     const customInput = getItemIdCustomInput();
@@ -671,28 +761,28 @@ function syncGovernanceItemIdMode(entityType, preferredValue = '') {
     const refreshButton = document.getElementById('governance-item-id-refresh-btn');
 
     if (lookupControls) {
-        lookupControls.classList.toggle('d-none', isMcpDestination);
+        lookupControls.classList.toggle('d-none', usesCustomItemId);
     }
     if (itemIdInput) {
-        itemIdInput.disabled = isMcpDestination;
+        itemIdInput.disabled = usesCustomItemId;
     }
     if (filterInput) {
-        filterInput.disabled = isMcpDestination;
+        filterInput.disabled = usesCustomItemId;
     }
     if (refreshButton) {
-        refreshButton.disabled = isMcpDestination;
+        refreshButton.disabled = usesCustomItemId;
     }
     if (customInput) {
-        customInput.classList.toggle('d-none', !isMcpDestination);
-        customInput.disabled = !isMcpDestination;
-        if (isMcpDestination) {
+        customInput.classList.toggle('d-none', !usesCustomItemId);
+        customInput.disabled = !usesCustomItemId;
+        if (usesCustomItemId) {
             customInput.value = String(preferredValue || '').trim();
         } else {
             customInput.value = '';
         }
     }
 
-    if (isMcpDestination) {
+    if (usesCustomItemId) {
         setGovernanceItemLookupStatus(GOVERNANCE_ITEM_LOOKUP_HINTS[normalizedEntityType] || 'Enter an MCP destination pattern.', 'muted');
     }
 }
@@ -1371,7 +1461,7 @@ async function openGovernanceItemPolicyEditor(policy = null) {
     setGovernanceItemEditorStatus('');
 
     syncGovernanceItemIdMode(entityType, itemId);
-    if (isGovernanceMcpDestinationEntityType(entityType)) {
+    if (isGovernanceCustomItemIdEntityType(entityType)) {
         if (itemIdCustomInput) {
             itemIdCustomInput.value = itemId;
         }
@@ -1386,7 +1476,7 @@ async function openGovernanceItemPolicyEditor(policy = null) {
 
     applyItemAllowAllUiState();
     governanceItemPolicyEditorModal?.show();
-    if (isGovernanceMcpDestinationEntityType(entityType)) {
+    if (isGovernanceCustomItemIdEntityType(entityType)) {
         itemIdCustomInput?.focus();
     } else {
         itemIdInput.focus();
@@ -1439,6 +1529,101 @@ async function openGovernanceMcpDestinationPolicyEditor(entityType) {
     });
 }
 
+async function openGovernanceInboundMcpPolicyEditor(options = {}) {
+    const entityType = normalizeGovernanceItemEntityType(options.entityType || options.entity_type || '');
+    const itemId = String(options.itemId || options.item_id || '').trim();
+    if (!GOVERNANCE_INBOUND_MCP_QUICK_CREATE_ENTITY_TYPES.has(entityType)) {
+        setGovernanceStatus('Unknown inbound MCP governance policy type.', 'warning');
+        return;
+    }
+
+    await openGovernanceItemPolicyEditor({
+        entity_type: entityType,
+        item_id: itemId,
+        policy_name: String(options.policyName || options.policy_name || '').trim(),
+        resource_label: String(options.resourceLabel || options.resource_label || '').trim() || itemId,
+        allow_all: false,
+        allowed_users: [],
+        allowed_groups: [],
+    });
+}
+
+function ensureGovernancePolicyHelpModal() {
+    let modalElement = document.getElementById('governance-policy-help-modal');
+    if (!modalElement) {
+        const modalMarkup = `
+            <div class="modal fade" id="governance-policy-help-modal" tabindex="-1" aria-labelledby="governance-policy-help-title" aria-hidden="true">
+                <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title" id="governance-policy-help-title">Governance policy help</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                        </div>
+                        <div class="modal-body" id="governance-policy-help-body"></div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        const wrapper = document.createElement('div');
+        // xss-check: ignore - modalMarkup is a static Bootstrap shell; dynamic content is populated with textContent.
+        wrapper.innerHTML = modalMarkup.trim();
+        modalElement = wrapper.firstElementChild;
+        document.body.appendChild(modalElement);
+    }
+
+    if (!governancePolicyHelpModal) {
+        governancePolicyHelpModal = bootstrap.Modal.getOrCreateInstance(modalElement);
+    }
+
+    return modalElement;
+}
+
+function appendGovernanceHelpSection(body, title, lines) {
+    const heading = document.createElement('h6');
+    heading.className = 'mb-2';
+    heading.textContent = title;
+    body.appendChild(heading);
+
+    const list = document.createElement('ul');
+    list.className = 'mb-3';
+    (Array.isArray(lines) ? lines : []).forEach((line) => {
+        const item = document.createElement('li');
+        item.textContent = String(line || '');
+        list.appendChild(item);
+    });
+    body.appendChild(list);
+}
+
+function openGovernancePolicyHelpModal(helpKey) {
+    const content = GOVERNANCE_POLICY_HELP_CONTENT[String(helpKey || '').trim()];
+    if (!content) {
+        setGovernanceStatus('No help content is available for this governance policy.', 'warning');
+        return;
+    }
+
+    const modalElement = ensureGovernancePolicyHelpModal();
+    const title = modalElement.querySelector('#governance-policy-help-title');
+    const body = modalElement.querySelector('#governance-policy-help-body');
+    if (!title || !body) {
+        return;
+    }
+
+    title.textContent = content.title;
+    body.textContent = '';
+
+    const purpose = document.createElement('p');
+    purpose.className = 'mb-3';
+    purpose.textContent = content.purpose;
+    body.appendChild(purpose);
+
+    appendGovernanceHelpSection(body, 'Configuration examples', content.configuration);
+    governancePolicyHelpModal?.show();
+}
+
 function ensureGovernanceItemPolicyEditorModal() {
     let modalElement = document.getElementById('governance-item-policy-editor-modal');
     if (!modalElement) {
@@ -1480,6 +1665,15 @@ function ensureGovernanceItemPolicyEditorModal() {
                                         <option value="mcp_personal_destination">MCP Personal Destination</option>
                                         <option value="mcp_group_destination">MCP Group Destination</option>
                                         <option value="mcp_global_destination">MCP Global Destination</option>
+                                        <option value="inbound_mcp_access">Inbound MCP Access</option>
+                                        <option value="inbound_mcp_source">Inbound MCP Source</option>
+                                        <optgroup label="Legacy inbound MCP policy types">
+                                            <option value="inbound_mcp_client" disabled>Inbound MCP Client (Legacy)</option>
+                                            <option value="inbound_mcp_tool" disabled>Inbound MCP Tool (Legacy)</option>
+                                            <option value="inbound_mcp_scope" disabled>Inbound MCP Scope (Legacy)</option>
+                                            <option value="inbound_mcp_resource_operation" disabled>Inbound MCP Resource Operation (Legacy)</option>
+                                            <option value="inbound_mcp_target" disabled>Inbound MCP Target (Legacy)</option>
+                                        </optgroup>
                                     </select>
                                 </div>
                                 <div class="col-lg-6 col-md-8">
@@ -1495,7 +1689,7 @@ function ensureGovernanceItemPolicyEditorModal() {
                                             </button>
                                         </div>
                                     </div>
-                                    <input type="text" class="form-control d-none" id="governance-item-id-custom" placeholder="preconfiguration:microsoft_learn, *.contoso.com, https://example.com/mcp*, or *" disabled>
+                                    <input type="text" class="form-control d-none" id="governance-item-id-custom" placeholder="Access scope, source, destination pattern, legacy item key, or *" disabled>
                                     <div class="form-text" id="governance-item-id-status">Choose an entity type to load available delegated items.</div>
                                 </div>
                                 <div class="col-lg-3 col-md-4">
@@ -3439,7 +3633,7 @@ async function saveItemPolicy(event) {
 
     const entityType = normalizeGovernanceItemEntityType(entityTypeInput.value);
     const itemId = getCurrentGovernanceItemIdValue();
-    const resourceLabel = String(resourceLabelInput?.value || '').trim() || (isGovernanceMcpDestinationEntityType(entityType) ? itemId : '');
+    const resourceLabel = String(resourceLabelInput?.value || '').trim() || (isGovernanceCustomItemIdEntityType(entityType) ? itemId : '');
     const policyName = String(policyNameInput?.value || '').trim() || buildDefaultItemPolicyName(entityType, itemId, resourceLabel);
 
     if (!entityType || !itemId) {
@@ -3535,6 +3729,25 @@ function wireGovernanceHandlers() {
             } catch (error) {
                 setGovernanceStatus(error.message || 'Failed to open MCP destination policy editor.', 'danger');
             }
+        });
+    });
+
+    document.querySelectorAll('.governance-new-inbound-mcp-policy-btn').forEach((button) => {
+        button.addEventListener('click', async () => {
+            try {
+                await openGovernanceInboundMcpPolicyEditor({
+                    entityType: button.dataset.governanceInboundMcpEntity || '',
+                    itemId: button.dataset.governanceInboundMcpItem || '',
+                });
+            } catch (error) {
+                setGovernanceStatus(error.message || 'Failed to open inbound MCP policy editor.', 'danger');
+            }
+        });
+    });
+
+    document.querySelectorAll('.governance-policy-help-btn').forEach((button) => {
+        button.addEventListener('click', () => {
+            openGovernancePolicyHelpModal(button.dataset.governanceHelpKey || '');
         });
     });
 

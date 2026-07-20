@@ -75,6 +75,8 @@ const MCP_FALLBACK_SERVER_PRESETS = [
       sse_read_timeout: 300,
       retry_count: 0,
       retry_backoff_seconds: 1,
+      validate_tool_arguments: false,
+      tool_result_policy: 'truncate',
       allowed_tool_names: []
     },
     ui: {
@@ -84,7 +86,7 @@ const MCP_FALLBACK_SERVER_PRESETS = [
     },
     constraints: {
       allowedTransports: ['streamable_http', 'sse', 'websocket', 'stdio'],
-      allowedAuthMethods: ['none', 'bearer', 'api_key', 'basic'],
+      allowedAuthMethods: ['none', 'bearer', 'api_key', 'basic', 'identity'],
       customHeadersAllowed: true,
       stdioAllowed: true
     },
@@ -2527,8 +2529,22 @@ export class PluginModalStepper {
       return;
     }
 
-    const docsText = preconfiguration.documentationUrl ? ` Docs: ${preconfiguration.documentationUrl}` : '';
-    help.textContent = `${preconfiguration.description || 'Curated MCP server configuration.'}${docsText}`;
+    const helpParts = [
+      preconfiguration.ui?.helpText || preconfiguration.description || 'Curated MCP server configuration.'
+    ];
+    if (preconfiguration.catalogTier === 'enterprise' || preconfiguration.riskLabel === 'high') {
+      helpParts.push('Enterprise/high-risk template: review governance, identity, and tool exposure before use.');
+    }
+    if (Array.isArray(preconfiguration.requiredGovernanceGates) && preconfiguration.requiredGovernanceGates.length > 0) {
+      helpParts.push(`Required governance: ${preconfiguration.requiredGovernanceGates.join(', ')}.`);
+    }
+    if (Array.isArray(preconfiguration.warnings) && preconfiguration.warnings.length > 0) {
+      helpParts.push(`Warnings: ${preconfiguration.warnings.join(' ')}`);
+    }
+    if (preconfiguration.documentationUrl) {
+      helpParts.push(`Docs: ${preconfiguration.documentationUrl}`);
+    }
+    help.textContent = helpParts.join(' ');
   }
 
   applyMcpPreconfiguration() {
@@ -2575,6 +2591,11 @@ export class PluginModalStepper {
     if (loadPrompts && typeof defaults.load_prompts === 'boolean') {
       loadPrompts.checked = defaults.load_prompts;
     }
+    const validateToolArguments = document.getElementById('mcp-validate-tool-arguments');
+    if (validateToolArguments && typeof defaults.validate_tool_arguments === 'boolean') {
+      validateToolArguments.checked = defaults.validate_tool_arguments;
+    }
+    setFieldValue('mcp-tool-result-policy', defaults.tool_result_policy || 'truncate');
     this.toggleMcpAuthFields();
     this.toggleMcpTransportFields();
   }
@@ -2613,6 +2634,14 @@ export class PluginModalStepper {
     const loadPrompts = document.getElementById('mcp-load-prompts');
     if (loadPrompts) {
       loadPrompts.checked = Boolean(this.getMcpPresetDefault(preset, 'load_prompts', false));
+    }
+    const validateToolArguments = document.getElementById('mcp-validate-tool-arguments');
+    if (validateToolArguments) {
+      validateToolArguments.checked = Boolean(this.getMcpPresetDefault(preset, 'validate_tool_arguments', false));
+    }
+    const resultPolicy = document.getElementById('mcp-tool-result-policy');
+    if (resultPolicy) {
+      resultPolicy.value = this.getMcpPresetDefault(preset, 'tool_result_policy', 'truncate');
     }
 
     const allowedToolNames = this.getMcpPresetDefault(preset, 'allowed_tool_names', []);
@@ -2722,6 +2751,7 @@ export class PluginModalStepper {
       'mcp-sse-read-timeout': '300',
       'mcp-retry-count': '0',
       'mcp-retry-backoff-seconds': '1',
+      'mcp-tool-result-policy': 'truncate',
       'mcp-tool-metadata': '[]',
       'mcp-env': '{}'
     };
@@ -2849,6 +2879,8 @@ export class PluginModalStepper {
     document.getElementById('mcp-env').value = JSON.stringify(additionalFields.env || {}, null, 2);
     document.getElementById('mcp-load-tools').checked = additionalFields.load_tools !== false;
     document.getElementById('mcp-load-prompts').checked = Boolean(additionalFields.load_prompts);
+    document.getElementById('mcp-validate-tool-arguments').checked = Boolean(additionalFields.validate_tool_arguments);
+    document.getElementById('mcp-tool-result-policy').value = additionalFields.tool_result_policy || 'truncate';
     document.getElementById('mcp-request-timeout').value = additionalFields.request_timeout || 30;
     document.getElementById('mcp-connect-timeout').value = additionalFields.connect_timeout || 10;
     document.getElementById('mcp-sse-read-timeout').value = additionalFields.sse_read_timeout || 300;
@@ -2864,7 +2896,7 @@ export class PluginModalStepper {
     if (auth.type === 'key' && !additionalFields.auth_method) {
       authMethod = 'bearer';
     }
-    document.getElementById('mcp-auth-method').value = authMethod === 'identity' ? 'none' : authMethod;
+    document.getElementById('mcp-auth-method').value = authMethod;
 
     if (authMethod === 'bearer') {
       document.getElementById('mcp-bearer-token').value = auth.key || '';
@@ -2885,15 +2917,19 @@ export class PluginModalStepper {
 
   getMcpConfiguration() {
     const transport = document.getElementById('mcp-transport')?.value || 'streamable_http';
+    const selectedPreconfigurationId = document.getElementById('mcp-preconfiguration')?.value || '';
+    const selectedPreconfiguration = this.getMcpServerPreconfiguration(selectedPreconfigurationId);
     const selectedIdentity = this.getSelectedActionIdentity('mcp');
     const authMethod = selectedIdentity ? 'identity' : (document.getElementById('mcp-auth-method')?.value || 'none');
     const additionalFields = {
-      preconfiguration_id: document.getElementById('mcp-preconfiguration')?.value || '',
+      preconfiguration_id: selectedPreconfigurationId,
       server_profile: document.getElementById('mcp-server-profile')?.value || this.mcpDefaultServerPreset || MCP_DEFAULT_SERVER_PROFILE,
       transport,
       auth_method: authMethod,
       load_tools: document.getElementById('mcp-load-tools')?.checked !== false,
       load_prompts: Boolean(document.getElementById('mcp-load-prompts')?.checked),
+      validate_tool_arguments: Boolean(document.getElementById('mcp-validate-tool-arguments')?.checked),
+      tool_result_policy: document.getElementById('mcp-tool-result-policy')?.value || 'truncate',
       request_timeout: this.getIntegerFieldValue('mcp-request-timeout', 30),
       connect_timeout: this.getIntegerFieldValue('mcp-connect-timeout', 10),
       sse_read_timeout: this.getIntegerFieldValue('mcp-sse-read-timeout', 300),
@@ -2903,6 +2939,12 @@ export class PluginModalStepper {
       allowed_tool_names: this.parseTextareaLines('mcp-tool-names'),
       mcp_tools: this.parseJsonArrayField('mcp-tool-metadata', 'Discovered Tool Metadata', [])
     };
+    if (selectedPreconfiguration?.implementation && typeof selectedPreconfiguration.implementation === 'object') {
+      additionalFields.implementation = JSON.parse(JSON.stringify(selectedPreconfiguration.implementation));
+    }
+    if (selectedPreconfiguration?.additionalSettings && typeof selectedPreconfiguration.additionalSettings === 'object') {
+      additionalFields.additionalSettings = JSON.parse(JSON.stringify(selectedPreconfiguration.additionalSettings));
+    }
 
     let endpoint = document.getElementById('mcp-endpoint')?.value.trim() || '';
     if (transport === 'stdio') {
@@ -2951,6 +2993,23 @@ export class PluginModalStepper {
     status.className = `small text-${variant}`;
   }
 
+  setMcpDiscoveryWarnings(warnings = []) {
+    const warningContainer = document.getElementById('mcp-discover-warnings');
+    if (!warningContainer) {
+      return;
+    }
+    const safeWarnings = Array.isArray(warnings)
+      ? warnings.map(warning => String(warning || '').trim()).filter(Boolean)
+      : [];
+    if (!safeWarnings.length) {
+      warningContainer.textContent = '';
+      warningContainer.classList.add('d-none');
+      return;
+    }
+    warningContainer.textContent = safeWarnings.join(' ');
+    warningContainer.classList.remove('d-none');
+  }
+
   async discoverMcpTools() {
     const button = document.getElementById('mcp-discover-tools-btn');
     const spinner = document.getElementById('mcp-discover-spinner');
@@ -2988,6 +3047,7 @@ export class PluginModalStepper {
         spinner.classList.remove('d-none');
       }
       this.setMcpDiscoveryStatus('Discovering tools...', 'muted');
+      this.setMcpDiscoveryWarnings([]);
 
       const response = await fetch('/api/plugins/mcp/discover', {
         method: 'POST',
@@ -3005,7 +3065,10 @@ export class PluginModalStepper {
 
       const tools = Array.isArray(result.tools) ? result.tools : [];
       document.getElementById('mcp-tool-metadata').value = JSON.stringify(tools, null, 2);
-      this.setMcpDiscoveryStatus(`Discovered ${tools.length} tool${tools.length === 1 ? '' : 's'}.`, 'success');
+      const warnings = Array.isArray(result.warnings) ? result.warnings : [];
+      const capabilityText = result.capabilities?.connector_type ? ` Probe: ${result.capabilities.connector_type}.` : '';
+      this.setMcpDiscoveryStatus(`Discovered ${tools.length} tool${tools.length === 1 ? '' : 's'}.${capabilityText}`, 'success');
+      this.setMcpDiscoveryWarnings(warnings);
     } catch (error) {
       this.setMcpDiscoveryStatus(error.message || 'Tool discovery failed.', 'danger');
     } finally {
@@ -5783,6 +5846,8 @@ export class PluginModalStepper {
     const preconfigurationId = document.getElementById('mcp-preconfiguration')?.value || '';
     const loadTools = Boolean(document.getElementById('mcp-load-tools')?.checked);
     const loadPrompts = Boolean(document.getElementById('mcp-load-prompts')?.checked);
+    const validateToolArguments = Boolean(document.getElementById('mcp-validate-tool-arguments')?.checked);
+    const resultPolicy = document.getElementById('mcp-tool-result-policy')?.value || 'truncate';
     const loadModes = [];
     if (loadTools) {
       loadModes.push('Tools');
@@ -5823,6 +5888,8 @@ export class PluginModalStepper {
       : 'None configured';
     document.getElementById('summary-mcp-tool-names').textContent = allowedToolNames.length ? allowedToolNames.join(', ') : 'All discovered tools';
     document.getElementById('summary-mcp-tool-metadata').textContent = `${toolMetadataCount} cached tool${toolMetadataCount === 1 ? '' : 's'}`;
+    const resultPolicyLabel = resultPolicy === 'error_on_limit' ? 'error on oversized results' : 'truncate oversized results';
+    document.getElementById('summary-mcp-tool-metadata').textContent += `; validation ${validateToolArguments ? 'on' : 'off'}; ${resultPolicyLabel}`;
     mcpSection.classList.remove('d-none');
   }
 

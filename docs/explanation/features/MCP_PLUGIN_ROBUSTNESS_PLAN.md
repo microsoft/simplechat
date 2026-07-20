@@ -1,10 +1,10 @@
 # MCP Plugin Robustness Plan
 
-Planning version: **0.250.065**
+Planning version: **0.250.080**
 
 Implemented in version: **In progress across phases**
 
-Related configuration version: `application/single_app/config.py` currently sets `VERSION = "0.250.065"`.
+Related configuration version: `application/single_app/config.py` currently sets `VERSION = "0.250.080"`.
 
 Detailed Track B Phase B0/B1 architecture outcome: [Inbound SimpleChat MCP Server Architecture](./INBOUND_MCP_SERVER_ARCHITECTURE.md).
 
@@ -29,7 +29,7 @@ PR #722, **MCP Server addition and modification of SimpleChat API to accommodate
 - Prefer personal-scope read tools before group, public, or all-scope tools.
 - Include Protected Resource Metadata (PRM) and bearer-token interoperability in the design.
 - Keep potentially broader group/public/all-scope tools disabled until policy, role, and workspace checks are fully designed.
-- Add a way for MCP clients to inspect login/auth status and user profile, subject to redaction and claims minimization.
+- Add a way for MCP clients to inspect required auth status if needed, subject to redaction and claims minimization; do not expose a user profile tool in the initial set.
 
 ### Implementation Patterns To Avoid
 
@@ -50,7 +50,7 @@ PR #722, **MCP Server addition and modification of SimpleChat API to accommodate
 - Keep tools as the primary supported MCP surface while leaving resources, prompts, streaming, and long-running jobs as later enhancements.
 - Add an enterprise-ready plan for a SimpleChat inbound MCP server after outbound MCP plugin hardening is under way.
 - Start inbound SimpleChat MCP with a small, personal-scope tool set and grow only after governance, authorization, observability, and scaling controls are in place.
-- Use a combined access model where Entra roles/scopes provide coarse access, SimpleChat governance provides tool/scope policy, and existing workspace roles protect data.
+- Use a combined access model where Entra roles/scopes and client allowlists provide coarse app access, SimpleChat governance provides user/source policy, and existing workspace roles protect data.
 - Add fine-grained outbound MCP destination controls so admins can restrict which external MCP servers may be used by personal, group, or global actions.
 - Add a server-side catalog of preconfigured outbound MCP servers so useful unauthenticated or low-friction MCP servers can be created from trusted templates without confusing them with compatibility presets.
 - Classify preconfigured outbound MCP servers by risk and auth tier, including future authenticated enterprise templates for Microsoft Sentinel MCP and Azure MCP Server.
@@ -276,7 +276,7 @@ Recommended approach:
 
 ### Phase 1D: Authenticated Enterprise Preconfiguration Templates For Sentinel And Azure MCP
 
-Status: **planned**. This phase adds roadmap and catalog support for high-value Microsoft enterprise MCP servers without treating them as public unauthenticated defaults.
+Status: **implemented in v0.250.066 as a guarded catalog/template foundation**. This phase adds catalog support for high-value Microsoft enterprise MCP servers without treating them as public unauthenticated defaults or complete token-lifecycle integrations.
 
 1. Add catalog tiering for authenticated enterprise templates.
    - Separate public unauthenticated starter entries from authenticated enterprise entries and organization-hosted templates.
@@ -304,9 +304,47 @@ Status: **planned**. This phase adds roadmap and catalog support for high-value 
    - Audit logs identify the user, workspace/group, MCP destination, preconfiguration ID, tool invoked, allow/deny reason, and redacted result summary.
    - Tests prove disabled templates are hidden from ordinary users, policy-enabled templates appear only in the intended scope, and high-risk tools are not enabled by default.
 
+Implemented Phase 1D artifacts:
+
+- Extended MCP preconfiguration schema metadata for catalog tier, auth tier, deployment model, disabled-by-default status, endpoint review, required governance gates, and operator notes.
+- Added bundled enterprise templates:
+  - `microsoft_sentinel`
+  - `azure_mcp_server`
+- Kept enterprise templates hidden unless MCP destination governance is enabled and a matching explicit `preconfiguration:<id>` policy allows the requested scope.
+- Kept enterprise template defaults tool-safe by setting `load_tools=false` and no default tool allowlist.
+- Added modal warning/help text for high-risk or warning-bearing preconfigurations.
+- Added functional/UI coverage for enterprise template metadata, hidden-by-default behavior, explicit policy requirements, and warnings.
+
+### Phase 1E: Implementation-Specific Catalog Schemas
+
+Status: **implemented in v0.250.067 as a base-schema plus provider-schema framework**. This phase keeps outbound MCP presets and preconfigurations extensible without pushing Sentinel-, Azure-, GitHub-, or Splunk-specific fields into the generic catalog schemas.
+
+1. Split catalog validation into provider-neutral and implementation-specific layers.
+   - Keep `mcp_server_preset.schema.json` and `mcp_server_preconfiguration.schema.json` focused on common catalog fields.
+   - Add `implementation` metadata and non-secret `additionalSettings` to catalog definitions.
+   - Validate `additionalSettings` through `implementation_schemas\{implementation-id}.preset.schema.json` or `implementation_schemas\{implementation-id}.preconfiguration.schema.json`.
+
+2. Migrate bundled definitions into the framework.
+   - Add implementation schemas for generic, Splunk, Microsoft Learn, GitHub, local development, Microsoft Sentinel, and Azure MCP Server.
+   - Move provider-specific traits such as Sentinel tool collections, Azure service namespace allowlists, GitHub permission model hints, and Splunk compatibility metadata into implementation-specific `additionalSettings`.
+   - Reject secret-like fields in `defaults` and implementation-specific `additionalSettings`.
+
+3. Harden enterprise preconfiguration use beyond dropdown filtering.
+   - Enforce explicit enterprise preconfiguration policy during direct action save/update, discovery, and runtime connector creation.
+   - Require endpoint-reviewed enterprise templates to also match a specific destination policy for the governed endpoint, not just `preconfiguration:<id>`.
+   - Default Sentinel and Azure MCP enterprise templates to reusable identity auth rather than bearer-token entry.
+
+Implemented Phase 1E artifacts:
+
+- Added `functions_mcp_catalog_implementations.py` for implementation ID normalization, secret-like field detection, and schema-backed `additionalSettings` validation.
+- Added implementation schema directories under `mcp_presets` and `mcp_preconfigurations`.
+- Updated bundled presets/preconfigurations to include `implementation` and validated `additionalSettings`.
+- Updated MCP action normalization and modal payload generation so selected preconfiguration implementation metadata is copied into saved actions.
+- Added functional/UI coverage for custom implementation schemas, direct enterprise policy denial, endpoint-specific enterprise approval, and identity-backed enterprise defaults.
+
 ### Phase 2: Capability Probe And Tool Metadata Robustness
 
-Status: **planned after Phase 1C; can proceed before or after Phase 1D depending on whether authenticated enterprise preconfiguration planning or general MCP robustness is the higher priority.**
+Status: **implemented in v0.250.068 as outbound discovery probing, richer cached tool metadata, opt-in argument validation, large-result policies, and modal warnings.**
 
 1. Add an MCP compatibility probe endpoint or discovery mode.
    - Reuse `McpPluginFactory.create_connector`.
@@ -337,6 +375,15 @@ Status: **planned after Phase 1C; can proceed before or after Phase 1D depending
    - Warn when duplicate names require function-name normalization.
    - Warn when prompts/resources are requested but unsupported.
    - Warn when schemas are too broad for safe auto-exposure.
+
+Implemented Phase 2 artifacts:
+
+- Discovery now uses an MCP compatibility probe that returns the existing `tools` payload plus transport, auth method, capability hints, and non-blocking warnings.
+- Cached MCP tool metadata now preserves output schemas, annotations, and structured-content hints when the connector exposes them.
+- Added optional `validate_tool_arguments` schema checks against cached input schemas before configured tool invocation.
+- Added `tool_result_policy` with backward-compatible `truncate` behavior and an `error_on_limit` option for oversized MCP tool results.
+- Updated the MCP action modal to display discovery warnings and summarize validation/result policy settings.
+- Added functional/UI coverage for metadata preservation, broad-schema warnings, argument validation, large-result policy behavior, and saved modal payloads.
 
 ### Phase 3: TLS And Enterprise Network Options
 
@@ -455,13 +502,14 @@ Status: **Architecture decision recorded in version 0.250.062; disabled shell im
 
 ### Phase B1: Auth Foundation And Protected Resource Metadata
 
-Status: **Auth foundation and PRM contract recorded in version 0.250.062; dedicated disabled-shell guard and PRM route implemented in version 0.250.063.** See [Inbound SimpleChat MCP Server Architecture](./INBOUND_MCP_SERVER_ARCHITECTURE.md).
+Status: **Auth foundation and PRM contract recorded in version 0.250.062; dedicated disabled-shell guard and PRM route implemented in version 0.250.063; mutable runtime settings moved to app_settings with minimal OS-gated admin UI in version 0.250.071; Easy Auth exclusion modal and server-side enablement guard implemented in version 0.250.072; cloud-aware generated setup script with backup implemented in version 0.250.073; script copy button and authsettingsV2 GET read fix implemented in version 0.250.074; default delegated scope and setup-script delegated-scope preflight implemented in version 0.250.075; PRM discovery challenge implemented in version 0.250.076; inbound MCP governance UI implemented in version 0.250.077; delegated user role and future app-only role split implemented in version 0.250.078; MCP governance help modals implemented in version 0.250.079; inbound MCP governance simplified to personal access plus source policies in version 0.250.080.** See [Inbound SimpleChat MCP Server Architecture](./INBOUND_MCP_SERVER_ARCHITECTURE.md).
 
 1. Add a dedicated inbound MCP auth guard.
    - Do not weaken or broaden the shared `accesstoken_required` decorator used by existing external routes.
    - Require valid token issuer, tenant, expiration, and audience for SimpleChat.
    - Support the required Entra token version intentionally rather than by accident.
-   - Require a dedicated inbound MCP app role or scope such as `McpServerAccess` or a deliberately reused `ExternalApi`.
+   - Require a dedicated delegated user app role such as `InboundMCPUserAccess` plus a separate delegated scope such as `DelegatedMcpServerAccess` for interactive user clients.
+   - Reserve an app-only app role such as `InboundMCPAppAccess` for future non-personal service/admin tools.
    - Add an allowed client application ID list similar to the existing CI bearer-session allowlist pattern.
    - Include source allowlist context in the auth/governance decision, while treating custom headers, Origin, Referer, and User-Agent as supplemental signals rather than primary identity proof.
 
@@ -481,23 +529,23 @@ Status: **Auth foundation and PRM contract recorded in version 0.250.062; dedica
 
 ### Phase B2: Governance, Roles, And Tool Policy
 
+Status: **Initial explicit item-policy evaluator implemented in version 0.250.070 for the first personal read tool. Minimal Admin Settings controls for runtime enablement, Entra scope/user role/app-only role, client allowlist, tenant allowlist, source allowlist, and source header were added across versions 0.250.071 and 0.250.078. Easy Auth exclusion verification is required before enabling the server as of version 0.250.072. Version 0.250.080 simplifies current inbound MCP governance to two required policy concepts: personal access and source. Broader capability/tool policy authoring UX and additional tools remain future work.**
+
 Use a combined model rather than choosing only governance or only roles:
 
 - **Entra roles/scopes** provide the coarse gate: the caller can reach the inbound MCP surface.
 - **Client app allowlists** provide client trust: the calling application is approved.
-- **SimpleChat governance** provides fine-grained policy: which tools and workspace scopes are enabled.
+- **SimpleChat governance** provides delegated user/source policy: which users or groups can use personal inbound MCP and which sources are allowed.
 - **Existing workspace roles** protect data: the delegated user must already be allowed to access the requested personal, group, or public resource.
 
 1. Add inbound MCP governance settings.
-   - Global enablement flag for inbound MCP.
-   - Per-client enablement.
-   - Per-tool allowlist.
-   - Per-resource-family allowlist: profile, conversations, documents, prompts, agent templates, chat.
-   - Per-operation allowlist: list, retrieve, search, write.
-   - Per-scope allowlist: personal, group, public.
-   - Per-target allowlist or denylist: all groups, a specific group, all public workspaces, a specific public workspace, or a specific delegated user scope.
-   - Per-source allowlist with wildcard `*` support for deployments that only require identity, client, and governance checks.
-   - Optional per-client or per-user rate limits.
+   - Global enablement flag for inbound MCP remains in runtime configuration.
+   - Tenant and client application allowlists remain in inbound MCP runtime configuration because they are app trust controls, not user governance controls.
+   - Current user governance uses `inbound_mcp_access` with item `personal`; the allow-all toggle, allowed users, and allowed groups decide who can use personal inbound MCP.
+   - Current source governance uses `inbound_mcp_source` with item `*` or a resolved source id; the policy's allow-all/users/groups decide who may satisfy that source rule.
+   - Future capability governance should use admin-friendly capability names such as `personal_read`, `personal_search`, `workflow_execute`, or `group_read` instead of raw tool names.
+   - Future per-resource-family, per-operation, per-scope, and per-target policy should be added only when it maps to clear admin workflows and does not duplicate existing workspace authorization.
+   - Optional per-client or per-user rate limits remain future work.
 
 2. Keep the initial tool registry explicit.
    - Each MCP tool should declare required identity type, workspace scope, resource family, operation, feature flags, governance keys, rate-limit category, and audit event type.
@@ -507,47 +555,51 @@ Use a combined model rather than choosing only governance or only roles:
    - Personal tools must validate current-user ownership.
    - Group tools must use the same group role checks used by web/API routes.
    - Public workspace tools must use the same public workspace role and workspace-status checks used by existing external/public routes.
-   - Governance must deny by default when a client/tool/scope is not configured.
+   - Governance must deny by default when personal access or source policy is not configured.
    - Fine-grained governance allow must never grant data access that existing workspace authorization would deny.
 
 4. Evaluate policy with deny-by-default and explicit-deny precedence.
    - Missing policy denies the operation.
    - Explicit deny wins over allow.
-   - Specific target policy, such as a group id, is evaluated before wildcard policies when effects do not conflict.
-   - Source allowlist `*` disables source filtering but keeps identity, client app, tool, scope, resource, operation, and workspace authorization checks.
+   - Personal access should use delegated item `personal`; do not encode user authorization into item ids such as `personal:*`.
+   - Source policy item `*` disables source filtering only for principals allowed by that source policy; identity, client app configuration, personal access governance, and workspace authorization still apply.
 
-### Phase B3: Initial Read-Only Personal Tool Set
+### Phase B3: Initial Personal Read And Workflow Tool Set
 
-Start with a small, personal-scope read set inspired by PR #722, not full feature parity:
+Status: **First governed personal read tool implemented in version 0.250.070: `list_personal_tags`. Other planned personal tools remain disabled until their service-layer authorization, bounds, and tests are complete.**
 
-1. `show_user_profile`
-   - Return minimal profile fields needed by MCP clients.
-   - Do not return raw token claims by default.
+Start with a small, personal-scope set inspired by PR #722, not full feature parity. Most actions are read-only. `execute_workflow` is intentionally treated as an execution/write operation and must stay behind explicit governance, workflow ownership, rate limiting, and audit controls.
 
-2. `list_conversations`
+1. `list_conversations`
    - Return only conversations visible to the delegated user.
    - Include pagination and maximum result limits.
 
-3. `get_conversation_messages`
+2. `get_conversation_messages`
    - Require conversation ownership or collaboration access.
    - Include pagination and maximum message limits.
 
-4. `list_personal_documents`
+3. `list_personal_documents`
    - Return only the delegated user's personal documents.
    - Include pagination, filtering, and result limits.
 
-5. `list_personal_prompts`
+4. `list_personal_prompts`
    - Return only the delegated user's personal prompts.
    - Include pagination and result limits.
+
+5. `list_personal_tags`
+   - Return only personal workspace tags available to the delegated user.
+   - Include pagination or bounded result limits if the tag set grows.
+   - Implemented in version **0.250.070**. As of version **0.250.080**, exposure requires personal access governance for item `personal` plus source governance for `*` or a resolved source id; client allowlisting lives in inbound MCP runtime configuration.
 
 6. `search_personal_documents`
    - Restrict to personal document scope.
    - Require bounded `top_n`.
    - Preserve existing search and embedding error behavior.
 
-7. `list_agent_template_tags`
-   - Return only approved template tags.
-   - Respect the agent template gallery feature flag.
+7. `execute_workflow`
+   - Trigger only explicitly governed personal workflows owned by the delegated user.
+   - Require workflow execution governance separate from read-only list/retrieve/search operations.
+   - Preserve workflow runner guardrails: distributed run lock, status updates, token/cost logging, audit logging, and bounded response metadata.
 
 ### Phase B4: Personal Chat Write Tool
 
@@ -683,7 +735,10 @@ Prerequisites before enabling:
 ### Inbound SimpleChat MCP Server
 
 - New `application/single_app/functions_mcp_server_auth.py` or equivalent.
-  - Validate inbound MCP bearer tokens, issuer, audience, client app ID, source context, role/scope, delegated user identity, and app-only restrictions.
+  - Validate inbound MCP bearer tokens, issuer, audience, client app ID, source context, delegated scope, delegated user role, delegated user identity, and app-only restrictions.
+
+- New `application/single_app/functions_mcp_server_config.py` or equivalent.
+  - Normalize app-settings-backed inbound MCP runtime configuration, keep the admin UI feature gate OS/App-Service-environment only, and verify required App Service Authentication excluded paths before enabling inbound MCP.
 
 - New `application/single_app/functions_mcp_server_governance.py` or equivalent.
   - Resolve inbound MCP client/source/tool/resource/operation/scope policy and compose Entra roles/scopes, app allowlists, SimpleChat governance, source allowlists, resource-operation policy, and workspace-role checks.
@@ -704,7 +759,10 @@ Prerequisites before enabling:
   - Add inbound MCP feature, client, tool, and scope governance helpers if existing action-governance primitives are not sufficient.
 
 - `application/single_app/functions_settings.py`
-  - Add sanitized settings support for inbound MCP governance and configuration if the admin UI needs to display these settings.
+  - Persist mutable inbound MCP runtime settings in `app_settings`, while keeping the UI gate out of persisted settings.
+
+- `application/single_app/templates/admin_settings.html` and `application/single_app/templates/_sidebar_nav.html`
+  - Surface the minimal inbound MCP runtime settings panel and left-nav jump link only when the OS-only MCP UI feature flag is enabled.
 
 - Optional `application/external_apps/mcp/`.
   - Keep only if a separate deployment model is deliberately chosen. Do not copy PR #722's prototype directly.
@@ -718,7 +776,7 @@ Prerequisites before enabling:
   - Suggested names: `test_mcp_custom_headers.py`, `test_mcp_splunk_profile.py`, `test_mcp_discovery_diagnostics.py`, `test_mcp_result_policy.py`, `test_mcp_oauth_pkce.py`.
 
 - New inbound MCP functional tests under `functional_tests/`.
-  - Suggested names: `test_inbound_mcp_auth_contract.py`, `test_inbound_mcp_tool_governance.py`, `test_inbound_mcp_personal_tools.py`, `test_inbound_mcp_prm_metadata.py`, `test_inbound_mcp_personal_chat_guardrails.py`.
+  - Suggested names: `test_inbound_mcp_auth_contract.py`, `test_inbound_mcp_access_governance.py`, `test_inbound_mcp_personal_tools.py`, `test_inbound_mcp_prm_metadata.py`, `test_inbound_mcp_personal_chat_guardrails.py`.
 
 - `ui_tests/test_workspace_mcp_action_modal.py`
   - Extend UI coverage for new controls and discovery behavior.
@@ -804,7 +862,7 @@ Prerequisites before enabling:
    - Expired token.
    - Invalid issuer.
    - Invalid audience.
-   - Missing required inbound MCP app role/scope.
+   - Missing required inbound MCP delegated scope, delegated user role, or app-only role.
    - Disallowed caller app ID.
    - App-only token rejected for user-data tools.
    - Delegated token accepted only for the represented user.
@@ -817,24 +875,22 @@ Prerequisites before enabling:
 3. Add governance tests:
    - Inbound MCP disabled globally.
    - Client disabled.
-   - Source disabled when source allowlist is not wildcard `*`.
-   - Tool disabled.
-   - Resource family disabled.
-   - Resource operation disabled.
-   - Personal scope disabled.
+   - Source denied when no matching `inbound_mcp_source` policy allows the delegated user.
+   - Personal access denied when no matching `inbound_mcp_access/personal` policy allows the delegated user.
+   - Legacy scope/target policies remain temporary compatibility fallback only.
    - Specific group document listing/retrieval disabled while other group operations remain governed independently.
    - Wildcard all-groups policy applies consistently.
    - Group/public/all-scope tools remain disabled by default.
    - Governance denial returns a clear authorization response without leaking policy internals.
 
 4. Add initial personal-tool tests:
-   - `show_user_profile` returns minimized profile data.
    - `list_conversations` returns only the delegated user's conversations.
    - `get_conversation_messages` rejects conversations the user cannot access.
    - `list_personal_documents` returns only personal documents for the delegated user.
    - `list_personal_prompts` returns only personal prompts for the delegated user.
+   - `list_personal_tags` returns only personal tags for the delegated user.
    - `search_personal_documents` enforces personal scope and result limits.
-   - `list_agent_template_tags` respects the agent template gallery feature flag.
+   - `execute_workflow` rejects workflows the delegated user does not own, rejects missing governance, uses a distributed run lock, and records the caller/source in audit-safe run metadata.
 
 5. Add personal-chat write tests before enabling `send_personal_chat_message`:
    - New conversation creation.
@@ -862,9 +918,9 @@ Prerequisites before enabling:
 2. Track B Phase B0 architecture decision and Track B Phase B1 auth foundation design. **Status: recorded; disabled inbound MCP shell implemented.**
 3. Track A Phase 1B outbound destination governance and preconfigured MCP server catalog. **Status: implemented as config/env-backed server enforcement in v0.250.064.**
 4. Track A Phase 1C destination governance UI and policy persistence. **Status: implemented in v0.250.065 using delegated item policies; remaining catalog-admin refinements can follow later.**
-5. Track A Phase 1D authenticated enterprise preconfiguration templates for Microsoft Sentinel MCP and Azure MCP Server. **Status: planned; templates should stay disabled/admin-governed until identity, source allowlisting, per-tool policy, and audit gates are ready.**
-6. Track A Phase 2 capability probe, richer metadata, result policies, and opt-in schema validation. **Status: next general Track A robustness slice unless Phase 1D, outbound OAuth, or inbound planning becomes higher priority.**
-7. Track B Phase B2 governance/tool registry and Track B Phase B3 initial read-only personal tools.
+5. Track A Phase 1D authenticated enterprise preconfiguration templates for Microsoft Sentinel MCP and Azure MCP Server. **Status: implemented in v0.250.066 as disabled-by-default, explicit-policy-gated templates; OAuth/token refresh remains future work.**
+6. Track A Phase 2 capability probe, richer metadata, result policies, and opt-in schema validation. **Status: implemented in v0.250.068.**
+7. Track B Phase B2 governance/tool registry and Track B Phase B3 initial personal read plus workflow-execution tools. **Status: first governed read tool implemented in v0.250.070; app-settings-backed runtime config and minimal OS-gated Admin Settings UI implemented in v0.250.071; Easy Auth exclusion verification before enablement implemented in v0.250.072; generated setup script now derives cloud/deployment hints and backs up authsettings in v0.250.073; copy button and GET-based authsettings read fix implemented in v0.250.074; delegated scope default and setup-script preflight implemented in v0.250.075; OAuth PRM challenge implemented in v0.250.076; inbound MCP governance policy UI implemented in v0.250.077; delegated user role and future app-only role split implemented in v0.250.078; per-policy help modals implemented in v0.250.079; current inbound MCP governance simplified to personal access plus source in v0.250.080.**
 8. Track B Phase B4 personal chat write tool only after read-only tools, auth, and governance are stable.
 9. Track A Phase 3 TLS diagnostics and optional certificate references after connector support is confirmed.
 10. Track A Phase 4 OAuth 2.1 PKCE.
@@ -884,7 +940,7 @@ Prerequisites before enabling:
 - TLS controls should not be exposed until the connector stack can honor them securely.
 - Relaxing shared external auth decorators would broaden access for existing external APIs; inbound MCP should use a dedicated guard.
 - App-only tokens are dangerous for user-data tools unless they are explicitly constrained to admin-only operations.
-- Bearer-to-session bridges can become confused-deputy paths if caller app ID, audience, role/scope, delegated user, expiry, and audit controls are not enforced.
+- Bearer-to-session bridges can become confused-deputy paths if caller app ID, audience, delegated scope, delegated user role, delegated user, expiry, and audit controls are not enforced.
 - Inbound group/public/all-scope tools can bypass workspace protections if they do not reuse existing role and workspace-status checks.
 - Inbound MCP tool schemas and metadata can leak internal URLs, settings, or implementation details if not reviewed and redacted.
 
@@ -907,20 +963,21 @@ The first inbound planning/architecture slice and disabled shell are also comple
 - Track B Phase B1 auth foundation design.
 - Dedicated inbound MCP auth guard design.
 - PRM metadata contract.
-- Governance model for client, tool, and scope allowlists.
-- Initial read-only personal tool registry.
+- Governance model for personal access and source allowlists, with client trust kept in inbound MCP runtime configuration.
+- Initial personal read and workflow-execution tool registry.
 - Auth and governance test plan.
 - Disabled `/api/mcp` route shell.
 - Dedicated inbound MCP auth guard.
 - PRM metadata route.
 - Health/readiness route.
 - Deny-by-default governance and no-enabled-tools registry skeleton.
+- Easy Auth exclusion modal and server-side verification guard before inbound MCP can be enabled from Admin Settings.
 
 Current forward options:
 
-1. Continue Track A Phase 1D: authenticated enterprise preconfiguration template planning for Microsoft Sentinel MCP and Azure MCP Server, without enabling them as unauthenticated defaults.
-2. Continue Track A Phase 2: capability probing, richer discovered tool metadata, result policies, and opt-in schema validation.
-3. Continue Track B with Phase B2/B3: durable inbound governance evaluation and the first read-only personal tool.
-4. Add outbound MCP catalog-administration refinements: per-definition enable/disable controls, policy summaries, and optional environment/config import review.
+1. Continue Track B with the next low-risk personal read tool after `list_personal_tags`, reusing the app-settings-backed runtime config, simplified personal-access/source governance, minimal admin UI, and verified Easy Auth exclusion guard.
+2. Add outbound MCP catalog-administration refinements: per-definition enable/disable controls, policy summaries, and optional environment/config import review.
+3. Start outbound OAuth/token lifecycle planning for authenticated MCP servers such as GitHub, Microsoft Sentinel MCP, and Azure MCP Server.
+4. Continue Track A Phase 3: TLS diagnostics and enterprise network guidance once connector support is confirmed.
 
-The first inbound executable slice should expose only read-only personal tools after token validation, client allowlisting, governance checks, observability, redaction, and tests are in place.
+The first inbound executable slice should start with governed personal tools after token validation, client allowlisting, governance checks, observability, redaction, and tests are in place. Read tools should come first; `execute_workflow` should be enabled only after workflow ownership, execution governance, run locking, and audit tests are ready.

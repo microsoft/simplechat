@@ -30,6 +30,16 @@
         "customHeadersAllowed": true,
         "stdioAllowed": false
     },
+    "implementation": {
+        "id": "splunk",
+        "schemaVersion": "1.0.0"
+    },
+    "additionalSettings": {
+        "compatibilityProfile": "splunk_mcp",
+        "credentialMode": "scoped_test_or_workspace_identity",
+        "customHeaderValueHandling": "secret",
+        "preferredTransport": "streamable_http"
+    },
     "suggestedHeaders": [],
     "warnings": [
         "Use scoped test tokens for validation and store production credentials only through approved SimpleChat secret flows."

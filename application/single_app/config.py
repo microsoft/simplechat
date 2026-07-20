@@ -94,7 +94,7 @@ DOTENV_LOAD_RESULT = load_simplechat_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.250.065"
+VERSION = "0.250.080"
 
 SESSION_COOKIE_SAMESITE = os.getenv('SESSION_COOKIE_SAMESITE', 'Lax')
 SESSION_COOKIE_HTTPONLY = os.getenv('SESSION_COOKIE_HTTPONLY', 'true').lower() != 'false'
@@ -311,25 +311,9 @@ CI_BEARER_SESSION_ALLOWED_APP_IDS = [
     if app_id.strip()
 ]
 CI_BEARER_SESSION_REQUIRED_ROLE = os.getenv("CI_BEARER_SESSION_REQUIRED_ROLE", "Admin")
-ENABLE_INBOUND_MCP_SERVER = os.getenv("ENABLE_INBOUND_MCP_SERVER", "false").lower() == "true"
-INBOUND_MCP_REQUIRED_ROLE = os.getenv("INBOUND_MCP_REQUIRED_ROLE", "McpServerAccess")
-INBOUND_MCP_REQUIRED_SCOPE = os.getenv("INBOUND_MCP_REQUIRED_SCOPE", "McpServerAccess")
-INBOUND_MCP_ALLOWED_CLIENT_APP_IDS = _split_env_list(
-    os.getenv("INBOUND_MCP_ALLOWED_CLIENT_APP_IDS", ""),
-    lowercase=True
-)
-INBOUND_MCP_ALLOWED_TENANT_IDS = _split_env_list(
-    os.getenv("INBOUND_MCP_ALLOWED_TENANT_IDS", "")
-)
-INBOUND_MCP_ALLOWED_SOURCE_IDS = _split_env_list(
-    os.getenv("INBOUND_MCP_ALLOWED_SOURCE_IDS", "*")
-) or ["*"]
-INBOUND_MCP_SOURCE_HEADER = os.getenv("INBOUND_MCP_SOURCE_HEADER", "X-SimpleChat-MCP-Source")
-INBOUND_MCP_RESOURCE_PATH = os.getenv("INBOUND_MCP_RESOURCE_PATH", "/api/mcp")
-INBOUND_MCP_PRM_PATH = os.getenv(
-    "INBOUND_MCP_PRM_PATH",
-    "/.well-known/oauth-protected-resource/mcp"
-)
+ENABLE_MCP_UI = os.getenv("ENABLE_MCP_UI", os.getenv("enable_mcp_ui", "false")).lower() == "true"
+INBOUND_MCP_RESOURCE_PATH = "/api/mcp"
+INBOUND_MCP_PRM_PATH = "/.well-known/oauth-protected-resource/mcp"
 ENABLE_MCP_DESTINATION_GOVERNANCE = os.getenv("ENABLE_MCP_DESTINATION_GOVERNANCE", "false").lower() == "true"
 MCP_ALLOWED_DESTINATIONS = _split_env_list(os.getenv("MCP_ALLOWED_DESTINATIONS", ""))
 MCP_ALLOWED_PERSONAL_DESTINATIONS = _split_env_list(os.getenv("MCP_ALLOWED_PERSONAL_DESTINATIONS", ""))

@@ -580,6 +580,7 @@
                   <option value="bearer">Bearer Token</option>
                   <option value="api_key">API Key Header</option>
                   <option value="basic">Basic Auth</option>
+                  <option value="identity">Reusable Identity</option>
                 </select>
               </div>
 
@@ -642,6 +643,20 @@
                     <label class="form-check-label" for="mcp-load-prompts">Load prompts</label>
                   </div>
                 </div>
+                <div class="col-md-6">
+                  <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" role="switch" id="mcp-validate-tool-arguments" />
+                    <label class="form-check-label" for="mcp-validate-tool-arguments">Validate tool arguments</label>
+                  </div>
+                  <div class="form-text">Optional. Uses cached input schemas from discovery before invoking tools.</div>
+                </div>
+                <div class="col-md-6">
+                  <label for="mcp-tool-result-policy" class="form-label">Large Result Policy</label>
+                  <select class="form-select" id="mcp-tool-result-policy">
+                    <option value="truncate">Truncate oversized results</option>
+                    <option value="error_on_limit">Return an error when oversized</option>
+                  </select>
+                </div>
               </div>
               <div class="mb-3">
                 <label for="mcp-tool-names" class="form-label">Allowed Tool Names</label>
@@ -660,6 +675,7 @@
                   <span id="mcp-discover-spinner" class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
                   <span id="mcp-discover-status" class="small text-muted"></span>
                 </div>
+                <div id="mcp-discover-warnings" class="alert alert-warning mt-2 py-2 px-3 small d-none" role="alert"></div>
               </div>
             </div>
 

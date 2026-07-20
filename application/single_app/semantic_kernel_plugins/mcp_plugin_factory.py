@@ -15,9 +15,10 @@ from semantic_kernel.connectors.mcp import (
 from functions_debug import debug_print
 from functions_mcp_operations import (
     MCP_CUSTOM_HEADERS_FIELD,
-    MCP_MAX_TOOL_RESULT_TEXT_LENGTH,
     MCP_PLUGIN_TYPE,
     McpRuntimeError,
+    apply_mcp_result_text_policy,
+    build_mcp_tool_metadata_warnings,
     classify_mcp_exception,
     get_mcp_custom_header_validation_errors,
     is_valid_mcp_header_name,
@@ -26,6 +27,7 @@ from functions_mcp_operations import (
     validate_mcp_endpoint_for_transport,
 )
 from functions_mcp_destinations import assert_mcp_destination_allowed, infer_mcp_destination_scope
+from functions_mcp_preconfigurations import assert_mcp_preconfiguration_manifest_allowed
 from semantic_kernel_plugins.mcp_plugin import McpPlugin
 
 
@@ -49,6 +51,47 @@ class McpPluginFactory:
         )
 
     @classmethod
+    async def probe_server_from_config(cls, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Connect to an MCP server and return tool metadata plus compatibility hints."""
+        return await cls._run_with_retries(
+            config,
+            "capability_probe",
+            lambda: cls._probe_server_once(config),
+        )
+
+    @classmethod
+    async def _probe_server_once(cls, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Perform one MCP compatibility probe attempt."""
+        manifest = dict(config or {})
+        additional_fields = normalize_mcp_additional_fields(manifest.get("additionalFields", {}))
+        connector = cls.create_connector(manifest)
+        try:
+            debug_print("[McpPluginFactory] Connecting to MCP server for capability probe.")
+            await connector.connect()
+            if not connector.session:
+                raise ValueError("MCP server did not create a session.")
+
+            tools = await cls._list_tools_from_session(connector.session)
+            capabilities = {
+                "tools": bool(tools),
+                "prompts_requested": bool(additional_fields.get("load_prompts")),
+                "resources": False,
+                "connector_type": connector.__class__.__name__,
+                "session_type": connector.session.__class__.__name__,
+            }
+            return {
+                "transport": additional_fields.get("transport"),
+                "auth_method": additional_fields.get("auth_method"),
+                "tool_count": len(tools),
+                "tools": tools,
+                "capabilities": capabilities,
+                "warnings": build_mcp_tool_metadata_warnings(tools, additional_fields),
+            }
+        finally:
+            debug_print("[McpPluginFactory] Closing MCP probe connector.")
+            await connector.close()
+
+    @classmethod
     async def _discover_tools_once(cls, config: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Perform one MCP tool discovery attempt."""
         connector = cls.create_connector(config)
@@ -57,21 +100,39 @@ class McpPluginFactory:
             await connector.connect()
             if not connector.session:
                 raise ValueError("MCP server did not create a session.")
-            tool_list = await connector.session.list_tools()
-            raw_tools = []
-            for tool in tool_list.tools if tool_list else []:
-                raw_tools.append({
-                    "original_name": getattr(tool, "name", ""),
-                    "function_name": getattr(tool, "name", ""),
-                    "description": getattr(tool, "description", "") or "",
-                    "input_schema": cls._coerce_schema(getattr(tool, "inputSchema", None)),
-                })
-            normalized_tools = normalize_mcp_tool_metadata(raw_tools)
+            normalized_tools = await cls._list_tools_from_session(connector.session)
             debug_print(f"[McpPluginFactory] MCP tool discovery succeeded tool_count={len(normalized_tools)}.")
             return normalized_tools
         finally:
             debug_print("[McpPluginFactory] Closing MCP discovery connector.")
             await connector.close()
+
+    @classmethod
+    async def _list_tools_from_session(cls, session) -> List[Dict[str, Any]]:
+        tool_list = await session.list_tools()
+        raw_tools = []
+        for tool in tool_list.tools if tool_list else []:
+            raw_tools.append({
+                "original_name": getattr(tool, "name", ""),
+                "function_name": getattr(tool, "name", ""),
+                "description": getattr(tool, "description", "") or "",
+                "input_schema": cls._coerce_schema(
+                    getattr(tool, "inputSchema", None) or getattr(tool, "input_schema", None)
+                ),
+                "output_schema": cls._coerce_schema(
+                    getattr(tool, "outputSchema", None) or getattr(tool, "output_schema", None)
+                ),
+                "annotations": cls._coerce_object(
+                    getattr(tool, "annotations", None)
+                ),
+                "structured_content": bool(
+                    getattr(tool, "structuredContent", False)
+                    or getattr(tool, "structured_content", False)
+                    or getattr(tool, "outputSchema", None)
+                    or getattr(tool, "output_schema", None)
+                ),
+            })
+        return normalize_mcp_tool_metadata(raw_tools)
 
     @classmethod
     async def call_tool_from_config(
@@ -100,7 +161,12 @@ class McpPluginFactory:
             debug_print(f"[McpPluginFactory] Connecting to MCP server for tool call tool_name={tool_name}.")
             await connector.connect()
             raw_result = await connector.call_tool(tool_name, **(arguments or {}))
-            result = cls._serialize_tool_result(tool_name, raw_result)
+            additional_fields = normalize_mcp_additional_fields((config or {}).get("additionalFields", {}))
+            result = cls._serialize_tool_result(
+                tool_name,
+                raw_result,
+                additional_fields.get("tool_result_policy"),
+            )
             debug_print(
                 f"[McpPluginFactory] MCP tool call succeeded tool_name={tool_name} "
                 f"success={result.get('success') if isinstance(result, dict) else '<unknown>'}."
@@ -165,6 +231,13 @@ class McpPluginFactory:
 
         inferred_scope_type, inferred_scope_id = infer_mcp_destination_scope(manifest)
         assert_mcp_destination_allowed(
+            manifest,
+            scope_type=inferred_scope_type,
+            scope_id=inferred_scope_id,
+            operation="mcp_runtime_connector",
+            user_id=manifest.get("runtime_user_id") or manifest.get("user_id") or "",
+        )
+        assert_mcp_preconfiguration_manifest_allowed(
             manifest,
             scope_type=inferred_scope_type,
             scope_id=inferred_scope_id,
@@ -295,12 +368,20 @@ class McpPluginFactory:
             return schema_value.model_dump(mode="json", exclude_none=True)
         return {}
 
+    @staticmethod
+    def _coerce_object(value: Any) -> Dict[str, Any]:
+        if isinstance(value, dict):
+            return value
+        if hasattr(value, "model_dump"):
+            return value.model_dump(mode="json", exclude_none=True)
+        return {}
+
     @classmethod
-    def _serialize_tool_result(cls, tool_name: str, raw_result: Any) -> Dict[str, Any]:
+    def _serialize_tool_result(cls, tool_name: str, raw_result: Any, result_policy: str) -> Dict[str, Any]:
         if isinstance(raw_result, list):
-            content = [cls._serialize_content_item(item) for item in raw_result]
+            content = [cls._serialize_content_item(item, result_policy) for item in raw_result]
         else:
-            content = cls._serialize_content_item(raw_result)
+            content = cls._serialize_content_item(raw_result, result_policy)
         return {
             "success": True,
             "tool_name": tool_name,
@@ -308,18 +389,18 @@ class McpPluginFactory:
         }
 
     @classmethod
-    def _serialize_content_item(cls, item: Any) -> Any:
+    def _serialize_content_item(cls, item: Any, result_policy: str) -> Any:
         if item is None or isinstance(item, (bool, int, float)):
             return item
         if isinstance(item, str):
-            return cls._truncate_text(item)
+            return cls._truncate_text(item, result_policy)
         if isinstance(item, list):
-            return [cls._serialize_content_item(child) for child in item]
+            return [cls._serialize_content_item(child, result_policy) for child in item]
         if isinstance(item, dict):
-            return {str(key): cls._serialize_content_item(value) for key, value in item.items()}
+            return {str(key): cls._serialize_content_item(value, result_policy) for key, value in item.items()}
         if hasattr(item, "model_dump"):
             try:
-                return cls._serialize_content_item(item.model_dump(mode="json", exclude_none=True))
+                return cls._serialize_content_item(item.model_dump(mode="json", exclude_none=True), result_policy)
             except Exception:
                 pass
 
@@ -327,12 +408,10 @@ class McpPluginFactory:
         if text_value is not None:
             return {
                 "type": item.__class__.__name__,
-                "text": cls._truncate_text(str(text_value)),
+                "text": cls._truncate_text(str(text_value), result_policy),
             }
-        return cls._truncate_text(str(item))
+        return cls._truncate_text(str(item), result_policy)
 
     @staticmethod
-    def _truncate_text(value: str) -> str:
-        if len(value) <= MCP_MAX_TOOL_RESULT_TEXT_LENGTH:
-            return value
-        return f"{value[:MCP_MAX_TOOL_RESULT_TEXT_LENGTH]}... [truncated]"
+    def _truncate_text(value: str, result_policy: str) -> str:
+        return apply_mcp_result_text_policy(value, result_policy)

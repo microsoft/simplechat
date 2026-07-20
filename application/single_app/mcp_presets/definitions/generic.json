@@ -26,9 +26,16 @@
     },
     "constraints": {
         "allowedTransports": ["streamable_http", "sse", "websocket", "stdio"],
-        "allowedAuthMethods": ["none", "bearer", "api_key", "basic"],
+        "allowedAuthMethods": ["none", "bearer", "api_key", "basic", "identity"],
         "customHeadersAllowed": true,
         "stdioAllowed": true
+    },
+    "implementation": {
+        "id": "generic",
+        "schemaVersion": "1.0.0"
+    },
+    "additionalSettings": {
+        "compatibilityProfile": "standards_compliant"
     },
     "suggestedHeaders": [],
     "warnings": []

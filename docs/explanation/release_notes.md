@@ -2,11 +2,148 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.080)**
+
+#### User Interface Enhancements
+
+*   **Simplified Inbound MCP Governance**
+    *   Reworked Admin Settings > Governance so inbound MCP setup now focuses on two production-facing policies: personal access (`inbound_mcp_access` / `personal`) and source (`inbound_mcp_source` / source value or `*`).
+    *   Removed quick-create buttons for client, tool, resource-operation, and target policies; client trust remains in Inbound MCP runtime configuration, while governance controls authorized users/groups and source signals.
+    *   Preserved legacy scope/target policy compatibility in backend evaluation while steering new setup toward the shared allow-all/users/groups policy experience.
+    *   (Ref: microsoft/simplechat#1017, inbound MCP governance, `functions_mcp_server_governance.py`, `admin_settings.html`, `admin_governance.js`)
+
+### **(v0.250.079)**
+
+#### User Interface Enhancements
+
+*   **MCP Governance Policy Help Modals**
+    *   Added reusable info buttons next to MCP destination and inbound MCP governance quick-create buttons.
+    *   Each help modal explains when to use that policy type and shows proper item ID examples, including sample `fedorg.gov` source/destination values.
+    *   (Ref: microsoft/simplechat#1017, MCP governance help, `admin_settings.html`, `admin_governance.js`)
+
+### **(v0.250.078)**
+
+#### User Interface Enhancements
+
+*   **Inbound MCP User/App Role Split**
+    *   Renamed the default delegated inbound MCP user role to `InboundMCPUserAccess` and added `InboundMCPAppAccess` as the reserved future app-only role default.
+    *   Tightened delegated MCP authentication so personal tools require both `scp=DelegatedMcpServerAccess` and an assigned delegated user role, instead of accepting role-or-scope.
+    *   Updated the Admin Settings inbound MCP panel and Easy Auth setup script preflight to show and validate the required delegated scope, user role, and app-only role.
+    *   Made inbound MCP governance quick-create policies open in restricted user/group mode by default rather than broad allow-all mode.
+    *   (Ref: microsoft/simplechat#1017, inbound MCP auth hardening, `functions_mcp_server_auth.py`, `functions_mcp_server_config.py`, `admin_settings.html`, `admin_governance.js`)
+
+### **(v0.250.077)**
+
+#### User Interface Enhancements
+
+*   **Inbound MCP Governance Policy Editor**
+    *   Added Admin Settings > Governance controls for creating the six inbound MCP delegated item policies required by governed tools: client, source, tool, scope, resource operation, and target.
+    *   Added quick-create buttons for the initial `list_personal_tags` policy set, including `personal`, `personal:tags:list`, and `personal:*` defaults.
+    *   (Ref: microsoft/simplechat#1017, inbound MCP governance, `admin_settings.html`, `admin_governance.js`)
+
+### **(v0.250.075)**
+
+#### User Interface Enhancements
+
+*   **Inbound MCP Delegated Scope Setup Preflight**
+    *   Changed the default inbound MCP delegated scope to `DelegatedMcpServerAccess` so it does not collide with the `McpServerAccess` app role.
+    *   Updated the Admin Settings inbound MCP modal to show the derived SimpleChat API client ID and required delegated scope, and to attempt an Entra app-registration check before changing Easy Auth excluded paths.
+    *   Clarified that personal MCP tools use delegated user tokens by default, while app-role/app-only access is reserved for future non-personal service/admin tool designs.
+    *   (Ref: microsoft/simplechat#1017, inbound MCP delegated scope, Easy Auth modal, `functions_mcp_server_config.py`, `route_frontend_admin_settings.py`, `admin_settings.html`)
+
+### **(v0.250.074)**
+
+#### Bug Fixes
+
+*   **Inbound MCP Easy Auth Script Read Fix**
+    *   Fixed the generated Easy Auth setup script to read App Service `authsettingsV2` with the resource `GET` endpoint instead of the unsupported POST list action before creating a backup.
+    *   This prevents failed reads from producing invalid backup files.
+    *   (Ref: microsoft/simplechat#1017, inbound MCP Easy Auth modal, `authsettingsV2`, `route_frontend_admin_settings.py`)
+
+#### User Interface Enhancements
+
+*   **Inbound MCP Script Copy Button**
+    *   Added a compact copy-to-clipboard icon button for the generated PowerShell setup script in the inbound MCP Easy Auth modal.
+    *   (Ref: microsoft/simplechat#1017, inbound MCP Easy Auth modal, `admin_settings.html`, `admin_settings.js`)
+
+### **(v0.250.073)**
+
+#### User Interface Enhancements
+
+*   **Cloud-Aware Inbound MCP Easy Auth Setup Script**
+    *   Updated the inbound MCP enablement modal to generate its PowerShell/az CLI script from SimpleChat deployment hints instead of assuming public Azure.
+    *   Added support for selecting the Azure CLI cloud before tenant login, matching custom clouds by Resource Manager endpoint, and using the SimpleChat-configured Resource Manager endpoint for public, government, MAG, Secret, or other custom environments.
+    *   Added timestamped `authsettingsV2` backup creation before changing App Service Authentication excluded paths.
+    *   (Ref: microsoft/simplechat#1017, inbound MCP Easy Auth modal, App Service Authentication excluded paths, `route_frontend_admin_settings.py`, `admin_settings.html`)
+
+### **(v0.250.072)**
+
+#### New Features
+
+*   **Inbound MCP Easy Auth Enablement Guard**
+    *   Added an Admin Settings modal that explains the required App Service Authentication excluded paths for inbound MCP and provides Azure Cloud Shell-friendly PowerShell/az CLI setup guidance.
+    *   Verifies the protected resource metadata, MCP endpoint, and MCP health endpoint are reachable without Easy Auth sign-in interception before allowing admins to enable inbound MCP.
+    *   Added server-side enforcement so inbound MCP cannot be enabled by bypassing the browser modal when the exclusion check fails.
+    *   (Ref: microsoft/simplechat#1017, inbound MCP admin UI, Easy Auth excluded paths, `functions_mcp_server_config.py`, `admin_settings.js`)
+
+### **(v0.250.071)**
+
+#### New Features
+
+*   **Inbound MCP App Settings And Admin UI**
+    *   Moved mutable inbound MCP runtime configuration from OS environment variables into the Cosmos-backed `app_settings` document.
+    *   Added a minimal Admin Settings > Agents and Actions panel for inbound MCP enablement, required Entra role/scope, allowed client app IDs, allowed tenant IDs, allowed source IDs, and source-header configuration.
+    *   Gated the new admin panel and left-nav entry behind an OS-only MCP UI feature flag that is not saved in SimpleChat settings or exposed as an editable UI control.
+    *   (Ref: microsoft/simplechat#1017, `functions_mcp_server_config.py`, `functions_settings.py`, `functions_mcp_server_auth.py`, `admin_settings.html`, `_sidebar_nav.html`)
+
+### **(v0.250.070)**
+
+#### New Features
+
+*   **First Governed Inbound MCP Tool**
+    *   Added explicit deny-by-default inbound MCP item-policy evaluation for approved clients, sources, tools, scopes, resource operations, and target scopes.
+    *   Added minimal streamable HTTP JSON-RPC handling for `initialize`, `tools/list`, and `tools/call`.
+    *   Implemented the first delegated-user personal tool, `list_personal_tags`, which only returns bounded tag metadata when every required governance dimension allows the request.
+    *   Kept `execute_workflow` and the other planned personal tools disabled until their service-layer authorization and guardrails are implemented.
+    *   (Ref: microsoft/simplechat#1017, `functions_mcp_server_governance.py`, `functions_mcp_server_registry.py`, `functions_mcp_server_tools.py`, `route_inbound_mcp.py`)
+
+### **(v0.250.068)**
+
+#### New Features
+
+*   **MCP Capability Probe And Tool Metadata Safeguards**
+    *   Upgraded outbound MCP discovery into a compatibility probe that preserves the existing `tools` response while adding capability hints, transport/auth echoes, and warning messages for broad schemas or unsupported prompt loading.
+    *   Expanded cached MCP tool metadata to retain output schemas, annotations, and structured-content hints where available.
+    *   Added opt-in MCP tool argument validation and configurable large-result handling with the existing truncate behavior as the default.
+    *   Updated the MCP action modal to display probe warnings and save validation/result-policy settings.
+    *   (Ref: microsoft/simplechat#1014, `McpPluginFactory.probe_server_from_config`, `functions_mcp_operations.py`, MCP action modal, `test_mcp_phase2_probe_metadata.py`)
+
+### **(v0.250.067)**
+
+#### New Features
+
+*   **MCP Catalog Implementation Schema Framework**
+    *   Added implementation-specific schema validation for MCP presets and preconfigurations so provider-specific settings live in `additionalSettings` instead of expanding the base catalog schemas.
+    *   Migrated bundled Generic, Splunk, Microsoft Learn, Azure documentation, GitHub, local development, Microsoft Sentinel, and Azure MCP Server entries into the new framework with validated non-secret implementation metadata.
+    *   Hardened enterprise preconfiguration use by enforcing direct-submit/runtime policy checks and requiring endpoint-reviewed enterprise templates to match both explicit `preconfiguration:<id>` policy and a specific governed endpoint policy.
+    *   Updated Sentinel and Azure MCP enterprise templates to default to reusable identity auth rather than manual bearer-token entry.
+    *   (Ref: microsoft/simplechat#1014, `functions_mcp_catalog_implementations.py`, `mcp_presets\implementation_schemas`, `mcp_preconfigurations\implementation_schemas`, MCP action modal)
+
+### **(v0.250.066)**
+
+#### New Features
+
+*   **MCP Enterprise Preconfiguration Templates**
+    *   Added enterprise catalog tiering for authenticated MCP server templates, including catalog metadata for auth tier, deployment model, endpoint review, required governance gates, and operator notes.
+    *   Added disabled-by-default Microsoft Sentinel MCP and Azure MCP Server templates that stay hidden unless admins enable MCP destination governance and explicitly allow the matching `preconfiguration:<id>` policy for the intended scope.
+    *   Kept high-risk enterprise template tools disabled by default and surfaced warnings in the MCP action modal when governed templates are available.
+    *   (Ref: microsoft/simplechat#1014, `functions_mcp_preconfigurations.py`, `mcp_preconfigurations\definitions`, MCP action modal, `MCP_SERVER_PRECONFIGURATIONS.md`)
+
 ### **(v0.250.065)**
 
 #### New Features
 
-*   **MCP Destination Governance UI And Policy Persistence**
+*   **MCP Action Destination Governance UI And Policy Persistence**
     *   Added Admin Settings > Governance controls for enabling outbound MCP destination allowlist enforcement and unsafe literal-IP destination blocking.
     *   Extended delegated item policies so admins can allow personal, group, and global MCP destinations with patterns such as `preconfiguration:<id>`, wildcard hosts, URL prefixes, transports, or `*`, including group-specific overrides.
     *   Filtered the MCP preconfiguration API through destination governance so disallowed preconfigured MCP servers are not returned to the action modal.

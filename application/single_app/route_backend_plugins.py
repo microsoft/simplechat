@@ -93,7 +93,10 @@ from functions_mcp_destinations import (
     assert_mcp_destination_allowed,
     get_mcp_destination_policy_config,
 )
-from functions_mcp_preconfigurations import build_mcp_server_preconfigurations_response
+from functions_mcp_preconfigurations import (
+    assert_mcp_preconfiguration_manifest_allowed,
+    build_mcp_server_preconfigurations_response,
+)
 from functions_mcp_presets import build_mcp_server_presets_response
 from semantic_kernel_plugins.mcp_plugin_factory import McpPluginFactory
 from functions_msgraph_operations import (
@@ -598,7 +601,7 @@ def _enforce_mcp_destination_policy(plugin_manifest, scope_type, scope_id, opera
 
     normalized_user_id = str(user_id or get_current_user_id() or '').strip()
     policy_config = get_mcp_destination_policy_config(get_settings(), user_id=normalized_user_id)
-    return assert_mcp_destination_allowed(
+    decision = assert_mcp_destination_allowed(
         plugin_manifest,
         scope_type=scope_type,
         scope_id=scope_id,
@@ -606,6 +609,15 @@ def _enforce_mcp_destination_policy(plugin_manifest, scope_type, scope_id, opera
         operation=operation,
         user_id=normalized_user_id,
     )
+    assert_mcp_preconfiguration_manifest_allowed(
+        plugin_manifest,
+        scope_type=scope_type,
+        scope_id=scope_id,
+        settings=get_settings(),
+        operation=operation,
+        user_id=normalized_user_id,
+    )
+    return decision
 
 
 def _hydrate_sql_test_identity(data, existing_plugin, user_id):
@@ -1801,13 +1813,15 @@ def discover_mcp_tools():
             user_id=user_id,
         )
 
-        tools = asyncio.run(McpPluginFactory.discover_tools_from_config(discovery_manifest))
+        probe_result = asyncio.run(McpPluginFactory.probe_server_from_config(discovery_manifest))
+        tools = probe_result.get('tools', []) if isinstance(probe_result, dict) else []
         log_event(
             "[MCP Discovery] Discovered MCP tools",
             extra={
                 "user_id": user_id,
                 "tool_count": len(tools),
                 "transport": discovery_manifest.get('additionalFields', {}).get('transport'),
+                "warning_count": len(probe_result.get('warnings', [])) if isinstance(probe_result, dict) else 0,
             },
             level=logging.INFO,
         )
@@ -1815,6 +1829,10 @@ def discover_mcp_tools():
             'success': True,
             'tool_count': len(tools),
             'tools': tools,
+            'capabilities': probe_result.get('capabilities', {}) if isinstance(probe_result, dict) else {},
+            'warnings': probe_result.get('warnings', []) if isinstance(probe_result, dict) else [],
+            'transport': probe_result.get('transport') if isinstance(probe_result, dict) else None,
+            'auth_method': probe_result.get('auth_method') if isinstance(probe_result, dict) else None,
         })
     except PermissionError as exc:
         return jsonify({'error': str(exc)}), 403

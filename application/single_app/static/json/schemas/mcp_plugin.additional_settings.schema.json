@@ -15,6 +15,28 @@
       "default": "",
       "description": "Optional concrete MCP server preconfiguration id selected from the server-side MCP preconfiguration catalog."
     },
+    "implementation": {
+      "type": "object",
+      "default": {},
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+        },
+        "schemaVersion": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        }
+      },
+      "description": "Provider-specific MCP implementation metadata copied from a server-side preconfiguration."
+    },
+    "additionalSettings": {
+      "type": "object",
+      "default": {},
+      "additionalProperties": true,
+      "description": "Provider-specific MCP settings copied from a server-side preconfiguration and validated by the implementation schema."
+    },
     "transport": {
       "type": "string",
       "enum": ["streamable_http", "sse", "websocket", "stdio"],
@@ -83,6 +105,17 @@
       "maximum": 30,
       "description": "Initial backoff in seconds before retrying transient MCP failures."
     },
+    "validate_tool_arguments": {
+      "type": "boolean",
+      "default": false,
+      "description": "When enabled, validate MCP tool call arguments against cached input schemas before invocation."
+    },
+    "tool_result_policy": {
+      "type": "string",
+      "enum": ["truncate", "error_on_limit"],
+      "default": "truncate",
+      "description": "How SimpleChat handles MCP tool results that exceed the configured result size limit."
+    },
     "command": {
       "type": "string",
       "description": "Command used when transport is stdio."
@@ -114,7 +147,10 @@
           "original_name": {"type": "string"},
           "function_name": {"type": "string"},
           "description": {"type": "string"},
-          "input_schema": {"type": "object"}
+          "input_schema": {"type": "object"},
+          "output_schema": {"type": "object"},
+          "annotations": {"type": "object"},
+          "structured_content": {"type": "boolean"}
         },
         "required": ["original_name", "function_name"],
         "additionalProperties": true

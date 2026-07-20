@@ -17,10 +17,17 @@ from jsonschema import Draft7Validator
 from jsonschema.exceptions import ValidationError
 
 from functions_appinsights import log_event
+from functions_mcp_catalog_implementations import (
+    McpImplementationValidationError,
+    clear_mcp_implementation_schema_cache,
+    find_secret_like_field,
+    validate_mcp_implementation_settings,
+)
 from functions_mcp_destinations import (
     MCP_DESTINATION_SCOPE_GLOBAL,
     MCP_DESTINATION_SCOPE_GROUP,
     MCP_DESTINATION_SCOPE_PERSONAL,
+    McpDestinationPolicyError,
     evaluate_mcp_destination_policy,
     get_mcp_destination_policy_config,
     normalize_mcp_destination_scope,
@@ -43,6 +50,25 @@ MCP_PRECONFIGURATION_PATHS_ENV = "SIMPLECHAT_MCP_PRECONFIGURATION_PATHS"
 ENABLE_LOCAL_MCP_PRECONFIGURATION_ENV = "ENABLE_LOCAL_MCP_PRECONFIGURATION"
 MCP_PRECONFIGURATION_BUNDLED_SOURCE = "bundled"
 MCP_PRECONFIGURATION_CUSTOM_SOURCE = "custom"
+MCP_PRECONFIGURATION_CATALOG_TIER_PUBLIC = "public"
+MCP_PRECONFIGURATION_CATALOG_TIER_ENTERPRISE = "enterprise"
+MCP_PRECONFIGURATION_AUTH_TIER_PUBLIC = "public_unauthenticated"
+MCP_PRECONFIGURATION_AUTH_TIER_USER_CREDENTIAL = "user_supplied_credential"
+MCP_PRECONFIGURATION_AUTH_TIER_ENTRA = "delegated_oauth_entra"
+MCP_PRECONFIGURATION_DEPLOYMENT_HOSTED_REMOTE = "hosted_remote"
+MCP_PRECONFIGURATION_POLICY_PREFIX = "preconfiguration:"
+MCP_DESTINATION_POLICY_PREFIXES_WITHOUT_ENDPOINT_REVIEW = (
+    MCP_PRECONFIGURATION_POLICY_PREFIX,
+    "preset:",
+    "transport:",
+)
+MCP_ENTERPRISE_REQUIRED_GOVERNANCE_GATES = {
+    "destination_allowlist",
+    "preconfiguration_policy",
+    "per_tool_allowlist",
+    "audit_logging",
+    "identity_review",
+}
 
 MCP_PRECONFIGURATIONS_ROOT = os.path.join(os.path.dirname(__file__), "mcp_preconfigurations")
 MCP_PRECONFIGURATION_SCHEMA_PATH = os.path.join(MCP_PRECONFIGURATIONS_ROOT, MCP_PRECONFIGURATION_SCHEMA_FILE)
@@ -55,10 +81,6 @@ MCP_VALID_PRECONFIGURATION_SCOPES = {
     MCP_DESTINATION_SCOPE_GROUP,
     MCP_DESTINATION_SCOPE_GLOBAL,
 }
-MCP_SECRET_FIELD_PATTERN = re.compile(r"(key|secret|password|token|connection)", re.IGNORECASE)
-MCP_ALLOWED_SECRET_LIKE_DEFAULT_FIELDS = {"api_key_header_name"}
-
-
 class McpPreconfigurationValidationError(ValueError):
     """Raised when an MCP preconfiguration definition fails validation."""
 
@@ -78,6 +100,36 @@ def normalize_mcp_preconfiguration_id(value):
     if not MCP_PRECONFIGURATION_ID_PATTERN.fullmatch(normalized_value):
         return MCP_DEFAULT_SERVER_PRECONFIGURATION_ID
     return normalized_value
+
+
+def _coerce_bool(value, default=False):
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _normalize_catalog_tier(value):
+    normalized_tier = str(value or "").strip().lower()
+    if normalized_tier == MCP_PRECONFIGURATION_CATALOG_TIER_ENTERPRISE:
+        return MCP_PRECONFIGURATION_CATALOG_TIER_ENTERPRISE
+    return MCP_PRECONFIGURATION_CATALOG_TIER_PUBLIC
+
+
+def _default_auth_tier_for_requirement(auth_requirement):
+    normalized_requirement = str(auth_requirement or "").strip().lower()
+    if normalized_requirement == "none":
+        return MCP_PRECONFIGURATION_AUTH_TIER_PUBLIC
+    if normalized_requirement == "identity":
+        return MCP_PRECONFIGURATION_AUTH_TIER_ENTRA
+    return MCP_PRECONFIGURATION_AUTH_TIER_USER_CREDENTIAL
+
+
+def _default_deployment_model(definition):
+    if definition.get("developmentOnly", False):
+        return "local_reference"
+    return MCP_PRECONFIGURATION_DEPLOYMENT_HOSTED_REMOTE
 
 
 def _load_json_file(file_path):
@@ -136,24 +188,6 @@ def _iter_preconfiguration_definition_paths():
                 yield os.path.join(directory, file_name), source
 
 
-def _contains_secret_like_field(value, path=""):
-    if isinstance(value, dict):
-        for key, child_value in value.items():
-            key_text = str(key or "")
-            child_path = f"{path}.{key_text}" if path else key_text
-            if MCP_SECRET_FIELD_PATTERN.search(key_text) and key_text not in MCP_ALLOWED_SECRET_LIKE_DEFAULT_FIELDS:
-                return child_path
-            secret_path = _contains_secret_like_field(child_value, child_path)
-            if secret_path:
-                return secret_path
-    elif isinstance(value, list):
-        for index, child_value in enumerate(value):
-            secret_path = _contains_secret_like_field(child_value, f"{path}[{index}]")
-            if secret_path:
-                return secret_path
-    return ""
-
-
 def _validate_mcp_preconfiguration(definition, file_path):
     schema = _load_mcp_preconfiguration_schema()
     validator = Draft7Validator(schema)
@@ -201,11 +235,45 @@ def _validate_mcp_preconfiguration(definition, file_path):
             f"{os.path.basename(file_path)} cannot require auth defaults when authRequirement is none."
         )
 
-    secret_path = _contains_secret_like_field(definition.get("defaults", {}))
+    secret_path = find_secret_like_field(definition.get("defaults", {}))
     if secret_path:
         raise McpPreconfigurationValidationError(
             f"{os.path.basename(file_path)} contains a secret-like default field: {secret_path}."
         )
+
+    validate_mcp_implementation_settings(
+        definition,
+        file_path,
+        MCP_PRECONFIGURATIONS_ROOT,
+        "preconfiguration",
+    )
+
+    catalog_tier = _normalize_catalog_tier(definition.get("catalogTier"))
+    if catalog_tier == MCP_PRECONFIGURATION_CATALOG_TIER_ENTERPRISE:
+        if definition.get("authRequirement") == "none":
+            raise McpPreconfigurationValidationError(
+                f"{os.path.basename(file_path)} enterprise templates must require identity or credentials."
+            )
+        auth_tier = definition.get("authTier") or _default_auth_tier_for_requirement(definition.get("authRequirement"))
+        if auth_tier == MCP_PRECONFIGURATION_AUTH_TIER_PUBLIC:
+            raise McpPreconfigurationValidationError(
+                f"{os.path.basename(file_path)} enterprise templates cannot use public unauthenticated auth tier."
+            )
+        if not _coerce_bool(definition.get("disabledByDefault")):
+            raise McpPreconfigurationValidationError(
+                f"{os.path.basename(file_path)} enterprise templates must be disabled by default."
+            )
+        if not _coerce_bool(definition.get("requiresAdminEnablement")):
+            raise McpPreconfigurationValidationError(
+                f"{os.path.basename(file_path)} enterprise templates must require admin enablement."
+            )
+        governance_gates = set(definition.get("requiredGovernanceGates") or [])
+        missing_gates = sorted(MCP_ENTERPRISE_REQUIRED_GOVERNANCE_GATES - governance_gates)
+        if missing_gates:
+            raise McpPreconfigurationValidationError(
+                f"{os.path.basename(file_path)} enterprise template is missing governance gates: "
+                f"{', '.join(missing_gates)}."
+            )
 
 
 def _is_development_preconfiguration_enabled(definition):
@@ -223,6 +291,20 @@ def _is_development_preconfiguration_enabled(definition):
 def _sanitize_preconfiguration_for_client(definition, source):
     preconfiguration = copy.deepcopy(definition)
     preconfiguration["source"] = source
+    preconfiguration["catalogTier"] = _normalize_catalog_tier(preconfiguration.get("catalogTier"))
+    preconfiguration["authTier"] = preconfiguration.get("authTier") or _default_auth_tier_for_requirement(
+        preconfiguration.get("authRequirement")
+    )
+    preconfiguration["deploymentModel"] = preconfiguration.get("deploymentModel") or _default_deployment_model(
+        preconfiguration
+    )
+    preconfiguration["disabledByDefault"] = _coerce_bool(preconfiguration.get("disabledByDefault"))
+    preconfiguration["requiresAdminEnablement"] = _coerce_bool(preconfiguration.get("requiresAdminEnablement"))
+    preconfiguration["requiresEndpointReview"] = _coerce_bool(preconfiguration.get("requiresEndpointReview"))
+    preconfiguration.setdefault("requiredGovernanceGates", [])
+    preconfiguration.setdefault("operatorNotes", [])
+    preconfiguration.setdefault("implementation", {})
+    preconfiguration.setdefault("additionalSettings", {})
     return preconfiguration
 
 
@@ -235,7 +317,13 @@ def load_mcp_server_preconfigurations():
         try:
             definition = _load_json_file(file_path)
             _validate_mcp_preconfiguration(definition, file_path)
-        except (OSError, JSONDecodeError, ValidationError, McpPreconfigurationValidationError) as exc:
+        except (
+            OSError,
+            JSONDecodeError,
+            ValidationError,
+            McpImplementationValidationError,
+            McpPreconfigurationValidationError,
+        ) as exc:
             log_event(
                 f"[MCPPreconfigurations] Failed to load MCP preconfiguration definition: {exc}",
                 level=logging.WARNING,
@@ -286,6 +374,8 @@ def _build_preconfiguration_manifest(preconfiguration):
     additional_fields["transport"] = preconfiguration.get("transport")
     additional_fields["server_profile"] = preconfiguration.get("presetId") or MCP_DEFAULT_SERVER_PRESET_ID
     additional_fields["preconfiguration_id"] = preconfiguration.get("id")
+    additional_fields["implementation"] = copy.deepcopy(preconfiguration.get("implementation") or {})
+    additional_fields["additionalSettings"] = copy.deepcopy(preconfiguration.get("additionalSettings") or {})
     return {
         "name": preconfiguration.get("id") or "mcp_preconfiguration",
         "displayName": preconfiguration.get("displayName") or preconfiguration.get("id") or "MCP Preconfiguration",
@@ -299,16 +389,96 @@ def _build_preconfiguration_manifest(preconfiguration):
     }
 
 
-def _is_destination_policy_eligible(preconfiguration, action_scope, scope_id="", user_id="", settings=None):
-    policy_config = get_mcp_destination_policy_config(settings, user_id=user_id)
-    decision = evaluate_mcp_destination_policy(
-        _build_preconfiguration_manifest(preconfiguration),
-        scope_type=action_scope,
+def _requires_explicit_preconfiguration_policy(preconfiguration):
+    return (
+        preconfiguration.get("catalogTier") == MCP_PRECONFIGURATION_CATALOG_TIER_ENTERPRISE
+        or _coerce_bool(preconfiguration.get("disabledByDefault"))
+        or _coerce_bool(preconfiguration.get("requiresAdminEnablement"))
+    )
+
+
+def _is_explicit_preconfiguration_policy_match(preconfiguration, decision):
+    preconfiguration_id = normalize_mcp_preconfiguration_id(preconfiguration.get("id"))
+    matched_pattern = str(decision.get("matched_pattern") or "").strip().lower()
+    return bool(preconfiguration_id and matched_pattern == f"{MCP_PRECONFIGURATION_POLICY_PREFIX}{preconfiguration_id}")
+
+
+def _is_specific_destination_policy_match(decision):
+    matched_pattern = str(decision.get("matched_pattern") or "").strip().lower()
+    if not matched_pattern or matched_pattern == "*":
+        return False
+    return not matched_pattern.startswith(MCP_DESTINATION_POLICY_PREFIXES_WITHOUT_ENDPOINT_REVIEW)
+
+
+def _build_manifest_without_preconfiguration_match(manifest):
+    destination_manifest = copy.deepcopy(manifest)
+    additional_fields = destination_manifest.get("additionalFields")
+    if not isinstance(additional_fields, dict):
+        additional_fields = {}
+    additional_fields = dict(additional_fields)
+    additional_fields["preconfiguration_id"] = ""
+    destination_manifest["additionalFields"] = additional_fields
+    return destination_manifest
+
+
+def _evaluate_specific_destination_policy(manifest, scope_type, scope_id="", user_id="", policy_config=None):
+    return evaluate_mcp_destination_policy(
+        _build_manifest_without_preconfiguration_match(manifest),
+        scope_type=scope_type,
         scope_id=scope_id,
         policy_config=policy_config,
         user_id=user_id,
     )
-    return decision.get("allowed", False)
+
+
+def _enterprise_destination_policy_is_allowed(preconfiguration, manifest, normalized_scope, scope_id, user_id, policy_config):
+    if not _coerce_bool(preconfiguration.get("requiresEndpointReview")):
+        return True
+    destination_decision = _evaluate_specific_destination_policy(
+        manifest,
+        normalized_scope,
+        scope_id=scope_id,
+        user_id=user_id,
+        policy_config=policy_config,
+    )
+    return destination_decision.get("allowed", False) and _is_specific_destination_policy_match(destination_decision)
+
+
+def _is_preconfiguration_available_for_scope(
+    preconfiguration,
+    normalized_scope,
+    scope_id="",
+    user_id="",
+    policy_config=None,
+):
+    if not _is_scope_eligible(preconfiguration, normalized_scope):
+        return False
+
+    manifest = _build_preconfiguration_manifest(preconfiguration)
+    decision = evaluate_mcp_destination_policy(
+        manifest,
+        scope_type=normalized_scope,
+        scope_id=scope_id,
+        policy_config=policy_config,
+        user_id=user_id,
+    )
+    if not decision.get("allowed", False):
+        return False
+
+    if _requires_explicit_preconfiguration_policy(preconfiguration):
+        return (
+            _is_explicit_preconfiguration_policy_match(preconfiguration, decision)
+            and _enterprise_destination_policy_is_allowed(
+                preconfiguration,
+                manifest,
+                normalized_scope,
+                scope_id,
+                user_id,
+                policy_config,
+            )
+        )
+
+    return True
 
 
 def build_mcp_server_preconfigurations_response(
@@ -319,18 +489,16 @@ def build_mcp_server_preconfigurations_response(
 ):
     """Return the API response payload for MCP server preconfigurations."""
     normalized_scope = normalize_mcp_destination_scope(action_scope)
+    policy_config = get_mcp_destination_policy_config(settings, user_id=user_id)
     preconfigurations = [
         copy.deepcopy(preconfiguration)
         for preconfiguration in load_mcp_server_preconfigurations()
-        if (
-            _is_scope_eligible(preconfiguration, normalized_scope)
-            and _is_destination_policy_eligible(
-                preconfiguration,
-                normalized_scope,
-                scope_id=scope_id,
-                user_id=user_id,
-                settings=settings,
-            )
+        if _is_preconfiguration_available_for_scope(
+            preconfiguration,
+            normalized_scope,
+            scope_id=scope_id,
+            user_id=user_id,
+            policy_config=policy_config,
         )
     ]
     return {
@@ -340,7 +508,110 @@ def build_mcp_server_preconfigurations_response(
     }
 
 
+def evaluate_mcp_preconfiguration_manifest_policy(
+    manifest,
+    scope_type=MCP_DESTINATION_SCOPE_PERSONAL,
+    scope_id="",
+    user_id="",
+    settings=None,
+):
+    """Evaluate catalog-specific MCP preconfiguration policy for a submitted manifest."""
+    if not isinstance(manifest, dict) or manifest.get("type") != MCP_PLUGIN_TYPE:
+        return {
+            "allowed": True,
+            "reason": "not_mcp_preconfiguration",
+            "matched_pattern": "",
+        }
+
+    additional_fields = manifest.get("additionalFields") if isinstance(manifest.get("additionalFields"), dict) else {}
+    preconfiguration_id = normalize_mcp_preconfiguration_id(additional_fields.get("preconfiguration_id"))
+    if not preconfiguration_id:
+        return {
+            "allowed": True,
+            "reason": "no_preconfiguration_selected",
+            "matched_pattern": "",
+        }
+
+    preconfiguration = get_mcp_server_preconfiguration(preconfiguration_id)
+    if not preconfiguration:
+        return {
+            "allowed": False,
+            "reason": "MCP preconfiguration is not available.",
+            "matched_pattern": "",
+            "preconfiguration_id": preconfiguration_id,
+        }
+
+    if not _requires_explicit_preconfiguration_policy(preconfiguration):
+        return {
+            "allowed": True,
+            "reason": "preconfiguration_has_no_explicit_policy_requirement",
+            "matched_pattern": "",
+            "preconfiguration_id": preconfiguration_id,
+        }
+
+    policy_config = get_mcp_destination_policy_config(settings, user_id=user_id)
+    decision = evaluate_mcp_destination_policy(
+        manifest,
+        scope_type=scope_type,
+        scope_id=scope_id,
+        policy_config=policy_config,
+        user_id=user_id,
+    )
+    if decision.get("allowed") and _is_explicit_preconfiguration_policy_match(preconfiguration, decision):
+        if not _enterprise_destination_policy_is_allowed(
+            preconfiguration,
+            manifest,
+            scope_type,
+            scope_id,
+            user_id,
+            policy_config,
+        ):
+            return {
+                "allowed": False,
+                "reason": "MCP enterprise preconfiguration requires a specific destination policy.",
+                "matched_pattern": decision.get("matched_pattern", ""),
+                "preconfiguration_id": preconfiguration_id,
+            }
+        return {
+            "allowed": True,
+            "reason": "matched_explicit_preconfiguration_policy",
+            "matched_pattern": decision.get("matched_pattern", ""),
+            "preconfiguration_id": preconfiguration_id,
+        }
+
+    return {
+        "allowed": False,
+        "reason": "MCP enterprise preconfiguration requires an explicit preconfiguration policy.",
+        "matched_pattern": decision.get("matched_pattern", ""),
+        "preconfiguration_id": preconfiguration_id,
+    }
+
+
+def assert_mcp_preconfiguration_manifest_allowed(
+    manifest,
+    scope_type=MCP_DESTINATION_SCOPE_PERSONAL,
+    scope_id="",
+    user_id="",
+    settings=None,
+    operation="mcp",
+):
+    """Raise when a submitted MCP manifest uses a gated preconfiguration without explicit policy."""
+    decision = evaluate_mcp_preconfiguration_manifest_policy(
+        manifest,
+        scope_type=scope_type,
+        scope_id=scope_id,
+        user_id=user_id,
+        settings=settings,
+    )
+    if decision.get("allowed"):
+        return decision
+    raise McpDestinationPolicyError(
+        f"{decision.get('reason')} Operation '{operation}' is not allowed for this MCP preconfiguration."
+    )
+
+
 def clear_mcp_server_preconfiguration_cache():
     """Clear preconfiguration caches for tests or future admin refresh actions."""
     load_mcp_server_preconfigurations.cache_clear()
     _load_mcp_preconfiguration_schema.cache_clear()
+    clear_mcp_implementation_schema_cache()

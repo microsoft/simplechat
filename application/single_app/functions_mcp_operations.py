@@ -4,6 +4,9 @@
 import re
 from urllib.parse import urlparse
 
+from jsonschema import Draft7Validator
+from jsonschema.exceptions import SchemaError
+
 from functions_mcp_presets import (
     MCP_DEFAULT_SERVER_PRESET_ID,
     mcp_server_preset_exists,
@@ -46,6 +49,12 @@ MCP_MAX_TOOL_RESULT_TEXT_LENGTH = 120000
 MCP_MAX_CUSTOM_HEADER_COUNT = 20
 MCP_MAX_HEADER_NAME_LENGTH = 128
 MCP_MAX_HEADER_VALUE_LENGTH = 4096
+MCP_TOOL_RESULT_POLICY_TRUNCATE = "truncate"
+MCP_TOOL_RESULT_POLICY_ERROR_ON_LIMIT = "error_on_limit"
+MCP_TOOL_RESULT_POLICIES = {
+    MCP_TOOL_RESULT_POLICY_TRUNCATE,
+    MCP_TOOL_RESULT_POLICY_ERROR_ON_LIMIT,
+}
 MCP_CUSTOM_HEADERS_FIELD = "custom_headers"
 MCP_HEADER_NAME_PATTERN = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
 MCP_RESERVED_CUSTOM_HEADERS = {
@@ -163,6 +172,32 @@ def coerce_mcp_retry_count(value):
 def coerce_mcp_retry_backoff(value):
     """Coerce retry backoff into the supported MCP backoff range."""
     return coerce_mcp_integer(value, MCP_DEFAULT_RETRY_BACKOFF_SECONDS, 1, MCP_MAX_RETRY_BACKOFF_SECONDS)
+
+
+def normalize_mcp_result_policy(value):
+    """Return a supported MCP tool result handling policy."""
+    normalized_value = str(value or "").strip().lower()
+    if normalized_value in MCP_TOOL_RESULT_POLICIES:
+        return normalized_value
+    return MCP_TOOL_RESULT_POLICY_TRUNCATE
+
+
+def apply_mcp_result_text_policy(value, result_policy):
+    """Apply configured MCP result text handling to one string value."""
+    text_value = str(value or "")
+    if len(text_value) <= MCP_MAX_TOOL_RESULT_TEXT_LENGTH:
+        return text_value
+
+    normalized_policy = normalize_mcp_result_policy(result_policy)
+    if normalized_policy == MCP_TOOL_RESULT_POLICY_ERROR_ON_LIMIT:
+        raise McpRuntimeError(
+            "MCP tool result exceeded the configured result size limit.",
+            category="result_limit",
+            operation="tool_call",
+            detail=f"Tool result text length {len(text_value)} exceeded {MCP_MAX_TOOL_RESULT_TEXT_LENGTH}.",
+            retryable=False,
+        )
+    return f"{text_value[:MCP_MAX_TOOL_RESULT_TEXT_LENGTH]}... [truncated]"
 
 
 def normalize_mcp_string_list(value, max_items=MCP_MAX_TOOL_COUNT):
@@ -339,6 +374,8 @@ def get_mcp_error_http_status(category):
         return 401
     if category == "timeout":
         return 504
+    if category == "result_limit":
+        return 413
     if category in {"connection", "dns_resolution", "tls", "initialization", "discovery", "tool_execution"}:
         return 502
     return 500
@@ -378,13 +415,92 @@ def normalize_mcp_tool_metadata(value):
             suffix += 1
         used_function_names.add(function_name)
 
+        output_schema = tool.get("output_schema") if isinstance(tool.get("output_schema"), dict) else {}
+        annotations = tool.get("annotations") if isinstance(tool.get("annotations"), dict) else {}
+        structured_content = bool(tool.get("structured_content")) or bool(output_schema)
+
         normalized_tools.append({
             "original_name": original_name,
             "function_name": function_name,
             "description": str(tool.get("description") or "").strip(),
             "input_schema": tool.get("input_schema") if isinstance(tool.get("input_schema"), dict) else {},
+            "output_schema": output_schema,
+            "annotations": annotations,
+            "structured_content": structured_content,
         })
     return normalized_tools
+
+
+def _is_broad_mcp_input_schema(schema):
+    if not isinstance(schema, dict) or not schema:
+        return True
+
+    schema_type = schema.get("type")
+    properties = schema.get("properties")
+    additional_properties = schema.get("additionalProperties")
+    if schema_type == "object" or isinstance(properties, dict):
+        return not properties and additional_properties is not False
+    return False
+
+
+def build_mcp_tool_metadata_warnings(tools, additional_fields=None):
+    """Return non-blocking warnings for discovered MCP metadata."""
+    normalized_tools = normalize_mcp_tool_metadata(tools)
+    normalized_fields = normalize_mcp_additional_fields(additional_fields or {})
+    warnings = []
+
+    if not normalized_tools:
+        warnings.append("MCP discovery returned no tools.")
+
+    base_function_names = {}
+    renamed_count = 0
+    broad_schema_count = 0
+    for tool in normalized_tools:
+        original_name = tool.get("original_name") or ""
+        expected_function_name = normalize_mcp_function_name(original_name)
+        actual_function_name = tool.get("function_name") or ""
+        base_function_names[expected_function_name] = base_function_names.get(expected_function_name, 0) + 1
+        if actual_function_name != expected_function_name:
+            renamed_count += 1
+        if _is_broad_mcp_input_schema(tool.get("input_schema")):
+            broad_schema_count += 1
+
+    if renamed_count or any(count > 1 for count in base_function_names.values()):
+        warnings.append("One or more MCP tool names were normalized to safe unique function names.")
+    if broad_schema_count:
+        warnings.append(
+            f"{broad_schema_count} MCP tool input schema"
+            f"{'' if broad_schema_count == 1 else 's'} are missing or broad; argument validation may be limited."
+        )
+    if normalized_fields.get("load_prompts"):
+        warnings.append("Prompt loading was requested, but SimpleChat currently caches MCP tools only.")
+
+    return warnings[:20]
+
+
+def validate_mcp_tool_arguments(tool, arguments):
+    """Return validation errors for MCP tool arguments against cached input schema."""
+    if not isinstance(tool, dict):
+        return ["MCP tool metadata is unavailable for argument validation."]
+
+    input_schema = tool.get("input_schema") if isinstance(tool.get("input_schema"), dict) else {}
+    if not input_schema:
+        return []
+
+    if not isinstance(arguments, dict):
+        return ["MCP tool arguments must be a JSON object."]
+    arguments_value = arguments
+    try:
+        Draft7Validator.check_schema(input_schema)
+        validator = Draft7Validator(input_schema)
+        errors = sorted(validator.iter_errors(arguments_value), key=lambda error: list(error.path))
+    except SchemaError as exc:
+        return [f"MCP tool input schema is invalid: {exc.message}"]
+
+    return [
+        f"{'.'.join(str(part) for part in error.path) or 'arguments'}: {error.message}"
+        for error in errors
+    ]
 
 
 def normalize_mcp_additional_fields(additional_fields):
@@ -415,9 +531,17 @@ def normalize_mcp_additional_fields(additional_fields):
     normalized_fields["retry_backoff_seconds"] = coerce_mcp_retry_backoff(
         normalized_fields.get("retry_backoff_seconds")
     )
+    normalized_fields["validate_tool_arguments"] = bool(normalized_fields.get("validate_tool_arguments", False))
+    normalized_fields["tool_result_policy"] = normalize_mcp_result_policy(
+        normalized_fields.get("tool_result_policy")
+    )
     normalized_fields[MCP_CUSTOM_HEADERS_FIELD] = normalize_mcp_custom_headers(
         normalized_fields.get(MCP_CUSTOM_HEADERS_FIELD)
     )
+    if not isinstance(normalized_fields.get("implementation"), dict):
+        normalized_fields["implementation"] = {}
+    if not isinstance(normalized_fields.get("additionalSettings"), dict):
+        normalized_fields["additionalSettings"] = {}
     normalized_fields["allowed_tool_names"] = normalize_mcp_string_list(
         normalized_fields.get("allowed_tool_names")
     )

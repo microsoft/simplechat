@@ -44,6 +44,8 @@ DEFAULT_ITEM_POLICY_ENTITY_TYPES = {
     "mcp_personal_destination",
     "mcp_group_destination",
     "mcp_global_destination",
+    "inbound_mcp_access",
+    "inbound_mcp_source",
 }
 
 

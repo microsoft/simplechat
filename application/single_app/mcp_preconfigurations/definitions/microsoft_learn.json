@@ -12,6 +12,25 @@
     "endpoint": "https://learn.microsoft.com/api/mcp",
     "transport": "streamable_http",
     "authRequirement": "none",
+    "implementation": {
+        "id": "microsoft_learn",
+        "schemaVersion": "1.0.0"
+    },
+    "additionalSettings": {
+        "contentFocus": "all_microsoft",
+        "publicDocumentationOnly": true,
+        "preferredTools": [
+            "microsoft_docs_search",
+            "microsoft_docs_fetch",
+            "microsoft_code_sample_search"
+        ]
+    },
+    "catalogTier": "public",
+    "authTier": "public_unauthenticated",
+    "deploymentModel": "hosted_remote",
+    "disabledByDefault": false,
+    "requiresAdminEnablement": false,
+    "requiresEndpointReview": false,
     "defaults": {
         "auth_method": "none",
         "api_key_header_name": "X-API-Key",
@@ -30,10 +49,12 @@
     },
     "scopeEligibility": ["personal", "group", "global"],
     "destinationTags": ["microsoft", "learn", "documentation", "public"],
+    "requiredGovernanceGates": [],
     "riskLabel": "low",
     "documentationUrl": "https://learn.microsoft.com/en-us/training/support/mcp",
     "ui": {
         "helpText": "Uses the public Microsoft Learn MCP endpoint over streamable HTTP and does not require authentication."
     },
+    "operatorNotes": [],
     "warnings": []
 }

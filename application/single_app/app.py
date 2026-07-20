@@ -31,6 +31,7 @@ from functions_content import *
 from functions_documents import *
 from functions_search import *
 from functions_settings import *
+from functions_mcp_server_config import is_mcp_ui_enabled
 from functions_appinsights import *
 from functions_activity_logging import *
 
@@ -589,7 +590,8 @@ def inject_settings():
         custom_pages_nav=custom_pages_nav,
         idle_timeout_enabled=idle_timeout_enabled,
         idle_timeout_minutes=idle_timeout_minutes,
-        idle_warning_minutes=idle_warning_minutes
+        idle_warning_minutes=idle_warning_minutes,
+        mcp_ui_enabled=is_mcp_ui_enabled()
     )
 
 @app.template_filter('to_datetime')

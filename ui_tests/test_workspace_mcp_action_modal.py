@@ -1,7 +1,7 @@
 # test_workspace_mcp_action_modal.py
 """
 UI test for the workspace MCP action modal.
-Version: 0.250.065
+Version: 0.250.068
 Implemented in: 0.241.103
 
 This test ensures users can select the MCP action type, configure transport,
@@ -90,7 +90,17 @@ def test_workspace_mcp_action_modal():
                         "function_name": "search_repositories",
                         "description": "Search repositories.",
                         "input_schema": {"type": "object"},
+                        "output_schema": {"type": "object"},
+                        "annotations": {"readOnlyHint": True},
+                        "structured_content": True,
                     }
+                ],
+                "capabilities": {
+                    "tools": True,
+                    "connector_type": "MCPStreamableHttpPlugin",
+                },
+                "warnings": [
+                    "1 MCP tool input schema is missing or broad; argument validation may be limited.",
                 ],
             }),
         )
@@ -132,6 +142,8 @@ def test_workspace_mcp_action_modal():
                             "sse_read_timeout": 300,
                             "retry_count": 0,
                             "retry_backoff_seconds": 1,
+                            "validate_tool_arguments": False,
+                            "tool_result_policy": "truncate",
                             "allowed_tool_names": [],
                         },
                         "ui": {
@@ -141,7 +153,7 @@ def test_workspace_mcp_action_modal():
                         },
                         "constraints": {
                             "allowedTransports": ["streamable_http", "sse", "websocket", "stdio"],
-                            "allowedAuthMethods": ["none", "bearer", "api_key", "basic"],
+                            "allowedAuthMethods": ["none", "bearer", "api_key", "basic", "identity"],
                             "customHeadersAllowed": True,
                             "stdioAllowed": True,
                         },
@@ -161,6 +173,8 @@ def test_workspace_mcp_action_modal():
                             "sse_read_timeout": 300,
                             "retry_count": 0,
                             "retry_backoff_seconds": 1,
+                            "validate_tool_arguments": False,
+                            "tool_result_policy": "truncate",
                             "allowed_tool_names": [],
                         },
                         "ui": {
@@ -198,6 +212,22 @@ def test_workspace_mcp_action_modal():
                         "endpoint": "https://api.githubcopilot.com/mcp/",
                         "transport": "streamable_http",
                         "authRequirement": "required",
+                        "implementation": {
+                            "id": "github",
+                            "schemaVersion": "1.0.0",
+                        },
+                        "additionalSettings": {
+                            "hostedServer": True,
+                            "permissionModel": "supplied_identity_permissions",
+                            "recommendedCredentialHandling": "least_privilege_pat_or_identity",
+                            "defaultRepositoryScope": "user_selected",
+                        },
+                        "catalogTier": "public",
+                        "authTier": "user_supplied_credential",
+                        "deploymentModel": "hosted_remote",
+                        "disabledByDefault": False,
+                        "requiresAdminEnablement": False,
+                        "requiresEndpointReview": False,
                         "defaults": {
                             "auth_method": "bearer",
                             "api_key_header_name": "X-API-Key",
@@ -208,16 +238,22 @@ def test_workspace_mcp_action_modal():
                             "sse_read_timeout": 300,
                             "retry_count": 0,
                             "retry_backoff_seconds": 1,
+                            "validate_tool_arguments": False,
+                            "tool_result_policy": "truncate",
                             "allowed_tool_names": [],
                         },
                         "scopeEligibility": ["personal", "group", "global"],
                         "destinationTags": ["github", "hosted"],
+                        "requiredGovernanceGates": [],
                         "riskLabel": "medium",
                         "documentationUrl": "https://docs.github.com/",
                         "ui": {
                             "helpText": "Requires a GitHub token.",
                         },
-                        "warnings": [],
+                        "operatorNotes": [],
+                        "warnings": [
+                            "Use least-privilege credentials.",
+                        ],
                     },
                 ],
             }),
@@ -270,6 +306,8 @@ def test_workspace_mcp_action_modal():
         expect(page.locator("#sql-config-section")).to_be_hidden()
 
         page.locator("#mcp-preconfiguration").select_option("github")
+        expect(page.locator("#mcp-preconfiguration-help")).to_contain_text("Requires a GitHub token.")
+        expect(page.locator("#mcp-preconfiguration-help")).to_contain_text("Use least-privilege credentials.")
         expect(page.locator("#mcp-endpoint")).to_have_value("https://api.githubcopilot.com/mcp/")
         expect(page.locator("#mcp-auth-method")).to_have_value("bearer")
         page.locator("#mcp-bearer-token").fill("test-token")
@@ -277,8 +315,12 @@ def test_workspace_mcp_action_modal():
             "X-GitHub-Host": "api.github.com",
         }, indent=2))
         page.locator("#mcp-tool-names").fill("search_repositories\nget_issue")
+        page.locator("#mcp-validate-tool-arguments").check()
+        page.locator("#mcp-tool-result-policy").select_option("error_on_limit")
         page.locator("#mcp-discover-tools-btn").click()
-        expect(page.locator("#mcp-discover-status")).to_have_text("Discovered 1 tool.")
+        expect(page.locator("#mcp-discover-status")).to_contain_text("Discovered 1 tool.")
+        expect(page.locator("#mcp-discover-status")).to_contain_text("MCPStreamableHttpPlugin")
+        expect(page.locator("#mcp-discover-warnings")).to_contain_text("argument validation may be limited")
         page.locator("#mcp-request-timeout").fill("45")
         page.locator("#mcp-connect-timeout").fill("12")
         page.locator("#mcp-sse-read-timeout").fill("120")
@@ -298,7 +340,9 @@ def test_workspace_mcp_action_modal():
         expect(page.locator("#summary-mcp-custom-headers")).not_to_contain_text("api.github.com")
         expect(page.locator("#summary-mcp-retry-policy")).to_have_text("2 retries, 3s initial backoff")
         expect(page.locator("#summary-mcp-tool-names")).to_contain_text("search_repositories")
-        expect(page.locator("#summary-mcp-tool-metadata")).to_have_text("1 cached tool")
+        expect(page.locator("#summary-mcp-tool-metadata")).to_contain_text("1 cached tool")
+        expect(page.locator("#summary-mcp-tool-metadata")).to_contain_text("validation on")
+        expect(page.locator("#summary-mcp-tool-metadata")).to_contain_text("error on oversized results")
 
         modal.get_by_role("button", name="Save Action").click()
 
@@ -319,7 +363,11 @@ def test_workspace_mcp_action_modal():
         assert discovery_payload["additionalFields"]["auth_method"] == "bearer"
         assert discovery_payload["additionalFields"]["server_profile"] == "generic"
         assert discovery_payload["additionalFields"]["preconfiguration_id"] == "github"
+        assert discovery_payload["additionalFields"]["implementation"]["id"] == "github"
+        assert discovery_payload["additionalFields"]["additionalSettings"]["hostedServer"] is True
         assert discovery_payload["additionalFields"]["custom_headers"]["X-GitHub-Host"] == "api.github.com"
+        assert discovery_payload["additionalFields"]["validate_tool_arguments"] is True
+        assert discovery_payload["additionalFields"]["tool_result_policy"] == "error_on_limit"
 
         assert saved_plugin["type"] == "mcp"
         assert saved_plugin["name"] == "github_mcp_tools"
@@ -330,11 +378,15 @@ def test_workspace_mcp_action_modal():
         additional_fields = saved_plugin["additionalFields"]
         assert additional_fields["preconfiguration_id"] == "github"
         assert additional_fields["server_profile"] == "generic"
+        assert additional_fields["implementation"]["id"] == "github"
+        assert additional_fields["additionalSettings"]["permissionModel"] == "supplied_identity_permissions"
         assert additional_fields["transport"] == "streamable_http"
         assert additional_fields["auth_method"] == "bearer"
         assert additional_fields["custom_headers"]["X-GitHub-Host"] == "api.github.com"
         assert additional_fields["load_tools"] is True
         assert additional_fields["load_prompts"] is False
+        assert additional_fields["validate_tool_arguments"] is True
+        assert additional_fields["tool_result_policy"] == "error_on_limit"
         assert additional_fields["request_timeout"] == 45
         assert additional_fields["connect_timeout"] == 12
         assert additional_fields["sse_read_timeout"] == 120
@@ -342,6 +394,8 @@ def test_workspace_mcp_action_modal():
         assert additional_fields["retry_backoff_seconds"] == 3
         assert additional_fields["allowed_tool_names"] == ["search_repositories", "get_issue"]
         assert additional_fields["mcp_tools"][0]["function_name"] == "search_repositories"
+        assert additional_fields["mcp_tools"][0]["output_schema"]["type"] == "object"
+        assert additional_fields["mcp_tools"][0]["annotations"]["readOnlyHint"] is True
     finally:
         context.close()
         browser.close()

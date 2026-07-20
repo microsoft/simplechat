@@ -1,0 +1,75 @@
+{
+    "id": "azure_mcp_server",
+    "version": "1.0.0",
+    "displayName": "Azure MCP Server",
+    "description": "Create an enterprise MCP action template for an organization-hosted Azure MCP Server endpoint with governed, identity-backed Azure operations access.",
+    "provider": "Microsoft",
+    "category": "Azure Operations",
+    "enabled": true,
+    "developmentOnly": false,
+    "sortOrder": 80,
+    "presetId": "generic",
+    "endpoint": "https://azure-mcp.example.com/mcp",
+    "transport": "streamable_http",
+    "authRequirement": "identity",
+    "implementation": {
+        "id": "azure_mcp_server",
+        "schemaVersion": "1.0.0"
+    },
+    "additionalSettings": {
+        "defaultAccessMode": "read_only",
+        "localCommandExecution": false,
+        "organizationHostedRemoteRequired": true,
+        "serviceNamespaces": [
+            "Azure.ResourceGroups",
+            "Azure.Storage",
+            "Azure.Monitor"
+        ]
+    },
+    "catalogTier": "enterprise",
+    "authTier": "delegated_oauth_entra",
+    "deploymentModel": "organization_hosted_remote",
+    "disabledByDefault": true,
+    "requiresAdminEnablement": true,
+    "requiresEndpointReview": true,
+    "defaults": {
+        "auth_method": "identity",
+        "api_key_header_name": "X-API-Key",
+        "load_tools": false,
+        "load_prompts": false,
+        "request_timeout": 30,
+        "connect_timeout": 10,
+        "sse_read_timeout": 300,
+        "retry_count": 0,
+        "retry_backoff_seconds": 1,
+        "allowed_tool_names": []
+    },
+    "scopeEligibility": ["personal", "group", "global"],
+    "destinationTags": ["microsoft", "azure", "operations", "enterprise"],
+    "requiredGovernanceGates": [
+        "destination_allowlist",
+        "source_allowlist",
+        "preconfiguration_policy",
+        "per_tool_allowlist",
+        "read_only_mode",
+        "audit_logging",
+        "identity_review",
+        "least_privilege_permissions",
+        "operator_review",
+        "service_namespace_allowlist"
+    ],
+    "riskLabel": "high",
+    "documentationUrl": "https://learn.microsoft.com/en-us/azure/developer/azure-mcp-server/get-started",
+    "ui": {
+        "helpText": "Enterprise template only. Replace the example endpoint with an organization-hosted remote Azure MCP endpoint and keep tools disabled until read-only mode, service namespaces, identity, and audit controls are reviewed."
+    },
+    "operatorNotes": [
+        "SimpleChat should not execute user-supplied local package commands such as npx, dnx, uvx, or Docker for Azure MCP.",
+        "Prefer read-only mode and explicit Azure service namespace allowlists before any mutating tools are enabled."
+    ],
+    "warnings": [
+        "Azure MCP Server can inspect and potentially mutate Azure resources depending on identity permissions and enabled tools.",
+        "Do not enable broad Azure service namespaces or mutating tools until RBAC, OAuth/token handling, and audit requirements are complete.",
+        "This template is hidden unless explicitly allowed with a preconfiguration:azure_mcp_server MCP destination policy."
+    ]
+}

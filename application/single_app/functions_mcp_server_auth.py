@@ -7,19 +7,9 @@ from functools import wraps
 
 from flask import g, jsonify, request
 
-from config import (
-    ENABLE_INBOUND_MCP_SERVER,
-    INBOUND_MCP_ALLOWED_CLIENT_APP_IDS,
-    INBOUND_MCP_ALLOWED_SOURCE_IDS,
-    INBOUND_MCP_ALLOWED_TENANT_IDS,
-    INBOUND_MCP_PRM_PATH,
-    INBOUND_MCP_REQUIRED_ROLE,
-    INBOUND_MCP_REQUIRED_SCOPE,
-    INBOUND_MCP_SOURCE_HEADER,
-    TENANT_ID,
-)
 from functions_appinsights import log_event
 from functions_authentication import validate_bearer_token
+from functions_mcp_server_config import get_inbound_mcp_runtime_config
 
 
 AUTH_CATEGORY = "InboundMCP"
@@ -91,8 +81,8 @@ def _extract_bearer_token(flask_request):
     return token
 
 
-def _resolve_source_signal(flask_request, caller_app_id):
-    source_header_name = (INBOUND_MCP_SOURCE_HEADER or "").strip()
+def _resolve_source_signal(flask_request, caller_app_id, runtime_config):
+    source_header_name = str(runtime_config.get("inbound_mcp_source_header") or "").strip()
     if source_header_name:
         source_header_value = flask_request.headers.get(source_header_name, "").strip()
         if source_header_value:
@@ -112,29 +102,42 @@ def _resolve_source_signal(flask_request, caller_app_id):
     return "unknown", "unknown", "unknown"
 
 
-def _source_is_allowed(source_id):
-    allowed_sources = tuple(INBOUND_MCP_ALLOWED_SOURCE_IDS or ("*",))
+def _source_is_allowed(source_id, runtime_config):
+    allowed_sources = tuple(runtime_config.get("inbound_mcp_allowed_source_ids") or ("*",))
     return "*" in allowed_sources or source_id in allowed_sources
 
 
-def _tenant_is_allowed(tenant_id):
-    allowed_tenants = tuple(INBOUND_MCP_ALLOWED_TENANT_IDS or ())
-    if not allowed_tenants and TENANT_ID:
-        allowed_tenants = (TENANT_ID,)
+def _tenant_is_allowed(tenant_id, runtime_config):
+    allowed_tenants = tuple(runtime_config.get("inbound_mcp_allowed_tenant_ids") or ())
     return not allowed_tenants or tenant_id in allowed_tenants
 
 
-def _client_is_allowed(caller_app_id):
-    allowed_clients = tuple(INBOUND_MCP_ALLOWED_CLIENT_APP_IDS or ())
+def _client_is_allowed(caller_app_id, runtime_config):
+    allowed_clients = tuple(runtime_config.get("inbound_mcp_allowed_client_app_ids") or ())
     return bool(caller_app_id and allowed_clients and caller_app_id.lower() in allowed_clients)
 
 
-def _has_required_role_or_scope(roles, scopes):
-    required_role = (INBOUND_MCP_REQUIRED_ROLE or "").strip()
-    required_scope = (INBOUND_MCP_REQUIRED_SCOPE or "").strip()
-    has_role = bool(required_role and required_role in roles)
-    has_scope = bool(required_scope and required_scope in scopes)
-    return has_role or has_scope
+def _runtime_list(runtime_config, key):
+    values = runtime_config.get(key)
+    if isinstance(values, (list, tuple, set)):
+        return tuple(str(value or "").strip() for value in values if str(value or "").strip())
+    value = str(values or "").strip()
+    return (value,) if value else ()
+
+
+def _has_required_delegated_scope(scopes, runtime_config):
+    required_scope = str(runtime_config.get("inbound_mcp_required_scope") or "").strip()
+    return bool(required_scope and required_scope in scopes)
+
+
+def _has_required_delegated_user_role(roles, runtime_config):
+    required_roles = _runtime_list(runtime_config, "inbound_mcp_required_user_roles")
+    return bool(required_roles and set(required_roles).intersection(set(roles or ())))
+
+
+def _has_required_app_role(roles, runtime_config):
+    required_roles = _runtime_list(runtime_config, "inbound_mcp_required_app_roles")
+    return bool(required_roles and set(required_roles).intersection(set(roles or ())))
 
 
 def _correlation_id(flask_request):
@@ -148,6 +151,7 @@ def _correlation_id(flask_request):
 
 def validate_inbound_mcp_request(flask_request, token_validator=None):
     """Validate bearer auth and source policy for an inbound MCP request."""
+    runtime_config = get_inbound_mcp_runtime_config()
     token_validator = token_validator or validate_bearer_token
     token = _extract_bearer_token(flask_request)
     is_valid, token_claims = token_validator(token)
@@ -162,32 +166,12 @@ def validate_inbound_mcp_request(flask_request, token_validator=None):
         raise InboundMcpAuthError(401, "invalid_token", "The bearer token is invalid.")
 
     tenant_id = str(token_claims.get("tid") or "").strip()
-    if not _tenant_is_allowed(tenant_id):
+    if not _tenant_is_allowed(tenant_id, runtime_config):
         raise InboundMcpAuthError(401, "invalid_token", "The bearer token is invalid.")
 
     caller_app_id = str(token_claims.get("azp") or token_claims.get("appid") or "").strip().lower()
-    if not _client_is_allowed(caller_app_id):
+    if not _client_is_allowed(caller_app_id, runtime_config):
         raise InboundMcpAuthError(403, "mcp_client_not_allowed", "The MCP client is not allowed.")
-
-    roles = _normalize_claim_values(token_claims.get("roles"))
-    scopes = _normalize_claim_values(token_claims.get("scp"))
-    if not _has_required_role_or_scope(roles, scopes):
-        raise InboundMcpAuthError(
-            403,
-            "insufficient_mcp_permissions",
-            "The bearer token does not include the required MCP role or scope.",
-        )
-
-    source_id, source_signal_type, source_trust_level = _resolve_source_signal(
-        flask_request,
-        caller_app_id,
-    )
-    if not _source_is_allowed(source_id):
-        raise InboundMcpAuthError(
-            403,
-            "mcp_source_not_allowed",
-            "The MCP source is not allowed.",
-        )
 
     delegated_user_id = str(token_claims.get("oid") or token_claims.get("sub") or "").strip()
     delegated_username = str(
@@ -196,7 +180,41 @@ def validate_inbound_mcp_request(flask_request, token_validator=None):
         or token_claims.get("name")
         or ""
     ).strip()
+    roles = _normalize_claim_values(token_claims.get("roles"))
+    scopes = _normalize_claim_values(token_claims.get("scp"))
     token_type = "delegated" if delegated_user_id and scopes else "app_only"
+
+    if token_type == "delegated":
+        if not _has_required_delegated_scope(scopes, runtime_config):
+            raise InboundMcpAuthError(
+                403,
+                "insufficient_mcp_permissions",
+                "The bearer token does not include the required delegated MCP scope.",
+            )
+        if not _has_required_delegated_user_role(roles, runtime_config):
+            raise InboundMcpAuthError(
+                403,
+                "insufficient_mcp_permissions",
+                "The bearer token does not include the required delegated MCP user role.",
+            )
+    elif not _has_required_app_role(roles, runtime_config):
+        raise InboundMcpAuthError(
+            403,
+            "insufficient_mcp_permissions",
+            "The bearer token does not include the required app-only MCP role.",
+        )
+
+    source_id, source_signal_type, source_trust_level = _resolve_source_signal(
+        flask_request,
+        caller_app_id,
+        runtime_config,
+    )
+    if not _source_is_allowed(source_id, runtime_config):
+        raise InboundMcpAuthError(
+            403,
+            "mcp_source_not_allowed",
+            "The MCP source is not allowed.",
+        )
 
     return InboundMcpAuthContext(
         tenant_id=tenant_id,
@@ -216,14 +234,34 @@ def validate_inbound_mcp_request(flask_request, token_validator=None):
 
 
 def is_inbound_mcp_metadata_request(flask_request):
-    return flask_request.method == "GET" and flask_request.path == INBOUND_MCP_PRM_PATH
+    runtime_config = get_inbound_mcp_runtime_config()
+    return (
+        flask_request.method == "GET"
+        and flask_request.path == runtime_config.get("inbound_mcp_prm_path")
+    )
+
+def _build_resource_metadata_url(flask_request):
+    runtime_config = get_inbound_mcp_runtime_config()
+    metadata_path = str(runtime_config.get("inbound_mcp_prm_path") or "").strip()
+    if not metadata_path.startswith("/"):
+        metadata_path = "/.well-known/oauth-protected-resource/mcp"
+    if not flask_request:
+        return metadata_path
+    base_url = str(flask_request.url_root or "").strip().rstrip("/")
+    if not base_url:
+        return metadata_path
+    return f"{base_url}{metadata_path}".replace("\r", "").replace("\n", "")
 
 
-def build_inbound_mcp_auth_error_response(auth_error):
-    return jsonify({
+def build_inbound_mcp_auth_error_response(auth_error, flask_request=None):
+    response = jsonify({
         "error": auth_error.public_error,
         "message": auth_error.public_message,
-    }), auth_error.status_code
+    })
+    if auth_error.status_code == 401:
+        metadata_url = _build_resource_metadata_url(flask_request)
+        response.headers["WWW-Authenticate"] = f'Bearer resource_metadata="{metadata_url}"'
+    return response, auth_error.status_code
 
 
 def inbound_mcp_required(f):
@@ -232,7 +270,7 @@ def inbound_mcp_required(f):
         try:
             g.inbound_mcp_auth_context = validate_inbound_mcp_request(request)
         except InboundMcpAuthError as auth_error:
-            return build_inbound_mcp_auth_error_response(auth_error)
+            return build_inbound_mcp_auth_error_response(auth_error, request)
         return f(*args, **kwargs)
     return decorated_function
 
@@ -244,7 +282,8 @@ def inbound_mcp_required_blueprint():
             return None
         if is_inbound_mcp_metadata_request(request):
             return None
-        if not ENABLE_INBOUND_MCP_SERVER:
+        runtime_config = get_inbound_mcp_runtime_config()
+        if not runtime_config.get("enable_inbound_mcp_server"):
             log_event(
                 "[InboundMCP] Inbound MCP request rejected because the server is disabled.",
                 extra={"path": request.path, "method": request.method},
@@ -272,7 +311,7 @@ def inbound_mcp_required_blueprint():
                 debug_only=True,
                 category=AUTH_CATEGORY,
             )
-            return build_inbound_mcp_auth_error_response(auth_error)
+            return build_inbound_mcp_auth_error_response(auth_error, request)
 
         return None
 

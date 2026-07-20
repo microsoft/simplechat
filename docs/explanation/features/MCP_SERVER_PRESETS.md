@@ -2,6 +2,10 @@
 
 Implemented in version: **0.250.062**
 
+Implementation-specific preset schema validation added in version: **0.250.067**
+
+Capability-probe defaults for argument validation and result policy added in version: **0.250.068**
+
 ## Overview
 
 MCP server presets are server-side JSON definitions that describe known-good defaults for Model Context Protocol actions. They let SimpleChat ship curated presets, such as Generic MCP Server and Splunk MCP Server, while allowing organizations to add their own definitions without hard-coding provider behavior in browser JavaScript.
@@ -21,6 +25,9 @@ Bundled presets live in:
 ```text
 application\single_app\mcp_presets\
     mcp_server_preset.schema.json
+    implementation_schemas\
+        generic.preset.schema.json
+        splunk.preset.schema.json
     definitions\
         generic.json
         splunk.json
@@ -71,6 +78,8 @@ Preset IDs must match:
         "sse_read_timeout": 120,
         "retry_count": 1,
         "retry_backoff_seconds": 2,
+        "validate_tool_arguments": false,
+        "tool_result_policy": "truncate",
         "allowed_tool_names": []
     },
     "ui": {
@@ -84,6 +93,13 @@ Preset IDs must match:
         "customHeadersAllowed": true,
         "stdioAllowed": false
     },
+    "implementation": {
+        "id": "contoso",
+        "schemaVersion": "1.0.0"
+    },
+    "additionalSettings": {
+        "compatibilityProfile": "contoso_mcp"
+    },
     "suggestedHeaders": [],
     "warnings": []
 }
@@ -94,6 +110,7 @@ Preset IDs must match:
 - Do not include bearer tokens, API keys, passwords, client secrets, or connection strings.
 - Do not include production tenant/customer endpoint URLs as defaults. Use placeholders.
 - Presets may define header names and descriptions through `suggestedHeaders`, but should not define secret header values.
+- Presets with `additionalSettings` must include an `implementation` block and a matching `implementation_schemas\{id}.preset.schema.json` file.
 - Runtime credentials must still be entered through the SimpleChat action modal or reusable workspace identities.
 - Invalid preset definitions are skipped and logged through the application logging pipeline.
 
@@ -102,7 +119,7 @@ Preset IDs must match:
 1. The modal calls `/api/plugins/mcp/presets`.
 2. The server returns enabled, validated presets.
 3. The modal populates the Server Preset dropdown from the API response.
-4. Selecting a preset applies non-secret defaults such as transport, auth method, timeouts, retries, and help text.
+4. Selecting a preset applies non-secret defaults such as transport, auth method, timeouts, retries, argument-validation preference, result policy, and help text.
 5. Existing saved actions keep their values when opened for editing; preset defaults are not reapplied unless the user changes the preset.
 
 ## Bundled Presets
@@ -116,6 +133,7 @@ The generic preset keeps broad MCP defaults:
 - Tools enabled.
 - Prompts disabled.
 - Custom headers allowed.
+- Reusable identity auth is allowed for preconfigurations that require workspace identity.
 - Stdio allowed only when the action scope is admin-managed global.
 
 ### Splunk MCP Server
@@ -138,3 +156,7 @@ Related validation:
 - `functional_tests\test_mcp_server_presets.py`
 - `ui_tests\test_workspace_mcp_action_modal.py`
 - Route policy tests under `functional_tests\route_tests\`
+
+Expanded coverage in version **0.250.067** validates implementation-specific preset schemas, secret-like field rejection in `additionalSettings`, and the generic preset's reusable identity option.
+
+Expanded coverage in version **0.250.068** validates preset-compatible defaults for opt-in MCP argument validation and large-result policy behavior.

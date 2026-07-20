@@ -9,6 +9,7 @@ from functions_appinsights import log_event
 from functions_cosmos_throughput import get_default_cosmos_throughput_settings
 from functions_document_actions import get_default_document_action_capabilities
 from functions_icon_utils import normalize_icon_payload
+from functions_mcp_server_config import INBOUND_MCP_SETTINGS_DEFAULTS, normalize_inbound_mcp_settings
 from functions_service_health import get_default_service_health
 import app_settings_cache
 import inspect
@@ -790,6 +791,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'governance_global_actions_usage': False,
         'enable_mcp_destination_governance': False,
         'mcp_block_unsafe_destinations': False,
+        **INBOUND_MCP_SETTINGS_DEFAULTS,
         'allow_ai_foundry_agents': False,
         'allow_group_ai_foundry_agents': False,
         'allow_personal_ai_foundry_agents': False,
@@ -1356,6 +1358,7 @@ def get_settings(use_cosmos=False, include_source=False):
         assignment_settings_updated = normalize_group_workflow_assignment_settings(merged)
         promoted_popular_settings_updated = normalize_agents_page_promoted_popular_settings(merged)
         document_access_index_settings_updated = normalize_document_access_index_required_settings(merged)
+        inbound_mcp_settings_updated = normalize_inbound_mcp_settings(merged)
 
         merged['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(merged)
 
@@ -1366,6 +1369,7 @@ def get_settings(use_cosmos=False, include_source=False):
             or assignment_settings_updated
             or promoted_popular_settings_updated
             or document_access_index_settings_updated
+            or inbound_mcp_settings_updated
         ):
             cosmos_settings_container.upsert_item(merged)
             _refresh_app_settings_cache_after_write(merged, context="merge_upsert")
@@ -1416,6 +1420,7 @@ def update_settings(new_settings):
         normalize_group_workflow_assignment_settings(settings_item)
         normalize_agents_page_promoted_popular_settings(settings_item)
         normalize_document_access_index_required_settings(settings_item)
+        normalize_inbound_mcp_settings(settings_item)
         settings_item['enable_multi_model_endpoints'] = coerce_multi_model_endpoint_enablement(
             existing_multi_endpoint_enabled,
             settings_item.get('enable_multi_model_endpoints', False),

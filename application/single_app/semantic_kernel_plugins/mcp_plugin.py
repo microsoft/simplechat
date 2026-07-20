@@ -13,6 +13,7 @@ from functions_mcp_operations import (
     classify_mcp_exception,
     normalize_mcp_additional_fields,
     normalize_mcp_tool_metadata,
+    validate_mcp_tool_arguments,
 )
 from semantic_kernel_plugins.base_plugin import BasePlugin
 from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
@@ -110,7 +111,7 @@ class McpPlugin(BasePlugin):
             description = f"{description}\n\nInput schema: {input_schema}"
 
         async def tool_function(**kwargs):
-            return await self.invoke_tool(original_name, kwargs)
+            return await self.call_tool(original_name, kwargs)
 
         tool_function.__name__ = function_name
         tool_function.__qualname__ = f"McpPlugin.{function_name}"
@@ -156,6 +157,19 @@ class McpPlugin(BasePlugin):
                 "error_type": "not_configured",
                 "configured_tools": sorted(configured_tool_names),
             }
+        if self._additional_fields.get("validate_tool_arguments"):
+            configured_tool = next(
+                (tool for tool in self._tools if tool.get("original_name") == normalized_tool_name),
+                None,
+            )
+            validation_errors = validate_mcp_tool_arguments(configured_tool, arguments or {})
+            if validation_errors:
+                return {
+                    "success": False,
+                    "error": "MCP tool arguments failed input schema validation.",
+                    "error_type": "validation",
+                    "validation_errors": validation_errors,
+                }
 
         return await self.invoke_tool(normalized_tool_name, arguments or {})
 

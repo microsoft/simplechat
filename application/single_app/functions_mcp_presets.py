@@ -13,6 +13,12 @@ from jsonschema import Draft7Validator
 from jsonschema.exceptions import ValidationError
 
 from functions_appinsights import log_event
+from functions_mcp_catalog_implementations import (
+    McpImplementationValidationError,
+    clear_mcp_implementation_schema_cache,
+    find_secret_like_field,
+    validate_mcp_implementation_settings,
+)
 
 
 MCP_DEFAULT_SERVER_PRESET_ID = "generic"
@@ -55,9 +61,16 @@ MCP_FALLBACK_GENERIC_PRESET = {
     },
     "constraints": {
         "allowedTransports": ["streamable_http", "sse", "websocket", "stdio"],
-        "allowedAuthMethods": ["none", "bearer", "api_key", "basic"],
+        "allowedAuthMethods": ["none", "bearer", "api_key", "basic", "identity"],
         "customHeadersAllowed": True,
         "stdioAllowed": True,
+    },
+    "implementation": {
+        "id": MCP_DEFAULT_SERVER_PRESET_ID,
+        "schemaVersion": "1.0.0",
+    },
+    "additionalSettings": {
+        "compatibilityProfile": "standards_compliant",
     },
     "suggestedHeaders": [],
     "warnings": [],
@@ -149,10 +162,25 @@ def _validate_mcp_preset(definition, file_path):
             f"{os.path.basename(file_path)} must use a file name that matches preset id '{preset_id}'."
         )
 
+    secret_path = find_secret_like_field(definition.get("defaults", {}))
+    if secret_path:
+        raise McpPresetValidationError(
+            f"{os.path.basename(file_path)} contains a secret-like default field: {secret_path}."
+        )
+
+    validate_mcp_implementation_settings(
+        definition,
+        file_path,
+        MCP_PRESETS_ROOT,
+        "preset",
+    )
+
 
 def _sanitize_preset_for_client(definition, source):
     preset = copy.deepcopy(definition)
     preset["source"] = source
+    preset.setdefault("implementation", {})
+    preset.setdefault("additionalSettings", {})
     return preset
 
 
@@ -165,7 +193,13 @@ def load_mcp_server_presets():
         try:
             definition = _load_json_file(file_path)
             _validate_mcp_preset(definition, file_path)
-        except (OSError, JSONDecodeError, ValidationError, McpPresetValidationError) as exc:
+        except (
+            OSError,
+            JSONDecodeError,
+            ValidationError,
+            McpImplementationValidationError,
+            McpPresetValidationError,
+        ) as exc:
             log_event(
                 f"[MCPPresets] Failed to load MCP preset definition: {exc}",
                 level=logging.WARNING,
@@ -220,3 +254,4 @@ def clear_mcp_server_preset_cache():
     """Clear preset caches for tests or future admin refresh actions."""
     load_mcp_server_presets.cache_clear()
     _load_mcp_preset_schema.cache_clear()
+    clear_mcp_implementation_schema_cache()
