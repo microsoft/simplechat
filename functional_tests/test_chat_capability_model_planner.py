@@ -1,8 +1,8 @@
 # test_chat_capability_model_planner.py
 """
 Functional test for the model-assisted chat capability planner contract.
-Version: 0.250.076
-Implemented in: 0.250.069; contextual goal contract added in 0.250.076
+Version: 0.250.077
+Implemented in: 0.250.069; transport compatibility corrected in 0.250.077
 
 This test ensures planner requests expose only safe authorized capability
 descriptors and untrusted planner results fail closed before execution.
@@ -224,6 +224,10 @@ class _FakeClient:
 
 def _fake_client(*responses):
     return _FakeClient(responses)
+
+
+class _FakeBadRequestError(Exception):
+    status_code = 400
 
 
 def test_request_projects_only_safe_planner_fields():
@@ -690,8 +694,8 @@ def test_azure_invocation_uses_schema_and_transport_timeout():
     request_payload = client.requests[0]
     assert 0 < request_payload['timeout'] <= 5.0
     assert request_payload['stream'] is False
-    assert request_payload['temperature'] == 0
     assert request_payload['max_completion_tokens'] == 300
+    assert request_payload['reasoning_effort'] == 'minimal'
     assert request_payload['response_format']['type'] == 'json_schema'
     result_schema = request_payload['response_format']['json_schema']['schema']
     requirement_schema = result_schema['properties']['requirements']['items']
@@ -726,10 +730,10 @@ def test_azure_invocation_uses_schema_and_transport_timeout():
 
 def test_protocol_fallback_is_bounded_and_arbitrary_failures_are_not_retried():
     fallback_client = _fake_client(
-        TypeError("unexpected keyword argument 'response_format'"),
-        TypeError("unexpected keyword argument 'response_format'"),
-        TypeError("unsupported parameter: response_format"),
-        TypeError("unsupported parameter: response_format"),
+        _FakeBadRequestError("unexpected keyword argument 'response_format'"),
+        _FakeBadRequestError("unexpected keyword argument 'response_format'"),
+        _FakeBadRequestError("unsupported parameter: response_format"),
+        _FakeBadRequestError("unsupported parameter: response_format"),
         _completion_response(_proposal_payload()),
     )
     fallback_result = invoke_capability_planner(
@@ -743,6 +747,7 @@ def test_protocol_fallback_is_bounded_and_arbitrary_failures_are_not_retried():
     assert fallback_client.options == [{'timeout': 10.0, 'max_retries': 0}]
     assert len(fallback_client.requests) == 5
     assert 'response_format' not in fallback_client.requests[-1]
+    assert fallback_client.requests[-1]['reasoning_effort'] == 'minimal'
 
     failed_client = _fake_client(RuntimeError('quota exceeded'))
     failed_result = invoke_capability_planner(
@@ -766,8 +771,38 @@ def test_protocol_fallback_is_bounded_and_arbitrary_failures_are_not_retried():
     assert misleading_error_result['failure_code'] == 'client_error'
     assert len(misleading_error_client.requests) == 1
 
+    local_type_error_client = _fake_client(
+        TypeError("unexpected keyword argument 'response_format'"),
+        _completion_response(_proposal_payload()),
+    )
+    local_type_error_result = invoke_capability_planner(
+        planner_client=local_type_error_client,
+        planner_model='planner-model',
+        planner_request=_request(),
+    )
+    assert local_type_error_result['failure_code'] == 'client_error'
+    assert local_type_error_result['transport_error_class'] == 'type_error'
+    assert len(local_type_error_client.requests) == 1
+
+    unsupported_completion_tokens_client = _fake_client(
+        _FakeBadRequestError(
+            'unsupported parameter: max_completion_tokens'
+        ),
+        _completion_response(_proposal_payload()),
+    )
+    unsupported_completion_tokens_result = invoke_capability_planner(
+        planner_client=unsupported_completion_tokens_client,
+        planner_model='planner-model',
+        planner_request=_request(),
+    )
+    assert unsupported_completion_tokens_result['failure_code'] == 'client_error'
+    assert unsupported_completion_tokens_result[
+        'transport_error_class'
+    ] == 'http_400_max_completion_tokens'
+    assert len(unsupported_completion_tokens_client.requests) == 1
+
     reasoning_client = _fake_client(
-        TypeError('unsupported parameter: temperature'),
+        _FakeBadRequestError('unsupported parameter: reasoning_effort'),
         _completion_response(_proposal_payload()),
     )
     reasoning_result = invoke_capability_planner(
@@ -779,8 +814,34 @@ def test_protocol_fallback_is_bounded_and_arbitrary_failures_are_not_retried():
     assert reasoning_result['response_format_class'] == 'json_schema'
     assert len(reasoning_client.requests) == 2
     assert reasoning_client.requests[-1]['max_completion_tokens'] == 600
-    assert 'temperature' not in reasoning_client.requests[-1]
+    assert 'reasoning_effort' not in reasoning_client.requests[-1]
     assert reasoning_client.requests[-1]['response_format']['type'] == 'json_schema'
+
+    schema_fallback_client = _fake_client(
+        _FakeBadRequestError('Invalid parameter: response_format json_schema'),
+        _FakeBadRequestError('Invalid parameter: response_format json_schema'),
+        _completion_response(_proposal_payload()),
+    )
+    schema_fallback_result = invoke_capability_planner(
+        planner_client=schema_fallback_client,
+        planner_model='gpt-5.6-planner',
+        planner_request=_request(),
+    )
+    assert schema_fallback_result['status'] == 'valid'
+    assert schema_fallback_result['response_format_class'] == 'json_object'
+    assert len(schema_fallback_client.requests) == 3
+
+    terminal_bad_request = invoke_capability_planner(
+        planner_client=_fake_client(
+            _FakeBadRequestError('Bad request unrelated to optional fields')
+        ),
+        planner_model='planner-model',
+        planner_request=_request(),
+    )
+    assert terminal_bad_request['failure_code'] == 'client_error'
+    assert terminal_bad_request['transport_error_class'] == 'http_4xx'
+    assert terminal_bad_request['transport_variant_index'] == 0
+    assert 'Bad request' not in json.dumps(terminal_bad_request)
 
     unsupported_transport = SimpleNamespace(chat=reasoning_client.chat)
     unsupported_result = invoke_capability_planner(
@@ -793,7 +854,7 @@ def test_protocol_fallback_is_bounded_and_arbitrary_failures_are_not_retried():
 
 def test_optional_parameter_fallbacks_share_one_wall_clock_deadline():
     deadline_client = _fake_client(
-        TypeError("unexpected keyword argument 'response_format'"),
+        _FakeBadRequestError("unexpected keyword argument 'response_format'"),
         _completion_response(_proposal_payload()),
     )
     with patch(
@@ -813,7 +874,7 @@ def test_optional_parameter_fallbacks_share_one_wall_clock_deadline():
     assert result['latency_ms'] == 4500
 
     anthropic_client = _fake_client(
-        TypeError('unsupported parameter: temperature'),
+        _FakeBadRequestError('unsupported parameter: temperature'),
         _completion_response(_proposal_payload()),
     )
     with patch(
@@ -1099,7 +1160,10 @@ def test_planner_settings_normalize_closed_and_stay_backend_only():
         'chat_capability_planner_model_source': 'configured',
         'chat_capability_planner_model_endpoint_id': 'server-endpoint',
     })
-    assert incomplete_configured['chat_capability_planner_mode'] == 'off'
+    assert incomplete_configured['chat_capability_planner_mode'] == 'shadow'
+    assert incomplete_configured[
+        'chat_capability_planner_model_source'
+    ] == 'same_as_chat'
 
     sanitized = sanitize_settings_for_user({
         **bounded,

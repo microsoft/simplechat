@@ -1,11 +1,11 @@
 # test_admin_capability_planner_settings.py
 """Azure Playwright UI tests for governed capability planner settings.
 
-Version: 0.250.073
-Implemented in: 0.250.072; enhanced controls added in 0.250.073
+Version: 0.250.077
+Implemented in: 0.250.072; dependent model selectors added in 0.250.077
 
 This test verifies that administrators can select off, shadow, or assist mode
-and understand and edit bounded planner controls without layout overflow.
+and choose a valid global endpoint/model pair without layout overflow.
 """
 
 import os
@@ -31,10 +31,21 @@ def test_capability_planner_control_source_contract():
         'admin',
         'admin_settings.js',
     )
+    endpoint_script_path = os.path.join(
+        repo_root,
+        'application',
+        'single_app',
+        'static',
+        'js',
+        'admin',
+        'admin_model_endpoints.js',
+    )
     with open(template_path, encoding='utf-8') as template_file:
         template_source = template_file.read()
     with open(script_path, encoding='utf-8') as script_file:
         script_source = script_file.read()
+    with open(endpoint_script_path, encoding='utf-8') as endpoint_script_file:
+        endpoint_script_source = endpoint_script_file.read()
 
     planner_section = template_source.split(
         'id="chat-capability-planner-section"',
@@ -51,10 +62,28 @@ def test_capability_planner_control_source_contract():
     assert 'range(1, 7)' in planner_section
     assert 'id="chat_capability_planner_max_capabilities_per_plan"' in planner_section
     assert 'min="1" max="8"' in planner_section
+    assert '<select class="form-select" id="chat_capability_planner_model_endpoint_id"' in planner_section
+    assert '<select class="form-select" id="chat_capability_planner_model_id"' in planner_section
+    assert '<input type="text" class="form-control" id="chat_capability_planner_model_endpoint_id"' not in planner_section
+    assert '<input type="text" class="form-control" id="chat_capability_planner_model_id"' not in planner_section
     assert 'setupCapabilityPlannerControls();' in script_source
     assert 'modeTitle.textContent = description.title;' in script_source
     assert 'modeText.textContent = description.text;' in script_source
     assert 'valueOutput.textContent' in script_source
+    assert 'endpointSelect.replaceChildren(' in script_source
+    assert 'modelSelect.replaceChildren(' in script_source
+    assert 'endpoint.models' in script_source
+    assert "document.addEventListener('model-endpoints-changed'" in script_source
+    assert 'endpointSelect?.value ?? savedEndpointId' in script_source
+    assert 'modelSelect?.value ?? savedModelId' in script_source
+    assert 'setGlobalEndpoints(window.modelEndpoints, savedEndpointId, savedModelId);' in (
+        script_source
+    )
+    assert 'const plannerEndpoints = (modelEndpoints || []).map(endpoint => ({' in (
+        endpoint_script_source
+    )
+    assert 'detail: { endpoints: plannerEndpoints }' in endpoint_script_source
+    assert 'detail: { endpoints: modelEndpoints }' not in endpoint_script_source
 
 
 def _admin_settings_url():
@@ -105,6 +134,111 @@ def test_capability_planner_settings_are_accessible_and_responsive(viewport):
             'never shows its proposals'
         )
         panel.get_by_role('radio', name='Assist').check()
+
+        page.evaluate(
+            """
+            () => document.dispatchEvent(new CustomEvent('model-endpoints-changed', {
+                detail: {
+                    endpoints: [
+                        {
+                            id: 'planner-endpoint',
+                            name: 'Planner <Endpoint>',
+                            provider: 'aoai',
+                            enabled: true,
+                            models: [
+                                {
+                                    id: 'planner-model',
+                                    displayName: 'Planner <Model>',
+                                    modelName: 'gpt-test',
+                                    enabled: true,
+                                },
+                                {
+                                    id: 'disabled-model',
+                                    displayName: 'Disabled model',
+                                    enabled: false,
+                                },
+                            ],
+                        },
+                        {
+                            id: 'disabled-endpoint',
+                            name: 'Disabled endpoint',
+                            enabled: false,
+                            models: [],
+                        },
+                    ],
+                },
+            }))
+            """
+        )
+        model_source = panel.get_by_label('Planner model source')
+        endpoint_select = panel.get_by_label('Global endpoint')
+        model_select = panel.get_by_label('Global model')
+        model_source.select_option('configured')
+        expect(endpoint_select).to_be_enabled()
+        expect(endpoint_select.locator('option')).to_have_count(2)
+        endpoint_select.select_option('planner-endpoint')
+        expect(model_select).to_be_enabled()
+        expect(model_select.locator('option')).to_have_count(2)
+        expect(model_select.locator('option').nth(1)).to_have_text(
+            'Planner <Model> (gpt-test)'
+        )
+        expect(panel.locator('img')).to_have_count(0)
+        model_select.select_option('planner-model')
+
+        page.evaluate(
+            """
+            () => document.dispatchEvent(new CustomEvent('model-endpoints-changed', {
+                detail: {
+                    endpoints: [
+                        {
+                            id: 'planner-endpoint',
+                            name: 'Renamed planner endpoint',
+                            provider: 'aoai',
+                            enabled: true,
+                            models: [
+                                {
+                                    id: 'planner-model',
+                                    displayName: 'Renamed planner model',
+                                    modelName: 'gpt-test',
+                                    enabled: true,
+                                },
+                            ],
+                        },
+                    ],
+                },
+            }))
+            """
+        )
+        expect(endpoint_select).to_have_value('planner-endpoint')
+        expect(model_select).to_have_value('planner-model')
+
+        endpoint_select.select_option('')
+        page.evaluate(
+            """
+            () => document.dispatchEvent(new CustomEvent('model-endpoints-changed', {
+                detail: {
+                    endpoints: [
+                        {
+                            id: 'planner-endpoint',
+                            name: 'Renamed planner endpoint',
+                            provider: 'aoai',
+                            enabled: true,
+                            models: [
+                                {
+                                    id: 'planner-model',
+                                    displayName: 'Renamed planner model',
+                                    modelName: 'gpt-test',
+                                    enabled: true,
+                                },
+                            ],
+                        },
+                    ],
+                },
+            }))
+            """
+        )
+        expect(endpoint_select).to_have_value('')
+        expect(model_select).to_have_value('')
 
         timeout = panel.get_by_label('Planner timeout')
         timeout.fill('15000')

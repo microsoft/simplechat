@@ -3014,6 +3014,7 @@ def _build_server_capability_discovery(
     selected_capability_ids,
     authorized_document_count=0,
     selected_agent_present=False,
+    enable_deterministic_matching=True,
 ):
     inventory = _resolve_server_chat_capability_inventory(
         settings=settings,
@@ -3028,18 +3029,26 @@ def _build_server_capability_discovery(
         selected_capability_ids=selected_capability_ids,
         authorized_document_count=authorized_document_count,
     )
-    requirements = classify_capability_requirements(
-        user_message,
-        authorized_document_count=authorized_document_count,
-    )
-    match = match_governed_capabilities(inventory, requirements)
-    agent_requirements = classify_agent_capability_requirements(user_message)
     inventory = _attach_governed_agent_inventory(
         inventory,
         settings=settings,
         user_id=user_id,
         selected_agent_present=selected_agent_present,
     )
+    if not enable_deterministic_matching:
+        return {
+            'inventory': inventory,
+            'requirements': [],
+            'auto_capability_ids': [],
+            'recommendation': None,
+        }
+
+    requirements = classify_capability_requirements(
+        user_message,
+        authorized_document_count=authorized_document_count,
+    )
+    match = match_governed_capabilities(inventory, requirements)
+    agent_requirements = classify_agent_capability_requirements(user_message)
     agent_inventory = {
         'version': 1,
         'agents': copy.deepcopy(inventory.get('agents') or []),
@@ -3082,7 +3091,17 @@ def _resolve_chat_capability_planner_runtime(
     same_chat_endpoint,
 ):
     """Resolve a planner model only from server-authoritative endpoint policy."""
-    if planner_settings.get('chat_capability_planner_model_source') == 'same_as_chat':
+    configured_endpoint_id = str(
+        planner_settings.get('chat_capability_planner_model_endpoint_id') or ''
+    ).strip()
+    configured_model_id = str(
+        planner_settings.get('chat_capability_planner_model_id') or ''
+    ).strip()
+    if (
+        planner_settings.get('chat_capability_planner_model_source')
+        == 'same_as_chat'
+        or not (configured_endpoint_id and configured_model_id)
+    ):
         return {
             'client': same_chat_client,
             'model': same_chat_model,
@@ -13688,8 +13707,7 @@ def resolve_streaming_multi_endpoint_gpt_config(
     )
     debug_print(
         f"[Streaming][Model Resolution] Resolved {selection_source} multi-endpoint model | "
-        f"provider={provider} | endpoint_id={requested_endpoint_id} | model_id={model_cfg.get('id')} | "
-        f"deployment={deployment} | api_version={api_version} | protocol={runtime_protocol}"
+        f"provider_class={provider} | protocol={runtime_protocol}"
     )
     return (
         gpt_client,
@@ -22310,14 +22328,22 @@ def register_route_backend_chats(bp):
                     if capability_resume_context
                     else _get_selected_builtin_chat_capability_ids(data)
                 )
+                planner_settings = normalize_chat_capability_planner_settings(settings)
+                capability_planner_mode = planner_settings.get(
+                    'chat_capability_planner_mode'
+                )
                 if capability_resume_context:
                     capability_discovery = {
                         'inventory': copy.deepcopy(
                             capability_resume_context.get('capability_inventory') or {}
                         ),
-                        'requirements': classify_capability_requirements(
-                            user_message,
-                            authorized_document_count=len(discovery_document_ids),
+                        'requirements': (
+                            []
+                            if capability_planner_mode == 'assist'
+                            else classify_capability_requirements(
+                                user_message,
+                                authorized_document_count=len(discovery_document_ids),
+                            )
                         ),
                         'auto_capability_ids': [
                             capability_id
@@ -22339,6 +22365,9 @@ def register_route_backend_chats(bp):
                         selected_capability_ids=selected_builtin_capability_ids,
                         authorized_document_count=len(discovery_document_ids),
                         selected_agent_present=_has_chat_agent_selection(request_agent_info),
+                        enable_deterministic_matching=(
+                            capability_planner_mode != 'assist'
+                        ),
                     )
                 inventory_entries = capability_discovery.get('inventory', {}).get('capabilities', [])
                 log_event(
@@ -22386,9 +22415,6 @@ def register_route_backend_chats(bp):
                     return
 
                 capability_recommendation = capability_discovery.get('recommendation')
-                deterministic_capability_recommendation = copy.deepcopy(
-                    capability_recommendation
-                )
                 capability_planner_shadow_metadata = None
                 capability_planner_shadow_comparison = None
                 capability_planner_provider_class = 'other'
@@ -22398,10 +22424,9 @@ def register_route_backend_chats(bp):
                 contextual_planner_activation = False
                 contextual_planner_goal_used = False
                 planner_clarification_activation = False
-                planner_settings = normalize_chat_capability_planner_settings(settings)
-                capability_planner_mode = planner_settings.get(
-                    'chat_capability_planner_mode'
-                )
+                if capability_planner_mode == 'assist':
+                    capability_recommendation = None
+                    capability_discovery['auto_capability_ids'] = []
                 if (
                     capability_planner_mode in {'shadow', 'assist'}
                     and not capability_resume_context
@@ -22619,6 +22644,29 @@ def register_route_backend_chats(bp):
                             ),
                             cancel_requested=stream_cancel_requested,
                         )
+                        if capability_planner_result.get('status') != 'valid':
+                            log_event(
+                                '[CapabilityPlanner] Fast planner call rejected',
+                                extra={
+                                    'failure_code': capability_planner_result.get(
+                                        'failure_code'
+                                    ),
+                                    'transport_error_class': (
+                                        capability_planner_result.get(
+                                            'transport_error_class'
+                                        )
+                                    ),
+                                    'transport_variant_index': (
+                                        capability_planner_result.get(
+                                            'transport_variant_index'
+                                        )
+                                    ),
+                                    'latency_ms': capability_planner_result.get(
+                                        'latency_ms'
+                                    ),
+                                },
+                                level=logging.WARNING,
+                            )
                         if stream_cancel_requested():
                             cancel_reason = (
                                 stream_session.get_cancel_reason()
@@ -23363,9 +23411,7 @@ def register_route_backend_chats(bp):
                             ) or user_message
                         ).strip()
                     except Exception as goal_binding_error:
-                        capability_recommendation = (
-                            deterministic_capability_recommendation
-                        )
+                        capability_recommendation = None
                         contextual_planner_activation = False
                         contextual_planner_goal_used = False
                         log_event(

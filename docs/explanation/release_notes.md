@@ -2,6 +2,22 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.077)**
+
+#### Bug Fixes
+
+*   **Planner-First Capability Suggestions And Selected-Model Fallback**
+    *   Corrected Assist so one fast, non-executing model call owns the `direct`, `propose`, or `clarify` decision. Deterministic requirement classifiers no longer create fallback suggestions or automatically activate discovered tools when Assist is enabled.
+    *   Incomplete global planner configuration now falls back to the exact model selected for the chat turn instead of disabling planning or choosing a catalog default. Azure/OpenAI reasoning models use `max_completion_tokens`, minimal reasoning, strict structured output first, and bounded compatibility fallbacks for explicitly rejected optional fields.
+    *   Added privacy-safe transport diagnostics and verified a selected-model public-archive probe that proposed Deep Research with Web Search as the alternative without executing either capability.
+    *   (Ref: microsoft/simplechat#1021, `functions_chat_capability_planner.py`, `functions_chat_capabilities.py`, `functions_settings.py`, `route_backend_chats.py`)
+
+#### User Interface Enhancements
+
+*   **Dependent Global Planner Model Selectors**
+    *   Replaced free-form planner endpoint and model IDs with enabled global-endpoint and dependent model dropdowns sourced from the sanitized Admin catalog. Unsaved selections remain stable when endpoint definitions change and still-valid options are repopulated.
+    *   (Ref: microsoft/simplechat#1021, `admin_settings.html`, `admin_settings.js`, `admin_model_endpoints.js`, `test_admin_capability_planner_settings.py`)
+
 ### **(v0.250.076)**
 
 #### New Features

@@ -245,6 +245,23 @@ function updateHiddenInput() {
         return;
     }
     endpointsInput.value = JSON.stringify(modelEndpoints || []);
+    const plannerEndpoints = (modelEndpoints || []).map(endpoint => ({
+        id: endpoint?.id || '',
+        name: endpoint?.name || '',
+        displayName: endpoint?.displayName || '',
+        provider: endpoint?.provider || '',
+        enabled: endpoint?.enabled !== false,
+        models: (Array.isArray(endpoint?.models) ? endpoint.models : []).map(model => ({
+            id: model?.id || '',
+            displayName: model?.displayName || '',
+            deploymentName: model?.deploymentName || '',
+            modelName: model?.modelName || '',
+            enabled: model?.enabled !== false,
+        })),
+    }));
+    document.dispatchEvent(new CustomEvent('model-endpoints-changed', {
+        detail: { endpoints: plannerEndpoints },
+    }));
 }
 
 function normalizeDefaultModelSelection(selection) {

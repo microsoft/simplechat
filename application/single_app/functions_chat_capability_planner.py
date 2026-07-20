@@ -171,6 +171,17 @@ CAPABILITY_PLANNER_FAILURE_CODES = frozenset({
     'current_goal_turn_required',
     'clarification_budget_exhausted',
 })
+CAPABILITY_PLANNER_TRANSPORT_ERROR_CLASSES = frozenset({
+    'connection_error',
+    'http_400_max_completion_tokens',
+    'http_400_reasoning_effort',
+    'http_400_response_format',
+    'http_400_temperature',
+    'http_4xx',
+    'http_5xx',
+    'other',
+    'type_error',
+})
 
 
 def _bounded_int(value, *, default, minimum, maximum):
@@ -1152,27 +1163,33 @@ def _model_request_variants(
     return [
         {
             'response_format': schema_format,
-            'temperature': 0,
             'max_completion_tokens': token_limit,
+            'reasoning_effort': 'minimal',
         },
         {
             'response_format': schema_format,
             'max_completion_tokens': token_limit,
         },
         {
-            'response_format': schema_format,
-            'max_tokens': token_limit,
+            'response_format': {'type': 'json_object'},
+            'max_completion_tokens': token_limit,
+            'reasoning_effort': 'minimal',
         },
         {
             'response_format': {'type': 'json_object'},
             'max_completion_tokens': token_limit,
         },
+        {
+            'max_completion_tokens': token_limit,
+            'reasoning_effort': 'minimal',
+        },
         {'max_completion_tokens': token_limit},
-        {'max_tokens': token_limit},
     ]
 
 
 def _optional_parameter_is_unsupported(exc, request_variant):
+    if getattr(exc, 'status_code', None) != 400:
+        return False
     error_text = str(exc or '').strip().lower()
     field_markers = {
         'max_tokens': ('max_tokens', 'max tokens'),
@@ -1187,6 +1204,10 @@ def _optional_parameter_is_unsupported(exc, request_variant):
             'json schema',
         ),
         'temperature': ('temperature',),
+        'reasoning_effort': (
+            'reasoning_effort',
+            'reasoning effort',
+        ),
     }
     optional_fields = {
         field_name
@@ -1208,6 +1229,48 @@ def _optional_parameter_is_unsupported(exc, request_variant):
         'unrecognized',
         'unsupported',
     ))
+
+
+def _transport_error_class(exc, request_variant):
+    """Return a bounded diagnostic class without provider text or request data."""
+    error_text = str(exc or '').strip().lower()
+    status_code = getattr(exc, 'status_code', None)
+    for field_name in (
+        'response_format',
+        'reasoning_effort',
+        'max_completion_tokens',
+        'temperature',
+    ):
+        if field_name not in request_variant:
+            continue
+        markers = (field_name, field_name.replace('_', ' '))
+        if status_code == 400 and any(marker in error_text for marker in markers):
+            return f'http_400_{field_name}'
+    if isinstance(status_code, int):
+        if 400 <= status_code < 500:
+            return 'http_4xx'
+        if status_code >= 500:
+            return 'http_5xx'
+    error_name = type(exc).__name__.lower()
+    if isinstance(exc, TypeError):
+        return 'type_error'
+    if 'connection' in error_name or 'connection' in error_text:
+        return 'connection_error'
+    return 'other'
+
+
+def _request_variant_can_fallback(exc, request_variant):
+    """Return whether a fast 400 can safely retry with fewer optional fields."""
+    error_class = _transport_error_class(exc, request_variant)
+    if error_class == 'http_400_max_completion_tokens':
+        return False
+    if _optional_parameter_is_unsupported(exc, request_variant):
+        return True
+    return error_class in {
+        'http_400_reasoning_effort',
+        'http_400_response_format',
+        'http_400_temperature',
+    }
 
 
 def _is_timeout_error(exc):
@@ -1257,15 +1320,30 @@ def _extract_model_response(response):
     return (content, None) if content else ('', 'empty_response')
 
 
-def _invocation_failure(status, failure_code, *, started_at):
+def _invocation_failure(
+    status,
+    failure_code,
+    *,
+    started_at,
+    transport_error_class=None,
+    transport_variant_index=None,
+):
     latency_ms = max(0, round((time.perf_counter() - started_at) * 1000))
-    return {
+    failure = {
         'version': CAPABILITY_PLANNER_CONTRACT_VERSION,
         'status': status,
         'failure_code': failure_code,
         'latency_ms': min(latency_ms, MAX_PLANNER_TIMEOUT_MS),
         'fallback_used': True,
     }
+    if transport_error_class in CAPABILITY_PLANNER_TRANSPORT_ERROR_CLASSES:
+        failure['transport_error_class'] = transport_error_class
+    if isinstance(transport_variant_index, int):
+        failure['transport_variant_index'] = max(
+            0,
+            min(transport_variant_index, 8),
+        )
+    return failure
 
 
 def _planner_transport_client(planner_client, runtime_protocol, timeout_seconds):
@@ -1370,10 +1448,19 @@ def invoke_capability_planner(
                 )
             if (
                 variant_index + 1 < len(variants)
-                and _optional_parameter_is_unsupported(exc, request_variant)
+                and _request_variant_can_fallback(exc, request_variant)
             ):
                 continue
-            return _invocation_failure('rejected', 'client_error', started_at=started_at)
+            return _invocation_failure(
+                'rejected',
+                'client_error',
+                started_at=started_at,
+                transport_error_class=_transport_error_class(
+                    exc,
+                    request_variant,
+                ),
+                transport_variant_index=variant_index,
+            )
 
         if callable(cancel_requested) and cancel_requested():
             return _invocation_failure('discarded', 'cancelled', started_at=started_at)
@@ -1508,6 +1595,18 @@ def build_capability_planner_metadata(planner_result, *, mode='shadow'):
     failure_code = str(result.get('failure_code') or '').strip().lower()
     if status != 'valid' and failure_code in CAPABILITY_PLANNER_FAILURE_CODES:
         metadata['failure_code'] = failure_code
+    transport_error_class = str(
+        result.get('transport_error_class') or ''
+    ).strip().lower()
+    if transport_error_class in CAPABILITY_PLANNER_TRANSPORT_ERROR_CLASSES:
+        metadata['transport_error_class'] = transport_error_class
+    if isinstance(result.get('transport_variant_index'), int):
+        metadata['transport_variant_index'] = _bounded_int(
+            result.get('transport_variant_index'),
+            default=0,
+            minimum=0,
+            maximum=8,
+        )
     return metadata
 
 

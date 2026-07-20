@@ -1575,54 +1575,29 @@ def arbitrate_planner_capability_recommendation(
     planner_recommendation,
     deterministic_recommendation,
 ):
-    """Prefer deterministic control when a planner plan omits its material source."""
-    deterministic = (
-        copy.deepcopy(dict(deterministic_recommendation))
-        if isinstance(deterministic_recommendation, Mapping)
-        else None
-    )
+    """Activate only a validated planner recommendation in Assist mode."""
+    del deterministic_recommendation
     planner = (
         copy.deepcopy(dict(planner_recommendation))
         if isinstance(planner_recommendation, Mapping)
         else None
     )
     if not planner:
-        return deterministic, {
+        return None, {
             'activation_status': 'suppressed',
-            'recommendation_source': 'deterministic' if deterministic else 'direct',
+            'recommendation_source': 'direct',
             'suppression_reason': 'planner_not_materialized',
         }
 
     planner_signature = _planner_option_signature(
         _recommended_capability_option(planner)
     )
-    deterministic_signature = _planner_option_signature(
-        _recommended_capability_option(deterministic)
-    )
     if not planner_signature:
-        return deterministic, {
+        return None, {
             'activation_status': 'suppressed',
-            'recommendation_source': 'deterministic' if deterministic else 'direct',
+            'recommendation_source': 'direct',
             'suppression_reason': 'planner_not_materialized',
         }
-    if deterministic_signature and not deterministic_signature.issubset(planner_signature):
-        return deterministic, {
-            'activation_status': 'suppressed',
-            'recommendation_source': 'deterministic',
-            'suppression_reason': 'deterministic_conflict',
-        }
-    if deterministic_signature:
-        planner['options'] = [
-            option
-            for option in planner.get('options') or []
-            if (
-                str(option.get('id') or '').strip()
-                == CONTINUE_WITHOUT_CAPABILITIES_OPTION_ID
-                or deterministic_signature.issubset(
-                    _planner_option_signature(option)
-                )
-            )
-        ]
     return planner, {
         'activation_status': 'materialized',
         'recommendation_source': 'planner',

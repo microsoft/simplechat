@@ -158,7 +158,7 @@ def normalize_chat_capability_planner_settings(settings):
         source.get('chat_capability_planner_model_id') or ''
     ).strip()[:256]
     if model_source == 'configured' and not (model_endpoint_id and model_id):
-        mode = 'off'
+        model_source = 'same_as_chat'
 
     return {
         'chat_capability_planner_mode': mode,

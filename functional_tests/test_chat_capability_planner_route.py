@@ -1,11 +1,11 @@
 # test_chat_capability_planner_route.py
 """
 Functional test for chat capability planner route placement and isolation.
-Version: 0.250.076
-Implemented in: 0.250.069; contextual planning added in 0.250.076
+Version: 0.250.077
+Implemented in: 0.250.069; planner-first Assist corrected in 0.250.077
 
-This test ensures shadow planning runs only on eligible new turns after safe
-discovery and cannot alter deterministic recommendation or execution state.
+This test ensures Shadow remains isolated while Assist builds only the safe
+inventory before the planner and cannot use heuristic capability suggestions.
 """
 
 import copy
@@ -178,6 +178,7 @@ def test_shadow_metadata_is_user_turn_only_and_configured_model_is_server_owned(
 
 def test_configured_planner_ignores_colliding_user_endpoint(monkeypatch):
     route_backend_chats = importlib.import_module('route_backend_chats')
+    diagnostic_messages = []
 
     def endpoint(scope, deployment):
         return {
@@ -220,6 +221,11 @@ def test_configured_planner_ignores_colliding_user_endpoint(monkeypatch):
             'deployment': deployment_name,
         },
     )
+    monkeypatch.setattr(
+        route_backend_chats,
+        'debug_print',
+        diagnostic_messages.append,
+    )
 
     resolved = route_backend_chats.resolve_streaming_multi_endpoint_gpt_config(
         {'enable_multi_model_endpoints': True},
@@ -238,6 +244,116 @@ def test_configured_planner_ignores_colliding_user_endpoint(monkeypatch):
     assert resolved[1] == 'admin-controlled-deployment'
     assert resolved[6] == 'shared-endpoint-id'
     assert resolved[7] == 'planner-model-id'
+    diagnostics = ' '.join(diagnostic_messages)
+    for forbidden_value in (
+        'shared-endpoint-id',
+        'planner-model-id',
+        'admin-controlled-deployment',
+        'https://global.example.test',
+        '2025-01-01-preview',
+        'global-secret',
+    ):
+        assert forbidden_value not in diagnostics
+    assert 'provider_class=aoai' in diagnostics
+    assert 'protocol=azure_openai' in diagnostics
+
+
+def test_planner_runtime_uses_exact_selected_chat_model_without_admin_selection():
+    route_backend_chats = importlib.import_module('route_backend_chats')
+    selected_chat_client = object()
+
+    runtime = route_backend_chats._resolve_chat_capability_planner_runtime(
+        settings={},
+        planner_settings={
+            'chat_capability_planner_mode': 'assist',
+            'chat_capability_planner_model_source': 'same_as_chat',
+            'chat_capability_planner_model_endpoint_id': '',
+            'chat_capability_planner_model_id': '',
+        },
+        user_id='current-user',
+        active_group_ids=[],
+        same_chat_client=selected_chat_client,
+        same_chat_model='gpt-5.6-luna',
+        same_chat_provider='aoai',
+        same_chat_endpoint='https://selected.example.test',
+    )
+
+    assert runtime['client'] is selected_chat_client
+    assert runtime['model'] == 'gpt-5.6-luna'
+    assert runtime['runtime_protocol'] == 'azure_openai'
+
+
+def test_planner_runtime_treats_incomplete_configured_ids_as_selected_chat_model():
+    route_backend_chats = importlib.import_module('route_backend_chats')
+    selected_chat_client = object()
+
+    runtime = route_backend_chats._resolve_chat_capability_planner_runtime(
+        settings={},
+        planner_settings={
+            'chat_capability_planner_mode': 'assist',
+            'chat_capability_planner_model_source': 'configured',
+            'chat_capability_planner_model_endpoint_id': 'global-endpoint',
+            'chat_capability_planner_model_id': '',
+        },
+        user_id='current-user',
+        active_group_ids=[],
+        same_chat_client=selected_chat_client,
+        same_chat_model='gpt-5.6-luna',
+        same_chat_provider='aoai',
+        same_chat_endpoint='https://selected.example.test',
+    )
+
+    assert runtime['client'] is selected_chat_client
+    assert runtime['model'] == 'gpt-5.6-luna'
+
+
+def test_assist_discovery_builds_inventory_without_heuristic_classification(
+    monkeypatch,
+):
+    route_backend_chats = importlib.import_module('route_backend_chats')
+    inventory = _inventory()
+
+    monkeypatch.setattr(
+        route_backend_chats,
+        '_resolve_server_chat_capability_inventory',
+        lambda **kwargs: copy.deepcopy(inventory),
+    )
+    monkeypatch.setattr(
+        route_backend_chats,
+        '_attach_governed_agent_inventory',
+        lambda current_inventory, **kwargs: current_inventory,
+    )
+    monkeypatch.setattr(
+        route_backend_chats,
+        'classify_capability_requirements',
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError('Assist must not run the built-in heuristic classifier.')
+        ),
+    )
+    monkeypatch.setattr(
+        route_backend_chats,
+        'classify_agent_capability_requirements',
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError('Assist must not run the agent heuristic classifier.')
+        ),
+    )
+
+    discovery = route_backend_chats._build_server_capability_discovery(
+        settings={},
+        user_id='current-user',
+        user_email='user@example.test',
+        user_roles=[],
+        user_message='Find current public evidence.',
+        selected_capability_ids=[],
+        enable_deterministic_matching=False,
+    )
+
+    assert discovery == {
+        'inventory': inventory,
+        'requirements': [],
+        'auto_capability_ids': [],
+        'recommendation': None,
+    }
 
 
 def test_planner_cancellation_precedes_plan_and_persistence():
