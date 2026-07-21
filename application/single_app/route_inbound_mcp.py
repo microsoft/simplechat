@@ -152,7 +152,35 @@ def _call_tool(auth_context, request_id, params):
             status_code=403,
         )
 
-    result = execute_inbound_mcp_tool(tool.get("id", ""), auth_context, arguments)
+    try:
+        result = execute_inbound_mcp_tool(tool.get("id", ""), auth_context, arguments)
+    except ValueError as exc:
+        return _jsonrpc_error(request_id, -32602, str(exc), status_code=400)
+    except PermissionError:
+        log_event(
+            "[InboundMCP] Inbound MCP tool call denied by object authorization.",
+            extra={
+                "tool_id": tool.get("id", ""),
+                "caller_app_id": getattr(auth_context, "caller_app_id", ""),
+                "delegated_user_id": getattr(auth_context, "delegated_user_id", ""),
+            },
+            level=logging.WARNING,
+            debug_only=True,
+            category="InboundMCP",
+        )
+        return _jsonrpc_error(
+            request_id,
+            -32003,
+            "Inbound MCP tool access denied.",
+            status_code=403,
+        )
+    except LookupError:
+        return _jsonrpc_error(
+            request_id,
+            -32004,
+            "Inbound MCP resource not found.",
+            status_code=404,
+        )
     log_event(
         "[InboundMCP] Inbound MCP tool call completed.",
         extra={

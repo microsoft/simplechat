@@ -30,13 +30,17 @@ Simplified inbound MCP access/source governance implemented in version: **0.250.
 
 Single inbound MCP access governance implemented in version: **0.250.081**
 
-Runtime implementation: **Inbound MCP shell supports minimal streamable HTTP JSON-RPC (`initialize`, `tools/list`, `tools/call`) and exposes personal delegated tools only when the single explicit inbound MCP access policy allows the delegated user. Mutable inbound MCP runtime settings are stored in the Cosmos-backed `app_settings` document. Admin enablement is blocked until the required App Service Authentication excluded paths are verified. The Easy Auth setup script is generated from SimpleChat deployment hints, supports public/government/custom Resource Manager endpoints, attempts to verify that the SimpleChat API app exposes the delegated scope plus required inbound MCP user/app roles, creates a backup before changing `authsettingsV2`, and can be copied from the modal. Inbound MCP 401 responses advertise the PRM endpoint through `WWW-Authenticate` so OAuth-capable MCP clients discover Entra instead of falling back to `/authorize` on the SimpleChat host. Admin Settings now exposes a quick-create governance control and reusable policy-help modal for the current inbound MCP access policy; source filtering stays in runtime configuration.**
+Personal conversation read tools implemented in version: **0.250.082**
+
+Personal document and prompt listing tools implemented in version: **0.250.083**
+
+Runtime implementation: **Inbound MCP shell supports minimal streamable HTTP JSON-RPC (`initialize`, `tools/list`, `tools/call`) and exposes personal delegated tools only when the single explicit inbound MCP access policy allows the delegated user. Mutable inbound MCP runtime settings are stored in the Cosmos-backed `app_settings` document. Admin enablement is blocked until the required App Service Authentication excluded paths are verified. The Easy Auth setup script is generated from SimpleChat deployment hints, supports public/government/custom Resource Manager endpoints, attempts to verify that the SimpleChat API app exposes the delegated scope plus required inbound MCP user/app roles, creates a backup before changing `authsettingsV2`, and can be copied from the modal. Inbound MCP 401 responses advertise the PRM endpoint through `WWW-Authenticate` so OAuth-capable MCP clients discover Entra instead of falling back to `/authorize` on the SimpleChat host. Admin Settings now exposes a quick-create governance control and reusable policy-help modal for the current inbound MCP access policy; source filtering stays in runtime configuration. Version 0.250.083 adds bounded delegated personal document and prompt metadata listing tools.**
 
 ## Overview
 
 This document records Track B Phase B0 and B1 decisions for the inbound SimpleChat Model Context Protocol (MCP) server. The goal is to expose a small, governed set of SimpleChat capabilities to approved MCP clients without weakening SimpleChat's existing authentication, authorization, workspace, governance, observability, and data-protection boundaries.
 
-This document began as the architecture and auth-foundation slice. As of version **0.250.081**, the first governed personal read tool is implemented, the mutable runtime settings are app-settings backed, a minimal Admin Settings panel exists behind an OS-only UI feature flag, enabling the server requires a verified Easy Auth exclusion check, the default delegated scope is `DelegatedMcpServerAccess`, delegated personal tools require the `InboundMCPUserAccess` user-assignable app role by default, `InboundMCPAppAccess` is reserved for future app-only tools, OAuth clients receive the PRM discovery challenge on bearer-token 401 responses, and admins can create a single inbound MCP access policy from the Governance tab with per-button help guidance. Source filtering stays in Inbound MCP runtime configuration. The rest of the initial tool set remains planned and disabled.
+This document began as the architecture and auth-foundation slice. As of version **0.250.083**, the first governed personal read tools are implemented, the mutable runtime settings are app-settings backed, a minimal Admin Settings panel exists behind an OS-only UI feature flag, enabling the server requires a verified Easy Auth exclusion check, the default delegated scope is `DelegatedMcpServerAccess`, delegated personal tools require the `InboundMCPUserAccess` user-assignable app role by default, `InboundMCPAppAccess` is reserved for future app-only tools, OAuth clients receive the PRM discovery challenge on bearer-token 401 responses, and admins can create a single inbound MCP access policy from the Governance tab with per-button help guidance. Source filtering stays in Inbound MCP runtime configuration. Search and workflow execution remain planned and disabled.
 
 ## Dependencies
 
@@ -416,10 +420,10 @@ Initial candidate personal tools are explicit and data-driven. Most are read-onl
 
 | Tool | Scope | Identity | Initial status |
 | --- | --- | --- | --- |
-| `list_conversations` | personal | delegated | Planned |
-| `get_conversation_messages` | personal | delegated | Planned |
-| `list_personal_documents` | personal | delegated | Planned |
-| `list_personal_prompts` | personal | delegated | Planned |
+| `list_conversations` | personal | delegated | Implemented in v0.250.082; bounded and delegated-user scoped |
+| `get_conversation_messages` | personal | delegated | Implemented in v0.250.082; validates personal ownership or accepted personal collaboration access |
+| `list_personal_documents` | personal | delegated | Implemented in v0.250.083; metadata-only, bounded, and delegated-user scoped |
+| `list_personal_prompts` | personal | delegated | Implemented in v0.250.083; metadata-only, bounded, and delegated-user scoped |
 | `list_personal_tags` | personal | delegated | Implemented in v0.250.070; exposed only when the explicit inbound MCP access policy allows the delegated user |
 | `search_personal_documents` | personal | delegated | Planned |
 | `execute_workflow` | personal | delegated | Planned with explicit execution governance |
@@ -591,7 +595,7 @@ Version **0.250.070** adds the first executable inbound MCP tool slice:
 3. Missing explicit policy denies access.
 4. Matching explicit deny policies win over matching allow policies.
 5. `functions_mcp_server_registry.py` distinguishes planned tools from implemented tools.
-6. `functions_mcp_server_tools.py` implements `list_personal_tags` using the delegated user identity from the inbound MCP auth context.
+6. `functions_mcp_server_tools.py` implements `list_conversations`, `get_conversation_messages`, and `list_personal_tags` using the delegated user identity from the inbound MCP auth context.
 
 To expose personal inbound MCP tools, an admin must enable the global inbound MCP feature and configure the bearer-token delegated scope, delegated user role, tenant allowlist, client allowlist, and source allowlist as needed. Tenant, client, and source trust belong to the Inbound MCP runtime configuration. SimpleChat governance decides which users/groups may use inbound MCP. Version **0.250.081** simplifies the required item policy shape to:
 

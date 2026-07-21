@@ -2,12 +2,14 @@
 #!/usr/bin/env python3
 """
 Functional test for the inbound MCP server shell.
-Version: 0.250.081
+Version: 0.250.083
 Implemented in: 0.250.063
 OAuth protected-resource discovery header implemented in: 0.250.076
 Inbound MCP user/app role split implemented in: 0.250.078
 Simplified inbound MCP access/source governance implemented in: 0.250.080
 Single inbound MCP access policy implemented in: 0.250.081
+Personal conversation read tools implemented in: 0.250.082
+Personal document and prompt listing tools implemented in: 0.250.083
 
 This test ensures the inbound MCP shell is wired as a disabled-by-default,
 dedicated bearer-token route surface with safe PRM metadata, explicit
@@ -34,7 +36,7 @@ def test_inbound_mcp_config_defaults():
     settings_source = read_repo_file("application/single_app/functions_settings.py")
     mcp_config_source = read_repo_file("application/single_app/functions_mcp_server_config.py")
 
-    assert 'VERSION = "0.250.081"' in config_source
+    assert 'VERSION = "0.250.083"' in config_source
     assert 'ENABLE_INBOUND_MCP_SERVER = os.getenv(' not in config_source
     assert 'INBOUND_MCP_REQUIRED_ROLE = os.getenv(' not in config_source
     assert 'INBOUND_MCP_REQUIRED_SCOPE = os.getenv(' not in config_source
@@ -132,6 +134,10 @@ def test_inbound_mcp_governance_and_registry_default_deny():
     assert "show_user_profile" not in registry_source
     assert "list_agent_template_tags" not in registry_source
     assert '"id": "list_personal_tags"' in registry_source
+    assert '"id": "list_conversations"' in registry_source
+    assert '"id": "get_conversation_messages"' in registry_source
+    assert '"id": "list_personal_documents"' in registry_source
+    assert '"id": "list_personal_prompts"' in registry_source
     assert '"id": "execute_workflow"' in registry_source
     assert '"resource_family": "workflows"' in registry_source
     assert '"operation": "execute"' in registry_source
@@ -143,15 +149,28 @@ def test_inbound_mcp_governance_and_registry_default_deny():
     assert "return []" not in registry_source
 
 
-def test_inbound_mcp_first_tool_service_layer():
-    """Validate the first exposed tool is service-layer backed and user-bound."""
+def test_inbound_mcp_tool_service_layer():
+    """Validate exposed tools are service-layer backed and user-bound."""
     tool_source = read_repo_file("application/single_app/functions_mcp_server_tools.py")
 
+    assert "def list_conversations(auth_context, arguments=None):" in tool_source
+    assert "def get_conversation_messages(auth_context, arguments=None):" in tool_source
+    assert "def list_personal_documents(auth_context, arguments=None):" in tool_source
+    assert "def list_personal_prompts(auth_context, arguments=None):" in tool_source
     assert "def list_personal_tags(auth_context, arguments=None):" in tool_source
     assert "delegated_user_id = _require_delegated_user_id(auth_context)" in tool_source
+    assert "assert_user_can_view_collaboration_conversation" in tool_source
+    assert "is_personal_collaboration_conversation" in tool_source
+    assert "INBOUND_MCP_MESSAGE_CONTENT_MAX_CHARS" in tool_source
+    assert "_query_accessible_documents(delegated_user_id)" in tool_source
+    assert "cosmos_user_prompts_container.query_items(" in tool_source
     assert "get_workspace_tags(delegated_user_id)" in tool_source
     assert '"scope": "personal"' in tool_source
     assert "def execute_inbound_mcp_tool(tool_id, auth_context, arguments=None):" in tool_source
+    assert 'normalized_tool_id == "list_conversations"' in tool_source
+    assert 'normalized_tool_id == "get_conversation_messages"' in tool_source
+    assert 'normalized_tool_id == "list_personal_documents"' in tool_source
+    assert 'normalized_tool_id == "list_personal_prompts"' in tool_source
     assert 'normalized_tool_id == "list_personal_tags"' in tool_source
     assert "raise LookupError" in tool_source
 
@@ -181,7 +200,7 @@ if __name__ == "__main__":
         test_inbound_mcp_auth_guard_is_dedicated,
         test_inbound_mcp_routes_expose_json_rpc_shell,
         test_inbound_mcp_governance_and_registry_default_deny,
-        test_inbound_mcp_first_tool_service_layer,
+        test_inbound_mcp_tool_service_layer,
         test_inbound_mcp_app_and_route_policy_wiring,
     ]
     results = []

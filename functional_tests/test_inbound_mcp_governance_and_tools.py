@@ -2,10 +2,12 @@
 #!/usr/bin/env python3
 """
 Functional test for inbound MCP governance and first tool contracts.
-Version: 0.250.081
+Version: 0.250.083
 Implemented in: 0.250.070
 Simplified personal access/source governance implemented in: 0.250.080
 Single inbound MCP access policy implemented in: 0.250.081
+Personal conversation read tools implemented in: 0.250.082
+Personal document and prompt listing tools implemented in: 0.250.083
 
 This test ensures inbound MCP uses explicit inbound MCP access governance,
 exposes only implemented tools through JSON-RPC, and binds personal tools to
@@ -60,6 +62,10 @@ def test_registry_exposes_only_implemented_governed_tools():
     source = read_repo_file("application/single_app/functions_mcp_server_registry.py")
 
     assert '"id": "list_personal_tags"' in source
+    assert '"id": "list_conversations"' in source
+    assert '"id": "get_conversation_messages"' in source
+    assert '"id": "list_personal_documents"' in source
+    assert '"id": "list_personal_prompts"' in source
     assert '"implemented": True' in source
     assert '"id": "execute_workflow"' in source
     assert '"implemented": False' in source
@@ -83,7 +89,61 @@ def test_json_rpc_tool_dispatch_contract():
     assert "build_mcp_tool_descriptor(tool)" in source
     assert "execute_inbound_mcp_tool(tool.get(\"id\", \"\"), auth_context, arguments)" in source
     assert "Inbound MCP governance denied the tool call." in source
+    assert "Inbound MCP tool access denied." in source
+    assert "Inbound MCP resource not found." in source
     assert "Unsupported inbound MCP method." in source
+
+
+def test_conversation_read_tools_contract():
+    """Validate conversation MCP tools are delegated-user scoped and bounded."""
+    tool_source = read_repo_file("application/single_app/functions_mcp_server_tools.py")
+    registry_source = read_repo_file("application/single_app/functions_mcp_server_registry.py")
+
+    assert "def list_conversations(auth_context, arguments=None):" in tool_source
+    assert "def get_conversation_messages(auth_context, arguments=None):" in tool_source
+    assert "delegated_user_id = _require_delegated_user_id(auth_context)" in tool_source
+    assert "list_personal_collaboration_conversations_for_user(delegated_user_id)" in tool_source
+    assert "MEMBERSHIP_STATUS_ACCEPTED" in tool_source
+    assert "cosmos_conversations_container.query_items(" in tool_source
+    assert "assert_user_can_view_collaboration_conversation(delegated_user_id, conversation_item)" in tool_source
+    assert "is_personal_collaboration_conversation(conversation_item)" in tool_source
+    assert "list_collaboration_messages(conversation_item.get(\"id\"))" in tool_source
+    assert "cosmos_messages_container.query_items(" in tool_source
+    assert "filter_assistant_artifact_items(all_items)" in tool_source
+    assert "INBOUND_MCP_MESSAGE_CONTENT_MAX_CHARS = 4000" in tool_source
+    assert "INBOUND_MCP_CONVERSATION_LIMIT_MAX = 50" in tool_source
+    assert "INBOUND_MCP_OFFSET_MAX = 10000" in tool_source
+    assert "arguments.get(\"user_id\")" not in tool_source
+    assert "get_workspace_tags(arguments" not in tool_source
+    assert 'normalized_tool_id == "list_conversations"' in tool_source
+    assert 'normalized_tool_id == "get_conversation_messages"' in tool_source
+    assert '"offset": {"type": "integer", "minimum": 0}' in registry_source
+    assert '"include_hidden": {"type": "boolean"}' in registry_source
+    assert '"conversation_id": {"type": "string", "minLength": 1, "maxLength": 128}' in registry_source
+
+
+def test_personal_document_and_prompt_listing_contract():
+    """Validate document and prompt MCP list tools are metadata-only and user-bound."""
+    tool_source = read_repo_file("application/single_app/functions_mcp_server_tools.py")
+    registry_source = read_repo_file("application/single_app/functions_mcp_server_registry.py")
+
+    assert "def list_personal_documents(auth_context, arguments=None):" in tool_source
+    assert "def list_personal_prompts(auth_context, arguments=None):" in tool_source
+    assert "delegated_user_id = _require_delegated_user_id(auth_context)" in tool_source
+    assert "_query_accessible_documents(delegated_user_id)" in tool_source
+    assert "select_current_documents(" in tool_source
+    assert "sort_documents(" in tool_source
+    assert "sanitize_tags_for_filter(requested_tag)" in tool_source
+    assert "tag must contain exactly one valid tag." in tool_source
+    assert "cosmos_user_prompts_container.query_items(" in tool_source
+    assert "SELECT c.id, c.name, c.type, c.created_at, c.updated_at" in tool_source
+    assert 'normalized_tool_id == "list_personal_documents"' in tool_source
+    assert 'normalized_tool_id == "list_personal_prompts"' in tool_source
+    assert "prompt_item.get(\"content\")" not in tool_source
+    assert '"relationship": relationship' in tool_source
+    assert '"shared_approval_status": _get_shared_approval_status(document_item, delegated_user_id)' in tool_source
+    assert '"offset": {"type": "integer", "minimum": 0}' in registry_source
+    assert '"tag": {"type": "string", "minLength": 1, "maxLength": 50}' in registry_source
 
 
 def test_list_personal_tags_contract():
@@ -94,7 +154,6 @@ def test_list_personal_tags_contract():
     assert "delegated_user_id = _require_delegated_user_id(auth_context)" in source
     assert "get_workspace_tags(delegated_user_id)" in source
     assert "get_workspace_tags(arguments" not in source
-    assert "user_id" not in source.replace("delegated_user_id", "")
     assert '"scope": "personal"' in source
     assert '"name": tag_name' in source
     assert '"count": int(tag.get("count") or 0)' in source
@@ -106,6 +165,8 @@ if __name__ == "__main__":
         test_governance_policy_dimensions,
         test_registry_exposes_only_implemented_governed_tools,
         test_json_rpc_tool_dispatch_contract,
+        test_conversation_read_tools_contract,
+        test_personal_document_and_prompt_listing_contract,
         test_list_personal_tags_contract,
     ]
     results = []

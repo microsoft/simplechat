@@ -1,10 +1,10 @@
 # MCP Plugin Robustness Plan
 
-Planning version: **0.250.081**
+Planning version: **0.250.083**
 
 Implemented in version: **In progress across phases**
 
-Related configuration version: `application/single_app/config.py` currently sets `VERSION = "0.250.081"`.
+Related configuration version: `application/single_app/config.py` currently sets `VERSION = "0.250.083"`.
 
 Detailed Track B Phase B0/B1 architecture outcome: [Inbound SimpleChat MCP Server Architecture](./INBOUND_MCP_SERVER_ARCHITECTURE.md).
 
@@ -567,25 +567,29 @@ Use a combined model rather than choosing only governance or only roles:
 
 ### Phase B3: Initial Personal Read And Workflow Tool Set
 
-Status: **First governed personal read tool implemented in version 0.250.070: `list_personal_tags`. Other planned personal tools remain disabled until their service-layer authorization, bounds, and tests are complete.**
+Status: **First governed personal read tool implemented in version 0.250.070: `list_personal_tags`. Bounded personal conversation listing and message retrieval implemented in version 0.250.082. Bounded personal document and prompt metadata listing implemented in version 0.250.083. Search and workflow execution remain disabled until their service-layer authorization, bounds, and tests are complete.**
 
 Start with a small, personal-scope set inspired by PR #722, not full feature parity. Most actions are read-only. `execute_workflow` is intentionally treated as an execution/write operation and must stay behind explicit governance, workflow ownership, rate limiting, and audit controls.
 
 1. `list_conversations`
    - Return only conversations visible to the delegated user.
    - Include pagination and maximum result limits.
+   - Implemented in version **0.250.082** with bounded `limit`/`offset` pagination and optional hidden-conversation inclusion.
 
 2. `get_conversation_messages`
    - Require conversation ownership or collaboration access.
    - Include pagination and maximum message limits.
+   - Implemented in version **0.250.082** for delegated personal conversations and accepted personal collaborative conversations. Message content is bounded to avoid oversized MCP responses.
 
 3. `list_personal_documents`
-   - Return only the delegated user's personal documents.
-   - Include pagination, filtering, and result limits.
+   - Return only personal workspace document metadata visible to the delegated user, including owned and shared personal documents already visible through SimpleChat's personal document authorization boundary.
+   - Include pagination, single-tag filtering, and result limits.
+   - Implemented in version **0.250.083** with bounded `limit`/`offset` pagination and metadata-only responses.
 
 4. `list_personal_prompts`
-   - Return only the delegated user's personal prompts.
+   - Return only the delegated user's personal prompt metadata.
    - Include pagination and result limits.
+   - Implemented in version **0.250.083** with bounded `limit`/`offset` pagination and metadata-only responses. Prompt content remains out of the list response.
 
 5. `list_personal_tags`
    - Return only personal workspace tags available to the delegated user.
@@ -921,7 +925,7 @@ Prerequisites before enabling:
 4. Track A Phase 1C destination governance UI and policy persistence. **Status: implemented in v0.250.065 using delegated item policies; remaining catalog-admin refinements can follow later.**
 5. Track A Phase 1D authenticated enterprise preconfiguration templates for Microsoft Sentinel MCP and Azure MCP Server. **Status: implemented in v0.250.066 as disabled-by-default, explicit-policy-gated templates; OAuth/token refresh remains future work.**
 6. Track A Phase 2 capability probe, richer metadata, result policies, and opt-in schema validation. **Status: implemented in v0.250.068.**
-7. Track B Phase B2 governance/tool registry and Track B Phase B3 initial personal read plus workflow-execution tools. **Status: first governed read tool implemented in v0.250.070; app-settings-backed runtime config and minimal OS-gated Admin Settings UI implemented in v0.250.071; Easy Auth exclusion verification before enablement implemented in v0.250.072; generated setup script now derives cloud/deployment hints and backs up authsettings in v0.250.073; copy button and GET-based authsettings read fix implemented in v0.250.074; delegated scope default and setup-script preflight implemented in v0.250.075; OAuth PRM challenge implemented in v0.250.076; inbound MCP governance policy UI implemented in v0.250.077; delegated user role and future app-only role split implemented in v0.250.078; per-policy help modals implemented in v0.250.079; current inbound MCP governance simplified to personal access plus source in v0.250.080 and collapsed to one broad inbound MCP access policy in v0.250.081.**
+7. Track B Phase B2 governance/tool registry and Track B Phase B3 initial personal read plus workflow-execution tools. **Status: first governed read tool implemented in v0.250.070; app-settings-backed runtime config and minimal OS-gated Admin Settings UI implemented in v0.250.071; Easy Auth exclusion verification before enablement implemented in v0.250.072; generated setup script now derives cloud/deployment hints and backs up authsettings in v0.250.073; copy button and GET-based authsettings read fix implemented in v0.250.074; delegated scope default and setup-script preflight implemented in v0.250.075; OAuth PRM challenge implemented in v0.250.076; inbound MCP governance policy UI implemented in v0.250.077; delegated user role and future app-only role split implemented in v0.250.078; per-policy help modals implemented in v0.250.079; current inbound MCP governance simplified to personal access plus source in v0.250.080, collapsed to one broad inbound MCP access policy in v0.250.081, expanded with bounded personal conversation read tools in v0.250.082, and expanded with bounded personal document/prompt metadata listing in v0.250.083.**
 8. Track B Phase B4 personal chat write tool only after read-only tools, auth, and governance are stable.
 9. Track A Phase 3 TLS diagnostics and optional certificate references after connector support is confirmed.
 10. Track A Phase 4 OAuth 2.1 PKCE.
@@ -976,7 +980,7 @@ The first inbound planning/architecture slice and disabled shell are also comple
 
 Current forward options:
 
-1. Continue Track B with the next low-risk personal read tool after `list_personal_tags`, reusing the app-settings-backed runtime config, single inbound MCP access governance, minimal admin UI, and verified Easy Auth exclusion guard.
+1. Continue Track B with the next low-risk personal read tools after conversation listing/retrieval: `list_personal_documents` and `list_personal_prompts`, reusing the app-settings-backed runtime config, single inbound MCP access governance, minimal admin UI, and verified Easy Auth exclusion guard.
 2. Add outbound MCP catalog-administration refinements: per-definition enable/disable controls, policy summaries, and optional environment/config import review.
 3. Start outbound OAuth/token lifecycle planning for authenticated MCP servers such as GitHub, Microsoft Sentinel MCP, and Azure MCP Server.
 4. Continue Track A Phase 3: TLS diagnostics and enterprise network guidance once connector support is confirmed.

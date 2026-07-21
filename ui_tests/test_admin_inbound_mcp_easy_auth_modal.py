@@ -2,7 +2,7 @@
 """
 UI test for the inbound MCP Easy Auth verification modal.
 
-Version: 0.250.081
+Version: 0.250.083
 Implemented in: 0.250.072
 Cloud-aware script improvements implemented in: 0.250.073
 Script copy and authsettingsV2 GET fix implemented in: 0.250.074

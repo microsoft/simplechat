@@ -2,6 +2,26 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.083)**
+
+#### New Features
+
+*   **Inbound MCP Personal Document And Prompt Listings**
+    *   Added delegated-user-scoped `list_personal_documents` and `list_personal_prompts` tools to the inbound MCP server.
+    *   Document listings reuse SimpleChat's existing personal document visibility boundary, include owned and shared visible document metadata, support bounded pagination, and allow a single safe tag filter.
+    *   Prompt listings return bounded personal prompt metadata only; prompt content stays out of the list response.
+    *   (Ref: microsoft/simplechat#1017, inbound MCP personal tools, `functions_mcp_server_tools.py`, `functions_mcp_server_registry.py`)
+
+### **(v0.250.082)**
+
+#### New Features
+
+*   **Inbound MCP Conversation Read Tools**
+    *   Added delegated-user-scoped `list_conversations` and `get_conversation_messages` tools to the inbound MCP server.
+    *   Conversation reads now use existing SimpleChat personal and personal-collaboration authorization boundaries, bounded pagination, and truncated message content to keep MCP responses safe and predictable.
+    *   Added JSON-RPC error mapping for invalid parameters, object-level authorization denial, and missing resources.
+    *   (Ref: microsoft/simplechat#1017, inbound MCP conversation tools, `functions_mcp_server_tools.py`, `functions_mcp_server_registry.py`, `route_inbound_mcp.py`)
+
 ### **(v0.250.081)**
 
 #### User Interface Enhancements

@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for the inbound MCP admin UI settings slice.
-Version: 0.250.081
+Version: 0.250.083
 Implemented in: 0.250.071
 Easy Auth enablement guard implemented in: 0.250.072
 Cloud-aware Easy Auth script implemented in: 0.250.073
@@ -14,6 +14,8 @@ Inbound MCP user/app role split implemented in: 0.250.078
 MCP governance help modal implemented in: 0.250.079
 Simplified inbound MCP governance UX implemented in: 0.250.080
 Single inbound MCP access policy implemented in: 0.250.081
+Personal conversation read tools implemented in: 0.250.082
+Personal document and prompt listing tools implemented in: 0.250.083
 
 This test ensures inbound MCP runtime configuration is stored in app_settings,
 the minimal Admin Settings UI is gated by an OS-only feature flag, and the
@@ -40,7 +42,7 @@ def test_inbound_mcp_runtime_settings_are_app_settings():
     helper_source = read_repo_file("application/single_app/functions_mcp_server_config.py")
     settings_source = read_repo_file("application/single_app/functions_settings.py")
 
-    assert 'VERSION = "0.250.081"' in config_source
+    assert 'VERSION = "0.250.083"' in config_source
     assert "ENABLE_INBOUND_MCP_SERVER = os.getenv" not in config_source
     assert "INBOUND_MCP_REQUIRED_ROLE = os.getenv" not in config_source
     assert "INBOUND_MCP_ALLOWED_CLIENT_APP_IDS = _split_env_list" not in config_source

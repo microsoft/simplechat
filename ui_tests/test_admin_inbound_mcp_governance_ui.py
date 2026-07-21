@@ -2,7 +2,7 @@
 """
 UI test for inbound MCP governance policy creation controls.
 
-Version: 0.250.081
+Version: 0.250.083
 Implemented in: 0.250.077
 Inbound MCP restricted policy defaults implemented in: 0.250.078
 MCP governance help modal implemented in: 0.250.079

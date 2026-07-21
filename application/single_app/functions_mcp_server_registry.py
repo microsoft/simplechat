@@ -15,11 +15,13 @@ PLANNED_INBOUND_MCP_TOOLS = (
         "rate_limit_category": "read",
         "audit_event": "InboundMcpListConversations",
         "enabled_by_default": False,
-        "implemented": False,
+        "implemented": True,
         "input_schema": {
             "type": "object",
             "properties": {
-                "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+                "offset": {"type": "integer", "minimum": 0},
+                "include_hidden": {"type": "boolean"},
             },
             "additionalProperties": False,
         },
@@ -35,12 +37,13 @@ PLANNED_INBOUND_MCP_TOOLS = (
         "rate_limit_category": "read",
         "audit_event": "InboundMcpGetConversationMessages",
         "enabled_by_default": False,
-        "implemented": False,
+        "implemented": True,
         "input_schema": {
             "type": "object",
             "properties": {
-                "conversation_id": {"type": "string", "minLength": 1},
+                "conversation_id": {"type": "string", "minLength": 1, "maxLength": 128},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                "offset": {"type": "integer", "minimum": 0},
             },
             "required": ["conversation_id"],
             "additionalProperties": False,
@@ -57,11 +60,12 @@ PLANNED_INBOUND_MCP_TOOLS = (
         "rate_limit_category": "read",
         "audit_event": "InboundMcpListPersonalDocuments",
         "enabled_by_default": False,
-        "implemented": False,
+        "implemented": True,
         "input_schema": {
             "type": "object",
             "properties": {
                 "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                "offset": {"type": "integer", "minimum": 0},
                 "tag": {"type": "string", "minLength": 1, "maxLength": 50},
             },
             "additionalProperties": False,
@@ -78,11 +82,12 @@ PLANNED_INBOUND_MCP_TOOLS = (
         "rate_limit_category": "read",
         "audit_event": "InboundMcpListPersonalPrompts",
         "enabled_by_default": False,
-        "implemented": False,
+        "implemented": True,
         "input_schema": {
             "type": "object",
             "properties": {
                 "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                "offset": {"type": "integer", "minimum": 0},
             },
             "additionalProperties": False,
         },
