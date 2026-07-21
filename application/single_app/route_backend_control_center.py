@@ -7925,7 +7925,7 @@ def register_route_backend_control_center(bp):
                     # - AI Search index deletion
                     # - Cosmos DB document deletion
                     delete_document(user_id, document_id)
-                    delete_document_chunks(document_id)
+                    delete_document_chunks(document_id, user_id=user_id)
                     
                     deleted_count += 1
                     debug_print(f"✅ [DELETE_USER_DOCS] Successfully deleted document {document_id}")

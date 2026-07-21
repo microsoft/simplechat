@@ -52,6 +52,10 @@ nul
 Demo testing/artifacts/
 scripts/agent.json
 scripts/me.json
+/scripts/Migration-AISearch.state.json
+/scripts/Migration-Cosmos.state.json
+/scripts/Migration-StorageAccount.state.json
+/scripts/Migration-*.state.json.*.tmp
 .github/instructions/python-venv-path.instructions.md
 .github/instructions/local.instructions.md
 /venv

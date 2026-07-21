@@ -750,7 +750,12 @@ def delete_aged_documents(retention_days, workspace_type='personal', user_id=Non
             
             # Delete document chunks from search index
             try:
-                delete_document_chunks(document_id, group_id, public_workspace_id)
+                delete_document_chunks(
+                    document_id,
+                    group_id=group_id,
+                    public_workspace_id=public_workspace_id,
+                    user_id=doc_user_id,
+                )
             except CosmosResourceNotFoundError:
                 # Document chunks already deleted - this is fine
                 debug_print(f"Document chunks for {document_id} already deleted (not found)")

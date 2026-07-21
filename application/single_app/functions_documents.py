@@ -751,6 +751,53 @@ def _build_archived_scope_value(scope_value):
     return f"{ARCHIVED_SCOPE_PREFIX}{scope_value}"
 
 
+def _escape_ai_search_odata_literal(value):
+    return str(value).replace("'", "''")
+
+
+def _build_document_chunk_filter(
+    document_id,
+    user_id=None,
+    group_id=None,
+    public_workspace_id=None,
+    version=None,
+):
+    if public_workspace_id is not None:
+        scope_field = "public_workspace_id"
+        scope_value = public_workspace_id
+    elif group_id is not None:
+        scope_field = "group_id"
+        scope_value = group_id
+    else:
+        scope_field = "user_id"
+        scope_value = user_id
+
+    if document_id is None or str(document_id) == "":
+        raise ValueError("document_id is required for AI Search chunk operations")
+    if scope_value is None or str(scope_value) == "":
+        raise ValueError(f"{scope_field} is required for AI Search chunk operations")
+
+    escaped_scope_value = _escape_ai_search_odata_literal(scope_value)
+    escaped_archived_scope_value = _escape_ai_search_odata_literal(
+        _build_archived_scope_value(scope_value)
+    )
+    clauses = [
+        f"document_id eq '{_escape_ai_search_odata_literal(document_id)}'",
+        (
+            f"({scope_field} eq '{escaped_scope_value}' or "
+            f"{scope_field} eq '{escaped_archived_scope_value}')"
+        ),
+    ]
+    if version is not None:
+        try:
+            normalized_version = int(version)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("version must be an integer for AI Search chunk operations") from exc
+        clauses.append(f"version eq {normalized_version}")
+
+    return " and ".join(clauses)
+
+
 def set_document_chunk_visibility(document_item, active=True):
     document_id = document_item.get("id")
     group_id = document_item.get("group_id")
@@ -766,7 +813,12 @@ def set_document_chunk_visibility(document_item, active=True):
     chunk_results = list(
         search_client.search(
             search_text="*",
-            filter=f"document_id eq '{document_id}'",
+            filter=_build_document_chunk_filter(
+                document_id,
+                user_id=user_id,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+            ),
         )
     )
 
@@ -3516,6 +3568,7 @@ def delete_document_revision(user_id, document_id, delete_mode="all_versions", g
                 document_id=family_document['id'],
                 group_id=group_id,
                 public_workspace_id=public_workspace_id,
+                user_id=user_id,
             )
             deleted_document_ids.append(family_document['id'])
 
@@ -3535,6 +3588,7 @@ def delete_document_revision(user_id, document_id, delete_mode="all_versions", g
         document_id=document_id,
         group_id=group_id,
         public_workspace_id=public_workspace_id,
+        user_id=user_id,
     )
 
     promoted_document_id = None
@@ -3922,7 +3976,7 @@ def delete_chat_upload_workspace_documents_for_conversation(user_id, conversatio
         'failed_documents': failed_documents,
     }
 
-def delete_document_chunks(document_id, group_id=None, public_workspace_id=None):
+def delete_document_chunks(document_id, group_id=None, public_workspace_id=None, user_id=None):
     """Delete document chunks from Azure Cognitive Search index."""
 
     is_group = group_id is not None
@@ -3932,7 +3986,12 @@ def delete_document_chunks(document_id, group_id=None, public_workspace_id=None)
         search_client = CLIENTS["search_client_public"] if is_public_workspace else CLIENTS["search_client_group"] if is_group else CLIENTS["search_client_user"]
         results = search_client.search(
             search_text="*",
-            filter=f"document_id eq '{document_id}'",
+            filter=_build_document_chunk_filter(
+                document_id,
+                user_id=user_id,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+            ),
             select=["id"]
         )
 
@@ -3948,7 +4007,7 @@ def delete_document_chunks(document_id, group_id=None, public_workspace_id=None)
     except Exception as e:
         raise
 
-def delete_document_version_chunks(document_id, version, group_id=None, public_workspace_id=None):
+def delete_document_version_chunks(document_id, version, group_id=None, public_workspace_id=None, user_id=None):
     """Delete document chunks from Azure Cognitive Search index for a specific version."""
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
@@ -3960,7 +4019,13 @@ def delete_document_version_chunks(document_id, version, group_id=None, public_w
             {"@search.action": "delete", "id": chunk['id']} for chunk in
             search_client.search(
                 search_text="*",
-                filter=f"document_id eq '{document_id}' and version eq {version}",
+                filter=_build_document_chunk_filter(
+                    document_id,
+                    user_id=user_id,
+                    group_id=group_id,
+                    public_workspace_id=public_workspace_id,
+                    version=version,
+                ),
                 select="id"
             )
         ]
@@ -7378,7 +7443,12 @@ def process_document_reprocess_extraction_background(document_id, user_id, targe
         )
 
         update_doc_callback(status=f"Deleting existing chunks before extracting again with {target_mode_label}...")
-        delete_document_chunks(document_id, group_id=group_id, public_workspace_id=public_workspace_id)
+        delete_document_chunks(
+            document_id,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+            user_id=user_id,
+        )
 
         update_doc_callback(status=f"Extracting PDF again with Document Intelligence {target_mode_label}...")
         result = process_di_document(
