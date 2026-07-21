@@ -2,11 +2,12 @@
 #!/usr/bin/env python3
 """
 Functional test for the inbound MCP server shell.
-Version: 0.250.080
+Version: 0.250.081
 Implemented in: 0.250.063
 OAuth protected-resource discovery header implemented in: 0.250.076
 Inbound MCP user/app role split implemented in: 0.250.078
 Simplified inbound MCP access/source governance implemented in: 0.250.080
+Single inbound MCP access policy implemented in: 0.250.081
 
 This test ensures the inbound MCP shell is wired as a disabled-by-default,
 dedicated bearer-token route surface with safe PRM metadata, explicit
@@ -33,7 +34,7 @@ def test_inbound_mcp_config_defaults():
     settings_source = read_repo_file("application/single_app/functions_settings.py")
     mcp_config_source = read_repo_file("application/single_app/functions_mcp_server_config.py")
 
-    assert 'VERSION = "0.250.080"' in config_source
+    assert 'VERSION = "0.250.081"' in config_source
     assert 'ENABLE_INBOUND_MCP_SERVER = os.getenv(' not in config_source
     assert 'INBOUND_MCP_REQUIRED_ROLE = os.getenv(' not in config_source
     assert 'INBOUND_MCP_REQUIRED_SCOPE = os.getenv(' not in config_source
@@ -118,7 +119,9 @@ def test_inbound_mcp_governance_and_registry_default_deny():
     assert "explicit inbound MCP policy" in governance_source
     assert "effect == \"deny\"" in governance_source
     assert "INBOUND_MCP_ACCESS_POLICY_ENTITY" in governance_source
-    assert "INBOUND_MCP_SOURCE_POLICY_ENTITY" in governance_source
+    assert "INBOUND_MCP_ACCESS_ITEM_ID" in governance_source
+    assert "INBOUND_MCP_SOURCE_POLICY_ENTITY" not in governance_source
+    assert '"source_filtering_config_key": "inbound_mcp_allowed_source_ids"' in governance_source
     assert "LEGACY_INBOUND_MCP_POLICY_ENTITIES" in governance_source
     assert "INBOUND_MCP_CLIENT_POLICY_ENTITY" not in governance_source
     assert "INBOUND_MCP_TOOL_POLICY_ENTITY" not in governance_source

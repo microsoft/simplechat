@@ -23,7 +23,7 @@ const GOVERNANCE_ITEM_ENTITY_LABELS = {
     mcp_group_destination: 'MCP Group Destination',
     mcp_global_destination: 'MCP Global Destination',
     inbound_mcp_access: 'Inbound MCP Access',
-    inbound_mcp_source: 'Inbound MCP Source',
+    inbound_mcp_source: 'Inbound MCP Source (Legacy)',
     inbound_mcp_client: 'Inbound MCP Client (Legacy)',
     inbound_mcp_tool: 'Inbound MCP Tool (Legacy)',
     inbound_mcp_scope: 'Inbound MCP Scope (Legacy)',
@@ -41,13 +41,13 @@ const GOVERNANCE_ITEM_LOOKUP_HINTS = {
     mcp_personal_destination: 'Enter a personal MCP destination pattern such as preconfiguration:microsoft_learn, *.contoso.com, or *.',
     mcp_group_destination: 'Enter a group MCP destination pattern. Use group:<group-id>::<pattern> for a specific group override.',
     mcp_global_destination: 'Enter a global/admin MCP destination pattern such as preconfiguration:github, https://example.com/mcp*, or *.',
-    inbound_mcp_access: 'Enter the inbound MCP access scope such as personal.',
-    inbound_mcp_source: 'Enter the inbound MCP source ID, origin, configured source header value, or *.',
+    inbound_mcp_access: 'Enter inbound_mcp for new inbound MCP access policies.',
+    inbound_mcp_source: 'Legacy policy type. Source filtering now lives in Inbound MCP configuration.',
     inbound_mcp_client: 'Legacy policy type. Client allowlisting now lives in Inbound MCP configuration.',
     inbound_mcp_tool: 'Legacy policy type. Tool-level inbound MCP governance is not required for the current personal access model.',
-    inbound_mcp_scope: 'Legacy policy type. Use inbound_mcp_access with item personal for new policies.',
+    inbound_mcp_scope: 'Legacy policy type. Use inbound_mcp_access with item inbound_mcp for new policies.',
     inbound_mcp_resource_operation: 'Legacy policy type. Operation-level inbound MCP governance is not required for the current personal access model.',
-    inbound_mcp_target: 'Legacy policy type. Personal access should use item personal with the standard user/group allowlist.',
+    inbound_mcp_target: 'Legacy policy type. Inbound MCP access should use item inbound_mcp with the standard user/group allowlist.',
 };
 
 const GOVERNANCE_POLICY_HELP_CONTENT = {
@@ -79,21 +79,13 @@ const GOVERNANCE_POLICY_HELP_CONTENT = {
         ],
     },
     inbound_mcp_access: {
-        title: 'Inbound MCP personal access policy',
-        purpose: 'Use this to allow specific users or groups to use SimpleChat inbound MCP for their personal workspace data.',
+        title: 'Inbound MCP access policy',
+        purpose: 'Use this to allow specific users or groups to use SimpleChat as an inbound MCP server after Entra role/scope, tenant, client, and source configuration checks succeed.',
         configuration: [
             'Entity type: inbound_mcp_access.',
-            'Item ID: personal.',
-            'Keep "Allow all users" off unless every user with the required Entra role and delegated scope should be able to use personal inbound MCP tools.',
-        ],
-    },
-    inbound_mcp_source: {
-        title: 'Inbound MCP source policy',
-        purpose: 'Use this to allow calls from an approved source signal after the caller has passed MCP app/client configuration and user access governance.',
-        configuration: [
-            'Entity type: inbound_mcp_source.',
-            'Item ID examples: *, https://agent.fedorg.gov, https://copilot.fedorg.gov, or the value supplied by the configured X-SimpleChat-MCP-Source header.',
-            'The source header is advisory unless trusted infrastructure controls it, so prefer specific origins or use * only when MCP app/client configuration and user governance are sufficient.',
+            'Item ID: inbound_mcp.',
+            'Keep "Allow all users" off unless every user with the required Entra role and delegated scope should be able to use approved inbound MCP tools.',
+            'Configure allowed sources in the Inbound MCP runtime settings, for example https://agent.fedorg.gov or a trusted X-SimpleChat-MCP-Source value controlled by your gateway.',
         ],
     },
 };
@@ -106,7 +98,6 @@ const GOVERNANCE_MCP_DESTINATION_ENTITY_TYPES = new Set([
 
 const GOVERNANCE_INBOUND_MCP_QUICK_CREATE_ENTITY_TYPES = new Set([
     'inbound_mcp_access',
-    'inbound_mcp_source',
 ]);
 
 const GOVERNANCE_CUSTOM_ITEM_ID_ENTITY_TYPES = new Set([
@@ -1666,8 +1657,8 @@ function ensureGovernanceItemPolicyEditorModal() {
                                         <option value="mcp_group_destination">MCP Group Destination</option>
                                         <option value="mcp_global_destination">MCP Global Destination</option>
                                         <option value="inbound_mcp_access">Inbound MCP Access</option>
-                                        <option value="inbound_mcp_source">Inbound MCP Source</option>
                                         <optgroup label="Legacy inbound MCP policy types">
+                                            <option value="inbound_mcp_source" disabled>Inbound MCP Source (Legacy)</option>
                                             <option value="inbound_mcp_client" disabled>Inbound MCP Client (Legacy)</option>
                                             <option value="inbound_mcp_tool" disabled>Inbound MCP Tool (Legacy)</option>
                                             <option value="inbound_mcp_scope" disabled>Inbound MCP Scope (Legacy)</option>

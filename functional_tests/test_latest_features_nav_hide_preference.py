@@ -2,7 +2,7 @@
 # test_latest_features_nav_hide_preference.py
 """
 Functional test for versioned Latest Features navigation hiding.
-Version: 0.250.080
+Version: 0.250.081
 Implemented in: 0.250.059
 
 This test ensures that Latest Features navigation entries hide only for the
@@ -26,7 +26,7 @@ from functions_latest_features_nav import (  # noqa: E402
 )
 
 
-CURRENT_VERSION = "0.250.080"
+CURRENT_VERSION = "0.250.081"
 PREVIOUS_VERSION = "0.250.057"
 
 

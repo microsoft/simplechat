@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for the inbound MCP admin UI settings slice.
-Version: 0.250.080
+Version: 0.250.081
 Implemented in: 0.250.071
 Easy Auth enablement guard implemented in: 0.250.072
 Cloud-aware Easy Auth script implemented in: 0.250.073
@@ -13,6 +13,7 @@ Inbound MCP governance policy UI implemented in: 0.250.077
 Inbound MCP user/app role split implemented in: 0.250.078
 MCP governance help modal implemented in: 0.250.079
 Simplified inbound MCP governance UX implemented in: 0.250.080
+Single inbound MCP access policy implemented in: 0.250.081
 
 This test ensures inbound MCP runtime configuration is stored in app_settings,
 the minimal Admin Settings UI is gated by an OS-only feature flag, and the
@@ -39,7 +40,7 @@ def test_inbound_mcp_runtime_settings_are_app_settings():
     helper_source = read_repo_file("application/single_app/functions_mcp_server_config.py")
     settings_source = read_repo_file("application/single_app/functions_settings.py")
 
-    assert 'VERSION = "0.250.080"' in config_source
+    assert 'VERSION = "0.250.081"' in config_source
     assert "ENABLE_INBOUND_MCP_SERVER = os.getenv" not in config_source
     assert "INBOUND_MCP_REQUIRED_ROLE = os.getenv" not in config_source
     assert "INBOUND_MCP_ALLOWED_CLIENT_APP_IDS = _split_env_list" not in config_source
@@ -215,13 +216,12 @@ def test_inbound_mcp_easy_auth_guard_contract():
 
 
 def test_inbound_mcp_governance_ui_policy_creation_contract():
-    """Validate simplified inbound MCP access/source policies are exposed in the governance editor."""
+    """Validate the simplified inbound MCP access policy is exposed in the governance editor."""
     admin_template = read_repo_file("application/single_app/templates/admin_settings.html")
     governance_js = read_repo_file("application/single_app/static/js/admin/admin_governance.js")
 
     expected_entities = [
         "inbound_mcp_access",
-        "inbound_mcp_source",
     ]
     for entity in expected_entities:
         assert entity in admin_template
@@ -231,12 +231,12 @@ def test_inbound_mcp_governance_ui_policy_creation_contract():
     assert "governance-new-inbound-mcp-policy-btn" in admin_template
     assert "governance-policy-help-btn" in admin_template
     assert "Inbound MCP Access Governance" in admin_template
-    assert "Minimum policies required for personal inbound MCP" in admin_template
-    assert "New Personal Access Policy" in admin_template
+    assert "Minimum policy required for inbound MCP" in admin_template
+    assert "New Inbound MCP Access Policy" in admin_template
     assert 'data-governance-inbound-mcp-entity="inbound_mcp_access"' in admin_template
-    assert 'data-governance-inbound-mcp-item="personal"' in admin_template
+    assert 'data-governance-inbound-mcp-item="inbound_mcp"' in admin_template
     assert 'data-governance-help-key="inbound_mcp_access"' in admin_template
-    assert 'data-governance-help-key="inbound_mcp_source"' in admin_template
+    assert 'data-governance-help-key="inbound_mcp_source"' not in admin_template
     assert 'data-governance-help-key="inbound_mcp_tool"' not in admin_template
     assert 'data-governance-help-key="inbound_mcp_scope"' not in admin_template
     assert 'data-governance-help-key="inbound_mcp_resource_operation"' not in admin_template
@@ -257,6 +257,9 @@ def test_inbound_mcp_governance_ui_policy_creation_contract():
     assert "function ensureGovernancePolicyHelpModal" in governance_js
     assert "https://agent.fedorg.gov" in governance_js
     assert "https://mcp.fedorg.gov/mcp*" in governance_js
+    assert "Source filtering now lives in Inbound MCP configuration." in governance_js
+    assert "Inbound MCP Source (Legacy)" in governance_js
+    assert "Item ID: inbound_mcp." in governance_js
     assert "Inbound MCP Client (Legacy)" in governance_js
     assert "document.querySelectorAll('.governance-policy-help-btn')" in governance_js
     assert "allow_all: false" in governance_js

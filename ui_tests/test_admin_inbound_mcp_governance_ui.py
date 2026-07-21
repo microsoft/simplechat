@@ -2,15 +2,15 @@
 """
 UI test for inbound MCP governance policy creation controls.
 
-Version: 0.250.080
+Version: 0.250.081
 Implemented in: 0.250.077
 Inbound MCP restricted policy defaults implemented in: 0.250.078
 MCP governance help modal implemented in: 0.250.079
 Simplified inbound MCP access/source governance implemented in: 0.250.080
+Single inbound MCP access policy implemented in: 0.250.081
 
 This test ensures Admin Settings exposes inbound MCP governance policy
-controls and can open the delegated item policy editor for personal access
-and source policies.
+controls and can open the delegated item policy editor for inbound MCP access.
 """
 
 import os
@@ -62,16 +62,16 @@ def test_admin_inbound_mcp_governance_policy_editor_controls():
         inbound_section = page.locator("#governance-inbound-mcp-section")
         expect(inbound_section).to_be_visible()
         expect(inbound_section).to_contain_text("Inbound MCP Access Governance")
-        expect(inbound_section).to_contain_text("Minimum policies required for personal inbound MCP")
-        expect(inbound_section).to_contain_text("New Personal Access Policy")
-        expect(inbound_section.locator(".governance-policy-help-btn")).to_have_count(2)
+        expect(inbound_section).to_contain_text("Minimum policy required for inbound MCP")
+        expect(inbound_section).to_contain_text("New Inbound MCP Access Policy")
+        expect(inbound_section.locator(".governance-policy-help-btn")).to_have_count(1)
         expect(page.locator("#governance-mcp-destination-section .governance-policy-help-btn")).to_have_count(3)
 
         page.locator(".governance-policy-help-btn[data-governance-help-key=\"inbound_mcp_access\"]").click()
         help_modal = page.locator("#governance-policy-help-modal")
         expect(help_modal).to_be_visible()
-        expect(help_modal).to_contain_text("Inbound MCP personal access policy")
-        expect(help_modal).to_contain_text("Item ID: personal.")
+        expect(help_modal).to_contain_text("Inbound MCP access policy")
+        expect(help_modal).to_contain_text("Item ID: inbound_mcp.")
         page.keyboard.press("Escape")
         expect(help_modal).to_be_hidden()
 
@@ -79,7 +79,7 @@ def test_admin_inbound_mcp_governance_policy_editor_controls():
         editor = page.locator("#governance-item-policy-editor-modal")
         expect(editor).to_be_visible()
         expect(page.locator("#governance-item-entity-type")).to_have_value("inbound_mcp_access")
-        expect(page.locator("#governance-item-id-custom")).to_have_value("personal")
+        expect(page.locator("#governance-item-id-custom")).to_have_value("inbound_mcp")
         expect(page.locator("#governance-item-allow-all")).not_to_be_checked()
     finally:
         context.close()

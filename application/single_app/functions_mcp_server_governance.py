@@ -6,11 +6,12 @@ from functions_governance import get_explicit_item_policies, get_user_governance
 
 
 INBOUND_MCP_ACCESS_POLICY_ENTITY = "inbound_mcp_access"
-INBOUND_MCP_SOURCE_POLICY_ENTITY = "inbound_mcp_source"
+INBOUND_MCP_ACCESS_ITEM_ID = "inbound_mcp"
 INBOUND_MCP_SCOPE_POLICY_ENTITY = "inbound_mcp_scope"
 INBOUND_MCP_TARGET_POLICY_ENTITY = "inbound_mcp_target"
 LEGACY_INBOUND_MCP_POLICY_ENTITIES = (
     "inbound_mcp_client",
+    "inbound_mcp_source",
     "inbound_mcp_tool",
     INBOUND_MCP_SCOPE_POLICY_ENTITY,
     "inbound_mcp_resource_operation",
@@ -42,13 +43,12 @@ def get_inbound_mcp_governance_baseline():
         "explicit_deny_wins": True,
         "required_policy_entities": [
             INBOUND_MCP_ACCESS_POLICY_ENTITY,
-            INBOUND_MCP_SOURCE_POLICY_ENTITY,
         ],
         "policy_entities": [
             INBOUND_MCP_ACCESS_POLICY_ENTITY,
-            INBOUND_MCP_SOURCE_POLICY_ENTITY,
         ],
         "legacy_policy_entities": list(LEGACY_INBOUND_MCP_POLICY_ENTITIES),
+        "source_filtering_config_key": "inbound_mcp_allowed_source_ids",
     }
 
 
@@ -80,16 +80,6 @@ def _policy_matches_principal(policy, user_id, group_ids):
         return True
 
     return bool(set(group_ids or set()).intersection(allowed_groups))
-
-
-def _evaluate_explicit_policy(entity_type, item_ids, user_id, group_ids, error, reason_prefix):
-    return _evaluate_explicit_policy_group(
-        [(entity_type, item_ids)],
-        user_id,
-        group_ids,
-        error,
-        reason_prefix,
-    )
 
 
 def _evaluate_explicit_policy_group(policy_checks, user_id, group_ids, error, reason_prefix):
@@ -188,24 +178,18 @@ def evaluate_inbound_mcp_governance(
             reason="Inbound MCP tool requires a delegated user identity.",
         )
 
-    source_id = str(getattr(auth_context, "source_id", "") or "").strip()
     normalized_target_scope_id = str(target_scope_id or "").strip()
     if normalized_scope == "personal" and not normalized_target_scope_id:
         normalized_target_scope_id = delegated_user_id
 
     user_group_ids = get_user_governance_group_ids(delegated_user_id)
     decisions = [
-        _evaluate_explicit_policy(
-            INBOUND_MCP_SOURCE_POLICY_ENTITY,
-            [source_id, "*"],
-            delegated_user_id,
-            user_group_ids,
-            "mcp_source_not_allowed",
-            "Inbound MCP source",
-        ),
         _evaluate_explicit_policy_group(
             [
-                (INBOUND_MCP_ACCESS_POLICY_ENTITY, [normalized_scope]),
+                (
+                    INBOUND_MCP_ACCESS_POLICY_ENTITY,
+                    [INBOUND_MCP_ACCESS_ITEM_ID, normalized_scope],
+                ),
                 (INBOUND_MCP_SCOPE_POLICY_ENTITY, [normalized_scope]),
                 (
                     INBOUND_MCP_TARGET_POLICY_ENTITY,

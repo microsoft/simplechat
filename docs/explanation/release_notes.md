@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.081)**
+
+#### User Interface Enhancements
+
+*   **Inbound MCP Single Access Governance**
+    *   Collapsed the current inbound MCP governance setup to one broad `inbound_mcp_access` policy with item `inbound_mcp`, so admins only need to decide which users or groups may use approved inbound MCP tools.
+    *   Moved source control out of user-bound governance setup; tenant, client, and source trust remain in Inbound MCP runtime configuration.
+    *   Preserved legacy source/scope/target policy compatibility for existing data while steering new setup toward the simpler access-policy workflow.
+    *   (Ref: microsoft/simplechat#1017, inbound MCP governance, `functions_mcp_server_governance.py`, `admin_settings.html`, `admin_governance.js`)
+
 ### **(v0.250.080)**
 
 #### User Interface Enhancements

@@ -2,14 +2,14 @@
 #!/usr/bin/env python3
 """
 Functional test for inbound MCP governance and first tool contracts.
-Version: 0.250.080
+Version: 0.250.081
 Implemented in: 0.250.070
 Simplified personal access/source governance implemented in: 0.250.080
+Single inbound MCP access policy implemented in: 0.250.081
 
-This test ensures inbound MCP uses explicit personal access and source
-governance, exposes only implemented tools through JSON-RPC, and binds
-personal tools to the delegated user rather than caller-supplied user
-identifiers.
+This test ensures inbound MCP uses explicit inbound MCP access governance,
+exposes only implemented tools through JSON-RPC, and binds personal tools to
+the delegated user rather than caller-supplied user identifiers.
 """
 
 import sys
@@ -25,12 +25,11 @@ def read_repo_file(relative_path):
 
 
 def test_governance_policy_dimensions():
-    """Validate inbound MCP governance requires personal access and source policies."""
+    """Validate inbound MCP governance requires the single access policy."""
     source = read_repo_file("application/single_app/functions_mcp_server_governance.py")
 
     expected_entities = [
         "inbound_mcp_access",
-        "inbound_mcp_source",
     ]
     for entity in expected_entities:
         assert entity in source
@@ -42,7 +41,11 @@ def test_governance_policy_dimensions():
     assert "mcp_delegated_user_required" in source
     assert '"mcp_access_not_allowed"' in source
     assert "_evaluate_explicit_policy_group(" in source
-    assert "(INBOUND_MCP_ACCESS_POLICY_ENTITY, [normalized_scope])" in source
+    assert "INBOUND_MCP_ACCESS_ITEM_ID = \"inbound_mcp\"" in source
+    assert "INBOUND_MCP_ACCESS_POLICY_ENTITY" in source
+    assert "[INBOUND_MCP_ACCESS_ITEM_ID, normalized_scope]" in source
+    assert '"source_filtering_config_key": "inbound_mcp_allowed_source_ids"' in source
+    assert '"mcp_source_not_allowed"' not in source
     assert "LEGACY_INBOUND_MCP_POLICY_ENTITIES" in source
     assert "INBOUND_MCP_CLIENT_POLICY_ENTITY" not in source
     assert "INBOUND_MCP_TOOL_POLICY_ENTITY" not in source

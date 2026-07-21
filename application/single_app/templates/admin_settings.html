@@ -1921,33 +1921,26 @@
                         <i class="bi bi-box-arrow-in-down-right me-2"></i>Inbound MCP Access Governance
                     </h5>
                     <p class="text-muted mb-2">
-                        Control which delegated users and trusted sources can use SimpleChat as an inbound MCP server. OAuth client and tenant trust are configured in the Inbound MCP settings above; governance decides who can use MCP and where calls may come from.
+                        Control which delegated users and groups can use SimpleChat as an inbound MCP server. OAuth client, tenant, and source trust are configured in the Inbound MCP settings above; governance decides who can use MCP.
                     </p>
                     <div class="alert alert-warning py-2 small" role="alert">
                         Quick-create inbound MCP policies open in restricted user/group mode by default. Only use "Allow all users" when every delegated user with the required Entra role and delegated scope should be able to satisfy that policy.
                     </div>
                     <div class="row g-3 align-items-start">
                         <div class="col-lg-7">
-                            <div class="small fw-semibold mb-1">Minimum policies required for personal inbound MCP</div>
+                            <div class="small fw-semibold mb-1">Minimum policy required for inbound MCP</div>
                             <ul class="small text-muted mb-2">
-                                <li><code>inbound_mcp_access</code> with delegated item <code>personal</code>: allows selected users or groups to use personal inbound MCP tools.</li>
-                                <li><code>inbound_mcp_source</code> with delegated item <code>*</code> or a trusted source value: allows the calling source signal.</li>
+                                <li><code>inbound_mcp_access</code> with delegated item <code>inbound_mcp</code>: allows selected users or groups to use approved inbound MCP tools.</li>
                             </ul>
                             <div class="small text-muted">
-                                Tool-specific, resource-operation, target, and client policies are legacy compatibility surfaces. New production setup should start with personal access and source policies; client allowlisting remains in Inbound MCP configuration.
+                                Source filtering, tenant allowlisting, and client allowlisting remain in Inbound MCP configuration. Tool-specific, resource-operation, target, source, and client item policies are legacy compatibility surfaces.
                             </div>
                         </div>
                         <div class="col-lg-5">
                             <div class="d-grid gap-2 governance-policy-action-list">
                                 <div class="input-group input-group-sm">
-                                    <button type="button" class="btn btn-outline-primary flex-grow-1 governance-new-inbound-mcp-policy-btn" data-governance-inbound-mcp-entity="inbound_mcp_access" data-governance-inbound-mcp-item="personal">New Personal Access Policy</button>
-                                    <button type="button" class="btn btn-outline-info governance-policy-help-btn" data-governance-help-key="inbound_mcp_access" aria-label="About inbound MCP personal access policies" title="About inbound MCP personal access policies">
-                                        <i class="bi bi-info-circle" aria-hidden="true"></i>
-                                    </button>
-                                </div>
-                                <div class="input-group input-group-sm">
-                                    <button type="button" class="btn btn-outline-primary flex-grow-1 governance-new-inbound-mcp-policy-btn" data-governance-inbound-mcp-entity="inbound_mcp_source" data-governance-inbound-mcp-item="*">New Inbound Source Policy (*)</button>
-                                    <button type="button" class="btn btn-outline-info governance-policy-help-btn" data-governance-help-key="inbound_mcp_source" aria-label="About inbound MCP source policies" title="About inbound MCP source policies">
+                                    <button type="button" class="btn btn-outline-primary flex-grow-1 governance-new-inbound-mcp-policy-btn" data-governance-inbound-mcp-entity="inbound_mcp_access" data-governance-inbound-mcp-item="inbound_mcp">New Inbound MCP Access Policy</button>
+                                    <button type="button" class="btn btn-outline-info governance-policy-help-btn" data-governance-help-key="inbound_mcp_access" aria-label="About inbound MCP access policies" title="About inbound MCP access policies">
                                         <i class="bi bi-info-circle" aria-hidden="true"></i>
                                     </button>
                                 </div>
@@ -2009,8 +2002,8 @@
                                 <option value="mcp_group_destination">MCP Group Destination</option>
                                 <option value="mcp_global_destination">MCP Global Destination</option>
                                 <option value="inbound_mcp_access">Inbound MCP Access</option>
-                                <option value="inbound_mcp_source">Inbound MCP Source</option>
                                 <optgroup label="Legacy inbound MCP policy types">
+                                    <option value="inbound_mcp_source">Inbound MCP Source (Legacy)</option>
                                     <option value="inbound_mcp_client">Inbound MCP Client (Legacy)</option>
                                     <option value="inbound_mcp_tool">Inbound MCP Tool (Legacy)</option>
                                     <option value="inbound_mcp_scope">Inbound MCP Scope (Legacy)</option>

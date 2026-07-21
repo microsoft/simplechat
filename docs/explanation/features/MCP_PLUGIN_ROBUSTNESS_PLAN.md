@@ -1,10 +1,10 @@
 # MCP Plugin Robustness Plan
 
-Planning version: **0.250.080**
+Planning version: **0.250.081**
 
 Implemented in version: **In progress across phases**
 
-Related configuration version: `application/single_app/config.py` currently sets `VERSION = "0.250.080"`.
+Related configuration version: `application/single_app/config.py` currently sets `VERSION = "0.250.081"`.
 
 Detailed Track B Phase B0/B1 architecture outcome: [Inbound SimpleChat MCP Server Architecture](./INBOUND_MCP_SERVER_ARCHITECTURE.md).
 
@@ -50,7 +50,7 @@ PR #722, **MCP Server addition and modification of SimpleChat API to accommodate
 - Keep tools as the primary supported MCP surface while leaving resources, prompts, streaming, and long-running jobs as later enhancements.
 - Add an enterprise-ready plan for a SimpleChat inbound MCP server after outbound MCP plugin hardening is under way.
 - Start inbound SimpleChat MCP with a small, personal-scope tool set and grow only after governance, authorization, observability, and scaling controls are in place.
-- Use a combined access model where Entra roles/scopes and client allowlists provide coarse app access, SimpleChat governance provides user/source policy, and existing workspace roles protect data.
+- Use a combined access model where Entra roles/scopes and client/source allowlists provide coarse app and source trust, SimpleChat governance provides user/group policy, and existing workspace roles protect data.
 - Add fine-grained outbound MCP destination controls so admins can restrict which external MCP servers may be used by personal, group, or global actions.
 - Add a server-side catalog of preconfigured outbound MCP servers so useful unauthenticated or low-friction MCP servers can be created from trusted templates without confusing them with compatibility presets.
 - Classify preconfigured outbound MCP servers by risk and auth tier, including future authenticated enterprise templates for Microsoft Sentinel MCP and Azure MCP Server.
@@ -502,7 +502,7 @@ Status: **Architecture decision recorded in version 0.250.062; disabled shell im
 
 ### Phase B1: Auth Foundation And Protected Resource Metadata
 
-Status: **Auth foundation and PRM contract recorded in version 0.250.062; dedicated disabled-shell guard and PRM route implemented in version 0.250.063; mutable runtime settings moved to app_settings with minimal OS-gated admin UI in version 0.250.071; Easy Auth exclusion modal and server-side enablement guard implemented in version 0.250.072; cloud-aware generated setup script with backup implemented in version 0.250.073; script copy button and authsettingsV2 GET read fix implemented in version 0.250.074; default delegated scope and setup-script delegated-scope preflight implemented in version 0.250.075; PRM discovery challenge implemented in version 0.250.076; inbound MCP governance UI implemented in version 0.250.077; delegated user role and future app-only role split implemented in version 0.250.078; MCP governance help modals implemented in version 0.250.079; inbound MCP governance simplified to personal access plus source policies in version 0.250.080.** See [Inbound SimpleChat MCP Server Architecture](./INBOUND_MCP_SERVER_ARCHITECTURE.md).
+Status: **Auth foundation and PRM contract recorded in version 0.250.062; dedicated disabled-shell guard and PRM route implemented in version 0.250.063; mutable runtime settings moved to app_settings with minimal OS-gated admin UI in version 0.250.071; Easy Auth exclusion modal and server-side enablement guard implemented in version 0.250.072; cloud-aware generated setup script with backup implemented in version 0.250.073; script copy button and authsettingsV2 GET read fix implemented in version 0.250.074; default delegated scope and setup-script delegated-scope preflight implemented in version 0.250.075; PRM discovery challenge implemented in version 0.250.076; inbound MCP governance UI implemented in version 0.250.077; delegated user role and future app-only role split implemented in version 0.250.078; MCP governance help modals implemented in version 0.250.079; inbound MCP governance simplified to personal access plus source policies in version 0.250.080; current governance collapsed to a single broad inbound MCP access policy in version 0.250.081.** See [Inbound SimpleChat MCP Server Architecture](./INBOUND_MCP_SERVER_ARCHITECTURE.md).
 
 1. Add a dedicated inbound MCP auth guard.
    - Do not weaken or broaden the shared `accesstoken_required` decorator used by existing external routes.
@@ -529,20 +529,21 @@ Status: **Auth foundation and PRM contract recorded in version 0.250.062; dedica
 
 ### Phase B2: Governance, Roles, And Tool Policy
 
-Status: **Initial explicit item-policy evaluator implemented in version 0.250.070 for the first personal read tool. Minimal Admin Settings controls for runtime enablement, Entra scope/user role/app-only role, client allowlist, tenant allowlist, source allowlist, and source header were added across versions 0.250.071 and 0.250.078. Easy Auth exclusion verification is required before enabling the server as of version 0.250.072. Version 0.250.080 simplifies current inbound MCP governance to two required policy concepts: personal access and source. Broader capability/tool policy authoring UX and additional tools remain future work.**
+Status: **Initial explicit item-policy evaluator implemented in version 0.250.070 for the first personal read tool. Minimal Admin Settings controls for runtime enablement, Entra scope/user role/app-only role, client allowlist, tenant allowlist, source allowlist, and source header were added across versions 0.250.071 and 0.250.078. Easy Auth exclusion verification is required before enabling the server as of version 0.250.072. Version 0.250.081 simplifies current inbound MCP governance to one broad `inbound_mcp_access/inbound_mcp` policy; source control remains runtime configuration. Broader capability/tool policy authoring UX and additional tools remain future work.**
 
 Use a combined model rather than choosing only governance or only roles:
 
 - **Entra roles/scopes** provide the coarse gate: the caller can reach the inbound MCP surface.
 - **Client app allowlists** provide client trust: the calling application is approved.
-- **SimpleChat governance** provides delegated user/source policy: which users or groups can use personal inbound MCP and which sources are allowed.
+- **SimpleChat governance** provides delegated user/group policy: which users or groups can use approved inbound MCP tools.
+- **Source runtime allowlists** provide optional source control through the configured source header, Origin, Referer, or caller app fallback.
 - **Existing workspace roles** protect data: the delegated user must already be allowed to access the requested personal, group, or public resource.
 
 1. Add inbound MCP governance settings.
    - Global enablement flag for inbound MCP remains in runtime configuration.
    - Tenant and client application allowlists remain in inbound MCP runtime configuration because they are app trust controls, not user governance controls.
-   - Current user governance uses `inbound_mcp_access` with item `personal`; the allow-all toggle, allowed users, and allowed groups decide who can use personal inbound MCP.
-   - Current source governance uses `inbound_mcp_source` with item `*` or a resolved source id; the policy's allow-all/users/groups decide who may satisfy that source rule.
+   - Current user governance uses `inbound_mcp_access` with item `inbound_mcp`; the allow-all toggle, allowed users, and allowed groups decide who can use approved inbound MCP tools.
+   - Source control uses `inbound_mcp_allowed_source_ids` in runtime configuration rather than user-bound governance policies.
    - Future capability governance should use admin-friendly capability names such as `personal_read`, `personal_search`, `workflow_execute`, or `group_read` instead of raw tool names.
    - Future per-resource-family, per-operation, per-scope, and per-target policy should be added only when it maps to clear admin workflows and does not duplicate existing workspace authorization.
    - Optional per-client or per-user rate limits remain future work.
@@ -555,14 +556,14 @@ Use a combined model rather than choosing only governance or only roles:
    - Personal tools must validate current-user ownership.
    - Group tools must use the same group role checks used by web/API routes.
    - Public workspace tools must use the same public workspace role and workspace-status checks used by existing external/public routes.
-   - Governance must deny by default when personal access or source policy is not configured.
+   - Governance must deny by default when inbound MCP access policy is not configured.
    - Fine-grained governance allow must never grant data access that existing workspace authorization would deny.
 
 4. Evaluate policy with deny-by-default and explicit-deny precedence.
    - Missing policy denies the operation.
    - Explicit deny wins over allow.
-   - Personal access should use delegated item `personal`; do not encode user authorization into item ids such as `personal:*`.
-   - Source policy item `*` disables source filtering only for principals allowed by that source policy; identity, client app configuration, personal access governance, and workspace authorization still apply.
+   - Inbound MCP access should use delegated item `inbound_mcp`; do not encode user authorization into item ids such as `personal:*`.
+   - Source filtering belongs to runtime configuration; identity, client app configuration, inbound MCP access governance, and workspace authorization still apply.
 
 ### Phase B3: Initial Personal Read And Workflow Tool Set
 
@@ -589,7 +590,7 @@ Start with a small, personal-scope set inspired by PR #722, not full feature par
 5. `list_personal_tags`
    - Return only personal workspace tags available to the delegated user.
    - Include pagination or bounded result limits if the tag set grows.
-   - Implemented in version **0.250.070**. As of version **0.250.080**, exposure requires personal access governance for item `personal` plus source governance for `*` or a resolved source id; client allowlisting lives in inbound MCP runtime configuration.
+   - Implemented in version **0.250.070**. As of version **0.250.081**, exposure requires inbound MCP access governance for item `inbound_mcp`; tenant, client, and source allowlisting live in inbound MCP runtime configuration.
 
 6. `search_personal_documents`
    - Restrict to personal document scope.
@@ -875,8 +876,8 @@ Prerequisites before enabling:
 3. Add governance tests:
    - Inbound MCP disabled globally.
    - Client disabled.
-   - Source denied when no matching `inbound_mcp_source` policy allows the delegated user.
-   - Personal access denied when no matching `inbound_mcp_access/personal` policy allows the delegated user.
+   - Source denied when the runtime source allowlist does not allow the resolved source signal.
+   - Inbound MCP access denied when no matching `inbound_mcp_access/inbound_mcp` policy allows the delegated user.
    - Legacy scope/target policies remain temporary compatibility fallback only.
    - Specific group document listing/retrieval disabled while other group operations remain governed independently.
    - Wildcard all-groups policy applies consistently.
@@ -920,7 +921,7 @@ Prerequisites before enabling:
 4. Track A Phase 1C destination governance UI and policy persistence. **Status: implemented in v0.250.065 using delegated item policies; remaining catalog-admin refinements can follow later.**
 5. Track A Phase 1D authenticated enterprise preconfiguration templates for Microsoft Sentinel MCP and Azure MCP Server. **Status: implemented in v0.250.066 as disabled-by-default, explicit-policy-gated templates; OAuth/token refresh remains future work.**
 6. Track A Phase 2 capability probe, richer metadata, result policies, and opt-in schema validation. **Status: implemented in v0.250.068.**
-7. Track B Phase B2 governance/tool registry and Track B Phase B3 initial personal read plus workflow-execution tools. **Status: first governed read tool implemented in v0.250.070; app-settings-backed runtime config and minimal OS-gated Admin Settings UI implemented in v0.250.071; Easy Auth exclusion verification before enablement implemented in v0.250.072; generated setup script now derives cloud/deployment hints and backs up authsettings in v0.250.073; copy button and GET-based authsettings read fix implemented in v0.250.074; delegated scope default and setup-script preflight implemented in v0.250.075; OAuth PRM challenge implemented in v0.250.076; inbound MCP governance policy UI implemented in v0.250.077; delegated user role and future app-only role split implemented in v0.250.078; per-policy help modals implemented in v0.250.079; current inbound MCP governance simplified to personal access plus source in v0.250.080.**
+7. Track B Phase B2 governance/tool registry and Track B Phase B3 initial personal read plus workflow-execution tools. **Status: first governed read tool implemented in v0.250.070; app-settings-backed runtime config and minimal OS-gated Admin Settings UI implemented in v0.250.071; Easy Auth exclusion verification before enablement implemented in v0.250.072; generated setup script now derives cloud/deployment hints and backs up authsettings in v0.250.073; copy button and GET-based authsettings read fix implemented in v0.250.074; delegated scope default and setup-script preflight implemented in v0.250.075; OAuth PRM challenge implemented in v0.250.076; inbound MCP governance policy UI implemented in v0.250.077; delegated user role and future app-only role split implemented in v0.250.078; per-policy help modals implemented in v0.250.079; current inbound MCP governance simplified to personal access plus source in v0.250.080 and collapsed to one broad inbound MCP access policy in v0.250.081.**
 8. Track B Phase B4 personal chat write tool only after read-only tools, auth, and governance are stable.
 9. Track A Phase 3 TLS diagnostics and optional certificate references after connector support is confirmed.
 10. Track A Phase 4 OAuth 2.1 PKCE.
@@ -975,7 +976,7 @@ The first inbound planning/architecture slice and disabled shell are also comple
 
 Current forward options:
 
-1. Continue Track B with the next low-risk personal read tool after `list_personal_tags`, reusing the app-settings-backed runtime config, simplified personal-access/source governance, minimal admin UI, and verified Easy Auth exclusion guard.
+1. Continue Track B with the next low-risk personal read tool after `list_personal_tags`, reusing the app-settings-backed runtime config, single inbound MCP access governance, minimal admin UI, and verified Easy Auth exclusion guard.
 2. Add outbound MCP catalog-administration refinements: per-definition enable/disable controls, policy summaries, and optional environment/config import review.
 3. Start outbound OAuth/token lifecycle planning for authenticated MCP servers such as GitHub, Microsoft Sentinel MCP, and Azure MCP Server.
 4. Continue Track A Phase 3: TLS diagnostics and enterprise network guidance once connector support is confirmed.
