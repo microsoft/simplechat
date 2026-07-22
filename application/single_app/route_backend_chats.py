@@ -109,8 +109,11 @@ from functions_group import find_group_by_id, get_group_model_endpoints, get_use
 from functions_chat import *
 from functions_content import generate_embedding, generate_embeddings_batch
 from functions_assistant_table_exports import (
-    TABLE_EXPORT_REQUEST_MARKERS,
+    assistant_table_export_requested,
+    build_safe_csv_headers,
     build_assistant_table_csv_export,
+    extract_assistant_table_entries,
+    neutralize_csv_spreadsheet_formula,
 )
 from functions_chart_operations import (
     CORE_CHART_PLUGIN_NAME,
@@ -1627,6 +1630,47 @@ def maybe_create_assistant_table_generated_output(
 
     generated_file_name = export_payload.get('file_name')
     row_count = _safe_int(export_payload.get('row_count'))
+    settings = get_settings()
+    table_rows = extract_assistant_table_entries(assistant_content)
+    row_batches = _build_tabular_generated_output_row_batches(
+        table_rows,
+        settings=settings,
+    )
+    if should_queue_tabular_generated_output_background(row_count, len(row_batches), settings):
+        try:
+            background_run = queue_tabular_generated_output_run(
+                user_id=get_current_user_id(),
+                conversation_id=conversation_id,
+                user_question=user_question,
+                source_candidate={
+                    'filename': generated_file_name,
+                    'selected_sheet': '',
+                    'source_authorization': {
+                        'source': 'chat',
+                        'container': storage_account_personal_chat_container_name,
+                    },
+                },
+                output_format='csv',
+                row_batches=row_batches,
+                gpt_model='',
+                settings=settings,
+                passthrough_input_rows=True,
+            )
+            return build_background_tabular_generated_output_metadata(background_run)
+        except Exception as exc:
+            log_event(
+                '[Assistant Table Export] Failed to queue large CSV export',
+                {
+                    'conversation_id': conversation_id,
+                    'generated_file_name': generated_file_name,
+                    'row_count': row_count,
+                    'error': str(exc),
+                },
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return None
+
     try:
         upload_result = upload_generated_analysis_artifact_for_current_user(
             conversation_id=conversation_id,
@@ -4065,11 +4109,9 @@ def get_tabular_generated_output_format(user_question):
         'return json',
         'valid json',
     )
-    csv_markers = TABLE_EXPORT_REQUEST_MARKERS
-
     if any(marker in normalized_question for marker in json_markers):
         return 'json'
-    if any(marker in normalized_question for marker in csv_markers):
+    if assistant_table_export_requested(user_question):
         return 'csv'
     return None
 
@@ -4094,7 +4136,7 @@ def question_requests_tabular_generated_output(user_question):
         'each object',
         'each row',
     )
-    if requested_format == 'csv' and any(marker in normalized_question for marker in TABLE_EXPORT_REQUEST_MARKERS):
+    if requested_format == 'csv' and assistant_table_export_requested(user_question):
         return True
 
     return any(marker in normalized_question for marker in exhaustive_markers)
@@ -4163,13 +4205,13 @@ def _serialize_tabular_generated_output_value(value):
     if value is None:
         return ''
     if isinstance(value, (dict, list)):
-        return json.dumps(value, default=str, ensure_ascii=False)
+        return neutralize_csv_spreadsheet_formula(json.dumps(value, default=str, ensure_ascii=False))
     if hasattr(value, 'isoformat') and not isinstance(value, str):
         try:
-            return value.isoformat()
+            return neutralize_csv_spreadsheet_formula(value.isoformat())
         except TypeError:
             pass
-    return str(value)
+    return neutralize_csv_spreadsheet_formula(value)
 
 
 def _build_tabular_generated_output_csv(entries):
@@ -4188,14 +4230,15 @@ def _build_tabular_generated_output_csv(entries):
     if not ordered_columns:
         ordered_columns = ['value']
 
+    safe_ordered_columns = build_safe_csv_headers(ordered_columns)
     output_buffer = io.StringIO()
-    writer = csv.DictWriter(output_buffer, fieldnames=ordered_columns)
+    writer = csv.DictWriter(output_buffer, fieldnames=safe_ordered_columns)
     writer.writeheader()
     for entry in entries or []:
         serialized_row = {}
         if isinstance(entry, dict):
-            for field_name in ordered_columns:
-                serialized_row[field_name] = _serialize_tabular_generated_output_value(entry.get(field_name))
+            for field_name, safe_field_name in zip(ordered_columns, safe_ordered_columns):
+                serialized_row[safe_field_name] = _serialize_tabular_generated_output_value(entry.get(field_name))
         writer.writerow(serialized_row)
     return output_buffer.getvalue()
 

@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.065)**
+
+#### Bug Fixes
+
+*   **Non-Tabular Document CSV Artifacts**
+    *   Explicit CSV requests over PDF, Word, and other non-tabular documents now create downloadable CSV artifacts when the assistant returns valid comma-delimited rows.
+    *   CSV exports preserve quoted commas, escaped quotes, multiline values, and every source column while excluding surrounding response prose and citations and neutralizing spreadsheet formula prefixes across immediate and background export paths.
+    *   (Ref: microsoft/simplechat#1066, `functions_assistant_table_exports.py`, `route_backend_chats.py`, `functions_tabular_generated_exports.py`, `functions_workflow_runner.py`, `test_assistant_table_csv_artifact.py`, `NON_TABULAR_DOCUMENT_CSV_ARTIFACT_FIX.md`)
+
 ### **(v0.250.064)**
 
 #### New Features

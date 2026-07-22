@@ -9,6 +9,57 @@ from typing import Any, Dict, List, Optional
 
 
 ASSISTANT_TABLE_EXPORT_PREVIEW_ROWS = 3
+CSV_FENCE_LANGUAGES = {'', 'csv', 'md', 'markdown', 'plaintext', 'text', 'text/csv', 'txt'}
+CSV_OUTPUT_REQUEST_PATTERNS = (
+    re.compile(
+        r'\b(?:build|create|download|export|generate|make|prepare|save)\b'
+        r'.{0,120}\b(?:a\s+)?csv(?:\s+(?:file|format|output))?\b'
+    ),
+    re.compile(
+        r'\b(?:respond|return|provide|output)\b'
+        r'(?:(?!\bfrom\b).){0,80}\b(?:as|in|to\s+)?(?:a\s+)?csv\b'
+    ),
+    re.compile(
+        r'\b(?:convert|format|put|turn)\b.{0,80}\b(?:as|in|into|to)\s+(?:a\s+)?csv\b'
+    ),
+    re.compile(r'\b(?:get|give)\s+(?:me\s+)?(?:a|the)\s+csv\b'),
+    re.compile(
+        r'\b(?:need|want)\s+(?:(?:a|the)\s+)?(?:direct\s+)?csv'
+        r'(?:\s+(?:file|format|output))?\b'
+    ),
+    re.compile(
+        r'\b(?:need|want)\b.{0,40}\b(?:results?|output|answer|response|fields?|rows?|data|this|that|it)\b'
+        r'.{0,40}\b(?:as|in)\s+csv\b'
+    ),
+    re.compile(r'\bcsv\s+(?:output|version)\b'),
+    re.compile(r'^\s*(?:a\s+)?csv\s+file\s*(?:,?\s*please)?[.!?]?\s*$'),
+    re.compile(
+        r'\b(?:build|create|download|export|generate|make|prepare|save|turn)\b'
+        r'.{0,80}\bspreadsheet\b'
+    ),
+)
+CSV_PROSE_PREFIXES = (
+    'below ',
+    'csv data',
+    'for clarity',
+    'for context',
+    'here are ',
+    'here is ',
+    'i extracted ',
+    'i found ',
+    'in summary',
+    'sure ',
+    'the following ',
+    'the requested ',
+    'the export ',
+    'this csv ',
+    'this export ',
+    'your csv ',
+)
+SIGNED_NUMBER_PATTERN = re.compile(
+    r'[+-]?(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?',
+    flags=re.IGNORECASE,
+)
 
 TABLE_EXPORT_REQUEST_MARKERS = (
     'turn that into a csv',
@@ -85,15 +136,13 @@ TABLE_EXPORT_REQUEST_MARKERS = (
     'table for me',
     'in table format',
     'download table',
-    'table file',
-    'spreadsheet',
-    'csv file',
     'download csv',
     'save csv',
     'make a csv',
     'make csv',
     'create a csv',
     'create csv',
+    'csv version',
 )
 
 
@@ -103,7 +152,37 @@ def assistant_table_export_requested(user_question: str) -> bool:
     if not normalized_question:
         return False
 
-    return any(marker in normalized_question for marker in TABLE_EXPORT_REQUEST_MARKERS)
+    csv_markers = tuple(marker for marker in TABLE_EXPORT_REQUEST_MARKERS if 'csv' in marker)
+    table_markers = tuple(marker for marker in TABLE_EXPORT_REQUEST_MARKERS if 'csv' not in marker)
+    question_clauses = [
+        clause.strip()
+        for clause in re.split(r'[;.!?]+', normalized_question)
+        if clause.strip()
+    ]
+
+    for question_clause in question_clauses:
+        if 'csv' not in question_clause:
+            continue
+        csv_request_negated = bool(re.search(
+            r"\b(?:do\s+not|don't|dont|never)\b.{0,80}\bcsv\b"
+            r'|\b(?:not|no|without)\s+(?:a\s+)?csv\b',
+            question_clause,
+        ))
+        if csv_request_negated:
+            continue
+        if any(marker in question_clause for marker in csv_markers):
+            return True
+        if any(pattern.search(question_clause) for pattern in CSV_OUTPUT_REQUEST_PATTERNS):
+            return True
+
+    return (
+        any(marker in normalized_question for marker in table_markers)
+        or any(
+            pattern.search(normalized_question)
+            for pattern in CSV_OUTPUT_REQUEST_PATTERNS
+            if 'spreadsheet' in pattern.pattern
+        )
+    )
 
 
 def build_assistant_table_csv_export(user_question: str, assistant_content: str) -> Optional[Dict[str, Any]]:
@@ -130,14 +209,19 @@ def build_assistant_table_csv_export(user_question: str, assistant_content: str)
 
 
 def extract_assistant_table_entries(assistant_content: str) -> List[Dict[str, str]]:
-    """Extract table rows from Markdown pipe tables or tab-separated assistant output."""
+    """Extract table rows from Markdown, tab-separated, or CSV assistant output."""
     normalized_content = str(assistant_content or '').replace('\r\n', '\n').replace('\r', '\n')
     if not normalized_content.strip():
         return []
 
+    fenced_csv_rows = _extract_fenced_comma_separated_table_entries(normalized_content)
+    if fenced_csv_rows:
+        return fenced_csv_rows
+
     candidates = [
         _extract_markdown_table_entries(normalized_content),
         _extract_tab_separated_table_entries(normalized_content),
+        _extract_comma_separated_table_entries(normalized_content),
     ]
     return max(candidates, key=len, default=[])
 
@@ -169,6 +253,30 @@ def build_assistant_table_csv(table_rows: List[Dict[str, Any]]) -> str:
                 serialized_row[column_name] = _serialize_table_cell(table_row.get(column_name))
         writer.writerow(serialized_row)
     return output_buffer.getvalue()
+
+
+def build_safe_csv_headers(header_cells: List[Any]) -> List[str]:
+    """Return non-empty, formula-safe, unique CSV headers in source order."""
+    headers = []
+    seen_headers = set()
+    for index, header_cell in enumerate(header_cells or []):
+        base_header = neutralize_csv_spreadsheet_formula(_clean_table_cell(header_cell)) or f'Column {index + 1}'
+        header = base_header
+        occurrence_count = 2
+        while header.casefold() in seen_headers:
+            header = f'{base_header} {occurrence_count}'
+            occurrence_count += 1
+        seen_headers.add(header.casefold())
+        headers.append(header)
+    return headers
+
+
+def neutralize_csv_spreadsheet_formula(value: Any) -> str:
+    """Prefix spreadsheet formula-like text while preserving signed numbers."""
+    serialized_value = '' if value is None else str(value)
+    if _spreadsheet_formula_candidate(serialized_value):
+        return f"'{serialized_value}"
+    return serialized_value
 
 
 def _extract_markdown_table_entries(content: str) -> List[Dict[str, str]]:
@@ -213,6 +321,198 @@ def _extract_tab_separated_table_entries(content: str) -> List[Dict[str, str]]:
             best_entries = block_entries
 
     return best_entries
+
+
+def _extract_comma_separated_table_entries(content: str) -> List[Dict[str, str]]:
+    fenced_candidates = []
+    unfenced_sections = []
+    previous_end = 0
+    fence_pattern = re.compile(
+        r'```[ \t]*(?P<language>[^\n`]*)\n(?P<body>.*?)```',
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    for fence_match in fence_pattern.finditer(content):
+        unfenced_sections.append(content[previous_end:fence_match.start()])
+        language = str(fence_match.group('language') or '').strip().casefold()
+        if language in CSV_FENCE_LANGUAGES:
+            fenced_candidates.extend(_parse_csv_table_candidates(fence_match.group('body'), trusted=True))
+        previous_end = fence_match.end()
+    unfenced_sections.append(content[previous_end:])
+
+    if fenced_candidates:
+        return max(fenced_candidates, key=len, default=[])
+
+    candidates = []
+    for section in unfenced_sections:
+        candidates.extend(_parse_csv_table_candidates(section, trusted=False))
+
+    return max(candidates, key=len, default=[])
+
+
+def _extract_fenced_comma_separated_table_entries(content: str) -> List[Dict[str, str]]:
+    explicit_csv_candidates = []
+    generic_fenced_candidates = []
+    fence_pattern = re.compile(
+        r'```[ \t]*(?P<language>[^\n`]*)\n(?P<body>.*?)```',
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    for fence_match in fence_pattern.finditer(content):
+        language = str(fence_match.group('language') or '').strip().casefold()
+        if language in CSV_FENCE_LANGUAGES:
+            parsed_candidates = _parse_csv_table_candidates(fence_match.group('body'), trusted=True)
+            if language in {'csv', 'text/csv'}:
+                explicit_csv_candidates.extend(parsed_candidates)
+            else:
+                generic_fenced_candidates.extend(parsed_candidates)
+    if explicit_csv_candidates:
+        return max(explicit_csv_candidates, key=len, default=[])
+    return max(generic_fenced_candidates, key=len, default=[])
+
+
+def _parse_csv_table_candidates(content: str, trusted: bool = False) -> List[List[Dict[str, str]]]:
+    if ',' not in str(content or ''):
+        return []
+
+    try:
+        parsed_rows = list(csv.reader(io.StringIO(content), strict=True))
+    except csv.Error:
+        return []
+
+    candidates = []
+    current_rows = []
+    current_width = None
+    for parsed_row in parsed_rows:
+        if not trusted and _is_csv_source_citation_row(parsed_row):
+            candidate_rows = _trim_trailing_csv_narration_rows(current_rows)
+            if len(candidate_rows) >= 2:
+                candidates.append(_build_csv_table_entries(candidate_rows, trusted=trusted))
+            current_rows = []
+            current_width = None
+            continue
+
+        row_width = len(parsed_row)
+        if row_width < 2:
+            if len(current_rows) >= 2:
+                candidates.append(_build_csv_table_entries(current_rows, trusted=trusted))
+            current_rows = []
+            current_width = None
+            continue
+
+        if current_width is not None and row_width != current_width:
+            if len(current_rows) >= 2:
+                candidates.append(_build_csv_table_entries(current_rows, trusted=trusted))
+            current_rows = []
+
+        current_rows.append(parsed_row)
+        current_width = row_width
+
+    if len(current_rows) >= 2:
+        candidates.append(_build_csv_table_entries(current_rows, trusted=trusted))
+
+    return [candidate for candidate in candidates if candidate]
+
+
+def _build_csv_table_entries(parsed_rows: List[List[str]], trusted: bool = False) -> List[Dict[str, str]]:
+    if len(parsed_rows) < 2:
+        return []
+
+    if trusted:
+        header_index = 0
+    else:
+        header_index = next(
+            (
+                row_index
+                for row_index, parsed_row in enumerate(parsed_rows[:-1])
+                if _is_likely_csv_header_row(parsed_row)
+            ),
+            None,
+        )
+    if header_index is None:
+        return []
+
+    table_rows = parsed_rows[header_index:]
+    headers = _build_unique_headers(table_rows[0])
+    if len(headers) < 2:
+        return []
+
+    entries = []
+    for parsed_row in table_rows[1:]:
+        if not trusted and _is_csv_source_citation_row(parsed_row):
+            break
+        normalized_row = _coerce_row_length(parsed_row, len(headers))
+        if not any(str(cell or '').strip() for cell in normalized_row):
+            continue
+        entries.append({
+            header: _clean_csv_cell(normalized_row[index])
+            for index, header in enumerate(headers)
+        })
+    return entries
+
+
+def _is_likely_csv_header_row(parsed_row: List[str]) -> bool:
+    cleaned_cells = [_clean_csv_cell(cell) for cell in parsed_row]
+    if len(cleaned_cells) < 2 or any(not cell for cell in cleaned_cells):
+        return False
+
+    if _is_likely_csv_preamble_row(parsed_row) or _is_csv_source_citation_row(parsed_row):
+        return False
+
+    return all('\n' not in cell for cell in cleaned_cells)
+
+
+def _is_likely_csv_discourse_row(parsed_row: List[str]) -> bool:
+    if not parsed_row:
+        return False
+
+    first_cell = _clean_csv_cell(parsed_row[0]).casefold()
+    return first_cell.startswith(CSV_PROSE_PREFIXES)
+
+
+def _is_likely_csv_preamble_row(parsed_row: List[str]) -> bool:
+    if _is_likely_csv_discourse_row(parsed_row):
+        return True
+
+    cleaned_cells = [_clean_csv_cell(cell) for cell in parsed_row]
+    combined_text = ', '.join(cell for cell in cleaned_cells if cell)
+    word_count = len(re.findall(r"\b[\w'-]+\b", combined_text))
+    return (
+        len(cleaned_cells) == 2
+        and word_count >= 5
+        and cleaned_cells[-1].rstrip().endswith(('.', '!'))
+        and not any(re.search(r'\d', cell) for cell in cleaned_cells)
+    )
+
+
+def _trim_trailing_csv_narration_rows(parsed_rows: List[List[str]]) -> List[List[str]]:
+    trimmed_rows = list(parsed_rows or [])
+    while len(trimmed_rows) > 1 and _is_likely_csv_trailing_narration_row(trimmed_rows[-1]):
+        trimmed_rows.pop()
+    return trimmed_rows
+
+
+def _is_likely_csv_trailing_narration_row(parsed_row: List[str]) -> bool:
+    cleaned_cells = [_clean_csv_cell(cell) for cell in parsed_row]
+    if len(cleaned_cells) != 2 or not _is_likely_csv_discourse_row(parsed_row):
+        return False
+
+    combined_text = ', '.join(cell for cell in cleaned_cells if cell)
+    word_count = len(re.findall(r"\b[\w'-]+\b", combined_text))
+    return word_count >= 5 and cleaned_cells[-1].rstrip().endswith(('.', '!'))
+
+
+def _is_csv_source_citation_row(parsed_row: List[str]) -> bool:
+    if not parsed_row:
+        return False
+
+    first_cell = _clean_csv_cell(parsed_row[0])
+    return bool(re.match(
+        r'^\s*(?:[-*+>\u2022\u25e6\u25aa\u2023]\s*)?'
+        r'(?:(?:\[\s*\d+\s*\]|\(\s*\d+\s*\)|\d+[.)])\s*)?'
+        r'[\[(]?\s*(?:sources?|citations?)\s*[\])]?\s*:',
+        first_cell,
+        flags=re.IGNORECASE,
+    ))
 
 
 def _parse_markdown_table_block(table_block: List[str]) -> List[Dict[str, str]]:
@@ -321,17 +621,7 @@ def _is_markdown_separator_row(row: List[str]) -> bool:
 
 
 def _build_unique_headers(header_cells: List[str]) -> List[str]:
-    headers = []
-    seen_headers = {}
-    for index, header_cell in enumerate(header_cells or []):
-        header = _clean_table_cell(header_cell) or f'Column {index + 1}'
-        normalized_header = header.casefold()
-        occurrence_count = seen_headers.get(normalized_header, 0)
-        seen_headers[normalized_header] = occurrence_count + 1
-        if occurrence_count:
-            header = f'{header} {occurrence_count + 1}'
-        headers.append(header)
-    return headers
+    return build_safe_csv_headers(header_cells)
 
 
 def _coerce_row_length(row: List[str], target_length: int) -> List[str]:
@@ -353,12 +643,25 @@ def _clean_table_cell(value: Any) -> str:
     return cleaned
 
 
+def _clean_csv_cell(value: Any) -> str:
+    return str(value or '').replace('\r\n', '\n').replace('\r', '\n').strip()
+
+
 def _serialize_table_cell(value: Any) -> str:
     if value is None:
         return ''
     if isinstance(value, (dict, list)):
-        return str(value)
-    return str(value)
+        return neutralize_csv_spreadsheet_formula(str(value))
+    return neutralize_csv_spreadsheet_formula(str(value))
+
+
+def _spreadsheet_formula_candidate(value: Any) -> bool:
+    normalized_value = str(value or '').lstrip()
+    if not normalized_value or normalized_value[0] not in ('=', '+', '-', '@'):
+        return False
+    if normalized_value[0] in ('+', '-') and SIGNED_NUMBER_PATTERN.fullmatch(normalized_value):
+        return False
+    return True
 
 
 def _build_assistant_table_export_file_name() -> str:

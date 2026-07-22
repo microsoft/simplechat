@@ -34,6 +34,7 @@ from config import (
     storage_account_user_documents_container_name,
 )
 from functions_appinsights import log_event
+from functions_assistant_table_exports import build_safe_csv_headers, neutralize_csv_spreadsheet_formula
 from functions_tabular_csv_query import (
     iter_tabular_csv_query_rows,
     validate_tabular_csv_query_expression,
@@ -232,13 +233,13 @@ def _serialize_generated_output_value(value):
     if value is None:
         return ''
     if isinstance(value, (dict, list)):
-        return json.dumps(value, default=str, ensure_ascii=False)
+        return neutralize_csv_spreadsheet_formula(json.dumps(value, default=str, ensure_ascii=False))
     if hasattr(value, 'isoformat') and not isinstance(value, str):
         try:
-            return value.isoformat()
+            return neutralize_csv_spreadsheet_formula(value.isoformat())
         except TypeError:
             pass
-    return str(value)
+    return neutralize_csv_spreadsheet_formula(value)
 
 
 def _normalize_source_identity_label(value):
@@ -513,14 +514,15 @@ def _build_generated_output_csv(entries):
     if not ordered_columns:
         ordered_columns = ['value']
 
+    safe_ordered_columns = build_safe_csv_headers(ordered_columns)
     output_buffer = io.StringIO()
-    writer = csv.DictWriter(output_buffer, fieldnames=ordered_columns)
+    writer = csv.DictWriter(output_buffer, fieldnames=safe_ordered_columns)
     writer.writeheader()
     for entry in entries or []:
         serialized_row = {}
         if isinstance(entry, dict):
-            for field_name in ordered_columns:
-                serialized_row[field_name] = _serialize_generated_output_value(entry.get(field_name))
+            for field_name, safe_field_name in zip(ordered_columns, safe_ordered_columns):
+                serialized_row[safe_field_name] = _serialize_generated_output_value(entry.get(field_name))
         writer.writerow(serialized_row)
     return output_buffer.getvalue()
 
@@ -2143,8 +2145,10 @@ def _write_ordered_output_stream(run, output_stream):
         raise ValueError('Generated output schema is missing source row order')
 
     csv_writer = None
+    safe_output_schema = None
     if output_format == 'csv':
-        csv_writer = csv.DictWriter(output_stream, fieldnames=output_schema, lineterminator='\n')
+        safe_output_schema = build_safe_csv_headers(output_schema)
+        csv_writer = csv.DictWriter(output_stream, fieldnames=safe_output_schema, lineterminator='\n')
         csv_writer.writeheader()
     else:
         output_stream.write('[\n')
@@ -2179,8 +2183,8 @@ def _write_ordered_output_stream(run, output_stream):
             }
             if csv_writer:
                 csv_writer.writerow({
-                    field_name: _serialize_generated_output_value(field_value)
-                    for field_name, field_value in ordered_entry.items()
+                    safe_field_name: _serialize_generated_output_value(ordered_entry.get(field_name))
+                    for field_name, safe_field_name in zip(output_schema, safe_output_schema)
                 })
             else:
                 if written_row_count:
@@ -2463,6 +2467,31 @@ def _checkpoint_generated_batch_results(run, generated_results):
     return batch_results
 
 
+def _build_passthrough_batch_results(run, batch_requests):
+    """Create checkpoint entries directly when rows are already final export output."""
+    expected_output_schema = list(run.get('output_schema') or [])
+    generated_results = []
+    for batch_request in batch_requests:
+        batch_started_at = time.monotonic()
+        batch_entries, output_schema = _normalize_generated_batch_entries(
+            batch_request['rows'],
+            batch_request['rows'],
+            expected_output_schema=expected_output_schema,
+        )
+        if not expected_output_schema:
+            expected_output_schema = output_schema
+        generated_results.append({
+            'batch_number': batch_request['batch_number'],
+            'batch_entries': batch_entries,
+            'batch_summary': _build_generated_batch_summary(batch_entries),
+            'batch_row_count': len(batch_entries),
+            'elapsed_seconds': time.monotonic() - batch_started_at,
+            'mismatch_count': 0,
+            'output_schema': output_schema,
+        })
+    return generated_results
+
+
 def _advance_run_progress_for_window(run, batch_results, completed_batches, processed_rows, window_start, window_end):
     for batch_number in range(window_start, window_end + 1):
         batch_result = batch_results.get(batch_number)
@@ -2516,11 +2545,13 @@ def process_tabular_generated_output_run(run_id, user_id):
             minimum=1,
             maximum=TABULAR_EXPORT_MAX_BATCH_CONCURRENCY,
         )
-        chat_service = _build_chat_service(
-            run.get('gpt_model'),
-            settings,
-            model_context=run.get('model_context'),
-        )
+        chat_service = None
+        if not run.get('passthrough_input_rows'):
+            chat_service = _build_chat_service(
+                run.get('gpt_model'),
+                settings,
+                model_context=run.get('model_context'),
+            )
         completed_batches = _safe_int(run.get('completed_batches'))
         processed_rows = _safe_int(run.get('processed_rows'))
         batch_count = _safe_int(run.get('batch_count'))
@@ -2580,20 +2611,23 @@ def process_tabular_generated_output_run(run_id, user_id):
                     },
                     debug_only=True,
                 )
-                generated_results, generation_error = asyncio.run(
-                    _generate_batch_window_entries(
-                        chat_service,
-                        run.get('user_question'),
-                        batch_requests,
-                        batch_count,
-                        run.get('source_file_name'),
-                        run.get('selected_sheet'),
-                        retry_attempts,
-                        normalized_run_id,
-                        batch_concurrency,
-                        expected_output_schema=run.get('output_schema'),
+                if run.get('passthrough_input_rows'):
+                    generated_results = _build_passthrough_batch_results(run, batch_requests)
+                else:
+                    generated_results, generation_error = asyncio.run(
+                        _generate_batch_window_entries(
+                            chat_service,
+                            run.get('user_question'),
+                            batch_requests,
+                            batch_count,
+                            run.get('source_file_name'),
+                            run.get('selected_sheet'),
+                            retry_attempts,
+                            normalized_run_id,
+                            batch_concurrency,
+                            expected_output_schema=run.get('output_schema'),
+                        )
                     )
-                )
                 _raise_if_tabular_export_canceled(run)
                 batch_results.update(_checkpoint_generated_batch_results(run, generated_results))
 
@@ -2655,6 +2689,7 @@ def queue_tabular_generated_output_run(
     settings=None,
     model_context=None,
     source_descriptor=None,
+    passthrough_input_rows=False,
 ):
     """Stage batch input blobs, create a run record, and submit background processing."""
     normalized_user_id = str(user_id or '').strip()
@@ -2756,6 +2791,7 @@ def queue_tabular_generated_output_run(
         'output_format': normalized_output_format,
         'gpt_model': str(gpt_model or '').strip(),
         'model_context': model_context if isinstance(model_context, dict) else {},
+        'passthrough_input_rows': bool(passthrough_input_rows),
         'generated_file_name': generated_file_name,
         'row_count': staged_row_count,
         'batch_count': staged_batch_count,
