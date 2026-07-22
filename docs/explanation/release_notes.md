@@ -2,6 +2,39 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.077)**
+
+#### Bug Fixes
+
+*   **Planner-First Capability Suggestions And Selected-Model Fallback**
+    *   Corrected Assist so one fast, non-executing model call owns the `direct`, `propose`, or `clarify` decision. Deterministic requirement classifiers no longer create fallback suggestions or automatically activate discovered tools when Assist is enabled.
+    *   Incomplete global planner configuration now falls back to the exact model selected for the chat turn instead of disabling planning or choosing a catalog default. Azure/OpenAI reasoning models use `max_completion_tokens`, minimal reasoning, strict structured output first, and bounded compatibility fallbacks for explicitly rejected optional fields.
+    *   Added privacy-safe transport diagnostics and verified a selected-model public-archive probe that proposed Deep Research with Web Search as the alternative without executing either capability.
+    *   (Ref: microsoft/simplechat#1021, `functions_chat_capability_planner.py`, `functions_chat_capabilities.py`, `functions_settings.py`, `route_backend_chats.py`)
+
+#### User Interface Enhancements
+
+*   **Dependent Global Planner Model Selectors**
+    *   Replaced free-form planner endpoint and model IDs with enabled global-endpoint and dependent model dropdowns sourced from the sanitized Admin catalog. Unsaved selections remain stable when endpoint definitions change and still-valid options are repopulated.
+    *   (Ref: microsoft/simplechat#1021, `admin_settings.html`, `admin_settings.js`, `admin_model_endpoints.js`, `test_admin_capability_planner_settings.py`)
+
+### **(v0.250.076)**
+
+#### New Features
+
+*   **Contextual Goals And Structured Clarification**
+    *   Added bounded contextual planning over the current message and at most two preceding active user turns, with opaque planner references mapped back to exact authorized message documents. Assistant, system, tool, evidence, workspace, deleted, masked, generated, inactive, and foreign content remains excluded.
+    *   Added an explicit durable choice whenever prior user text would cross an external boundary. The server reconstructs and minimizes the query from exact user turns at decision, resume, and execution; continuing without external retrieval suppresses external capabilities for that turn without changing saved toolbar selections.
+    *   Added one durable server-authored clarification checkpoint using allowlisted ambiguity codes, fixed questions, bounded options, optimistic concurrency, response leases, claim-generation fencing, exact Retry/Edit recovery, process-loss reconciliation, and fail-closed source revocation.
+    *   Protected contextual and clarification state across history, collaboration, metadata, SSE, and telemetry so source IDs, hashes, stored queries, trusted resume state, clarification linkage, and response hashes remain server-only.
+    *   (Ref: microsoft/simplechat#1021, `functions_chat_contextual_goals.py`, `functions_chat_clarifications.py`, `functions_chat_capability_choices.py`, `route_backend_chats.py`, `route_backend_conversations.py`)
+
+#### User Interface Enhancements
+
+*   **Prior-Goal Disclosure And Clarification Controls**
+    *   Added an inert prior-goal disclosure to contextual capability choices and accessible clarification options that submit through the normal chat path, with free-text focus, pending/processing/resolved/expired reconstruction, keyboard support, 44-pixel mobile controls, and responsive overflow protection.
+    *   (Ref: microsoft/simplechat#1021, `chat-capability-choice.js`, `chat-clarification.js`, `chat-messages.js`, `chats.css`, `test_chat_capability_choice_card.py`, `test_chat_clarification.py`)
+
 ### **(v0.250.075)**
 
 #### User Interface Enhancements

@@ -36,6 +36,7 @@ from collaboration_models import (
 )
 from functions_activity_logging import log_chat_activity
 from functions_appinsights import log_event
+from functions_chat_capability_choices import project_chat_metadata_for_client
 from functions_conversation_cache import bump_conversation_cache_version, invalidate_conversation_cache_for_item
 from functions_documents import sync_chat_upload_workspace_document_sharing_for_collaboration
 from functions_group import (
@@ -337,7 +338,8 @@ def build_collaboration_image_url(conversation_id, message_id):
 
 
 def serialize_collaboration_message(message_doc):
-    metadata = message_doc.get('metadata', {}) if isinstance(message_doc, dict) else {}
+    stored_metadata = message_doc.get('metadata', {}) if isinstance(message_doc, dict) else {}
+    metadata = project_chat_metadata_for_client(stored_metadata)
     display_role = _get_collaboration_display_role(message_doc)
     serialized_role = display_role if display_role in ('file', 'image') else message_doc.get('role')
     serialized_content = message_doc.get('content', '')
@@ -695,8 +697,9 @@ def build_collaboration_message_metadata_payload(message_doc, conversation_doc):
             'vision_analysis': message_doc.get('vision_analysis') or (source_message_doc or {}).get('vision_analysis'),
         }
 
+    projected_metadata = project_chat_metadata_for_client(merged_metadata)
     if str(message_doc.get('role') or '').strip().lower() != 'assistant':
-        return merged_metadata
+        return projected_metadata
 
     payload = deepcopy(source_message_doc or {})
     payload.update({
@@ -721,7 +724,7 @@ def build_collaboration_message_metadata_payload(message_doc, conversation_doc):
         'extracted_text': message_doc.get('extracted_text') or payload.get('extracted_text'),
         'vision_analysis': message_doc.get('vision_analysis') or payload.get('vision_analysis'),
     })
-    payload['metadata'] = merged_metadata
+    payload['metadata'] = projected_metadata
     return payload
 
 

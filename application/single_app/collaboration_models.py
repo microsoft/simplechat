@@ -5,6 +5,8 @@
 from datetime import UTC, datetime, timedelta
 import uuid
 
+from functions_chat_capability_choices import project_chat_metadata_for_client
+
 
 COLLABORATION_KIND = 'collaborative'
 
@@ -660,7 +662,7 @@ def build_collaboration_message_doc_from_legacy(
 
     collaboration_metadata = collaboration_message.get('metadata', {})
     collaboration_message['metadata'] = {
-        **dict(legacy_metadata),
+        **project_chat_metadata_for_client(legacy_metadata),
         **collaboration_metadata,
         'source_message_id': _clean_string(legacy_message.get('id')) or None,
         'source_role': legacy_role or None,

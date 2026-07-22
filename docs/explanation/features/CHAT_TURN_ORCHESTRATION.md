@@ -5,6 +5,8 @@ Updated for governed planner activation in version: **0.250.072**
 Updated planner administration in version: **0.250.073**
 Updated governed choice experience in version: **0.250.074**
 Updated resolved choice state in version: **0.250.075**
+Updated contextual goals and clarification in version: **0.250.076**
+Corrected planner-first Assist runtime in version: **0.250.077**
 Associated issue: **[#1021](https://github.com/microsoft/simplechat/issues/1021)**
 
 ## Overview
@@ -329,9 +331,11 @@ documented in
 `docs/explanation/features/CHAT_ORCHESTRATION_EVALUATION_QUALITY_GATES.md`.
 Phase 10A adds model-assisted capability planning in non-executing shadow mode.
 Phase 10B activates validated high-confidence additive proposals through the
-existing durable choice lifecycle. Phase 10C remains responsible for contextual
-clarification and bounded prior-user-goal references. Generalized output types
-move to Phase 11.
+existing durable choice lifecycle. Phase 10C adds contextual clarification and
+bounded prior-user-goal references. Version 0.250.077 makes Assist planner-first:
+the model owns capability suggestions while the server retains inventory,
+authorization, approval, execution, and evidence control. Generalized output
+types move to Phase 11.
 
 ## Phase 10A Model-Assisted Planner Shadow Mode
 
@@ -373,12 +377,15 @@ plan remains the only behavioral input.
 The planner uses the already resolved chat model by default. Administrators may
 configure a saved global endpoint/model pair; the server resolves it through
 global endpoint and item governance and ignores colliding personal or group
-endpoint IDs. Browser model values are not consulted. Azure OpenAI uses strict
-JSON schema when supported, OpenAI-style providers use bounded compatibility
-variants, and Anthropic-compatible models receive the exact schema in JSON-only
-prompting. Calls are non-streaming, tool-free, single-result, disable SDK retries,
-and share one real transport deadline that defaults to five seconds and cannot
-exceed ten seconds.
+endpoint IDs. An incomplete configured pair falls back to the exact client and
+deployment selected for the chat turn; it never chooses the first catalog model.
+Browser connection values are not consulted. Azure OpenAI starts with strict
+JSON schema, `max_completion_tokens`, and minimal reasoning. OpenAI-style
+providers use bounded compatibility variants only for classified optional-field
+HTTP 400 responses, and Anthropic-compatible models receive the exact schema in
+JSON-only prompting. Calls are non-streaming, tool-free, single-result, disable
+SDK retries, and share one real transport deadline that defaults to ten seconds
+and cannot exceed twenty seconds.
 
 ### Shadow Metadata And Evaluation
 
@@ -414,12 +421,17 @@ silently adding, removing, or replacing work in an approved turn. A selected
 dependency keeps `selection` origin while remaining part of the bound closure.
 
 Planner and deterministic recommendations use conservative precedence.
-Submitted selections, explicit declines, current eligibility, and material
-deterministic recommendations remain authoritative. A planner plan can add
-complementary work only when it contains the deterministic effective set;
-otherwise deterministic behavior wins. Planner timeout, invalid output, low
-confidence, provider failure, bundle failure, or proposal persistence failure
-executes no newly proposed capability.
+This was the original Phase 10B arbitration contract. Version 0.250.077 changes
+current Assist behavior: the server builds the governed inventory but skips
+built-in and governed-agent heuristic requirement classification, deterministic
+recommendation generation, and automatic capability discovery. The validated
+planner is the only source of new suggestions. Submitted selections, explicit
+declines, current eligibility, and server policy remain authoritative. Planner
+timeout, invalid output, low confidence, provider failure, bundle failure, or
+proposal persistence failure suggests and executes no newly proposed capability.
+Off retains explicit selections and deterministic server behavior; Shadow may
+still compute the deterministic recommendation solely as an observational
+comparison control.
 
 Activated plans reuse the existing `awaiting_user_choice` assistant message,
 allowlisted option decision, conversation/source-turn authorization, ETag
@@ -454,8 +466,9 @@ reconciliation completes only the same execution ID from running or failed
 state.
 
 Deterministic and planner recommendation paths both subtract the complete
-selected and automatic closure. Stored deterministic built-in options are also
-rebound to the current recursive closure before resume. Streaming,
+selected and automatic closure where those paths remain active. Stored
+deterministic built-in options are also rebound to the current recursive closure
+before resume. Assist does not create new automatic discovery roots. Streaming,
 non-streaming, and document-action paths persist the same expanded selected
 members with `selection` origin while retaining only explicit roots in the
 selection snapshot.
@@ -480,9 +493,64 @@ to compose a new bundle. Selecting a card immediately submits its one persisted
 option ID and resumes execution. A full-width secondary action continues
 without additional capabilities. External-data notices and submitted
 selections remain visible as context. Admin Settings exposes the three modes
-and bounded planner runtime controls for staged rollout. After a choice is
+and bounded planner runtime controls for staged rollout. Configured global model
+selection uses an enabled endpoint dropdown and a dependent enabled-model
+dropdown sourced from sanitized settings; unsaved valid selections survive
+catalog refreshes. After a choice is
 saved, the expanded chooser condenses to one inert summary showing the selected
 plan, its included capabilities, and Saved, Running, Completed, or retry state.
+
+## Phase 10C Contextual Goals And Structured Clarification
+
+Phase 10C lets the planner interpret a terse follow-up against a bounded set of
+exact prior user goals. Planning context contains the current user message and
+at most two preceding active user messages from the same thread lineage. The
+server excludes assistant, system, tool, evidence, citation, workspace,
+deleted, fully or partially masked, generated-artifact, inactive, and
+cross-thread content. The planner receives only request-local `turn_0` through
+`turn_2` references; canonical conversation and message IDs remain server-side.
+
+The planner may select supplied goal refs, but it cannot author executable
+combined text. The server maps validated refs back to exact user documents,
+binds their content hashes and thread lineage, and rebuilds the goal in
+deterministic order. Internal retrieval can use the exact combined user goal
+without crossing an external boundary. A proposal using any prior user turn for Web Search, Deep
+Research, or another external source always creates one disclosed durable
+choice, including when the external capability was already selected or
+automatic. The browser still submits only one persisted option ID. Continuing
+without external retrieval suppresses external baseline capabilities for that
+turn without changing toolbar defaults.
+
+Approved contextual retrieval is reauthorized from the exact conversation
+partition during proposal load, inside decision and resume ETag transitions,
+after the resume lease is claimed, and immediately before the first external
+call. Deleted, masked, changed, foreign, inactive, or missing source turns
+invalidate the proposal. The outbound query is reconstructed and minimized
+again from exact user documents; stored query text is audit context rather than
+authorization. Assistant output, planner-composed text, tool/evidence content,
+and workspace text cannot become the external query. Address-bearing variants
+retain a separate explicit sensitive-input option.
+
+Validated planner `clarify` decisions map one of seven allowlisted ambiguity
+codes to a fixed server-authored question. The assistant persists an
+`awaiting_user_clarification` checkpoint and closes the stream. Options submit
+through the normal chat path, while free text uses the normal composer. The
+clarification response claims an ETag-protected lease before the next planner
+call, so an identical concurrent replay cannot create a second child plan. The
+claim completes only after the exact response user turn is persisted. A live
+claim reconstructs as processing; an expired claim can reuse its child linkage,
+and a persisted response turn reconciles completion after process loss. The
+response retains exact parent/source/child linkage on the server and consumes
+the one-clarification budget for the goal. Unknown codes/options, conflicting
+responses, expiry, and source revocation fail closed.
+
+Client metadata projection removes exact source IDs, content hashes, stored
+queries, trusted resume requests, clarification IDs, and run linkage before
+history, metadata, initial-render, or SSE responses reach the browser. The
+choice and clarification modules render all dynamic summaries and option text
+through inert DOM APIs. Fixed-schema evaluation records only bounded turn
+counts, booleans, safe codes/classes, hashes, latency, lifecycle states, and
+outcomes.
 
 ## Security And Governance
 
@@ -640,17 +708,26 @@ Phase 9 evaluation coverage is in:
 Phase 10A and 10B planner coverage is in:
 
 - `functional_tests/test_chat_capability_model_planner.py` for safe request projection, strict direct/propose/clarify validation, selected-mandate preservation, provider variants, transport timeout, cancellation, privacy, the 139-row deterministic evaluation dataset, and required semantic fixtures.
-- `functional_tests/test_chat_capability_planner_route.py` for off/shadow eligibility, resume isolation, server-owned configured model selection, route ordering, deterministic control isolation, and user-turn-only metadata.
+- `functional_tests/test_chat_capability_planner_route.py` for off/shadow eligibility, resume isolation, exact selected-chat fallback, global-only configured model selection, planner-only Assist discovery, route ordering, deterministic Shadow isolation, and user-turn-only metadata.
 - `functional_tests/test_phase9_orchestration_observability.py` for the four fixed planner event types and forbidden-value checks.
-- `functional_tests/test_phase10b_governed_additive_plan_activation.py` for high-confidence activation, additive bundles, selected and automatic dependency expansion, origin separation, deterministic arbitration, exact plan binding, sensitive current-turn options, governed agents, Image/agent exclusion, failure closure, admin controls, and bounded telemetry.
-- `ui_tests/test_chat_capability_choice_card.py` and `ui_tests/test_admin_capability_planner_settings.py` for additive choice rendering and staged rollout controls across desktop and mobile.
-- `scripts/run_phase9_orchestration_quality_gates.py` for the combined Phase 9/10A/10B repeatable gate.
+- `functional_tests/test_phase10b_governed_additive_plan_activation.py` for planner-owned high-confidence activation, additive bundles, selected and automatic dependency expansion, origin separation, exact plan binding, sensitive current-turn options, governed agents, Image/agent exclusion, failure closure, admin controls, and bounded telemetry.
+- `ui_tests/test_chat_capability_choice_card.py` and `ui_tests/test_admin_capability_planner_settings.py` for additive choice rendering, dependent configured-model selectors, and staged rollout controls across desktop and mobile.
+- `scripts/run_phase9_orchestration_quality_gates.py` for the combined Phase 9/10A/10B/10C repeatable gate.
+
+Phase 10C contextual-goal and clarification coverage is in:
+
+- `functional_tests/test_phase10c_contextual_goals.py` for bounded active user-turn assembly, opaque ref binding, masking/artifact exclusion, exact source rereads, and context-only external choices.
+- `functional_tests/test_chat_capability_model_planner.py` for planner v2 goal refs, current-turn requirements, server-allowlisted clarification codes/options, and clarification budget enforcement.
+- `functional_tests/test_chat_capability_choice_contract.py`, `functional_tests/test_chat_capability_choice_persistence.py`, and `functional_tests/test_chat_capability_choice_route.py` for source hashes/lineage, client projection, option-scoped approval, ETag validation, mutation/revocation failure, exact query reconstruction, and contextual decline.
+- `functional_tests/test_chat_clarification_persistence.py` for fixed questions, option/free-text responses, expiry, ETag retries, duplicate/conflicting responses, and parent/child linkage.
+- `functional_tests/test_phase9_orchestration_observability.py` for bounded context, prior-goal, and clarification lifecycle telemetry with forbidden-value checks.
+- `ui_tests/test_chat_capability_choice_card.py` and `ui_tests/test_chat_clarification.py` for inert disclosures/options, keyboard and screen-reader state, refresh reconstruction, 44-pixel controls, and desktop/mobile overflow.
 
 ## Known Limitations
 
-Phase 8A, Phase 8B, Phase 10A, and Phase 10B add durable governed choice and conservative additive model planning, with these deliberate boundaries:
+Phase 8A, Phase 8B, Phase 10A, Phase 10B, and Phase 10C add durable governed choice, conservative additive model planning, bounded contextual goals, and one structured clarification, with these deliberate boundaries:
 
-- `assist` can create one server-authored choice from a validated high-confidence proposal, but the model cannot execute capabilities, author policy fields, bypass deterministic conflict precedence, or create a clarification checkpoint.
+- `assist` can create one server-authored choice or one server-templated clarification from a validated result, but the model cannot execute capabilities, author query/question text or policy fields, override explicit selections or server authorization, approve egress, or create an unbounded clarification loop.
 
 - Generalized multi-agent recommendation remains out of scope. When an agent is already selected, Phase 8B does not recommend another agent.
 - Foundry-backed agents and local agents with attached actions remain explicitly selectable but are not discoverable until hidden tools, action arguments, and runtime telemetry have a separately reviewed read-only governance contract.

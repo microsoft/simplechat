@@ -4136,25 +4136,31 @@
                                 <option value="same_as_chat" {% if settings.chat_capability_planner_model_source|default('same_as_chat') == 'same_as_chat' %}selected{% endif %}>Same as selected chat model</option>
                                 <option value="configured" {% if settings.chat_capability_planner_model_source == 'configured' %}selected{% endif %}>Configured global model</option>
                             </select>
-                            <div class="form-text">Use a configured model when planning should be independent of the model selected in chat.</div>
+                            <div class="form-text">Use a configured model when planning should be independent of the model selected in chat. If no complete global model is selected, planning uses the exact model selected for that chat turn.</div>
                         </div>
                         <div class="col-lg-4">
                             <div class="d-flex align-items-center mb-1">
-                                <label class="form-label mb-0" for="chat_capability_planner_model_endpoint_id">Global endpoint ID</label>
-                                <button type="button" class="btn btn-link p-0 ms-2 text-secondary lh-1" data-bs-toggle="tooltip" data-bs-trigger="hover focus" title="The internal ID of an enabled global model endpoint from Admin Settings > AI Models. This is an endpoint catalog ID, not a URL." aria-label="About global endpoint ID">
+                                <label class="form-label mb-0" for="chat_capability_planner_model_endpoint_id">Global endpoint</label>
+                                <button type="button" class="btn btn-link p-0 ms-2 text-secondary lh-1" data-bs-toggle="tooltip" data-bs-trigger="hover focus" title="Choose an enabled global model endpoint from Admin Settings > AI Models. Endpoint URLs and credentials are never shown here." aria-label="About global endpoint">
                                     <i class="bi bi-info-circle" aria-hidden="true"></i>
                                 </button>
                             </div>
-                            <input type="text" class="form-control" id="chat_capability_planner_model_endpoint_id" name="chat_capability_planner_model_endpoint_id" maxlength="256" value="{{ settings.chat_capability_planner_model_endpoint_id|default('') }}" autocomplete="off" />
+                            <select class="form-select" id="chat_capability_planner_model_endpoint_id" name="chat_capability_planner_model_endpoint_id" data-selected-value="{{ settings.chat_capability_planner_model_endpoint_id|default('') }}">
+                                <option value="">Use selected chat model</option>
+                            </select>
+                            <div class="form-text">Choose an enabled endpoint from Admin Settings &gt; AI Models.</div>
                         </div>
                         <div class="col-lg-4">
                             <div class="d-flex align-items-center mb-1">
-                                <label class="form-label mb-0" for="chat_capability_planner_model_id">Model ID</label>
-                                <button type="button" class="btn btn-link p-0 ms-2 text-secondary lh-1" data-bs-toggle="tooltip" data-bs-trigger="hover focus" title="The internal model ID inside the selected global endpoint. It is not a candidate plan, capability ID, deployment label, or model display name." aria-label="About planner model ID">
+                                <label class="form-label mb-0" for="chat_capability_planner_model_id">Global model</label>
+                                <button type="button" class="btn btn-link p-0 ms-2 text-secondary lh-1" data-bs-toggle="tooltip" data-bs-trigger="hover focus" title="Choose an enabled model from the selected global endpoint. Only the saved catalog selection is submitted." aria-label="About global model">
                                     <i class="bi bi-info-circle" aria-hidden="true"></i>
                                 </button>
                             </div>
-                            <input type="text" class="form-control" id="chat_capability_planner_model_id" name="chat_capability_planner_model_id" maxlength="256" value="{{ settings.chat_capability_planner_model_id|default('') }}" autocomplete="off" />
+                            <select class="form-select" id="chat_capability_planner_model_id" name="chat_capability_planner_model_id" data-selected-value="{{ settings.chat_capability_planner_model_id|default('') }}" disabled>
+                                <option value="">Select a global endpoint first</option>
+                            </select>
+                            <div class="form-text">Only enabled models from the selected global endpoint are available.</div>
                         </div>
                         <div class="col-sm-6 col-xl-3">
                             <div class="d-flex align-items-center justify-content-between mb-1">

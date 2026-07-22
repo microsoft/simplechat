@@ -1198,7 +1198,45 @@ def get_capability_option_revalidation_error(option, inventory):
     """Return a bounded error when a built-in option no longer matches server policy."""
     if not isinstance(option, Mapping) or not isinstance(inventory, Mapping):
         return 'capability_plan_invalid'
-    if str(option.get('kind') or 'capability').strip().lower() != 'capability':
+    option_kind = str(option.get('kind') or 'capability').strip().lower()
+    if option_kind == 'context':
+        entries_by_id = {
+            str(entry.get('id') or '').strip().lower(): entry
+            for entry in (inventory.get('capabilities') or [])
+            if isinstance(entry, Mapping) and str(entry.get('id') or '').strip()
+        }
+        rebuilt_option = _build_contextual_egress_option(
+            option.get('effective_capability_ids') or [],
+            entries_by_id,
+            inventory.get('version'),
+        )
+        if not rebuilt_option:
+            return 'capability_plan_invalid'
+        expected_option_id = rebuilt_option['id']
+        if str(option.get('id') or '').endswith('_with_sensitive_inputs'):
+            expected_option_id = f'{expected_option_id}_with_sensitive_inputs'
+            if not (
+                option.get('external_query_mode')
+                == 'include_approved_sensitive_inputs'
+                and 'street_address' in (option.get('sensitive_input_types') or [])
+            ):
+                return 'capability_plan_policy_changed'
+        for field_name in (
+            'kind',
+            'effective_capability_ids',
+            'latency_class',
+            'cost_class',
+            'external_data',
+            'read_only',
+            'risk_class',
+            'data_sensitivity',
+        ):
+            if option.get(field_name) != rebuilt_option.get(field_name):
+                return 'capability_plan_policy_changed'
+        if option.get('id') != expected_option_id:
+            return 'capability_plan_policy_changed'
+        return None
+    if option_kind != 'capability':
         return None
     option_id = str(option.get('id') or '').strip()
     approved_ids = [
@@ -1353,58 +1391,213 @@ def _recommended_capability_option(recommendation):
     )
 
 
+def _build_contextual_egress_option(effective_ids, entries_by_id, inventory_version):
+    normalized_ids = sorted({
+        str(capability_id or '').strip().lower()
+        for capability_id in effective_ids or []
+        if str(capability_id or '').strip().lower() in entries_by_id
+    })
+    effective_entries = [entries_by_id[capability_id] for capability_id in normalized_ids]
+    if not effective_entries or not all(
+        entry.get('external_data') is True
+        and entry.get('read_only') is True
+        and entry.get('input_ready') is True
+        and entry.get('state') in {'selected', 'unselected'}
+        for entry in effective_entries
+    ):
+        return None
+    binding = {
+        'kind': 'prior_user_goal_egress',
+        'inventory_version': inventory_version,
+        'capabilities': [
+            {
+                'id': entry.get('id'),
+                'state': entry.get('state'),
+                'risk_class': entry.get('risk_class'),
+                'latency_class': entry.get('latency_class'),
+                'cost_class': entry.get('cost_class'),
+                'data_sensitivity': entry.get('data_sensitivity'),
+            }
+            for entry in effective_entries
+        ],
+    }
+    option_digest = hashlib.sha256(
+        json.dumps(binding, sort_keys=True, separators=(',', ':')).encode('utf-8')
+    ).hexdigest()[:32]
+    effective_id_set = set(normalized_ids)
+    if 'deep_research' in effective_id_set:
+        label = 'Research using the earlier request'
+    elif 'web_search' in effective_id_set:
+        label = 'Search the web using the earlier request'
+    else:
+        label = 'Use external sources from the earlier request'
+    risk_order = {
+        'internal_read': 0,
+        'external_read': 1,
+    }
+    return {
+        'id': f'context:{option_digest}',
+        'kind': 'context',
+        'capability_ids': [],
+        'effective_capability_ids': normalized_ids,
+        'label': label,
+        'latency_class': _planner_plan_aggregate_class(
+            effective_entries,
+            'latency_class',
+            _PLANNER_PLAN_LATENCY_ORDER,
+            'seconds',
+        ),
+        'cost_class': _planner_plan_aggregate_class(
+            effective_entries,
+            'cost_class',
+            _PLANNER_PLAN_COST_ORDER,
+            'standard',
+        ),
+        'external_data': True,
+        'requires_user_choice': True,
+        'read_only': True,
+        'risk_class': _planner_plan_aggregate_class(
+            effective_entries,
+            'risk_class',
+            risk_order,
+            'external_read',
+        ),
+        'data_sensitivity': (
+            'internal'
+            if any(
+                str(entry.get('risk_class') or '').strip().lower()
+                == 'internal_read'
+                for entry in effective_entries
+            )
+            else 'public'
+        ),
+    }
+
+
+def build_contextual_egress_recommendation(
+    validated_result,
+    inventory,
+    selection_snapshot=None,
+):
+    """Require one choice when a prior goal would use baseline external retrieval."""
+    if not (
+        isinstance(validated_result, Mapping)
+        and validated_result.get('status') == 'valid'
+        and validated_result.get('decision') == 'direct'
+        and validated_result.get('prior_goal_included') is True
+        and isinstance(inventory, Mapping)
+    ):
+        return None
+    entries_by_id = {
+        str(entry.get('id') or '').strip().lower(): entry
+        for entry in inventory.get('capabilities') or []
+        if isinstance(entry, Mapping) and str(entry.get('id') or '').strip()
+    }
+    try:
+        selected_ids = _selected_planner_capability_ids(
+            inventory,
+            selection_snapshot,
+        )
+        automatic_root_ids = {
+            str(capability_id or '').strip().lower()
+            for capability_id in (
+                selection_snapshot.get('auto_capability_ids')
+                if isinstance(selection_snapshot, Mapping)
+                else []
+            ) or []
+            if str(capability_id or '').strip()
+        }
+        automatic_ids = set(expand_governed_capability_baseline_ids(
+            inventory,
+            automatic_root_ids,
+        ))
+    except ValueError:
+        return None
+    external_effective_ids = {
+        capability_id
+        for capability_id in selected_ids | automatic_ids
+        if capability_id in entries_by_id
+        and entries_by_id[capability_id].get('external_data') is True
+    }
+    option = _build_contextual_egress_option(
+        external_effective_ids,
+        entries_by_id,
+        inventory.get('version'),
+    )
+    if not option:
+        return None
+    reason_codes = [
+        str(item.get('reason_code') or '').strip().lower()
+        for item in validated_result.get('requirements') or []
+        if isinstance(item, Mapping)
+        and _bounded_reason(item.get('reason_code'))
+    ]
+    if not reason_codes:
+        reason_codes = ['public_source_retrieval']
+    return {
+        'version': CAPABILITY_RECOMMENDATION_VERSION,
+        'status': 'pending',
+        'source': 'planner',
+        'requirement_ids': [
+            str(item.get('id') or '').strip().lower()
+            for item in validated_result.get('requirements') or []
+            if isinstance(item, Mapping) and str(item.get('id') or '').strip()
+        ],
+        'reason_codes': list(dict.fromkeys(reason_codes)),
+        'recommended_option_id': option['id'],
+        'options': [
+            option,
+            {
+                'id': CONTINUE_WITHOUT_CAPABILITIES_OPTION_ID,
+                'kind': 'continue',
+                'capability_ids': [],
+                'effective_capability_ids': [],
+                'label': 'Continue without external retrieval',
+                'latency_class': 'immediate',
+                'cost_class': 'none',
+                'external_data': False,
+                'requires_user_choice': True,
+            },
+        ],
+        'required_inputs': [],
+        'selected_capability_ids': sorted(selected_ids),
+        'selected_context_labels': [
+            entry['label']
+            for entry in inventory.get('capabilities') or []
+            if isinstance(entry, Mapping)
+            and entry.get('state') == 'selected'
+            and str(entry.get('label') or '').strip()
+        ],
+    }
+
+
 def arbitrate_planner_capability_recommendation(
     planner_recommendation,
     deterministic_recommendation,
 ):
-    """Prefer deterministic control when a planner plan omits its material source."""
-    deterministic = (
-        copy.deepcopy(dict(deterministic_recommendation))
-        if isinstance(deterministic_recommendation, Mapping)
-        else None
-    )
+    """Activate only a validated planner recommendation in Assist mode."""
+    del deterministic_recommendation
     planner = (
         copy.deepcopy(dict(planner_recommendation))
         if isinstance(planner_recommendation, Mapping)
         else None
     )
     if not planner:
-        return deterministic, {
+        return None, {
             'activation_status': 'suppressed',
-            'recommendation_source': 'deterministic' if deterministic else 'direct',
+            'recommendation_source': 'direct',
             'suppression_reason': 'planner_not_materialized',
         }
 
     planner_signature = _planner_option_signature(
         _recommended_capability_option(planner)
     )
-    deterministic_signature = _planner_option_signature(
-        _recommended_capability_option(deterministic)
-    )
     if not planner_signature:
-        return deterministic, {
+        return None, {
             'activation_status': 'suppressed',
-            'recommendation_source': 'deterministic' if deterministic else 'direct',
+            'recommendation_source': 'direct',
             'suppression_reason': 'planner_not_materialized',
         }
-    if deterministic_signature and not deterministic_signature.issubset(planner_signature):
-        return deterministic, {
-            'activation_status': 'suppressed',
-            'recommendation_source': 'deterministic',
-            'suppression_reason': 'deterministic_conflict',
-        }
-    if deterministic_signature:
-        planner['options'] = [
-            option
-            for option in planner.get('options') or []
-            if (
-                str(option.get('id') or '').strip()
-                == CONTINUE_WITHOUT_CAPABILITIES_OPTION_ID
-                or deterministic_signature.issubset(
-                    _planner_option_signature(option)
-                )
-            )
-        ]
     return planner, {
         'activation_status': 'materialized',
         'recommendation_source': 'planner',

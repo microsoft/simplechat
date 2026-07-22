@@ -41,6 +41,7 @@ ORCHESTRATION_RUN_STATUSES = frozenset({
     'pending',
     'running',
     'awaiting_user_choice',
+    'awaiting_user_clarification',
     'succeeded',
     'partial',
     'failed',

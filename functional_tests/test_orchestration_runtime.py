@@ -721,7 +721,7 @@ def test_chat_routes_persist_and_gate_request_scoped_runtime():
         route_source.index('def finalize_cancelled_stream_response():'),
     )
     cancel_persist_index = route_source.index(
-        'cosmos_messages_container.upsert_item(user_message_doc)',
+        'persist_stream_user_message(user_metadata)',
         cancel_runtime_index,
     )
     stream_failure_index = route_source.index(
@@ -729,7 +729,7 @@ def test_chat_routes_persist_and_gate_request_scoped_runtime():
         cancel_persist_index,
     )
     stream_failure_persist_index = route_source.index(
-        'cosmos_messages_container.upsert_item(user_message_doc)',
+        'persist_stream_user_message(user_metadata)',
         stream_failure_index,
     )
     assert cancel_runtime_index < cancel_persist_index < stream_failure_index

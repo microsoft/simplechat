@@ -9708,21 +9708,93 @@ function setupCapabilityPlannerControls() {
     updateModeDescription();
 
     const modelSource = document.getElementById('chat_capability_planner_model_source');
-    const configuredModelFields = [
-        document.getElementById('chat_capability_planner_model_endpoint_id'),
-        document.getElementById('chat_capability_planner_model_id'),
-    ].filter(Boolean);
-    const updateConfiguredModelFields = () => {
-        const usesConfiguredModel = modelSource?.value === 'configured';
-        configuredModelFields.forEach(field => {
-            field.readOnly = !usesConfiguredModel;
-            field.setAttribute('aria-disabled', `${!usesConfiguredModel}`);
-            field.classList.toggle('bg-body-secondary', !usesConfiguredModel);
-        });
+    const endpointSelect = document.getElementById('chat_capability_planner_model_endpoint_id');
+    const modelSelect = document.getElementById('chat_capability_planner_model_id');
+    let globalEndpoints = [];
+    const savedEndpointId = endpointSelect?.dataset.selectedValue || '';
+    const savedModelId = modelSelect?.dataset.selectedValue || '';
+
+    const endpointLabel = endpoint => {
+        const name = endpoint.name || endpoint.displayName || endpoint.id;
+        const provider = endpoint.provider ? ` (${endpoint.provider})` : '';
+        return `${name}${provider}`;
     };
 
-    modelSource?.addEventListener('change', updateConfiguredModelFields);
-    updateConfiguredModelFields();
+    const modelLabel = model => {
+        const name = model.displayName || model.deploymentName || model.modelName || model.id;
+        const detail = model.modelName && model.modelName !== name ? ` (${model.modelName})` : '';
+        return `${name}${detail}`;
+    };
+
+    const populateEndpointOptions = preferredEndpointId => {
+        if (!endpointSelect) {
+            return;
+        }
+        endpointSelect.replaceChildren(new Option('Use selected chat model', ''));
+        globalEndpoints.forEach(endpoint => {
+            endpointSelect.add(new Option(endpointLabel(endpoint), endpoint.id));
+        });
+        endpointSelect.value = globalEndpoints.some(endpoint => endpoint.id === preferredEndpointId)
+            ? preferredEndpointId
+            : '';
+    };
+
+    const setGlobalEndpoints = (endpoints, preferredEndpointId, preferredModelId) => {
+        globalEndpoints = (Array.isArray(endpoints) ? endpoints : [])
+            .filter(endpoint => endpoint && endpoint.enabled !== false && endpoint.id);
+        populateEndpointOptions(preferredEndpointId);
+        updateConfiguredModelFields(preferredModelId);
+    };
+
+    const populateModelOptions = preferredModelId => {
+        if (!modelSelect) {
+            return;
+        }
+        const endpoint = globalEndpoints.find(candidate => candidate.id === endpointSelect?.value);
+        const enabledModels = Array.isArray(endpoint?.models)
+            ? endpoint.models.filter(model => model && model.enabled !== false && model.id)
+            : [];
+        const emptyLabel = endpoint
+            ? 'Select a model'
+            : 'Select a global endpoint first';
+        modelSelect.replaceChildren(new Option(emptyLabel, ''));
+        enabledModels.forEach(model => {
+            modelSelect.add(new Option(modelLabel(model), model.id));
+        });
+        modelSelect.value = enabledModels.some(model => model.id === preferredModelId)
+            ? preferredModelId
+            : '';
+        modelSelect.disabled = modelSource?.value !== 'configured' || !endpoint || enabledModels.length === 0;
+    };
+
+    const updateConfiguredModelFields = preferredModelId => {
+        const usesConfiguredModel = modelSource?.value === 'configured';
+        if (endpointSelect) {
+            endpointSelect.disabled = !usesConfiguredModel || globalEndpoints.length === 0;
+            endpointSelect.setAttribute('aria-disabled', `${endpointSelect.disabled}`);
+            endpointSelect.classList.toggle('bg-body-secondary', endpointSelect.disabled);
+        }
+        populateModelOptions(preferredModelId ?? modelSelect?.value ?? savedModelId);
+        if (modelSelect) {
+            modelSelect.setAttribute('aria-disabled', `${modelSelect.disabled}`);
+            modelSelect.classList.toggle('bg-body-secondary', modelSelect.disabled);
+        }
+    };
+
+    modelSource?.addEventListener('change', () => updateConfiguredModelFields());
+    endpointSelect?.addEventListener('change', () => {
+        populateModelOptions('');
+        markFormAsModified();
+    });
+    modelSelect?.addEventListener('change', markFormAsModified);
+    document.addEventListener('model-endpoints-changed', event => {
+        setGlobalEndpoints(
+            event.detail?.endpoints,
+            endpointSelect?.value ?? savedEndpointId,
+            modelSelect?.value ?? savedModelId,
+        );
+    });
+    setGlobalEndpoints(window.modelEndpoints, savedEndpointId, savedModelId);
 
     panel.querySelectorAll('.capability-planner-range').forEach(rangeInput => {
         const outputId = rangeInput.getAttribute('data-value-output');

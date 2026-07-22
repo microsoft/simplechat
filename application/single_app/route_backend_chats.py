@@ -56,6 +56,7 @@ from urllib.parse import urlparse
 import threading
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 from config import *
+from azure.core import MatchConditions
 from flask import Response, copy_current_request_context, current_app, g, has_request_context, stream_with_context
 from functions_authentication import *
 from functions_search import *
@@ -135,6 +136,7 @@ from functions_chat_capability_planner import (
 from functions_chat_capabilities import (
     arbitrate_planner_capability_recommendation,
     build_agent_capability_recommendation,
+    build_contextual_egress_recommendation,
     build_governed_agent_capability_inventory,
     build_governed_capability_inventory,
     build_planner_capability_recommendation,
@@ -151,15 +153,41 @@ from functions_agent_catalog import build_authorized_agent_discovery_catalog
 from functions_chat_capability_choices import (
     CapabilityChoiceError,
     add_sensitive_external_query_options,
+    build_decline_aware_execution_baseline,
+    build_approved_user_turn_goal,
     build_capability_choice_proposal,
     build_capability_provenance,
     build_capability_resume_origins,
     build_minimized_external_query,
     build_resumed_external_query,
+    project_chat_metadata_for_client,
+    rebuild_approved_user_turn_goal,
     revalidate_capability_choice,
     revalidate_capability_execution_baseline,
     revalidate_capability_execution_compatibility,
     resolve_external_retrieval_message,
+)
+from functions_chat_contextual_goals import (
+    load_bounded_prior_user_turns,
+    planner_prior_user_turns,
+    read_exact_goal_source_messages,
+    resolve_planner_goal_source_messages,
+)
+from functions_chat_clarifications import (
+    DEFAULT_CLARIFICATION_OPTION_CANDIDATES,
+    ChatClarificationError,
+    build_chat_clarification,
+    chat_clarification_response_matches,
+    clarification_is_expired,
+    clarification_response_lease_is_active,
+    find_latest_unresolved_chat_clarification,
+    find_pending_chat_clarification,
+    persist_chat_clarification_expiry,
+    persist_chat_clarification_invalidation,
+    persist_chat_clarification_response_claim,
+    persist_chat_clarification_response_completion,
+    read_chat_clarification_message,
+    validate_chat_clarification_source,
 )
 from functions_chat_capability_persistence import (
     persist_capability_invalidation,
@@ -190,6 +218,7 @@ from functions_evidence_ledger import (
     set_evidence_ledger_status,
 )
 from functions_orchestration_evaluation import (
+    build_clarification_evaluation_event,
     build_planner_activation_evaluation_event,
     build_planner_completed_evaluation_event,
     build_planner_rejected_evaluation_event,
@@ -414,6 +443,7 @@ def _build_capability_usage_metadata(
     workspace_search_used=False,
     workspace_search_result_count=0,
     document_action_type=DOCUMENT_ACTION_TYPE_NONE,
+
     document_scope=None,
     selected_document_ids=None,
     active_group_ids=None,
@@ -495,6 +525,7 @@ def _assigned_knowledge_allows_document_action(assigned_knowledge_filters, docum
 
 def _build_assigned_knowledge_search_args(assigned_knowledge_filters, *, query, user_id, top_n):
     return {
+
         'query': query,
         'user_id': user_id,
         'top_n': top_n,
@@ -2979,31 +3010,45 @@ def _build_server_capability_discovery(
     user_email,
     user_roles,
     user_message,
+    capability_input_message=None,
     selected_capability_ids,
     authorized_document_count=0,
     selected_agent_present=False,
+    enable_deterministic_matching=True,
 ):
     inventory = _resolve_server_chat_capability_inventory(
         settings=settings,
         user_id=user_id,
         user_email=user_email,
         user_roles=user_roles,
-        user_message=user_message,
+        user_message=(
+            capability_input_message
+            if capability_input_message is not None
+            else user_message
+        ),
         selected_capability_ids=selected_capability_ids,
         authorized_document_count=authorized_document_count,
     )
-    requirements = classify_capability_requirements(
-        user_message,
-        authorized_document_count=authorized_document_count,
-    )
-    match = match_governed_capabilities(inventory, requirements)
-    agent_requirements = classify_agent_capability_requirements(user_message)
     inventory = _attach_governed_agent_inventory(
         inventory,
         settings=settings,
         user_id=user_id,
         selected_agent_present=selected_agent_present,
     )
+    if not enable_deterministic_matching:
+        return {
+            'inventory': inventory,
+            'requirements': [],
+            'auto_capability_ids': [],
+            'recommendation': None,
+        }
+
+    requirements = classify_capability_requirements(
+        user_message,
+        authorized_document_count=authorized_document_count,
+    )
+    match = match_governed_capabilities(inventory, requirements)
+    agent_requirements = classify_agent_capability_requirements(user_message)
     agent_inventory = {
         'version': 1,
         'agents': copy.deepcopy(inventory.get('agents') or []),
@@ -3046,7 +3091,17 @@ def _resolve_chat_capability_planner_runtime(
     same_chat_endpoint,
 ):
     """Resolve a planner model only from server-authoritative endpoint policy."""
-    if planner_settings.get('chat_capability_planner_model_source') == 'same_as_chat':
+    configured_endpoint_id = str(
+        planner_settings.get('chat_capability_planner_model_endpoint_id') or ''
+    ).strip()
+    configured_model_id = str(
+        planner_settings.get('chat_capability_planner_model_id') or ''
+    ).strip()
+    if (
+        planner_settings.get('chat_capability_planner_model_source')
+        == 'same_as_chat'
+        or not (configured_endpoint_id and configured_model_id)
+    ):
         return {
             'client': same_chat_client,
             'model': same_chat_model,
@@ -3332,6 +3387,25 @@ def _load_authorized_capability_proposal_context(
         if isinstance(user_message_doc.get('metadata'), Mapping)
         else {}
     )
+    user_thread_info = (
+        user_metadata.get('thread_info')
+        if isinstance(user_metadata.get('thread_info'), Mapping)
+        else {}
+    )
+    if (
+        user_metadata.get('masked') is True
+        or bool(user_metadata.get('masked_ranges') or [])
+        or user_metadata.get('is_generated_chat_artifact') is True
+        or user_thread_info.get('active_thread') is False
+    ):
+        raise CapabilityChoiceError(
+            'proposal source user message is no longer active',
+            code='proposal_user_message_invalid',
+        )
+    approved_user_turn_goal = _rebuild_authorized_contextual_goal(
+        proposal,
+        conversation_id=conversation_id,
+    )
     original_plan = (
         user_metadata.get('orchestration')
         if isinstance(user_metadata.get('orchestration'), Mapping)
@@ -3511,7 +3585,11 @@ def _load_authorized_capability_proposal_context(
         user_id=user_id,
         user_email=user_email,
         user_roles=user_roles,
-        user_message=resume_request['message'],
+        user_message=(
+            approved_user_turn_goal.get('contextual_query')
+            if isinstance(approved_user_turn_goal, Mapping)
+            else resume_request['message']
+        ),
         selected_capability_ids=selected_capability_ids,
         authorized_document_count=len(authorized_documents) + len(authorized_task_documents),
     )
@@ -3554,7 +3632,876 @@ def _load_authorized_capability_proposal_context(
         'baseline_error_code': baseline_error_code,
         'agent_catalog': agent_catalog,
         'provenance': copy.deepcopy(dict(provenance)),
+        'approved_user_turn_goal': approved_user_turn_goal,
     }
+
+
+def _rebuild_authorized_contextual_goal(
+    proposal,
+    *,
+    conversation_id,
+):
+    """Rebuild private prior-user goal lineage from exact partition reads."""
+    if not isinstance(proposal, Mapping):
+        return None
+    stored_goal = proposal.get('_approved_user_turn_goal')
+    if not isinstance(stored_goal, Mapping):
+        return None
+    if stored_goal.get('conversation_id') != conversation_id:
+        raise CapabilityChoiceError(
+            'approved goal does not belong to this conversation',
+            code='goal_conversation_mismatch',
+        )
+    decision = (
+        proposal.get('decision')
+        if isinstance(proposal.get('decision'), Mapping)
+        else {}
+    )
+    rebuilt_goal = _rebuild_exact_contextual_goal(
+        stored_goal,
+        conversation_id=conversation_id,
+        approved_sensitive_input_types=(
+            decision.get('sensitive_input_types') or []
+        ),
+    )
+    if decision.get('contextual_goal_included') is True and (
+        rebuilt_goal.get('approved_by_option_id')
+        != decision.get('option_id')
+    ):
+        raise CapabilityChoiceError(
+            'approved goal no longer matches the persisted decision',
+            code='goal_approval_mismatch',
+        )
+    return rebuilt_goal
+
+
+def _rebuild_claimed_contextual_goal(
+    capability_resume_context,
+    *,
+    conversation_id,
+):
+    """Rebuild one claimed contextual goal and invalidate it on drift."""
+    resume_context = (
+        capability_resume_context
+        if isinstance(capability_resume_context, Mapping)
+        else {}
+    )
+    proposal = resume_context.get('_contextual_proposal')
+    if not isinstance(proposal, Mapping):
+        return None
+    try:
+        return _rebuild_authorized_contextual_goal(
+            proposal,
+            conversation_id=conversation_id,
+        )
+    except CapabilityChoiceError as contextual_error:
+        persist_capability_invalidation(
+            cosmos_messages_container,
+            conversation_id=conversation_id,
+            proposal_id=resume_context.get('proposal_id'),
+            reason=contextual_error.code,
+            expected_execution_id=resume_context.get('execution_id'),
+        )
+        raise
+
+
+def _rebuild_exact_contextual_goal(
+    stored_goal,
+    *,
+    conversation_id,
+    approved_sensitive_input_types=None,
+):
+    """Rebuild one exact contextual goal from its authorized user documents."""
+    try:
+        source_messages = read_exact_goal_source_messages(
+            cosmos_messages_container,
+            conversation_id=conversation_id,
+            stored_goal=stored_goal,
+        )
+    except CosmosResourceNotFoundError as exc:
+        raise CapabilityChoiceError(
+            'approved goal source no longer exists',
+            code='goal_source_missing',
+        ) from exc
+    return rebuild_approved_user_turn_goal(
+        stored_goal,
+        source_messages,
+        approved_sensitive_input_types=approved_sensitive_input_types,
+    )
+
+
+def _find_persisted_clarification_child_output(
+    *,
+    conversation_id,
+    child_run_id,
+):
+    """Find one persisted terminal output for an exact clarification child run."""
+    normalized_conversation_id = str(conversation_id or '').strip()
+    normalized_child_run_id = str(child_run_id or '').strip()
+    if not normalized_conversation_id or not normalized_child_run_id:
+        return None
+    rows = list(cosmos_messages_container.query_items(
+        query=(
+            'SELECT TOP 2 * FROM c '
+            'WHERE c.conversation_id = @conversation_id '
+            'AND (c.role = "assistant" OR c.role = "image" '
+            'OR c.role = "safety") '
+            'AND c.metadata.orchestration.run_id = @child_run_id'
+        ),
+        parameters=[
+            {
+                'name': '@conversation_id',
+                'value': normalized_conversation_id,
+            },
+            {'name': '@child_run_id', 'value': normalized_child_run_id},
+        ],
+        partition_key=normalized_conversation_id,
+    ))
+    rows.sort(
+        key=lambda row: str(row.get('timestamp') or ''),
+        reverse=True,
+    )
+    output = rows[0] if rows else None
+    output_run_id = str(
+        (output or {}).get('metadata', {}).get('orchestration', {}).get(
+            'run_id'
+        ) or ''
+    ).strip()
+    return output if output_run_id == normalized_child_run_id else None
+
+
+def _finalize_stream_clarification_claim(
+    *,
+    conversation_id,
+    clarification,
+):
+    """Resolve output-backed claims or terminalize no-output stream claims."""
+    if not isinstance(clarification, Mapping):
+        return None
+    clarification_id = str(
+        clarification.get('clarification_id') or ''
+    ).strip()
+    response_user_message_id = str(
+        clarification.get('_response_user_message_id') or ''
+    ).strip()
+    child_run_id = str(clarification.get('child_run_id') or '').strip()
+    claimed_at = str(clarification.get('claimed_at') or '').strip()
+    if not all((
+        clarification_id,
+        response_user_message_id,
+        child_run_id,
+        claimed_at,
+    )):
+        return None
+    _, current = read_chat_clarification_message(
+        cosmos_messages_container,
+        conversation_id=conversation_id,
+        clarification_id=clarification_id,
+    )
+    if not (
+        current.get('_response_user_message_id')
+        == response_user_message_id
+        and current.get('child_run_id') == child_run_id
+        and str(current.get('claimed_at') or '').strip() == claimed_at
+    ):
+        raise ChatClarificationError(
+            'clarification stream claim changed',
+            code='clarification_response_claim_mismatch',
+        )
+    if current.get('status') in {'resolved', 'expired'}:
+        return current
+    if current.get('status') != 'resolving':
+        return current
+    try:
+        _validate_current_claimed_clarification_response(
+            conversation_id=conversation_id,
+            clarification=current,
+        )
+    except ChatClarificationError as response_error:
+        persist_chat_clarification_invalidation(
+            cosmos_messages_container,
+            conversation_id=conversation_id,
+            clarification_id=clarification_id,
+            reason='clarification_response_claim_mismatch',
+            expected_response_user_message_id=response_user_message_id,
+            expected_child_run_id=child_run_id,
+            expected_claimed_at=claimed_at,
+        )
+        raise response_error
+    child_output = _find_persisted_clarification_child_output(
+        conversation_id=conversation_id,
+        child_run_id=child_run_id,
+    )
+    if child_output:
+        _, completed, _ = persist_chat_clarification_response_completion(
+            cosmos_messages_container,
+            conversation_id=conversation_id,
+            clarification_id=clarification_id,
+            response_user_message_id=response_user_message_id,
+            child_run_id=child_run_id,
+            expected_claimed_at=claimed_at,
+            response_validator=lambda claimed: (
+                _validate_current_claimed_clarification_response(
+                    conversation_id=conversation_id,
+                    clarification=claimed,
+                )
+            ),
+        )
+        return completed
+    _, invalidated, _ = persist_chat_clarification_invalidation(
+        cosmos_messages_container,
+        conversation_id=conversation_id,
+        clarification_id=clarification_id,
+        reason='clarification_child_output_missing',
+        expected_response_user_message_id=response_user_message_id,
+        expected_child_run_id=child_run_id,
+        expected_claimed_at=claimed_at,
+    )
+    return invalidated
+
+
+def _load_latest_chat_clarification_context(*, conversation_id):
+    """Load the latest bounded user lineage and linked clarification state."""
+    context_state = load_bounded_prior_user_turns(
+        cosmos_messages_container,
+        conversation_id=conversation_id,
+    )
+    prior_user_messages = [
+        message
+        for message in context_state.get('prior_user_messages') or []
+        if isinstance(message, Mapping)
+    ]
+    latest_user_message = prior_user_messages[-1] if prior_user_messages else None
+    clarification = None
+    predecessor_thread_id = context_state.get('predecessor_thread_id')
+    if predecessor_thread_id:
+        _, clarification = find_pending_chat_clarification(
+            cosmos_messages_container,
+            conversation_id=conversation_id,
+            source_thread_id=predecessor_thread_id,
+        )
+    if clarification is None and latest_user_message:
+        latest_metadata = (
+            latest_user_message.get('metadata')
+            if isinstance(latest_user_message.get('metadata'), Mapping)
+            else {}
+        )
+        clarification_response = (
+            latest_metadata.get('clarification_response')
+            if isinstance(
+                latest_metadata.get('clarification_response'),
+                Mapping,
+            )
+            else {}
+        )
+        clarification_id = str(
+            clarification_response.get('_clarification_id') or ''
+        ).strip()
+        if clarification_id:
+            _, clarification = read_chat_clarification_message(
+                cosmos_messages_container,
+                conversation_id=conversation_id,
+                clarification_id=clarification_id,
+            )
+    if clarification is None:
+        _, clarification = find_latest_unresolved_chat_clarification(
+            cosmos_messages_container,
+            conversation_id=conversation_id,
+        )
+    return {
+        'context_state': context_state,
+        'latest_user_message': latest_user_message,
+        'clarification': clarification,
+    }
+
+
+def _invalidate_chat_clarification_checkpoint(
+    *,
+    conversation_id,
+    clarification,
+    reason,
+):
+    """Invalidate pending state or one exact resolving claim generation."""
+    if not isinstance(clarification, Mapping):
+        raise ChatClarificationError(
+            'clarification metadata is invalid',
+            code='clarification_invalid',
+        )
+    invalidation_kwargs = {
+        'container': cosmos_messages_container,
+        'conversation_id': conversation_id,
+        'clarification_id': clarification.get('clarification_id'),
+        'reason': reason,
+    }
+    if clarification.get('status') == 'resolving':
+        invalidation_kwargs.update({
+            'expected_response_user_message_id': (
+                clarification.get('_response_user_message_id')
+            ),
+            'expected_child_run_id': clarification.get('child_run_id'),
+            'expected_claimed_at': clarification.get('claimed_at'),
+        })
+    return persist_chat_clarification_invalidation(**invalidation_kwargs)
+
+
+def _preflight_chat_clarification(
+    *,
+    conversation_id,
+    user_message=None,
+    retry_user_message_id=None,
+    allow_pending_response=False,
+    allow_exact_response_retry=False,
+    expected_clarification_id=None,
+):
+    """Fail closed unless this request is an allowed clarification response."""
+    normalized_retry_user_message_id = str(
+        retry_user_message_id or ''
+    ).strip()
+    context = None
+    if normalized_retry_user_message_id:
+        try:
+            targeted_response = cosmos_messages_container.read_item(
+                item=normalized_retry_user_message_id,
+                partition_key=conversation_id,
+            )
+        except CosmosResourceNotFoundError:
+            targeted_response = None
+        targeted_metadata = (
+            targeted_response.get('metadata')
+            if isinstance(targeted_response, Mapping)
+            and isinstance(targeted_response.get('metadata'), Mapping)
+            else {}
+        )
+        targeted_clarification_response = (
+            targeted_metadata.get('clarification_response')
+            if isinstance(
+                targeted_metadata.get('clarification_response'),
+                Mapping,
+            )
+            else {}
+        )
+        targeted_clarification_id = str(
+            targeted_clarification_response.get('_clarification_id') or ''
+        ).strip()
+        if targeted_clarification_id:
+            if not (
+                targeted_response.get('conversation_id') == conversation_id
+                and targeted_response.get('role') == 'user'
+                and targeted_response.get('id')
+                == normalized_retry_user_message_id
+            ):
+                raise ChatClarificationError(
+                    'clarification retry response is invalid',
+                    code='clarification_response_conflict',
+                )
+            try:
+                _, targeted_clarification = read_chat_clarification_message(
+                    cosmos_messages_container,
+                    conversation_id=conversation_id,
+                    clarification_id=targeted_clarification_id,
+                )
+            except CosmosResourceNotFoundError as exc:
+                raise ChatClarificationError(
+                    'linked clarification is no longer available',
+                    code='clarification_response_conflict',
+                ) from exc
+            context = {
+                'context_state': {
+                    'prior_user_messages': [],
+                    'predecessor_thread_id': None,
+                },
+                'latest_user_message': targeted_response,
+                'clarification': targeted_clarification,
+            }
+    if context is None:
+        try:
+            context = _load_latest_chat_clarification_context(
+                conversation_id=conversation_id,
+            )
+        except CosmosResourceNotFoundError as exc:
+            raise ChatClarificationError(
+                'clarification state is no longer available',
+                code='clarification_source_invalid',
+            ) from exc
+    normalized_expected_clarification_id = str(
+        expected_clarification_id or ''
+    ).strip()
+    if normalized_expected_clarification_id:
+        try:
+            _, expected_clarification = read_chat_clarification_message(
+                cosmos_messages_container,
+                conversation_id=conversation_id,
+                clarification_id=(
+                    normalized_expected_clarification_id
+                ),
+            )
+        except CosmosResourceNotFoundError as exc:
+            raise ChatClarificationError(
+                'expected clarification is no longer available',
+                code='clarification_response_conflict',
+            ) from exc
+        expected_status = str(
+            expected_clarification.get('status') or ''
+        ).strip().lower()
+        allowed_expected_statuses = {'pending', 'resolving'}
+        if allow_exact_response_retry:
+            allowed_expected_statuses.update({'resolved', 'expired'})
+        if expected_status not in allowed_expected_statuses:
+            raise ChatClarificationError(
+                'expected clarification is no longer pending',
+                code='clarification_response_conflict',
+            )
+        context = {
+            **context,
+            'clarification': expected_clarification,
+        }
+    clarification = context.get('clarification')
+    if not isinstance(clarification, Mapping):
+        return {
+            **context,
+            'exact_response_retry': False,
+        }
+    status = str(clarification.get('status') or '').strip().lower()
+    if (
+        status in {'pending', 'resolving'}
+        and clarification_is_expired(clarification)
+    ):
+        persist_chat_clarification_expiry(
+            cosmos_messages_container,
+            conversation_id=conversation_id,
+            clarification_id=clarification.get('clarification_id'),
+        )
+        raise ChatClarificationError(
+            'clarification has expired',
+            code='clarification_expired',
+        )
+
+    def validate_source_or_invalidate():
+        try:
+            validate_chat_clarification_source(
+                cosmos_messages_container,
+                conversation_id=conversation_id,
+                clarification=clarification,
+            )
+        except (CosmosResourceNotFoundError, ChatClarificationError) as exc:
+            _invalidate_chat_clarification_checkpoint(
+                conversation_id=conversation_id,
+                clarification=clarification,
+                reason='clarification_source_invalid',
+            )
+            raise ChatClarificationError(
+                'clarification source turn is no longer active',
+                code='clarification_source_invalid',
+            ) from exc
+
+    if status in {'pending', 'resolving'}:
+        validate_source_or_invalidate()
+    stored_response_user_message_id = str(
+        clarification.get('_response_user_message_id') or ''
+    ).strip()
+    if status == 'resolving':
+        response_thread_id = str(
+            clarification.get('_response_thread_id') or ''
+        ).strip()
+        source_thread_id = str(
+            clarification.get('_source_thread_id') or ''
+        ).strip()
+        try:
+            response_document = cosmos_messages_container.read_item(
+                item=stored_response_user_message_id,
+                partition_key=conversation_id,
+            )
+            response_metadata = (
+                response_document.get('metadata')
+                if isinstance(response_document.get('metadata'), Mapping)
+                else {}
+            )
+            response_thread_info = (
+                response_metadata.get('thread_info')
+                if isinstance(response_metadata.get('thread_info'), Mapping)
+                else {}
+            )
+            if not (
+                stored_response_user_message_id
+                and response_document.get('id')
+                == stored_response_user_message_id
+                and response_document.get('conversation_id')
+                == conversation_id
+                and response_document.get('role') == 'user'
+                and response_metadata.get('is_deleted') is not True
+                and response_metadata.get('masked') is not True
+                and not (response_metadata.get('masked_ranges') or [])
+                and response_metadata.get(
+                    'is_generated_chat_artifact'
+                ) is not True
+                and response_thread_info.get('active_thread') is not False
+                and str(
+                    response_thread_info.get('thread_id') or ''
+                ).strip() == response_thread_id
+                and str(
+                    response_thread_info.get('previous_thread_id') or ''
+                ).strip() == source_thread_id
+                and chat_clarification_response_matches(
+                    clarification,
+                    response_document.get('content'),
+                )
+            ):
+                raise ChatClarificationError(
+                    'clarification response state is invalid',
+                    code='clarification_response_claim_mismatch',
+                )
+        except CosmosResourceNotFoundError as exc:
+            if clarification_response_lease_is_active(clarification):
+                raise ChatClarificationError(
+                    'clarification response is already being processed',
+                    code='clarification_response_in_progress',
+                ) from exc
+            _invalidate_chat_clarification_checkpoint(
+                conversation_id=conversation_id,
+                clarification=clarification,
+                reason='clarification_response_claim_mismatch',
+            )
+            raise ChatClarificationError(
+                'clarification response state is invalid',
+                code='clarification_response_claim_mismatch',
+            ) from exc
+        except ChatClarificationError:
+            _invalidate_chat_clarification_checkpoint(
+                conversation_id=conversation_id,
+                clarification=clarification,
+                reason='clarification_response_claim_mismatch',
+            )
+            raise
+    latest_user_message_id = str(
+        (context.get('latest_user_message') or {}).get('id') or ''
+    ).strip()
+    exact_response_retry = bool(
+        normalized_retry_user_message_id
+        and normalized_retry_user_message_id
+        == stored_response_user_message_id
+        == latest_user_message_id
+        and chat_clarification_response_matches(
+            clarification,
+            user_message,
+        )
+    )
+    targeted_response_retry = bool(
+        normalized_retry_user_message_id
+        and normalized_retry_user_message_id
+        == stored_response_user_message_id
+    )
+    if targeted_response_retry and not exact_response_retry:
+        raise ChatClarificationError(
+            'clarification retry does not match the stored response',
+            code=(
+                'clarification_expired'
+                if status == 'expired'
+                else 'clarification_response_conflict'
+            ),
+        )
+    if exact_response_retry and status not in {'pending', 'resolving'}:
+        validate_source_or_invalidate()
+    if exact_response_retry:
+        if status not in {'resolving', 'resolved'}:
+            raise ChatClarificationError(
+                'clarification is no longer available for retry',
+                code=(
+                    'clarification_expired'
+                    if status == 'expired'
+                    else 'clarification_response_conflict'
+                ),
+            )
+        if allow_exact_response_retry:
+            return {
+                **context,
+                'exact_response_retry': True,
+            }
+        raise ChatClarificationError(
+            'retry the clarification response through the normal chat stream',
+            code='clarification_pending',
+        )
+    if (
+        status == 'pending'
+        and allow_pending_response
+        and not normalized_retry_user_message_id
+    ):
+        return {
+            **context,
+            'exact_response_retry': False,
+        }
+    if status in {'pending', 'resolving'}:
+        raise ChatClarificationError(
+            'answer the pending clarification before starting another action',
+            code='clarification_pending',
+        )
+    return {
+        **context,
+        'exact_response_retry': False,
+    }
+
+
+def _prepare_clarification_recovery_context(context_state, clarification):
+    """Remove the persisted response before retrying it as the current turn."""
+    state = (
+        copy.deepcopy(dict(context_state))
+        if isinstance(context_state, Mapping)
+        else {}
+    )
+    response_user_message_id = str(
+        (clarification or {}).get('_response_user_message_id') or ''
+    ).strip()
+    source_user_message_id = str(
+        (clarification or {}).get('_source_user_message_id') or ''
+    ).strip()
+    source_thread_id = str(
+        (clarification or {}).get('_source_thread_id') or ''
+    ).strip()
+    if not all((
+        response_user_message_id,
+        source_user_message_id,
+        source_thread_id,
+    )):
+        raise ChatClarificationError(
+            'clarification recovery linkage is incomplete',
+            code='clarification_response_claim_mismatch',
+        )
+    prior_user_messages = [
+        copy.deepcopy(message)
+        for message in state.get('prior_user_messages') or []
+        if isinstance(message, Mapping)
+    ]
+    response_matches = [
+        message
+        for message in prior_user_messages
+        if str(message.get('id') or '').strip()
+        == response_user_message_id
+    ]
+    retained_messages = [
+        message
+        for message in prior_user_messages
+        if str(message.get('id') or '').strip()
+        != response_user_message_id
+    ]
+    source_matches = [
+        message
+        for message in retained_messages
+        if str(message.get('id') or '').strip()
+        == source_user_message_id
+    ]
+    if len(response_matches) != 1 or len(source_matches) != 1:
+        raise ChatClarificationError(
+            'clarification recovery context is invalid',
+            code='clarification_response_claim_mismatch',
+        )
+    state['prior_user_messages'] = retained_messages
+    state['predecessor_thread_id'] = source_thread_id
+    return state
+
+
+def _claimed_clarification_response_is_valid(
+    document,
+    clarification,
+    *,
+    conversation_id,
+):
+    """Validate one exact durable clarification response user turn."""
+    if not (
+        isinstance(document, Mapping)
+        and isinstance(clarification, Mapping)
+    ):
+        return False
+    metadata = (
+        document.get('metadata')
+        if isinstance(document.get('metadata'), Mapping)
+        else {}
+    )
+    thread_info = (
+        metadata.get('thread_info')
+        if isinstance(metadata.get('thread_info'), Mapping)
+        else {}
+    )
+    return bool(
+        document.get('id')
+        == clarification.get('_response_user_message_id')
+        and document.get('conversation_id') == conversation_id
+        and document.get('role') == 'user'
+        and metadata.get('is_deleted') is not True
+        and metadata.get('masked') is not True
+        and not (metadata.get('masked_ranges') or [])
+        and metadata.get('is_generated_chat_artifact') is not True
+        and thread_info.get('active_thread') is not False
+        and str(thread_info.get('thread_id') or '').strip()
+        == str(clarification.get('_response_thread_id') or '').strip()
+        and str(thread_info.get('previous_thread_id') or '').strip()
+        == str(clarification.get('_source_thread_id') or '').strip()
+        and chat_clarification_response_matches(
+            clarification,
+            document.get('content'),
+        )
+    )
+
+
+def _validate_current_claimed_clarification_response(
+    *,
+    conversation_id,
+    clarification,
+):
+    """Read and validate the exact response owned by a clarification claim."""
+    try:
+        response_document = cosmos_messages_container.read_item(
+            item=clarification.get('_response_user_message_id'),
+            partition_key=conversation_id,
+        )
+    except CosmosResourceNotFoundError as exc:
+        raise ChatClarificationError(
+            'clarification response state is invalid',
+            code='clarification_response_claim_mismatch',
+        ) from exc
+    if not _claimed_clarification_response_is_valid(
+        response_document,
+        clarification,
+        conversation_id=conversation_id,
+    ):
+        raise ChatClarificationError(
+            'clarification response state is invalid',
+            code='clarification_response_claim_mismatch',
+        )
+    return response_document
+
+
+def _persist_claimed_clarification_response_metadata(
+    document,
+    clarification,
+    *,
+    conversation_id,
+    desired_metadata,
+):
+    """Conditionally merge response metadata without overwriting user changes."""
+    current_document = copy.deepcopy(dict(document or {}))
+    expected_response_user_message_id = str(
+        clarification.get('_response_user_message_id') or ''
+    ).strip()
+    expected_child_run_id = str(
+        clarification.get('child_run_id') or ''
+    ).strip()
+    expected_claimed_at = str(
+        clarification.get('claimed_at') or ''
+    ).strip()
+    for _ in range(3):
+        _, current_clarification = read_chat_clarification_message(
+            cosmos_messages_container,
+            conversation_id=conversation_id,
+            clarification_id=clarification.get('clarification_id'),
+        )
+        if not (
+            current_clarification.get('status') == 'resolving'
+            and current_clarification.get('_response_user_message_id')
+            == expected_response_user_message_id
+            and current_clarification.get('child_run_id')
+            == expected_child_run_id
+            and str(current_clarification.get('claimed_at') or '').strip()
+            == expected_claimed_at
+        ):
+            raise ChatClarificationError(
+                'clarification claim changed during response persistence',
+                code='clarification_response_claim_mismatch',
+            )
+        if not _claimed_clarification_response_is_valid(
+            current_document,
+            clarification,
+            conversation_id=conversation_id,
+        ):
+            persist_chat_clarification_invalidation(
+                cosmos_messages_container,
+                conversation_id=conversation_id,
+                clarification_id=clarification.get('clarification_id'),
+                reason='clarification_response_claim_mismatch',
+                expected_response_user_message_id=(
+                    expected_response_user_message_id
+                ),
+                expected_child_run_id=expected_child_run_id,
+                expected_claimed_at=expected_claimed_at,
+            )
+            raise ChatClarificationError(
+                'clarification response state is invalid',
+                code='clarification_response_claim_mismatch',
+            )
+        current_metadata = (
+            copy.deepcopy(dict(current_document.get('metadata')))
+            if isinstance(current_document.get('metadata'), Mapping)
+            else {}
+        )
+        current_metadata.update(copy.deepcopy(dict(desired_metadata or {})))
+        updated_document = copy.deepcopy(current_document)
+        updated_document['metadata'] = current_metadata
+        try:
+            return cosmos_messages_container.replace_item(
+                item=updated_document['id'],
+                body=updated_document,
+                etag=current_document.get('_etag'),
+                match_condition=MatchConditions.IfNotModified,
+            )
+        except Exception as write_error:
+            write_status = getattr(write_error, 'status_code', None)
+            if (
+                isinstance(write_error, CosmosResourceNotFoundError)
+                or write_status == 404
+            ):
+                persist_chat_clarification_invalidation(
+                    cosmos_messages_container,
+                    conversation_id=conversation_id,
+                    clarification_id=clarification.get(
+                        'clarification_id'
+                    ),
+                    reason='clarification_response_claim_mismatch',
+                    expected_response_user_message_id=(
+                        expected_response_user_message_id
+                    ),
+                    expected_child_run_id=expected_child_run_id,
+                    expected_claimed_at=expected_claimed_at,
+                )
+                raise ChatClarificationError(
+                    'clarification response state is invalid',
+                    code='clarification_response_claim_mismatch',
+                ) from write_error
+            if write_status not in {409, 412}:
+                raise
+            try:
+                current_document = cosmos_messages_container.read_item(
+                    item=updated_document['id'],
+                    partition_key=conversation_id,
+                )
+            except CosmosResourceNotFoundError as read_error:
+                persist_chat_clarification_invalidation(
+                    cosmos_messages_container,
+                    conversation_id=conversation_id,
+                    clarification_id=clarification.get(
+                        'clarification_id'
+                    ),
+                    reason='clarification_response_claim_mismatch',
+                    expected_response_user_message_id=(
+                        expected_response_user_message_id
+                    ),
+                    expected_child_run_id=expected_child_run_id,
+                    expected_claimed_at=expected_claimed_at,
+                )
+                raise ChatClarificationError(
+                    'clarification response state is invalid',
+                    code='clarification_response_claim_mismatch',
+                ) from read_error
+    persist_chat_clarification_invalidation(
+        cosmos_messages_container,
+        conversation_id=conversation_id,
+        clarification_id=clarification.get('clarification_id'),
+        reason='clarification_response_claim_mismatch',
+        expected_response_user_message_id=expected_response_user_message_id,
+        expected_child_run_id=expected_child_run_id,
+        expected_claimed_at=expected_claimed_at,
+    )
+    raise ChatClarificationError(
+        'clarification response changed during persistence',
+        code='clarification_response_claim_mismatch',
+    )
 
 
 def _distinct_authorized_document_ids(documents):
@@ -3656,14 +4603,24 @@ def _claim_authorized_capability_resume_impl(
     proposal_id,
 ):
     """Claim one durable resume and return a server-authored execution request."""
-    context = _load_authorized_capability_proposal_context(
-        settings=settings,
-        user_id=user_id,
-        user_email=user_email,
-        user_roles=user_roles,
-        conversation_id=conversation_id,
-        proposal_id=proposal_id,
-    )
+    try:
+        context = _load_authorized_capability_proposal_context(
+            settings=settings,
+            user_id=user_id,
+            user_email=user_email,
+            user_roles=user_roles,
+            conversation_id=conversation_id,
+            proposal_id=proposal_id,
+        )
+    except CapabilityChoiceError as authorization_error:
+        if authorization_error.code.startswith('goal_'):
+            persist_capability_invalidation(
+                cosmos_messages_container,
+                conversation_id=conversation_id,
+                proposal_id=proposal_id,
+                reason=authorization_error.code,
+            )
+        raise
     pending_decision = (
         context['proposal'].get('decision')
         if isinstance(context['proposal'].get('decision'), Mapping)
@@ -3763,6 +4720,12 @@ def _claim_authorized_capability_resume_impl(
         ),
         selected_agent_present=context.get('selected_agent_present') is True,
         baseline_error_code=context.get('baseline_error_code'),
+        source_lineage_validator=lambda proposal: (
+            _rebuild_authorized_contextual_goal(
+                proposal,
+                conversation_id=conversation_id,
+            )
+        ),
     )
     if idempotent:
         context['proposal'] = claimed_proposal
@@ -3800,27 +4763,38 @@ def _claim_authorized_capability_resume_impl(
             'resume claim changed before execution authorization completed',
             code='resume_claim_mismatch',
         )
+    execution_validation_baseline = build_decline_aware_execution_baseline(
+        execution_proposal,
+        execution_context['inventory'],
+        selected_capability_ids=execution_context.get(
+            'selected_capability_ids'
+        ),
+        prior_effective_capabilities=(
+            execution_context['provenance'].get(
+                'effective_capabilities'
+            ) or []
+        ),
+        automatic_capability_root_ids=execution_context.get(
+            'automatic_capability_root_ids'
+        ),
+        automatic_capability_effective_ids=execution_context.get(
+            'automatic_capability_effective_ids'
+        ),
+    )
     try:
         revalidate_capability_execution_baseline(
             execution_context['inventory'],
-            selected_capability_ids=execution_context.get('selected_capability_ids'),
-            prior_effective_capabilities=(
-                execution_context['provenance'].get('effective_capabilities') or []
-            ),
-            automatic_capability_root_ids=execution_context.get(
-                'automatic_capability_root_ids'
-            ),
-            automatic_capability_effective_ids=execution_context.get(
-                'automatic_capability_effective_ids'
-            ),
+            **execution_validation_baseline,
             baseline_error_code=execution_context.get('baseline_error_code'),
         )
         revalidate_capability_execution_compatibility(
             execution_proposal,
-            selected_capability_ids=execution_context.get('selected_capability_ids'),
-            prior_effective_capabilities=(
-                execution_context['provenance'].get('effective_capabilities') or []
-            ),
+            selected_capability_ids=execution_validation_baseline[
+                'selected_capability_ids'
+            ],
+            prior_effective_capabilities=execution_validation_baseline[
+                'prior_effective_capabilities'
+            ],
             selected_agent_present=(
                 execution_context.get('selected_agent_present') is True
             ),
@@ -3848,13 +4822,19 @@ def _claim_authorized_capability_resume_impl(
     effective_capability_ids = list(decision.get('effective_capability_ids') or [])
     selected_effective_capability_ids = expand_governed_capability_baseline_ids(
         context['inventory'],
-        context.get('selected_capability_ids') or [],
+        execution_validation_baseline.get('selected_capability_ids') or [],
     )
-    automatic_root_capability_ids = context.get('automatic_capability_root_ids')
+    automatic_root_capability_ids = execution_validation_baseline.get(
+        'automatic_capability_root_ids'
+    )
     if automatic_root_capability_ids is None:
         automatic_root_capability_ids = {
             str(item.get('id') or '').strip()
-            for item in (context['provenance'].get('effective_capabilities') or [])
+            for item in (
+                execution_validation_baseline.get(
+                    'prior_effective_capabilities'
+                ) or []
+            )
             if isinstance(item, Mapping)
             and str(item.get('origin') or '').strip() == 'discovery_auto'
             and str(item.get('id') or '').strip()
@@ -3866,10 +4846,29 @@ def _claim_authorized_capability_resume_impl(
     execution_effective_capability_ids = set(selected_effective_capability_ids)
     execution_effective_capability_ids.update(automatic_effective_capability_ids)
     execution_effective_capability_ids.update(effective_capability_ids)
+    contextual_egress_declined = (
+        decision.get('approval_scope')
+        == 'prior_user_goal_egress_declined'
+    )
+    if contextual_egress_declined:
+        external_capability_ids = set(
+            claimed_proposal.get('_external_capability_ids') or []
+        )
+        execution_effective_capability_ids.difference_update(
+            external_capability_ids
+        )
     request_data = _apply_effective_capabilities_to_request(
         context['resume_request'],
         execution_effective_capability_ids,
     )
+    if contextual_egress_declined:
+        request_data.update({
+            'web_search_enabled': False,
+            'url_access_enabled': False,
+            'source_review_enabled': False,
+            'deep_research_enabled': False,
+            '_server_contextual_egress_declined': True,
+        })
     if 'image' in effective_capability_ids:
         source_thread_info = (
             context.get('user_message_doc', {}).get('metadata', {}).get(
@@ -3898,14 +4897,34 @@ def _claim_authorized_capability_resume_impl(
         canonical_discovered_agent['_orchestration_discovery_ref'] = agent_ref
         request_data['agent_info'] = canonical_discovered_agent
     external_query_mode = str(decision.get('external_query_mode') or 'minimized').strip().lower()
-    resumed_external_query = build_resumed_external_query(
-        request_data.get('message'),
-        execution_effective_capability_ids,
-        external_query_mode=external_query_mode,
-        approved_sensitive_input_types=decision.get('sensitive_input_types') or [],
+    approved_user_turn_goal = execution_context.get(
+        'approved_user_turn_goal'
     )
+    if (
+        decision.get('prior_goal_included') is True
+        and isinstance(approved_user_turn_goal, Mapping)
+    ):
+        resumed_external_query = str(
+            approved_user_turn_goal.get('external_query') or ''
+        ).strip()
+    else:
+        resumed_external_query = build_resumed_external_query(
+            request_data.get('message'),
+            execution_effective_capability_ids,
+            external_query_mode=external_query_mode,
+            approved_sensitive_input_types=decision.get(
+                'sensitive_input_types'
+            ) or [],
+        )
     if resumed_external_query is not None:
         request_data['_server_external_query'] = resumed_external_query
+    if (
+        decision.get('contextual_goal_included') is True
+        and isinstance(approved_user_turn_goal, Mapping)
+    ):
+        request_data['_server_contextual_goal_query'] = str(
+            approved_user_turn_goal.get('contextual_query') or ''
+        ).strip()
 
     capability_origins = build_capability_resume_origins(
         context['inventory'],
@@ -3918,6 +4937,14 @@ def _claim_authorized_capability_resume_impl(
         ),
         approved_agent_ref=agent_ref,
     )
+    capability_origins = {
+        capability_id: origin
+        for capability_id, origin in capability_origins.items()
+        if (
+            capability_id == 'selected_agent'
+            or capability_id in execution_effective_capability_ids
+        )
+    }
     capability_resume_context = {
         'conversation_id': conversation_id,
         'proposal_id': proposal_id,
@@ -3931,10 +4958,14 @@ def _claim_authorized_capability_resume_impl(
         'capability_origins': capability_origins,
         'capability_inventory': copy.deepcopy(context['inventory']),
         'decision': copy.deepcopy(decision),
+        '_contextual_proposal': copy.deepcopy(claimed_proposal),
         'original_proposal': copy.deepcopy(
             context['provenance'].get('proposed_capabilities') or claimed_proposal
         ),
         'effective_capability_ids': effective_capability_ids,
+        'execution_effective_capability_ids': sorted(
+            execution_effective_capability_ids
+        ),
         'automatic_capability_root_ids': copy.deepcopy(
             context.get('automatic_capability_root_ids')
         ),
@@ -12676,8 +13707,7 @@ def resolve_streaming_multi_endpoint_gpt_config(
     )
     debug_print(
         f"[Streaming][Model Resolution] Resolved {selection_source} multi-endpoint model | "
-        f"provider={provider} | endpoint_id={requested_endpoint_id} | model_id={model_cfg.get('id')} | "
-        f"deployment={deployment} | api_version={api_version} | protocol={runtime_protocol}"
+        f"provider_class={provider} | protocol={runtime_protocol}"
     )
     return (
         gpt_client,
@@ -12964,7 +13994,9 @@ def register_route_backend_chats(bp):
             'locked_contexts': payload.get('locked_contexts', []),
             'analysis_coverage': payload.get('analysis_coverage', {}),
             'document_action': payload.get('document_action', {}),
-            'metadata': payload.get('metadata', {}),
+            'metadata': project_chat_metadata_for_client(
+                payload.get('metadata', {})
+            ),
         })
 
     def _build_document_action_stream_content(event):
@@ -13634,6 +14666,59 @@ def register_route_backend_chats(bp):
         if conversation_id is not None:
             conversation_id = str(conversation_id).strip() or None
 
+        document_action_user_message = user_message
+        if conversation_id:
+            try:
+                _authorize_personal_conversation_access(user_id, conversation_id)
+                _preflight_chat_clarification(
+                    conversation_id=conversation_id,
+                    user_message=user_message,
+                    retry_user_message_id=(
+                        data.get('retry_user_message_id')
+                        or data.get('edited_user_message_id')
+                    ),
+                )
+            except LookupError:
+                return {'error': 'Conversation not found'}, 404
+            except PermissionError:
+                return {'error': 'Forbidden'}, 403
+            except (CapabilityChoiceError, ChatClarificationError) as clarification_error:
+                return {
+                    'error': str(clarification_error),
+                    'code': clarification_error.code,
+                }, 409
+            except Exception:
+                return {
+                    'error': 'Failed to validate pending clarification',
+                }, 500
+        if (
+            capability_resume_context
+            and isinstance(
+                capability_resume_context.get('_contextual_proposal'),
+                Mapping,
+            )
+        ):
+            try:
+                document_action_contextual_goal = (
+                    _rebuild_claimed_contextual_goal(
+                        capability_resume_context,
+                        conversation_id=conversation_id,
+                    )
+                )
+                document_action_user_message = str(
+                    (document_action_contextual_goal or {}).get(
+                        'contextual_query'
+                    ) or user_message
+                ).strip()
+            except CapabilityChoiceError as contextual_action_error:
+                return {
+                    'error': (
+                        'The earlier request is no longer available. '
+                        'Send a new message to continue.'
+                    ),
+                    'code': contextual_action_error.code,
+                }, 409
+
         selected_document_id = data.get('selected_document_id')
         selected_document_ids = data.get('selected_document_ids', [])
         if not selected_document_ids and selected_document_id:
@@ -13822,6 +14907,36 @@ def register_route_backend_chats(bp):
         g.conversation_id = conversation_id
         _set_authorized_chat_request_context(user_id, conversation_id, action_scope_context)
 
+        if isinstance(
+            (capability_resume_context or {}).get('_contextual_proposal'),
+            Mapping,
+        ):
+            try:
+                document_action_contextual_goal = (
+                    _rebuild_claimed_contextual_goal(
+                        capability_resume_context,
+                        conversation_id=conversation_id,
+                    )
+                )
+                document_action_user_message = str(
+                    (document_action_contextual_goal or {}).get(
+                        'contextual_query'
+                    ) or ''
+                ).strip()
+                if not document_action_user_message:
+                    raise CapabilityChoiceError(
+                        'approved contextual goal could not be rebuilt',
+                        code='goal_query_empty',
+                    )
+            except CapabilityChoiceError as contextual_action_error:
+                return {
+                    'error': (
+                        'The earlier request is no longer available. '
+                        'Send a new message to continue.'
+                    ),
+                    'code': contextual_action_error.code,
+                }, 409
+
         assigned_knowledge_planned = bool(
             assigned_knowledge_filters
             and assigned_knowledge_filters.get('has_workspace_knowledge')
@@ -13887,7 +15002,7 @@ def register_route_backend_chats(bp):
             else {}
         )
         turn_orchestration_plan = build_turn_orchestration_plan(
-            user_message,
+            document_action_user_message,
             run_id=(
                 capability_resume_context.get('child_run_id')
                 if capability_resume_context
@@ -14021,7 +15136,7 @@ def register_route_backend_chats(bp):
         action_evidence_task = build_agent_action_evidence_task(
             turn_orchestration_plan,
             turn_evidence_ledger,
-            user_message,
+            document_action_user_message,
             executor_type='selected_action',
             executor_name=normalized_action.get('type'),
             capability_metadata=normalized_action,
@@ -14183,11 +15298,40 @@ def register_route_backend_chats(bp):
         assigned_knowledge_action_context = {}
         assigned_context_metadata = {}
         assigned_knowledge_context_citations = []
+        if isinstance(
+            (capability_resume_context or {}).get('_contextual_proposal'),
+            Mapping,
+        ):
+            try:
+                document_action_contextual_goal = (
+                    _rebuild_claimed_contextual_goal(
+                        capability_resume_context,
+                        conversation_id=conversation_id,
+                    )
+                )
+                document_action_user_message = str(
+                    (document_action_contextual_goal or {}).get(
+                        'contextual_query'
+                    ) or ''
+                ).strip()
+                if not document_action_user_message:
+                    raise CapabilityChoiceError(
+                        'approved contextual goal could not be rebuilt',
+                        code='goal_query_empty',
+                    )
+            except CapabilityChoiceError as contextual_action_error:
+                return {
+                    'error': (
+                        'The earlier request is no longer available. '
+                        'Send a new message to continue.'
+                    ),
+                    'code': contextual_action_error.code,
+                }, 409
         if assigned_knowledge_filters and assigned_knowledge_filters.get('has_workspace_knowledge'):
             try:
                 assigned_knowledge_action_context = _build_assigned_knowledge_reference_context(
                     assigned_knowledge_filters,
-                    query=user_message,
+                    query=document_action_user_message,
                     user_id=user_id,
                     top_n=ASSIGNED_KNOWLEDGE_CONTEXT_TOP_N,
                 )
@@ -14240,8 +15384,38 @@ def register_route_backend_chats(bp):
                 elif thought_tracker.enabled:
                     thought_tracker.add_thought('search', assigned_context_thought)
 
+        if isinstance(
+            (capability_resume_context or {}).get('_contextual_proposal'),
+            Mapping,
+        ):
+            try:
+                document_action_contextual_goal = (
+                    _rebuild_claimed_contextual_goal(
+                        capability_resume_context,
+                        conversation_id=conversation_id,
+                    )
+                )
+                document_action_user_message = str(
+                    (document_action_contextual_goal or {}).get(
+                        'contextual_query'
+                    ) or ''
+                ).strip()
+                if not document_action_user_message:
+                    raise CapabilityChoiceError(
+                        'approved contextual goal could not be rebuilt',
+                        code='goal_query_empty',
+                    )
+            except CapabilityChoiceError as contextual_action_error:
+                return {
+                    'error': (
+                        'The earlier request is no longer available. '
+                        'Send a new message to continue.'
+                    ),
+                    'code': contextual_action_error.code,
+                }, 409
+
         workflow_task_prompt = _build_document_action_prompt_with_assigned_knowledge_context(
-            user_message,
+            document_action_user_message,
             assigned_knowledge_action_context.get('context_block'),
             normalized_action.get('type'),
         )
@@ -14285,6 +15459,28 @@ def register_route_backend_chats(bp):
         try:
             if document_action_cancel_requested():
                 return persist_cancelled_document_action_runtime()
+            if isinstance(
+                (capability_resume_context or {}).get(
+                    '_contextual_proposal'
+                ),
+                Mapping,
+            ):
+                final_document_action_goal = (
+                    _rebuild_claimed_contextual_goal(
+                        capability_resume_context,
+                        conversation_id=conversation_id,
+                    )
+                )
+                final_document_action_query = str(
+                    (final_document_action_goal or {}).get(
+                        'contextual_query'
+                    ) or ''
+                ).strip()
+                if final_document_action_query != document_action_user_message:
+                    raise CapabilityChoiceError(
+                        'approved contextual goal changed before execution',
+                        code='goal_source_changed',
+                    )
             debug_print(
                 '[ChatDocumentAction] Executing action | '
                 f'user_id={user_id} | '
@@ -14303,6 +15499,14 @@ def register_route_backend_chats(bp):
             )
             if document_action_cancel_requested():
                 return persist_cancelled_document_action_runtime()
+        except CapabilityChoiceError as contextual_action_error:
+            return {
+                'error': (
+                    'The earlier request is no longer available. '
+                    'Send a new message to continue.'
+                ),
+                'code': contextual_action_error.code,
+            }, 409
         except Exception as exc:
             debug_print(
                 '[ChatDocumentAction] Execution failed | '
@@ -14722,7 +15926,9 @@ def register_route_backend_chats(bp):
             'analysis_coverage': execution_result.get('analysis_coverage') or {},
             'document_action': normalized_action,
             'token_usage': execution_result.get('token_usage'),
-            'metadata': assistant_doc.get('metadata', {}),
+            'metadata': project_chat_metadata_for_client(
+                assistant_doc.get('metadata', {})
+            ),
         }), 200
 
     def execute_analyze_chat_request(
@@ -14762,8 +15968,38 @@ def register_route_backend_chats(bp):
         capability_resume_proposal_id = str(
             data.get('capability_resume_proposal_id') or ''
         ).strip()
+        requested_conversation_id = str(
+            data.get('conversation_id') or ''
+        ).strip() or None
+        if requested_conversation_id:
+            try:
+                _authorize_personal_conversation_access(
+                    user_id,
+                    requested_conversation_id,
+                )
+                _preflight_chat_clarification(
+                    conversation_id=requested_conversation_id,
+                    user_message=data.get('message'),
+                    retry_user_message_id=(
+                        data.get('retry_user_message_id')
+                        or data.get('edited_user_message_id')
+                    ),
+                )
+            except LookupError:
+                return jsonify({'error': 'Conversation not found'}), 404
+            except PermissionError:
+                return jsonify({'error': 'Forbidden'}), 403
+            except (CapabilityChoiceError, ChatClarificationError) as clarification_error:
+                return jsonify({
+                    'error': str(clarification_error),
+                    'code': clarification_error.code,
+                }), 409
+            except Exception:
+                return jsonify({
+                    'error': 'Failed to validate pending clarification',
+                }), 500
         if capability_resume_proposal_id:
-            resume_conversation_id = str(data.get('conversation_id') or '').strip()
+            resume_conversation_id = requested_conversation_id
             if not resume_conversation_id:
                 return jsonify({'error': 'conversation_id is required for capability resume'}), 400
             current_user_info = get_current_user_info() or {}
@@ -15006,6 +16242,30 @@ def register_route_backend_chats(bp):
         conversation_id = getattr(g, 'conversation_id', None) or data.get('conversation_id')
         if conversation_id is not None:
             conversation_id = str(conversation_id).strip() or None
+        if conversation_id:
+            try:
+                _authorize_personal_conversation_access(user_id, conversation_id)
+                _preflight_chat_clarification(
+                    conversation_id=conversation_id,
+                    user_message=data.get('message'),
+                    retry_user_message_id=(
+                        data.get('retry_user_message_id')
+                        or data.get('edited_user_message_id')
+                    ),
+                )
+            except LookupError:
+                return jsonify({'error': 'Conversation not found'}), 404
+            except PermissionError:
+                return jsonify({'error': 'Forbidden'}), 403
+            except (CapabilityChoiceError, ChatClarificationError) as clarification_error:
+                return jsonify({
+                    'error': str(clarification_error),
+                    'code': clarification_error.code,
+                }), 409
+            except Exception:
+                return jsonify({
+                    'error': 'Failed to validate pending clarification',
+                }), 500
         if not conversation_id:
             conversation_id = str(uuid.uuid4())
         data['conversation_id'] = conversation_id
@@ -15070,6 +16330,19 @@ def register_route_backend_chats(bp):
                 return jsonify({'error': 'conversation_id is required'}), 400
 
             conversation_item = _authorize_personal_conversation_access(user_id, conversation_id)
+            try:
+                _preflight_chat_clarification(
+                    conversation_id=conversation_id,
+                    user_message=(
+                        data.get('prompt')
+                        or (data.get('proposal') or {}).get('prompt')
+                    ),
+                )
+            except (CapabilityChoiceError, ChatClarificationError) as clarification_error:
+                return jsonify({
+                    'error': str(clarification_error),
+                    'code': clarification_error.code,
+                }), 409
 
             proposal_payload = data.get('proposal') if isinstance(data.get('proposal'), dict) else dict(data)
             if data.get('prompt'):
@@ -15236,6 +16509,12 @@ def register_route_backend_chats(bp):
                 ),
                 selected_agent_present=context.get('selected_agent_present') is True,
                 baseline_error_code=context.get('baseline_error_code'),
+                source_lineage_validator=lambda stored_proposal: (
+                    _rebuild_authorized_contextual_goal(
+                        stored_proposal,
+                        conversation_id=conversation_id,
+                    )
+                ),
             )
             decision = proposal.get('decision') or {}
             effective_capability_ids = list(decision.get('effective_capability_ids') or [])
@@ -15295,10 +16574,27 @@ def register_route_backend_chats(bp):
                 ),
                 level=logging.WARNING,
             )
+            if exc.code.startswith('goal_'):
+                try:
+                    persist_capability_invalidation(
+                        cosmos_messages_container,
+                        conversation_id=conversation_id,
+                        proposal_id=proposal_id,
+                        reason=exc.code,
+                    )
+                except Exception as invalidation_error:
+                    log_event(
+                        '[CapabilityPlanner] Contextual decision invalidation failed',
+                        extra={
+                            'error_type': type(invalidation_error).__name__,
+                        },
+                        level=logging.ERROR,
+                    )
             status_code = 409 if (
                 exc.code in conflict_codes
                 or exc.code.startswith('capability_')
                 or exc.code.startswith('agent_')
+                or exc.code.startswith('goal_')
             ) else 400
             return jsonify({'error': str(exc), 'code': exc.code}), status_code
         except Exception as exc:
@@ -15360,6 +16656,33 @@ def register_route_backend_chats(bp):
             conversation_id = getattr(g, 'conversation_id', None) or data.get('conversation_id')
             if conversation_id is not None:
                 conversation_id = str(conversation_id).strip() or None
+            if conversation_id:
+                try:
+                    _authorize_personal_conversation_access(
+                        user_id,
+                        conversation_id,
+                    )
+                    _preflight_chat_clarification(
+                        conversation_id=conversation_id,
+                        user_message=user_message,
+                        retry_user_message_id=(
+                            data.get('retry_user_message_id')
+                            or data.get('edited_user_message_id')
+                        ),
+                    )
+                except LookupError:
+                    return jsonify({'error': 'Conversation not found'}), 404
+                except PermissionError:
+                    return jsonify({'error': 'Forbidden'}), 403
+                except (CapabilityChoiceError, ChatClarificationError) as clarification_error:
+                    return jsonify({
+                        'error': str(clarification_error),
+                        'code': clarification_error.code,
+                    }), 409
+                except Exception:
+                    return jsonify({
+                        'error': 'Failed to validate pending clarification',
+                    }), 500
             hybrid_search_enabled = data.get('hybrid_search')
             web_search_enabled = data.get('web_search_enabled')
             url_access_enabled = data.get('url_access_enabled')
@@ -15625,24 +16948,45 @@ def register_route_backend_chats(bp):
                     assigned_knowledge_filters,
                     ASSIGNED_KNOWLEDGE_WEB_SOURCE_MODE_DEEP_RESEARCH,
                 )
-                if assigned_knowledge_url_review_urls and not is_url_access_enabled_for_user(
-                    settings,
-                    user_roles=current_user_roles,
+                if (
+                    assigned_knowledge_url_review_urls
+                    and data.get('_server_contextual_egress_declined') is not True
+                    and not is_url_access_enabled_for_user(
+                        settings,
+                        user_roles=current_user_roles,
+                    )
                 ):
                     return jsonify({
                         'error': 'This agent has assigned URL sources, but URL Access is not available for your account.'
                     }), 403
-                if assigned_knowledge_deep_research_urls and not source_review_allowed_for_user:
+                if (
+                    assigned_knowledge_deep_research_urls
+                    and data.get('_server_contextual_egress_declined') is not True
+                    and not source_review_allowed_for_user
+                ):
                     return jsonify({
                         'error': 'This agent has assigned Deep Research sources, but Deep Research is not available for your account.'
                     }), 403
-                if assigned_knowledge_url_review_urls or assigned_knowledge_deep_research_urls:
+                if (
+                    data.get('_server_contextual_egress_declined') is not True
+                    and (
+                        assigned_knowledge_url_review_urls
+                        or assigned_knowledge_deep_research_urls
+                    )
+                ):
                     source_review_enabled = True
                     if assigned_knowledge_deep_research_urls:
                         deep_research_enabled = True
                 g.assigned_knowledge_context = assigned_knowledge_filters
                 g.assigned_knowledge_user_context_active = assigned_knowledge_user_context_active
 
+            if data.get('_server_contextual_egress_declined') is True:
+                web_search_enabled = False
+                url_access_enabled = False
+                source_review_enabled = False
+                deep_research_enabled = False
+                assigned_knowledge_url_review_urls = []
+                assigned_knowledge_deep_research_urls = []
             explicit_external_retrieval_requested = _is_explicit_external_retrieval_requested(
                 web_search_enabled=web_search_enabled,
                 url_access_enabled=url_access_enabled,
@@ -15878,18 +17222,11 @@ def register_route_backend_chats(bp):
 
             compatibility_resume_context = trusted_capability_resume_context
             compatibility_selected_capability_ids = (
-                [
-                    capability.get('id')
-                    for capability in (
-                        compatibility_resume_context.get(
-                            'capability_inventory', {}
-                        ).get('capabilities', [])
-                        if compatibility_resume_context
-                        else []
-                    )
-                    if isinstance(capability, Mapping)
-                    and capability.get('state') == 'selected'
-                ]
+                list(
+                    compatibility_resume_context.get(
+                        'execution_effective_capability_ids'
+                    ) or []
+                )
                 if compatibility_resume_context
                 else _get_selected_builtin_chat_capability_ids(data)
             )
@@ -15945,6 +17282,13 @@ def register_route_backend_chats(bp):
                 web_search_enabled = True
                 source_review_enabled = True
                 deep_research_enabled = True
+            if data.get('_server_contextual_egress_declined') is True:
+                web_search_enabled = False
+                url_access_enabled = False
+                source_review_enabled = False
+                deep_research_enabled = False
+                assigned_knowledge_url_review_urls = []
+                assigned_knowledge_deep_research_urls = []
             compatibility_selection_snapshot = {
                 'conversation_id': conversation_id,
                 'capability_ids': list(compatibility_selected_capability_ids),
@@ -17482,6 +18826,56 @@ def register_route_backend_chats(bp):
                         detail=f"files={tabular_filenames_str}"
                     )
 
+            if data.get('_server_contextual_egress_declined') is True:
+                web_search_enabled = False
+                url_access_enabled = False
+                source_review_enabled = False
+                deep_research_enabled = False
+                assigned_knowledge_url_review_urls = []
+                assigned_knowledge_deep_research_urls = []
+            legacy_contextual_external_execution = bool(
+                capability_resume_context
+                and (
+                    web_search_enabled
+                    or source_review_enabled
+                    or deep_research_enabled
+                    or url_access_enabled
+                )
+                and (
+                    capability_resume_context.get('decision') or {}
+                ).get('prior_goal_included') is True
+            )
+            if legacy_contextual_external_execution:
+                try:
+                    legacy_pre_execution_goal = (
+                        _rebuild_claimed_contextual_goal(
+                            capability_resume_context,
+                            conversation_id=conversation_id,
+                        )
+                    )
+                    rebuilt_external_query = str(
+                        (legacy_pre_execution_goal or {}).get(
+                            'external_query'
+                        ) or ''
+                    ).strip()
+                    if not rebuilt_external_query:
+                        raise CapabilityChoiceError(
+                            'approved external goal could not be rebuilt',
+                            code='goal_query_empty',
+                        )
+                    external_retrieval_message = rebuilt_external_query
+                    web_search_query_text = build_web_search_query_text(
+                        rebuilt_external_query
+                    )
+                except CapabilityChoiceError as contextual_execution_error:
+                    return jsonify({
+                        'error': (
+                            'The approved earlier request is no longer '
+                            'available. Send a new message to continue.'
+                        ),
+                        'code': contextual_execution_error.code,
+                    }), 409
+
             if web_search_enabled:
                 search_thought_label = 'deep_research' if deep_research_enabled else 'web_search'
                 search_thought_text = "Planning Deep Research web searches" if deep_research_enabled else f"Searching the web for '{web_search_query_text[:50]}'"
@@ -18968,7 +20362,9 @@ def register_route_backend_chats(bp):
                 'source_review': compact_source_review_result_for_metadata(source_review_result),
                 'deep_research': deep_research_result,
                 'agent_citations': prepared_agent_citations,
-                'metadata': assistant_doc.get('metadata', {}),
+                'metadata': project_chat_metadata_for_client(
+                    assistant_doc.get('metadata', {})
+                ),
                 'reload_messages': reload_messages_required,
                 'kernel_fallback_notice': kernel_fallback_notice,
                 'thoughts_enabled': thought_tracker.enabled
@@ -19037,6 +20433,72 @@ def register_route_backend_chats(bp):
         capability_resume_proposal_id = str(
             (data or {}).get('capability_resume_proposal_id') or ''
         ).strip()
+        retry_user_message_id = data.get('retry_user_message_id') or data.get('edited_user_message_id')
+        retry_thread_id = data.get('retry_thread_id')
+        retry_thread_attempt = data.get('retry_thread_attempt')
+        is_retry = bool(retry_user_message_id)
+        is_edit = bool(data.get('edited_user_message_id'))
+        compatibility_mode = bool(data.get('image_generation')) or is_retry
+        requested_conversation_id = str(data.get('conversation_id') or '').strip() or None
+        clarification_response_retry = False
+
+        if requested_conversation_id:
+            try:
+                _authorize_personal_conversation_access(
+                    user_id,
+                    requested_conversation_id,
+                )
+                clarification_preflight = _preflight_chat_clarification(
+                    conversation_id=requested_conversation_id,
+                    user_message=data.get('message'),
+                    retry_user_message_id=retry_user_message_id,
+                    allow_pending_response=(
+                        not compatibility_mode
+                        and not capability_resume_proposal_id
+                    ),
+                    allow_exact_response_retry=(
+                        compatibility_mode
+                        and not capability_resume_proposal_id
+                    ),
+                )
+                if clarification_preflight.get('exact_response_retry'):
+                    clarification_response_retry = True
+                    compatibility_mode = False
+                preflight_clarification = clarification_preflight.get(
+                    'clarification'
+                )
+                if (
+                    isinstance(preflight_clarification, Mapping)
+                    and (
+                        clarification_response_retry
+                        or (
+                            preflight_clarification.get('status') == 'pending'
+                            and not compatibility_mode
+                        )
+                    )
+                    and not capability_resume_proposal_id
+                ):
+                    data['_server_expected_clarification_id'] = str(
+                        preflight_clarification.get('clarification_id')
+                        or ''
+                    ).strip()
+            except LookupError:
+                return jsonify({'error': 'Conversation not found'}), 404
+            except PermissionError:
+                return jsonify({'error': 'Forbidden'}), 403
+            except (CapabilityChoiceError, ChatClarificationError) as clarification_error:
+                return jsonify({
+                    'error': str(clarification_error),
+                    'code': clarification_error.code,
+                }), 409
+            except Exception as exc:
+                debug_print(
+                    '[Streaming] Clarification preflight failed | '
+                    f'error_type={type(exc).__name__}'
+                )
+                return jsonify({
+                    'error': 'Failed to validate pending clarification',
+                }), 500
         if capability_resume_proposal_id:
             resume_conversation_id = str((data or {}).get('conversation_id') or '').strip()
             if not resume_conversation_id:
@@ -19089,38 +20551,6 @@ def register_route_backend_chats(bp):
                     }
                 ) else 400
                 return jsonify({'error': str(exc), 'code': exc.code}), status_code
-
-        retry_user_message_id = data.get('retry_user_message_id') or data.get('edited_user_message_id')
-        retry_thread_id = data.get('retry_thread_id')
-        retry_thread_attempt = data.get('retry_thread_attempt')
-        is_retry = bool(retry_user_message_id)
-        is_edit = bool(data.get('edited_user_message_id'))
-
-        compatibility_mode = bool(data.get('image_generation')) or is_retry
-        requested_conversation_id = str(data.get('conversation_id') or '').strip() or None
-
-        if requested_conversation_id:
-            try:
-                _authorize_personal_conversation_access(user_id, requested_conversation_id)
-            except LookupError:
-                _release_capability_resume_claim_context(
-                    trusted_capability_resume_context,
-                    'conversation_not_found',
-                )
-                return jsonify({'error': 'Conversation not found'}), 404
-            except PermissionError:
-                _release_capability_resume_claim_context(
-                    trusted_capability_resume_context,
-                    'conversation_forbidden',
-                )
-                return jsonify({'error': 'Forbidden'}), 403
-            except Exception as exc:
-                _release_capability_resume_claim_context(
-                    trusted_capability_resume_context,
-                    type(exc).__name__,
-                )
-                debug_print(f"[Streaming] Error authorizing conversation {requested_conversation_id}: {exc}")
-                return jsonify({'error': 'Failed to authorize conversation'}), 500
 
         try:
             initial_scope_context = _get_authorized_chat_scope_context(
@@ -19224,7 +20654,9 @@ def register_route_backend_chats(bp):
                 'kernel_fallback_notice': payload.get('kernel_fallback_notice'),
                 'thoughts_enabled': payload.get('thoughts_enabled', False),
                 'blocked': payload.get('blocked', False),
-                'metadata': payload.get('metadata', {}),
+                'metadata': project_chat_metadata_for_client(
+                    payload.get('metadata', {})
+                ),
             })
 
         def generate_compatibility_response():
@@ -19349,32 +20781,105 @@ def register_route_backend_chats(bp):
         def generate(publish_background_event=None):
             capability_resume_context = trusted_capability_resume_context
             resume_terminalized = capability_resume_context is None
+            clarification_terminalized = False
 
             def complete_stream_capability_resume(assistant_message_id):
                 nonlocal resume_terminalized
-                if resume_terminalized or not capability_resume_context:
-                    return
-                try:
-                    persist_capability_resume_completion(
-                        cosmos_messages_container,
-                        conversation_id=finalized_conversation_id,
-                        proposal_id=capability_resume_context.get('proposal_id'),
-                        execution_id=capability_resume_context.get('execution_id'),
-                        assistant_message_id=assistant_message_id,
-                    )
-                    resume_terminalized = True
-                except Exception as resume_completion_error:
-                    resume_terminalized = True
-                    log_event(
-                        '[CapabilityDiscovery] Resume completion persistence failed',
-                        extra={
-                            'conversation_id': finalized_conversation_id,
-                            'proposal_id': capability_resume_context.get('proposal_id'),
-                            'error_type': type(resume_completion_error).__name__,
-                        },
-                        level=logging.ERROR,
-                        exceptionTraceback=True,
-                    )
+                nonlocal clarification_terminalized
+                nonlocal resolved_chat_clarification
+                if (
+                    not clarification_terminalized
+                    and isinstance(resolved_chat_clarification, Mapping)
+                    and resolved_chat_clarification.get('status') == 'resolving'
+                ):
+                    try:
+                        persist_stream_user_message(user_metadata)
+                        (
+                            _,
+                            resolved_chat_clarification,
+                            clarification_idempotent,
+                        ) = persist_chat_clarification_response_completion(
+                            cosmos_messages_container,
+                            conversation_id=finalized_conversation_id,
+                            clarification_id=(
+                                resolved_chat_clarification.get(
+                                    'clarification_id'
+                                )
+                            ),
+                            response_user_message_id=(
+                                resolved_chat_clarification.get(
+                                    '_response_user_message_id'
+                                )
+                            ),
+                            child_run_id=resolved_chat_clarification.get(
+                                'child_run_id'
+                            ),
+                            expected_claimed_at=(
+                                resolved_chat_clarification.get(
+                                    'claimed_at'
+                                )
+                            ),
+                            response_validator=lambda claimed: (
+                                _validate_current_claimed_clarification_response(
+                                    conversation_id=(
+                                        finalized_conversation_id
+                                    ),
+                                    clarification=claimed,
+                                )
+                            ),
+                        )
+                        clarification_terminalized = True
+                        log_event(
+                            '[CapabilityPlanner] Clarification child completed',
+                            extra=build_clarification_evaluation_event(
+                                resolved_chat_clarification,
+                                lifecycle='resolved',
+                                idempotent=clarification_idempotent,
+                            ),
+                        )
+                    except ChatClarificationError as clarification_completion_error:
+                        log_event(
+                            '[CapabilityPlanner] Clarification completion rejected',
+                            extra={
+                                'error_type': type(
+                                    clarification_completion_error
+                                ).__name__,
+                            },
+                            level=logging.ERROR,
+                        )
+                        raise
+                    except Exception as clarification_completion_error:
+                        log_event(
+                            '[CapabilityPlanner] Clarification completion deferred',
+                            extra={
+                                'error_type': type(
+                                    clarification_completion_error
+                                ).__name__,
+                            },
+                            level=logging.ERROR,
+                        )
+                if not resume_terminalized and capability_resume_context:
+                    try:
+                        persist_capability_resume_completion(
+                            cosmos_messages_container,
+                            conversation_id=finalized_conversation_id,
+                            proposal_id=capability_resume_context.get('proposal_id'),
+                            execution_id=capability_resume_context.get('execution_id'),
+                            assistant_message_id=assistant_message_id,
+                        )
+                        resume_terminalized = True
+                    except Exception as resume_completion_error:
+                        resume_terminalized = True
+                        log_event(
+                            '[CapabilityDiscovery] Resume completion persistence failed',
+                            extra={
+                                'conversation_id': finalized_conversation_id,
+                                'proposal_id': capability_resume_context.get('proposal_id'),
+                                'error_type': type(resume_completion_error).__name__,
+                            },
+                            level=logging.ERROR,
+                            exceptionTraceback=True,
+                        )
 
             def fail_stream_capability_resume(error_type):
                 nonlocal resume_terminalized
@@ -19414,6 +20919,85 @@ def register_route_backend_chats(bp):
                 # Extract request parameters (same as non-streaming endpoint)
                 user_message = data.get('message', '')
                 conversation_id = finalized_conversation_id
+                early_contextual_goal = None
+                early_contextual_proposal = (
+                    capability_resume_context.get('_contextual_proposal')
+                    if capability_resume_context
+                    else None
+                )
+                if isinstance(early_contextual_proposal, Mapping):
+                    try:
+                        early_contextual_goal = (
+                            _rebuild_authorized_contextual_goal(
+                                early_contextual_proposal,
+                                conversation_id=conversation_id,
+                            )
+                        )
+                        early_contextual_decision = (
+                            capability_resume_context.get('decision') or {}
+                        )
+                        if early_contextual_decision.get(
+                            'contextual_goal_included'
+                        ) is True:
+                            contextual_query = str(
+                                (early_contextual_goal or {}).get(
+                                    'contextual_query'
+                                ) or ''
+                            ).strip()
+                            if not contextual_query:
+                                raise CapabilityChoiceError(
+                                    'approved contextual goal could not be rebuilt',
+                                    code='goal_query_empty',
+                                )
+                            data['_server_contextual_goal_query'] = contextual_query
+                        if early_contextual_decision.get(
+                            'prior_goal_included'
+                        ) is True:
+                            external_query = str(
+                                (early_contextual_goal or {}).get(
+                                    'external_query'
+                                ) or ''
+                            ).strip()
+                            if not external_query:
+                                raise CapabilityChoiceError(
+                                    'approved external goal could not be rebuilt',
+                                    code='goal_query_empty',
+                                )
+                            data['_server_external_query'] = external_query
+                    except Exception as contextual_source_error:
+                        error_code = (
+                            contextual_source_error.code
+                            if isinstance(
+                                contextual_source_error,
+                                CapabilityChoiceError,
+                            )
+                            else 'goal_reconstruction_failed'
+                        )
+                        persist_capability_invalidation(
+                            cosmos_messages_container,
+                            conversation_id=conversation_id,
+                            proposal_id=capability_resume_context.get(
+                                'proposal_id'
+                            ),
+                            reason=error_code,
+                            expected_execution_id=capability_resume_context.get(
+                                'execution_id'
+                            ),
+                        )
+                        resume_terminalized = True
+                        log_event(
+                            '[CapabilityPlanner] Contextual goal rejected at worker entry',
+                            extra={'failure_code': error_code},
+                            level=logging.WARNING,
+                        )
+                        yield f"data: {json.dumps({
+                            'error': (
+                                'The earlier request is no longer available. '
+                                'Send a new message to continue.'
+                            ),
+                            'code': error_code,
+                        })}\n\n"
+                        return
                 hybrid_search_enabled = data.get('hybrid_search')
                 web_search_enabled = data.get('web_search_enabled')
                 url_access_enabled = data.get('url_access_enabled')
@@ -19551,7 +21135,10 @@ def register_route_backend_chats(bp):
                 scope_type = 'group' if chat_type == 'group' else 'user'
 
                 # Initialize variables
-                search_query = user_message
+                search_query = str(
+                    data.get('_server_contextual_goal_query')
+                    or user_message
+                ).strip()
                 external_retrieval_message = resolve_external_retrieval_message(
                     data,
                     user_message,
@@ -19606,11 +21193,17 @@ def register_route_backend_chats(bp):
                 requested_url_access_enabled = bool(url_access_enabled)
                 requested_source_review_enabled = bool(source_review_enabled)
                 requested_deep_research_enabled = bool(deep_research_enabled)
-                prompt_urls = extract_urls_from_text(user_message)
+                url_access_input_message = str(
+                    data.get('_server_contextual_goal_query')
+                    or user_message
+                ).strip()
+                prompt_urls = extract_urls_from_text(
+                    url_access_input_message
+                )
                 url_access_requested = bool(url_access_enabled)
                 if url_access_requested:
                     url_access_validation = validate_url_access_request(
-                        user_message,
+                        url_access_input_message,
                         settings,
                         URL_ACCESS_CONTEXT_CHAT,
                         user_roles=current_user_roles,
@@ -19708,16 +21301,30 @@ def register_route_backend_chats(bp):
                         assigned_knowledge_filters,
                         ASSIGNED_KNOWLEDGE_WEB_SOURCE_MODE_DEEP_RESEARCH,
                     )
-                    if assigned_knowledge_url_review_urls and not is_url_access_enabled_for_user(
-                        settings,
-                        user_roles=current_user_roles,
+                    if (
+                        assigned_knowledge_url_review_urls
+                        and data.get('_server_contextual_egress_declined') is not True
+                        and not is_url_access_enabled_for_user(
+                            settings,
+                            user_roles=current_user_roles,
+                        )
                     ):
                         yield f"data: {json.dumps({'error': 'This agent has assigned URL sources, but URL Access is not available for your account.'})}\n\n"
                         return
-                    if assigned_knowledge_deep_research_urls and not source_review_allowed_for_user:
+                    if (
+                        assigned_knowledge_deep_research_urls
+                        and data.get('_server_contextual_egress_declined') is not True
+                        and not source_review_allowed_for_user
+                    ):
                         yield f"data: {json.dumps({'error': 'This agent has assigned Deep Research sources, but Deep Research is not available for your account.'})}\n\n"
                         return
-                    if assigned_knowledge_url_review_urls or assigned_knowledge_deep_research_urls:
+                    if (
+                        data.get('_server_contextual_egress_declined') is not True
+                        and (
+                            assigned_knowledge_url_review_urls
+                            or assigned_knowledge_deep_research_urls
+                        )
+                    ):
                         source_review_enabled = True
                         if assigned_knowledge_deep_research_urls:
                             deep_research_enabled = True
@@ -19731,6 +21338,13 @@ def register_route_backend_chats(bp):
                         f"public_workspaces={len(effective_active_public_workspace_ids)} | "
                         f"tags={len(tags_filter)}"
                     )
+                if data.get('_server_contextual_egress_declined') is True:
+                    web_search_enabled = False
+                    url_access_enabled = False
+                    source_review_enabled = False
+                    deep_research_enabled = False
+                    assigned_knowledge_url_review_urls = []
+                    assigned_knowledge_deep_research_urls = []
                 explicit_external_retrieval_requested = _is_explicit_external_retrieval_requested(
                     web_search_enabled=web_search_enabled,
                     url_access_enabled=url_access_enabled,
@@ -19915,6 +21529,692 @@ def register_route_backend_chats(bp):
                         yield f"data: {json.dumps({'error': 'Forbidden'})}\n\n"
                         return
 
+                capability_dialogue_context_state = {
+                    'prior_user_messages': [],
+                    'predecessor_thread_id': None,
+                }
+                pending_chat_clarification = None
+                if not capability_resume_context:
+                    try:
+                        expected_clarification_id = str(
+                            data.get('_server_expected_clarification_id')
+                            or ''
+                        ).strip()
+                        worker_clarification_preflight = (
+                            _preflight_chat_clarification(
+                                conversation_id=conversation_id,
+                                user_message=user_message,
+                                retry_user_message_id=(
+                                    retry_user_message_id
+                                    if clarification_response_retry
+                                    else None
+                                ),
+                                allow_pending_response=(
+                                    not clarification_response_retry
+                                ),
+                                allow_exact_response_retry=(
+                                    clarification_response_retry
+                                ),
+                                expected_clarification_id=(
+                                    expected_clarification_id or None
+                                ),
+                            )
+                        )
+                        targeted_clarification = (
+                            worker_clarification_preflight.get(
+                                'clarification'
+                            )
+                            if clarification_response_retry
+                            else None
+                        )
+                        targeted_response = (
+                            worker_clarification_preflight.get(
+                                'latest_user_message'
+                            )
+                            if clarification_response_retry
+                            else None
+                        )
+                        if (
+                            isinstance(targeted_clarification, Mapping)
+                            and targeted_clarification.get('status')
+                            == 'resolved'
+                        ):
+                            log_event(
+                                '[CapabilityPlanner] Clarification response reconciled',
+                                extra=build_clarification_evaluation_event(
+                                    targeted_clarification,
+                                    lifecycle='resolved',
+                                    idempotent=True,
+                                ),
+                            )
+                            yield f"data: {json.dumps({
+                                'done': True,
+                                'conversation_id': conversation_id,
+                                'full_content': '',
+                                'reload_messages': True,
+                                'clarification_replayed': True,
+                            })}\n\n"
+                            return
+                        if (
+                            isinstance(targeted_clarification, Mapping)
+                            and targeted_clarification.get('status')
+                            == 'resolving'
+                            and isinstance(targeted_response, Mapping)
+                        ):
+                            targeted_source = validate_chat_clarification_source(
+                                cosmos_messages_container,
+                                conversation_id=conversation_id,
+                                clarification=targeted_clarification,
+                            )
+                            capability_dialogue_context_state = {
+                                'prior_user_messages': [
+                                    targeted_source,
+                                    targeted_response,
+                                ],
+                                'predecessor_thread_id': str(
+                                    targeted_response.get('metadata', {}).get(
+                                        'thread_info', {}
+                                    ).get('thread_id') or ''
+                                ).strip() or None,
+                            }
+                            pending_chat_clarification = targeted_clarification
+                        else:
+                            capability_dialogue_context_state = (
+                                load_bounded_prior_user_turns(
+                                    cosmos_messages_container,
+                                    conversation_id=conversation_id,
+                                )
+                            )
+                        predecessor_thread_id = (
+                            capability_dialogue_context_state.get(
+                                'predecessor_thread_id'
+                            )
+                        )
+                        if pending_chat_clarification:
+                            pass
+                        elif expected_clarification_id:
+                            (
+                                _,
+                                pending_chat_clarification,
+                            ) = read_chat_clarification_message(
+                                cosmos_messages_container,
+                                conversation_id=conversation_id,
+                                clarification_id=expected_clarification_id,
+                            )
+                            if pending_chat_clarification.get(
+                                'status'
+                            ) not in {'pending', 'resolving'}:
+                                raise ChatClarificationError(
+                                    'clarification answer was already handled',
+                                    code='clarification_response_conflict',
+                                )
+                        elif predecessor_thread_id:
+                            (
+                                _,
+                                pending_chat_clarification,
+                            ) = find_pending_chat_clarification(
+                                cosmos_messages_container,
+                                conversation_id=conversation_id,
+                                source_thread_id=predecessor_thread_id,
+                            )
+                            if pending_chat_clarification and (
+                                clarification_is_expired(
+                                    pending_chat_clarification
+                                )
+                            ):
+                                persist_chat_clarification_expiry(
+                                    cosmos_messages_container,
+                                    conversation_id=conversation_id,
+                                    clarification_id=(
+                                        pending_chat_clarification.get(
+                                            'clarification_id'
+                                        )
+                                    ),
+                                )
+                                log_event(
+                                    '[CapabilityPlanner] Clarification expired',
+                                    extra=build_clarification_evaluation_event(
+                                        pending_chat_clarification,
+                                        lifecycle='expired',
+                                    ),
+                                )
+                                raise ChatClarificationError(
+                                    'clarification has expired',
+                                    code='clarification_expired',
+                                )
+                            elif pending_chat_clarification:
+                                validate_chat_clarification_source(
+                                    cosmos_messages_container,
+                                    conversation_id=conversation_id,
+                                    clarification=pending_chat_clarification,
+                                )
+                                if (
+                                    pending_chat_clarification.get('status')
+                                    == 'resolving'
+                                    and _find_persisted_clarification_child_output(
+                                        conversation_id=conversation_id,
+                                        child_run_id=(
+                                            pending_chat_clarification.get(
+                                                'child_run_id'
+                                            )
+                                        ),
+                                    )
+                                ):
+                                    (
+                                        _,
+                                        pending_chat_clarification,
+                                        _,
+                                    ) = persist_chat_clarification_response_completion(
+                                        cosmos_messages_container,
+                                        conversation_id=conversation_id,
+                                        clarification_id=(
+                                            pending_chat_clarification.get(
+                                                'clarification_id'
+                                            )
+                                        ),
+                                        response_user_message_id=(
+                                            pending_chat_clarification.get(
+                                                '_response_user_message_id'
+                                            )
+                                        ),
+                                        child_run_id=(
+                                            pending_chat_clarification.get(
+                                                'child_run_id'
+                                            )
+                                        ),
+                                        expected_claimed_at=(
+                                            pending_chat_clarification.get(
+                                                'claimed_at'
+                                            )
+                                        ),
+                                        response_validator=lambda claimed: (
+                                            _validate_current_claimed_clarification_response(
+                                                conversation_id=conversation_id,
+                                                clarification=claimed,
+                                            )
+                                        ),
+                                    )
+                        if not pending_chat_clarification:
+                            latest_user_message = next(
+                                reversed(
+                                    capability_dialogue_context_state.get(
+                                        'prior_user_messages'
+                                    ) or []
+                                ),
+                                None,
+                            )
+                            latest_user_metadata = (
+                                latest_user_message.get('metadata')
+                                if isinstance(latest_user_message, Mapping)
+                                and isinstance(
+                                    latest_user_message.get('metadata'),
+                                    Mapping,
+                                )
+                                else {}
+                            )
+                            latest_clarification_response = (
+                                latest_user_metadata.get(
+                                    'clarification_response'
+                                )
+                                if isinstance(
+                                    latest_user_metadata.get(
+                                        'clarification_response'
+                                    ),
+                                    Mapping,
+                                )
+                                else {}
+                            )
+                            clarification_id = str(
+                                latest_clarification_response.get(
+                                    '_clarification_id'
+                                ) or ''
+                            ).strip()
+                            if (
+                                clarification_id
+                                and clarification_response_retry
+                                and str(retry_user_message_id or '').strip()
+                                == str(
+                                    (latest_user_message or {}).get('id')
+                                    or ''
+                                ).strip()
+                            ):
+                                (
+                                    _,
+                                    retry_clarification,
+                                ) = read_chat_clarification_message(
+                                    cosmos_messages_container,
+                                    conversation_id=conversation_id,
+                                    clarification_id=clarification_id,
+                                )
+                                if chat_clarification_response_matches(
+                                    retry_clarification,
+                                    user_message,
+                                ):
+                                    validate_chat_clarification_source(
+                                        cosmos_messages_container,
+                                        conversation_id=conversation_id,
+                                        clarification=retry_clarification,
+                                    )
+                                    response_user_message_id = str(
+                                        retry_clarification.get(
+                                            '_response_user_message_id'
+                                        ) or ''
+                                    ).strip()
+                                    child_run_id = str(
+                                        retry_clarification.get(
+                                            'child_run_id'
+                                        ) or ''
+                                    ).strip()
+                                    if (
+                                        retry_clarification.get('status')
+                                        == 'resolving'
+                                        and response_user_message_id
+                                        == str(
+                                            latest_user_message.get('id')
+                                            or ''
+                                        ).strip()
+                                        and child_run_id
+                                    ):
+                                        child_output = (
+                                            _find_persisted_clarification_child_output(
+                                                conversation_id=conversation_id,
+                                                child_run_id=child_run_id,
+                                            )
+                                        )
+                                        if child_output:
+                                            (
+                                                _,
+                                                retry_clarification,
+                                                _,
+                                            ) = persist_chat_clarification_response_completion(
+                                                cosmos_messages_container,
+                                                conversation_id=conversation_id,
+                                                clarification_id=clarification_id,
+                                                response_user_message_id=(
+                                                    response_user_message_id
+                                                ),
+                                                child_run_id=child_run_id,
+                                                expected_claimed_at=(
+                                                    retry_clarification.get(
+                                                        'claimed_at'
+                                                    )
+                                                ),
+                                                response_validator=lambda claimed: (
+                                                    _validate_current_claimed_clarification_response(
+                                                        conversation_id=(
+                                                            conversation_id
+                                                        ),
+                                                        clarification=claimed,
+                                                    )
+                                                ),
+                                            )
+                                        else:
+                                            pending_chat_clarification = (
+                                                retry_clarification
+                                            )
+                                    if retry_clarification.get('status') == 'resolved':
+                                        log_event(
+                                            '[CapabilityPlanner] Clarification response reconciled',
+                                            extra=build_clarification_evaluation_event(
+                                                retry_clarification,
+                                                lifecycle='resolved',
+                                                idempotent=True,
+                                            ),
+                                        )
+                                        yield f"data: {json.dumps({
+                                            'done': True,
+                                            'conversation_id': conversation_id,
+                                            'full_content': '',
+                                            'reload_messages': True,
+                                            'clarification_replayed': True,
+                                        })}\n\n"
+                                        return
+                        log_event(
+                            '[CapabilityPlanner] Contextual planning context assembled',
+                            extra={
+                                'prior_user_turn_count': len(
+                                    capability_dialogue_context_state.get(
+                                        'prior_user_messages'
+                                    ) or []
+                                ),
+                                'clarification_pending': bool(
+                                    pending_chat_clarification
+                                ),
+                            },
+                        )
+                    except (CapabilityChoiceError, ChatClarificationError) as context_error:
+                        log_event(
+                            '[CapabilityPlanner] Contextual planning context rejected',
+                            extra={'failure_code': context_error.code},
+                            level=logging.WARNING,
+                        )
+                        yield f"data: {json.dumps({
+                            'error': str(context_error),
+                            'code': context_error.code,
+                        })}\n\n"
+                        return
+                    except Exception as context_error:
+                        log_event(
+                            '[CapabilityPlanner] Contextual planning context unavailable',
+                            extra={
+                                'error_type': type(context_error).__name__,
+                            },
+                            level=logging.WARNING,
+                        )
+                        yield f"data: {json.dumps({
+                            'error': 'Contextual planning state is unavailable',
+                            'code': 'contextual_planning_unavailable',
+                        })}\n\n"
+                        return
+
+                preallocated_user_message_id = None
+                preallocated_user_thread_id = None
+                clarification_child_run_id = None
+                resolved_chat_clarification = None
+                clarification_response_idempotent = False
+                claimed_clarification_user_doc = None
+                if pending_chat_clarification:
+                    recovering_clarification_response = (
+                        pending_chat_clarification.get('status') == 'resolving'
+                    )
+                    if (
+                        recovering_clarification_response
+                        and not clarification_response_retry
+                    ):
+                        yield f"data: {json.dumps({
+                            'error': (
+                                'Clarification response is already being '
+                                'processed'
+                            ),
+                            'code': 'clarification_response_in_progress',
+                        })}\n\n"
+                        return
+                    if recovering_clarification_response:
+                        try:
+                            capability_dialogue_context_state = (
+                                _prepare_clarification_recovery_context(
+                                    capability_dialogue_context_state,
+                                    pending_chat_clarification,
+                                )
+                            )
+                        except ChatClarificationError as recovery_error:
+                            _invalidate_chat_clarification_checkpoint(
+                                conversation_id=conversation_id,
+                                clarification=pending_chat_clarification,
+                                reason=recovery_error.code,
+                            )
+                            yield f"data: {json.dumps({
+                                'error': str(recovery_error),
+                                'code': recovery_error.code,
+                            })}\n\n"
+                            return
+                    preallocated_user_message_id = str(
+                        pending_chat_clarification.get(
+                            '_response_user_message_id'
+                        ) or ''
+                    ).strip() if recovering_clarification_response else (
+                        f"{conversation_id}_user_{int(time.time())}_"
+                        f"{random.randint(1000,9999)}"
+                    )
+                    preallocated_user_thread_id = str(
+                        pending_chat_clarification.get(
+                            '_response_thread_id'
+                        ) or ''
+                    ).strip() if recovering_clarification_response else str(
+                        uuid.uuid4()
+                    )
+                    clarification_child_run_id = str(
+                        pending_chat_clarification.get('child_run_id') or ''
+                    ).strip() if recovering_clarification_response else str(
+                        uuid.uuid4()
+                    )
+                    if not all((
+                        preallocated_user_message_id,
+                        preallocated_user_thread_id,
+                        clarification_child_run_id,
+                    )):
+                        _invalidate_chat_clarification_checkpoint(
+                            conversation_id=conversation_id,
+                            clarification=pending_chat_clarification,
+                            reason='clarification_response_claim_mismatch',
+                        )
+                        yield f"data: {json.dumps({
+                            'error': 'Clarification response state is incomplete',
+                            'code': 'clarification_response_claim_mismatch',
+                        })}\n\n"
+                        return
+                    try:
+                        (
+                            _,
+                            resolved_chat_clarification,
+                            clarification_response_idempotent,
+                        ) = persist_chat_clarification_response_claim(
+                            cosmos_messages_container,
+                            conversation_id=conversation_id,
+                            clarification_id=pending_chat_clarification.get(
+                                'clarification_id'
+                            ),
+                            response_user_message_id=(
+                                preallocated_user_message_id
+                            ),
+                            response_text=user_message,
+                            child_run_id=clarification_child_run_id,
+                            response_thread_id=preallocated_user_thread_id,
+                            source_validator=lambda clarification: (
+                                validate_chat_clarification_source(
+                                    cosmos_messages_container,
+                                    conversation_id=conversation_id,
+                                    clarification=clarification,
+                                )
+                            ),
+                            expected_response_user_message_id=(
+                                pending_chat_clarification.get(
+                                    '_response_user_message_id'
+                                )
+                                if recovering_clarification_response
+                                else None
+                            ),
+                            expected_child_run_id=(
+                                pending_chat_clarification.get('child_run_id')
+                                if recovering_clarification_response
+                                else None
+                            ),
+                            expected_claimed_at=(
+                                pending_chat_clarification.get('claimed_at')
+                                if recovering_clarification_response
+                                else None
+                            ),
+                        )
+                    except (CapabilityChoiceError, ChatClarificationError) as clarification_error:
+                        log_event(
+                            '[CapabilityPlanner] Clarification response rejected',
+                            extra=build_clarification_evaluation_event(
+                                pending_chat_clarification,
+                                lifecycle='failed',
+                                error_code=clarification_error.code,
+                            ),
+                            level=logging.WARNING,
+                        )
+                        yield f"data: {json.dumps({
+                            'error': str(clarification_error),
+                            'code': clarification_error.code,
+                        })}\n\n"
+                        return
+                    if clarification_response_idempotent:
+                        log_event(
+                            '[CapabilityPlanner] Clarification replayed',
+                            extra=build_clarification_evaluation_event(
+                                resolved_chat_clarification,
+                                lifecycle='resolved',
+                                idempotent=True,
+                            ),
+                        )
+                        yield f"data: {json.dumps({
+                            'done': True,
+                            'conversation_id': conversation_id,
+                            'full_content': '',
+                            'reload_messages': True,
+                            'clarification_replayed': True,
+                        })}\n\n"
+                        return
+                    preallocated_user_message_id = str(
+                        resolved_chat_clarification.get(
+                            '_response_user_message_id'
+                        ) or preallocated_user_message_id
+                    )
+                    clarification_child_run_id = str(
+                        resolved_chat_clarification.get('child_run_id')
+                        or clarification_child_run_id
+                    )
+                    preallocated_user_thread_id = str(
+                        resolved_chat_clarification.get(
+                            '_response_thread_id'
+                        ) or preallocated_user_thread_id
+                    )
+                    pending_chat_clarification = resolved_chat_clarification
+                    try:
+                        claimed_clarification_user_doc = (
+                            cosmos_messages_container.read_item(
+                                item=preallocated_user_message_id,
+                                partition_key=conversation_id,
+                            )
+                        )
+                    except CosmosResourceNotFoundError:
+                        if recovering_clarification_response:
+                            _invalidate_chat_clarification_checkpoint(
+                                conversation_id=conversation_id,
+                                clarification=resolved_chat_clarification,
+                                reason=(
+                                    'clarification_response_claim_mismatch'
+                                ),
+                            )
+                            yield f"data: {json.dumps({
+                                'error': (
+                                    'Clarification response state is invalid'
+                                ),
+                                'code': (
+                                    'clarification_response_claim_mismatch'
+                                ),
+                            })}\n\n"
+                            return
+                        claimed_clarification_user_doc = {
+                            'id': preallocated_user_message_id,
+                            'conversation_id': conversation_id,
+                            'role': 'user',
+                            'content': user_message,
+                            'timestamp': datetime.utcnow().isoformat(),
+                            'model_deployment_name': None,
+                            'metadata': {},
+                        }
+                    claimed_response_metadata = (
+                        copy.deepcopy(
+                            claimed_clarification_user_doc.get('metadata')
+                        )
+                        if isinstance(
+                            claimed_clarification_user_doc.get('metadata'),
+                            Mapping,
+                        )
+                        else {}
+                    )
+                    claimed_response_thread_info = (
+                        claimed_response_metadata.get('thread_info')
+                        if isinstance(
+                            claimed_response_metadata.get('thread_info'),
+                            Mapping,
+                        )
+                        else {}
+                    )
+                    if (
+                        recovering_clarification_response
+                        and not _claimed_clarification_response_is_valid(
+                            claimed_clarification_user_doc,
+                            resolved_chat_clarification,
+                            conversation_id=conversation_id,
+                        )
+                    ):
+                        _invalidate_chat_clarification_checkpoint(
+                            conversation_id=conversation_id,
+                            clarification=resolved_chat_clarification,
+                            reason='clarification_response_claim_mismatch',
+                        )
+                        yield f"data: {json.dumps({
+                            'error': 'Clarification response state is invalid',
+                            'code': 'clarification_response_claim_mismatch',
+                        })}\n\n"
+                        return
+                    claimed_response_metadata['thread_info'] = {
+                        'thread_id': preallocated_user_thread_id,
+                        'previous_thread_id': (
+                            resolved_chat_clarification.get(
+                                '_source_thread_id'
+                            )
+                        ),
+                        'active_thread': True,
+                        'thread_attempt': 1,
+                    }
+                    claimed_response_metadata['clarification_response'] = {
+                        'version': resolved_chat_clarification.get('version'),
+                        'code': resolved_chat_clarification.get('code'),
+                        'status': resolved_chat_clarification.get('status'),
+                        'response_mode': resolved_chat_clarification.get(
+                            'response_mode'
+                        ),
+                        'parent_run_id': resolved_chat_clarification.get(
+                            'parent_run_id'
+                        ),
+                        'child_run_id': clarification_child_run_id,
+                        'idempotent': False,
+                        '_clarification_id': (
+                            resolved_chat_clarification.get(
+                                'clarification_id'
+                            )
+                        ),
+                    }
+                    claimed_clarification_user_doc['metadata'] = (
+                        claimed_response_metadata
+                    )
+                    if recovering_clarification_response:
+                        claimed_clarification_user_doc = (
+                            _persist_claimed_clarification_response_metadata(
+                                claimed_clarification_user_doc,
+                                resolved_chat_clarification,
+                                conversation_id=conversation_id,
+                                desired_metadata=(
+                                    claimed_response_metadata
+                                ),
+                            )
+                        )
+                    else:
+                        cosmos_messages_container.upsert_item(
+                            claimed_clarification_user_doc
+                        )
+                        claimed_clarification_user_doc = (
+                            cosmos_messages_container.read_item(
+                                item=preallocated_user_message_id,
+                                partition_key=conversation_id,
+                            )
+                        )
+
+                bounded_prior_user_turns = planner_prior_user_turns(
+                    capability_dialogue_context_state
+                )
+                capability_input_message = '\n'.join(
+                    [
+                        str(turn.get('text') or '').strip()
+                        for turn in bounded_prior_user_turns
+                        if str(turn.get('text') or '').strip()
+                    ]
+                    + [user_message]
+                ).strip()
+                current_turn_urls = extract_urls_from_text(user_message)
+                contextual_input_urls = extract_urls_from_text(
+                    capability_input_message
+                )
+                prior_url_input_used = bool(
+                    not current_turn_urls
+                    and contextual_input_urls
+                )
+
                 auto_linked_chat_upload_document_ids = []
                 auto_merge_chat_upload_workspace_context = _should_auto_merge_chat_upload_workspace_context(
                     explicit_external_retrieval_requested,
@@ -20019,18 +22319,31 @@ def register_route_backend_chats(bp):
                         )
                         if isinstance(capability, Mapping)
                         and capability.get('state') == 'selected'
+                        and capability.get('id') in set(
+                            capability_resume_context.get(
+                                'execution_effective_capability_ids'
+                            ) or []
+                        )
                     ]
                     if capability_resume_context
                     else _get_selected_builtin_chat_capability_ids(data)
+                )
+                planner_settings = normalize_chat_capability_planner_settings(settings)
+                capability_planner_mode = planner_settings.get(
+                    'chat_capability_planner_mode'
                 )
                 if capability_resume_context:
                     capability_discovery = {
                         'inventory': copy.deepcopy(
                             capability_resume_context.get('capability_inventory') or {}
                         ),
-                        'requirements': classify_capability_requirements(
-                            user_message,
-                            authorized_document_count=len(discovery_document_ids),
+                        'requirements': (
+                            []
+                            if capability_planner_mode == 'assist'
+                            else classify_capability_requirements(
+                                user_message,
+                                authorized_document_count=len(discovery_document_ids),
+                            )
                         ),
                         'auto_capability_ids': [
                             capability_id
@@ -20048,9 +22361,13 @@ def register_route_backend_chats(bp):
                         user_email=current_user_email,
                         user_roles=current_user_roles,
                         user_message=user_message,
+                        capability_input_message=capability_input_message,
                         selected_capability_ids=selected_builtin_capability_ids,
                         authorized_document_count=len(discovery_document_ids),
                         selected_agent_present=_has_chat_agent_selection(request_agent_info),
+                        enable_deterministic_matching=(
+                            capability_planner_mode != 'assist'
+                        ),
                     )
                 inventory_entries = capability_discovery.get('inventory', {}).get('capabilities', [])
                 log_event(
@@ -20102,29 +22419,75 @@ def register_route_backend_chats(bp):
                 capability_planner_shadow_comparison = None
                 capability_planner_provider_class = 'other'
                 capability_planner_model_name = ''
-                planner_settings = normalize_chat_capability_planner_settings(settings)
-                capability_planner_mode = planner_settings.get(
-                    'chat_capability_planner_mode'
-                )
+                capability_planner_request = None
+                capability_planner_result = None
+                contextual_planner_activation = False
+                contextual_planner_goal_used = False
+                planner_clarification_activation = False
+                if capability_planner_mode == 'assist':
+                    capability_recommendation = None
+                    capability_discovery['auto_capability_ids'] = []
                 if (
                     capability_planner_mode in {'shadow', 'assist'}
                     and not capability_resume_context
                     and not stream_cancel_requested()
                 ):
-                    capability_planner_request = build_capability_planner_request(
-                        user_message,
-                        capability_discovery.get('inventory'),
-                        max_candidate_plans=planner_settings.get(
-                            'chat_capability_planner_max_candidate_plans'
-                        ),
-                        max_capabilities_per_plan=planner_settings.get(
-                            'chat_capability_planner_max_capabilities_per_plan'
-                        ),
-                        additional_selected_mandate_ids=(
-                            ['selected_agent']
-                            if _has_chat_agent_selection(request_agent_info)
-                            else []
-                        ),
+                    planner_structured_state = None
+                    if pending_chat_clarification:
+                        source_user_message_id = str(
+                            pending_chat_clarification.get(
+                                '_source_user_message_id'
+                            ) or ''
+                        ).strip()
+                        source_goal_index = next(
+                            (
+                                index
+                                for index, message in enumerate(
+                                    capability_dialogue_context_state.get(
+                                        'prior_user_messages'
+                                    ) or []
+                                )
+                                if str(message.get('id') or '').strip()
+                                == source_user_message_id
+                            ),
+                            None,
+                        )
+                        if source_goal_index is not None:
+                            planner_structured_state = {
+                                'type': 'clarification',
+                                'source_goal_ref': f'turn_{source_goal_index}',
+                                'status': 'resolved',
+                                'code': pending_chat_clarification.get('code'),
+                            }
+                    def build_active_capability_planner_request():
+                        return build_capability_planner_request(
+                            user_message,
+                            capability_discovery.get('inventory'),
+                            max_candidate_plans=planner_settings.get(
+                                'chat_capability_planner_max_candidate_plans'
+                            ),
+                            max_capabilities_per_plan=planner_settings.get(
+                                'chat_capability_planner_max_capabilities_per_plan'
+                            ),
+                            additional_selected_mandate_ids=(
+                                ['selected_agent']
+                                if _has_chat_agent_selection(
+                                    request_agent_info
+                                )
+                                else []
+                            ),
+                            prior_user_turns=bounded_prior_user_turns,
+                            structured_state=planner_structured_state,
+                            clarification_option_candidates=(
+                                DEFAULT_CLARIFICATION_OPTION_CANDIDATES
+                            ),
+                            clarification_budget_remaining=(
+                                0 if pending_chat_clarification else 1
+                            ),
+                        )
+
+                    capability_planner_request = (
+                        build_active_capability_planner_request()
                     )
                     if capability_planner_is_eligible(
                         planner_settings,
@@ -20164,7 +22527,111 @@ def register_route_backend_chats(bp):
                         capability_planner_model_name = (
                             capability_planner_runtime.get('model') or ''
                         )
-                        capability_planner_shadow_result = invoke_capability_planner(
+                        if pending_chat_clarification:
+                            try:
+                                exact_clarification_response = (
+                                    cosmos_messages_container.read_item(
+                                        item=pending_chat_clarification.get(
+                                            '_response_user_message_id'
+                                        ),
+                                        partition_key=conversation_id,
+                                    )
+                                )
+                                if not _claimed_clarification_response_is_valid(
+                                    exact_clarification_response,
+                                    pending_chat_clarification,
+                                    conversation_id=conversation_id,
+                                ):
+                                    raise ChatClarificationError(
+                                        'clarification response state is invalid',
+                                        code=(
+                                            'clarification_response_claim_mismatch'
+                                        ),
+                                    )
+                                exact_clarification_source = (
+                                    validate_chat_clarification_source(
+                                        cosmos_messages_container,
+                                        conversation_id=conversation_id,
+                                        clarification=(
+                                            pending_chat_clarification
+                                        ),
+                                    )
+                                )
+                                clarification_source_id = str(
+                                    pending_chat_clarification.get(
+                                        '_source_user_message_id'
+                                    ) or ''
+                                ).strip()
+                                refreshed_prior_messages = [
+                                    copy.deepcopy(message)
+                                    for message in (
+                                        capability_dialogue_context_state.get(
+                                            'prior_user_messages'
+                                        ) or []
+                                    )
+                                    if isinstance(message, Mapping)
+                                ]
+                                matching_source_indexes = [
+                                    index
+                                    for index, message in enumerate(
+                                        refreshed_prior_messages
+                                    )
+                                    if str(message.get('id') or '').strip()
+                                    == clarification_source_id
+                                ]
+                                if len(matching_source_indexes) != 1:
+                                    raise ChatClarificationError(
+                                        'clarification source is not in the bounded context',
+                                        code='clarification_source_invalid',
+                                    )
+                                refreshed_prior_messages[
+                                    matching_source_indexes[0]
+                                ] = copy.deepcopy(exact_clarification_source)
+                                capability_dialogue_context_state = {
+                                    **capability_dialogue_context_state,
+                                    'prior_user_messages': (
+                                        refreshed_prior_messages
+                                    ),
+                                }
+                                bounded_prior_user_turns = (
+                                    planner_prior_user_turns(
+                                        capability_dialogue_context_state
+                                    )
+                                )
+                                capability_planner_request = (
+                                    build_active_capability_planner_request()
+                                )
+                            except Exception as clarification_source_error:
+                                error_code = (
+                                    clarification_source_error.code
+                                    if isinstance(
+                                        clarification_source_error,
+                                        (
+                                            CapabilityChoiceError,
+                                            ChatClarificationError,
+                                        ),
+                                    )
+                                    else 'clarification_source_invalid'
+                                )
+                                _invalidate_chat_clarification_checkpoint(
+                                    conversation_id=conversation_id,
+                                    clarification=pending_chat_clarification,
+                                    reason=error_code,
+                                )
+                                log_event(
+                                    '[CapabilityPlanner] Clarification source invalidated before planning',
+                                    extra={'failure_code': error_code},
+                                    level=logging.WARNING,
+                                )
+                                yield f"data: {json.dumps({
+                                    'error': (
+                                        'The clarification source is no '
+                                        'longer available. Send a new message.'
+                                    ),
+                                    'code': error_code,
+                                })}\n\n"
+                                return
+                        capability_planner_result = invoke_capability_planner(
                             planner_client=capability_planner_runtime.get('client'),
                             planner_model=capability_planner_model_name,
                             planner_request=capability_planner_request,
@@ -20177,6 +22644,29 @@ def register_route_backend_chats(bp):
                             ),
                             cancel_requested=stream_cancel_requested,
                         )
+                        if capability_planner_result.get('status') != 'valid':
+                            log_event(
+                                '[CapabilityPlanner] Fast planner call rejected',
+                                extra={
+                                    'failure_code': capability_planner_result.get(
+                                        'failure_code'
+                                    ),
+                                    'transport_error_class': (
+                                        capability_planner_result.get(
+                                            'transport_error_class'
+                                        )
+                                    ),
+                                    'transport_variant_index': (
+                                        capability_planner_result.get(
+                                            'transport_variant_index'
+                                        )
+                                    ),
+                                    'latency_ms': capability_planner_result.get(
+                                        'latency_ms'
+                                    ),
+                                },
+                                level=logging.WARNING,
+                            )
                         if stream_cancel_requested():
                             cancel_reason = (
                                 stream_session.get_cancel_reason()
@@ -20191,48 +22681,117 @@ def register_route_backend_chats(bp):
                             return
                         capability_planner_shadow_metadata = (
                             build_capability_planner_metadata(
-                                capability_planner_shadow_result,
+                                capability_planner_result,
                                 mode=capability_planner_mode,
                             )
                         )
                         capability_planner_shadow_comparison = (
                             compare_capability_planner_shadow(
-                                capability_planner_shadow_result,
+                                capability_planner_result,
                                 capability_recommendation,
                             )
                         )
+                        contextual_planner_goal_used = bool(
+                            capability_planner_result.get('status') == 'valid'
+                            and capability_planner_result.get(
+                                'prior_goal_included'
+                            ) is True
+                        )
+                        planner_url_access_requested = any(
+                            'url_access' in (
+                                candidate.get('capability_ids') or []
+                            )
+                            for candidate in capability_planner_result.get(
+                                'candidate_plans'
+                            ) or []
+                            if isinstance(candidate, Mapping)
+                        )
+                        contextual_url_ref_missing = bool(
+                            prior_url_input_used
+                            and planner_url_access_requested
+                            and not contextual_planner_goal_used
+                        )
                         if capability_planner_mode == 'assist':
+                            planner_selection_snapshot = {
+                                'selected_capability_ids': (
+                                    selected_builtin_capability_ids
+                                    + (
+                                        ['selected_agent']
+                                        if _has_chat_agent_selection(
+                                            request_agent_info
+                                        )
+                                        else []
+                                    )
+                                ),
+                                'auto_capability_ids': list(
+                                    capability_discovery.get(
+                                        'auto_capability_ids'
+                                    ) or []
+                                ),
+                            }
+                            planner_recommendation = (
+                                build_planner_capability_recommendation(
+                                    capability_planner_result,
+                                    capability_discovery.get('inventory'),
+                                    planner_selection_snapshot,
+                                )
+                                or build_contextual_egress_recommendation(
+                                    capability_planner_result,
+                                    capability_discovery.get('inventory'),
+                                    planner_selection_snapshot,
+                                )
+                            )
+                            if contextual_url_ref_missing:
+                                planner_recommendation = None
+                            selected_goal_refs = set(
+                                capability_planner_result.get(
+                                    'goal_turn_refs'
+                                ) or []
+                            )
+                            contextual_query_input = '\n'.join(
+                                str(turn.get('text') or '')
+                                for turn in capability_planner_request.get(
+                                    'dialogue_context'
+                                ) or []
+                                if turn.get('ref') in selected_goal_refs
+                            )
                             planner_recommendation = (
                                 add_sensitive_external_query_options(
-                                    build_planner_capability_recommendation(
-                                        capability_planner_shadow_result,
-                                        capability_discovery.get('inventory'),
-                                        {
-                                            'selected_capability_ids': (
-                                                selected_builtin_capability_ids
-                                                + (
-                                                    ['selected_agent']
-                                                    if _has_chat_agent_selection(request_agent_info)
-                                                    else []
-                                                )
-                                            ),
-                                            'auto_capability_ids': list(
-                                                capability_discovery.get(
-                                                    'auto_capability_ids'
-                                                ) or []
-                                            ),
-                                        },
-                                    ),
-                                    user_message,
+                                    planner_recommendation,
+                                    contextual_query_input or user_message,
                                     max_actionable_options=3,
                                 )
                             )
-                            (
-                                capability_recommendation,
-                                activation_summary,
-                            ) = arbitrate_planner_capability_recommendation(
-                                planner_recommendation,
-                                capability_recommendation,
+                            if (
+                                capability_planner_result.get('status') == 'valid'
+                                and capability_planner_result.get('decision')
+                                == 'clarify'
+                                and not pending_chat_clarification
+                            ):
+                                capability_recommendation = None
+                                planner_clarification_activation = True
+                                activation_summary = {
+                                    'activation_status': 'clarification',
+                                    'recommendation_source': 'planner',
+                                    'suppression_reason': None,
+                                }
+                            else:
+                                (
+                                    capability_recommendation,
+                                    activation_summary,
+                                ) = arbitrate_planner_capability_recommendation(
+                                    planner_recommendation,
+                                    capability_recommendation,
+                                )
+                            contextual_planner_activation = bool(
+                                activation_summary.get('activation_status')
+                                == 'materialized'
+                                and capability_planner_result.get(
+                                    'prior_goal_included'
+                                ) is True
+                                and activation_summary.get(
+                                    'recommendation_source'
+                                ) == 'planner'
                             )
                             capability_planner_shadow_metadata.update(
                                 activation_summary
@@ -20339,6 +22898,19 @@ def register_route_backend_chats(bp):
                         **plan_kwargs,
                     )
                 else:
+                    clarification_plan_linkage = (
+                        {
+                            'run_id': clarification_child_run_id,
+                            'parent_run_id': pending_chat_clarification.get(
+                                'parent_run_id'
+                            ),
+                        }
+                        if (
+                            clarification_child_run_id
+                            and pending_chat_clarification
+                        )
+                        else {}
+                    )
                     inherited_selected_capability_ids = (
                         set(selected_effective_capability_ids)
                         - set(selected_builtin_capability_ids)
@@ -20352,21 +22924,35 @@ def register_route_backend_chats(bp):
                             'source_review_enabled': requested_source_review_enabled,
                             'deep_research_enabled': requested_deep_research_enabled,
                         })
+                        submitted_plan_kwargs.update(
+                            clarification_plan_linkage
+                        )
                         submitted_plan = build_turn_orchestration_plan(
                             user_message,
                             **submitted_plan_kwargs,
                         )
+                        reconciled_plan_kwargs = dict(plan_kwargs)
+                        if pending_chat_clarification:
+                            reconciled_plan_kwargs['parent_run_id'] = (
+                                pending_chat_clarification.get(
+                                    'parent_run_id'
+                                )
+                            )
                         turn_orchestration_plan = build_turn_orchestration_plan(
                             user_message,
                             run_id=submitted_plan.get('run_id'),
                             capability_origins=capability_origins,
                             selection_snapshot_override=submitted_plan.get('selection_snapshot'),
-                            **plan_kwargs,
+                            **reconciled_plan_kwargs,
                         )
                     else:
+                        direct_plan_kwargs = dict(plan_kwargs)
+                        direct_plan_kwargs.update(
+                            clarification_plan_linkage
+                        )
                         turn_orchestration_plan = build_turn_orchestration_plan(
                             user_message,
-                            **plan_kwargs,
+                            **direct_plan_kwargs,
                         )
 
                 effective_capability_entries = [
@@ -20472,7 +23058,10 @@ def register_route_backend_chats(bp):
                 user_message_id = (
                     str(capability_resume_context.get('user_message_id') or '').strip()
                     if capability_resume_context
-                    else f"{conversation_id}_user_{int(time.time())}_{random.randint(1000,9999)}"
+                    else (
+                        preallocated_user_message_id
+                        or f"{conversation_id}_user_{int(time.time())}_{random.randint(1000,9999)}"
+                    )
                 )
                 turn_evidence_ledger = create_evidence_ledger_from_plan(
                     turn_orchestration_plan,
@@ -20665,26 +23254,19 @@ def register_route_backend_chats(bp):
                 )
                 previous_thread_id = existing_thread_info.get('previous_thread_id')
                 if not capability_resume_context:
-                    try:
-                        last_msg_query = f"""
-                            SELECT TOP 1 c.metadata.thread_info.thread_id as thread_id
-                            FROM c
-                            WHERE c.conversation_id = '{conversation_id}'
-                            ORDER BY c.timestamp DESC
-                        """
-                        last_msgs = list(cosmos_messages_container.query_items(
-                            query=last_msg_query,
-                            partition_key=conversation_id
-                        ))
-                        if last_msgs:
-                            previous_thread_id = last_msgs[0].get('thread_id')
-                    except Exception as e:
-                        debug_print(f"Error fetching last message for threading: {e}")
+                    previous_thread_id = (
+                        capability_dialogue_context_state.get(
+                            'predecessor_thread_id'
+                        )
+                    )
 
                 current_user_thread_id = (
                     str(existing_thread_info.get('thread_id') or '').strip()
                     if capability_resume_context
-                    else str(uuid.uuid4())
+                    else (
+                        preallocated_user_thread_id
+                        or str(uuid.uuid4())
+                    )
                 )
                 if not current_user_thread_id:
                     raise CapabilityChoiceError(
@@ -20700,26 +23282,145 @@ def register_route_backend_chats(bp):
                     'active_thread': True,
                     'thread_attempt': 1
                 }
+                if resolved_chat_clarification:
+                    user_metadata['clarification_response'] = {
+                        'version': resolved_chat_clarification.get('version'),
+                        'code': resolved_chat_clarification.get('code'),
+                        'status': resolved_chat_clarification.get('status'),
+                        'response_mode': resolved_chat_clarification.get(
+                            'response_mode'
+                        ),
+                        'parent_run_id': resolved_chat_clarification.get(
+                            'parent_run_id'
+                        ),
+                        'child_run_id': resolved_chat_clarification.get(
+                            'child_run_id'
+                        ),
+                        'idempotent': False,
+                        '_clarification_id': (
+                            resolved_chat_clarification.get(
+                                'clarification_id'
+                            )
+                        ),
+                    }
 
                 user_message_doc = (
                     copy.deepcopy(capability_resume_context.get('existing_user_message'))
                     if capability_resume_context
-                    else {
-                        'id': user_message_id,
-                        'conversation_id': conversation_id,
-                        'role': 'user',
-                        'content': user_message,
-                        'timestamp': datetime.utcnow().isoformat(),
-                        'model_deployment_name': None,
-                    }
+                    else (
+                        copy.deepcopy(claimed_clarification_user_doc)
+                        if isinstance(claimed_clarification_user_doc, Mapping)
+                        else {
+                            'id': user_message_id,
+                            'conversation_id': conversation_id,
+                            'role': 'user',
+                            'content': user_message,
+                            'timestamp': datetime.utcnow().isoformat(),
+                            'model_deployment_name': None,
+                        }
+                    )
                 )
-                user_message_doc['metadata'] = user_metadata
 
-                cosmos_messages_container.upsert_item(user_message_doc)
+                def persist_stream_user_message(metadata):
+                    nonlocal user_message_doc
+                    user_message_doc['metadata'] = metadata
+                    if resolved_chat_clarification:
+                        user_message_doc = (
+                            _persist_claimed_clarification_response_metadata(
+                                user_message_doc,
+                                resolved_chat_clarification,
+                                conversation_id=conversation_id,
+                                desired_metadata=metadata,
+                            )
+                        )
+                    else:
+                        cosmos_messages_container.upsert_item(
+                            user_message_doc
+                        )
+                    return user_message_doc
+
+                persist_stream_user_message(user_metadata)
                 debug_print(
                     f"[Streaming] {'Updated resumed' if capability_resume_context else 'Saved'} user message "
                     f"{user_message_id} | thread_id={current_user_thread_id} | previous_thread_id={previous_thread_id}"
                 )
+
+                if resolved_chat_clarification:
+                    if (
+                        resolved_chat_clarification.get('child_run_id')
+                        != turn_orchestration_plan.get('run_id')
+                    ):
+                        raise ChatClarificationError(
+                            'clarification child run linkage changed',
+                            code='clarification_child_run_mismatch',
+                        )
+                    user_metadata['clarification_response'] = {
+                        'version': resolved_chat_clarification.get('version'),
+                        'code': resolved_chat_clarification.get('code'),
+                        'status': resolved_chat_clarification.get('status'),
+                        'response_mode': resolved_chat_clarification.get(
+                            'response_mode'
+                        ),
+                        'parent_run_id': resolved_chat_clarification.get(
+                            'parent_run_id'
+                        ),
+                        'child_run_id': resolved_chat_clarification.get(
+                            'child_run_id'
+                        ),
+                        'idempotent': clarification_response_idempotent,
+                        '_clarification_id': (
+                            resolved_chat_clarification.get(
+                                'clarification_id'
+                            )
+                        ),
+                    }
+                    persist_stream_user_message(user_metadata)
+
+                approved_user_turn_goal = None
+                if (
+                    contextual_planner_goal_used
+                    and capability_planner_request
+                    and capability_planner_result
+                ):
+                    try:
+                        goal_source_messages = (
+                            resolve_planner_goal_source_messages(
+                                capability_planner_request,
+                                capability_planner_result,
+                                capability_dialogue_context_state,
+                                user_message_doc,
+                            )
+                        )
+                        exact_goal_source_messages = [
+                            cosmos_messages_container.read_item(
+                                item=str(source_message.get('id') or ''),
+                                partition_key=conversation_id,
+                            )
+                            for source_message in goal_source_messages
+                        ]
+                        approved_user_turn_goal = (
+                            build_approved_user_turn_goal(
+                                exact_goal_source_messages,
+                                conversation_id=conversation_id,
+                                current_user_message_id=user_message_id,
+                            )
+                        )
+                        search_query = str(
+                            approved_user_turn_goal.get(
+                                'contextual_query'
+                            ) or user_message
+                        ).strip()
+                    except Exception as goal_binding_error:
+                        capability_recommendation = None
+                        contextual_planner_activation = False
+                        contextual_planner_goal_used = False
+                        log_event(
+                            '[CapabilityPlanner] Contextual goal binding rejected',
+                            extra={
+                                'error_type': type(goal_binding_error).__name__,
+                            },
+                            level=logging.WARNING,
+                        )
 
                 # Log activity
                 if not capability_resume_context:
@@ -20943,6 +23644,9 @@ def register_route_backend_chats(bp):
                                     'parent_run_id': capability_resume_context.get('parent_run_id'),
                                     'execution_id': capability_resume_context.get('execution_id'),
                                 }
+                            safety_doc.setdefault('metadata', {})[
+                                'orchestration'
+                            ] = turn_orchestration_plan
                             cosmos_messages_container.upsert_item(safety_doc)
                             complete_stream_capability_resume(assistant_message_id)
 
@@ -20965,16 +23669,109 @@ def register_route_backend_chats(bp):
                                 'web_search_citations': [],
                                 'agent_citations': [],
                                 'model_deployment_name': None,
-                                'metadata': safety_doc.get('metadata', {}),
+                                'metadata': project_chat_metadata_for_client(
+                                    safety_doc.get('metadata', {})
+                                ),
                                 'thoughts_enabled': thought_tracker.enabled,
                             })
                             yield f"data: {json.dumps(final_data)}\n\n"
                             return
 
+                    except ChatClarificationError:
+                        raise
                     except HttpResponseError as e:
                         debug_print(f"[Content Safety Error - Streaming] {e}")
                     except Exception as ex:
                         debug_print(f"[Content Safety - Streaming] Unexpected error: {ex}")
+
+                if (
+                    planner_clarification_activation
+                    and not capability_resume_context
+                    and capability_planner_result
+                ):
+                    turn_orchestration_run.status = 'awaiting_user_clarification'
+                    turn_orchestration_run.started_at = datetime.utcnow().isoformat()
+                    clarification = build_chat_clarification(
+                        capability_planner_result.get('clarification'),
+                        parent_run_id=turn_orchestration_plan.get('run_id'),
+                        conversation_id=conversation_id,
+                        source_user_message_id=user_message_id,
+                        source_thread_id=current_user_thread_id,
+                        assistant_message_id=assistant_message_id,
+                        ttl_seconds=settings.get(
+                            'chat_capability_choice_ttl_seconds',
+                            86400,
+                        ),
+                    )
+                    user_metadata['orchestration_runtime'] = (
+                        turn_orchestration_run.to_metadata()
+                    )
+                    user_metadata['clarification_requested'] = {
+                        'version': clarification.get('version'),
+                        'code': clarification.get('code'),
+                        'status': clarification.get('status'),
+                        'clarification_budget_used': clarification.get(
+                            'clarification_budget_used'
+                        ),
+                    }
+                    persist_stream_user_message(user_metadata)
+
+                    clarification_assistant_doc = make_json_serializable({
+                        'id': assistant_message_id,
+                        'conversation_id': conversation_id,
+                        'role': 'assistant',
+                        'content': clarification.get('question'),
+                        'timestamp': datetime.utcnow().isoformat(),
+                        'augmented': False,
+                        'hybrid_citations': [],
+                        'web_search_citations': [],
+                        'agent_citations': [],
+                        'model_deployment_name': None,
+                        'metadata': {
+                            'awaiting_user_clarification': True,
+                            'orchestration': turn_orchestration_plan,
+                            'orchestration_runtime': (
+                                turn_orchestration_run.to_metadata()
+                            ),
+                            'chat_clarification': clarification,
+                            'thread_info': {
+                                'thread_id': user_thread_id,
+                                'previous_thread_id': user_previous_thread_id,
+                                'active_thread': True,
+                                'thread_attempt': assistant_thread_attempt,
+                            },
+                        },
+                    })
+                    cosmos_messages_container.upsert_item(
+                        clarification_assistant_doc
+                    )
+                    conversation_item['last_updated'] = datetime.utcnow().isoformat()
+                    cosmos_conversations_container.upsert_item(conversation_item)
+                    invalidate_conversation_cache_for_item(
+                        conversation_item,
+                        reason='chat_clarification_created',
+                    )
+                    log_event(
+                        '[CapabilityPlanner] Clarification created',
+                        extra=build_clarification_evaluation_event(
+                            clarification,
+                            lifecycle='created',
+                        ),
+                    )
+                    yield f"data: {json.dumps(make_json_serializable({
+                        'done': True,
+                        'awaiting_user_clarification': True,
+                        'conversation_id': conversation_id,
+                        'conversation_title': conversation_item.get('title'),
+                        'message_id': assistant_message_id,
+                        'user_message_id': user_message_id,
+                        'full_content': clarification.get('question'),
+                        'metadata': project_chat_metadata_for_client(
+                            clarification_assistant_doc.get('metadata', {})
+                        ),
+                        'thoughts_enabled': thought_tracker.enabled,
+                    }))}\n\n"
+                    return
 
                 if capability_recommendation and not capability_resume_context:
                     turn_orchestration_run.status = 'awaiting_user_choice'
@@ -20985,6 +23782,10 @@ def register_route_backend_chats(bp):
                         conversation_id=conversation_id,
                         user_message_id=user_message_id,
                         assistant_message_id=assistant_message_id,
+                        approved_user_turn_goal=approved_user_turn_goal,
+                        capability_inventory=capability_discovery.get(
+                            'inventory'
+                        ),
                         ttl_seconds=settings.get('chat_capability_choice_ttl_seconds', 86400),
                     )
                     turn_capability_provenance = build_capability_provenance(
@@ -20999,8 +23800,7 @@ def register_route_backend_chats(bp):
                     )
                     user_metadata['capability_provenance'] = turn_capability_provenance
                     user_metadata['orchestration_runtime'] = turn_orchestration_run.to_metadata()
-                    user_message_doc['metadata'] = user_metadata
-                    cosmos_messages_container.upsert_item(user_message_doc)
+                    persist_stream_user_message(user_metadata)
 
                     proposal_content = (
                         'An additional capability could materially improve this answer. '
@@ -21037,6 +23837,7 @@ def register_route_backend_chats(bp):
                         },
                     })
                     cosmos_messages_container.upsert_item(proposal_assistant_doc)
+                    complete_stream_capability_resume(assistant_message_id)
                     conversation_item['last_updated'] = datetime.utcnow().isoformat()
                     cosmos_conversations_container.upsert_item(conversation_item)
                     invalidate_conversation_cache_for_item(
@@ -21056,10 +23857,88 @@ def register_route_backend_chats(bp):
                         'message_id': assistant_message_id,
                         'user_message_id': user_message_id,
                         'full_content': proposal_content,
-                        'metadata': proposal_assistant_doc.get('metadata', {}),
+                        'metadata': project_chat_metadata_for_client(
+                            proposal_assistant_doc.get('metadata', {})
+                        ),
                         'thoughts_enabled': thought_tracker.enabled,
                     }))}\n\n"
                     return
+
+                contextual_goal_for_execution = None
+                contextual_goal_proposal = (
+                    capability_resume_context.get('_contextual_proposal')
+                    if capability_resume_context
+                    else None
+                )
+                contextual_goal_decision = (
+                    capability_resume_context.get('decision')
+                    if capability_resume_context
+                    and isinstance(
+                        capability_resume_context.get('decision'),
+                        Mapping,
+                    )
+                    else {}
+                )
+                stored_contextual_goal = (
+                    contextual_goal_proposal.get('_approved_user_turn_goal')
+                    if isinstance(contextual_goal_proposal, Mapping)
+                    else approved_user_turn_goal
+                )
+                if isinstance(stored_contextual_goal, Mapping):
+                    try:
+                        contextual_goal_for_execution = (
+                            _rebuild_exact_contextual_goal(
+                                stored_contextual_goal,
+                                conversation_id=conversation_id,
+                                approved_sensitive_input_types=(
+                                    contextual_goal_decision.get(
+                                        'sensitive_input_types'
+                                    ) or []
+                                ),
+                            )
+                        )
+                        search_query = str(
+                            contextual_goal_for_execution.get(
+                                'contextual_query'
+                            ) or user_message
+                        ).strip()
+                    except Exception as contextual_source_error:
+                        error_code = (
+                            contextual_source_error.code
+                            if isinstance(
+                                contextual_source_error,
+                                CapabilityChoiceError,
+                            )
+                            else 'goal_reconstruction_failed'
+                        )
+                        if capability_resume_context:
+                            persist_capability_invalidation(
+                                cosmos_messages_container,
+                                conversation_id=conversation_id,
+                                proposal_id=capability_resume_context.get(
+                                    'proposal_id'
+                                ),
+                                reason=error_code,
+                                expected_execution_id=(
+                                    capability_resume_context.get(
+                                        'execution_id'
+                                    )
+                                ),
+                            )
+                            resume_terminalized = True
+                        log_event(
+                            '[CapabilityPlanner] Contextual goal rejected before execution',
+                            extra={'failure_code': error_code},
+                            level=logging.WARNING,
+                        )
+                        yield f"data: {json.dumps({
+                            'error': (
+                                'The earlier request is no longer available. '
+                                'Send a new message to continue.'
+                            ),
+                            'code': error_code,
+                        })}\n\n"
+                        return
 
                 if not original_hybrid_search_enabled and not explicit_external_retrieval_requested:
                     prior_grounded_document_refs = _normalize_prior_grounded_document_refs(conversation_item)
@@ -21168,8 +24047,7 @@ def register_route_backend_chats(bp):
                                     'document_count': len(effective_selected_document_ids),
                                     'search_query': search_query,
                                 }
-                                user_message_doc['metadata'] = user_metadata
-                                cosmos_messages_container.upsert_item(user_message_doc)
+                                persist_stream_user_message(user_metadata)
                     else:
                         yield emit_thought(
                             'history_context',
@@ -21651,6 +24529,75 @@ def register_route_backend_chats(bp):
                             detail=f"files={tabular_filenames_str}"
                         )
 
+                contextual_external_execution = bool(
+                    capability_resume_context
+                    and (
+                        web_search_enabled
+                        or source_review_enabled
+                        or deep_research_enabled
+                        or url_access_enabled
+                    )
+                    and (
+                        capability_resume_context.get('decision') or {}
+                    ).get('prior_goal_included') is True
+                )
+                if contextual_external_execution:
+                    try:
+                        pre_execution_goal = _rebuild_authorized_contextual_goal(
+                            capability_resume_context.get(
+                                '_contextual_proposal'
+                            ),
+                            conversation_id=conversation_id,
+                        )
+                        rebuilt_external_query = str(
+                            (pre_execution_goal or {}).get(
+                                'external_query'
+                            ) or ''
+                        ).strip()
+                        if not rebuilt_external_query:
+                            raise CapabilityChoiceError(
+                                'approved external goal could not be rebuilt',
+                                code='goal_query_empty',
+                            )
+                        external_retrieval_message = rebuilt_external_query
+                        web_search_query_text = build_web_search_query_text(
+                            rebuilt_external_query
+                        )
+                    except Exception as contextual_execution_error:
+                        error_code = (
+                            contextual_execution_error.code
+                            if isinstance(
+                                contextual_execution_error,
+                                CapabilityChoiceError,
+                            )
+                            else 'goal_reconstruction_failed'
+                        )
+                        persist_capability_invalidation(
+                            cosmos_messages_container,
+                            conversation_id=conversation_id,
+                            proposal_id=capability_resume_context.get(
+                                'proposal_id'
+                            ),
+                            reason=error_code,
+                            expected_execution_id=capability_resume_context.get(
+                                'execution_id'
+                            ),
+                        )
+                        resume_terminalized = True
+                        log_event(
+                            '[CapabilityPlanner] Contextual external goal invalidated',
+                            extra={'failure_code': error_code},
+                            level=logging.WARNING,
+                        )
+                        yield f"data: {json.dumps({
+                            'error': (
+                                'The approved earlier request is no longer '
+                                'available. Send a new message to continue.'
+                            ),
+                            'code': error_code,
+                        })}\n\n"
+                        return
+
                 if web_search_enabled:
                     debug_print(
                         f"[Streaming] Starting web search augmentation for conversation_id={conversation_id}"
@@ -21813,8 +24760,7 @@ def register_route_backend_chats(bp):
                     deep_research_query_count=_deep_research_query_count(deep_research_query_plan, deep_research_web_search_runs),
                 )
                 user_metadata['chat_context']['chat_type'] = message_chat_type
-                user_message_doc['metadata'] = user_metadata
-                cosmos_messages_container.upsert_item(user_message_doc)
+                persist_stream_user_message(user_metadata)
 
                 # Prepare conversation history
                 conversation_history_for_api = []
@@ -21878,8 +24824,7 @@ def register_route_backend_chats(bp):
                     )
                     user_metadata['evidence_ledger'] = turn_evidence_ledger
                     user_metadata['orchestration_runtime'] = turn_orchestration_run.to_metadata()
-                    user_message_doc['metadata'] = user_metadata
-                    cosmos_messages_container.upsert_item(user_message_doc)
+                    persist_stream_user_message(user_metadata)
                     for runtime_progress_event in drain_orchestration_runtime_progress():
                         yield runtime_progress_event
                     history_segments = build_conversation_history_segments(
@@ -22174,8 +25119,7 @@ def register_route_backend_chats(bp):
                     user_metadata['evidence_ledger'] = turn_evidence_ledger
                     user_metadata['orchestration_runtime'] = turn_orchestration_run.to_metadata()
                     user_metadata['central_synthesis'] = central_synthesis_metadata
-                    user_message_doc['metadata'] = user_metadata
-                    cosmos_messages_container.upsert_item(user_message_doc)
+                    persist_stream_user_message(user_metadata)
                     return central_synthesis_metadata
 
                 if enable_semantic_kernel and user_enable_agents:
@@ -22352,8 +25296,7 @@ def register_route_backend_chats(bp):
                         )
                     user_metadata['orchestration_runtime'] = turn_orchestration_run.to_metadata()
                     user_metadata['evidence_ledger'] = turn_evidence_ledger
-                    user_message_doc['metadata'] = user_metadata
-                    cosmos_messages_container.upsert_item(user_message_doc)
+                    persist_stream_user_message(user_metadata)
                     if (
                         central_synthesis_metadata
                         and central_synthesis_metadata.get('status') == 'pending'
@@ -22748,8 +25691,7 @@ def register_route_backend_chats(bp):
                             )
                             user_metadata['evidence_ledger'] = turn_evidence_ledger
                             user_metadata['orchestration_runtime'] = turn_orchestration_run.to_metadata()
-                            user_message_doc['metadata'] = user_metadata
-                            cosmos_messages_container.upsert_item(user_message_doc)
+                            persist_stream_user_message(user_metadata)
                             error_payload = {'error': f'Agent streaming failed: {str(stream_error)}'}
                             if isinstance(stream_error, FoundryAgentUserAuthenticationRequired):
                                 auth_response = getattr(stream_error, 'auth_response', {}) or {}
@@ -22976,8 +25918,7 @@ def register_route_backend_chats(bp):
                                 turn_evidence_ledger,
                             )
                             if not central_synthesis_context:
-                                user_message_doc['metadata'] = user_metadata
-                                cosmos_messages_container.upsert_item(user_message_doc)
+                                persist_stream_user_message(user_metadata)
                                 raise RuntimeError(
                                     'Agent evidence did not reach a terminal synthesis state.'
                                 )
@@ -23370,18 +26311,6 @@ def register_route_backend_chats(bp):
                         }
                     })
                     cosmos_messages_container.upsert_item(assistant_doc)
-                    if capability_resume_context:
-                        complete_stream_capability_resume(assistant_message_id)
-                        if resume_terminalized:
-                            log_event(
-                                '[CapabilityDiscovery] Orchestration resumed',
-                                extra={
-                                    'conversation_id': conversation_id,
-                                    'proposal_id': capability_resume_context.get('proposal_id'),
-                                    'parent_run_id': capability_resume_context.get('parent_run_id'),
-                                    'child_run_id': turn_orchestration_plan.get('run_id'),
-                                },
-                            )
                     if use_agent_streaming and agent_name_used:
                         agent_scope_for_usage = 'personal'
                         agent_group_id_for_usage = None
@@ -23458,27 +26387,48 @@ def register_route_backend_chats(bp):
                     conversation_item['last_updated'] = datetime.utcnow().isoformat()
 
                     try:
-                        user_message_doc = cosmos_messages_container.read_item(
-                            item=user_message_id,
-                            partition_key=conversation_id
-                        )
-                        if 'metadata' in user_message_doc and 'model_selection' in user_message_doc['metadata']:
-                            user_message_doc['metadata']['model_selection']['selected_model'] = final_model_used if use_agent_streaming else gpt_model
-                            user_message_doc['metadata']['model_selection']['model_icon'] = gpt_model_icon
+                        if resolved_chat_clarification:
+                            final_user_metadata = copy.deepcopy(user_metadata)
+                        else:
+                            user_message_doc = cosmos_messages_container.read_item(
+                                item=user_message_id,
+                                partition_key=conversation_id
+                            )
+                            final_user_metadata = copy.deepcopy(
+                                user_message_doc.get('metadata') or {}
+                            )
+                        if 'model_selection' in final_user_metadata:
+                            final_user_metadata['model_selection']['selected_model'] = final_model_used if use_agent_streaming else gpt_model
+                            final_user_metadata['model_selection']['model_icon'] = gpt_model_icon
                         if selected_agent_metadata:
-                            user_message_doc.setdefault('metadata', {})['agent_selection'] = selected_agent_metadata
-                        user_message_doc.setdefault('metadata', {})['evidence_ledger'] = turn_evidence_ledger
-                        user_message_doc.setdefault('metadata', {})['orchestration_runtime'] = (
+                            final_user_metadata['agent_selection'] = selected_agent_metadata
+                        final_user_metadata['evidence_ledger'] = turn_evidence_ledger
+                        final_user_metadata['orchestration_runtime'] = (
                             turn_orchestration_run.to_metadata()
                         )
                         if central_synthesis_metadata:
-                            user_message_doc.setdefault('metadata', {})['central_synthesis'] = central_synthesis_metadata
-                        user_message_doc.setdefault('metadata', {})['capability_provenance'] = (
+                            final_user_metadata['central_synthesis'] = central_synthesis_metadata
+                        final_user_metadata['capability_provenance'] = (
                             turn_capability_provenance
                         )
-                        cosmos_messages_container.upsert_item(user_message_doc)
+                        user_metadata = final_user_metadata
+                        persist_stream_user_message(user_metadata)
+                    except ChatClarificationError:
+                        raise
                     except Exception as e:
                         debug_print(f"Warning: Could not update streaming user message metadata: {e}")
+
+                    complete_stream_capability_resume(assistant_message_id)
+                    if capability_resume_context and resume_terminalized:
+                        log_event(
+                            '[CapabilityDiscovery] Orchestration resumed',
+                            extra={
+                                'conversation_id': conversation_id,
+                                'proposal_id': capability_resume_context.get('proposal_id'),
+                                'parent_run_id': capability_resume_context.get('parent_run_id'),
+                                'child_run_id': turn_orchestration_plan.get('run_id'),
+                            },
+                        )
 
                     try:
                         conversation_item = collect_conversation_metadata(
@@ -23553,7 +26503,9 @@ def register_route_backend_chats(bp):
                         'agent_name': agent_name_used if use_agent_streaming else None,
                         'agent_icon': agent_icon_used if use_agent_streaming else None,
                         'agent_tags': agent_tags_used if use_agent_streaming else [],
-                        'metadata': assistant_doc.get('metadata', {}),
+                        'metadata': project_chat_metadata_for_client(
+                            assistant_doc.get('metadata', {})
+                        ),
                         'full_content': accumulated_content,
                         'thoughts_enabled': thought_tracker.enabled
                     })
@@ -23579,8 +26531,7 @@ def register_route_backend_chats(bp):
                         )
                     user_metadata['orchestration_runtime'] = turn_orchestration_run.to_metadata()
                     user_metadata['evidence_ledger'] = turn_evidence_ledger
-                    user_message_doc['metadata'] = user_metadata
-                    cosmos_messages_container.upsert_item(user_message_doc)
+                    persist_stream_user_message(user_metadata)
 
                     if (
                         central_synthesis_metadata
@@ -23663,6 +26614,8 @@ def register_route_backend_chats(bp):
                         try:
                             cosmos_messages_container.upsert_item(assistant_doc)
                             complete_stream_capability_resume(assistant_message_id)
+                        except ChatClarificationError:
+                            raise
                         except Exception as partial_output_error:
                             log_event(
                                 '[CapabilityDiscovery] Partial resume output persistence failed',
@@ -23681,7 +26634,7 @@ def register_route_backend_chats(bp):
                     partial_error_payload = {
                         'error': error_msg,
                         'partial_content': accumulated_content,
-                        'metadata': {
+                        'metadata': project_chat_metadata_for_client({
                             'incomplete': True,
                             'error': error_msg,
                             'orchestration': turn_orchestration_plan,
@@ -23689,7 +26642,7 @@ def register_route_backend_chats(bp):
                             'evidence_ledger': turn_evidence_ledger,
                             'capability_provenance': turn_capability_provenance,
                             'central_synthesis': central_synthesis_metadata,
-                        },
+                        }),
                     }
                     yield f"data: {json.dumps(partial_error_payload)}\n\n"
 
@@ -23729,25 +26682,58 @@ def register_route_backend_chats(bp):
                                 progress_callback=runtime_progress_callback,
                             )
                         active_user_metadata = locals().get('user_metadata')
-                        active_user_message_doc = locals().get('user_message_doc')
                         active_evidence_ledger = locals().get('turn_evidence_ledger')
+                        active_user_persistence = locals().get(
+                            'persist_stream_user_message'
+                        )
                         if (
                             isinstance(active_user_metadata, dict)
-                            and isinstance(active_user_message_doc, dict)
+                            and callable(active_user_persistence)
                         ):
                             active_user_metadata['orchestration_runtime'] = (
                                 active_runtime.to_metadata()
                             )
                             if active_evidence_ledger is not None:
                                 active_user_metadata['evidence_ledger'] = active_evidence_ledger
-                            active_user_message_doc['metadata'] = active_user_metadata
-                            cosmos_messages_container.upsert_item(active_user_message_doc)
+                            active_user_persistence(active_user_metadata)
                     except Exception as runtime_cleanup_error:
                         log_event(
                             '[OrchestrationRuntime] Failed to close an incomplete stream run',
                             extra={
                                 'run_id': active_runtime.run_id,
                                 'error_type': type(runtime_cleanup_error).__name__,
+                            },
+                            level=logging.ERROR,
+                        )
+                active_clarification = locals().get(
+                    'resolved_chat_clarification'
+                )
+                if (
+                    not clarification_terminalized
+                    and isinstance(active_clarification, Mapping)
+                ):
+                    try:
+                        resolved_chat_clarification = (
+                            _finalize_stream_clarification_claim(
+                                conversation_id=finalized_conversation_id,
+                                clarification=active_clarification,
+                            )
+                        )
+                        clarification_terminalized = bool(
+                            isinstance(
+                                resolved_chat_clarification,
+                                Mapping,
+                            )
+                            and resolved_chat_clarification.get('status')
+                            in {'resolved', 'expired'}
+                        )
+                    except Exception as clarification_cleanup_error:
+                        log_event(
+                            '[CapabilityPlanner] Clarification cleanup failed',
+                            extra={
+                                'error_type': type(
+                                    clarification_cleanup_error
+                                ).__name__,
                             },
                             level=logging.ERROR,
                         )

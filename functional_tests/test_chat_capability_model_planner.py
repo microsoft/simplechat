@@ -1,13 +1,14 @@
 # test_chat_capability_model_planner.py
 """
 Functional test for the model-assisted chat capability planner contract.
-Version: 0.250.073
-Implemented in: 0.250.069; Admin bounds updated in 0.250.073
+Version: 0.250.077
+Implemented in: 0.250.069; transport compatibility corrected in 0.250.077
 
 This test ensures planner requests expose only safe authorized capability
 descriptors and untrusted planner results fail closed before execution.
 """
 
+import copy
 import json
 import sys
 from collections import Counter
@@ -23,6 +24,7 @@ sys.path.insert(0, str(SINGLE_APP_ROOT))
 from functions_chat_capability_planner import (  # noqa: E402
     build_capability_planner_shadow_metadata,
     build_capability_planner_request,
+    capability_planner_is_eligible,
     invoke_capability_planner,
     validate_capability_planner_result,
 )
@@ -156,8 +158,9 @@ def _request():
 
 def _proposal_payload():
     return {
-        'version': 1,
+        'version': 2,
         'decision': 'propose',
+        'goal_turn_refs': ['turn_0'],
         'requirements': [
             {
                 'id': 'requirement_1',
@@ -174,7 +177,7 @@ def _proposal_payload():
             }
         ],
         'recommended_plan_id': 'candidate_1',
-        'clarification_code': None,
+        'clarification': None,
     }
 
 
@@ -223,14 +226,24 @@ def _fake_client(*responses):
     return _FakeClient(responses)
 
 
+class _FakeBadRequestError(Exception):
+    status_code = 400
+
+
 def test_request_projects_only_safe_planner_fields():
     planner_request = _request()
 
-    assert planner_request['version'] == 1
+    assert planner_request['version'] == 2
     assert planner_request['mode'] == 'capability_planning'
     assert planner_request['selected_mandates'] == [
         {'id': 'workspace_search', 'required': True}
     ]
+    assert planner_request['dialogue_context'] == [{
+        'ref': 'turn_0',
+        'role': 'user',
+        'text': 'Compare our internal policy with the current public regulation.',
+    }]
+    assert planner_request['structured_state'] is None
     assert [
         capability['id']
         for capability in planner_request['available_capabilities']
@@ -257,8 +270,9 @@ def test_request_projects_only_safe_planner_fields():
 def test_valid_proposal_preserves_selected_mandates_and_deduplicates():
     result = validate_capability_planner_result(
         {
-            'version': 1,
+            'version': 2,
             'decision': 'propose',
+            'goal_turn_refs': ['turn_0'],
             'requirements': [
                 {
                     'id': 'requirement_1',
@@ -284,7 +298,7 @@ def test_valid_proposal_preserves_selected_mandates_and_deduplicates():
                 },
             ],
             'recommended_plan_id': 'candidate_2',
-            'clarification_code': None,
+            'clarification': None,
         },
         _request(),
     )
@@ -307,8 +321,9 @@ def test_valid_proposal_preserves_selected_mandates_and_deduplicates():
     )
     unordered_result = validate_capability_planner_result(
         {
-            'version': 1,
+            'version': 2,
             'decision': 'propose',
+            'goal_turn_refs': ['turn_0'],
             'requirements': [],
             'candidate_plans': [
                 {
@@ -325,7 +340,7 @@ def test_valid_proposal_preserves_selected_mandates_and_deduplicates():
                 },
             ],
             'recommended_plan_id': 'candidate_2',
-            'clarification_code': None,
+            'clarification': None,
         },
         unordered_request,
     )
@@ -340,8 +355,9 @@ def test_valid_proposal_preserves_selected_mandates_and_deduplicates():
 
 def test_unknown_fields_and_capabilities_fail_closed():
     base_result = {
-        'version': 1,
+        'version': 2,
         'decision': 'propose',
+        'goal_turn_refs': ['turn_0'],
         'requirements': [],
         'candidate_plans': [
             {
@@ -352,7 +368,7 @@ def test_unknown_fields_and_capabilities_fail_closed():
             }
         ],
         'recommended_plan_id': 'candidate_1',
-        'clarification_code': None,
+        'clarification': None,
     }
 
     unknown_field = validate_capability_planner_result(
@@ -360,7 +376,7 @@ def test_unknown_fields_and_capabilities_fail_closed():
         _request(),
     )
     assert unknown_field == {
-        'version': 1,
+        'version': 2,
         'status': 'rejected',
         'failure_code': 'unknown_field',
         'fallback_used': True,
@@ -384,12 +400,13 @@ def test_unknown_fields_and_capabilities_fail_closed():
 def test_direct_and_clarify_decisions_are_strict():
     direct = validate_capability_planner_result(
         {
-            'version': 1,
+            'version': 2,
             'decision': 'direct',
+            'goal_turn_refs': ['turn_0'],
             'requirements': [],
             'candidate_plans': [],
             'recommended_plan_id': None,
-            'clarification_code': None,
+            'clarification': None,
         },
         _request(),
     )
@@ -398,8 +415,9 @@ def test_direct_and_clarify_decisions_are_strict():
 
     clarify = validate_capability_planner_result(
         {
-            'version': 1,
+            'version': 2,
             'decision': 'clarify',
+            'goal_turn_refs': ['turn_0'],
             'requirements': [
                 {
                     'id': 'requirement_1',
@@ -409,18 +427,21 @@ def test_direct_and_clarify_decisions_are_strict():
             ],
             'candidate_plans': [],
             'recommended_plan_id': None,
-            'clarification_code': 'material_ambiguity',
+            'clarification': {
+                'code': 'ambiguous_reference',
+                'option_values': [],
+            },
         },
         _request(),
     )
     assert clarify['status'] == 'valid'
-    assert clarify['clarification_code'] == 'material_ambiguity'
+    assert clarify['clarification']['code'] == 'ambiguous_reference'
 
     invalid_clarify = validate_capability_planner_result(
         {
             **clarify,
             'status': 'valid',
-            'clarification_code': None,
+            'clarification': None,
         },
         _request(),
     )
@@ -428,8 +449,9 @@ def test_direct_and_clarify_decisions_are_strict():
 
     missing_field = validate_capability_planner_result(
         {
-            'version': 1,
+            'version': 2,
             'decision': 'direct',
+            'goal_turn_refs': ['turn_0'],
             'requirements': [],
             'candidate_plans': [],
         },
@@ -441,8 +463,9 @@ def test_direct_and_clarify_decisions_are_strict():
 def test_selected_only_and_oversized_proposals_fail_closed():
     selected_only = validate_capability_planner_result(
         {
-            'version': 1,
+            'version': 2,
             'decision': 'propose',
+            'goal_turn_refs': ['turn_0'],
             'requirements': [],
             'candidate_plans': [
                 {
@@ -453,7 +476,7 @@ def test_selected_only_and_oversized_proposals_fail_closed():
                 }
             ],
             'recommended_plan_id': 'candidate_1',
-            'clarification_code': None,
+            'clarification': None,
         },
         _request(),
     )
@@ -461,8 +484,9 @@ def test_selected_only_and_oversized_proposals_fail_closed():
 
     out_of_budget_alias = validate_capability_planner_result(
         {
-            'version': 1,
+            'version': 2,
             'decision': 'propose',
+            'goal_turn_refs': ['turn_0'],
             'requirements': [],
             'candidate_plans': [
                 {
@@ -473,7 +497,7 @@ def test_selected_only_and_oversized_proposals_fail_closed():
                 }
             ],
             'recommended_plan_id': 'candidate_4',
-            'clarification_code': None,
+            'clarification': None,
         },
         _request(),
     )
@@ -499,6 +523,156 @@ def test_selected_only_and_oversized_proposals_fail_closed():
     assert oversized_result['failure_code'] == 'too_many_candidate_plans'
 
 
+def test_contextual_goal_refs_are_bounded_ordered_and_request_scoped():
+    planner_request = build_capability_planner_request(
+        'Yes, search.',
+        _inventory(),
+        prior_user_turns=[
+            {'role': 'assistant', 'text': 'SECRET assistant URL'},
+            {'role': 'user', 'text': 'Find JPMorgan press releases.'},
+            {'role': 'user', 'text': 'Use the past three years.'},
+        ],
+    )
+
+    assert planner_request['dialogue_context'] == [
+        {
+            'ref': 'turn_0',
+            'role': 'user',
+            'text': 'Find JPMorgan press releases.',
+        },
+        {
+            'ref': 'turn_1',
+            'role': 'user',
+            'text': 'Use the past three years.',
+        },
+        {'ref': 'turn_2', 'role': 'user', 'text': 'Yes, search.'},
+    ]
+    assert 'SECRET assistant URL' not in json.dumps(planner_request)
+
+    trailing_assistant_request = build_capability_planner_request(
+        'Yes, search.',
+        _inventory(),
+        prior_user_turns=[
+            {'role': 'user', 'text': 'Find JPMorgan press releases.'},
+            {'role': 'user', 'text': 'Use the past three years.'},
+            {'role': 'assistant', 'text': 'SECRET trailing assistant URL'},
+        ],
+    )
+    assert [
+        turn['text']
+        for turn in trailing_assistant_request['dialogue_context']
+    ] == [
+        'Find JPMorgan press releases.',
+        'Use the past three years.',
+        'Yes, search.',
+    ]
+
+    payload = _proposal_payload()
+    payload['goal_turn_refs'] = ['turn_2', 'turn_0']
+    result = validate_capability_planner_result(payload, planner_request)
+    assert result['status'] == 'valid'
+    assert result['goal_turn_refs'] == ['turn_0', 'turn_2']
+    assert result['eligible_goal_turn_count'] == 3
+    assert result['selected_goal_turn_count'] == 2
+    assert result['prior_goal_included'] is True
+
+    current_only_request = _request()
+    unknown_ref = _proposal_payload()
+    unknown_ref['goal_turn_refs'] = ['turn_0', 'turn_1']
+    assert validate_capability_planner_result(
+        unknown_ref,
+        current_only_request,
+    )['failure_code'] == 'invalid_goal_turn_refs'
+
+    prior_only = dict(payload)
+    prior_only['goal_turn_refs'] = ['turn_0']
+    assert validate_capability_planner_result(
+        prior_only,
+        planner_request,
+    )['failure_code'] == 'current_goal_turn_required'
+
+    selected_external_inventory = copy.deepcopy(_inventory())
+    web_search = next(
+        capability
+        for capability in selected_external_inventory['capabilities']
+        if capability['id'] == 'web_search'
+    )
+    web_search.update({
+        'state': 'selected',
+        'selected': True,
+        'discoverable': False,
+        'requires_user_choice': False,
+    })
+    selected_context_request = build_capability_planner_request(
+        'Yes, search.',
+        selected_external_inventory,
+        prior_user_turns=['Find current public records.'],
+    )
+    assert capability_planner_is_eligible(
+        {'chat_capability_planner_mode': 'assist'},
+        selected_context_request,
+    ) is True
+
+
+def test_clarification_codes_and_options_are_server_allowlisted():
+    planner_request = build_capability_planner_request(
+        'Compare the policy with public law.',
+        _inventory(),
+        clarification_option_candidates={
+            'jurisdiction_required': ['Virginia', 'Fairfax County'],
+        },
+    )
+    clarify_payload = {
+        'version': 2,
+        'decision': 'clarify',
+        'goal_turn_refs': ['turn_0'],
+        'requirements': [{
+            'id': 'requirement_1',
+            'evidence_types': [],
+            'reason_code': 'material_ambiguity',
+        }],
+        'candidate_plans': [],
+        'recommended_plan_id': None,
+        'clarification': {
+            'code': 'jurisdiction_required',
+            'option_values': ['Virginia', 'Fairfax County'],
+        },
+    }
+
+    validated = validate_capability_planner_result(
+        clarify_payload,
+        planner_request,
+    )
+    assert validated['status'] == 'valid'
+    assert validated['clarification'] == clarify_payload['clarification']
+
+    injected = json.loads(json.dumps(clarify_payload))
+    injected['clarification']['option_values'] = ['<img src=x onerror=alert(1)>']
+    assert validate_capability_planner_result(
+        injected,
+        planner_request,
+    )['failure_code'] == 'unknown_clarification_option'
+
+    unknown_code = json.loads(json.dumps(clarify_payload))
+    unknown_code['clarification']['code'] = 'execute_arbitrary_tool'
+    assert validate_capability_planner_result(
+        unknown_code,
+        planner_request,
+    )['failure_code'] == 'invalid_clarification_code'
+
+    exhausted_request = build_capability_planner_request(
+        'Compare the policy with public law.',
+        _inventory(),
+        clarification_budget_remaining=0,
+    )
+    exhausted_payload = json.loads(json.dumps(clarify_payload))
+    exhausted_payload['clarification']['option_values'] = []
+    assert validate_capability_planner_result(
+        exhausted_payload,
+        exhausted_request,
+    )['failure_code'] == 'clarification_budget_exhausted'
+
+
 def test_azure_invocation_uses_schema_and_transport_timeout():
     client = _fake_client(_completion_response(_proposal_payload()))
     planner_request = _request()
@@ -520,8 +694,8 @@ def test_azure_invocation_uses_schema_and_transport_timeout():
     request_payload = client.requests[0]
     assert 0 < request_payload['timeout'] <= 5.0
     assert request_payload['stream'] is False
-    assert request_payload['temperature'] == 0
     assert request_payload['max_completion_tokens'] == 300
+    assert request_payload['reasoning_effort'] == 'minimal'
     assert request_payload['response_format']['type'] == 'json_schema'
     result_schema = request_payload['response_format']['json_schema']['schema']
     requirement_schema = result_schema['properties']['requirements']['items']
@@ -556,10 +730,10 @@ def test_azure_invocation_uses_schema_and_transport_timeout():
 
 def test_protocol_fallback_is_bounded_and_arbitrary_failures_are_not_retried():
     fallback_client = _fake_client(
-        TypeError("unexpected keyword argument 'response_format'"),
-        TypeError("unexpected keyword argument 'response_format'"),
-        TypeError("unsupported parameter: response_format"),
-        TypeError("unsupported parameter: response_format"),
+        _FakeBadRequestError("unexpected keyword argument 'response_format'"),
+        _FakeBadRequestError("unexpected keyword argument 'response_format'"),
+        _FakeBadRequestError("unsupported parameter: response_format"),
+        _FakeBadRequestError("unsupported parameter: response_format"),
         _completion_response(_proposal_payload()),
     )
     fallback_result = invoke_capability_planner(
@@ -573,6 +747,7 @@ def test_protocol_fallback_is_bounded_and_arbitrary_failures_are_not_retried():
     assert fallback_client.options == [{'timeout': 10.0, 'max_retries': 0}]
     assert len(fallback_client.requests) == 5
     assert 'response_format' not in fallback_client.requests[-1]
+    assert fallback_client.requests[-1]['reasoning_effort'] == 'minimal'
 
     failed_client = _fake_client(RuntimeError('quota exceeded'))
     failed_result = invoke_capability_planner(
@@ -596,8 +771,38 @@ def test_protocol_fallback_is_bounded_and_arbitrary_failures_are_not_retried():
     assert misleading_error_result['failure_code'] == 'client_error'
     assert len(misleading_error_client.requests) == 1
 
+    local_type_error_client = _fake_client(
+        TypeError("unexpected keyword argument 'response_format'"),
+        _completion_response(_proposal_payload()),
+    )
+    local_type_error_result = invoke_capability_planner(
+        planner_client=local_type_error_client,
+        planner_model='planner-model',
+        planner_request=_request(),
+    )
+    assert local_type_error_result['failure_code'] == 'client_error'
+    assert local_type_error_result['transport_error_class'] == 'type_error'
+    assert len(local_type_error_client.requests) == 1
+
+    unsupported_completion_tokens_client = _fake_client(
+        _FakeBadRequestError(
+            'unsupported parameter: max_completion_tokens'
+        ),
+        _completion_response(_proposal_payload()),
+    )
+    unsupported_completion_tokens_result = invoke_capability_planner(
+        planner_client=unsupported_completion_tokens_client,
+        planner_model='planner-model',
+        planner_request=_request(),
+    )
+    assert unsupported_completion_tokens_result['failure_code'] == 'client_error'
+    assert unsupported_completion_tokens_result[
+        'transport_error_class'
+    ] == 'http_400_max_completion_tokens'
+    assert len(unsupported_completion_tokens_client.requests) == 1
+
     reasoning_client = _fake_client(
-        TypeError('unsupported parameter: temperature'),
+        _FakeBadRequestError('unsupported parameter: reasoning_effort'),
         _completion_response(_proposal_payload()),
     )
     reasoning_result = invoke_capability_planner(
@@ -609,8 +814,34 @@ def test_protocol_fallback_is_bounded_and_arbitrary_failures_are_not_retried():
     assert reasoning_result['response_format_class'] == 'json_schema'
     assert len(reasoning_client.requests) == 2
     assert reasoning_client.requests[-1]['max_completion_tokens'] == 600
-    assert 'temperature' not in reasoning_client.requests[-1]
+    assert 'reasoning_effort' not in reasoning_client.requests[-1]
     assert reasoning_client.requests[-1]['response_format']['type'] == 'json_schema'
+
+    schema_fallback_client = _fake_client(
+        _FakeBadRequestError('Invalid parameter: response_format json_schema'),
+        _FakeBadRequestError('Invalid parameter: response_format json_schema'),
+        _completion_response(_proposal_payload()),
+    )
+    schema_fallback_result = invoke_capability_planner(
+        planner_client=schema_fallback_client,
+        planner_model='gpt-5.6-planner',
+        planner_request=_request(),
+    )
+    assert schema_fallback_result['status'] == 'valid'
+    assert schema_fallback_result['response_format_class'] == 'json_object'
+    assert len(schema_fallback_client.requests) == 3
+
+    terminal_bad_request = invoke_capability_planner(
+        planner_client=_fake_client(
+            _FakeBadRequestError('Bad request unrelated to optional fields')
+        ),
+        planner_model='planner-model',
+        planner_request=_request(),
+    )
+    assert terminal_bad_request['failure_code'] == 'client_error'
+    assert terminal_bad_request['transport_error_class'] == 'http_4xx'
+    assert terminal_bad_request['transport_variant_index'] == 0
+    assert 'Bad request' not in json.dumps(terminal_bad_request)
 
     unsupported_transport = SimpleNamespace(chat=reasoning_client.chat)
     unsupported_result = invoke_capability_planner(
@@ -623,7 +854,7 @@ def test_protocol_fallback_is_bounded_and_arbitrary_failures_are_not_retried():
 
 def test_optional_parameter_fallbacks_share_one_wall_clock_deadline():
     deadline_client = _fake_client(
-        TypeError("unexpected keyword argument 'response_format'"),
+        _FakeBadRequestError("unexpected keyword argument 'response_format'"),
         _completion_response(_proposal_payload()),
     )
     with patch(
@@ -643,7 +874,7 @@ def test_optional_parameter_fallbacks_share_one_wall_clock_deadline():
     assert result['latency_ms'] == 4500
 
     anthropic_client = _fake_client(
-        TypeError('unsupported parameter: temperature'),
+        _FakeBadRequestError('unsupported parameter: temperature'),
         _completion_response(_proposal_payload()),
     )
     with patch(
@@ -857,13 +1088,16 @@ def test_shadow_metadata_excludes_prompts_responses_and_opaque_references():
     metadata = build_capability_planner_shadow_metadata(planner_result)
 
     assert metadata == {
-        'version': 1,
+        'version': 2,
         'mode': 'shadow',
         'status': 'valid',
         'candidate_count': 1,
         'latency_ms': 412,
         'fallback_used': False,
         'decision': 'propose',
+        'eligible_goal_turn_count': 1,
+        'selected_goal_turn_count': 1,
+        'prior_goal_included': False,
         'recommended_capability_classes': [
             'workspace_search',
             'web_search',
@@ -926,7 +1160,10 @@ def test_planner_settings_normalize_closed_and_stay_backend_only():
         'chat_capability_planner_model_source': 'configured',
         'chat_capability_planner_model_endpoint_id': 'server-endpoint',
     })
-    assert incomplete_configured['chat_capability_planner_mode'] == 'off'
+    assert incomplete_configured['chat_capability_planner_mode'] == 'shadow'
+    assert incomplete_configured[
+        'chat_capability_planner_model_source'
+    ] == 'same_as_chat'
 
     sanitized = sanitize_settings_for_user({
         **bounded,
@@ -1318,8 +1555,9 @@ def _scenario_result(
             'reason_code': reason_code,
         })
     return {
-        'version': 1,
+        'version': 2,
         'decision': decision,
+        'goal_turn_refs': ['turn_0'],
         'requirements': requirements,
         'candidate_plans': [
             {
@@ -1335,8 +1573,13 @@ def _scenario_result(
             ) in enumerate(candidates, start=1)
         ],
         'recommended_plan_id': 'candidate_1' if candidates else None,
-        'clarification_code': (
-            'material_ambiguity' if decision == 'clarify' else None
+        'clarification': (
+            {
+                'code': 'ambiguous_reference',
+                'option_values': [],
+            }
+            if decision == 'clarify'
+            else None
         ),
     }
 

@@ -12,6 +12,8 @@ Choice-card experience enhanced in version: **0.250.074**
 
 Resolved choice state compacted in version: **0.250.075**
 
+Planner-first runtime corrected in version: **0.250.077**
+
 Associated issue: **[#1021](https://github.com/microsoft/simplechat/issues/1021)**
 
 ## Overview
@@ -23,10 +25,12 @@ or `clarify` result. The model never receives execution authority.
 
 Phase 10A introduced `off` and observational `shadow` modes. Phase 10B adds a
 conservative `assist` mode: a validated high-confidence `propose` result may
-become one durable server-authored choice card. The existing deterministic
-recommendation wins material conflicts, and planner failure always falls back
-to deterministic or direct behavior. `clarify` remains observational until
-Phase 10C.
+become one durable server-authored choice card. In `assist`, the server builds
+the governed inventory but does not run deterministic requirement classifiers,
+create heuristic suggestions, or automatically activate discovered tools. One
+fast model call owns the `direct`, `propose`, or `clarify` decision. Invalid or
+failed planning continues directly with explicit user selections only. Phase
+10C adds bounded prior-user-turn goals and one durable structured clarification.
 
 ## Dependencies
 
@@ -42,10 +46,10 @@ The streaming path performs these operations in order:
 
 1. Authorize the user, conversation, active scopes, selected controls, and input readiness.
 2. Resolve the chat model through existing endpoint governance.
-3. Build the safe capability inventory and deterministic control recommendation.
+3. Build the safe capability inventory. In `shadow`, also build the unchanged deterministic control for comparison.
 4. When eligible, invoke and strictly validate the planner.
 5. In `shadow`, compare safe planner classes with the unchanged deterministic control.
-6. In `assist`, materialize high-confidence candidates from the current server inventory and arbitrate them against the deterministic recommendation.
+6. In `assist`, materialize high-confidence candidates from the current server inventory without heuristic arbitration or automatic discovery.
 7. Persist at most one recommendation through the existing capability proposal contract, or continue directly when no material valid proposal remains.
 8. Recursively expand selected, automatic, and approved bundles, then reauthorize every effective member at decision, resume, and immediately before child-run execution.
 9. Continue through the existing runtime, evidence-ledger, and central-finalization paths.
@@ -122,30 +126,24 @@ proposal completion write transiently fails. Wrappers do not downgrade that
 execution to retryable failure, and restart reconciliation may complete the
 same exact running or failed execution without accepting a newer claim.
 
-Deterministic recommendations use the same recursive baseline semantics as
-planner options. Selected bundle dependencies are treated as already effective
-and cannot be offered again. Deterministic built-in options are rebound to the
-fresh recursive closure and safe policy fields at decision and resume, so a
-bundle member added, removed, or replaced invalidates the stored option.
-Streaming, non-streaming, and document-action provenance all record the same
-expanded selected closure while preserving only explicit roots in the immutable
-selection snapshot.
-
-Material arbitration is deliberately conservative. A planner plan may augment
-the deterministic recommendation only when it contains the deterministic
-plan's effective capability set. If it omits or conflicts with that material
-source, the deterministic recommendation remains authoritative. Low confidence,
-invalid output, timeout, refusal, filtering, provider failure, materialization
-failure, or persistence failure grants no new capability.
+Deterministic recommendations retain the same recursive baseline semantics in
+`off` and as the observational control in `shadow`. In `assist`, neither built-in
+nor governed-agent heuristic classification runs. Explicit selections and their
+dependencies remain authoritative mandates, but deterministic discovery cannot
+create a choice or automatic capability. Low confidence, invalid output,
+timeout, refusal, filtering, provider failure, materialization failure, or
+persistence failure grants no new capability and continues directly.
 
 ## Request Contract
 
-The version 1 request contains:
+The version 2 request contains:
 
 - The current user request, bounded to 16,000 characters.
+- At most two preceding active user turns, projected with opaque turn references and bounded text.
 - Selected capability IDs marked as required mandates.
 - At most 64 safe available built-in and governed-agent descriptors.
 - Server-owned candidate and per-plan limits.
+- Bounded structured clarification state and allowlisted clarification options.
 - Literal policy flags stating that the planner cannot execute or grant access.
 
 Built-in descriptors contain only server-known planning classes such as state,
@@ -162,14 +160,15 @@ artifacts, secrets, and inaccessible counts are forbidden.
 
 ## Result Validation
 
-The version 1 result schema permits only:
+The version 2 result schema permits only:
 
 - `version`
 - `decision`
+- `goal_turn_refs`
 - `requirements`
 - `candidate_plans`
 - `recommended_plan_id`
-- `clarification_code`
+- `clarification`
 
 Requirements and candidates have fixed nested fields and use allowlisted reason,
 evidence, and confidence classes. Validation rejects malformed JSON, missing or
@@ -193,21 +192,25 @@ repair can turn an unknown ID into a known capability.
 
 ## Provider And Timeout Behavior
 
-The default model source is `same_as_chat`. `configured` mode accepts only a
-server-saved global endpoint ID and model ID and resolves them through current
-global endpoint and item governance. A personal or group endpoint with the same
-ID cannot shadow the configured planner. Missing, disabled, inaccessible, or
-unsupported configured models do not fall back to browser input or another
-model.
+The default model source is `same_as_chat`, which uses the exact endpoint client
+and deployment selected for that chat turn. `configured` mode accepts only a
+complete server-saved global endpoint ID and model ID pair and resolves it
+through current global endpoint and item governance. A personal or group
+endpoint with the same ID cannot shadow the configured planner. An incomplete
+configured pair normalizes back to the exact selected chat model; a complete
+but unavailable configured pair fails closed rather than choosing the first
+model in a catalog or accepting browser-supplied connection data.
 
-Azure OpenAI and compatible OpenAI providers prefer strict JSON schema and use a
-bounded list of fallbacks only when the active optional request parameter is
-explicitly unsupported. Anthropic-compatible providers receive the exact result
-schema in a JSON-only prompt. SDK retries are disabled, and arbitrary model,
-network, quota, or service failures are not retried.
+Azure OpenAI and compatible OpenAI providers begin with strict JSON schema,
+`max_completion_tokens`, and `reasoning_effort=minimal`. A bounded sequence may
+remove unsupported reasoning or schema options, use JSON-object mode, or rely
+on the prompt schema only when a specific optional field produces a safe HTTP
+400 compatibility class. Anthropic-compatible providers receive the exact
+result schema in a JSON-only prompt. SDK retries are disabled, and arbitrary
+model, network, quota, authentication, or service failures are not retried.
 
 Every call passes its remaining deadline to the provider request itself. The
-default is 5,000 milliseconds, persisted values are clamped from 250 to 10,000
+default is 10,000 milliseconds, persisted values are clamped from 250 to 20,000
 milliseconds, all compatibility variants share that one wall-clock budget, and
 the Anthropic HTTP adapter splits the same bound across connect and read time in
 `requests.post`. Timeout, empty or malformed provider output, invalid JSON,
@@ -232,12 +235,16 @@ Backend settings and defaults are:
 ```
 
 Admin Settings exposes `Off`, `Shadow`, and `Assist` modes plus model source,
-global endpoint/model IDs, timeout, completion budget, candidate count, and
-per-plan capability limits. Server normalization accepts only
+dependent global endpoint/model selectors, timeout, completion budget,
+candidate count, and per-plan capability limits. The endpoint selector lists
+enabled global endpoints, and the model selector lists enabled models from the
+chosen endpoint while preserving unsaved selections across catalog edits.
+Server normalization accepts only
 `off | shadow | assist`, clamps every numeric value to the documented bounds,
-and forces incomplete configured-model selections back to `off`. The shipped
-default is `assist`; administrators may select `off` as a kill switch or return
-to `shadow` without altering already persisted proposals awaiting a decision.
+and forces incomplete configured-model selections back to `same_as_chat` without
+disabling the selected planner mode. The shipped default is `assist`;
+administrators may select `off` as a kill switch or return to `shadow` without
+altering already persisted proposals awaiting a decision.
 
 The Admin panel defines each mode and setting through visible descriptions and
 keyboard-accessible information tooltips:
@@ -248,9 +255,9 @@ keyboard-accessible information tooltips:
   display proposals, or execute suggested capabilities.
 - `Off` skips the planner model call entirely.
 - `Same as selected chat model` plans with the model selected for each turn.
-  `Configured global model` instead requires the internal global endpoint ID
-  and model ID from the Admin model-endpoint catalog; these values are not URLs,
-  deployment labels, candidate plans, or capability IDs.
+  `Configured global model` instead uses dependent selectors backed by the
+  sanitized Admin model-endpoint catalog; endpoint URLs, credentials, and raw
+  settings never enter these controls.
 - Planner timeout uses a 1-20 second slider with 10 seconds recommended.
 - Completion budget uses a 64-1200 token slider with 600 recommended. It limits
   only the compact planner JSON, not the final response or tool output.
@@ -300,8 +307,9 @@ deterministic evaluation rows, and the required archive, additive, direct,
 selected-mandate, clarify, and governed-agent scenarios.
 
 `functional_tests/test_chat_capability_planner_route.py` verifies route ordering,
-off/resume/cancellation gates, server-owned model selection, deterministic
-control isolation, and user-turn-only shadow metadata.
+off/resume/cancellation gates, exact turn-model fallback, global-only configured
+selection, planner-only Assist discovery, deterministic Shadow isolation, and
+user-turn-only metadata.
 
 `functional_tests/test_phase10a_controlled_shadow_runner.py` validates the
 realistic controlled manifest, unavailable and input-not-ready filtering,
@@ -312,8 +320,8 @@ clarification, prompt-injection, unavailable, unauthorized, and policy-blocked
 behavior.
 
 `functional_tests/test_phase10b_governed_additive_plan_activation.py` validates
-assist normalization and eligibility, high-confidence activation, deterministic
-conflict precedence, Workspace plus Web and selected/automatic additive cases,
+assist normalization and eligibility, high-confidence planner-only activation,
+Workspace plus Web and selected/automatic additive cases,
 Deep Research expansion, deterministic and planner selected/automatic bundle
 subtraction, root-to-closure drift, deterministic option rebinding, dependency
 policy drift, equivalent-plan collapse, governed agents, Image/agent exclusion,
@@ -340,6 +348,13 @@ Run the combined deterministic gate with:
 
 No live or billable planner call is required by the test suite.
 
+Version 0.250.077 was also probed through the exact server-resolved model
+selected for a chat turn. The non-executing public-archive scenario returned a
+valid `propose` result in 4.017 seconds, recommending Deep Research with Web
+Search as the alternative. The endpoint used the bounded JSON-object
+compatibility variant; no capability was executed and no secret, endpoint ID,
+host, prompt, or raw provider response was printed or persisted.
+
 After deterministic gates pass, run the opt-in controlled live matrix with a
 known test deployment:
 
@@ -362,7 +377,7 @@ prohibited execution-surface imports, and p50/p95 latency of 1.67/2.65 seconds.
 ## Known Limitations
 
 - `shadow` remains observational; only `assist` can materialize a proposal.
-- `clarify` is still observational and cannot create a conversational checkpoint until Phase 10C.
-- Only the current user request is available. Prior-turn goal resolution and prior-user-text external queries are deferred to Phase 10C.
+- `clarify` is limited to one durable allowlisted clarification checkpoint per goal.
+- Context is limited to the current request and at most two preceding active user turns; prior-user-text external egress always requires a separate durable choice.
 - Planner activation is limited to read-only built-ins and Phase 8B governed agents. Consequential, write, action-attached, sensitive-by-policy, and over-budget tools remain prohibited.
 - Generalized document, presentation, data, export, and workflow finalizers remain Phase 11 work.

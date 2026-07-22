@@ -68,6 +68,10 @@ class FakeMessageContainer:
             raise DummyNotFoundError(item_id)
         return copy.deepcopy(stored_item)
 
+    def query_items(self, *, query, parameters, partition_key, **kwargs):
+        del query, parameters, partition_key, kwargs
+        return []
+
     def set_item(self, item):
         self.items[(item['conversation_id'], item['id'])] = copy.deepcopy(item)
 

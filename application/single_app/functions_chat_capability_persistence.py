@@ -10,6 +10,7 @@ from azure.core import MatchConditions
 from functions_chat_capability_choices import (
     CapabilityChoiceError,
     apply_capability_choice_decision,
+    build_decline_aware_execution_baseline,
     capability_choice_is_expired,
     claim_capability_choice_resume,
     complete_capability_choice_resume,
@@ -114,6 +115,7 @@ def persist_capability_decision(
     automatic_capability_effective_ids=None,
     selected_agent_present=False,
     baseline_error_code=None,
+    source_lineage_validator=None,
     now=None,
 ):
     """Persist one allowlisted decision using optimistic concurrency."""
@@ -147,18 +149,31 @@ def persist_capability_decision(
             now=now,
         )
         try:
-            revalidate_capability_execution_baseline(
+            if callable(source_lineage_validator):
+                source_lineage_validator(updated)
+            validation_baseline = build_decline_aware_execution_baseline(
+                updated,
                 refreshed_inventory,
                 selected_capability_ids=selected_capability_ids,
                 prior_effective_capabilities=prior_effective_capabilities,
                 automatic_capability_root_ids=automatic_capability_root_ids,
-                automatic_capability_effective_ids=automatic_capability_effective_ids,
+                automatic_capability_effective_ids=(
+                    automatic_capability_effective_ids
+                ),
+            )
+            revalidate_capability_execution_baseline(
+                refreshed_inventory,
+                **validation_baseline,
                 baseline_error_code=baseline_error_code,
             )
             revalidate_capability_execution_compatibility(
                 updated,
-                selected_capability_ids=selected_capability_ids,
-                prior_effective_capabilities=prior_effective_capabilities,
+                selected_capability_ids=validation_baseline[
+                    'selected_capability_ids'
+                ],
+                prior_effective_capabilities=validation_baseline[
+                    'prior_effective_capabilities'
+                ],
                 selected_agent_present=selected_agent_present,
             )
             revalidate_capability_choice(updated, refreshed_inventory)
@@ -199,6 +214,7 @@ def persist_capability_resume_claim(
     automatic_capability_effective_ids=None,
     selected_agent_present=False,
     baseline_error_code=None,
+    source_lineage_validator=None,
     now=None,
     execution_id=None,
     child_run_id=None,
@@ -229,18 +245,31 @@ def persist_capability_resume_claim(
                 code='proposal_expired',
             )
         try:
-            revalidate_capability_execution_baseline(
+            if callable(source_lineage_validator):
+                source_lineage_validator(proposal)
+            validation_baseline = build_decline_aware_execution_baseline(
+                proposal,
                 refreshed_inventory,
                 selected_capability_ids=selected_capability_ids,
                 prior_effective_capabilities=prior_effective_capabilities,
                 automatic_capability_root_ids=automatic_capability_root_ids,
-                automatic_capability_effective_ids=automatic_capability_effective_ids,
+                automatic_capability_effective_ids=(
+                    automatic_capability_effective_ids
+                ),
+            )
+            revalidate_capability_execution_baseline(
+                refreshed_inventory,
+                **validation_baseline,
                 baseline_error_code=baseline_error_code,
             )
             revalidate_capability_execution_compatibility(
                 proposal,
-                selected_capability_ids=selected_capability_ids,
-                prior_effective_capabilities=prior_effective_capabilities,
+                selected_capability_ids=validation_baseline[
+                    'selected_capability_ids'
+                ],
+                prior_effective_capabilities=validation_baseline[
+                    'prior_effective_capabilities'
+                ],
                 selected_agent_present=selected_agent_present,
             )
             revalidate_capability_choice(proposal, refreshed_inventory)

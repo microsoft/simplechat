@@ -1,8 +1,8 @@
 # test_phase10b_governed_additive_plan_activation.py
 """Functional tests for Phase 10B governed additive plan activation.
 
-Version: 0.250.073
-Implemented in: 0.250.072; Admin controls enhanced in 0.250.073
+Version: 0.250.077
+Implemented in: 0.250.072; planner-only Assist corrected in 0.250.077
 
 This test ensures validated planner candidates become bounded server-owned
 capability options without rewriting selected mandates.
@@ -836,7 +836,7 @@ def test_assist_mode_is_normalized_and_uses_new_turn_eligibility():
     ) is False
 
 
-def test_deterministic_material_conflict_wins_but_complementary_plan_activates():
+def test_validated_planner_recommendation_owns_assist_activation():
     inventory = _build_inventory()
     planner_recommendation = build_planner_capability_recommendation(
         _planner_result([
@@ -878,15 +878,15 @@ def test_deterministic_material_conflict_wins_but_complementary_plan_activates()
         deterministic_deep_research,
     )
 
-    assert selected == deterministic_deep_research
+    assert selected == planner_recommendation
     assert summary == {
-        'activation_status': 'suppressed',
-        'recommendation_source': 'deterministic',
-        'suppression_reason': 'deterministic_conflict',
+        'activation_status': 'materialized',
+        'recommendation_source': 'planner',
+        'suppression_reason': None,
     }
 
 
-def test_every_planner_alternative_preserves_deterministic_material_source():
+def test_planner_alternatives_do_not_inherit_heuristic_material_sources():
     planner_recommendation = build_planner_capability_recommendation(
         _planner_result([
             {
@@ -924,11 +924,14 @@ def test_every_planner_alternative_preserves_deterministic_material_source():
         if option['id'] != 'continue_without_capabilities'
     ]
     assert summary['activation_status'] == 'materialized'
-    assert len(actionable_options) == 1
-    assert actionable_options[0]['effective_capability_ids'] == [
-        'web_search',
-        'workspace_search',
-    ]
+    assert len(actionable_options) == 2
+    assert {
+        tuple(option['effective_capability_ids'])
+        for option in actionable_options
+    } == {
+        ('web_search', 'workspace_search'),
+        ('web_search',),
+    }
 
 
 def test_governed_agent_candidate_reuses_server_owned_opaque_reference():
@@ -1001,7 +1004,7 @@ def test_plan_binding_revalidates_exact_bundle_and_policy_state():
     )
     approved = _approved_planner_proposal(recommendation)
 
-    assert approved['version'] == 2
+    assert approved['version'] == 3
     assert approved['recommendation_source'] == 'planner'
     assert revalidate_capability_choice(approved, inventory) is True
 

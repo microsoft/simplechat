@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 
 from functions_chat_capability_planner import (
+    CAPABILITY_PLANNER_CLARIFICATION_CODES,
     CAPABILITY_PLANNER_DECISIONS,
     CAPABILITY_PLANNER_FAILURE_CODES,
     CAPABILITY_PLANNER_REASON_CODES,
@@ -49,6 +50,7 @@ SAFE_NODE_STATUSES = frozenset({
     'succeeded',
 })
 SAFE_RUN_STATUSES = frozenset({
+    'awaiting_user_clarification',
     'awaiting_user_choice',
     'cancelled',
     'failed',
@@ -98,7 +100,11 @@ SAFE_CAPABILITY_COMBINATIONS = frozenset({
     'web_search+workspace_search',
     'workspace_search',
 })
-SAFE_PLANNER_ACTIVATION_STATUSES = frozenset({'materialized', 'suppressed'})
+SAFE_PLANNER_ACTIVATION_STATUSES = frozenset({
+    'clarification',
+    'materialized',
+    'suppressed',
+})
 SAFE_RECOMMENDATION_SOURCES = frozenset({'deterministic', 'direct', 'planner'})
 SAFE_PLANNER_SUPPRESSION_REASONS = frozenset({
     'deterministic_conflict',
@@ -121,6 +127,31 @@ SAFE_REVALIDATION_REASON_CLASSES = frozenset({
     'input',
     'lease',
     'policy',
+})
+SAFE_PRIOR_GOAL_OUTCOMES = frozenset({
+    'approved',
+    'declined',
+    'invalidated',
+    'not_applicable',
+    'pending',
+})
+SAFE_CLARIFICATION_LIFECYCLES = frozenset({
+    'created',
+    'expired',
+    'failed',
+    'resolved',
+})
+SAFE_CLARIFICATION_STATUSES = frozenset({
+    'expired',
+    'failed',
+    'pending',
+    'resolving',
+    'resolved',
+})
+SAFE_CLARIFICATION_RESPONSE_MODES = frozenset({
+    'free_text',
+    'none',
+    'option',
 })
 
 
@@ -256,6 +287,20 @@ def _planner_event_fields(run_id, metadata, *, provider_class, model_name):
         'reason_codes': _safe_planner_reason_codes(summary.get('reason_codes')),
         'latency_ms': _bounded_count(summary.get('latency_ms')),
         'fallback_used': bool(summary.get('fallback_used')),
+        'eligible_goal_turn_count': min(
+            _bounded_count(summary.get('eligible_goal_turn_count')),
+            3,
+        ),
+        'selected_goal_turn_count': min(
+            _bounded_count(summary.get('selected_goal_turn_count')),
+            3,
+        ),
+        'prior_goal_included': bool(summary.get('prior_goal_included')),
+        'clarification_code': _safe_enum(
+            summary.get('clarification_code'),
+            CAPABILITY_PLANNER_CLARIFICATION_CODES,
+            fallback='none',
+        ),
     }
 
 
@@ -309,6 +354,11 @@ def _capability_class(option):
         return 'unknown'
     if option.get('kind') == 'agent' or option.get('agent_ref'):
         return 'governed_agent'
+    if option.get('kind') == 'context':
+        effective_classes = _safe_planner_capability_classes(
+            option.get('effective_capability_ids')
+        )
+        return effective_classes[0] if effective_classes else 'unknown'
     capability_ids = [
         str(capability_id or '').strip()
         for capability_id in (option.get('capability_ids') or [])
@@ -421,6 +471,18 @@ def build_recommendation_created_evaluation_event(proposal):
         'sensitive_data_notice_required': bool(
             _field(proposal, 'sensitive_data_notice_required', False)
         ),
+        'prior_goal_included': bool(
+            _field(proposal, 'prior_goal_included', False)
+        ),
+        'goal_source_count': min(
+            _bounded_count(_field(proposal, 'goal_source_count', 0)),
+            3,
+        ),
+        'prior_goal_outcome': (
+            'pending'
+            if _field(proposal, 'prior_goal_included', False)
+            else 'not_applicable'
+        ),
     }
 
 
@@ -452,6 +514,65 @@ def build_recommendation_decision_evaluation_event(proposal, *, idempotent=False
             decision.get('decided_at'),
         ),
         'idempotent': bool(idempotent),
+        'prior_goal_included': bool(
+            decision.get('prior_goal_included')
+        ),
+        'goal_source_count': min(
+            _bounded_count(decision.get('goal_source_count')),
+            3,
+        ),
+        'prior_goal_outcome': _safe_enum(
+            (
+                decision.get('status')
+                if _field(proposal, 'prior_goal_included', False)
+                else 'not_applicable'
+            ),
+            SAFE_PRIOR_GOAL_OUTCOMES,
+            fallback='not_applicable',
+        ),
+    }
+
+
+def build_clarification_evaluation_event(
+    clarification,
+    *,
+    lifecycle,
+    idempotent=False,
+    error_code=None,
+):
+    """Build one bounded clarification lifecycle event without text or IDs."""
+    value = clarification if isinstance(clarification, Mapping) else {}
+    return {
+        **_base_event('orchestration_clarification_lifecycle'),
+        'parent_run_correlation_id': _correlation_id(
+            value.get('parent_run_id')
+        ),
+        'lifecycle': _safe_enum(
+            lifecycle,
+            SAFE_CLARIFICATION_LIFECYCLES,
+        ),
+        'status': _safe_enum(
+            value.get('status'),
+            SAFE_CLARIFICATION_STATUSES,
+        ),
+        'clarification_code': _safe_enum(
+            value.get('code'),
+            CAPABILITY_PLANNER_CLARIFICATION_CODES,
+        ),
+        'option_count': min(
+            _bounded_count(len(value.get('options') or [])),
+            6,
+        ),
+        'response_mode': _safe_enum(
+            value.get('response_mode') or 'none',
+            SAFE_CLARIFICATION_RESPONSE_MODES,
+        ),
+        'idempotent': bool(idempotent),
+        'failure_class': (
+            _revalidation_reason_class(error_code)
+            if error_code
+            else 'none'
+        ),
     }
 
 

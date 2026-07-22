@@ -7,10 +7,19 @@ import time
 from collections.abc import Mapping
 
 
-CAPABILITY_PLANNER_CONTRACT_VERSION = 1
+CAPABILITY_PLANNER_CONTRACT_VERSION = 2
 CAPABILITY_PLANNER_MODE = 'capability_planning'
 CAPABILITY_PLANNER_DECISIONS = frozenset({'direct', 'propose', 'clarify'})
 CAPABILITY_PLANNER_CONFIDENCE_CLASSES = frozenset({'low', 'medium', 'high'})
+CAPABILITY_PLANNER_CLARIFICATION_CODES = frozenset({
+    'ambiguous_reference',
+    'document_targets_required',
+    'jurisdiction_required',
+    'output_format_required',
+    'source_scope_required',
+    'target_entity_required',
+    'time_range_required',
+})
 CAPABILITY_PLANNER_REASON_CODES = frozenset({
     'fresh_public_information',
     'public_source_retrieval',
@@ -33,6 +42,11 @@ MAX_CAPABILITIES_PER_PLAN = 8
 MAX_PLANNER_REQUIREMENTS = 8
 MAX_EVIDENCE_TYPES_PER_REQUIREMENT = 8
 MAX_USER_REQUEST_CHARS = 16000
+MAX_DIALOGUE_CONTEXT_TURNS = 3
+MAX_PRIOR_DIALOGUE_TURNS = MAX_DIALOGUE_CONTEXT_TURNS - 1
+MAX_DIALOGUE_TURN_CHARS = 8000
+MAX_CLARIFICATION_OPTIONS = 6
+MAX_CLARIFICATION_OPTION_CHARS = 120
 MAX_AVAILABLE_CAPABILITIES = 64
 DEFAULT_PLANNER_TIMEOUT_MS = 10000
 MAX_PLANNER_TIMEOUT_MS = 20000
@@ -56,27 +70,34 @@ CAPABILITY_PLANNER_SYSTEM_PROMPT = (
     'For broad, exhaustive, or multi-year public archive collection, prefer Deep '
     'Research and optionally offer Web Search as a faster alternative. For one named '
     'or narrowly scoped current public item, prefer Web Search. '
-    'Prefer direct for simple timeless requests. Use additive plans only when sources are '
-    'complementary. Use clarify only when interpretations materially change the required '
-    'plan. Requirement IDs must use requirement_1, requirement_2, and so on. Candidate '
+    'The dialogue context contains only bounded user-authored turns with request-local '
+    'turn references. Select only supplied turn references and never invent message IDs. '
+    'The current turn must be selected unless the supplied structured clarification state '
+    'explicitly links the goal to an earlier turn. Prior-turn selection describes intent '
+    'only and never grants external-data approval. Prefer direct for simple timeless '
+    'requests. Use additive plans only when sources are complementary. Use clarify only '
+    'when ambiguity materially changes sources, scope, output, risk, or required input. '
+    'For clarify, choose one supplied clarification code and only option values explicitly '
+    'listed for that code. Requirement IDs must use requirement_1, requirement_2, and so on. Candidate '
     'plan IDs must use candidate_1, candidate_2, and so on. Candidate capability IDs '
     'must contain only unselected additions; never repeat selected mandates in a '
     'candidate. Copy capability IDs and evidence types exactly from the provided '
-    'inventory. For direct, return empty '
-    'requirements and candidate_plans with both nullable fields set to null. For clarify, '
-    'return no candidate plans, a null recommended_plan_id, and material_ambiguity as the '
-    'clarification_code. For propose, return at least one candidate plan, recommend one '
-    'returned candidate ID, and set clarification_code to null. Return the exact JSON '
+    'inventory. For direct, return empty requirements and candidate_plans, a null '
+    'recommended_plan_id, and a null clarification. For clarify, return no candidate '
+    'plans, a null recommended_plan_id, and one clarification object. For propose, return '
+    'at least one candidate plan, recommend one returned candidate ID, and set '
+    'clarification to null. Return the exact JSON '
     'schema with no prose, markup, or private reasoning.'
 )
 
 _PLANNER_RESULT_FIELDS = frozenset({
     'version',
     'decision',
+    'goal_turn_refs',
     'requirements',
     'candidate_plans',
     'recommended_plan_id',
-    'clarification_code',
+    'clarification',
 })
 _PLANNER_REQUIREMENT_FIELDS = frozenset({
     'id',
@@ -91,6 +112,7 @@ _PLANNER_CANDIDATE_FIELDS = frozenset({
 })
 _REQUIREMENT_ID_PATTERN = re.compile(r'^requirement_[1-8]$')
 _CANDIDATE_ID_PATTERN = re.compile(r'^candidate_[1-6]$')
+_TURN_REF_PATTERN = re.compile(r'^turn_[0-2]$')
 _SAFE_IDENTIFIER_PATTERN = re.compile(r'^[a-z0-9][a-z0-9_:-]{0,255}$')
 _SAFE_BUILTIN_CAPABILITY_CLASSES = frozenset({
     'analyze',
@@ -112,7 +134,9 @@ CAPABILITY_PLANNER_FAILURE_CODES = frozenset({
     'invalid_candidate_plan',
     'invalid_candidate_plans',
     'invalid_capability_ids',
+    'invalid_clarification',
     'invalid_clarification_code',
+    'invalid_clarification_options',
     'invalid_decision_shape',
     'invalid_evidence_types',
     'invalid_json',
@@ -122,6 +146,7 @@ CAPABILITY_PLANNER_FAILURE_CODES = frozenset({
     'invalid_response',
     'invalid_result',
     'invalid_result_type',
+    'invalid_goal_turn_refs',
     'ineligible_capability',
     'model_unavailable',
     'missing_field',
@@ -134,13 +159,28 @@ CAPABILITY_PLANNER_FAILURE_CODES = frozenset({
     'transport_timeout',
     'transport_unsupported',
     'unknown_capability',
+    'unknown_clarification_option',
     'unknown_confidence',
     'unknown_decision',
     'unknown_evidence_type',
     'unknown_field',
+    'unknown_goal_turn_ref',
     'unknown_reason_code',
     'unknown_recommended_plan',
     'unsupported_version',
+    'current_goal_turn_required',
+    'clarification_budget_exhausted',
+})
+CAPABILITY_PLANNER_TRANSPORT_ERROR_CLASSES = frozenset({
+    'connection_error',
+    'http_400_max_completion_tokens',
+    'http_400_reasoning_effort',
+    'http_400_response_format',
+    'http_400_temperature',
+    'http_4xx',
+    'http_5xx',
+    'other',
+    'type_error',
 })
 
 
@@ -169,6 +209,85 @@ def _safe_identifier_list(values, *, max_items):
             normalized.append(identifier)
         if len(normalized) >= max_items:
             break
+    return normalized
+
+
+def _normalize_dialogue_context(user_request, prior_user_turns):
+    current_text = str(user_request or '').strip()[:MAX_USER_REQUEST_CHARS]
+    prior_texts = []
+    raw_prior_turns = (
+        prior_user_turns
+        if isinstance(prior_user_turns, list)
+        else []
+    )
+    for raw_turn in raw_prior_turns:
+        if isinstance(raw_turn, Mapping):
+            if str(raw_turn.get('role') or 'user').strip().lower() != 'user':
+                continue
+            text = str(raw_turn.get('text') or '').strip()
+        else:
+            text = str(raw_turn or '').strip()
+        if text:
+            prior_texts.append(text[:MAX_DIALOGUE_TURN_CHARS])
+    dialogue_texts = prior_texts[-MAX_PRIOR_DIALOGUE_TURNS:] + [
+        current_text[:MAX_DIALOGUE_TURN_CHARS]
+    ]
+    return [
+        {
+            'ref': f'turn_{index}',
+            'role': 'user',
+            'text': text,
+        }
+        for index, text in enumerate(dialogue_texts)
+    ]
+
+
+def _normalize_structured_state(structured_state, available_refs):
+    if not isinstance(structured_state, Mapping):
+        return None
+    state_type = str(structured_state.get('type') or '').strip().lower()
+    status = str(structured_state.get('status') or '').strip().lower()
+    source_goal_ref = str(
+        structured_state.get('source_goal_ref') or ''
+    ).strip().lower()
+    code = str(structured_state.get('code') or '').strip().lower()
+    if (
+        state_type not in {'capability_offer', 'clarification'}
+        or status not in {'unresolved', 'resolved'}
+        or source_goal_ref not in available_refs
+    ):
+        return None
+    normalized = {
+        'type': state_type,
+        'source_goal_ref': source_goal_ref,
+        'status': status,
+    }
+    if state_type == 'clarification':
+        if code not in CAPABILITY_PLANNER_CLARIFICATION_CODES:
+            return None
+        normalized['code'] = code
+    return normalized
+
+
+def _normalize_clarification_option_candidates(option_candidates):
+    if not isinstance(option_candidates, Mapping):
+        return {}
+    normalized = {}
+    for raw_code, raw_values in option_candidates.items():
+        code = str(raw_code or '').strip().lower()
+        if code not in CAPABILITY_PLANNER_CLARIFICATION_CODES:
+            continue
+        values = []
+        for raw_value in raw_values if isinstance(raw_values, list) else []:
+            value = ' '.join(str(raw_value or '').split())[
+                :MAX_CLARIFICATION_OPTION_CHARS
+            ]
+            if value and value not in values:
+                values.append(value)
+            if len(values) >= MAX_CLARIFICATION_OPTIONS:
+                break
+        if values:
+            normalized[code] = values
     return normalized
 
 
@@ -224,6 +343,10 @@ def build_capability_planner_request(
     max_candidate_plans=DEFAULT_MAX_CANDIDATE_PLANS,
     max_capabilities_per_plan=DEFAULT_MAX_CAPABILITIES_PER_PLAN,
     additional_selected_mandate_ids=None,
+    prior_user_turns=None,
+    structured_state=None,
+    clarification_option_candidates=None,
+    clarification_budget_remaining=1,
 ):
     """Project one server-authorized inventory into the model-safe contract."""
     inventory = capability_inventory if isinstance(capability_inventory, Mapping) else {}
@@ -260,10 +383,30 @@ def build_capability_planner_request(
         if normalized_id and normalized_id not in selected_mandate_ids:
             selected_mandates.append({'id': normalized_id, 'required': True})
             selected_mandate_ids.add(normalized_id)
+    user_request_text = str(user_request or '').strip()[:MAX_USER_REQUEST_CHARS]
+    dialogue_context = _normalize_dialogue_context(
+        user_request_text,
+        prior_user_turns,
+    )
+    dialogue_refs = {
+        turn['ref']
+        for turn in dialogue_context
+    }
+    normalized_structured_state = _normalize_structured_state(
+        structured_state,
+        dialogue_refs,
+    )
+    normalized_clarification_candidates = (
+        _normalize_clarification_option_candidates(
+            clarification_option_candidates
+        )
+    )
     return {
         'version': CAPABILITY_PLANNER_CONTRACT_VERSION,
         'mode': CAPABILITY_PLANNER_MODE,
-        'user_request': str(user_request or '').strip()[:MAX_USER_REQUEST_CHARS],
+        'user_request': user_request_text,
+        'dialogue_context': dialogue_context,
+        'structured_state': normalized_structured_state,
         'selected_mandates': selected_mandates,
         'available_capabilities': available_capabilities,
         'policy': {
@@ -282,6 +425,21 @@ def build_capability_planner_request(
             'selected_capabilities_are_required': True,
             'planner_may_execute': False,
             'planner_may_grant_access': False,
+            'max_goal_turn_refs': MAX_DIALOGUE_CONTEXT_TURNS,
+            'current_turn_ref': dialogue_context[-1]['ref'],
+            'prior_turn_egress_requires_choice': True,
+            'clarification_budget_remaining': _bounded_int(
+                clarification_budget_remaining,
+                default=1,
+                minimum=0,
+                maximum=1,
+            ),
+            'clarification_codes': sorted(
+                CAPABILITY_PLANNER_CLARIFICATION_CODES
+            ),
+            'clarification_option_candidates': (
+                normalized_clarification_candidates
+            ),
         },
     }
 
@@ -302,12 +460,27 @@ def capability_planner_is_eligible(
         or cancel_requested
     ):
         return False
-    return any(
+    unselected_discovery_available = any(
         isinstance(capability, Mapping)
         and capability.get('state') == 'unselected'
         and capability.get('discoverable') is True
         and capability.get('input_ready') is True
         for capability in request.get('available_capabilities') or []
+    )
+    contextual_selected_external_available = (
+        len(request.get('dialogue_context') or []) > 1
+        and any(
+            isinstance(capability, Mapping)
+            and capability.get('state') == 'selected'
+            and capability.get('external_data') is True
+            and capability.get('read_only') is True
+            and capability.get('input_ready') is True
+            for capability in request.get('available_capabilities') or []
+        )
+    )
+    return bool(
+        unselected_discovery_available
+        or contextual_selected_external_available
     )
 
 
@@ -479,6 +652,99 @@ def _normalize_candidates(
     return normalized, candidate_id_aliases, None
 
 
+def _normalize_goal_turn_refs(goal_turn_refs, planner_request):
+    if not isinstance(goal_turn_refs, list) or not goal_turn_refs:
+        return None, 'invalid_goal_turn_refs'
+    request = planner_request if isinstance(planner_request, Mapping) else {}
+    dialogue_context = [
+        turn
+        for turn in request.get('dialogue_context') or []
+        if isinstance(turn, Mapping)
+        and turn.get('role') == 'user'
+        and _TURN_REF_PATTERN.fullmatch(str(turn.get('ref') or ''))
+    ]
+    request_order = [str(turn.get('ref')) for turn in dialogue_context]
+    allowed_refs = set(request_order)
+    max_refs = min(MAX_DIALOGUE_CONTEXT_TURNS, len(request_order))
+    if len(goal_turn_refs) > max_refs:
+        return None, 'invalid_goal_turn_refs'
+    selected_refs = []
+    for raw_ref in goal_turn_refs:
+        turn_ref = str(raw_ref or '').strip().lower()
+        if not _TURN_REF_PATTERN.fullmatch(turn_ref):
+            return None, 'invalid_goal_turn_refs'
+        if turn_ref not in allowed_refs:
+            return None, 'unknown_goal_turn_ref'
+        if turn_ref in selected_refs:
+            return None, 'invalid_goal_turn_refs'
+        selected_refs.append(turn_ref)
+    policy = request.get('policy') if isinstance(request.get('policy'), Mapping) else {}
+    current_turn_ref = str(policy.get('current_turn_ref') or '').strip().lower()
+    structured_state = (
+        request.get('structured_state')
+        if isinstance(request.get('structured_state'), Mapping)
+        else {}
+    )
+    clarification_linked = (
+        structured_state.get('type') == 'clarification'
+        and structured_state.get('source_goal_ref') in selected_refs
+    )
+    if current_turn_ref not in selected_refs and not clarification_linked:
+        return None, 'current_goal_turn_required'
+    selected_set = set(selected_refs)
+    return [ref for ref in request_order if ref in selected_set], None
+
+
+def _normalize_clarification(clarification, planner_request):
+    if clarification is None:
+        return None, None
+    if not isinstance(clarification, Mapping):
+        return None, 'invalid_clarification'
+    if set(clarification) != {'code', 'option_values'}:
+        return None, 'invalid_clarification'
+    request = planner_request if isinstance(planner_request, Mapping) else {}
+    policy = request.get('policy') if isinstance(request.get('policy'), Mapping) else {}
+    if _bounded_int(
+        policy.get('clarification_budget_remaining'),
+        default=0,
+        minimum=0,
+        maximum=1,
+    ) < 1:
+        return None, 'clarification_budget_exhausted'
+    allowed_codes = {
+        str(code or '').strip().lower()
+        for code in policy.get('clarification_codes') or []
+        if str(code or '').strip().lower()
+        in CAPABILITY_PLANNER_CLARIFICATION_CODES
+    }
+    code = str(clarification.get('code') or '').strip().lower()
+    if code not in allowed_codes:
+        return None, 'invalid_clarification_code'
+    option_values = clarification.get('option_values')
+    if not isinstance(option_values, list) or len(option_values) > MAX_CLARIFICATION_OPTIONS:
+        return None, 'invalid_clarification_options'
+    candidates_by_code = (
+        policy.get('clarification_option_candidates')
+        if isinstance(policy.get('clarification_option_candidates'), Mapping)
+        else {}
+    )
+    allowed_values = candidates_by_code.get(code) or []
+    normalized_values = []
+    for raw_value in option_values:
+        value = ' '.join(str(raw_value or '').split())[
+            :MAX_CLARIFICATION_OPTION_CHARS
+        ]
+        if not value or value not in allowed_values:
+            return None, 'unknown_clarification_option'
+        if value in normalized_values:
+            return None, 'invalid_clarification_options'
+        normalized_values.append(value)
+    return {
+        'code': code,
+        'option_values': normalized_values,
+    }, None
+
+
 def validate_capability_planner_result(raw_result, planner_request):
     """Validate untrusted planner JSON against the exact request inventory."""
     parsed, failure_code = _parse_result(raw_result)
@@ -496,6 +762,12 @@ def validate_capability_planner_result(raw_result, planner_request):
     if decision not in CAPABILITY_PLANNER_DECISIONS:
         return _rejected_result('unknown_decision')
     request = planner_request if isinstance(planner_request, Mapping) else {}
+    goal_turn_refs, failure_code = _normalize_goal_turn_refs(
+        parsed.get('goal_turn_refs'),
+        request,
+    )
+    if failure_code:
+        return _rejected_result(failure_code)
     policy = request.get('policy') if isinstance(request.get('policy'), Mapping) else {}
     max_candidates = _bounded_int(
         policy.get('max_candidate_plans'),
@@ -552,12 +824,15 @@ def validate_capability_planner_result(raw_result, planner_request):
     recommended_plan_id = parsed.get('recommended_plan_id')
     if recommended_plan_id is not None:
         recommended_plan_id = str(recommended_plan_id).strip().lower()
-    clarification_code = parsed.get('clarification_code')
-    if clarification_code is not None:
-        clarification_code = str(clarification_code).strip().lower()
+    clarification, failure_code = _normalize_clarification(
+        parsed.get('clarification'),
+        request,
+    )
+    if failure_code:
+        return _rejected_result(failure_code)
 
     if decision == 'propose':
-        if not candidates or clarification_code is not None:
+        if not candidates or clarification is not None:
             return _rejected_result('invalid_decision_shape')
         if recommended_plan_id not in candidate_aliases:
             return _rejected_result('unknown_recommended_plan')
@@ -565,20 +840,33 @@ def validate_capability_planner_result(raw_result, planner_request):
     elif decision == 'clarify':
         if candidates or recommended_plan_id is not None:
             return _rejected_result('invalid_decision_shape')
-        if clarification_code != 'material_ambiguity':
-            return _rejected_result('invalid_clarification_code')
-    else:
-        if candidates or recommended_plan_id is not None or clarification_code is not None:
+        if clarification is None:
             return _rejected_result('invalid_decision_shape')
+    else:
+        if candidates or recommended_plan_id is not None or clarification is not None:
+            return _rejected_result('invalid_decision_shape')
+
+    policy = request.get('policy') if isinstance(request.get('policy'), Mapping) else {}
+    current_turn_ref = str(policy.get('current_turn_ref') or '').strip().lower()
 
     return {
         'version': CAPABILITY_PLANNER_CONTRACT_VERSION,
         'status': 'valid',
         'decision': decision,
+        'goal_turn_refs': goal_turn_refs,
+        'eligible_goal_turn_count': min(
+            len(request.get('dialogue_context') or []),
+            MAX_DIALOGUE_CONTEXT_TURNS,
+        ),
+        'selected_goal_turn_count': len(goal_turn_refs),
+        'prior_goal_included': any(
+            turn_ref != current_turn_ref
+            for turn_ref in goal_turn_refs
+        ),
         'requirements': requirements,
         'candidate_plans': candidates,
         'recommended_plan_id': recommended_plan_id,
-        'clarification_code': clarification_code,
+        'clarification': clarification,
         'fallback_used': False,
     }
 
@@ -680,6 +968,48 @@ def _planner_result_json_schema(planner_request=None):
         if evidence_types
         else identifier_schema
     )
+    dialogue_refs = [
+        str(turn.get('ref') or '').strip()
+        for turn in request.get('dialogue_context') or []
+        if isinstance(turn, Mapping)
+        and turn.get('role') == 'user'
+        and _TURN_REF_PATTERN.fullmatch(str(turn.get('ref') or '').strip())
+    ]
+    clarification_budget_remaining = _bounded_int(
+        policy.get('clarification_budget_remaining'),
+        default=0,
+        minimum=0,
+        maximum=1,
+    )
+    clarification_codes = sorted({
+        str(code or '').strip().lower()
+        for code in policy.get('clarification_codes') or []
+        if str(code or '').strip().lower()
+        in CAPABILITY_PLANNER_CLARIFICATION_CODES
+    })
+    clarification_candidates = (
+        policy.get('clarification_option_candidates')
+        if isinstance(policy.get('clarification_option_candidates'), Mapping)
+        else {}
+    )
+    clarification_option_values = sorted({
+        str(value)
+        for code in clarification_codes
+        for value in clarification_candidates.get(code) or []
+        if str(value)
+    })
+    clarification_option_schema = (
+        {'type': 'string', 'enum': clarification_option_values}
+        if clarification_option_values
+        else identifier_schema
+    )
+    allowed_decisions = set(
+        CAPABILITY_PLANNER_DECISIONS
+        if proposal_is_available
+        else CAPABILITY_PLANNER_DECISIONS - {'propose'}
+    )
+    if not clarification_budget_remaining or not clarification_codes:
+        allowed_decisions.discard('clarify')
     return {
         'name': 'chat_capability_planner_result',
         'strict': True,
@@ -690,10 +1020,20 @@ def _planner_result_json_schema(planner_request=None):
                 'version': {'type': 'integer', 'enum': [CAPABILITY_PLANNER_CONTRACT_VERSION]},
                 'decision': {
                     'type': 'string',
-                    'enum': sorted(
-                        CAPABILITY_PLANNER_DECISIONS
-                        if proposal_is_available
-                        else CAPABILITY_PLANNER_DECISIONS - {'propose'}
+                    'enum': sorted(allowed_decisions),
+                },
+                'goal_turn_refs': {
+                    'type': 'array',
+                    'minItems': 1,
+                    'maxItems': min(
+                        MAX_DIALOGUE_CONTEXT_TURNS,
+                        max(1, len(dialogue_refs)),
+                    ),
+                    'uniqueItems': True,
+                    'items': (
+                        {'type': 'string', 'enum': dialogue_refs}
+                        if dialogue_refs
+                        else identifier_schema
                     ),
                 },
                 'requirements': {
@@ -755,9 +1095,29 @@ def _planner_result_json_schema(planner_request=None):
                         else [{'type': 'null'}]
                     ),
                 },
-                'clarification_code': {
+                'clarification': {
                     'anyOf': [
-                        {'type': 'string', 'enum': ['material_ambiguity']},
+                        {
+                            'type': 'object',
+                            'additionalProperties': False,
+                            'properties': {
+                                'code': {
+                                    'type': 'string',
+                                    'enum': clarification_codes,
+                                },
+                                'option_values': {
+                                    'type': 'array',
+                                    'maxItems': (
+                                        MAX_CLARIFICATION_OPTIONS
+                                        if clarification_option_values
+                                        else 0
+                                    ),
+                                    'uniqueItems': True,
+                                    'items': clarification_option_schema,
+                                },
+                            },
+                            'required': ['code', 'option_values'],
+                        },
                         {'type': 'null'},
                     ],
                 },
@@ -765,10 +1125,11 @@ def _planner_result_json_schema(planner_request=None):
             'required': [
                 'version',
                 'decision',
+                'goal_turn_refs',
                 'requirements',
                 'candidate_plans',
                 'recommended_plan_id',
-                'clarification_code',
+                'clarification',
             ],
         },
     }
@@ -802,27 +1163,33 @@ def _model_request_variants(
     return [
         {
             'response_format': schema_format,
-            'temperature': 0,
             'max_completion_tokens': token_limit,
+            'reasoning_effort': 'minimal',
         },
         {
             'response_format': schema_format,
             'max_completion_tokens': token_limit,
         },
         {
-            'response_format': schema_format,
-            'max_tokens': token_limit,
+            'response_format': {'type': 'json_object'},
+            'max_completion_tokens': token_limit,
+            'reasoning_effort': 'minimal',
         },
         {
             'response_format': {'type': 'json_object'},
             'max_completion_tokens': token_limit,
         },
+        {
+            'max_completion_tokens': token_limit,
+            'reasoning_effort': 'minimal',
+        },
         {'max_completion_tokens': token_limit},
-        {'max_tokens': token_limit},
     ]
 
 
 def _optional_parameter_is_unsupported(exc, request_variant):
+    if getattr(exc, 'status_code', None) != 400:
+        return False
     error_text = str(exc or '').strip().lower()
     field_markers = {
         'max_tokens': ('max_tokens', 'max tokens'),
@@ -837,6 +1204,10 @@ def _optional_parameter_is_unsupported(exc, request_variant):
             'json schema',
         ),
         'temperature': ('temperature',),
+        'reasoning_effort': (
+            'reasoning_effort',
+            'reasoning effort',
+        ),
     }
     optional_fields = {
         field_name
@@ -858,6 +1229,48 @@ def _optional_parameter_is_unsupported(exc, request_variant):
         'unrecognized',
         'unsupported',
     ))
+
+
+def _transport_error_class(exc, request_variant):
+    """Return a bounded diagnostic class without provider text or request data."""
+    error_text = str(exc or '').strip().lower()
+    status_code = getattr(exc, 'status_code', None)
+    for field_name in (
+        'response_format',
+        'reasoning_effort',
+        'max_completion_tokens',
+        'temperature',
+    ):
+        if field_name not in request_variant:
+            continue
+        markers = (field_name, field_name.replace('_', ' '))
+        if status_code == 400 and any(marker in error_text for marker in markers):
+            return f'http_400_{field_name}'
+    if isinstance(status_code, int):
+        if 400 <= status_code < 500:
+            return 'http_4xx'
+        if status_code >= 500:
+            return 'http_5xx'
+    error_name = type(exc).__name__.lower()
+    if isinstance(exc, TypeError):
+        return 'type_error'
+    if 'connection' in error_name or 'connection' in error_text:
+        return 'connection_error'
+    return 'other'
+
+
+def _request_variant_can_fallback(exc, request_variant):
+    """Return whether a fast 400 can safely retry with fewer optional fields."""
+    error_class = _transport_error_class(exc, request_variant)
+    if error_class == 'http_400_max_completion_tokens':
+        return False
+    if _optional_parameter_is_unsupported(exc, request_variant):
+        return True
+    return error_class in {
+        'http_400_reasoning_effort',
+        'http_400_response_format',
+        'http_400_temperature',
+    }
 
 
 def _is_timeout_error(exc):
@@ -907,15 +1320,30 @@ def _extract_model_response(response):
     return (content, None) if content else ('', 'empty_response')
 
 
-def _invocation_failure(status, failure_code, *, started_at):
+def _invocation_failure(
+    status,
+    failure_code,
+    *,
+    started_at,
+    transport_error_class=None,
+    transport_variant_index=None,
+):
     latency_ms = max(0, round((time.perf_counter() - started_at) * 1000))
-    return {
+    failure = {
         'version': CAPABILITY_PLANNER_CONTRACT_VERSION,
         'status': status,
         'failure_code': failure_code,
         'latency_ms': min(latency_ms, MAX_PLANNER_TIMEOUT_MS),
         'fallback_used': True,
     }
+    if transport_error_class in CAPABILITY_PLANNER_TRANSPORT_ERROR_CLASSES:
+        failure['transport_error_class'] = transport_error_class
+    if isinstance(transport_variant_index, int):
+        failure['transport_variant_index'] = max(
+            0,
+            min(transport_variant_index, 8),
+        )
+    return failure
 
 
 def _planner_transport_client(planner_client, runtime_protocol, timeout_seconds):
@@ -1020,10 +1448,19 @@ def invoke_capability_planner(
                 )
             if (
                 variant_index + 1 < len(variants)
-                and _optional_parameter_is_unsupported(exc, request_variant)
+                and _request_variant_can_fallback(exc, request_variant)
             ):
                 continue
-            return _invocation_failure('rejected', 'client_error', started_at=started_at)
+            return _invocation_failure(
+                'rejected',
+                'client_error',
+                started_at=started_at,
+                transport_error_class=_transport_error_class(
+                    exc,
+                    request_variant,
+                ),
+                transport_variant_index=variant_index,
+            )
 
         if callable(cancel_requested) and cancel_requested():
             return _invocation_failure('discarded', 'cancelled', started_at=started_at)
@@ -1103,6 +1540,31 @@ def build_capability_planner_metadata(planner_result, *, mode='shadow'):
     decision = str(result.get('decision') or '').strip().lower()
     if status == 'valid' and decision in CAPABILITY_PLANNER_DECISIONS:
         metadata['decision'] = decision
+        metadata['eligible_goal_turn_count'] = _bounded_int(
+            result.get('eligible_goal_turn_count'),
+            default=1,
+            minimum=1,
+            maximum=MAX_DIALOGUE_CONTEXT_TURNS,
+        )
+        metadata['selected_goal_turn_count'] = _bounded_int(
+            result.get('selected_goal_turn_count'),
+            default=1,
+            minimum=1,
+            maximum=MAX_DIALOGUE_CONTEXT_TURNS,
+        )
+        metadata['prior_goal_included'] = bool(
+            result.get('prior_goal_included')
+        )
+        clarification = (
+            result.get('clarification')
+            if isinstance(result.get('clarification'), Mapping)
+            else {}
+        )
+        clarification_code = str(
+            clarification.get('code') or ''
+        ).strip().lower()
+        if clarification_code in CAPABILITY_PLANNER_CLARIFICATION_CODES:
+            metadata['clarification_code'] = clarification_code
 
     recommended_plan_id = str(result.get('recommended_plan_id') or '').strip()
     recommended_plan = next(
@@ -1133,6 +1595,18 @@ def build_capability_planner_metadata(planner_result, *, mode='shadow'):
     failure_code = str(result.get('failure_code') or '').strip().lower()
     if status != 'valid' and failure_code in CAPABILITY_PLANNER_FAILURE_CODES:
         metadata['failure_code'] = failure_code
+    transport_error_class = str(
+        result.get('transport_error_class') or ''
+    ).strip().lower()
+    if transport_error_class in CAPABILITY_PLANNER_TRANSPORT_ERROR_CLASSES:
+        metadata['transport_error_class'] = transport_error_class
+    if isinstance(result.get('transport_variant_index'), int):
+        metadata['transport_variant_index'] = _bounded_int(
+            result.get('transport_variant_index'),
+            default=0,
+            minimum=0,
+            maximum=8,
+        )
     return metadata
 
 

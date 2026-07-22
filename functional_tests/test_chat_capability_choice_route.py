@@ -2,8 +2,8 @@
 # test_chat_capability_choice_route.py
 """
 Functional test for authenticated chat capability decisions.
-Version: 0.250.072
-Implemented in: 0.250.067; additive baseline coverage added in 0.250.072
+Version: 0.250.076
+Implemented in: 0.250.067; contextual goal coverage added in 0.250.076
 
 This test ensures proposal decisions reauthorize the exact personal
 conversation and source turn, reject forged or stale choices, revalidate
@@ -11,6 +11,7 @@ capability authorization, and remain idempotent under duplicate clicks.
 """
 
 import copy
+import hashlib
 import importlib
 import sys
 from datetime import datetime, timedelta, timezone
@@ -29,13 +30,19 @@ if str(SINGLE_APP_ROOT) not in sys.path:
 from functions_chat_capabilities import (  # noqa: E402
     build_agent_capability_recommendation,
     build_capability_recommendation,
+    build_contextual_egress_recommendation,
     build_governed_agent_capability_inventory,
     build_governed_capability_inventory,
     classify_capability_requirements,
 )
 from functions_chat_capability_choices import (  # noqa: E402
+    build_approved_user_turn_goal,
     build_capability_choice_proposal,
     build_capability_provenance,
+)
+from functions_chat_clarifications import (  # noqa: E402
+    build_chat_clarification,
+    claim_chat_clarification_response,
 )
 from functions_chat_orchestration import build_turn_orchestration_plan  # noqa: E402
 from functions_evidence_ledger import (  # noqa: E402
@@ -103,17 +110,116 @@ class FakeMessageContainer:
         return copy.deepcopy(saved)
 
     def query_items(self, *, query, parameters, partition_key, **kwargs):
-        del query, kwargs
+        del kwargs
         parameter_values = {
             parameter['name']: parameter['value']
             for parameter in parameters
         }
         proposal_id = parameter_values.get('@proposal_id')
         execution_id = parameter_values.get('@execution_id')
+        child_run_id = parameter_values.get('@child_run_id')
+        source_thread_id = parameter_values.get('@source_thread_id')
+        thread_id = parameter_values.get('@thread_id')
+        if source_thread_id:
+            matches = []
+            for (conversation_id, _), message in self.items.items():
+                metadata = (
+                    message.get('metadata')
+                    if isinstance(message.get('metadata'), dict)
+                    else {}
+                )
+                thread_info = (
+                    metadata.get('thread_info')
+                    if isinstance(metadata.get('thread_info'), dict)
+                    else {}
+                )
+                if (
+                    conversation_id == partition_key
+                    and message.get('role') == 'assistant'
+                    and isinstance(
+                        metadata.get('chat_clarification'),
+                        dict,
+                    )
+                    and thread_info.get('thread_id') == source_thread_id
+                ):
+                    matches.append(copy.deepcopy(message))
+            matches.sort(
+                key=lambda message: str(message.get('timestamp') or ''),
+                reverse=True,
+            )
+            return matches[:2]
+        if (
+            'c.metadata.chat_clarification.status = "pending"' in query
+        ):
+            matches = []
+            for (conversation_id, _), message in self.items.items():
+                metadata = (
+                    message.get('metadata')
+                    if isinstance(message.get('metadata'), dict)
+                    else {}
+                )
+                clarification = metadata.get('chat_clarification')
+                if (
+                    conversation_id == partition_key
+                    and message.get('role') == 'assistant'
+                    and isinstance(clarification, dict)
+                    and clarification.get('status') in {
+                        'pending',
+                        'resolving',
+                    }
+                ):
+                    matches.append(copy.deepcopy(message))
+            matches.sort(
+                key=lambda message: str(message.get('timestamp') or ''),
+                reverse=True,
+            )
+            return matches[:2]
+        if 'c.role = "user"' in query:
+            matches = []
+            for (conversation_id, _), message in self.items.items():
+                metadata = (
+                    message.get('metadata')
+                    if isinstance(message.get('metadata'), dict)
+                    else {}
+                )
+                thread_info = (
+                    metadata.get('thread_info')
+                    if isinstance(metadata.get('thread_info'), dict)
+                    else {}
+                )
+                if not (
+                    conversation_id == partition_key
+                    and message.get('role') == 'user'
+                    and metadata.get('is_deleted') is not True
+                    and metadata.get('masked') is not True
+                    and not (metadata.get('masked_ranges') or [])
+                    and metadata.get(
+                        'is_generated_chat_artifact'
+                    ) is not True
+                    and thread_info.get('active_thread') is not False
+                ):
+                    continue
+                if thread_id and thread_info.get('thread_id') != thread_id:
+                    continue
+                matches.append(copy.deepcopy(message))
+            matches.sort(
+                key=lambda message: str(message.get('timestamp') or ''),
+                reverse=True,
+            )
+            return matches[:2]
         matches = []
         for (conversation_id, _), message in self.items.items():
             metadata = message.get('metadata') if isinstance(message.get('metadata'), dict) else {}
             resume = metadata.get('capability_resume') if isinstance(metadata.get('capability_resume'), dict) else {}
+            orchestration = metadata.get('orchestration') if isinstance(metadata.get('orchestration'), dict) else {}
+            if child_run_id:
+                if (
+                    conversation_id == partition_key
+                    and message.get('role') in {'assistant', 'image', 'safety'}
+                    and orchestration.get('run_id') == child_run_id
+                ):
+                    matches.append(copy.deepcopy(message))
+                continue
             if (
                 conversation_id == partition_key
                 and message.get('role') in {'assistant', 'image', 'safety'}
@@ -161,6 +267,8 @@ def _proposal_documents(*, expires_at=None):
     proposal = build_capability_choice_proposal(
         recommendation,
         run_id='parent-run-1',
+
+
         conversation_id='conversation-owner',
         user_message_id='user-message-1',
         assistant_message_id='proposal-1',
@@ -185,6 +293,7 @@ def _proposal_documents(*, expires_at=None):
     )
     user_message = {
         'id': 'user-message-1',
+
         'conversation_id': 'conversation-owner',
         'role': 'user',
         'content': 'What are the current county rules?',
@@ -192,6 +301,7 @@ def _proposal_documents(*, expires_at=None):
             'orchestration': {'run_id': 'parent-run-1'},
             'capability_provenance': copy.deepcopy(provenance),
             'thread_info': {
+
                 'thread_id': 'thread-1',
                 'previous_thread_id': None,
             },
@@ -220,6 +330,214 @@ def _proposal_documents(*, expires_at=None):
         },
     }
     return user_message, assistant_message
+
+
+def _contextual_proposal_documents(*, selected_web=False):
+    selected_capability_ids = ['web_search'] if selected_web else None
+    inventory = _inventory(
+        selected_capability_ids=selected_capability_ids,
+    )
+    prior_message = {
+        'id': 'user-message-0',
+        'conversation_id': 'conversation-owner',
+        'role': 'user',
+        'content': 'Find JPMorgan press releases from the past three years.',
+        'timestamp': '2026-07-17T10:00:00+00:00',
+        'metadata': {
+            'thread_info': {
+                'thread_id': 'thread-0',
+                'previous_thread_id': None,
+                'thread_attempt': 1,
+                'active_thread': True,
+            },
+        },
+    }
+    current_message = {
+        'id': 'user-message-1',
+        'conversation_id': 'conversation-owner',
+        'role': 'user',
+        'content': 'Yes, search.',
+        'timestamp': '2026-07-17T10:01:00+00:00',
+        'metadata': {
+            'thread_info': {
+                'thread_id': 'thread-1',
+                'previous_thread_id': 'thread-0',
+                'thread_attempt': 1,
+                'active_thread': True,
+            },
+        },
+    }
+    approved_goal = build_approved_user_turn_goal(
+        [prior_message, current_message],
+        conversation_id='conversation-owner',
+        current_user_message_id='user-message-1',
+    )
+    if selected_web:
+        recommendation = build_contextual_egress_recommendation(
+            {
+                'status': 'valid',
+                'decision': 'direct',
+                'prior_goal_included': True,
+                'requirements': [],
+            },
+            inventory,
+            {'selected_capability_ids': ['web_search']},
+        )
+    else:
+        recommendation = build_capability_recommendation(
+            inventory,
+            classify_capability_requirements(
+                'What are the current county rules?'
+            ),
+        )
+    proposal = build_capability_choice_proposal(
+        recommendation,
+        run_id='parent-run-1',
+        conversation_id='conversation-owner',
+        user_message_id='user-message-1',
+        assistant_message_id='proposal-1',
+        approved_user_turn_goal=approved_goal,
+        capability_inventory=inventory,
+        now=datetime.now(timezone.utc),
+    )
+    selection_snapshot = {
+        'conversation_id': 'conversation-owner',
+        'toggles': {
+            'workspace_search': False,
+            'web_search': selected_web,
+            'url_access': False,
+            'source_review': False,
+            'deep_research': False,
+        },
+    }
+    effective_capabilities = (
+        [{'id': 'web_search', 'origin': 'selection', 'required': True}]
+        if selected_web
+        else []
+    )
+    provenance = build_capability_provenance(
+        selection_snapshot=selection_snapshot,
+        capability_inventory=inventory,
+        proposal=proposal,
+        effective_capabilities=effective_capabilities,
+    )
+    current_message['metadata'].update({
+        'orchestration': {'run_id': 'parent-run-1'},
+        'capability_provenance': copy.deepcopy(provenance),
+    })
+    assistant_message = {
+        'id': 'proposal-1',
+        'conversation_id': 'conversation-owner',
+        'role': 'assistant',
+        'content': 'Choose how to continue.',
+        'metadata': {
+            'capability_proposal': proposal,
+            'capability_provenance': provenance,
+            'capability_resume_request': {
+                'hybrid_search': False,
+                'web_search_enabled': selected_web,
+                'url_access_enabled': False,
+                'source_review_enabled': False,
+                'deep_research_enabled': False,
+                'selected_document_ids': [],
+                'active_group_ids': [],
+                'active_public_workspace_ids': [],
+                'doc_scope': 'personal',
+                'chat_type': 'user',
+            },
+        },
+    }
+    return (
+        prior_message,
+        current_message,
+        assistant_message,
+        proposal['recommended_option_id'],
+    )
+
+
+def _claimed_clarification_documents(
+    *,
+    blank_response=False,
+    missing_response_thread=False,
+    masked_source=False,
+):
+    now = datetime.now(timezone.utc)
+    source_message = {
+        'id': 'clarification-source-user',
+        'conversation_id': 'conversation-owner',
+        'role': 'user',
+        'content': 'Find the rules for this jurisdiction.',
+        'timestamp': now.isoformat(),
+        'metadata': {
+            'masked': masked_source,
+            'thread_info': {
+                'thread_id': 'clarification-source-thread',
+                'previous_thread_id': None,
+                'active_thread': True,
+                'thread_attempt': 1,
+            },
+        },
+    }
+    clarification = build_chat_clarification(
+        {
+            'code': 'jurisdiction_required',
+            'option_values': [],
+        },
+        parent_run_id='clarification-parent-run',
+        conversation_id='conversation-owner',
+        source_user_message_id='clarification-source-user',
+        source_thread_id='clarification-source-thread',
+        assistant_message_id='clarification-checkpoint',
+        now=now,
+        ttl_seconds=3600,
+    )
+    claimed, _ = claim_chat_clarification_response(
+        clarification,
+        response_user_message_id='clarification-response-user',
+        response_text='Virginia',
+        child_run_id='clarification-child-run',
+        response_thread_id='clarification-response-thread',
+        now=now + timedelta(seconds=1),
+    )
+    checkpoint_message = {
+        'id': 'clarification-checkpoint',
+        'conversation_id': 'conversation-owner',
+        'role': 'assistant',
+        'content': claimed['question'],
+        'timestamp': (now + timedelta(seconds=1)).isoformat(),
+        'metadata': {
+            'awaiting_user_clarification': True,
+            'chat_clarification': claimed,
+            'thread_info': {
+                'thread_id': 'clarification-source-thread',
+                'previous_thread_id': None,
+                'active_thread': True,
+                'thread_attempt': 1,
+            },
+        },
+    }
+    response_metadata = {
+        'clarification_response': {
+            '_clarification_id': 'clarification-checkpoint',
+        },
+        'thread_info': {
+            'thread_id': 'clarification-response-thread',
+            'previous_thread_id': 'clarification-source-thread',
+            'active_thread': True,
+            'thread_attempt': 1,
+        },
+    }
+    if missing_response_thread:
+        response_metadata.pop('thread_info')
+    response_message = {
+        'id': 'clarification-response-user',
+        'conversation_id': 'conversation-owner',
+        'role': 'user',
+        'content': '' if blank_response else 'Virginia',
+        'timestamp': (now + timedelta(seconds=2)).isoformat(),
+        'metadata': response_metadata,
+    }
+    return source_message, checkpoint_message, response_message
 
 
 def _governed_agent(agent_id='benefits-agent'):
@@ -617,6 +935,439 @@ def test_resume_claim_reconstructs_effective_capabilities_server_side(capability
             proposal_id='proposal-1',
         )
     assert duplicate_claim.value.code == 'resume_in_progress'
+
+
+def test_contextual_resume_rebuilds_exact_approved_user_goal(
+    capability_route_app,
+):
+    state = capability_route_app.config['capability_route_state']
+    route_backend_chats = state['route_module']
+    prior, current, proposal, _ = _contextual_proposal_documents()
+    state['messages'].set_item(prior)
+    state['messages'].set_item(current)
+    state['messages'].set_item(proposal)
+
+    with capability_route_app.test_client() as client:
+        approved = _decision(client, option_id='web_search')
+    assert approved.status_code == 200
+
+    context = route_backend_chats._claim_authorized_capability_resume(
+        settings={},
+        user_id='user-owner',
+        user_email='owner@example.com',
+        user_roles=[],
+        conversation_id='conversation-owner',
+        proposal_id='proposal-1',
+    )
+
+    assert context['request_data']['_server_external_query'] == (
+        'Find JPMorgan press releases from the past three years. Yes, search.'
+    )
+    assert context['request_data']['_server_contextual_goal_query'] == (
+        'Find JPMorgan press releases from the past three years. Yes, search.'
+    )
+    assert context['request_data']['web_search_enabled'] is True
+    assert context['capability_resume_context']['decision'][
+        'prior_goal_included'
+    ] is True
+    assert context['capability_resume_context'][
+        'execution_effective_capability_ids'
+    ] == ['web_search']
+    assert '_approved_user_turn_goal' in (
+        context['capability_resume_context']['_contextual_proposal']
+    )
+
+
+def test_contextual_source_mutation_invalidates_decision_and_resume(
+    capability_route_app,
+):
+    state = capability_route_app.config['capability_route_state']
+    route_backend_chats = state['route_module']
+    prior, current, proposal, _ = _contextual_proposal_documents()
+    state['messages'].set_item(prior)
+    state['messages'].set_item(current)
+    state['messages'].set_item(proposal)
+
+    mutated_prior = copy.deepcopy(prior)
+    mutated_prior['content'] = 'Changed after the contextual proposal.'
+    state['messages'].set_item(mutated_prior)
+    with capability_route_app.test_client() as client:
+        rejected = _decision(client, option_id='web_search')
+    assert rejected.status_code == 409
+    assert rejected.get_json()['code'] == 'goal_source_changed'
+    stored = state['messages'].items[('conversation-owner', 'proposal-1')]
+    assert stored['metadata']['capability_proposal']['status'] == 'invalidated'
+
+    prior, current, proposal, _ = _contextual_proposal_documents()
+    state['messages'].set_item(prior)
+    state['messages'].set_item(current)
+    state['messages'].set_item(proposal)
+    with capability_route_app.test_client() as client:
+        approved = _decision(client, option_id='web_search')
+    assert approved.status_code == 200
+    prior['metadata']['masked_ranges'] = [{'start': 0, 'end': 4}]
+    state['messages'].set_item(prior)
+
+    with pytest.raises(route_backend_chats.CapabilityChoiceError) as stale_resume:
+        route_backend_chats._claim_authorized_capability_resume(
+            settings={},
+            user_id='user-owner',
+            user_email='owner@example.com',
+            user_roles=[],
+            conversation_id='conversation-owner',
+            proposal_id='proposal-1',
+        )
+    assert stale_resume.value.code == 'goal_source_inactive'
+    stored = state['messages'].items[('conversation-owner', 'proposal-1')]
+    assert stored['metadata']['capability_proposal']['status'] == 'invalidated'
+
+
+def test_contextual_decline_suppresses_selected_external_execution(
+    capability_route_app,
+):
+    state = capability_route_app.config['capability_route_state']
+    route_backend_chats = state['route_module']
+    prior, current, proposal, _ = _contextual_proposal_documents(
+        selected_web=True
+    )
+    state['messages'].set_item(prior)
+    state['messages'].set_item(current)
+    state['messages'].set_item(proposal)
+
+    with capability_route_app.test_client() as client:
+        declined = _decision(
+            client,
+            option_id='continue_without_capabilities',
+        )
+    assert declined.status_code == 200
+
+    state['inventory']['web_authorized'] = False
+
+    context = route_backend_chats._claim_authorized_capability_resume(
+        settings={},
+        user_id='user-owner',
+        user_email='owner@example.com',
+        user_roles=[],
+        conversation_id='conversation-owner',
+        proposal_id='proposal-1',
+    )
+    request_data = context['request_data']
+    assert request_data['web_search_enabled'] is False
+    assert request_data['url_access_enabled'] is False
+    assert request_data['source_review_enabled'] is False
+    assert request_data['deep_research_enabled'] is False
+    assert request_data['_server_contextual_egress_declined'] is True
+    assert '_server_external_query' not in request_data
+    assert '_server_contextual_goal_query' not in request_data
+    assert context['capability_resume_context']['decision'][
+        'approval_scope'
+    ] == 'prior_user_goal_egress_declined'
+    assert context['capability_resume_context'][
+        'execution_effective_capability_ids'
+    ] == []
+    assert context['capability_resume_context']['capability_origins'] == {}
+
+    route_source = (
+        REPO_ROOT / 'application' / 'single_app' / 'route_backend_chats.py'
+    ).read_text(encoding='utf-8')
+    streaming_generator = route_source.index(
+        'def generate(publish_background_event=None):'
+    )
+    selected_reconstruction = route_source.index(
+        'selected_builtin_capability_ids = (',
+        streaming_generator,
+    )
+    selected_reconstruction_end = route_source.index(
+        'if capability_resume_context:',
+        selected_reconstruction,
+    )
+    assert "'execution_effective_capability_ids'" in route_source[
+        selected_reconstruction:selected_reconstruction_end
+    ]
+    post_claim_validation = route_source.index(
+        'execution_validation_baseline = build_decline_aware_execution_baseline('
+    )
+    request_reconstruction = route_source.index(
+        'request_data = _apply_effective_capabilities_to_request(',
+        post_claim_validation,
+    )
+    post_claim_source = route_source[
+        post_claim_validation:request_reconstruction
+    ]
+    assert '**execution_validation_baseline' in post_claim_source
+    assert (
+        "execution_validation_baseline.get('selected_capability_ids')"
+        in post_claim_source
+    )
+    assert "claimed_proposal.get('_external_capability_ids')" in (
+        post_claim_source
+    )
+    assigned_knowledge_application = route_source.index(
+        'if assigned_knowledge_filters:',
+        streaming_generator,
+    )
+    decline_enforcement = route_source.index(
+        "if data.get('_server_contextual_egress_declined') is True:",
+        assigned_knowledge_application,
+    )
+    external_execution = route_source.index(
+        'if web_search_enabled:',
+        decline_enforcement,
+    )
+    assert assigned_knowledge_application < decline_enforcement < external_execution
+    decline_source = route_source[decline_enforcement:external_execution]
+    for marker in (
+        'web_search_enabled = False',
+        'url_access_enabled = False',
+        'source_review_enabled = False',
+        'deep_research_enabled = False',
+        'assigned_knowledge_url_review_urls = []',
+        'assigned_knowledge_deep_research_urls = []',
+    ):
+        assert marker in decline_source
+    legacy_chat = route_source.index(
+        'def chat_api(server_request_data=None, server_resume_context=None):'
+    )
+    legacy_assigned_knowledge = route_source.index(
+        'if assigned_knowledge_filters:',
+        legacy_chat,
+    )
+    legacy_decline_enforcement = route_source.index(
+        "if data.get('_server_contextual_egress_declined') is True:",
+        legacy_assigned_knowledge,
+    )
+    legacy_source_review = route_source.index(
+        'if source_review_enabled:',
+        legacy_decline_enforcement,
+    )
+    assert (
+        legacy_assigned_knowledge
+        < legacy_decline_enforcement
+        < legacy_source_review
+    )
+    compatibility_reconstruction = route_source.index(
+        'compatibility_selected_capability_ids = (',
+        legacy_decline_enforcement,
+    )
+    compatibility_decline_enforcement = route_source.index(
+        "if data.get('_server_contextual_egress_declined') is True:",
+        compatibility_reconstruction,
+    )
+    assert "'execution_effective_capability_ids'" in route_source[
+        compatibility_reconstruction:compatibility_decline_enforcement
+    ]
+    assert "capability.get('state') == 'selected'" not in route_source[
+        compatibility_reconstruction:compatibility_decline_enforcement
+    ]
+    assert compatibility_decline_enforcement < legacy_source_review
+    legacy_assigned_sources = route_source[
+        legacy_assigned_knowledge:compatibility_reconstruction
+    ]
+    streaming_assigned_knowledge = route_source.index(
+        'if assigned_knowledge_filters:',
+        route_source.index('def generate(publish_background_event=None):'),
+    )
+    streaming_decline_enforcement = route_source.index(
+        "if data.get('_server_contextual_egress_declined') is True:",
+        streaming_assigned_knowledge,
+    )
+    streaming_assigned_sources = route_source[
+        streaming_assigned_knowledge:streaming_decline_enforcement
+    ]
+    assert legacy_assigned_sources.count(
+        "data.get('_server_contextual_egress_declined') is not True"
+    ) >= 3
+    assert streaming_assigned_sources.count(
+        "data.get('_server_contextual_egress_declined') is not True"
+    ) >= 3
+    legacy_final_decline = route_source.index(
+        "if data.get('_server_contextual_egress_declined') is True:",
+        compatibility_decline_enforcement + 1,
+    )
+    legacy_final_revalidation = route_source.index(
+        '_rebuild_claimed_contextual_goal(',
+        legacy_final_decline,
+    )
+    legacy_web_collector = route_source.index(
+        'perform_research_web_searches(',
+        legacy_final_revalidation,
+    )
+    legacy_source_collector = route_source.index(
+        'perform_source_review(',
+        legacy_final_revalidation,
+    )
+    assert (
+        compatibility_decline_enforcement
+        < legacy_final_decline
+        < legacy_final_revalidation
+        < legacy_web_collector
+        < legacy_source_collector
+    )
+
+
+def test_clarification_child_output_reconciliation_uses_exact_run(
+    capability_route_app,
+):
+    state = capability_route_app.config['capability_route_state']
+    route_backend_chats = state['route_module']
+    state['messages'].set_item({
+        'id': 'clarification-child-output',
+        'conversation_id': 'conversation-owner',
+        'role': 'assistant',
+        'content': 'Clarified child result.',
+        'timestamp': '2026-07-17T12:00:00+00:00',
+        'metadata': {
+            'orchestration': {'run_id': 'clarification-child-run'},
+        },
+    })
+    state['messages'].set_item({
+        'id': 'other-output',
+        'conversation_id': 'conversation-owner',
+        'role': 'assistant',
+        'content': 'Unrelated result.',
+        'timestamp': '2026-07-17T12:01:00+00:00',
+        'metadata': {
+            'orchestration': {'run_id': 'other-run'},
+        },
+    })
+
+    matched = route_backend_chats._find_persisted_clarification_child_output(
+        conversation_id='conversation-owner',
+        child_run_id='clarification-child-run',
+    )
+    missing = route_backend_chats._find_persisted_clarification_child_output(
+        conversation_id='conversation-owner',
+        child_run_id='missing-child-run',
+    )
+
+    assert matched['id'] == 'clarification-child-output'
+    assert missing is None
+
+
+def test_stream_clarification_cleanup_resolves_output_or_releases_no_output(
+    capability_route_app,
+):
+    state = capability_route_app.config['capability_route_state']
+    route_backend_chats = state['route_module']
+
+    source, checkpoint, response = _claimed_clarification_documents()
+    for message in (source, checkpoint, response):
+        state['messages'].set_item(message)
+    no_output = route_backend_chats._finalize_stream_clarification_claim(
+        conversation_id='conversation-owner',
+        clarification=checkpoint['metadata']['chat_clarification'],
+    )
+    assert no_output['status'] == 'expired'
+    assert no_output['invalidation_reason'] == (
+        'clarification_child_output_missing'
+    )
+
+    source, checkpoint, response = _claimed_clarification_documents()
+    child_output = {
+        'id': 'clarification-child-output-cleanup',
+        'conversation_id': 'conversation-owner',
+        'role': 'assistant',
+        'content': 'Clarification result.',
+        'timestamp': datetime.now(timezone.utc).isoformat(),
+        'metadata': {
+            'orchestration': {'run_id': 'clarification-child-run'},
+        },
+    }
+    for message in (source, checkpoint, response, child_output):
+        state['messages'].set_item(message)
+    completed = route_backend_chats._finalize_stream_clarification_claim(
+        conversation_id='conversation-owner',
+        clarification=checkpoint['metadata']['chat_clarification'],
+    )
+    assert completed['status'] == 'resolved'
+    assert completed['lease_expires_at'] is None
+
+
+def test_stale_stream_cleanup_cannot_invalidate_renewed_claim(
+    capability_route_app,
+):
+    state = capability_route_app.config['capability_route_state']
+    route_backend_chats = state['route_module']
+    source, checkpoint, response = _claimed_clarification_documents()
+    stale_claim = copy.deepcopy(
+        checkpoint['metadata']['chat_clarification']
+    )
+    renewed_claim, _ = claim_chat_clarification_response(
+        stale_claim,
+        response_user_message_id='clarification-response-user',
+        response_text='Virginia',
+        child_run_id='clarification-child-run',
+        response_thread_id='clarification-response-thread',
+        now=datetime.now(timezone.utc) + timedelta(minutes=31),
+    )
+    checkpoint['metadata']['chat_clarification'] = renewed_claim
+    for message in (source, checkpoint, response):
+        state['messages'].set_item(message)
+
+    with pytest.raises(
+        route_backend_chats.ChatClarificationError
+    ) as stale_cleanup:
+        route_backend_chats._finalize_stream_clarification_claim(
+            conversation_id='conversation-owner',
+            clarification=stale_claim,
+        )
+
+    assert stale_cleanup.value.code == 'clarification_response_claim_mismatch'
+    stored = state['messages'].items[
+        ('conversation-owner', 'clarification-checkpoint')
+    ]['metadata']['chat_clarification']
+    assert stored['status'] == 'resolving'
+    assert stored['claimed_at'] == renewed_claim['claimed_at']
+    assert stored.get('invalidation_reason') is None
+
+
+def test_clarification_recovery_context_deduplicates_response_and_lineage(
+    capability_route_app,
+):
+    route_backend_chats = capability_route_app.config[
+        'capability_route_state'
+    ]['route_module']
+    source = {
+        'id': 'clarification-source-user',
+        'metadata': {'thread_info': {'thread_id': 'source-thread'}},
+    }
+    response = {
+        'id': 'clarification-response-user',
+        'metadata': {
+            'thread_info': {
+                'thread_id': 'response-thread',
+                'previous_thread_id': 'source-thread',
+            },
+        },
+    }
+    clarification = {
+        '_source_user_message_id': 'clarification-source-user',
+        '_source_thread_id': 'source-thread',
+        '_response_user_message_id': 'clarification-response-user',
+    }
+
+    recovered = route_backend_chats._prepare_clarification_recovery_context(
+        {
+            'prior_user_messages': [source, response],
+            'predecessor_thread_id': 'response-thread',
+        },
+        clarification,
+    )
+
+    assert [
+        message['id']
+        for message in recovered['prior_user_messages']
+    ] == ['clarification-source-user']
+    assert recovered['predecessor_thread_id'] == 'source-thread'
+    with pytest.raises(route_backend_chats.ChatClarificationError) as missing:
+        route_backend_chats._prepare_clarification_recovery_context(
+            {
+                'prior_user_messages': [response],
+                'predecessor_thread_id': 'response-thread',
+            },
+            clarification,
+        )
+    assert missing.value.code == 'clarification_response_claim_mismatch'
 
 
 def test_resume_revalidates_revocation_after_approval(capability_route_app):
@@ -1284,6 +2035,712 @@ def test_stream_session_initialization_failure_releases_resume_lease(
     assert resume['error_type'] == 'runtimeerror'
 
 
+def test_compatibility_mode_cannot_bypass_pending_clarification(
+    capability_route_app,
+    monkeypatch,
+):
+    state = capability_route_app.config['capability_route_state']
+    route_backend_chats = state['route_module']
+    pending = {
+        'status': 'pending',
+        'clarification_id': 'clarification-1',
+        'expires_at': (
+            datetime.now(timezone.utc) + timedelta(minutes=5)
+        ).isoformat(),
+    }
+    monkeypatch.setattr(
+        route_backend_chats,
+        '_load_latest_chat_clarification_context',
+        lambda **kwargs: {
+            'context_state': {},
+            'latest_user_message': {'id': 'user-message-1'},
+            'clarification': pending,
+        },
+    )
+    monkeypatch.setattr(
+        route_backend_chats,
+        'validate_chat_clarification_source',
+        lambda *args, **kwargs: {'id': 'source-user-message'},
+    )
+
+    with capability_route_app.test_client() as client:
+        image_response = client.post(
+            '/api/chat/stream',
+            json={
+                'conversation_id': 'conversation-owner',
+                'message': 'Virginia',
+                'image_generation': True,
+            },
+        )
+        retry_response = client.post(
+            '/api/chat/stream',
+            json={
+                'conversation_id': 'conversation-owner',
+                'message': 'Retry another turn.',
+                'retry_user_message_id': 'unrelated-user-message',
+            },
+        )
+
+    assert image_response.status_code == 409
+    assert image_response.get_json()['code'] == 'clarification_pending'
+    assert retry_response.status_code == 409
+    assert retry_response.get_json()['code'] == 'clarification_pending'
+
+
+def test_pending_clarification_blocks_all_chat_execution_routes(
+    capability_route_app,
+    monkeypatch,
+):
+    state = capability_route_app.config['capability_route_state']
+    route_backend_chats = state['route_module']
+
+    def reject_pending_clarification(**kwargs):
+        del kwargs
+        raise route_backend_chats.ChatClarificationError(
+            'answer the pending clarification first',
+            code='clarification_pending',
+        )
+
+    monkeypatch.setattr(
+        route_backend_chats,
+        '_preflight_chat_clarification',
+        reject_pending_clarification,
+    )
+    monkeypatch.setattr(
+        route_backend_chats,
+        'image_generation_is_enabled',
+        lambda settings: True,
+    )
+    requests = (
+        ('/api/chat', {'message': 'Run directly.'}),
+        (
+            '/api/chat/document-action',
+            {
+                'message': 'Analyze this.',
+                'document_action': {'type': 'analyze'},
+            },
+        ),
+        (
+            '/api/chat/document-action/stream',
+            {
+                'message': 'Analyze this.',
+                'document_action': {'type': 'analyze'},
+            },
+        ),
+        ('/api/chat/analyze', {'message': 'Analyze this.'}),
+        ('/api/chat/analyze/stream', {'message': 'Analyze this.'}),
+        (
+            '/api/chat/image-proposals/generate',
+            {'prompt': 'Generate an image.'},
+        ),
+    )
+
+    with capability_route_app.test_client() as client:
+        responses = [
+            client.post(
+                endpoint,
+                json={
+                    'conversation_id': 'conversation-owner',
+                    **payload,
+                },
+            )
+            for endpoint, payload in requests
+        ]
+
+    assert [response.status_code for response in responses] == [409] * len(
+        requests
+    )
+    assert all(
+        response.get_json()['code'] == 'clarification_pending'
+        for response in responses
+    )
+
+
+def test_clarification_preflight_allows_only_normal_answer_or_exact_retry(
+    capability_route_app,
+    monkeypatch,
+):
+    state = capability_route_app.config['capability_route_state']
+    route_backend_chats = state['route_module']
+    response_text = 'Virginia'
+    pending = {
+        'status': 'pending',
+        'clarification_id': 'clarification-1',
+        'expires_at': (
+            datetime.now(timezone.utc) + timedelta(minutes=5)
+        ).isoformat(),
+        '_response_user_message_id': None,
+        '_response_hash': None,
+    }
+    context = {
+        'context_state': {},
+        'latest_user_message': {'id': 'source-user-message'},
+        'clarification': pending,
+    }
+    monkeypatch.setattr(
+        route_backend_chats,
+        '_load_latest_chat_clarification_context',
+        lambda **kwargs: copy.deepcopy(context),
+    )
+    validated = []
+    monkeypatch.setattr(
+        route_backend_chats,
+        'validate_chat_clarification_source',
+        lambda *args, **kwargs: validated.append(kwargs['clarification']),
+    )
+
+    allowed = route_backend_chats._preflight_chat_clarification(
+        conversation_id='conversation-owner',
+        user_message=response_text,
+        allow_pending_response=True,
+    )
+    assert allowed['clarification']['status'] == 'pending'
+    with pytest.raises(route_backend_chats.ChatClarificationError) as blocked:
+        route_backend_chats._preflight_chat_clarification(
+            conversation_id='conversation-owner',
+            user_message=response_text,
+        )
+    assert blocked.value.code == 'clarification_pending'
+
+    context['clarification'] = {
+        'status': 'resolving',
+        'clarification_id': 'clarification-1',
+        'expires_at': (
+            datetime.now(timezone.utc) + timedelta(minutes=5)
+        ).isoformat(),
+        '_response_user_message_id': 'clarification-response-user',
+        '_response_thread_id': 'clarification-response-thread',
+        '_source_thread_id': 'source-thread',
+        '_response_hash': hashlib.sha256(
+            response_text.encode('utf-8')
+        ).hexdigest(),
+    }
+    context['latest_user_message'] = {
+        'id': 'clarification-response-user',
+    }
+    state['messages'].set_item({
+        'id': 'clarification-response-user',
+        'conversation_id': 'conversation-owner',
+        'role': 'user',
+        'content': response_text,
+        'timestamp': datetime.now(timezone.utc).isoformat(),
+        'metadata': {
+            'thread_info': {
+                'thread_id': 'clarification-response-thread',
+                'previous_thread_id': 'source-thread',
+                'active_thread': True,
+            },
+        },
+    })
+    exact_retry = route_backend_chats._preflight_chat_clarification(
+        conversation_id='conversation-owner',
+        user_message=response_text,
+        retry_user_message_id='clarification-response-user',
+        allow_exact_response_retry=True,
+    )
+    assert exact_retry['exact_response_retry'] is True
+    with pytest.raises(route_backend_chats.ChatClarificationError) as mismatch:
+        route_backend_chats._preflight_chat_clarification(
+            conversation_id='conversation-owner',
+            user_message=response_text,
+            retry_user_message_id='different-user-message',
+            allow_exact_response_retry=True,
+        )
+    assert mismatch.value.code == 'clarification_pending'
+    assert len(validated) == 4
+
+
+def test_preflight_terminalizes_malformed_claimed_response_rows(
+    capability_route_app,
+):
+    state = capability_route_app.config['capability_route_state']
+    route_backend_chats = state['route_module']
+
+    for malformed_kwargs in (
+        {'blank_response': True},
+        {'missing_response_thread': True},
+    ):
+        source, checkpoint, response = _claimed_clarification_documents(
+            **malformed_kwargs
+        )
+        for message in (source, checkpoint, response):
+            state['messages'].set_item(message)
+
+        with pytest.raises(
+            route_backend_chats.ChatClarificationError
+        ) as rejected:
+            route_backend_chats._preflight_chat_clarification(
+                conversation_id='conversation-owner',
+                user_message='Virginia',
+                retry_user_message_id='clarification-response-user',
+                allow_exact_response_retry=True,
+            )
+
+        assert rejected.value.code == (
+            'clarification_response_claim_mismatch'
+        )
+        stored = state['messages'].items[
+            ('conversation-owner', 'clarification-checkpoint')
+        ]
+        stored_clarification = stored['metadata']['chat_clarification']
+        assert stored_clarification['status'] == 'expired'
+        assert stored_clarification['invalidation_reason'] == (
+            'clarification_response_claim_mismatch'
+        )
+        assert stored['metadata']['awaiting_user_clarification'] is False
+
+
+def test_preflight_terminalizes_invalid_clarification_source(
+    capability_route_app,
+):
+    state = capability_route_app.config['capability_route_state']
+    route_backend_chats = state['route_module']
+    source, checkpoint, response = _claimed_clarification_documents(
+        masked_source=True
+    )
+    for message in (source, checkpoint, response):
+        state['messages'].set_item(message)
+
+    with pytest.raises(
+        route_backend_chats.ChatClarificationError
+    ) as rejected:
+        route_backend_chats._preflight_chat_clarification(
+            conversation_id='conversation-owner',
+            user_message='Virginia',
+            retry_user_message_id='clarification-response-user',
+            allow_exact_response_retry=True,
+        )
+
+    assert rejected.value.code == 'clarification_source_invalid'
+    stored = state['messages'].items[
+        ('conversation-owner', 'clarification-checkpoint')
+    ]
+    stored_clarification = stored['metadata']['chat_clarification']
+    assert stored_clarification['status'] == 'expired'
+    assert stored_clarification['invalidation_reason'] == (
+        'clarification_source_invalid'
+    )
+    assert stored['metadata']['awaiting_user_clarification'] is False
+
+
+def test_preflight_preserves_live_unmaterialized_clarification_claim(
+    capability_route_app,
+):
+    state = capability_route_app.config['capability_route_state']
+    route_backend_chats = state['route_module']
+    source, checkpoint, _ = _claimed_clarification_documents()
+    for message in (source, checkpoint):
+        state['messages'].set_item(message)
+
+    with pytest.raises(
+        route_backend_chats.ChatClarificationError
+    ) as rejected:
+        route_backend_chats._preflight_chat_clarification(
+            conversation_id='conversation-owner',
+            user_message='Virginia',
+        )
+
+    assert rejected.value.code == 'clarification_response_in_progress'
+    stored = state['messages'].items[
+        ('conversation-owner', 'clarification-checkpoint')
+    ]
+    stored_clarification = stored['metadata']['chat_clarification']
+    assert stored_clarification['status'] == 'resolving'
+    assert stored_clarification.get('invalidation_reason') is None
+    assert stored['metadata']['awaiting_user_clarification'] is True
+
+
+def test_expected_clarification_cannot_downgrade_after_resolution(
+    capability_route_app,
+):
+    state = capability_route_app.config['capability_route_state']
+    route_backend_chats = state['route_module']
+    source, checkpoint, response = _claimed_clarification_documents()
+    checkpoint['metadata']['chat_clarification'].update({
+        'status': 'resolved',
+        'resolved_at': datetime.now(timezone.utc).isoformat(),
+        'lease_expires_at': None,
+    })
+    checkpoint['metadata']['awaiting_user_clarification'] = False
+    for message in (source, checkpoint, response):
+        state['messages'].set_item(message)
+
+    with pytest.raises(
+        route_backend_chats.ChatClarificationError
+    ) as rejected:
+        route_backend_chats._preflight_chat_clarification(
+            conversation_id='conversation-owner',
+            user_message='Virginia',
+            allow_pending_response=True,
+            expected_clarification_id='clarification-checkpoint',
+        )
+
+    assert rejected.value.code == 'clarification_response_conflict'
+
+
+def test_expired_exact_retry_cannot_downgrade_to_fresh_turn(
+    capability_route_app,
+):
+    state = capability_route_app.config['capability_route_state']
+    route_backend_chats = state['route_module']
+    source, checkpoint, response = _claimed_clarification_documents()
+    checkpoint['metadata']['chat_clarification'].update({
+        'status': 'expired',
+        'expired_at': datetime.now(timezone.utc).isoformat(),
+        'lease_expires_at': None,
+    })
+    checkpoint['metadata']['awaiting_user_clarification'] = False
+    for message in (source, checkpoint, response):
+        state['messages'].set_item(message)
+
+    with pytest.raises(
+        route_backend_chats.ChatClarificationError
+    ) as rejected:
+        route_backend_chats._preflight_chat_clarification(
+            conversation_id='conversation-owner',
+            user_message='Virginia',
+            retry_user_message_id='clarification-response-user',
+            allow_exact_response_retry=True,
+        )
+
+    assert rejected.value.code == 'clarification_expired'
+
+
+def test_edited_terminal_retry_cannot_downgrade_to_fresh_turn(
+    capability_route_app,
+):
+    state = capability_route_app.config['capability_route_state']
+    route_backend_chats = state['route_module']
+
+    for terminal_status, expected_code in (
+        ('resolved', 'clarification_response_conflict'),
+        ('expired', 'clarification_expired'),
+    ):
+        source, checkpoint, response = _claimed_clarification_documents()
+        checkpoint['metadata']['chat_clarification'].update({
+            'status': terminal_status,
+            'lease_expires_at': None,
+        })
+        checkpoint['metadata']['awaiting_user_clarification'] = False
+        for message in (source, checkpoint, response):
+            state['messages'].set_item(message)
+
+        with pytest.raises(
+            route_backend_chats.ChatClarificationError
+        ) as rejected:
+            route_backend_chats._preflight_chat_clarification(
+                conversation_id='conversation-owner',
+                user_message='Edited Virginia answer',
+                retry_user_message_id='clarification-response-user',
+                allow_exact_response_retry=True,
+            )
+
+        assert rejected.value.code == expected_code
+
+
+def test_non_latest_clarification_response_retry_targets_exact_checkpoint(
+    capability_route_app,
+    monkeypatch,
+):
+    state = capability_route_app.config['capability_route_state']
+    route_backend_chats = state['route_module']
+    monkeypatch.setattr(
+        route_backend_chats,
+        '_load_latest_chat_clarification_context',
+        lambda **kwargs: (_ for _ in ()).throw(
+            route_backend_chats.ChatClarificationError(
+                'unrelated latest clarification is ambiguous',
+                code='clarification_ambiguous',
+            )
+        ),
+    )
+
+    for checkpoint_status in ('resolving', 'resolved'):
+        source, checkpoint, response = _claimed_clarification_documents()
+        checkpoint['metadata']['chat_clarification']['status'] = (
+            checkpoint_status
+        )
+        if checkpoint_status == 'resolved':
+            checkpoint['metadata']['chat_clarification'].update({
+                'resolved_at': datetime.now(timezone.utc).isoformat(),
+                'lease_expires_at': None,
+            })
+            checkpoint['metadata']['awaiting_user_clarification'] = False
+        later_user = {
+            'id': 'later-unrelated-user',
+            'conversation_id': 'conversation-owner',
+            'role': 'user',
+            'content': 'A later unrelated request.',
+            'timestamp': (
+                datetime.now(timezone.utc) + timedelta(minutes=1)
+            ).isoformat(),
+            'metadata': {
+                'thread_info': {
+                    'thread_id': 'later-thread',
+                    'previous_thread_id': 'clarification-response-thread',
+                    'active_thread': True,
+                    'thread_attempt': 1,
+                },
+            },
+        }
+        for message in (source, checkpoint, response, later_user):
+            state['messages'].set_item(message)
+
+        preflight = route_backend_chats._preflight_chat_clarification(
+            conversation_id='conversation-owner',
+            user_message='Virginia',
+            retry_user_message_id='clarification-response-user',
+            allow_exact_response_retry=True,
+        )
+
+        assert preflight['exact_response_retry'] is True
+        assert preflight['latest_user_message']['id'] == (
+            'clarification-response-user'
+        )
+        assert preflight['clarification']['status'] == checkpoint_status
+
+
+def test_recovery_etag_conflict_preserves_mask_and_invalidates(
+    capability_route_app,
+    monkeypatch,
+):
+    state = capability_route_app.config['capability_route_state']
+    route_backend_chats = state['route_module']
+    source, checkpoint, response = _claimed_clarification_documents()
+    for message in (source, checkpoint, response):
+        state['messages'].set_item(message)
+    claimed = checkpoint['metadata']['chat_clarification']
+    response_document = state['messages'].read_item(
+        item='clarification-response-user',
+        partition_key='conversation-owner',
+    )
+    original_replace_item = state['messages'].replace_item
+    conflict_injected = {'value': False}
+
+    def replace_with_concurrent_mask(**kwargs):
+        if (
+            kwargs.get('item') == 'clarification-response-user'
+            and not conflict_injected['value']
+        ):
+            conflict_injected['value'] = True
+            masked_response = state['messages'].read_item(
+                item='clarification-response-user',
+                partition_key='conversation-owner',
+            )
+            masked_response['metadata']['masked'] = True
+            state['messages'].set_item(masked_response)
+            raise ConditionalConflict()
+        return original_replace_item(**kwargs)
+
+    monkeypatch.setattr(
+        state['messages'],
+        'replace_item',
+        replace_with_concurrent_mask,
+    )
+
+    with pytest.raises(
+        route_backend_chats.ChatClarificationError
+    ) as rejected:
+        route_backend_chats._persist_claimed_clarification_response_metadata(
+            response_document,
+            claimed,
+            conversation_id='conversation-owner',
+            desired_metadata={'model_selection': {'selected_model': 'test'}},
+        )
+
+    assert rejected.value.code == 'clarification_response_claim_mismatch'
+    stored_response = state['messages'].items[
+        ('conversation-owner', 'clarification-response-user')
+    ]
+    assert stored_response['metadata']['masked'] is True
+    assert 'model_selection' not in stored_response['metadata']
+    stored_checkpoint = state['messages'].items[
+        ('conversation-owner', 'clarification-checkpoint')
+    ]
+    stored_clarification = stored_checkpoint['metadata'][
+        'chat_clarification'
+    ]
+    assert stored_clarification['status'] == 'expired'
+    assert stored_clarification['invalidation_reason'] == (
+        'clarification_response_claim_mismatch'
+    )
+
+
+def test_recovery_physical_deletion_invalidates_without_recreation(
+    capability_route_app,
+    monkeypatch,
+):
+    state = capability_route_app.config['capability_route_state']
+    route_backend_chats = state['route_module']
+    source, checkpoint, response = _claimed_clarification_documents()
+    for message in (source, checkpoint, response):
+        state['messages'].set_item(message)
+    claimed = checkpoint['metadata']['chat_clarification']
+    response_document = state['messages'].read_item(
+        item='clarification-response-user',
+        partition_key='conversation-owner',
+    )
+    original_replace_item = state['messages'].replace_item
+
+    def replace_after_deletion(**kwargs):
+        if kwargs.get('item') == 'clarification-response-user':
+            state['messages'].items.pop(
+                ('conversation-owner', 'clarification-response-user'),
+                None,
+            )
+            raise DummyNotFoundError('clarification-response-user')
+        return original_replace_item(**kwargs)
+
+    monkeypatch.setattr(
+        state['messages'],
+        'replace_item',
+        replace_after_deletion,
+    )
+
+    with pytest.raises(
+        route_backend_chats.ChatClarificationError
+    ) as rejected:
+        route_backend_chats._persist_claimed_clarification_response_metadata(
+            response_document,
+            claimed,
+            conversation_id='conversation-owner',
+            desired_metadata={'model_selection': {'selected_model': 'test'}},
+        )
+
+    assert rejected.value.code == 'clarification_response_claim_mismatch'
+    assert (
+        'conversation-owner',
+        'clarification-response-user',
+    ) not in state['messages'].items
+    stored_checkpoint = state['messages'].items[
+        ('conversation-owner', 'clarification-checkpoint')
+    ]
+    stored_clarification = stored_checkpoint['metadata'][
+        'chat_clarification'
+    ]
+    assert stored_clarification['status'] == 'expired'
+    assert stored_clarification['invalidation_reason'] == (
+        'clarification_response_claim_mismatch'
+    )
+
+
+def test_preflight_finds_pending_checkpoint_with_filtered_source(
+    capability_route_app,
+):
+    state = capability_route_app.config['capability_route_state']
+    route_backend_chats = state['route_module']
+    source, checkpoint, _ = _claimed_clarification_documents(
+        masked_source=True
+    )
+    clarification = checkpoint['metadata']['chat_clarification']
+    clarification.update({
+        'status': 'pending',
+        'child_run_id': None,
+        'claimed_at': None,
+        'lease_expires_at': None,
+        '_response_user_message_id': None,
+        '_response_thread_id': None,
+        '_response_hash': None,
+    })
+    for message in (source, checkpoint):
+        state['messages'].set_item(message)
+
+    with pytest.raises(
+        route_backend_chats.ChatClarificationError
+    ) as rejected:
+        route_backend_chats._preflight_chat_clarification(
+            conversation_id='conversation-owner',
+            user_message='Start another action.',
+        )
+
+    assert rejected.value.code == 'clarification_source_invalid'
+    stored = state['messages'].items[
+        ('conversation-owner', 'clarification-checkpoint')
+    ]
+    stored_clarification = stored['metadata']['chat_clarification']
+    assert stored_clarification['status'] == 'expired'
+    assert stored_clarification['invalidation_reason'] == (
+        'clarification_source_invalid'
+    )
+
+
+def test_resolved_source_thread_checkpoint_is_not_pending(
+    capability_route_app,
+):
+    state = capability_route_app.config['capability_route_state']
+    route_backend_chats = state['route_module']
+    source, checkpoint, _ = _claimed_clarification_documents()
+    clarification = checkpoint['metadata']['chat_clarification']
+    clarification.update({
+        'status': 'resolved',
+        'lease_expires_at': None,
+        'resolved_at': datetime.now(timezone.utc).isoformat(),
+    })
+    checkpoint['metadata']['awaiting_user_clarification'] = False
+    for message in (source, checkpoint):
+        state['messages'].set_item(message)
+
+    preflight = route_backend_chats._preflight_chat_clarification(
+        conversation_id='conversation-owner',
+        user_message='Start a new request.',
+    )
+
+    assert preflight['clarification'] is None
+    assert preflight['exact_response_retry'] is False
+
+
+def test_exact_clarification_response_retry_leaves_compatibility_bridge(
+    capability_route_app,
+    monkeypatch,
+):
+    state = capability_route_app.config['capability_route_state']
+    route_backend_chats = state['route_module']
+    response_text = 'Virginia'
+    resolved = {
+        'status': 'resolved',
+        '_response_user_message_id': 'clarification-response-user',
+        '_response_hash': hashlib.sha256(
+            response_text.encode('utf-8')
+        ).hexdigest(),
+    }
+    monkeypatch.setattr(
+        route_backend_chats,
+        '_load_latest_chat_clarification_context',
+        lambda **kwargs: {
+            'context_state': {},
+            'latest_user_message': {
+                'id': 'clarification-response-user',
+            },
+            'clarification': resolved,
+        },
+    )
+    monkeypatch.setattr(
+        route_backend_chats,
+        'validate_chat_clarification_source',
+        lambda *args, **kwargs: {'id': 'source-user-message'},
+    )
+    monkeypatch.setattr(
+        route_backend_chats.CHAT_STREAM_REGISTRY,
+        'start_session',
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            RuntimeError('normal-generator-route-selected')
+        ),
+    )
+
+    with capability_route_app.test_client() as client:
+        response = client.post(
+            '/api/chat/stream',
+            json={
+                'conversation_id': 'conversation-owner',
+                'message': response_text,
+                'retry_user_message_id': 'clarification-response-user',
+            },
+        )
+
+    assert response.status_code == 500
+    assert response.get_json()['error'] == 'Failed to initialize chat stream'
+
+
 def test_persisted_safety_reconciles_process_loss_without_reexecution(
     capability_route_app,
 ):
@@ -1370,6 +2827,20 @@ def test_persisted_safety_reconciles_process_loss_without_reexecution(
     )
     assert 'complete_stream_capability_resume(assistant_message_id)' in (
         partial_failure_source
+    )
+    partial_error_start = route_source.index(
+        'partial_error_payload = {',
+        partial_failure_start,
+    )
+    partial_error_end = route_source.index(
+        'yield f"data: {json.dumps(partial_error_payload)}',
+        partial_error_start,
+    )
+    partial_error_source = route_source[
+        partial_error_start:partial_error_end
+    ]
+    assert "'metadata': project_chat_metadata_for_client({" in (
+        partial_error_source
     )
     assert 'fail_stream_capability_resume(type(e).__name__)' not in (
         partial_failure_source
