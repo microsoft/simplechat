@@ -2,8 +2,8 @@
 # test_tabular_large_result_pagination.py
 """
 Functional test for tabular SK large-result pagination and output trimming.
-Version: 0.242.072
-Implemented in: 0.242.067
+Version: 0.250.061
+Implemented in: 0.242.067; bounded CSV query path in 0.250.060
 
 This test ensures row-returning tabular processing tools support start_row/max_rows
 pagination, avoid skipped rows after auto-trimming oversized output, honor
@@ -38,6 +38,37 @@ PLUGIN_SPEC.loader.exec_module(PLUGIN_MODULE)
 TabularProcessingPlugin = PLUGIN_MODULE.TabularProcessingPlugin
 
 
+class MockCsvBlobClient:
+    """Minimal blob client for bounded CSV query tests."""
+
+    def __init__(self, content):
+        self.content = content
+
+    def download_blob(self, etag=None, match_condition=None):
+        assert etag == 'etag-csv-300'
+        assert match_condition is not None
+        content = self.content
+
+        class Downloader:
+            def readinto(self, stream):
+                return stream.write(content)
+
+        return Downloader()
+
+    def get_blob_properties(self):
+        return {'etag': 'etag-csv-300', 'size': len(self.content)}
+
+
+class MockCsvBlobServiceClient:
+    def __init__(self, content):
+        self.blob_client = MockCsvBlobClient(content)
+
+    def get_blob_client(self, container, blob):
+        assert container == 'mock-container'
+        assert blob == 'nested/version-7/large-results.csv'
+        return self.blob_client
+
+
 def build_workbook_plugin(workbook_frames):
     """Create a TabularProcessingPlugin backed by in-memory workbook frames."""
     plugin = TabularProcessingPlugin()
@@ -53,6 +84,10 @@ def build_workbook_plugin(workbook_frames):
 
     plugin._resolve_blob_location_with_fallback = lambda *args, **kwargs: (container_name, blob_name)
     plugin._get_workbook_metadata = lambda *args, **kwargs: workbook_metadata.copy()
+    plugin._blob_version_cache[(container_name, blob_name)] = {
+        'blob_etag': 'etag-workbook-test',
+        'blob_size': 0,
+    }
 
     def read_dataframe(container, blob, sheet_name=None, sheet_index=None, require_explicit_sheet=False):
         selected_sheet, _ = plugin._resolve_sheet_selection(
@@ -310,6 +345,56 @@ def test_query_tabular_data_supports_return_columns_and_pagination():
         return False
 
 
+def test_query_tabular_csv_uses_bounded_shared_engine_and_exact_descriptor():
+    """Verify CSV queries bypass whole-DataFrame loading and pin the exact analyzed blob."""
+    print('🔍 Testing bounded CSV query pagination and source identity...')
+
+    try:
+        csv_content = ('Case ID,Score,Payload\n' + ''.join(
+            f'SC-{2001 + row_index},{row_index},payload-{row_index}\n'
+            for row_index in range(300)
+        )).encode('utf-8')
+        plugin = TabularProcessingPlugin()
+        plugin._resolve_blob_location_with_fallback = lambda *args, **kwargs: (
+            'mock-container',
+            'nested/version-7/large-results.csv',
+        )
+        plugin._get_blob_service_client = lambda: MockCsvBlobServiceClient(csv_content)
+        plugin._read_tabular_blob_to_dataframe = lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError('CSV query must not use the whole-DataFrame reader')
+        )
+
+        result = asyncio.run(plugin.query_tabular_data(
+            user_id='test-user',
+            conversation_id='test-conversation',
+            filename='large-results.csv',
+            query_expression='Score >= 0',
+            return_columns='Case ID,Score',
+            source='chat',
+            start_row='94',
+            max_rows='95',
+        ))
+        payload = json.loads(result)
+        descriptor = result.internal_metadata['tabular_generated_export_source']
+
+        assert payload['total_matches'] == 300, payload
+        assert payload['returned_rows'] == 95, payload
+        assert payload['data'][0]['Case ID'] == 'SC-2095', payload
+        assert payload['data'][-1]['Case ID'] == 'SC-2189', payload
+        assert descriptor['container'] == 'mock-container', descriptor
+        assert descriptor['blob_path'] == 'nested/version-7/large-results.csv', descriptor
+        assert descriptor['blob_etag'] == 'etag-csv-300', descriptor
+        assert descriptor['expected_row_count'] == 300, descriptor
+
+        print('✅ Bounded CSV query pagination and source identity passed')
+        return True
+    except Exception as exc:
+        print(f'❌ Test failed: {exc}')
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 if __name__ == '__main__':
     tests = [
         test_filter_rows_paginates_without_skipping_after_row_trim,
@@ -317,6 +402,7 @@ if __name__ == '__main__':
         test_cross_sheet_filter_rows_paginates_across_sheet_boundary,
         test_search_rows_preserves_attachment_references_with_return_columns,
         test_query_tabular_data_supports_return_columns_and_pagination,
+        test_query_tabular_csv_uses_bounded_shared_engine_and_exact_descriptor,
     ]
 
     results = []

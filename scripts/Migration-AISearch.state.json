@@ -1,0 +1,145 @@
+{
+  "schemaVersion": 1,
+  "migrationType": "ai_search",
+  "configurationFingerprint": "e6d21189f8634b49be58598f2283f5c25609559f749175f930a1134981765ecf",
+  "configuration": {
+    "sourceService": "rbsimplechataisearch",
+    "sourceResourceGroup": "RG-SimpleChat",
+    "sourceSubscriptionId": "9698dd71-9367-49c2-bede-fd0deecfad62",
+    "destinationService": "migration-test-sc",
+    "destinationResourceGroup": "RG-Demos",
+    "destinationSubscriptionId": "9698dd71-9367-49c2-bede-fd0deecfad62",
+    "mode": "full",
+    "searchApiVersion": "2026-04-01",
+    "managementApiVersion": "2025-05-01",
+    "searchDnsSuffix": "search.windows.net"
+  },
+  "status": "completed",
+  "createdUtc": "2026-07-21T17:03:26.0649529Z",
+  "updatedUtc": "2026-07-21T17:29:55.6789369Z",
+  "completedUtc": "2026-07-21T17:29:55.6774107Z",
+  "resumeCount": 0,
+  "currentResource": null,
+  "lastError": null,
+  "resources": {
+    "synonymmaps": {
+      "status": "completed",
+      "attempt": 1,
+      "startedUtc": "2026-07-21T17:03:26.0776967Z",
+      "updatedUtc": "2026-07-21T17:03:26.5299985Z",
+      "completedUtc": "2026-07-21T17:03:26.5299985Z",
+      "lastError": null,
+      "progress": {},
+      "result": {}
+    },
+    "index:simplechat-group-index": {
+      "status": "completed",
+      "attempt": 1,
+      "startedUtc": "2026-07-21T17:03:27.0215182Z",
+      "updatedUtc": "2026-07-21T17:25:06.2150386Z",
+      "completedUtc": "2026-07-21T17:25:06.2150386Z",
+      "lastError": null,
+      "progress": {
+        "phase": "source_documents",
+        "keyField": "id",
+        "resumeSupported": true,
+        "sourceDocumentCount": 53994,
+        "lastCommittedKey": "fff82fc7-b5a0-4665-b1b0-c9ca7af281fe_5",
+        "processedCount": 53994,
+        "copiedCount": 53994,
+        "skippedCount": 0,
+        "batchCount": 541
+      },
+      "result": {
+        "CopiedCount": 53994,
+        "SkippedCount": 0,
+        "ProcessedCount": 53994,
+        "TotalCount": 53994,
+        "BatchCount": 541
+      }
+    },
+    "index:simplechat-public-index": {
+      "status": "completed",
+      "attempt": 1,
+      "startedUtc": "2026-07-21T17:25:06.2242466Z",
+      "updatedUtc": "2026-07-21T17:25:15.5708219Z",
+      "completedUtc": "2026-07-21T17:25:15.5708219Z",
+      "lastError": null,
+      "progress": {
+        "phase": "source_documents",
+        "keyField": "id",
+        "resumeSupported": true,
+        "sourceDocumentCount": 321,
+        "lastCommittedKey": "f41a450d-119b-475d-b626-18317146d8af_1",
+        "processedCount": 321,
+        "copiedCount": 321,
+        "skippedCount": 0,
+        "batchCount": 5
+      },
+      "result": {
+        "CopiedCount": 321,
+        "SkippedCount": 0,
+        "ProcessedCount": 321,
+        "TotalCount": 321,
+        "BatchCount": 5
+      }
+    },
+    "index:simplechat-user-index": {
+      "status": "completed",
+      "attempt": 1,
+      "startedUtc": "2026-07-21T17:25:15.5774242Z",
+      "updatedUtc": "2026-07-21T17:29:53.2903790Z",
+      "completedUtc": "2026-07-21T17:29:53.2903790Z",
+      "lastError": null,
+      "progress": {
+        "phase": "source_documents",
+        "keyField": "id",
+        "resumeSupported": true,
+        "sourceDocumentCount": 12042,
+        "lastCommittedKey": "ff7e80d0-e1d5-4bae-a555-a441247e5263_1",
+        "processedCount": 12042,
+        "copiedCount": 12042,
+        "skippedCount": 0,
+        "batchCount": 122
+      },
+      "result": {
+        "CopiedCount": 12042,
+        "SkippedCount": 0,
+        "ProcessedCount": 12042,
+        "TotalCount": 12042,
+        "BatchCount": 122
+      }
+    },
+    "index:visible-rag-demo": {
+      "status": "completed",
+      "attempt": 1,
+      "startedUtc": "2026-07-21T17:29:53.2988790Z",
+      "updatedUtc": "2026-07-21T17:29:55.6680026Z",
+      "completedUtc": "2026-07-21T17:29:55.6680026Z",
+      "lastError": null,
+      "progress": {
+        "phase": "source_documents",
+        "keyField": "id",
+        "resumeSupported": true,
+        "sourceDocumentCount": 168,
+        "lastCommittedKey": "2025-sya-ll-sop-pdf-0168",
+        "processedCount": 168,
+        "copiedCount": 168,
+        "skippedCount": 0,
+        "batchCount": 3
+      },
+      "result": {
+        "CopiedCount": 168,
+        "SkippedCount": 0,
+        "ProcessedCount": 168,
+        "TotalCount": 168,
+        "BatchCount": 3
+      }
+    }
+  },
+  "summary": {
+    "IndexCount": 4,
+    "CopiedCount": 66525,
+    "SkippedCount": 0
+  }
+}

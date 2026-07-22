@@ -1,0 +1,460 @@
+{
+  "schemaVersion": 1,
+  "migrationType": "cosmos",
+  "configurationFingerprint": "f8044834808d5a3c6bf3579b7aee6ec71f503fb8a81edeab1e6399fc0a3cd0de",
+  "configuration": {
+    "sourceAccount": "thisismydemocosmos",
+    "sourceResourceGroup": "RG-Demos",
+    "sourceSubscriptionId": "9698dd71-9367-49c2-bede-fd0deecfad62",
+    "sourceDatabase": "SimpleChat",
+    "destinationAccount": "migration-test-sc",
+    "destinationResourceGroup": "RG-Demos",
+    "destinationSubscriptionId": "9698dd71-9367-49c2-bede-fd0deecfad62",
+    "destinationDatabase": "SimpleChat2",
+    "containers": [
+      "activity_logs",
+      "agent_facts",
+      "agent_templates",
+      "approvals",
+      "archive_thoughts",
+      "archived_conversations",
+      "archived_messages",
+      "collaboration_conversations",
+      "collaboration_messages",
+      "collaboration_user_state",
+      "conversations",
+      "custom_pages",
+      "data_management_job_items",
+      "data_management_jobs",
+      "document_access_index",
+      "documents",
+      "feedback",
+      "file_processing",
+      "global_actions",
+      "global_agents",
+      "global_workspace_identities",
+      "governance_item_policies",
+      "governance_policies",
+      "group_actions",
+      "group_agents",
+      "group_conversations",
+      "group_documents",
+      "group_file_sync_items",
+      "group_file_sync_runs",
+      "group_file_sync_sources",
+      "group_messages",
+      "group_prompts",
+      "group_workflow_run_items",
+      "group_workflow_runs",
+      "group_workflows",
+      "group_workspace_identities",
+      "groups",
+      "messages",
+      "msgraph_pending_actions",
+      "notifications",
+      "personal_actions",
+      "personal_agents",
+      "personal_file_sync_items",
+      "personal_file_sync_runs",
+      "personal_file_sync_sources",
+      "personal_workflow_run_items",
+      "personal_workflow_runs",
+      "personal_workflows",
+      "personal_workspace_identities",
+      "prompts",
+      "public_documents",
+      "public_file_sync_items",
+      "public_file_sync_runs",
+      "public_file_sync_sources",
+      "public_prompts",
+      "public_workspace_identities",
+      "public_workspaces",
+      "safety",
+      "search_cache",
+      "service_throttle_logs",
+      "settings",
+      "tabular_export_runs",
+      "thoughts",
+      "user_settings",
+      "visual_image_runs",
+      "workflows"
+    ],
+    "containerSelectionMode": "all",
+    "mode": "differential",
+    "cosmosApiVersion": "2020-07-15",
+    "cosmosDnsSuffix": "documents.azure.com",
+    "excludedAdminSettingsDocument": "settings/app_settings"
+  },
+  "status": "failed",
+  "createdUtc": "2026-07-21T20:27:51.6231634Z",
+  "updatedUtc": "2026-07-21T22:42:24.1751867Z",
+  "completedUtc": null,
+  "resumeCount": 3,
+  "currentResource": "document_access_index",
+  "lastError": "Document 'dai:user:441f7b4e-2f43-4a83-abf1-40697309b24d:personal:e6eead38-d25e-40b5-8ef7-70b5bd55fd23:1' in container 'document_access_index' failed after 5 attempt(s): HTTP 429. {\"code\":\"TooManyRequests\",\"message\":\"The request rate is too large. Please retry after sometime. Learn more: http://aka.ms/cosmosdb-error-429, Windows/10.0.20348 cosmos-netstandard-sdk/3.18.0\"}",
+  "resources": {
+    "public_file_sync_sources": {
+      "status": "completed",
+      "attempt": 1,
+      "startedUtc": "2026-07-21T20:27:52.1761467Z",
+      "updatedUtc": "2026-07-21T20:27:52.9363193Z",
+      "completedUtc": "2026-07-21T20:27:52.9363193Z",
+      "lastError": null,
+      "progress": {},
+      "result": {
+        "CopiedCount": 0,
+        "SkippedCount": 0,
+        "ProcessedCount": 0,
+        "TotalCount": 0,
+        "RetryCount": 0
+      }
+    },
+    "personal_workflow_runs": {
+      "status": "completed",
+      "attempt": 1,
+      "startedUtc": "2026-07-21T20:27:52.9388451Z",
+      "updatedUtc": "2026-07-21T20:27:56.3127376Z",
+      "completedUtc": "2026-07-21T20:27:56.3127376Z",
+      "lastError": null,
+      "progress": {},
+      "result": {
+        "CopiedCount": 35,
+        "SkippedCount": 0,
+        "ProcessedCount": 35,
+        "TotalCount": 35,
+        "RetryCount": 0
+      }
+    },
+    "data_management_jobs": {
+      "status": "completed",
+      "attempt": 1,
+      "startedUtc": "2026-07-21T20:27:56.3186547Z",
+      "updatedUtc": "2026-07-21T20:27:57.5023713Z",
+      "completedUtc": "2026-07-21T20:27:57.5023713Z",
+      "lastError": null,
+      "progress": {},
+      "result": {
+        "CopiedCount": 3,
+        "SkippedCount": 0,
+        "ProcessedCount": 3,
+        "TotalCount": 3,
+        "RetryCount": 0
+      }
+    },
+    "global_workspace_identities": {
+      "status": "completed",
+      "attempt": 1,
+      "startedUtc": "2026-07-21T20:27:57.507741Z",
+      "updatedUtc": "2026-07-21T20:27:58.087601Z",
+      "completedUtc": "2026-07-21T20:27:58.087601Z",
+      "lastError": null,
+      "progress": {},
+      "result": {
+        "CopiedCount": 0,
+        "SkippedCount": 0,
+        "ProcessedCount": 0,
+        "TotalCount": 0,
+        "RetryCount": 0
+      }
+    },
+    "visual_image_runs": {
+      "status": "completed",
+      "attempt": 1,
+      "startedUtc": "2026-07-21T20:27:58.0903395Z",
+      "updatedUtc": "2026-07-21T20:27:59.1706123Z",
+      "completedUtc": "2026-07-21T20:27:59.1706123Z",
+      "lastError": null,
+      "progress": {},
+      "result": {
+        "CopiedCount": 3,
+        "SkippedCount": 0,
+        "ProcessedCount": 3,
+        "TotalCount": 3,
+        "RetryCount": 0
+      }
+    },
+    "public_documents": {
+      "status": "completed",
+      "attempt": 1,
+      "startedUtc": "2026-07-21T20:27:59.1754963Z",
+      "updatedUtc": "2026-07-21T20:28:02.0541212Z",
+      "completedUtc": "2026-07-21T20:28:02.0541212Z",
+      "lastError": null,
+      "progress": {},
+      "result": {
+        "CopiedCount": 38,
+        "SkippedCount": 0,
+        "ProcessedCount": 38,
+        "TotalCount": 38,
+        "RetryCount": 0
+      }
+    },
+    "personal_file_sync_sources": {
+      "status": "completed",
+      "attempt": 1,
+      "startedUtc": "2026-07-21T20:28:02.0696031Z",
+      "updatedUtc": "2026-07-21T20:28:03.2515497Z",
+      "completedUtc": "2026-07-21T20:28:03.2515497Z",
+      "lastError": null,
+      "progress": {},
+      "result": {
+        "CopiedCount": 2,
+        "SkippedCount": 0,
+        "ProcessedCount": 2,
+        "TotalCount": 2,
+        "RetryCount": 0
+      }
+    },
+    "data_management_job_items": {
+      "status": "completed",
+      "attempt": 1,
+      "startedUtc": "2026-07-21T20:28:03.2572852Z",
+      "updatedUtc": "2026-07-21T20:28:05.8860515Z",
+      "completedUtc": "2026-07-21T20:28:05.8860515Z",
+      "lastError": null,
+      "progress": {},
+      "result": {
+        "CopiedCount": 34,
+        "SkippedCount": 0,
+        "ProcessedCount": 34,
+        "TotalCount": 34,
+        "RetryCount": 0
+      }
+    },
+    "prompts": {
+      "status": "completed",
+      "attempt": 1,
+      "startedUtc": "2026-07-21T20:28:05.8906866Z",
+      "updatedUtc": "2026-07-21T20:28:07.4371353Z",
+      "completedUtc": "2026-07-21T20:28:07.4371353Z",
+      "lastError": null,
+      "progress": {},
+      "result": {
+        "CopiedCount": 16,
+        "SkippedCount": 0,
+        "ProcessedCount": 16,
+        "TotalCount": 16,
+        "RetryCount": 0
+      }
+    },
+    "group_workspace_identities": {
+      "status": "completed",
+      "attempt": 1,
+      "startedUtc": "2026-07-21T20:28:07.4419397Z",
+      "updatedUtc": "2026-07-21T20:28:08.3263897Z",
+      "completedUtc": "2026-07-21T20:28:08.3263897Z",
+      "lastError": null,
+      "progress": {},
+      "result": {
+        "CopiedCount": 0,
+        "SkippedCount": 0,
+        "ProcessedCount": 0,
+        "TotalCount": 0,
+        "RetryCount": 0
+      }
+    },
+    "feedback": {
+      "status": "completed",
+      "attempt": 1,
+      "startedUtc": "2026-07-21T20:28:08.3286231Z",
+      "updatedUtc": "2026-07-21T20:28:09.7918773Z",
+      "completedUtc": "2026-07-21T20:28:09.7918773Z",
+      "lastError": null,
+      "progress": {},
+      "result": {
+        "CopiedCount": 0,
+        "SkippedCount": 28,
+        "ProcessedCount": 28,
+        "TotalCount": 28,
+        "RetryCount": 0
+      }
+    },
+    "group_workflow_run_items": {
+      "status": "completed",
+      "attempt": 1,
+      "startedUtc": "2026-07-21T20:28:09.7970675Z",
+      "updatedUtc": "2026-07-21T20:28:10.3379742Z",
+      "completedUtc": "2026-07-21T20:28:10.3379742Z",
+      "lastError": null,
+      "progress": {},
+      "result": {
+        "CopiedCount": 0,
+        "SkippedCount": 0,
+        "ProcessedCount": 0,
+        "TotalCount": 0,
+        "RetryCount": 0
+      }
+    },
+    "custom_pages": {
+      "status": "completed",
+      "attempt": 1,
+      "startedUtc": "2026-07-21T20:28:10.3404352Z",
+      "updatedUtc": "2026-07-21T20:28:11.3043477Z",
+      "completedUtc": "2026-07-21T20:28:11.3043477Z",
+      "lastError": null,
+      "progress": {},
+      "result": {
+        "CopiedCount": 1,
+        "SkippedCount": 0,
+        "ProcessedCount": 1,
+        "TotalCount": 1,
+        "RetryCount": 0
+      }
+    },
+    "governance_policies": {
+      "status": "completed",
+      "attempt": 2,
+      "startedUtc": "2026-07-21T20:28:24.057504Z",
+      "updatedUtc": "2026-07-21T20:28:24.9581951Z",
+      "completedUtc": "2026-07-21T20:28:24.9581951Z",
+      "lastError": null,
+      "progress": {},
+      "result": {
+        "CopiedCount": 10,
+        "SkippedCount": 0,
+        "ProcessedCount": 10,
+        "TotalCount": 10,
+        "RetryCount": 0
+      }
+    },
+    "public_file_sync_items": {
+      "status": "completed",
+      "attempt": 1,
+      "startedUtc": "2026-07-21T20:28:24.963358Z",
+      "updatedUtc": "2026-07-21T20:28:25.6901956Z",
+      "completedUtc": "2026-07-21T20:28:25.6901956Z",
+      "lastError": null,
+      "progress": {},
+      "result": {
+        "CopiedCount": 0,
+        "SkippedCount": 0,
+        "ProcessedCount": 0,
+        "TotalCount": 0,
+        "RetryCount": 0
+      }
+    },
+    "group_workflow_runs": {
+      "status": "completed",
+      "attempt": 1,
+      "startedUtc": "2026-07-21T20:28:25.6926465Z",
+      "updatedUtc": "2026-07-21T20:28:26.2893584Z",
+      "completedUtc": "2026-07-21T20:28:26.2893584Z",
+      "lastError": null,
+      "progress": {},
+      "result": {
+        "CopiedCount": 0,
+        "SkippedCount": 0,
+        "ProcessedCount": 0,
+        "TotalCount": 0,
+        "RetryCount": 0
+      }
+    },
+    "personal_actions": {
+      "status": "completed",
+      "attempt": 1,
+      "startedUtc": "2026-07-21T20:28:26.2916977Z",
+      "updatedUtc": "2026-07-21T20:28:28.9459563Z",
+      "completedUtc": "2026-07-21T20:28:28.9459563Z",
+      "lastError": null,
+      "progress": {},
+      "result": {
+        "CopiedCount": 20,
+        "SkippedCount": 0,
+        "ProcessedCount": 20,
+        "TotalCount": 20,
+        "RetryCount": 4
+      }
+    },
+    "group_documents": {
+      "status": "completed",
+      "attempt": 1,
+      "startedUtc": "2026-07-21T20:28:28.9507122Z",
+      "updatedUtc": "2026-07-21T20:28:46.5712369Z",
+      "completedUtc": "2026-07-21T20:28:46.5712369Z",
+      "lastError": null,
+      "progress": {},
+      "result": {
+        "CopiedCount": 352,
+        "SkippedCount": 0,
+        "ProcessedCount": 352,
+        "TotalCount": 352,
+        "RetryCount": 20
+      }
+    },
+    "public_workspace_identities": {
+      "status": "completed",
+      "attempt": 1,
+      "startedUtc": "2026-07-21T20:28:46.5763258Z",
+      "updatedUtc": "2026-07-21T20:28:47.2251468Z",
+      "completedUtc": "2026-07-21T20:28:47.2251468Z",
+      "lastError": null,
+      "progress": {},
+      "result": {
+        "CopiedCount": 0,
+        "SkippedCount": 0,
+        "ProcessedCount": 0,
+        "TotalCount": 0,
+        "RetryCount": 0
+      }
+    },
+    "group_conversations": {
+      "status": "completed",
+      "attempt": 3,
+      "startedUtc": "2026-07-21T20:52:02.6996064Z",
+      "updatedUtc": "2026-07-21T22:42:09.6198737Z",
+      "completedUtc": "2026-07-21T22:42:09.6198737Z",
+      "lastError": null,
+      "progress": {},
+      "result": {
+        "CopiedCount": 348035,
+        "SkippedCount": 9352,
+        "ProcessedCount": 357387,
+        "TotalCount": 357387,
+        "RetryCount": 69
+      }
+    },
+    "public_prompts": {
+      "status": "completed",
+      "attempt": 1,
+      "startedUtc": "2026-07-21T22:42:09.6316864Z",
+      "updatedUtc": "2026-07-21T22:42:15.0682058Z",
+      "completedUtc": "2026-07-21T22:42:15.0682058Z",
+      "lastError": null,
+      "progress": {},
+      "result": {
+        "CopiedCount": 0,
+        "SkippedCount": 0,
+        "ProcessedCount": 0,
+        "TotalCount": 0,
+        "RetryCount": 0
+      }
+    },
+    "personal_workspace_identities": {
+      "status": "completed",
+      "attempt": 1,
+      "startedUtc": "2026-07-21T22:42:15.0716095Z",
+      "updatedUtc": "2026-07-21T22:42:18.1104476Z",
+      "completedUtc": "2026-07-21T22:42:18.1104476Z",
+      "lastError": null,
+      "progress": {},
+      "result": {
+        "CopiedCount": 2,
+        "SkippedCount": 0,
+        "ProcessedCount": 2,
+        "TotalCount": 2,
+        "RetryCount": 0
+      }
+    },
+    "document_access_index": {
+      "status": "failed",
+      "attempt": 1,
+      "startedUtc": "2026-07-21T22:42:18.1173309Z",
+      "updatedUtc": "2026-07-21T22:42:24.1736431Z",
+      "completedUtc": null,
+      "lastError": "Document 'dai:user:441f7b4e-2f43-4a83-abf1-40697309b24d:personal:e6eead38-d25e-40b5-8ef7-70b5bd55fd23:1' in container 'document_access_index' failed after 5 attempt(s): HTTP 429. {\"code\":\"TooManyRequests\",\"message\":\"The request rate is too large. Please retry after sometime. Learn more: http://aka.ms/cosmosdb-error-429, Windows/10.0.20348 cosmos-netstandard-sdk/3.18.0\"}",
+      "progress": {},
+      "result": {}
+    }
+  },
+  "summary": {}
+}

@@ -667,6 +667,66 @@ def upload_generated_analysis_artifact_for_user(
     )
 
 
+def upload_generated_analysis_artifact_stream_for_user(
+    current_user_id: str,
+    conversation_id: str,
+    file_name: str,
+    file_stream: Any,
+    file_size: int,
+    capability: str = "analysis",
+    output_format: str = "",
+    summary: str = "",
+    artifact_idempotency_key: str = "",
+) -> Dict[str, Any]:
+    """Upload a bounded-memory generated artifact stream for an authorized user."""
+    normalized_user_id = str(current_user_id or "").strip()
+    normalized_conversation_id = str(conversation_id or "").strip()
+    normalized_file_name = _normalize_generated_document_file_name(file_name)
+    normalized_capability = str(capability or "analysis").strip().lower() or "analysis"
+    normalized_output_format = str(output_format or "").strip().lower() or os.path.splitext(normalized_file_name)[1].lower().lstrip(".")
+    normalized_summary = str(summary or "").strip()
+
+    if not normalized_user_id:
+        raise ValueError("current_user_id is required")
+    if not normalized_conversation_id:
+        raise ValueError("conversation_id is required")
+    if not hasattr(file_stream, "read") or not hasattr(file_stream, "seek"):
+        raise ValueError("file_stream must be seekable and readable")
+    if not allowed_file(normalized_file_name):
+        raise ValueError("Generated file type is not supported")
+
+    normalized_file_size = max(0, int(file_size or 0))
+    if normalized_file_size <= 0:
+        raise ValueError("Generated artifact is empty")
+
+    settings = get_settings()
+    max_artifact_size_mb = settings.get("max_generated_chat_artifact_size_mb", 500)
+    try:
+        max_artifact_size_mb = max(1, int(max_artifact_size_mb))
+    except (TypeError, ValueError):
+        max_artifact_size_mb = 500
+
+    max_artifact_size_bytes = max_artifact_size_mb * 1024 * 1024
+    if normalized_file_size > max_artifact_size_bytes:
+        raise ValueError(
+            f"Generated artifact exceeds the {max_artifact_size_mb} MB size limit"
+        )
+
+    file_stream.seek(0)
+    return _upload_generated_chat_artifact_for_current_user(
+        current_user_id=normalized_user_id,
+        conversation_id=normalized_conversation_id,
+        normalized_file_name=normalized_file_name,
+        file_content_bytes=file_stream,
+        artifact_metadata={
+            "capability": normalized_capability,
+            "output_format": normalized_output_format,
+            "summary": normalized_summary,
+        },
+        artifact_idempotency_key=artifact_idempotency_key,
+    )
+
+
 def delete_blob_backed_chat_message_files(messages: Iterable[Dict[str, Any]]) -> int:
     """Delete blob-backed chat files referenced by the provided message documents."""
     blob_service_client = CLIENTS.get("storage_account_office_docs_client")
@@ -1743,6 +1803,7 @@ def _upload_generated_chat_artifact_for_current_user(
     normalized_file_name: str,
     file_content_bytes: bytes,
     artifact_metadata: Optional[Dict[str, Any]] = None,
+    artifact_idempotency_key: str = "",
 ) -> Dict[str, Any]:
     try:
         conversation_item = cosmos_conversations_container.read_item(
@@ -1759,7 +1820,15 @@ def _upload_generated_chat_artifact_for_current_user(
     if not blob_service_client:
         raise RuntimeError("Blob storage client not available")
 
-    artifact_message_id = f"{conversation_id}_generated_file_{uuid.uuid4().hex}"
+    normalized_idempotency_key = str(artifact_idempotency_key or "").strip()
+    if normalized_idempotency_key:
+        artifact_suffix = uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"simplechat-generated-artifact:{conversation_id}:{normalized_idempotency_key}",
+        ).hex
+    else:
+        artifact_suffix = uuid.uuid4().hex
+    artifact_message_id = f"{conversation_id}_generated_file_{artifact_suffix}"
     blob_path = (
         f"{current_user_id}/{conversation_id}/generated/"
         f"{artifact_message_id}/{normalized_file_name}"
@@ -1768,6 +1837,33 @@ def _upload_generated_chat_artifact_for_current_user(
         container=storage_account_personal_chat_container_name,
         blob=blob_path,
     )
+    if normalized_idempotency_key:
+        try:
+            existing_message = cosmos_messages_container.read_item(
+                item=artifact_message_id,
+                partition_key=conversation_id,
+            )
+        except CosmosResourceNotFoundError:
+            existing_message = None
+        if (
+            isinstance(existing_message, dict)
+            and existing_message.get("role") == "file"
+            and existing_message.get("filename") == normalized_file_name
+            and existing_message.get("blob_path") == blob_path
+            and blob_client.exists()
+        ):
+            existing_metadata = existing_message.get("metadata") or {}
+            return {
+                "message": {
+                    "id": artifact_message_id,
+                    "file_name": normalized_file_name,
+                    "blob_container": storage_account_personal_chat_container_name,
+                    "blob_path": blob_path,
+                    "capability": existing_metadata.get("generated_artifact_capability") or "analysis",
+                    "output_format": existing_metadata.get("generated_artifact_output_format") or "",
+                },
+                "conversation_id": conversation_id,
+            }
     blob_client.upload_blob(
         file_content_bytes,
         overwrite=True,
@@ -1775,6 +1871,7 @@ def _upload_generated_chat_artifact_for_current_user(
             "conversation_id": conversation_id,
             "user_id": current_user_id,
             "generated_artifact": "true",
+            "idempotent_artifact": str(bool(normalized_idempotency_key)).lower(),
         },
     )
 
@@ -1804,6 +1901,7 @@ def _upload_generated_chat_artifact_for_current_user(
             "generated_artifact_capability": artifact_capability,
             "generated_artifact_output_format": artifact_output_format,
             "generated_artifact_summary": artifact_summary,
+            "generated_artifact_idempotency_key": normalized_idempotency_key or None,
             "thread_info": {
                 "thread_id": current_thread_id,
                 "previous_thread_id": previous_thread_id,

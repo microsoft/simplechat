@@ -64,6 +64,15 @@ SECRET_ASSIGNMENT_RE = re.compile(
 AUTHORIZATION_VALUE_RE = re.compile(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+")
 
 
+class PluginInvocationResult(str):
+    """String tool result with server-only metadata retained in invocation history."""
+
+    def __new__(cls, value: str, internal_metadata: Optional[Dict[str, Any]] = None):
+        instance = super().__new__(cls, value)
+        instance.internal_metadata = dict(internal_metadata or {})
+        return instance
+
+
 def _normalize_sensitive_key(key: Any) -> str:
     return re.sub(r"[^a-z0-9]", "", str(key or "").strip().lower())
 

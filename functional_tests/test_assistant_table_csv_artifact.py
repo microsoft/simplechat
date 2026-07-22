@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for assistant-rendered table CSV artifacts.
-Version: 0.241.051
-Implemented in: 0.241.050
+Version: 0.250.061
+Implemented in: 0.241.050; exhaustive-export suppression in 0.250.060
 
 This test ensures that explicit table-format requests with assistant-rendered
 tables and natural CSV/table conversion requests are converted into
@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 APP_DIR = ROOT / 'application' / 'single_app'
 CONFIG_FILE = APP_DIR / 'config.py'
 CHAT_ROUTE_FILE = APP_DIR / 'route_backend_chats.py'
-EXPECTED_VERSION = '0.241.051'
+EXPECTED_VERSION = '0.250.061'
 
 sys.path.append(str(APP_DIR))
 

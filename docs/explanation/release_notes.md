@@ -2,6 +2,25 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.061)**
+
+#### User Interface Enhancements
+
+*   **Automatic Background Export Status Updates**
+    *   Removed the redundant Refresh Status button from generated tabular export cards because progress already updates automatically.
+    *   Running exports now present only the relevant Cancel action, while Continue remains available only when a stalled or retryable run can actually resume.
+    *   (Ref: microsoft/simplechat#1031, `chat-messages.js`, background generated export status cards)
+
+### **(v0.250.060)**
+
+#### Bug Fixes
+
+*   **Scalable Per-Row Tabular Analysis and Exports**
+    *   Fixed exhaustive CSV/JSON generation across paginated tabular results by validating compatible pages as one ordered source and preserving one authoritative source identity per output row.
+    *   Added authorized, ETag-pinned CSV query replay with bounded source/input/output windows, resumable checkpoints, stable schema enforcement, streamed atomic finalization, cancellation, and compact checkpoint-derived completion summaries for 30,000+ rows.
+    *   Prevented the generic assistant-table fallback from saving a partial summary CSV while an exhaustive export has an explicit durable status.
+    *   (Ref: microsoft/simplechat#1031, `functions_tabular_generated_exports.py`, `route_backend_chats.py`, `TABULAR_ROW_ORCHESTRATION_REMEDIATION_PLAN.md`)
+
 ### **(v0.250.059)**
 
 #### New Features

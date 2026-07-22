@@ -12,7 +12,11 @@ from semantic_kernel_loader import initialize_semantic_kernel
 from semantic_kernel_plugins.plugin_invocation_thoughts import (
     register_plugin_invocation_thought_callback,
 )
-from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger, sanitize_plugin_invocation_value
+from semantic_kernel_plugins.plugin_invocation_logger import (
+    PluginInvocationResult,
+    get_plugin_logger,
+    sanitize_plugin_invocation_value,
+)
 from semantic_kernel_plugins.chart_plugin import ChartPlugin
 from foundry_agent_runtime import FoundryAgentInvocationError, FoundryAgentUserAuthenticationRequired, execute_foundry_agent, resolve_authority
 from model_endpoint_clients import (
@@ -149,6 +153,7 @@ from functions_document_actions import (
     normalize_document_action_config,
 )
 from functions_thoughts import ThoughtTracker
+from functions_tabular_csv_query import validate_tabular_csv_query_expression
 from functions_workflow_runner import _execute_document_action_workflow
 from functions_simplechat_operations import (
     derive_conversation_title_from_message,
@@ -156,7 +161,10 @@ from functions_simplechat_operations import (
     upload_generated_analysis_artifact_for_current_user,
 )
 from functions_tabular_generated_exports import (
+    _normalize_generated_batch_entries,
+    _prepare_tabular_source_rows,
     build_background_tabular_generated_output_metadata,
+    cancel_tabular_generated_output_run,
     get_tabular_generated_output_run_status,
     queue_tabular_generated_output_run,
     resume_tabular_generated_output_run,
@@ -1223,7 +1231,13 @@ def _normalize_generated_analysis_artifact_metadata(raw_artifact, default_capabi
     artifact_message_id = str(raw_artifact.get('artifact_message_id') or '').strip()
     document_id = str(raw_artifact.get('document_id') or '').strip()
     export_run_id = str(raw_artifact.get('export_run_id') or raw_artifact.get('run_id') or '').strip()
-    if not artifact_message_id and not document_id and not export_run_id:
+    terminal_status = str(raw_artifact.get('status') or '').strip().lower()
+    suppress_assistant_table_export = bool(raw_artifact.get('suppress_assistant_table_export'))
+    is_terminal_export_status = (
+        terminal_status in {'failed', 'canceled'}
+        and suppress_assistant_table_export
+    )
+    if not artifact_message_id and not document_id and not export_run_id and not is_terminal_export_status:
         return None
 
     normalized_artifact = dict(raw_artifact)
@@ -1238,6 +1252,9 @@ def _normalize_generated_analysis_artifact_metadata(raw_artifact, default_capabi
     if export_run_id:
         normalized_artifact['export_run_id'] = export_run_id
         normalized_artifact['background_export'] = bool(raw_artifact.get('background_export', True))
+    elif is_terminal_export_status:
+        normalized_artifact['background_export'] = True
+        normalized_artifact['suppress_assistant_table_export'] = True
 
     normalized_output_format = str(raw_artifact.get('output_format') or '').strip().lower()
     if normalized_output_format:
@@ -1357,6 +1374,10 @@ def _has_generated_tabular_csv_output(generated_outputs):
             continue
 
         capability = str(generated_output.get('capability') or '').strip().lower()
+        if generated_output.get('suppress_assistant_table_export') and (
+            not capability or capability == 'tabular'
+        ):
+            return True
         output_format = str(generated_output.get('output_format') or '').strip().lower()
         file_name = str(generated_output.get('file_name') or '').strip().lower()
         if output_format == 'csv' or file_name.endswith('.csv'):
@@ -3683,10 +3704,15 @@ def augment_tabular_invocations_with_related_document_evidence(invocations, user
         updated_result_payload['data'] = updated_rows
         updated_result_payload['referenced_document_row_count'] = augmented_rows_for_invocation
         updated_result_payload['referenced_document_match_count'] = augmented_documents_for_invocation
-        if isinstance(getattr(invocation, 'result', None), dict):
+        existing_result = getattr(invocation, 'result', None)
+        internal_metadata = getattr(existing_result, 'internal_metadata', {}) or {}
+        if isinstance(existing_result, dict):
             invocation.result = updated_result_payload
         else:
-            invocation.result = json.dumps(updated_result_payload, indent=2, default=str, ensure_ascii=False)
+            invocation.result = PluginInvocationResult(
+                json.dumps(updated_result_payload, indent=2, default=str, ensure_ascii=False),
+                internal_metadata=internal_metadata,
+            )
 
     return {
         'augmented_row_count': augmented_row_count,
@@ -4319,6 +4345,9 @@ def _build_tabular_generated_output_candidate_diagnostic(invocation):
         'full_result_available': full_result_available,
         'function_rank': function_rank,
         'max_rows': result_payload.get('max_rows') if isinstance(result_payload, dict) else None,
+        'start_row': _safe_int(result_payload.get('start_row')) if isinstance(result_payload, dict) else 0,
+        'has_more': bool(result_payload.get('has_more')) if isinstance(result_payload, dict) else False,
+        'next_start_row': result_payload.get('next_start_row') if isinstance(result_payload, dict) else None,
         'filter_applied': result_payload.get('filter_applied') if isinstance(result_payload, dict) else None,
         'normalized_match': result_payload.get('normalized_match') if isinstance(result_payload, dict) else None,
         'skip_reason': skip_reason,
@@ -4333,50 +4362,327 @@ def _build_tabular_generated_output_candidate_diagnostics(invocations):
     ]
 
 
+def _build_tabular_generated_output_source_signature(invocation, result_payload):
+    invocation_parameters = getattr(invocation, 'parameters', {}) or {}
+    invocation_internal_metadata = getattr(
+        getattr(invocation, 'result', None),
+        'internal_metadata',
+        {},
+    ) or {}
+    source_descriptor = invocation_internal_metadata.get('tabular_generated_export_source') or {}
+    source_authorization = invocation_internal_metadata.get('tabular_source_authorization') or {}
+    source_identity = {
+        'source': source_descriptor.get('source') or source_authorization.get('source'),
+        'scope_id': source_descriptor.get('scope_id') or source_authorization.get('scope_id'),
+        'container': source_descriptor.get('container') or source_authorization.get('container'),
+        'blob_path': source_descriptor.get('blob_path') or source_authorization.get('blob_path'),
+        'blob_etag': source_descriptor.get('blob_etag') or source_authorization.get('blob_etag'),
+    }
+    signature_parameters = {
+        str(parameter_name): parameter_value
+        for parameter_name, parameter_value in invocation_parameters.items()
+        if str(parameter_name) not in {
+            'user_id',
+            'conversation_id',
+            'start_row',
+            'max_rows',
+        }
+    }
+    signature_payload = {
+        'plugin_name': str(getattr(invocation, 'plugin_name', '') or '').strip(),
+        'function_name': str(getattr(invocation, 'function_name', '') or '').strip(),
+        'filename': result_payload.get('filename'),
+        'selected_sheet': result_payload.get('selected_sheet'),
+        'parameters': signature_parameters,
+        'source_identity': source_identity,
+    }
+    return json.dumps(signature_payload, sort_keys=True, default=str, separators=(',', ':'))
+
+
+def _coalesce_tabular_generated_output_pages(pages, total_matches):
+    normalized_total_matches = _safe_int(total_matches)
+    ordered_pages = sorted(pages or [], key=lambda page: page.get('start_row', 0))
+    merged_rows = []
+    next_expected_row = 0
+
+    for page in ordered_pages:
+        start_row = _safe_int(page.get('start_row'))
+        page_rows = page.get('rows') if isinstance(page.get('rows'), list) else []
+        returned_rows = _safe_int(page.get('returned_rows'))
+        if returned_rows != len(page_rows):
+            return {
+                'rows': merged_rows,
+                'row_count': len(merged_rows),
+                'full_result_available': False,
+                'validation_error': (
+                    f'Page at row {start_row} declared {returned_rows} row(s) but contained {len(page_rows)}'
+                ),
+            }
+        if start_row < next_expected_row:
+            return {
+                'rows': merged_rows,
+                'row_count': len(merged_rows),
+                'full_result_available': False,
+                'validation_error': (
+                    f'Page overlap at row {start_row}; next expected row was {next_expected_row}'
+                ),
+            }
+        if start_row > next_expected_row:
+            return {
+                'rows': merged_rows,
+                'row_count': len(merged_rows),
+                'full_result_available': False,
+                'validation_error': (
+                    f'Page gap from row {next_expected_row} through {start_row - 1}'
+                ),
+            }
+
+        merged_rows.extend(page_rows)
+        next_expected_row += len(page_rows)
+
+    full_result_available = normalized_total_matches > 0 and next_expected_row == normalized_total_matches
+    validation_error = None
+    if next_expected_row < normalized_total_matches:
+        validation_error = (
+            f'Page gap from row {next_expected_row} through {normalized_total_matches - 1}'
+        )
+    elif normalized_total_matches and next_expected_row > normalized_total_matches:
+        validation_error = (
+            f'Page coverage returned {next_expected_row} row(s) for {normalized_total_matches} total match(es)'
+        )
+
+    return {
+        'rows': merged_rows,
+        'row_count': len(merged_rows),
+        'full_result_available': full_result_available,
+        'validation_error': validation_error,
+    }
+
+
 def _build_tabular_generated_output_source_candidate(invocations):
-    best_candidate = None
-    best_score = None
+    candidate_groups = {}
+    logical_source_identities = {}
 
     for invocation in invocations or []:
         diagnostic = _build_tabular_generated_output_candidate_diagnostic(invocation)
         if diagnostic.get('skip_reason'):
             continue
 
+        result_payload = get_tabular_invocation_result_payload(invocation)
+        invocation_internal_metadata = getattr(
+            getattr(invocation, 'result', None),
+            'internal_metadata',
+            {},
+        ) or {}
+        source_signature = _build_tabular_generated_output_source_signature(invocation, result_payload)
+        logical_signature = json.dumps({
+            'plugin_name': str(getattr(invocation, 'plugin_name', '') or '').strip(),
+            'function_name': str(getattr(invocation, 'function_name', '') or '').strip(),
+            'filename': result_payload.get('filename'),
+            'selected_sheet': result_payload.get('selected_sheet'),
+            'parameters': {
+                str(parameter_name): parameter_value
+                for parameter_name, parameter_value in (getattr(invocation, 'parameters', {}) or {}).items()
+                if str(parameter_name) not in {
+                    'user_id',
+                    'conversation_id',
+                    'start_row',
+                    'max_rows',
+                }
+            },
+        }, sort_keys=True, default=str, separators=(',', ':'))
+        logical_source_identities.setdefault(logical_signature, set()).add(source_signature)
+        candidate_group = candidate_groups.setdefault(source_signature, {
+            'function_name': diagnostic.get('function_name'),
+            'filename': result_payload.get('filename'),
+            'selected_sheet': result_payload.get('selected_sheet'),
+            'source_parameters': dict(getattr(invocation, 'parameters', {}) or {}),
+            'source_descriptor': invocation_internal_metadata.get('tabular_generated_export_source'),
+            'source_authorization': invocation_internal_metadata.get('tabular_source_authorization'),
+            'function_rank': diagnostic.get('function_rank') or 0,
+            'total_matches': diagnostic.get('total_matches') or 0,
+            'pages': [],
+            'diagnostics': [],
+            'logical_signature': logical_signature,
+        })
+        candidate_group['diagnostics'].append(diagnostic)
+        candidate_group['pages'].append({
+            'start_row': diagnostic.get('start_row') or 0,
+            'returned_rows': diagnostic.get('returned_rows') or diagnostic.get('data_row_count') or 0,
+            'rows': result_payload.get('data'),
+        })
+        if diagnostic.get('total_matches') != candidate_group['total_matches']:
+            candidate_group['total_count_mismatch'] = True
+
+    best_candidate = None
+    best_score = None
+    for candidate_group in candidate_groups.values():
+        coalesced_result = _coalesce_tabular_generated_output_pages(
+            candidate_group.get('pages'),
+            candidate_group.get('total_matches'),
+        )
+        if candidate_group.get('total_count_mismatch'):
+            coalesced_result['full_result_available'] = False
+            coalesced_result['validation_error'] = 'Compatible pages reported inconsistent total row counts'
+        if len(logical_source_identities.get(candidate_group.get('logical_signature'), set())) > 1:
+            coalesced_result['full_result_available'] = False
+            coalesced_result['validation_error'] = (
+                'Compatible pages resolved to different source blobs or versions'
+            )
+
         score = (
-            1 if diagnostic.get('full_result_available') else 0,
-            diagnostic.get('returned_rows') or diagnostic.get('data_row_count') or 0,
-            diagnostic.get('function_rank') or 0,
+            1 if coalesced_result.get('full_result_available') else 0,
+            coalesced_result.get('row_count') or 0,
+            candidate_group.get('function_rank') or 0,
         )
         if best_score is not None and score <= best_score:
             continue
 
-        result_payload = get_tabular_invocation_result_payload(invocation)
         best_candidate = {
-            'function_name': diagnostic.get('function_name'),
-            'filename': result_payload.get('filename'),
-            'selected_sheet': result_payload.get('selected_sheet'),
-            'rows': result_payload.get('data'),
-            'row_count': diagnostic.get('returned_rows') or diagnostic.get('data_row_count'),
-            'total_matches': diagnostic.get('total_matches'),
-            'full_result_available': diagnostic.get('full_result_available'),
-            'diagnostics': diagnostic,
+            'function_name': candidate_group.get('function_name'),
+            'filename': candidate_group.get('filename'),
+            'selected_sheet': candidate_group.get('selected_sheet'),
+            'source_parameters': candidate_group.get('source_parameters'),
+            'source_descriptor': candidate_group.get('source_descriptor'),
+            'source_authorization': candidate_group.get('source_authorization'),
+            'rows': coalesced_result.get('rows'),
+            'row_count': coalesced_result.get('row_count'),
+            'total_matches': candidate_group.get('total_matches'),
+            'full_result_available': coalesced_result.get('full_result_available'),
+            'validation_error': coalesced_result.get('validation_error'),
+            'page_count': len(candidate_group.get('pages') or []),
+            'diagnostics': candidate_group.get('diagnostics'),
         }
         best_score = score
 
     return best_candidate
 
 
-def _build_tabular_generated_output_batch_prompt(user_question, batch_rows, batch_index, total_batches, source_candidate):
+def _build_tabular_generated_output_query_descriptor(
+    source_candidate,
+    user_id,
+    conversation_id,
+    settings,
+):
+    if not isinstance(source_candidate, dict):
+        return None
+    if source_candidate.get('function_name') != 'query_tabular_data':
+        return None
+
+    source_parameters = source_candidate.get('source_parameters') or {}
+    query_expression = str(source_parameters.get('query_expression') or '').strip()
+    source_descriptor = source_candidate.get('source_descriptor') or {}
+    if (
+        not query_expression
+        or source_descriptor.get('kind') != 'query_tabular_data'
+        or str(source_descriptor.get('filename') or '') != str(source_candidate.get('filename') or '')
+        or str(source_descriptor.get('query_expression') or '') != query_expression
+    ):
+        return None
+    validate_tabular_csv_query_expression(query_expression)
+
+    batch_budget = _get_tabular_generated_output_batch_budget(settings)
+    descriptor = dict(source_descriptor)
+    descriptor['expected_row_count'] = _safe_int(source_candidate.get('total_matches'))
+    descriptor['batch_max_rows'] = batch_budget['max_rows']
+    descriptor['batch_max_chars'] = batch_budget['max_chars']
+    return descriptor
+
+
+def _build_tabular_generated_output_source_authorization(source_candidate):
+    exact_source_authorization = (source_candidate or {}).get('source_authorization') or {}
+    if (
+        exact_source_authorization.get('source')
+        and exact_source_authorization.get('container')
+        and exact_source_authorization.get('blob_path')
+    ):
+        return dict(exact_source_authorization)
+
+    source_parameters = (source_candidate or {}).get('source_parameters') or {}
+    source = str(source_parameters.get('source') or 'chat').strip().lower()
+    if source not in {'chat', 'workspace', 'group', 'public'}:
+        source = 'chat'
+
+    authorized_context = dict(getattr(g, 'authorized_chat_context', {}) or {})
+    scope_id = None
+    if source == 'group':
+        scope_id = str(
+            source_parameters.get('group_id')
+            or authorized_context.get('active_group_id')
+            or ''
+        ).strip() or None
+    elif source == 'public':
+        scope_id = str(
+            source_parameters.get('public_workspace_id')
+            or authorized_context.get('active_public_workspace_id')
+            or ''
+        ).strip() or None
+    return {
+        'source': source,
+        'scope_id': scope_id,
+    }
+
+
+def _build_failed_tabular_generated_output_metadata(source_candidate, output_format, reason):
+    normalized_output_format = str(output_format or 'json').strip().lower() or 'json'
+    row_count = _safe_int((source_candidate or {}).get('total_matches'))
+    failure_reason = str(reason or 'The exhaustive export could not be prepared.').strip()
+    return {
+        'capability': 'tabular',
+        'background_export': True,
+        'status': 'failed',
+        'status_label': 'Failed',
+        'status_tone': 'danger',
+        'status_detail': failure_reason,
+        'retryable_failure': False,
+        'can_resume': False,
+        'can_cancel': False,
+        'suppress_assistant_table_export': True,
+        'file_name': _build_tabular_generated_output_file_name(
+            (source_candidate or {}).get('filename'),
+            normalized_output_format,
+        ),
+        'output_format': normalized_output_format,
+        'row_count': row_count,
+        'processed_rows': 0,
+        'source_file_name': (source_candidate or {}).get('filename'),
+        'selected_sheet': (source_candidate or {}).get('selected_sheet'),
+        'summary': failure_reason,
+    }
+
+
+def _build_tabular_generated_output_batch_prompt(
+    user_question,
+    batch_rows,
+    batch_index,
+    total_batches,
+    source_candidate,
+    output_schema=None,
+):
     source_file_name = str(source_candidate.get('filename') or 'unknown file').strip() or 'unknown file'
     selected_sheet = str(source_candidate.get('selected_sheet') or '').strip()
     batch_rows_json = _dump_tabular_generated_output_json(batch_rows)
     selected_sheet_line = f"Worksheet: {selected_sheet}\n" if selected_sheet else ''
+    model_output_schema = [
+        field_name
+        for field_name in (output_schema or [])
+        if field_name not in {'source_row_number', 'source_row_identity'}
+    ]
+    output_schema_line = (
+        f'Use exactly these output fields for every object, in this order: '
+        f'{json.dumps(model_output_schema, ensure_ascii=False)}.\n'
+        if model_output_schema
+        else ''
+    )
 
     return (
         'Transform the tabular input rows below into structured output for the user.\n\n'
         f'User instructions:\n{user_question}\n\n'
         'Return ONLY a valid JSON array.\n'
         f'Return exactly {len(batch_rows)} JSON object(s), one per input row, in the same order.\n'
+        f'{output_schema_line}'
+        'Copy __simplechat_source_row_token exactly from each input row into its matching output object. '
+        'Do not include the other fields beginning with __simplechat_source_ in generated objects.\n'
         'Do not drop, merge, summarize, or cap rows.\n'
         'Input rows may include normalized helper fields such as comment_id, body_text, source_file, attachment_present, attachment_names, and attachment_text. Use those normalized fields when they are present.\n'
         'Input rows may include a referenced_documents array containing row-linked evidence from explicitly referenced non-tabular documents. Use that evidence as part of the source row context when it is relevant to the requested output.\n'
@@ -4394,6 +4700,25 @@ def _build_tabular_generated_output_system_message(output_metadata):
     output_format = str(output_metadata.get('output_format') or 'json').upper()
     file_name = str(output_metadata.get('file_name') or 'generated output').strip() or 'generated output'
     row_count = _safe_int(output_metadata.get('row_count'))
+    output_status = str(output_metadata.get('status') or '').strip().lower()
+
+    if output_status == 'failed':
+        failure_detail = str(
+            output_metadata.get('status_detail')
+            or output_metadata.get('summary')
+            or 'The exhaustive export failed validation.'
+        ).strip()
+        return (
+            f'The requested exhaustive {output_format} export for {row_count} row(s) failed. '
+            f'{failure_detail} Do not claim that a full or partial export is attached, and do not recreate '
+            'the assistant summary table as a CSV. Briefly report the failure and preserve any other requested analysis.'
+        )
+
+    if output_status == 'canceled':
+        return (
+            f'The requested exhaustive {output_format} export for {row_count} row(s) was canceled. '
+            'Do not claim that the full export is attached, and do not recreate a partial assistant-table CSV.'
+        )
 
     if output_metadata.get('background_export'):
         run_id = str(output_metadata.get('export_run_id') or output_metadata.get('run_id') or '').strip()
@@ -4455,13 +4780,14 @@ async def _generate_tabular_structured_output_entries(
 ):
     from semantic_kernel.contents.chat_history import ChatHistory as SKChatHistory
 
-    rows = [
+    normalized_rows = [
         _build_tabular_generated_output_input_row(
             row,
             source_file_name=source_candidate.get('filename'),
         )
         for row in (source_candidate.get('rows') or [])
     ]
+    rows = _prepare_tabular_source_rows(normalized_rows)
     if not rows:
         return None
 
@@ -4553,6 +4879,7 @@ async def _generate_tabular_structured_output_entries(
         )
 
     merged_entries = []
+    output_schema = None
     for batch_index, batch_rows in enumerate(row_batches):
         batch_number = batch_index + 1
         log_event(
@@ -4587,6 +4914,7 @@ async def _generate_tabular_structured_output_entries(
             batch_index,
             total_batches,
             source_candidate,
+            output_schema=output_schema,
         )
 
         parsed_entries = None
@@ -4625,6 +4953,18 @@ async def _generate_tabular_structured_output_entries(
             if result and result[0].content:
                 parsed_entries = _parse_tabular_generated_json_entries(raw_response_content)
             parsed_entry_count = len(parsed_entries) if parsed_entries is not None else 0
+            validation_error = None
+            if parsed_entries is not None and parsed_entry_count == len(batch_rows):
+                try:
+                    parsed_entries, candidate_output_schema = _normalize_generated_batch_entries(
+                        batch_rows,
+                        parsed_entries,
+                        expected_output_schema=output_schema,
+                    )
+                    output_schema = candidate_output_schema
+                except ValueError as exc:
+                    validation_error = str(exc)
+                    parsed_entries = None
             if parsed_entries is None or parsed_entry_count != len(batch_rows):
                 log_event(
                     '[Tabular Generated Output] Structured export batch attempt mismatch',
@@ -4636,6 +4976,7 @@ async def _generate_tabular_structured_output_entries(
                         'attempt_number': attempt_number,
                         'expected_row_count': len(batch_rows),
                         'parsed_row_count': parsed_entry_count,
+                        'validation_error': validation_error,
                         'response_char_count': len(raw_response_content),
                         'response_preview': _truncate_tabular_generated_output_response_preview(raw_response_content),
                     },
@@ -4718,6 +5059,172 @@ async def maybe_create_tabular_generated_output(
             debug_only=True,
         )
         return None
+
+    source_candidate['source_authorization'] = _build_tabular_generated_output_source_authorization(
+        source_candidate
+    )
+    source_descriptor = None
+    source_descriptor_error = None
+    if (
+        user_id
+        and conversation_id
+        and question_requests_tabular_structured_object_output(user_question)
+    ):
+        try:
+            source_descriptor = _build_tabular_generated_output_query_descriptor(
+                source_candidate,
+                user_id,
+                conversation_id,
+                settings,
+            )
+        except Exception as exc:
+            source_descriptor_error = str(exc)
+            log_event(
+                '[Tabular Generated Output] Could not build durable source query descriptor',
+                {
+                    'conversation_id': conversation_id,
+                    'source_file_name': source_candidate.get('filename'),
+                    'function_name': source_candidate.get('function_name'),
+                    'error': str(exc),
+                },
+                level=logging.WARNING,
+            )
+    if source_descriptor:
+        source_candidate['source_authorization'] = {
+            field_name: source_descriptor.get(field_name)
+            for field_name in ('source', 'scope_id', 'container', 'blob_path')
+        }
+
+    expected_row_count = _safe_int(source_candidate.get('total_matches'))
+    source_batch_rows = _safe_int((source_descriptor or {}).get('batch_max_rows')) or 1
+    estimated_batch_count = max(
+        1,
+        (expected_row_count + source_batch_rows - 1) // source_batch_rows,
+    )
+    materialized_rows = None
+    materialized_batches = None
+    if (
+        source_candidate.get('full_result_available')
+        and _safe_int(source_candidate.get('page_count')) > 1
+    ):
+        materialized_rows = [
+            _build_tabular_generated_output_input_row(
+                row,
+                source_file_name=source_candidate.get('filename'),
+            )
+            for row in (source_candidate.get('rows') or [])
+        ]
+        materialized_batches = _build_tabular_generated_output_row_batches(
+            materialized_rows,
+            settings=settings,
+        )
+    threshold_batch_count = len(materialized_batches) if materialized_batches else estimated_batch_count
+    exceeds_background_threshold = should_queue_tabular_generated_output_background(
+        expected_row_count,
+        threshold_batch_count,
+        settings,
+    )
+    should_queue_materialized_pages = bool(
+        user_id
+        and conversation_id
+        and question_requests_tabular_structured_object_output(user_question)
+        and source_candidate.get('full_result_available')
+        and _safe_int(source_candidate.get('page_count')) > 1
+        and not exceeds_background_threshold
+    )
+    if should_queue_materialized_pages:
+        background_run = queue_tabular_generated_output_run(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            user_question=user_question,
+            source_candidate=source_candidate,
+            output_format=output_format,
+            row_batches=materialized_batches,
+            gpt_model=gpt_model,
+            settings=settings,
+            model_context=model_context,
+        )
+        background_metadata = build_background_tabular_generated_output_metadata(background_run)
+        await emit_tabular_post_processing_thought(
+            thought_callback,
+            f"Queued exhaustive {str(output_format or 'json').upper()} export from validated tabular pages",
+            detail=(
+                f"run_id={background_metadata.get('export_run_id')}; "
+                f"rows={expected_row_count}; batches={len(materialized_batches)}; checkpointed=true"
+            ),
+            activity=build_tabular_post_processing_activity_payload(
+                'tabular.generated_output',
+                f"Exhaustive {str(output_format or 'json').upper()} export queued",
+                'running',
+                phase='queued',
+                output_format=output_format,
+                file_name=source_candidate.get('filename'),
+                batch_index=0,
+                batch_count=len(materialized_batches),
+            ),
+        )
+        return background_metadata
+
+    should_queue_source_backed_run = bool(
+        source_descriptor
+        and expected_row_count > 0
+        and (
+            not source_candidate.get('full_result_available')
+            or exceeds_background_threshold
+        )
+    )
+    if should_queue_source_backed_run:
+        try:
+            background_run = queue_tabular_generated_output_run(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                user_question=user_question,
+                source_candidate=source_candidate,
+                output_format=output_format,
+                row_batches=None,
+                gpt_model=gpt_model,
+                settings=settings,
+                model_context=model_context,
+                source_descriptor=source_descriptor,
+            )
+        except Exception as exc:
+            log_event(
+                '[Tabular Generated Output] Durable source-backed export queueing failed',
+                {
+                    'conversation_id': conversation_id,
+                    'source_file_name': source_candidate.get('filename'),
+                    'row_count': expected_row_count,
+                    'error': str(exc),
+                },
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return _build_failed_tabular_generated_output_metadata(
+                source_candidate,
+                output_format,
+                'The exhaustive export could not be queued. No partial CSV was created.',
+            )
+        background_metadata = build_background_tabular_generated_output_metadata(background_run)
+        await emit_tabular_post_processing_thought(
+            thought_callback,
+            f"Queued exhaustive {str(output_format or 'json').upper()} export from the authorized source query",
+            detail=(
+                f"run_id={background_metadata.get('export_run_id')}; "
+                f"rows={expected_row_count}; batches~={estimated_batch_count}; checkpointed=true"
+            ),
+            activity=build_tabular_post_processing_activity_payload(
+                'tabular.generated_output',
+                f"Exhaustive {str(output_format or 'json').upper()} export queued",
+                'running',
+                phase='queued',
+                output_format=output_format,
+                file_name=source_candidate.get('filename'),
+                batch_index=0,
+                batch_count=estimated_batch_count,
+            ),
+        )
+        return background_metadata
+
     if not source_candidate.get('full_result_available'):
         log_event(
             '[Tabular Generated Output] Selected source candidate is incomplete; skipping export',
@@ -4725,10 +5232,22 @@ async def maybe_create_tabular_generated_output(
                 'conversation_id': conversation_id,
                 'output_format': output_format,
                 'selected_candidate': source_candidate.get('diagnostics'),
+                'validation_error': source_candidate.get('validation_error'),
+                'source_replay_available': bool(source_descriptor),
             },
             debug_only=True,
         )
-        return None
+        failure_detail = source_descriptor_error or source_candidate.get('validation_error')
+        return _build_failed_tabular_generated_output_metadata(
+            source_candidate,
+            output_format,
+            (
+                f'The exhaustive export source could not be validated: {failure_detail}. '
+                'No partial CSV was created.'
+                if failure_detail
+                else 'The exhaustive export source was incomplete. No partial CSV was created.'
+            ),
+        )
     log_event(
         '[Tabular Generated Output] Selected source candidate',
         {
@@ -4755,7 +5274,11 @@ async def maybe_create_tabular_generated_output(
             model_context=model_context,
         )
         if output_entries is None:
-            return None
+            return _build_failed_tabular_generated_output_metadata(
+                source_candidate,
+                output_format,
+                'The exhaustive export failed output validation. No partial CSV was created.',
+            )
         if isinstance(output_entries, dict) and output_entries.get('background_export'):
             return output_entries
     else:
@@ -4835,6 +5358,7 @@ async def maybe_create_tabular_generated_output(
     )
     return {
         'capability': 'tabular',
+        'suppress_assistant_table_export': True,
         'artifact_message_id': upload_result.get('message', {}).get('id'),
         'conversation_id': conversation_id,
         'storage_scope': 'chat',
@@ -19149,9 +19673,28 @@ def register_route_backend_chats(bp):
         resume_result = resume_tabular_generated_output_run(user_id, run_id)
         if not resume_result:
             return jsonify({'error': 'Tabular generated-output run not found'}), 404
+        if resume_result.get('authorization_failed'):
+            return jsonify(resume_result), 403
         if not resume_result.get('success'):
             return jsonify(resume_result), 409
         return jsonify(resume_result)
+
+    @bp.route('/api/tabular/generated-output/runs/<run_id>/cancel', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def tabular_generated_output_run_cancel_api(run_id):
+        """Cancel a generated-output run owned by the current user."""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        cancel_result = cancel_tabular_generated_output_run(user_id, run_id)
+        if not cancel_result:
+            return jsonify({'error': 'Tabular generated-output run not found'}), 404
+        if not cancel_result.get('success'):
+            return jsonify(cancel_result), 409
+        return jsonify(cancel_result)
 
     @bp.route('/api/chat/stream/reattach/<conversation_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
