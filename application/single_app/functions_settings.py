@@ -220,6 +220,19 @@ def is_mixed_source_chat_search_enabled(settings):
     return bool((settings or {}).get('enable_mixed_source_chat_search', False))
 
 
+def is_mixed_source_analyze_enabled(settings):
+    """Return whether Phase 3 explicit mixed-source Analyze behavior is enabled."""
+    return bool((settings or {}).get('enable_mixed_source_analyze', False))
+
+
+def is_mixed_source_analyze_all_enabled(settings):
+    """Return whether the separately staged exhaustive Analyze All behavior is enabled."""
+    return bool(
+        (settings or {}).get('enable_mixed_source_analyze', False)
+        and (settings or {}).get('enable_mixed_source_analyze_all', False)
+    )
+
+
 def is_mixed_source_relevance_candidates_enabled(settings):
     """Return whether Phase 2 relevance-mode table candidates are enabled."""
     return bool(
@@ -780,6 +793,8 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_mixed_source_manifest': False,
         'enable_mixed_source_chat_search': False,
         'enable_mixed_source_relevance_candidates': False,
+        'enable_mixed_source_analyze': False,
+        'enable_mixed_source_analyze_all': False,
         'max_rounds_per_agent': 1,
         'workflow_max_auto_invoke_attempts': 60,
         'enable_semantic_kernel': False,
