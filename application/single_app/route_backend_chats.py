@@ -37,7 +37,16 @@ from functions_model_endpoint_runtime import (
     build_model_endpoint_sync_chat_client,
     build_semantic_kernel_chat_service_for_model,
 )
-from functions_mixed_source_orchestration import resolve_authorized_source_manifest
+from functions_mixed_source_orchestration import (
+    build_mixed_source_evidence_handoff,
+    build_narrative_evidence_envelopes,
+    build_tabular_file_contexts_from_manifest,
+    execute_tabular_evidence_sources,
+    normalize_document_context_request,
+    partition_source_manifest,
+    resolve_authorized_source_manifest,
+    should_run_tabular_evidence,
+)
 import builtins
 import asyncio, types
 import ast
@@ -60,6 +69,7 @@ from config import *
 from flask import Response, copy_current_request_context, g, has_request_context, stream_with_context
 from functions_authentication import *
 from functions_search import *
+from functions_search_service import search_relevant_tabular_candidates
 from functions_service_health import (
     SEMANTIC_SEARCH_QUOTA_WARNING_TYPE,
     SemanticSearchQuotaExceededError,
@@ -181,6 +191,7 @@ ASSIGNED_KNOWLEDGE_DOCUMENT_ACTION_MAP = {
 }
 ASSIGNED_KNOWLEDGE_CONTEXT_TOP_N = 12
 ASSIGNED_KNOWLEDGE_CONTEXT_EXCERPT_MAX_CHARS = 1800
+MIXED_SOURCE_CHAT_RELEVANCE_SOURCE_LIMIT = 48
 FOUNDRY_SELECTED_AGENT_TYPES = {'aifoundry', 'new_foundry', 'foundry_workflow'}
 FOUNDRY_AGENT_PLUGIN_NAMES = {
     'aifoundry': 'azure_ai_foundry',
@@ -326,6 +337,180 @@ def _maybe_resolve_chat_source_manifest(
             level=logging.WARNING,
         )
         return []
+
+
+def _normalize_chat_document_context_contract(
+    settings,
+    data,
+    selected_document_ids,
+    hybrid_search_enabled,
+):
+    """Normalize Phase 2 context intent while preserving flag-off compatibility."""
+    normalized_document_ids = _normalize_conversation_task_document_ids(
+        selected_document_ids
+    )
+    if not is_mixed_source_chat_search_enabled(settings):
+        return {
+            'selection_mode': 'selected' if normalized_document_ids else 'relevance',
+            'selected_document_ids': normalized_document_ids,
+            'document_context_requested': bool(hybrid_search_enabled),
+            'hybrid_search': bool(hybrid_search_enabled),
+            'explicit_selection': False,
+        }
+
+    return normalize_document_context_request(
+        selection_mode=data.get('selection_mode'),
+        selected_document_ids=normalized_document_ids,
+        document_context_requested=data.get('document_context_requested'),
+        hybrid_search=hybrid_search_enabled,
+    )
+
+
+def _resolve_chat_mixed_source_manifest(
+    settings,
+    user_id,
+    conversation_id,
+    document_ids,
+    selection_mode,
+    active_group_ids=None,
+    active_public_workspace_ids=None,
+):
+    """Resolve a fresh Phase 1 manifest for Phase 2 Chat evidence preparation."""
+    if not is_mixed_source_chat_search_enabled(settings):
+        return []
+    normalized_document_ids = _normalize_conversation_task_document_ids(document_ids)
+    if not normalized_document_ids:
+        return []
+    return resolve_authorized_source_manifest(
+        normalized_document_ids,
+        user_id=user_id,
+        selection_mode=selection_mode,
+        conversation_id=conversation_id,
+        active_group_ids=active_group_ids,
+        active_public_workspace_ids=active_public_workspace_ids,
+    )
+
+
+def _get_manifest_partition_document_ids(manifest_partitions, partition_name):
+    partitions = manifest_partitions if isinstance(manifest_partitions, dict) else {}
+    return [
+        str(source.get('document_id') or '').strip()
+        for source in partitions.get(partition_name) or []
+        if str(source.get('document_id') or '').strip()
+    ]
+
+
+def _resolve_chat_mixed_source_partition(
+    settings,
+    user_id,
+    conversation_id,
+    document_ids,
+    selection_mode,
+    active_group_ids=None,
+    active_public_workspace_ids=None,
+):
+    """Resolve and partition one current authorization-safe source manifest."""
+    manifest = _resolve_chat_mixed_source_manifest(
+        settings,
+        user_id,
+        conversation_id,
+        document_ids,
+        selection_mode,
+        active_group_ids=active_group_ids,
+        active_public_workspace_ids=active_public_workspace_ids,
+    )
+    partitions = partition_source_manifest(manifest)
+    return {
+        'manifest': manifest,
+        'partitions': partitions,
+        'narrative_document_ids': _get_manifest_partition_document_ids(
+            partitions,
+            'narrative_sources',
+        ),
+        'tabular_sources': list(partitions.get('tabular_sources') or []),
+    }
+
+
+def _resolve_chat_mixed_source_relevance_context(
+    *,
+    settings,
+    user_id,
+    conversation_id,
+    query,
+    search_results,
+    document_scope,
+    candidate_document_ids=None,
+    tags_filter=None,
+    active_group_ids=None,
+    active_public_workspace_ids=None,
+):
+    """Add bounded schema candidates and reauthorize all relevance-derived sources."""
+    if not is_mixed_source_chat_search_enabled(settings):
+        return {
+            'manifest': [],
+            'partitions': {},
+            'narrative_document_ids': [],
+            'tabular_sources': [],
+            'search_results': list(search_results or []),
+            'tabular_candidate_count': 0,
+        }
+
+    relevance_candidates_enabled = is_mixed_source_relevance_candidates_enabled(settings)
+    candidate_result = {
+        'document_ids': [],
+        'candidate_count': 0,
+    }
+    if relevance_candidates_enabled:
+        candidate_result = search_relevant_tabular_candidates(
+            query=query,
+            user_id=user_id,
+            doc_scope=document_scope,
+            document_ids=candidate_document_ids,
+            tags_filter=tags_filter,
+            active_group_ids=active_group_ids,
+            active_public_workspace_id=active_public_workspace_ids,
+        )
+    relevance_document_ids = []
+    seen_document_ids = set()
+    for result in list(search_results or []):
+        document_id = str((result or {}).get('document_id') or '').strip()
+        if document_id and document_id not in seen_document_ids:
+            seen_document_ids.add(document_id)
+            relevance_document_ids.append(document_id)
+        if len(relevance_document_ids) >= (
+            MIXED_SOURCE_CHAT_RELEVANCE_SOURCE_LIMIT - 6
+        ):
+            break
+    for document_id in candidate_result.get('document_ids') or []:
+        normalized_document_id = str(document_id or '').strip()
+        if normalized_document_id and normalized_document_id not in seen_document_ids:
+            seen_document_ids.add(normalized_document_id)
+            relevance_document_ids.append(normalized_document_id)
+        if len(relevance_document_ids) >= MIXED_SOURCE_CHAT_RELEVANCE_SOURCE_LIMIT:
+            break
+
+    resolved_context = _resolve_chat_mixed_source_partition(
+        settings,
+        user_id,
+        conversation_id,
+        relevance_document_ids,
+        'relevance',
+        active_group_ids=active_group_ids,
+        active_public_workspace_ids=active_public_workspace_ids,
+    )
+    narrative_document_id_set = set(
+        resolved_context.get('narrative_document_ids') or []
+    )
+    resolved_context['search_results'] = [
+        result
+        for result in list(search_results or [])
+        if str((result or {}).get('document_id') or '').strip()
+        in narrative_document_id_set
+    ]
+    resolved_context['tabular_candidate_count'] = int(
+        candidate_result.get('candidate_count') or 0
+    )
+    return resolved_context
 
 
 def _source_review_metadata_used(source_review_result):
@@ -9508,6 +9693,17 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
             file_source_hint = file_context.get('source_hint', source_hint)
             file_group_id = file_context.get('group_id')
             file_public_workspace_id = file_context.get('public_workspace_id')
+            storage_locator = file_context.get('storage_locator')
+            if isinstance(storage_locator, dict):
+                locator_container = str(storage_locator.get('container') or '').strip()
+                locator_blob_path = str(storage_locator.get('blob_path') or '').strip()
+                if locator_container and locator_blob_path:
+                    tabular_plugin.remember_resolved_blob_location(
+                        file_source_hint,
+                        fname,
+                        locator_container,
+                        locator_blob_path,
+                    )
             schema_source_context = {'source': file_source_hint}
             if file_group_id:
                 schema_source_context['group_id'] = file_group_id
@@ -10460,12 +10656,8 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
         log_event(f"[Tabular SK Analysis] Error: {e}", level=logging.WARNING, exceptionTraceback=True)
         return None
 
-def collect_tabular_sk_citations(user_id, conversation_id):
-    """Collect plugin invocations from the tabular SK analysis and convert to citation format."""
-    from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
-
-    plugin_logger = get_plugin_logger()
-    plugin_invocations = plugin_logger.get_invocations_for_conversation(user_id, conversation_id)
+def _build_tabular_sk_citations_from_invocations(plugin_invocations):
+    """Convert selected tabular invocations to the existing tool-citation shape."""
     plugin_invocations = filter_tabular_citation_invocations(plugin_invocations)
 
     if not plugin_invocations:
@@ -10510,8 +10702,252 @@ def collect_tabular_sk_citations(user_id, conversation_id):
         }
         citations.append(citation)
 
-    log_event(f"[Tabular SK Citations] Collected {len(citations)} tool execution citations", level=logging.INFO)
     return citations
+
+
+def collect_tabular_sk_citations(user_id, conversation_id):
+    """Collect plugin invocations from the tabular SK analysis and convert to citation format."""
+    plugin_logger = get_plugin_logger()
+    plugin_invocations = plugin_logger.get_invocations_for_conversation(user_id, conversation_id)
+    citations = _build_tabular_sk_citations_from_invocations(plugin_invocations)
+    log_event(
+        f"[Tabular SK Citations] Collected {len(citations)} tool execution citations",
+        level=logging.INFO,
+    )
+    return citations
+
+
+def _execute_mixed_source_tabular_evidence(
+    *,
+    tabular_sources,
+    selection_mode,
+    has_narrative_sources,
+    user_question,
+    user_id,
+    conversation_id,
+    gpt_model,
+    settings,
+    thought_tracker=None,
+    live_thought_callback=None,
+    model_context=None,
+):
+    """Run the existing tabular engine once per manifest source with terminal coverage."""
+    source_contexts = build_tabular_file_contexts_from_manifest(tabular_sources)
+    if has_request_context():
+        authorized_context = dict(getattr(g, 'authorized_chat_context', {}) or {})
+        authorized_blob_locations = []
+        for file_context in source_contexts:
+            storage_locator = file_context.get('storage_locator')
+            if not isinstance(storage_locator, dict):
+                continue
+            locator_container = str(storage_locator.get('container') or '').strip()
+            locator_blob_path = str(storage_locator.get('blob_path') or '').strip()
+            if locator_container and locator_blob_path:
+                authorized_blob_locations.append([locator_container, locator_blob_path])
+        authorized_context['authorized_blob_locations'] = authorized_blob_locations
+        g.authorized_chat_context = authorized_context
+    context_by_document_id = {
+        context['document_id']: context
+        for context in source_contexts
+    }
+    system_messages = []
+    agent_citations = []
+    generated_outputs = []
+    all_invocations = []
+    if not is_tabular_processing_enabled(settings):
+        def fail_unavailable_tabular_source(source):
+            del source
+            raise RuntimeError('Tabular processing is unavailable')
+
+        return {
+            'evidence_envelopes': execute_tabular_evidence_sources(
+                tabular_sources,
+                fail_unavailable_tabular_source,
+                selection_mode,
+            ),
+            'system_messages': [],
+            'agent_citations': [],
+            'generated_outputs': [],
+            'invocations': [],
+            'executed': False,
+        }
+
+    execute_tabular = should_run_tabular_evidence(
+        user_question,
+        has_narrative_sources=has_narrative_sources,
+    )
+    plugin_logger = get_plugin_logger()
+
+    def publish_post_processing_thought(thought_payload):
+        payload = thought_payload if isinstance(thought_payload, dict) else {}
+        if thought_tracker is not None:
+            thought_tracker.add_thought(
+                payload.get('step_type', 'tabular_analysis'),
+                payload.get('content', ''),
+                detail=payload.get('detail'),
+                activity=payload.get('activity'),
+            )
+        if callable(live_thought_callback):
+            live_payload = dict(payload)
+            if thought_tracker is not None:
+                live_payload['message_id'] = getattr(thought_tracker, 'message_id', None)
+                live_payload['step_index'] = thought_tracker.current_index - 1
+            live_thought_callback(live_payload)
+
+    def execute_source(source):
+        document_id = str(source.get('document_id') or '').strip()
+        file_context = context_by_document_id.get(document_id)
+        if not file_context:
+            raise ValueError('Authorized tabular source context is unavailable')
+
+        baseline_invocation_count = len(
+            plugin_logger.get_invocations_for_conversation(
+                user_id,
+                conversation_id,
+                limit=1000,
+            )
+        )
+        execution_mode = get_tabular_execution_mode(user_question)
+        tabular_analysis, streamed_tool_thoughts = asyncio.run(
+            run_tabular_analysis_with_thought_tracking(
+                user_question=user_question,
+                tabular_filenames={file_context['file_name']},
+                tabular_file_contexts=[file_context],
+                user_id=user_id,
+                conversation_id=conversation_id,
+                gpt_model=gpt_model,
+                settings=settings,
+                source_hint=file_context.get('source_hint', 'workspace'),
+                group_id=file_context.get('group_id'),
+                public_workspace_id=file_context.get('public_workspace_id'),
+                execution_mode=execution_mode,
+                thought_tracker=thought_tracker,
+                live_thought_callback=live_thought_callback,
+                model_context=model_context,
+            )
+        )
+        if not str(tabular_analysis or '').strip():
+            raise ValueError('Tabular execution returned no computed results')
+
+        invocations_after = plugin_logger.get_invocations_for_conversation(
+            user_id,
+            conversation_id,
+            limit=1000,
+        )
+        source_invocations = get_new_plugin_invocations(
+            invocations_after,
+            baseline_invocation_count,
+        )
+        if execution_mode == 'schema_summary':
+            successful_source_invocations = [
+                invocation
+                for invocation in source_invocations
+                if getattr(invocation, 'function_name', '') == 'describe_tabular_file'
+                and not get_tabular_invocation_error_message(invocation)
+            ]
+        else:
+            successful_source_invocations, _ = split_tabular_analysis_invocations(
+                source_invocations
+            )
+        if not successful_source_invocations:
+            raise ValueError('Tabular execution returned no successful native tool calls')
+        all_invocations.extend(source_invocations)
+        related_document_summary = ''
+        related_document_stats = augment_tabular_invocations_with_related_document_evidence(
+            source_invocations,
+            user_question,
+            user_id,
+            conversation_id=conversation_id,
+        )
+        if related_document_stats.get('augmented_row_count'):
+            related_document_summary = build_tabular_related_document_evidence_summary(
+                source_invocations,
+            )
+
+        if thought_tracker is not None and not streamed_tool_thoughts:
+            for thought_content, thought_detail in get_tabular_tool_thought_payloads(
+                source_invocations
+            ):
+                thought_tracker.add_thought(
+                    'tabular_analysis',
+                    thought_content,
+                    thought_detail,
+                )
+        if thought_tracker is not None:
+            for thought_content, thought_detail in get_tabular_status_thought_payloads(
+                source_invocations,
+                analysis_succeeded=True,
+            ):
+                thought_tracker.add_thought(
+                    'tabular_analysis',
+                    thought_content,
+                    thought_detail,
+                )
+
+        generated_output = asyncio.run(maybe_create_tabular_generated_output(
+            user_question=user_question,
+            invocations=source_invocations,
+            gpt_model=gpt_model,
+            settings=settings,
+            conversation_id=conversation_id,
+            thought_callback=publish_post_processing_thought,
+            user_id=user_id,
+            model_context=model_context,
+        ))
+        if generated_output:
+            generated_outputs.append(generated_output)
+
+        source_citations = _build_tabular_sk_citations_from_invocations(
+            source_invocations
+        )
+        agent_citations.extend(source_citations)
+        chart_citations = build_tabular_inline_chart_citations(
+            user_question,
+            source_invocations,
+        )
+        agent_citations.extend(chart_citations)
+        system_messages.append({
+            'role': 'system',
+            'content': build_tabular_computed_results_system_message(
+                'an authorized selected tabular source',
+                str(tabular_analysis).strip(),
+                related_document_evidence_summary=related_document_summary,
+            ),
+        })
+        if generated_output:
+            system_messages.append({
+                'role': 'system',
+                'content': _build_tabular_generated_output_system_message(generated_output),
+            })
+
+        return {
+            'summary': str(tabular_analysis).strip(),
+            'evidence': [
+                get_tabular_invocation_compact_payload(invocation, max_rows=5)
+                for invocation in source_invocations
+            ],
+            'citations': source_citations,
+            'generated_artifacts': [generated_output] if generated_output else [],
+            'coverage': {
+                'tool_call_count': len(source_invocations),
+                'execution_mode': execution_mode,
+            },
+        }
+
+    evidence_envelopes = execute_tabular_evidence_sources(
+        tabular_sources,
+        execute_source,
+        selection_mode,
+        execute=execute_tabular,
+    )
+    return {
+        'evidence_envelopes': evidence_envelopes,
+        'system_messages': system_messages,
+        'agent_citations': agent_citations,
+        'generated_outputs': generated_outputs,
+        'invocations': all_invocations,
+        'executed': execute_tabular,
+    }
 
 
 def is_tabular_filename(filename):
@@ -13206,6 +13642,38 @@ def register_route_backend_chats(bp):
                 deep_research_enabled = deep_research_enabled.lower() == 'true'
             if isinstance(image_gen_enabled, str):
                 image_gen_enabled = image_gen_enabled.lower() == 'true'
+            try:
+                document_context_contract = _normalize_chat_document_context_contract(
+                    settings,
+                    data,
+                    selected_document_ids,
+                    hybrid_search_enabled,
+                )
+            except ValueError as contract_error:
+                return jsonify({'error': str(contract_error)}), 400
+            selected_document_ids = list(
+                document_context_contract.get('selected_document_ids') or []
+            )
+            requested_selected_document_ids = list(selected_document_ids)
+            selected_document_id = (
+                selected_document_ids[0]
+                if len(selected_document_ids) == 1
+                else None
+            )
+            selection_mode = document_context_contract.get('selection_mode')
+            document_context_requested = bool(
+                document_context_contract.get('document_context_requested')
+            )
+            request_has_explicit_document_selection = bool(
+                document_context_contract.get('explicit_selection')
+            )
+            request_document_context_enabled = bool(
+                hybrid_search_enabled
+                or (
+                    is_mixed_source_chat_search_enabled(settings)
+                    and document_context_requested
+                )
+            )
             user_workspace_context_requested = data.get('user_workspace_context_enabled')
             if isinstance(user_workspace_context_requested, str):
                 user_workspace_context_requested = user_workspace_context_requested.lower() == 'true'
@@ -13273,7 +13741,7 @@ def register_route_backend_chats(bp):
             assigned_knowledge_deep_research_urls = []
             if assigned_knowledge_filters:
                 assigned_knowledge_user_context_active = (
-                    user_workspace_context_requested
+                    (user_workspace_context_requested or document_context_requested)
                     and _assigned_knowledge_allows_user_workspace_context(assigned_knowledge_filters)
                     and _assigned_knowledge_allows_document_action(
                         assigned_knowledge_filters,
@@ -13332,6 +13800,15 @@ def register_route_backend_chats(bp):
                         deep_research_enabled = True
                 g.assigned_knowledge_context = assigned_knowledge_filters
                 g.assigned_knowledge_user_context_active = assigned_knowledge_user_context_active
+
+            mixed_source_explicit_selection = bool(
+                is_mixed_source_chat_search_enabled(settings)
+                and request_has_explicit_document_selection
+                and (
+                    not assigned_knowledge_filters
+                    or assigned_knowledge_user_context_active
+                )
+            )
 
             explicit_external_retrieval_requested = _is_explicit_external_retrieval_requested(
                 web_search_enabled=web_search_enabled,
@@ -13503,11 +13980,14 @@ def register_route_backend_chats(bp):
             _set_authorized_chat_request_context(user_id, conversation_id, scope_context)
 
             auto_linked_chat_upload_document_ids = []
-            auto_merge_chat_upload_workspace_context = _should_auto_merge_chat_upload_workspace_context(
-                explicit_external_retrieval_requested,
-                hybrid_search_enabled,
-                assigned_knowledge_filters=assigned_knowledge_filters,
-                assigned_knowledge_user_context_active=assigned_knowledge_user_context_active,
+            auto_merge_chat_upload_workspace_context = (
+                not mixed_source_explicit_selection
+                and _should_auto_merge_chat_upload_workspace_context(
+                    explicit_external_retrieval_requested,
+                    hybrid_search_enabled,
+                    assigned_knowledge_filters=assigned_knowledge_filters,
+                    assigned_knowledge_user_context_active=assigned_knowledge_user_context_active,
+                )
             )
             if auto_merge_chat_upload_workspace_context:
                 chat_upload_context = _resolve_chat_upload_workspace_context(
@@ -13566,12 +14046,76 @@ def register_route_backend_chats(bp):
                 selected_document_id = effective_selected_document_id
                 document_scope = effective_document_scope
 
-            _maybe_resolve_chat_source_manifest(
-                settings,
-                user_id,
-                conversation_id,
-                effective_selected_document_ids,
-                scope_context,
+            mixed_source_manifest = []
+            mixed_source_partitions = {}
+            mixed_source_narrative_document_ids = []
+            mixed_source_tabular_sources = []
+            mixed_source_evidence_envelopes = []
+            if mixed_source_explicit_selection:
+                try:
+                    mixed_source_manifest = _resolve_chat_mixed_source_manifest(
+                        settings,
+                        user_id,
+                        conversation_id,
+                        effective_selected_document_ids,
+                        'selected',
+                        active_group_ids=effective_active_group_ids,
+                        active_public_workspace_ids=effective_active_public_workspace_ids,
+                    )
+                except ValueError as manifest_error:
+                    return jsonify({'error': str(manifest_error)}), 400
+                mixed_source_partitions = partition_source_manifest(
+                    mixed_source_manifest
+                )
+                mixed_source_narrative_document_ids = _get_manifest_partition_document_ids(
+                    mixed_source_partitions,
+                    'narrative_sources',
+                )
+                mixed_source_tabular_sources = list(
+                    mixed_source_partitions.get('tabular_sources') or []
+                )
+                authorized_selected_document_ids = [
+                    str(source.get('document_id') or '').strip()
+                    for source in (
+                        list(mixed_source_partitions.get('narrative_sources') or [])
+                        + mixed_source_tabular_sources
+                    )
+                    if str(source.get('document_id') or '').strip()
+                ]
+                effective_selected_document_ids = authorized_selected_document_ids
+                effective_selected_document_id = (
+                    authorized_selected_document_ids[0]
+                    if len(authorized_selected_document_ids) == 1
+                    else None
+                )
+                log_event(
+                    '[MixedSourceChatSearch] Activated explicit selected-source context.',
+                    extra={
+                        'selection_mode': 'selected',
+                        'requested_source_count': len(mixed_source_manifest),
+                        'authorized_source_count': len(authorized_selected_document_ids),
+                        'narrative_source_count': len(mixed_source_narrative_document_ids),
+                        'tabular_source_count': len(mixed_source_tabular_sources),
+                        'omitted_source_count': len(
+                            mixed_source_partitions.get('unresolved_sources') or []
+                        ),
+                    },
+                    level=logging.INFO,
+                )
+            else:
+                _maybe_resolve_chat_source_manifest(
+                    settings,
+                    user_id,
+                    conversation_id,
+                    effective_selected_document_ids,
+                    scope_context,
+                )
+            request_document_context_enabled = bool(
+                hybrid_search_enabled
+                or (
+                    is_mixed_source_chat_search_enabled(settings)
+                    and document_context_requested
+                )
             )
 
             # Clear plugin invocations at start of message processing to ensure
@@ -13671,13 +14215,13 @@ def register_route_backend_chats(bp):
                 # Button states and selections
                 user_metadata['button_states'] = {
                     'image_generation': image_gen_enabled,
-                    'document_search': hybrid_search_enabled,
+                    'document_search': request_document_context_enabled,
                     'web_search': bool(web_search_enabled),
                     'url_access': bool(url_access_enabled),
                     'deep_research': bool(deep_research_enabled)
                 }
                 user_metadata['capability_usage'] = _build_capability_usage_metadata(
-                    workspace_search_enabled=hybrid_search_enabled,
+                    workspace_search_enabled=request_document_context_enabled,
                     document_action_type=DOCUMENT_ACTION_TYPE_NONE,
                     document_scope=effective_document_scope,
                     selected_document_ids=effective_selected_document_ids,
@@ -13690,12 +14234,18 @@ def register_route_backend_chats(bp):
                 )
 
                 # Document search scope and selections
-                if hybrid_search_enabled:
+                if request_document_context_enabled:
                     user_metadata['workspace_search'] = {
                         'search_enabled': True,
+                        'selection_mode': selection_mode,
+                        'document_context_requested': document_context_requested,
+                        'hybrid_search_preference': bool(hybrid_search_enabled),
                         'document_scope': effective_document_scope,
                         'selected_document_id': effective_selected_document_id,
                         'selected_document_ids': effective_selected_document_ids,
+                        'requested_document_ids': requested_selected_document_ids,
+                        'active_group_ids': effective_active_group_ids,
+                        'active_public_workspace_ids': effective_active_public_workspace_ids,
                         'tags': tags_filter,
                         'classification': classifications_to_send
                     }
@@ -13884,7 +14434,7 @@ def register_route_backend_chats(bp):
                         conversation_id=conversation_id,
                         message_type='user_message',
                         message_length=len(user_message) if user_message else 0,
-                        has_document_search=hybrid_search_enabled,
+                        has_document_search=request_document_context_enabled,
                         has_image_generation=image_gen_enabled,
                         document_scope=document_scope,
                         chat_context=actual_chat_type,
@@ -14029,7 +14579,11 @@ def register_route_backend_chats(bp):
                 except Exception as ex:
                     debug_print(f"[Content Safety] Unexpected error: {ex}")
 
-            if not original_hybrid_search_enabled and not explicit_external_retrieval_requested:
+            if (
+                not original_hybrid_search_enabled
+                and not explicit_external_retrieval_requested
+                and not mixed_source_explicit_selection
+            ):
                 prior_grounded_document_refs = _normalize_prior_grounded_document_refs(conversation_item)
                 if prior_grounded_document_refs:
                     thought_tracker.add_thought(
@@ -14143,13 +14697,64 @@ def register_route_backend_chats(bp):
                         'history_context',
                         'No prior grounded documents were available; using conversation history only'
                     )
+            if (
+                is_mixed_source_chat_search_enabled(settings)
+                and history_grounded_search_used
+            ):
+                history_context = _resolve_chat_mixed_source_partition(
+                    settings,
+                    user_id,
+                    conversation_id,
+                    effective_selected_document_ids,
+                    'history',
+                    active_group_ids=effective_active_group_ids,
+                    active_public_workspace_ids=effective_active_public_workspace_ids,
+                )
+                mixed_source_manifest = history_context.get('manifest') or []
+                mixed_source_partitions = history_context.get('partitions') or {}
+                mixed_source_narrative_document_ids = list(
+                    history_context.get('narrative_document_ids') or []
+                )
+                mixed_source_tabular_sources = list(
+                    history_context.get('tabular_sources') or []
+                )
+                effective_selected_document_ids = (
+                    mixed_source_narrative_document_ids
+                    + _get_manifest_partition_document_ids(
+                        mixed_source_partitions,
+                        'tabular_sources',
+                    )
+                )
+                effective_selected_document_id = (
+                    effective_selected_document_ids[0]
+                    if len(effective_selected_document_ids) == 1
+                    else None
+                )
         # region 4 - Augmentation
             # ---------------------------------------------------------------------
             # 4) Augmentation (Search, etc.) - Run *before* final history prep
             # ---------------------------------------------------------------------
 
             # Hybrid Search
-            if hybrid_search_enabled or history_grounded_search_used:
+            mixed_source_document_context_active = bool(
+                (hybrid_search_enabled or history_grounded_search_used)
+                if not is_mixed_source_chat_search_enabled(settings)
+                else (
+                    document_context_requested
+                    or hybrid_search_enabled
+                    or history_grounded_search_used
+                )
+            )
+            combined_documents = []
+            mixed_source_narrative_search_active = bool(
+                mixed_source_document_context_active
+                and (
+                    not is_mixed_source_chat_search_enabled(settings)
+                    or not mixed_source_manifest
+                    or mixed_source_narrative_document_ids
+                )
+            )
+            if mixed_source_narrative_search_active:
 
                 # Optional: Summarize recent history *for search* (uses its own limit)
                 if hybrid_search_enabled and enable_summarize_content_history_for_search:
@@ -14264,8 +14869,14 @@ def register_route_backend_chats(bp):
                     ):
                         search_args["active_public_workspace_id"] = effective_active_public_workspace_id
 
-                    if effective_selected_document_ids:
-                        search_args["document_ids"] = effective_selected_document_ids
+                    search_document_ids = (
+                        mixed_source_narrative_document_ids
+                        if is_mixed_source_chat_search_enabled(settings)
+                        and mixed_source_manifest
+                        else effective_selected_document_ids
+                    )
+                    if search_document_ids:
+                        search_args["document_ids"] = search_document_ids
                     elif effective_selected_document_id:
                         search_args["document_id"] = effective_selected_document_id
                     if auto_linked_chat_upload_document_ids:
@@ -14300,6 +14911,40 @@ def register_route_backend_chats(bp):
                     else:
                         # Public scope now automatically searches all visible public workspaces
                         search_results = hybrid_search(**search_args) # Assuming hybrid_search handles None document_id
+
+                    if (
+                        is_mixed_source_chat_search_enabled(settings)
+                        and not mixed_source_explicit_selection
+                        and not history_grounded_search_used
+                    ):
+                        relevance_context = _resolve_chat_mixed_source_relevance_context(
+                            settings=settings,
+                            user_id=user_id,
+                            conversation_id=conversation_id,
+                            query=search_query,
+                            search_results=search_results,
+                            document_scope=effective_document_scope,
+                            candidate_document_ids=(
+                                assigned_knowledge_filters.get('document_ids')
+                                if assigned_knowledge_filters
+                                and assigned_knowledge_filters.get('has_workspace_knowledge')
+                                else None
+                            ),
+                            tags_filter=tags_filter,
+                            active_group_ids=effective_active_group_ids,
+                            active_public_workspace_ids=effective_active_public_workspace_ids,
+                        )
+                        mixed_source_manifest = relevance_context.get('manifest') or []
+                        mixed_source_partitions = relevance_context.get('partitions') or {}
+                        mixed_source_narrative_document_ids = list(
+                            relevance_context.get('narrative_document_ids') or []
+                        )
+                        mixed_source_tabular_sources = list(
+                            relevance_context.get('tabular_sources') or []
+                        )
+                        search_results = list(
+                            relevance_context.get('search_results') or []
+                        )
                 except SemanticSearchQuotaExceededError as e:
                     debug_print(f"Semantic search quota exceeded during hybrid search: {e}")
                     return jsonify({
@@ -14314,7 +14959,6 @@ def register_route_backend_chats(bp):
                         'error': 'There was an issue with the embedding process. Please check with an admin on embedding configuration.'
                     }), 500
 
-                combined_documents = []
                 if search_results:
                     unique_doc_names = set(doc.get('file_name', 'Unknown') for doc in search_results)
                     thought_tracker.add_thought('search', f"Found {len(search_results)} results from {len(unique_doc_names)} documents")
@@ -14375,11 +15019,12 @@ def register_route_backend_chats(bp):
                     # Construct system prompt for search results
                     system_prompt_search = build_search_augmentation_system_prompt(retrieved_content)
                     # Add this to a temporary list, don't save to DB yet
-                    system_messages_for_augmentation.append({
-                        'role': 'system',
-                        'content': system_prompt_search,
-                        'documents': combined_documents # Keep track of docs used
-                    })
+                    if not is_mixed_source_chat_search_enabled(settings):
+                        system_messages_for_augmentation.append({
+                            'role': 'system',
+                            'content': system_prompt_search,
+                            'documents': combined_documents # Keep track of docs used
+                        })
 
                     # Loop through each source document/chunk used for this message
                     for source_doc in combined_documents:
@@ -14595,7 +15240,13 @@ def register_route_backend_chats(bp):
             # Update message-level chat_type based on actual document usage for this message
             # This must happen after document search is completed so search_results is populated
             message_chat_type = None
-            if (hybrid_search_enabled or history_grounded_search_used) and search_results and len(search_results) > 0:
+            mixed_source_has_authorized_evidence_sources = bool(
+                mixed_source_narrative_document_ids
+                or mixed_source_tabular_sources
+            )
+            if mixed_source_document_context_active and (
+                search_results or mixed_source_has_authorized_evidence_sources
+            ):
                 # Documents were actually used for this message
                 if effective_document_scope == 'group':
                     message_chat_type = 'group'
@@ -14653,8 +15304,10 @@ def register_route_backend_chats(bp):
 
             source_review_used = _source_review_metadata_used(source_review_result)
             user_metadata['capability_usage'] = _build_capability_usage_metadata(
-                workspace_search_enabled=hybrid_search_enabled or history_grounded_search_used,
-                workspace_search_used=bool(search_results),
+                workspace_search_enabled=mixed_source_document_context_active,
+                workspace_search_used=bool(
+                    search_results or mixed_source_has_authorized_evidence_sources
+                ),
                 workspace_search_result_count=len(search_results or []),
                 document_action_type=DOCUMENT_ACTION_TYPE_NONE,
                 document_scope=effective_document_scope,
@@ -14863,7 +15516,11 @@ def register_route_backend_chats(bp):
 
             workspace_tabular_file_contexts = []
             workspace_tabular_files = set()
-            if (hybrid_search_enabled or history_grounded_search_used) and is_tabular_processing_enabled(settings):
+            if (
+                not is_mixed_source_chat_search_enabled(settings)
+                and (hybrid_search_enabled or history_grounded_search_used)
+                and is_tabular_processing_enabled(settings)
+            ):
                 workspace_tabular_file_contexts = collect_workspace_tabular_file_contexts(
                     combined_documents=combined_documents,
                     selected_document_ids=effective_selected_document_ids,
@@ -14887,7 +15544,88 @@ def register_route_backend_chats(bp):
                     activity=thought_payload.get('activity'),
                 )
 
-            if (hybrid_search_enabled or history_grounded_search_used) and workspace_tabular_files and is_tabular_processing_enabled(settings):
+            if (
+                is_mixed_source_chat_search_enabled(settings)
+                and mixed_source_document_context_active
+                and mixed_source_manifest
+            ):
+                effective_mixed_source_selection_mode = (
+                    'selected'
+                    if mixed_source_explicit_selection
+                    else 'history'
+                    if history_grounded_search_used
+                    else 'relevance'
+                )
+                mixed_source_evidence_envelopes.extend(
+                    build_narrative_evidence_envelopes(
+                        mixed_source_partitions.get('narrative_sources') or [],
+                        search_results,
+                        effective_mixed_source_selection_mode,
+                    )
+                )
+                mixed_source_tabular_result = _execute_mixed_source_tabular_evidence(
+                    tabular_sources=mixed_source_tabular_sources,
+                    selection_mode=effective_mixed_source_selection_mode,
+                    has_narrative_sources=bool(mixed_source_narrative_document_ids),
+                    user_question=user_message,
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    gpt_model=gpt_model,
+                    settings=settings,
+                    thought_tracker=thought_tracker,
+                    model_context=tabular_model_context,
+                )
+                mixed_source_evidence_envelopes.extend(
+                    mixed_source_tabular_result.get('evidence_envelopes') or []
+                )
+                agent_citations_list.extend(
+                    mixed_source_tabular_result.get('agent_citations') or []
+                )
+                generated_tabular_outputs_list.extend(
+                    mixed_source_tabular_result.get('generated_outputs') or []
+                )
+                generated_analysis_artifacts_list.extend(
+                    mixed_source_tabular_result.get('generated_outputs') or []
+                )
+                mixed_source_handoff = build_mixed_source_evidence_handoff(
+                    mixed_source_manifest,
+                    mixed_source_evidence_envelopes,
+                    effective_mixed_source_selection_mode,
+                )
+                system_messages_for_augmentation.append(mixed_source_handoff)
+                mixed_source_coverage = mixed_source_handoff.get(
+                    'mixed_source_coverage',
+                    {},
+                )
+                user_metadata['mixed_source_coverage'] = mixed_source_coverage
+                user_message_doc['metadata'] = user_metadata
+                cosmos_messages_container.upsert_item(user_message_doc)
+                log_event(
+                    '[MixedSourceChatSearch] Prepared bounded mixed-source synthesis evidence.',
+                    extra={
+                        'selection_mode': effective_mixed_source_selection_mode,
+                        'narrative_result_count': len(search_results or []),
+                        'tabular_candidate_count': len(mixed_source_tabular_sources),
+                        'tabular_completed_count': sum(
+                            1
+                            for envelope in mixed_source_evidence_envelopes
+                            if envelope.get('source_kind') == 'tabular'
+                            and envelope.get('status') == 'completed'
+                        ),
+                        'mixed_synthesis_count': 1,
+                        'partial_coverage': bool(
+                            mixed_source_coverage.get('partial_coverage')
+                        ),
+                    },
+                    level=logging.INFO,
+                )
+
+            if (
+                not is_mixed_source_chat_search_enabled(settings)
+                and (hybrid_search_enabled or history_grounded_search_used)
+                and workspace_tabular_files
+                and is_tabular_processing_enabled(settings)
+            ):
                 tabular_source_hint = determine_tabular_source_hint(
                     effective_document_scope,
                     active_group_id=effective_active_group_id,
@@ -15150,7 +15888,10 @@ def register_route_backend_chats(bp):
                     gpt_model=gpt_model,
                     user_message_id=user_message_id,
                     fallback_user_message=user_message,
-                    include_assistant_citation_context=not explicit_external_retrieval_requested,
+                    include_assistant_citation_context=(
+                        not explicit_external_retrieval_requested
+                        and not mixed_source_explicit_selection
+                    ),
                 )
                 summary_of_older = history_segments['summary_of_older']
                 chat_tabular_files = history_segments['chat_tabular_files']
@@ -15227,7 +15968,14 @@ def register_route_backend_chats(bp):
                 final_api_source_refs.extend(history_debug_info.get('history_message_source_refs', []))
 
                 # --- Mini SK analysis for tabular files uploaded directly to chat ---
-                if chat_tabular_files and is_tabular_processing_enabled(settings):
+                if (
+                    chat_tabular_files
+                    and is_tabular_processing_enabled(settings)
+                    and not (
+                        is_mixed_source_chat_search_enabled(settings)
+                        and (mixed_source_explicit_selection or mixed_source_tabular_sources)
+                    )
+                ):
                     chat_tabular_filenames_str = ", ".join(chat_tabular_files)
                     chat_tabular_execution_mode = get_tabular_execution_mode(user_message)
                     log_event(
@@ -15390,6 +16138,10 @@ def register_route_backend_chats(bp):
                 original_hybrid_search_enabled,
                 prior_grounded_document_refs,
                 explicit_external_retrieval_requested,
+                current_document_context_requested=(
+                    is_mixed_source_chat_search_enabled(settings)
+                    and document_context_requested
+                ),
             ):
                 history_grounding_message = build_history_grounding_system_message()
                 insert_idx = 0
@@ -15828,10 +16580,12 @@ def register_route_backend_chats(bp):
                                 'user_id': user_id,
                                 'message_id': user_message_id,
                                 'chat_type': chat_type,
-                                'document_scope': document_scope,
+                                'document_scope': effective_document_scope,
                                 'group_id': active_group_id if chat_type == 'group' else None,
                                 'hybrid_search_enabled': hybrid_search_enabled,
-                                'selected_document_id': selected_document_id,
+                                'selection_mode': selection_mode,
+                                'document_context_requested': mixed_source_document_context_active,
+                                'selected_document_id': effective_selected_document_id,
                                 'selected_document_ids': effective_selected_document_ids,
                                 'active_group_ids': effective_active_group_ids,
                                 'active_public_workspace_ids': effective_active_public_workspace_ids,
@@ -16272,8 +17026,10 @@ def register_route_backend_chats(bp):
             )
             source_review_used = _source_review_metadata_used(source_review_result)
             assistant_capability_usage = _build_capability_usage_metadata(
-                workspace_search_enabled=hybrid_search_enabled or history_grounded_search_used,
-                workspace_search_used=bool(search_results),
+                workspace_search_enabled=mixed_source_document_context_active,
+                workspace_search_used=bool(
+                    search_results or mixed_source_has_authorized_evidence_sources
+                ),
                 workspace_search_result_count=len(hybrid_citations_list or []),
                 document_action_type=DOCUMENT_ACTION_TYPE_NONE,
                 document_scope=effective_document_scope,
@@ -16430,7 +17186,7 @@ def register_route_backend_chats(bp):
                     document_scope=effective_document_scope,
                     selected_document_id=effective_selected_document_id,
                     model_deployment=actual_model_used,
-                    hybrid_search_enabled=hybrid_search_enabled or history_grounded_search_used,
+                    hybrid_search_enabled=mixed_source_document_context_active,
                     image_gen_enabled=image_gen_enabled,
                     selected_documents=combined_documents if 'combined_documents' in locals() else None,
                     selected_agent=selected_agent_name,
@@ -16867,6 +17623,39 @@ def register_route_backend_chats(bp):
                     source_review_enabled = source_review_enabled.lower() == 'true'
                 if isinstance(deep_research_enabled, str):
                     deep_research_enabled = deep_research_enabled.lower() == 'true'
+                try:
+                    document_context_contract = _normalize_chat_document_context_contract(
+                        settings,
+                        data,
+                        selected_document_ids,
+                        hybrid_search_enabled,
+                    )
+                except ValueError as contract_error:
+                    yield f"data: {json.dumps({'error': str(contract_error)})}\n\n"
+                    return
+                selected_document_ids = list(
+                    document_context_contract.get('selected_document_ids') or []
+                )
+                requested_selected_document_ids = list(selected_document_ids)
+                selected_document_id = (
+                    selected_document_ids[0]
+                    if len(selected_document_ids) == 1
+                    else None
+                )
+                selection_mode = document_context_contract.get('selection_mode')
+                document_context_requested = bool(
+                    document_context_contract.get('document_context_requested')
+                )
+                request_has_explicit_document_selection = bool(
+                    document_context_contract.get('explicit_selection')
+                )
+                request_document_context_enabled = bool(
+                    hybrid_search_enabled
+                    or (
+                        is_mixed_source_chat_search_enabled(settings)
+                        and document_context_requested
+                    )
+                )
                 user_workspace_context_requested = data.get('user_workspace_context_enabled')
                 if isinstance(user_workspace_context_requested, str):
                     user_workspace_context_requested = user_workspace_context_requested.lower() == 'true'
@@ -16931,7 +17720,7 @@ def register_route_backend_chats(bp):
                 assigned_knowledge_deep_research_urls = []
                 if assigned_knowledge_filters:
                     assigned_knowledge_user_context_active = (
-                        user_workspace_context_requested
+                        (user_workspace_context_requested or document_context_requested)
                         and _assigned_knowledge_allows_user_workspace_context(assigned_knowledge_filters)
                         and _assigned_knowledge_allows_document_action(
                             assigned_knowledge_filters,
@@ -16996,6 +17785,16 @@ def register_route_backend_chats(bp):
                         f"public_workspaces={len(effective_active_public_workspace_ids)} | "
                         f"tags={len(tags_filter)}"
                     )
+                mixed_source_explicit_selection = bool(
+                    is_mixed_source_chat_search_enabled(settings)
+                    and request_has_explicit_document_selection
+                    and (
+                        not assigned_knowledge_filters
+                        or assigned_knowledge_user_context_active
+                    )
+                )
+                mixed_source_document_context_active = request_document_context_enabled
+                mixed_source_has_authorized_evidence_sources = False
                 explicit_external_retrieval_requested = _is_explicit_external_retrieval_requested(
                     web_search_enabled=web_search_enabled,
                     url_access_enabled=url_access_enabled,
@@ -17013,8 +17812,10 @@ def register_route_backend_chats(bp):
                 def build_streaming_capability_usage():
                     source_review_was_used = _source_review_metadata_used(source_review_result)
                     return _build_capability_usage_metadata(
-                        workspace_search_enabled=hybrid_search_enabled or history_grounded_search_used,
-                        workspace_search_used=bool(search_results),
+                        workspace_search_enabled=mixed_source_document_context_active,
+                        workspace_search_used=bool(
+                            search_results or mixed_source_has_authorized_evidence_sources
+                        ),
                         workspace_search_result_count=len(hybrid_citations_list or []),
                         document_action_type=DOCUMENT_ACTION_TYPE_NONE,
                         document_scope=effective_document_scope,
@@ -17181,11 +17982,14 @@ def register_route_backend_chats(bp):
                         return
 
                 auto_linked_chat_upload_document_ids = []
-                auto_merge_chat_upload_workspace_context = _should_auto_merge_chat_upload_workspace_context(
-                    explicit_external_retrieval_requested,
-                    hybrid_search_enabled,
-                    assigned_knowledge_filters=assigned_knowledge_filters,
-                    assigned_knowledge_user_context_active=assigned_knowledge_user_context_active,
+                auto_merge_chat_upload_workspace_context = (
+                    not mixed_source_explicit_selection
+                    and _should_auto_merge_chat_upload_workspace_context(
+                        explicit_external_retrieval_requested,
+                        hybrid_search_enabled,
+                        assigned_knowledge_filters=assigned_knowledge_filters,
+                        assigned_knowledge_user_context_active=assigned_knowledge_user_context_active,
+                    )
                 )
                 if auto_merge_chat_upload_workspace_context:
                     chat_upload_context = _resolve_chat_upload_workspace_context(
@@ -17246,12 +18050,73 @@ def register_route_backend_chats(bp):
                     selected_document_id = effective_selected_document_id
                     document_scope = effective_document_scope
 
-                _maybe_resolve_chat_source_manifest(
-                    settings,
-                    user_id,
-                    conversation_id,
-                    effective_selected_document_ids,
-                    scope_context,
+                mixed_source_manifest = []
+                mixed_source_partitions = {}
+                mixed_source_narrative_document_ids = []
+                mixed_source_tabular_sources = []
+                mixed_source_evidence_envelopes = []
+                if mixed_source_explicit_selection:
+                    try:
+                        explicit_context = _resolve_chat_mixed_source_partition(
+                            settings,
+                            user_id,
+                            conversation_id,
+                            effective_selected_document_ids,
+                            'selected',
+                            active_group_ids=effective_active_group_ids,
+                            active_public_workspace_ids=effective_active_public_workspace_ids,
+                        )
+                    except ValueError as manifest_error:
+                        yield f"data: {json.dumps({'error': str(manifest_error)})}\n\n"
+                        return
+                    mixed_source_manifest = explicit_context.get('manifest') or []
+                    mixed_source_partitions = explicit_context.get('partitions') or {}
+                    mixed_source_narrative_document_ids = list(
+                        explicit_context.get('narrative_document_ids') or []
+                    )
+                    mixed_source_tabular_sources = list(
+                        explicit_context.get('tabular_sources') or []
+                    )
+                    effective_selected_document_ids = (
+                        mixed_source_narrative_document_ids
+                        + _get_manifest_partition_document_ids(
+                            mixed_source_partitions,
+                            'tabular_sources',
+                        )
+                    )
+                    effective_selected_document_id = (
+                        effective_selected_document_ids[0]
+                        if len(effective_selected_document_ids) == 1
+                        else None
+                    )
+                    log_event(
+                        '[MixedSourceChatSearch] Activated streaming explicit selected-source context.',
+                        extra={
+                            'selection_mode': 'selected',
+                            'requested_source_count': len(mixed_source_manifest),
+                            'authorized_source_count': len(effective_selected_document_ids),
+                            'narrative_source_count': len(mixed_source_narrative_document_ids),
+                            'tabular_source_count': len(mixed_source_tabular_sources),
+                            'omitted_source_count': len(
+                                mixed_source_partitions.get('unresolved_sources') or []
+                            ),
+                        },
+                        level=logging.INFO,
+                    )
+                else:
+                    _maybe_resolve_chat_source_manifest(
+                        settings,
+                        user_id,
+                        conversation_id,
+                        effective_selected_document_ids,
+                        scope_context,
+                    )
+                request_document_context_enabled = bool(
+                    hybrid_search_enabled
+                    or (
+                        is_mixed_source_chat_search_enabled(settings)
+                        and document_context_requested
+                    )
                 )
 
                 # Determine chat type
@@ -17285,13 +18150,13 @@ def register_route_backend_chats(bp):
 
                 user_metadata['button_states'] = {
                     'image_generation': False,
-                    'document_search': hybrid_search_enabled,
+                    'document_search': request_document_context_enabled,
                     'web_search': bool(web_search_enabled),
                     'url_access': bool(url_access_enabled),
                     'deep_research': bool(deep_research_enabled)
                 }
                 user_metadata['capability_usage'] = _build_capability_usage_metadata(
-                    workspace_search_enabled=hybrid_search_enabled,
+                    workspace_search_enabled=request_document_context_enabled,
                     document_action_type=DOCUMENT_ACTION_TYPE_NONE,
                     document_scope=effective_document_scope,
                     selected_document_ids=effective_selected_document_ids,
@@ -17304,12 +18169,16 @@ def register_route_backend_chats(bp):
                 )
 
                 # Document search scope and selections
-                if hybrid_search_enabled:
+                if request_document_context_enabled:
                     user_metadata['workspace_search'] = {
                         'search_enabled': True,
+                        'selection_mode': selection_mode,
+                        'document_context_requested': document_context_requested,
+                        'hybrid_search_preference': bool(hybrid_search_enabled),
                         'document_scope': effective_document_scope,
                         'selected_document_id': effective_selected_document_id,
                         'selected_document_ids': effective_selected_document_ids,
+                        'requested_document_ids': requested_selected_document_ids,
                         'active_group_ids': effective_active_group_ids,
                         'active_public_workspace_ids': effective_active_public_workspace_ids,
                         'classification': classifications_to_send
@@ -17460,7 +18329,7 @@ def register_route_backend_chats(bp):
                         conversation_id=conversation_id,
                         message_type='user_message',
                         message_length=len(user_message) if user_message else 0,
-                        has_document_search=hybrid_search_enabled,
+                        has_document_search=request_document_context_enabled,
                         has_image_generation=False,
                         document_scope=effective_document_scope,
                         chat_context=actual_chat_type,
@@ -17674,7 +18543,11 @@ def register_route_backend_chats(bp):
                     except Exception as ex:
                         debug_print(f"[Content Safety - Streaming] Unexpected error: {ex}")
 
-                if not original_hybrid_search_enabled and not explicit_external_retrieval_requested:
+                if (
+                    not original_hybrid_search_enabled
+                    and not explicit_external_retrieval_requested
+                    and not mixed_source_explicit_selection
+                ):
                     prior_grounded_document_refs = _normalize_prior_grounded_document_refs(conversation_item)
                     if prior_grounded_document_refs:
                         yield emit_thought(
@@ -17789,9 +18662,60 @@ def register_route_backend_chats(bp):
                             'No prior grounded documents were available; using conversation history only'
                         )
 
+                if (
+                    is_mixed_source_chat_search_enabled(settings)
+                    and history_grounded_search_used
+                ):
+                    history_context = _resolve_chat_mixed_source_partition(
+                        settings,
+                        user_id,
+                        conversation_id,
+                        effective_selected_document_ids,
+                        'history',
+                        active_group_ids=effective_active_group_ids,
+                        active_public_workspace_ids=effective_active_public_workspace_ids,
+                    )
+                    mixed_source_manifest = history_context.get('manifest') or []
+                    mixed_source_partitions = history_context.get('partitions') or {}
+                    mixed_source_narrative_document_ids = list(
+                        history_context.get('narrative_document_ids') or []
+                    )
+                    mixed_source_tabular_sources = list(
+                        history_context.get('tabular_sources') or []
+                    )
+                    effective_selected_document_ids = (
+                        mixed_source_narrative_document_ids
+                        + _get_manifest_partition_document_ids(
+                            mixed_source_partitions,
+                            'tabular_sources',
+                        )
+                    )
+                    effective_selected_document_id = (
+                        effective_selected_document_ids[0]
+                        if len(effective_selected_document_ids) == 1
+                        else None
+                    )
+
                 # Hybrid search (if enabled)
                 combined_documents = []
-                if hybrid_search_enabled or history_grounded_search_used:
+                mixed_source_document_context_active = bool(
+                    (hybrid_search_enabled or history_grounded_search_used)
+                    if not is_mixed_source_chat_search_enabled(settings)
+                    else (
+                        document_context_requested
+                        or hybrid_search_enabled
+                        or history_grounded_search_used
+                    )
+                )
+                mixed_source_narrative_search_active = bool(
+                    mixed_source_document_context_active
+                    and (
+                        not is_mixed_source_chat_search_enabled(settings)
+                        or not mixed_source_manifest
+                        or mixed_source_narrative_document_ids
+                    )
+                )
+                if mixed_source_narrative_search_active:
                     debug_print(
                         "[Streaming] Starting hybrid search | "
                         f"conversation_id={conversation_id} | doc_scope={effective_document_scope} | "
@@ -17834,8 +18758,14 @@ def register_route_backend_chats(bp):
                         ):
                             search_args['active_public_workspace_id'] = effective_active_public_workspace_id
 
-                        if effective_selected_document_ids:
-                            search_args['document_ids'] = effective_selected_document_ids
+                        search_document_ids = (
+                            mixed_source_narrative_document_ids
+                            if is_mixed_source_chat_search_enabled(settings)
+                            and mixed_source_manifest
+                            else effective_selected_document_ids
+                        )
+                        if search_document_ids:
+                            search_args['document_ids'] = search_document_ids
                         elif effective_selected_document_id:
                             search_args['document_id'] = effective_selected_document_id
                         if auto_linked_chat_upload_document_ids:
@@ -17865,6 +18795,40 @@ def register_route_backend_chats(bp):
                                 search_results = assigned_search_results
                         else:
                             search_results = hybrid_search(**search_args)
+
+                        if (
+                            is_mixed_source_chat_search_enabled(settings)
+                            and not mixed_source_explicit_selection
+                            and not history_grounded_search_used
+                        ):
+                            relevance_context = _resolve_chat_mixed_source_relevance_context(
+                                settings=settings,
+                                user_id=user_id,
+                                conversation_id=conversation_id,
+                                query=search_query,
+                                search_results=search_results,
+                                document_scope=effective_document_scope,
+                                candidate_document_ids=(
+                                    assigned_knowledge_filters.get('document_ids')
+                                    if assigned_knowledge_filters
+                                    and assigned_knowledge_filters.get('has_workspace_knowledge')
+                                    else None
+                                ),
+                                tags_filter=tags_filter,
+                                active_group_ids=effective_active_group_ids,
+                                active_public_workspace_ids=effective_active_public_workspace_ids,
+                            )
+                            mixed_source_manifest = relevance_context.get('manifest') or []
+                            mixed_source_partitions = relevance_context.get('partitions') or {}
+                            mixed_source_narrative_document_ids = list(
+                                relevance_context.get('narrative_document_ids') or []
+                            )
+                            mixed_source_tabular_sources = list(
+                                relevance_context.get('tabular_sources') or []
+                            )
+                            search_results = list(
+                                relevance_context.get('search_results') or []
+                            )
                         debug_print(
                             f"[Streaming] Hybrid search completed | results={len(search_results) if search_results else 0}"
                         )
@@ -18070,11 +19034,12 @@ def register_route_backend_chats(bp):
                         retrieved_content = "\n\n".join(retrieved_texts)
                         system_prompt_search = build_search_augmentation_system_prompt(retrieved_content)
 
-                        system_messages_for_augmentation.append({
-                            'role': 'system',
-                            'content': system_prompt_search,
-                            'documents': combined_documents
-                        })
+                        if not is_mixed_source_chat_search_enabled(settings):
+                            system_messages_for_augmentation.append({
+                                'role': 'system',
+                                'content': system_prompt_search,
+                                'documents': combined_documents
+                            })
 
                         hybrid_citations_list.sort(key=_build_hybrid_citation_sort_key, reverse=True)
                     elif history_grounded_search_used:
@@ -18103,7 +19068,11 @@ def register_route_backend_chats(bp):
 
                 workspace_tabular_file_contexts = []
                 workspace_tabular_files = set()
-                if (hybrid_search_enabled or history_grounded_search_used) and is_tabular_processing_enabled(settings):
+                if (
+                    not is_mixed_source_chat_search_enabled(settings)
+                    and (hybrid_search_enabled or history_grounded_search_used)
+                    and is_tabular_processing_enabled(settings)
+                ):
                     workspace_tabular_file_contexts = collect_workspace_tabular_file_contexts(
                         combined_documents=combined_documents,
                         selected_document_ids=effective_selected_document_ids,
@@ -18119,7 +19088,93 @@ def register_route_backend_chats(bp):
                         file_context['file_name'] for file_context in workspace_tabular_file_contexts
                     }
 
-                if (hybrid_search_enabled or history_grounded_search_used) and workspace_tabular_files and is_tabular_processing_enabled(settings):
+                if (
+                    is_mixed_source_chat_search_enabled(settings)
+                    and mixed_source_document_context_active
+                    and mixed_source_manifest
+                ):
+                    effective_mixed_source_selection_mode = (
+                        'selected'
+                        if mixed_source_explicit_selection
+                        else 'history'
+                        if history_grounded_search_used
+                        else 'relevance'
+                    )
+                    mixed_source_evidence_envelopes.extend(
+                        build_narrative_evidence_envelopes(
+                            mixed_source_partitions.get('narrative_sources') or [],
+                            search_results,
+                            effective_mixed_source_selection_mode,
+                        )
+                    )
+                    mixed_source_tabular_result = _execute_mixed_source_tabular_evidence(
+                        tabular_sources=mixed_source_tabular_sources,
+                        selection_mode=effective_mixed_source_selection_mode,
+                        has_narrative_sources=bool(mixed_source_narrative_document_ids),
+                        user_question=user_message,
+                        user_id=user_id,
+                        conversation_id=conversation_id,
+                        gpt_model=gpt_model,
+                        settings=settings,
+                        thought_tracker=thought_tracker,
+                        live_thought_callback=publish_live_plugin_thought,
+                        model_context=tabular_model_context,
+                    )
+                    mixed_source_evidence_envelopes.extend(
+                        mixed_source_tabular_result.get('evidence_envelopes') or []
+                    )
+                    agent_citations_list.extend(
+                        mixed_source_tabular_result.get('agent_citations') or []
+                    )
+                    generated_tabular_outputs_list.extend(
+                        mixed_source_tabular_result.get('generated_outputs') or []
+                    )
+                    generated_analysis_artifacts_list.extend(
+                        mixed_source_tabular_result.get('generated_outputs') or []
+                    )
+                    mixed_source_handoff = build_mixed_source_evidence_handoff(
+                        mixed_source_manifest,
+                        mixed_source_evidence_envelopes,
+                        effective_mixed_source_selection_mode,
+                    )
+                    system_messages_for_augmentation.append(mixed_source_handoff)
+                    mixed_source_coverage = mixed_source_handoff.get(
+                        'mixed_source_coverage',
+                        {},
+                    )
+                    mixed_source_has_authorized_evidence_sources = bool(
+                        mixed_source_narrative_document_ids
+                        or mixed_source_tabular_sources
+                    )
+                    user_metadata['mixed_source_coverage'] = mixed_source_coverage
+                    user_message_doc['metadata'] = user_metadata
+                    cosmos_messages_container.upsert_item(user_message_doc)
+                    log_event(
+                        '[MixedSourceChatSearch] Prepared streaming bounded mixed-source synthesis evidence.',
+                        extra={
+                            'selection_mode': effective_mixed_source_selection_mode,
+                            'narrative_result_count': len(search_results or []),
+                            'tabular_candidate_count': len(mixed_source_tabular_sources),
+                            'tabular_completed_count': sum(
+                                1
+                                for envelope in mixed_source_evidence_envelopes
+                                if envelope.get('source_kind') == 'tabular'
+                                and envelope.get('status') == 'completed'
+                            ),
+                            'mixed_synthesis_count': 1,
+                            'partial_coverage': bool(
+                                mixed_source_coverage.get('partial_coverage')
+                            ),
+                        },
+                        level=logging.INFO,
+                    )
+
+                if (
+                    not is_mixed_source_chat_search_enabled(settings)
+                    and (hybrid_search_enabled or history_grounded_search_used)
+                    and workspace_tabular_files
+                    and is_tabular_processing_enabled(settings)
+                ):
                     tabular_source_hint = determine_tabular_source_hint(
                         effective_document_scope,
                         active_group_id=effective_active_group_id,
@@ -18391,7 +19446,9 @@ def register_route_backend_chats(bp):
 
                 # Update message chat type
                 message_chat_type = None
-                if (hybrid_search_enabled or history_grounded_search_used) and search_results and len(search_results) > 0:
+                if mixed_source_document_context_active and (
+                    search_results or mixed_source_has_authorized_evidence_sources
+                ):
                     if effective_document_scope == 'group':
                         message_chat_type = 'group'
                     elif effective_document_scope == 'public':
@@ -18403,8 +19460,10 @@ def register_route_backend_chats(bp):
 
                 source_review_used = _source_review_metadata_used(source_review_result)
                 user_metadata['capability_usage'] = _build_capability_usage_metadata(
-                    workspace_search_enabled=hybrid_search_enabled or history_grounded_search_used,
-                    workspace_search_used=bool(search_results),
+                    workspace_search_enabled=mixed_source_document_context_active,
+                    workspace_search_used=bool(
+                        search_results or mixed_source_has_authorized_evidence_sources
+                    ),
                     workspace_search_result_count=len(search_results or []),
                     document_action_type=DOCUMENT_ACTION_TYPE_NONE,
                     document_scope=effective_document_scope,
@@ -18446,7 +19505,10 @@ def register_route_backend_chats(bp):
                         gpt_model=gpt_model,
                         user_message_id=user_message_id,
                         fallback_user_message=user_message,
-                        include_assistant_citation_context=not explicit_external_retrieval_requested,
+                        include_assistant_citation_context=(
+                            not explicit_external_retrieval_requested
+                            and not mixed_source_explicit_selection
+                        ),
                     )
                     summary_of_older = history_segments['summary_of_older']
                     chat_tabular_files = history_segments['chat_tabular_files']
@@ -18473,7 +19535,14 @@ def register_route_backend_chats(bp):
                     final_api_source_refs.extend(history_debug_info.get('history_message_source_refs', []))
 
                     # --- Mini SK analysis for tabular files uploaded directly to chat ---
-                    if chat_tabular_files and is_tabular_processing_enabled(settings):
+                    if (
+                        chat_tabular_files
+                        and is_tabular_processing_enabled(settings)
+                        and not (
+                            is_mixed_source_chat_search_enabled(settings)
+                            and (mixed_source_explicit_selection or mixed_source_tabular_sources)
+                        )
+                    ):
                         chat_tabular_filenames_str = ", ".join(chat_tabular_files)
                         chat_tabular_execution_mode = get_tabular_execution_mode(user_message)
                         log_event(
@@ -18645,6 +19714,10 @@ def register_route_backend_chats(bp):
                     original_hybrid_search_enabled,
                     prior_grounded_document_refs,
                     explicit_external_retrieval_requested,
+                    current_document_context_requested=(
+                        is_mixed_source_chat_search_enabled(settings)
+                        and document_context_requested
+                    ),
                 ):
                     history_grounding_message = build_history_grounding_system_message()
                     insert_idx = 0
@@ -18987,6 +20060,8 @@ def register_route_backend_chats(bp):
                                             'document_scope': effective_document_scope,
                                             'group_id': effective_active_group_id if chat_type == 'group' else None,
                                             'hybrid_search_enabled': hybrid_search_enabled,
+                                            'selection_mode': selection_mode,
+                                            'document_context_requested': mixed_source_document_context_active,
                                             'selected_document_id': effective_selected_document_id,
                                             'selected_document_ids': effective_selected_document_ids,
                                             'active_group_ids': effective_active_group_ids,
@@ -19519,7 +20594,7 @@ def register_route_backend_chats(bp):
                             document_scope=effective_document_scope,
                             selected_document_id=effective_selected_document_id,
                             model_deployment=final_model_used if use_agent_streaming else gpt_model,
-                            hybrid_search_enabled=hybrid_search_enabled or history_grounded_search_used,
+                            hybrid_search_enabled=mixed_source_document_context_active,
                             image_gen_enabled=False,
                             selected_documents=combined_documents if combined_documents else None,
                             selected_agent=agent_name_used if use_agent_streaming else None,
@@ -20516,11 +21591,13 @@ def should_apply_history_grounding_message(
     original_hybrid_search_enabled,
     prior_grounded_document_refs,
     explicit_external_retrieval_requested=False,
+    current_document_context_requested=False,
 ):
     """Apply bounded grounding only when prior grounded docs exist for this conversation."""
     return (
         not bool(original_hybrid_search_enabled)
         and not bool(explicit_external_retrieval_requested)
+        and not bool(current_document_context_requested)
         and bool(prior_grounded_document_refs)
     )
 

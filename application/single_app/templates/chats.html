@@ -1487,6 +1487,7 @@
         enable_multi_model_endpoints: {{ enable_multi_model_endpoints|tojson }},
         enable_thoughts: {{ settings.enable_thoughts|tojson }},
         enable_collaborative_conversations: {{ settings.enable_collaborative_conversations|tojson }},
+        enable_mixed_source_chat_search: {{ app_settings.enable_mixed_source_chat_search|default(false, true)|tojson }},
         documentActionCapabilities: {{ settings.document_action_capabilities|default({}, true)|tojson|safe }}
     };
 

@@ -6102,6 +6102,8 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
       .filter(value => value);
     selectedDocumentId = selectedDocumentIds.length > 0 ? selectedDocumentIds[0] : null;
   }
+  const selectionMode = selectedDocumentIds.length > 0 ? 'selected' : 'relevance';
+  const documentContextRequested = hybridSearchEnabled || selectedDocumentIds.length > 0;
 
   let imageGenEnabled = false;
   const igbtn = document.getElementById('image-generate-btn');
@@ -6216,6 +6218,8 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
     message: finalMessageToSend,
     conversation_id: conversationId,
     hybrid_search: hybridSearchEnabled,
+    selection_mode: selectionMode,
+    document_context_requested: documentContextRequested,
     user_workspace_context_enabled: userWorkspaceContextEnabled,
     web_search_enabled: webSearchEnabled,
     url_access_enabled: urlAccessEnabled,
@@ -6277,6 +6281,13 @@ export function buildCollaborativeInvocationTarget(messageData = {}, explicitInv
     messageData.agent_info
     && (messageData.agent_info.id || messageData.agent_info.name || messageData.agent_info.display_name)
   );
+  const workspaceContextInvocationRequested = Boolean(
+    messageData.hybrid_search
+    || (
+      messageData.document_context_requested
+      && window.appSettings?.enable_mixed_source_chat_search
+    )
+  );
   const sourceMode = messageData.image_generation
     ? 'image_generation'
     : hasAgentTarget
@@ -6287,7 +6298,7 @@ export function buildCollaborativeInvocationTarget(messageData = {}, explicitInv
     ? 'url_access'
     : messageData.web_search_enabled
     ? 'web_search'
-    : messageData.hybrid_search
+    : workspaceContextInvocationRequested
     ? 'workspace'
     : messageData.prompt_info
     ? 'prompt'

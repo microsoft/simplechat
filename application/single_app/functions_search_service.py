@@ -45,6 +45,9 @@ SUMMARY_DEFAULT_CHUNK_WINDOW = 20
 SUMMARY_MAX_WINDOW_SIZE = 50
 CHAT_UPLOAD_CHUNK_WORD_SIZE = 400
 CHAT_UPLOAD_CHUNK_WORD_OVERLAP = 40
+MIXED_SOURCE_TABULAR_CANDIDATE_TOP_N = 36
+MIXED_SOURCE_TABULAR_CANDIDATE_LIMIT = 6
+MIXED_SOURCE_TABULAR_EXTENSIONS = frozenset({".csv", ".xls", ".xlsx", ".xlsm"})
 
 
 def _coerce_positive_int(value, default_value, min_value=1, max_value=None):
@@ -553,6 +556,7 @@ def build_search_request(
     active_group_ids=None,
     active_public_workspace_id=None,
     enable_file_sharing=True,
+    include_all_public_workspaces=False,
 ):
     normalized_query = str(query or "").strip()
     if not normalized_query:
@@ -592,7 +596,11 @@ def build_search_request(
         active_public_workspace_id=active_public_workspace_id,
     )
     if resolved_public_workspace_ids and normalized_scope in ("all", "public"):
-        search_request["active_public_workspace_id"] = resolved_public_workspace_ids[0]
+        search_request["active_public_workspace_id"] = (
+            resolved_public_workspace_ids
+            if include_all_public_workspaces
+            else resolved_public_workspace_ids[0]
+        )
 
     return search_request
 
@@ -608,6 +616,7 @@ def search_documents(
     active_group_ids=None,
     active_public_workspace_id=None,
     enable_file_sharing=True,
+    include_all_public_workspaces=False,
 ):
     search_request = build_search_request(
         query=query,
@@ -620,6 +629,7 @@ def search_documents(
         active_group_ids=active_group_ids,
         active_public_workspace_id=active_public_workspace_id,
         enable_file_sharing=enable_file_sharing,
+        include_all_public_workspaces=include_all_public_workspaces,
     )
     results = hybrid_search(**search_request) or []
     unique_document_ids = {
@@ -639,6 +649,70 @@ def search_documents(
         "result_count": len(results),
         "document_count": len(unique_document_ids),
         "results": results,
+    }
+
+
+def search_relevant_tabular_candidates(
+    query,
+    user_id,
+    doc_scope="all",
+    document_ids=None,
+    tags_filter=None,
+    active_group_ids=None,
+    active_public_workspace_id=None,
+    max_candidates=MIXED_SOURCE_TABULAR_CANDIDATE_LIMIT,
+):
+    """Find a bounded set of authorized table candidates from indexed schema chunks."""
+    normalized_limit = _coerce_positive_int(
+        max_candidates,
+        MIXED_SOURCE_TABULAR_CANDIDATE_LIMIT,
+        min_value=1,
+        max_value=MIXED_SOURCE_TABULAR_CANDIDATE_LIMIT,
+    )
+    candidate_query = (
+        f"{str(query or '').strip()}\n"
+        "Relevant spreadsheet, workbook, worksheet, CSV, table schema, columns, and data fields."
+    ).strip()
+    search_result = search_documents(
+        query=candidate_query,
+        user_id=user_id,
+        top_n=MIXED_SOURCE_TABULAR_CANDIDATE_TOP_N,
+        doc_scope=doc_scope,
+        document_ids=document_ids,
+        tags_filter=tags_filter,
+        active_group_ids=active_group_ids,
+        active_public_workspace_id=active_public_workspace_id,
+        include_all_public_workspaces=True,
+    )
+
+    candidate_document_ids = []
+    seen_document_ids = set()
+    for result in search_result.get("results") or []:
+        file_name = str(result.get("file_name") or "").strip()
+        if os.path.splitext(file_name)[1].lower() not in MIXED_SOURCE_TABULAR_EXTENSIONS:
+            continue
+        document_id = str(result.get("document_id") or "").strip()
+        if not document_id or document_id in seen_document_ids:
+            continue
+        seen_document_ids.add(document_id)
+        candidate_document_ids.append(document_id)
+        if len(candidate_document_ids) >= normalized_limit:
+            break
+
+    log_event(
+        "[MixedSourceChatSearch] Completed bounded authorized tabular candidate search.",
+        extra={
+            "candidate_search_result_count": search_result.get("result_count", 0),
+            "tabular_candidate_count": len(candidate_document_ids),
+            "candidate_limit": normalized_limit,
+        },
+        level=logging.INFO,
+    )
+    return {
+        "document_ids": candidate_document_ids,
+        "candidate_count": len(candidate_document_ids),
+        "search_result_count": search_result.get("result_count", 0),
+        "query": search_result.get("query"),
     }
 
 

@@ -234,6 +234,14 @@ class TabularProcessingPlugin:
             for workspace_id in (authorized_context.get('active_public_workspace_ids') or [])
             if str(workspace_id or '').strip()
         ]
+        authorized_blob_locations = [
+            [str(location[0]), str(location[1])]
+            for location in authorized_context.get('authorized_blob_locations') or []
+            if isinstance(location, (list, tuple))
+            and len(location) == 2
+            and str(location[0] or '').strip()
+            and str(location[1] or '').strip()
+        ]
 
         return {
             'user_id': authorized_user_id,
@@ -244,6 +252,7 @@ class TabularProcessingPlugin:
             'active_public_workspace_id': (
                 str(authorized_context.get('active_public_workspace_id') or '').strip() or None
             ),
+            'authorized_blob_locations': authorized_blob_locations,
         }
 
     def _resolve_authorized_scope_arguments(
@@ -346,6 +355,14 @@ class TabularProcessingPlugin:
 
     def _is_authorized_blob_location(self, container_name: str, blob_path: str, authorized_context: dict) -> bool:
         """Ensure remembered blob locations still fall within the caller's authorized request scope."""
+        exact_authorized_locations = {
+            (str(location[0]), str(location[1]))
+            for location in authorized_context.get('authorized_blob_locations') or []
+            if isinstance(location, (list, tuple)) and len(location) == 2
+        }
+        if (str(container_name or ''), str(blob_path or '')) in exact_authorized_locations:
+            return True
+
         source = self._infer_source_from_container(container_name)
         blob_parts = [part for part in str(blob_path or '').split('/') if part]
         if not source or not blob_parts:

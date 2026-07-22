@@ -215,6 +215,19 @@ def is_mixed_source_manifest_enabled(settings):
     return bool((settings or {}).get('enable_mixed_source_manifest', False))
 
 
+def is_mixed_source_chat_search_enabled(settings):
+    """Return whether Phase 2 mixed-source Chat and Search behavior is enabled."""
+    return bool((settings or {}).get('enable_mixed_source_chat_search', False))
+
+
+def is_mixed_source_relevance_candidates_enabled(settings):
+    """Return whether Phase 2 relevance-mode table candidates are enabled."""
+    return bool(
+        (settings or {}).get('enable_mixed_source_chat_search', False)
+        and (settings or {}).get('enable_mixed_source_relevance_candidates', False)
+    )
+
+
 CHAT_FILE_UPLOAD_APP_ROLE = "ChatFileUploadUser"
 WORKFLOW_USER_APP_ROLE = "WorkflowUser"
 DOCUMENT_INTELLIGENCE_PDF_IMAGE_EXTRACTION_MODES = {"read", "layout", "auto"}
@@ -765,6 +778,8 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_tabular_processing_plugin': False,
         'enable_multi_agent_orchestration': False,
         'enable_mixed_source_manifest': False,
+        'enable_mixed_source_chat_search': False,
+        'enable_mixed_source_relevance_candidates': False,
         'max_rounds_per_agent': 1,
         'workflow_max_auto_invoke_attempts': 60,
         'enable_semantic_kernel': False,

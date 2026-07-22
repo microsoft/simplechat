@@ -42,6 +42,8 @@ FOUNDRY_METADATA_VALUE_MAX_LENGTH = 512
 FOUNDRY_INTERNAL_METADATA_KEYS = {
     "active_group_ids",
     "active_public_workspace_ids",
+    "document_context_requested",
+    "selection_mode",
     "selected_document_ids",
 }
 FOUNDRY_FILE_SEARCHABLE_CONTEXT_MAX_CHARS = 6000
@@ -1222,6 +1224,9 @@ def _looks_like_document_context_message(text: str) -> bool:
         "chat-uploaded file",
         "selected document",
         "tabular analysis",
+        "mixed-source evidence handoff",
+        "evidence_envelopes",
+        "[workflow document search context]",
     )
     return any(marker in normalized for marker in markers)
 
@@ -1237,7 +1242,13 @@ def _build_foundry_workflow_input_text(
         if not text:
             continue
         if not include_document_context and _looks_like_document_context_message(text):
-            continue
+            workflow_task_marker = "[Workflow task]"
+            workflow_task_index = text.rfind(workflow_task_marker)
+            if workflow_task_index < 0:
+                continue
+            text = text[workflow_task_index + len(workflow_task_marker):].strip()
+            if not text:
+                continue
         role_value = getattr(message, "role", "user")
         role = str(role_value).strip().lower() or "user"
         if role.startswith("authorrole."):
@@ -1800,6 +1811,8 @@ def _collect_foundry_response_file_inputs(
     foundry_settings: Dict[str, Any],
     metadata: Dict[str, Any],
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    if not _coerce_bool(foundry_settings.get("include_document_context"), True):
+        return [], []
     if not _coerce_bool(foundry_settings.get("include_file_inputs"), True):
         return [], []
 

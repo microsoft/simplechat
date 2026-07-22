@@ -78,7 +78,12 @@ from functions_message_artifacts import (
     build_agent_citation_artifact_documents,
     make_json_serializable,
 )
-from functions_mixed_source_orchestration import resolve_authorized_source_manifest
+from functions_mixed_source_orchestration import (
+    build_mixed_source_evidence_handoff,
+    build_narrative_evidence_envelopes,
+    partition_source_manifest,
+    resolve_authorized_source_manifest,
+)
 from model_endpoint_clients import (
     MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
 )
@@ -86,12 +91,17 @@ from functions_model_endpoint_runtime import build_model_endpoint_sync_chat_clie
 from functions_notifications import create_workflow_priority_notification
 from functions_personal_workflows import save_personal_workflow_run, save_personal_workflow_run_item
 from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
-from functions_search_service import resolve_document_context, search_documents
+from functions_search_service import (
+    resolve_document_context,
+    search_documents,
+    search_relevant_tabular_candidates,
+)
 from functions_search import normalize_search_id_list, normalize_search_scope, normalize_search_top_n
 from functions_simplechat_operations import upload_generated_analysis_artifact_for_current_user
 from functions_settings import (
     get_settings,
     get_user_settings,
+    is_mixed_source_chat_search_enabled,
     is_mixed_source_manifest_enabled,
     is_tabular_processing_enabled,
     normalize_model_endpoints,
@@ -3515,6 +3525,8 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
             'workspace_type': workspace_type,
             'group_id': group_id or None,
             'token_usage': result.get('token_usage'),
+            'generated_analysis_artifacts': list(result.get('generated_analysis_artifacts') or []),
+            'generated_tabular_outputs': list(result.get('generated_tabular_outputs') or []),
             'source_review': source_review_metadata,
             'workflow': {
                 'workflow_id': workflow.get('id'),
@@ -3527,6 +3539,7 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
                 'model_binding_summary': workflow.get('model_binding_summary') or {},
                 'document_action': document_action,
                 'document_search': result.get('document_search') or {},
+                'mixed_source_coverage': result.get('mixed_source_coverage') or {},
                 'analyze': workflow.get('analyze') or {},
                 'analysis_coverage': result.get('analysis_coverage') or {},
             },
@@ -4023,20 +4036,86 @@ def _format_workflow_search_results(results):
 def _build_workflow_search_prompt(task_prompt, search_context):
     task_prompt = str(task_prompt or '').strip()
     retrieved_content = str((search_context or {}).get('retrieved_content') or '').strip()
-    if not retrieved_content:
+    evidence_messages = [
+        str((message or {}).get('content') or '').strip()
+        for message in list((search_context or {}).get('evidence_messages') or [])
+        if str((message or {}).get('content') or '').strip()
+    ]
+    if not retrieved_content and not evidence_messages:
         return task_prompt
 
-    return (
+    prompt_sections = [
         '[Workflow document search context]\n'
-        'Use the retrieved document excerpts below as grounding for the workflow task. '
-        'When the excerpts are insufficient, say what is missing instead of guessing.\n\n'
-        f'{retrieved_content}\n\n'
-        '[Workflow task]\n'
-        f'{task_prompt}'
-    ).strip()
+        'Use the bounded native-engine evidence below as grounding for the workflow task. '
+        'When the evidence is insufficient or source coverage is partial, say what is missing instead of guessing.'
+    ]
+    if retrieved_content:
+        prompt_sections.append(
+            f'[Narrative excerpts]\n{retrieved_content}'
+        )
+    if evidence_messages:
+        prompt_sections.append(
+            '[Computed and coverage evidence]\n'
+            + '\n\n'.join(evidence_messages)
+        )
+    prompt_sections.append(f'[Workflow task]\n{task_prompt}')
+    return '\n\n'.join(prompt_sections).strip()
 
 
-def _prepare_workflow_search_context(workflow, action_config, settings, thought_tracker=None, run_id=None):
+@contextmanager
+def _workflow_mixed_source_execution_context(user_id, conversation_id, manifest):
+    """Bind tabular tools to scope IDs from a freshly authorized manifest."""
+    group_ids = []
+    public_workspace_ids = []
+    for source in list(manifest or []):
+        if source.get('authorization_status') != 'authorized':
+            continue
+        group_id = str(source.get('group_id') or '').strip()
+        public_workspace_id = str(source.get('public_workspace_id') or '').strip()
+        if group_id and group_id not in group_ids:
+            group_ids.append(group_id)
+        if public_workspace_id and public_workspace_id not in public_workspace_ids:
+            public_workspace_ids.append(public_workspace_id)
+
+    with _ensure_execution_context(user_id):
+        previous_conversation_id = getattr(g, 'conversation_id', None) if hasattr(g, 'conversation_id') else None
+        previous_authorized_chat_context = getattr(g, 'authorized_chat_context', None) if hasattr(g, 'authorized_chat_context') else None
+        g.conversation_id = conversation_id
+        g.authorized_chat_context = {
+            'user_id': user_id,
+            'conversation_id': conversation_id,
+            'active_group_ids': group_ids,
+            'active_group_id': group_ids[0] if len(group_ids) == 1 else None,
+            'active_public_workspace_ids': public_workspace_ids,
+            'active_public_workspace_id': (
+                public_workspace_ids[0]
+                if len(public_workspace_ids) == 1
+                else None
+            ),
+            'fact_memory_scope_id': group_ids[0] if len(group_ids) == 1 else user_id,
+            'fact_memory_scope_type': 'group' if len(group_ids) == 1 else 'user',
+        }
+        try:
+            yield
+        finally:
+            if previous_conversation_id is None and hasattr(g, 'conversation_id'):
+                delattr(g, 'conversation_id')
+            else:
+                g.conversation_id = previous_conversation_id
+            if previous_authorized_chat_context is None and hasattr(g, 'authorized_chat_context'):
+                delattr(g, 'authorized_chat_context')
+            else:
+                g.authorized_chat_context = previous_authorized_chat_context
+
+
+def _prepare_workflow_search_context(
+    workflow,
+    action_config,
+    settings,
+    conversation_id='',
+    thought_tracker=None,
+    run_id=None,
+):
     if not _is_document_search_workflow(action_config):
         return {'workflow': workflow, 'citations': [], 'result_count': 0, 'document_count': 0, 'query': None}
 
@@ -4049,20 +4128,163 @@ def _prepare_workflow_search_context(workflow, action_config, settings, thought_
     if not query:
         return {'workflow': workflow, 'citations': [], 'result_count': 0, 'document_count': 0, 'query': None}
 
-    search_top_n = normalize_search_top_n(max(12, len(document_ids) * 3 if document_ids else 12))
-    search_result = search_documents(
-        query=query,
-        user_id=str(workflow.get('user_id') or '').strip(),
-        top_n=search_top_n,
-        doc_scope=resolved_action.get('doc_scope') or 'all',
-        document_ids=document_ids,
-        active_group_ids=resolved_action.get('active_group_ids'),
-        active_public_workspace_id=resolved_action.get('active_public_workspace_id'),
+    user_id = str(workflow.get('user_id') or '').strip()
+    manifest_doc_scope = resolved_action.get('doc_scope') or 'all'
+    manifest_group_ids = list(resolved_action.get('active_group_ids') or [])
+    manifest_public_workspace_ids = list(
+        resolved_action.get('active_public_workspace_id') or []
     )
+    workflow_group_id = _get_workflow_group_id(workflow)
+    if workflow_group_id:
+        assert_group_role(
+            user_id,
+            workflow_group_id,
+            allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+        )
+        manifest_doc_scope = 'group'
+        manifest_group_ids = [workflow_group_id]
+        manifest_public_workspace_ids = []
+
+    scoped_action = dict(resolved_action)
+    scoped_action['doc_scope'] = manifest_doc_scope
+    scoped_action['active_group_ids'] = manifest_group_ids
+    scoped_action['active_public_workspace_id'] = manifest_public_workspace_ids
+
+    if not is_mixed_source_chat_search_enabled(settings):
+        search_top_n = normalize_search_top_n(max(12, len(document_ids) * 3 if document_ids else 12))
+        search_result = search_documents(
+            query=query,
+            user_id=user_id,
+            top_n=search_top_n,
+            doc_scope=manifest_doc_scope,
+            document_ids=document_ids,
+            active_group_ids=manifest_group_ids,
+            active_public_workspace_id=manifest_public_workspace_ids,
+        )
+        retrieved_content, citations = _format_workflow_search_results(search_result.get('results') or [])
+        prepared_workflow = _apply_runtime_document_action_config(workflow, scoped_action)
+        prepared_workflow['task_prompt'] = _build_workflow_search_prompt(workflow.get('task_prompt', ''), {
+            'retrieved_content': retrieved_content,
+        })
+
+        if thought_tracker and run_id:
+            _add_workflow_activity_thought(
+                thought_tracker,
+                prepared_workflow,
+                run_id,
+                step_type='document',
+                content='Searched selected workflow documents',
+                detail=(
+                    f"results={search_result.get('result_count', 0)} | "
+                    f"documents={search_result.get('document_count', 0)}"
+                ),
+                activity_key=f'search:{run_id}:documents',
+                kind='document_search',
+                title='Document search',
+                status='completed',
+            )
+
+        return {
+            'workflow': prepared_workflow,
+            'citations': citations,
+            'agent_citations': [],
+            'generated_tabular_outputs': [],
+            'coverage': {},
+            'result_count': search_result.get('result_count', 0),
+            'document_count': search_result.get('document_count', 0),
+            'query': search_result.get('query'),
+        }
+
+    manifest = resolve_authorized_source_manifest(
+        document_ids,
+        user_id=user_id,
+        selection_mode='selected',
+        conversation_id=conversation_id,
+        active_group_ids=manifest_group_ids,
+        active_public_workspace_ids=manifest_public_workspace_ids,
+        doc_scope=manifest_doc_scope,
+    )
+    partitions = partition_source_manifest(manifest)
+    narrative_sources = list(partitions.get('narrative_sources') or [])
+    tabular_sources = list(partitions.get('tabular_sources') or [])
+    narrative_document_ids = [
+        str(source.get('document_id') or '').strip()
+        for source in narrative_sources
+        if str(source.get('document_id') or '').strip()
+    ]
+    authorized_document_ids = narrative_document_ids + [
+        str(source.get('document_id') or '').strip()
+        for source in tabular_sources
+        if str(source.get('document_id') or '').strip()
+    ]
+
+    manifest_group_ids = []
+    manifest_public_workspace_ids = []
+    for source in narrative_sources + tabular_sources:
+        group_id = str(source.get('group_id') or '').strip()
+        public_workspace_id = str(source.get('public_workspace_id') or '').strip()
+        if group_id and group_id not in manifest_group_ids:
+            manifest_group_ids.append(group_id)
+        if public_workspace_id and public_workspace_id not in manifest_public_workspace_ids:
+            manifest_public_workspace_ids.append(public_workspace_id)
+
+    search_top_n = normalize_search_top_n(
+        max(12, len(narrative_document_ids) * 3 if narrative_document_ids else 12)
+    )
+    search_result = {
+        'results': [],
+        'result_count': 0,
+        'document_count': 0,
+        'query': query,
+    }
+    if narrative_document_ids:
+        search_result = search_documents(
+            query=query,
+            user_id=user_id,
+            top_n=search_top_n,
+            doc_scope=manifest_doc_scope,
+            document_ids=narrative_document_ids,
+            active_group_ids=manifest_group_ids,
+            active_public_workspace_id=manifest_public_workspace_ids,
+            include_all_public_workspaces=True,
+        )
     retrieved_content, citations = _format_workflow_search_results(search_result.get('results') or [])
-    prepared_workflow = _apply_runtime_document_action_config(workflow, resolved_action)
+    evidence_envelopes = build_narrative_evidence_envelopes(
+        narrative_sources,
+        search_result.get('results') or [],
+        'selected',
+    )
+
+    from functions_tabular_analysis import execute_mixed_source_tabular_evidence
+
+    with _workflow_mixed_source_execution_context(user_id, conversation_id, manifest):
+        tabular_result = execute_mixed_source_tabular_evidence(
+            tabular_sources=tabular_sources,
+            selection_mode='selected',
+            has_narrative_sources=bool(narrative_sources),
+            user_question=query,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            gpt_model=_resolve_tabular_document_action_model_name(workflow, settings),
+            settings=settings,
+            thought_tracker=thought_tracker,
+        )
+    evidence_envelopes.extend(tabular_result.get('evidence_envelopes') or [])
+    mixed_source_handoff = build_mixed_source_evidence_handoff(
+        manifest,
+        evidence_envelopes,
+        'selected',
+    )
+
+    prepared_action = dict(resolved_action)
+    prepared_action['document_ids'] = authorized_document_ids
+    prepared_action['doc_scope'] = manifest_doc_scope
+    prepared_action['active_group_ids'] = manifest_group_ids
+    prepared_action['active_public_workspace_id'] = manifest_public_workspace_ids
+    prepared_workflow = _apply_runtime_document_action_config(workflow, prepared_action)
     prepared_workflow['task_prompt'] = _build_workflow_search_prompt(workflow.get('task_prompt', ''), {
-        'retrieved_content': retrieved_content,
+        'retrieved_content': '',
+        'evidence_messages': [mixed_source_handoff],
     })
 
     if thought_tracker and run_id:
@@ -4074,7 +4296,8 @@ def _prepare_workflow_search_context(workflow, action_config, settings, thought_
             content='Searched selected workflow documents',
             detail=(
                 f"results={search_result.get('result_count', 0)} | "
-                f"documents={search_result.get('document_count', 0)}"
+                f"narrative_documents={len(narrative_sources)} | "
+                f"tabular_documents={len(tabular_sources)}"
             ),
             activity_key=f'search:{run_id}:documents',
             kind='document_search',
@@ -4085,10 +4308,46 @@ def _prepare_workflow_search_context(workflow, action_config, settings, thought_
     return {
         'workflow': prepared_workflow,
         'citations': citations,
+        'agent_citations': list(tabular_result.get('agent_citations') or []),
+        'generated_tabular_outputs': list(tabular_result.get('generated_outputs') or []),
+        'coverage': mixed_source_handoff.get('mixed_source_coverage') or {},
         'result_count': search_result.get('result_count', 0),
-        'document_count': search_result.get('document_count', 0),
+        'document_count': len(authorized_document_ids),
         'query': search_result.get('query'),
     }
+
+
+def _attach_workflow_search_context(execution_result, workflow_search_context):
+    """Merge mixed Search evidence into either a workflow model or agent result."""
+    execution_result = execution_result if isinstance(execution_result, dict) else {}
+    search_context = workflow_search_context if isinstance(workflow_search_context, dict) else {}
+    if not search_context:
+        return execution_result
+
+    existing_agent_citations = list(execution_result.get('agent_citations') or [])
+    existing_agent_citations.extend(list(search_context.get('agent_citations') or []))
+    existing_outputs = list(execution_result.get('generated_tabular_outputs') or [])
+    existing_outputs.extend(list(search_context.get('generated_tabular_outputs') or []))
+    hybrid_citations = list(search_context.get('citations') or [])
+    coverage = search_context.get('coverage') if isinstance(search_context.get('coverage'), dict) else {}
+    execution_result.update({
+        'hybrid_citations': hybrid_citations,
+        'agent_citations': existing_agent_citations,
+        'generated_tabular_outputs': existing_outputs,
+        'mixed_source_coverage': coverage,
+        'augmented': bool(
+            hybrid_citations
+            or existing_agent_citations
+            or coverage.get('requested_source_count')
+        ),
+        'document_search': {
+            'query': search_context.get('query'),
+            'result_count': search_context.get('result_count', 0),
+            'document_count': search_context.get('document_count', 0),
+            'partial_coverage': bool(coverage.get('partial_coverage')),
+        },
+    })
+    return execution_result
 
 
 def _apply_runtime_document_action_config(workflow, action_config):
@@ -5713,6 +5972,7 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
                 execution_workflow,
                 document_action,
                 settings,
+                conversation_id=conversation.get('id'),
                 thought_tracker=thought_tracker,
                 run_id=run_id,
             )
@@ -5751,16 +6011,10 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
                 thought_tracker=thought_tracker,
                 url_access_context=url_access_context,
             )
-            if workflow_search_context:
-                execution_result.update({
-                    'hybrid_citations': workflow_search_context.get('citations') or [],
-                    'augmented': bool(workflow_search_context.get('citations')),
-                    'document_search': {
-                        'query': workflow_search_context.get('query'),
-                        'result_count': workflow_search_context.get('result_count', 0),
-                        'document_count': workflow_search_context.get('document_count', 0),
-                    },
-                })
+            execution_result = _attach_workflow_search_context(
+                execution_result,
+                workflow_search_context,
+            )
         else:
             execution_result = _execute_model_workflow(
                 execution_workflow,
@@ -5769,16 +6023,10 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
                 thought_tracker=thought_tracker,
                 url_access_context=url_access_context,
             )
-            if workflow_search_context:
-                execution_result.update({
-                    'hybrid_citations': workflow_search_context.get('citations') or [],
-                    'augmented': bool(workflow_search_context.get('citations')),
-                    'document_search': {
-                        'query': workflow_search_context.get('query'),
-                        'result_count': workflow_search_context.get('result_count', 0),
-                        'document_count': workflow_search_context.get('document_count', 0),
-                    },
-                })
+            execution_result = _attach_workflow_search_context(
+                execution_result,
+                workflow_search_context,
+            )
         execution_result = _attach_workflow_url_access_result(execution_result, url_access_context)
 
         assistant_doc = _create_assistant_message(
