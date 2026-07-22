@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.062)**
+
+#### New Features
+
+*   **Authorized Mixed-Source Manifest and Evidence Contracts**
+    *   Added one ordered, authorization-safe source manifest that classifies selected personal, group, public, and chat-upload documents as tabular, narrative, unsupported, or unresolved without exposing inaccessible source metadata.
+    *   Added independent capability partitions, validated selection modes, bounded engine-neutral evidence envelopes, and aggregate privacy-safe diagnostics for later Chat, Search, Analyze, and Compare phases.
+    *   Kept Phase 1 behavior-neutral through a default-off internal shadow-manifest flag; native mixed-source execution remains scoped to follow-up issues #1057-#1061.
+    *   (Ref: microsoft/simplechat#1056, parent microsoft/simplechat#1055, `functions_mixed_source_orchestration.py`, `MIXED_SOURCE_MANIFEST_AND_EVIDENCE_CONTRACTS.md`)
+
 ### **(v0.250.061)**
 
 #### User Interface Enhancements

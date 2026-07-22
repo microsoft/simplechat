@@ -37,6 +37,7 @@ from functions_model_endpoint_runtime import (
     build_model_endpoint_sync_chat_client,
     build_semantic_kernel_chat_service_for_model,
 )
+from functions_mixed_source_orchestration import resolve_authorized_source_manifest
 import builtins
 import asyncio, types
 import ast
@@ -287,6 +288,44 @@ def _normalize_capability_action(document_action_type):
     if normalized_action_type == DOCUMENT_ACTION_TYPE_COMPARISON:
         return ASSIGNED_KNOWLEDGE_USER_ACTION_COMPARE
     return ASSIGNED_KNOWLEDGE_USER_ACTION_SEARCH
+
+
+def _maybe_resolve_chat_source_manifest(
+    settings,
+    user_id,
+    conversation_id,
+    selected_document_ids,
+    scope_context,
+):
+    if not is_mixed_source_manifest_enabled(settings):
+        return []
+
+    requested_source_ids = _normalize_conversation_task_document_ids(
+        selected_document_ids
+    )
+    if not requested_source_ids:
+        return []
+
+    scope_context = scope_context if isinstance(scope_context, dict) else {}
+    try:
+        return resolve_authorized_source_manifest(
+            requested_source_ids,
+            user_id=user_id,
+            selection_mode='selected',
+            conversation_id=conversation_id,
+            active_group_ids=scope_context.get('active_group_ids'),
+            active_public_workspace_ids=scope_context.get('active_public_workspace_ids'),
+        )
+    except Exception:
+        log_event(
+            '[MixedSourceManifest] Chat shadow resolution failed.',
+            extra={
+                'requested_source_count': len(requested_source_ids),
+                'selection_mode': 'selected',
+            },
+            level=logging.WARNING,
+        )
+        return []
 
 
 def _source_review_metadata_used(source_review_result):
@@ -13527,6 +13566,14 @@ def register_route_backend_chats(bp):
                 selected_document_id = effective_selected_document_id
                 document_scope = effective_document_scope
 
+            _maybe_resolve_chat_source_manifest(
+                settings,
+                user_id,
+                conversation_id,
+                effective_selected_document_ids,
+                scope_context,
+            )
+
             # Clear plugin invocations at start of message processing to ensure
             # each message only shows citations for tools executed during that specific interaction
             plugin_logger = get_plugin_logger()
@@ -17198,6 +17245,14 @@ def register_route_backend_chats(bp):
                     selected_document_ids = list(effective_selected_document_ids)
                     selected_document_id = effective_selected_document_id
                     document_scope = effective_document_scope
+
+                _maybe_resolve_chat_source_manifest(
+                    settings,
+                    user_id,
+                    conversation_id,
+                    effective_selected_document_ids,
+                    scope_context,
+                )
 
                 # Determine chat type
                 actual_chat_type = 'personal_single_user'
