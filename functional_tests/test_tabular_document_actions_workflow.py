@@ -76,8 +76,11 @@ def test_analyze_and_compare_dispatch_use_tabular_helper() -> None:
 
     workflow_runner_content = read_text(WORKFLOW_RUNNER_FILE)
 
-    assert "DOCUMENT_ACTION_TYPE_ANALYZE,\n                    workflow,\n                    analysis_config," in workflow_runner_content, (
-        "Expected analysis workflow execution to call the shared tabular document-action helper."
+    assert workflow_runner_content.count('_maybe_execute_tabular_document_action(') >= 5, (
+        "Expected analysis workflow execution to preserve the shared tabular helper for flag-off rollback."
+    )
+    assert workflow_runner_content.count('_execute_mixed_source_analyze_workflow(') >= 3, (
+        "Expected combined Analyze model and agent paths to use the Phase 3 coordinator."
     )
     assert "DOCUMENT_ACTION_TYPE_COMPARISON,\n                    workflow,\n                    comparison_config," in workflow_runner_content, (
         "Expected document comparison workflow execution to call the shared tabular document-action helper."

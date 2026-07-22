@@ -80,6 +80,12 @@ from functions_message_artifacts import (
     make_json_serializable,
 )
 from functions_mixed_source_orchestration import (
+    EVIDENCE_ENGINE_DOCUMENT_ANALYSIS,
+    EVIDENCE_ENGINE_TABULAR_TOOLS,
+    EVIDENCE_STATUS_COMPLETED,
+    EVIDENCE_STATUS_FAILED,
+    SELECTION_MODE_SELECTED,
+    build_evidence_envelope,
     build_mixed_source_evidence_handoff,
     build_narrative_evidence_envelopes,
     partition_source_manifest,
@@ -1804,6 +1810,233 @@ def _build_tabular_comparison_action_prompt(comparison_prompt, left_document, ri
         '\n\n'.join(section for section in prompt_sections if section),
         force=True,
     )
+
+
+def _build_mixed_source_analyze_reduction_prompt(analysis_prompt, handoff):
+    """Build the one bounded collective reduction prompt for combined Analyze."""
+    return (
+        'Answer the exact Analyze request using only the bounded evidence handoff below. '
+        'Treat computed tabular facts as tool-backed calculations and narrative facts as document excerpts. '
+        'Identify cross-source relationships only where the evidence supports them. Keep facts source-separated when needed. '
+        'Explicitly state missing, failed, unsupported, unresolved, or unprocessed evidence and never claim coverage for it.\n\n'
+        f'Analyze request:\n{str(analysis_prompt or "").strip()}\n\n'
+        f'Bounded evidence handoff:\n{json.dumps(handoff, ensure_ascii=False, separators=(",", ":"))}'
+    )
+
+
+def _build_mixed_source_analysis_coverage(handoff):
+    """Expose terminal coverage for every manifest entry with engine/status totals."""
+    coverage = dict((handoff or {}).get('mixed_source_coverage') or {})
+    engine_status_totals = {}
+    for envelope in list((handoff or {}).get('evidence_envelopes') or []):
+        engine = str(envelope.get('engine') or 'unknown')
+        status = str(envelope.get('status') or 'failed')
+        engine_status_totals.setdefault(engine, {})[status] = (
+            engine_status_totals.setdefault(engine, {}).get(status, 0) + 1
+        )
+    coverage['engine_status_totals'] = engine_status_totals
+    coverage['document_count'] = coverage.get('requested_source_count', 0)
+    coverage['progress_meta'] = {
+        'phase': 'complete',
+        'phase_label': 'Complete' if not coverage.get('partial_coverage') else 'Partial',
+        'phase_detail': 'Mixed-source Analyze completed with terminal source coverage',
+        'status': 'partial' if coverage.get('partial_coverage') else 'completed',
+        'percent_override': 100,
+    }
+    return coverage
+
+
+def _raise_legacy_mixed_source_analyze_limitation(
+    analysis_config,
+    user_id,
+    conversation_id='',
+):
+    """Fail closed rather than silently treating tables as narrative evidence on rollback."""
+    requested_ids, _ = _get_document_action_source_ids(analysis_config)
+    if len(requested_ids) < 2:
+        return
+    manifest = resolve_authorized_source_manifest(
+        requested_ids,
+        user_id=user_id,
+        selection_mode=SELECTION_MODE_SELECTED,
+        conversation_id=conversation_id,
+        active_group_ids=analysis_config.get('active_group_ids'),
+        active_public_workspace_ids=analysis_config.get('active_public_workspace_id'),
+        doc_scope=analysis_config.get('doc_scope', 'all'),
+    )
+    partitions = partition_source_manifest(manifest)
+    if partitions['narrative_sources'] and partitions['tabular_sources']:
+        raise ValueError(
+            'Mixed narrative and tabular Analyze is temporarily unavailable while mixed-source Analyze is disabled.'
+        )
+
+
+def _execute_mixed_source_analyze_workflow(
+    workflow,
+    analysis_config,
+    settings,
+    invoke_prompt,
+    conversation_id='',
+    activity_callback=None,
+    thought_tracker=None,
+    live_thought_callback=None,
+    max_documents=None,
+):
+    """Run combined Analyze cohorts natively, then reduce bounded evidence once."""
+    user_id = str(workflow.get('user_id') or '').strip()
+    requested_ids, _ = _get_document_action_source_ids(analysis_config)
+    requested_selection_mode = str(
+        analysis_config.get('selection_mode')
+        or analysis_config.get('target_mode')
+        or SELECTION_MODE_SELECTED
+    ).strip().lower()
+    if requested_selection_mode == 'all':
+        raise ValueError(
+            'Analyze All Documents is temporarily unavailable until exhaustive authorized catalog enumeration is enabled.'
+        )
+    if max_documents is not None and len(requested_ids) > int(max_documents):
+        raise ValueError(
+            f'Analyze supports up to {int(max_documents)} authorized documents at a time.'
+        )
+    if callable(activity_callback):
+        activity_callback({'type': 'mixed_source_progress', 'phase': 'resolving_sources', 'label': 'Resolving sources'})
+    manifest = resolve_authorized_source_manifest(
+        requested_ids,
+        user_id=user_id,
+        selection_mode=SELECTION_MODE_SELECTED,
+        conversation_id=conversation_id,
+        active_group_ids=analysis_config.get('active_group_ids'),
+        active_public_workspace_ids=analysis_config.get('active_public_workspace_id'),
+        doc_scope=analysis_config.get('doc_scope', 'all'),
+    )
+    partitions = partition_source_manifest(manifest)
+    evidence_envelopes = []
+    generated_tabular_outputs = []
+    tabular_agent_citations = []
+
+    narrative_sources = partitions['narrative_sources']
+    if narrative_sources:
+        if callable(activity_callback):
+            activity_callback({'type': 'mixed_source_progress', 'phase': 'analyzing_narrative', 'label': 'Analyzing narrative documents'})
+        try:
+            narrative_result = run_document_analysis(
+                user_id=user_id,
+                analysis_prompt=workflow.get('task_prompt', ''),
+                document_ids=[source.get('document_id') for source in narrative_sources],
+                invoke_prompt=invoke_prompt,
+                doc_scope=analysis_config.get('doc_scope'),
+                active_group_ids=analysis_config.get('active_group_ids'),
+                active_public_workspace_id=analysis_config.get('active_public_workspace_id'),
+                conversation_id=conversation_id,
+                window_unit=analysis_config.get('window_unit'),
+                window_size=analysis_config.get('window_size'),
+                window_percent=analysis_config.get('window_percent'),
+                max_retries_per_window=analysis_config.get('max_retries_per_window'),
+                activity_callback=activity_callback,
+                max_documents=max_documents,
+                include_coverage_summary=False,
+            )
+            documents_by_id = {
+                str(document.get('document_id') or ''): document
+                for document in list((narrative_result.get('coverage') or {}).get('documents') or [])
+            }
+            narrative_items_by_id = {
+                str(item.get('document_id') or ''): item
+                for item in list(narrative_result.get('document_analysis_items') or [])
+                if str(item.get('document_id') or '').strip()
+            }
+            for source in narrative_sources:
+                document_id = source.get('document_id')
+                document_coverage = documents_by_id.get(str(document_id), {})
+                narrative_item = narrative_items_by_id.get(str(document_id), {})
+                failed_windows = int(document_coverage.get('failed_windows') or 0)
+                total_windows = int(document_coverage.get('total_windows') or 0)
+                processed_windows = int(document_coverage.get('processed_windows') or 0)
+                status = (
+                    EVIDENCE_STATUS_COMPLETED
+                    if total_windows and processed_windows == total_windows and not failed_windows
+                    else ('partial' if processed_windows else EVIDENCE_STATUS_FAILED)
+                )
+                evidence_envelopes.append(build_evidence_envelope(
+                    document_id=document_id,
+                    source_kind='narrative',
+                    engine=EVIDENCE_ENGINE_DOCUMENT_ANALYSIS,
+                    status=status,
+                    summary=str(narrative_item.get('text') or ''),
+                    citations=[],
+                    generated_artifacts=[],
+                    coverage={'terminal': True, 'processed_windows': processed_windows, 'total_windows': total_windows, 'failed_windows': failed_windows},
+                    error='Narrative analysis could not be completed.' if status == EVIDENCE_STATUS_FAILED else None,
+                ))
+        except Exception:
+            for source in narrative_sources:
+                evidence_envelopes.append(build_evidence_envelope(
+                    document_id=source.get('document_id'), source_kind='narrative',
+                    engine=EVIDENCE_ENGINE_DOCUMENT_ANALYSIS, status=EVIDENCE_STATUS_FAILED,
+                    summary='Narrative evidence could not be completed for this source.',
+                    coverage={'terminal': True}, error='Narrative analysis could not be completed.',
+                ))
+
+    tabular_sources = partitions['tabular_sources']
+    if tabular_sources:
+        if callable(activity_callback):
+            activity_callback({'type': 'mixed_source_progress', 'phase': 'analyzing_tabular', 'label': 'Analyzing tabular documents'})
+        for source in tabular_sources:
+            tabular_config = dict(analysis_config)
+            tabular_config['document_ids'] = [source.get('document_id')]
+            tabular_payload = _maybe_execute_tabular_document_action(
+                DOCUMENT_ACTION_TYPE_ANALYZE, workflow, tabular_config, settings,
+                conversation_id=conversation_id, invoke_prompt=invoke_prompt,
+                thought_tracker=thought_tracker, live_thought_callback=live_thought_callback,
+            )
+            if not tabular_payload:
+                evidence_envelopes.append(build_evidence_envelope(
+                    document_id=source.get('document_id'), source_kind='tabular',
+                    engine=EVIDENCE_ENGINE_TABULAR_TOOLS, status=EVIDENCE_STATUS_FAILED,
+                    summary='Tabular evidence could not be completed for this source.',
+                    coverage={'terminal': True}, error='Tabular analysis could not be completed.',
+                ))
+                continue
+            tabular_result = tabular_payload.get('result') or {}
+            evidence_envelopes.append(build_evidence_envelope(
+                document_id=source.get('document_id'), source_kind='tabular',
+                engine=EVIDENCE_ENGINE_TABULAR_TOOLS, status=EVIDENCE_STATUS_COMPLETED,
+                summary=str(tabular_result.get('analysis_reply') or tabular_result.get('reply') or ''),
+                citations=list(tabular_payload.get('agent_citations') or []),
+                generated_artifacts=list(tabular_payload.get('generated_tabular_outputs') or []),
+                coverage={'terminal': True, 'tool_call_count': 1},
+            ))
+            generated_tabular_outputs.extend(tabular_payload.get('generated_tabular_outputs') or [])
+            tabular_agent_citations.extend(tabular_payload.get('agent_citations') or [])
+
+    handoff = build_mixed_source_evidence_handoff(manifest, evidence_envelopes, SELECTION_MODE_SELECTED)
+    if callable(activity_callback):
+        activity_callback({'type': 'mixed_source_progress', 'phase': 'combining_findings', 'label': 'Combining findings'})
+    collective_reply = str(invoke_prompt(
+        _build_mixed_source_analyze_reduction_prompt(workflow.get('task_prompt', ''), handoff),
+        stage='mixed_source_reduction', metadata={'requested_source_count': len(manifest)},
+    ) or '').strip()
+    if not collective_reply:
+        collective_reply = 'The selected sources could not be combined into a final analysis.'
+    coverage = _build_mixed_source_analysis_coverage(handoff)
+    if callable(activity_callback):
+        activity_callback({
+            'type': 'mixed_source_progress',
+            'phase': 'complete',
+            'label': coverage['progress_meta']['phase_label'],
+            'status': coverage['progress_meta']['status'],
+        })
+    return {
+        'reply': collective_reply,
+        'analysis_reply': collective_reply,
+        'coverage': coverage,
+        'documents': list(coverage.get('sources') or []),
+        'document_ids': [source.get('document_id') for source in manifest],
+        'mixed_source_manifest': manifest,
+        'mixed_source_evidence': handoff.get('evidence_envelopes') or [],
+        'generated_tabular_outputs': generated_tabular_outputs,
+        'agent_citations': tabular_agent_citations,
+    }
 
 
 def _build_workflow_generation_prompt(task_prompt):
@@ -5128,6 +5361,13 @@ def _execute_document_analysis_workflow(
 
         return _combine_per_document_analysis_results(per_document_results)
 
+    if not bool(settings.get('enable_mixed_source_analyze', False)):
+        _raise_legacy_mixed_source_analyze_limitation(
+            analysis_config,
+            user_id,
+            conversation_id=conversation_id,
+        )
+
     token_usage_aggregate = _create_token_usage_aggregate()
 
     if workflow.get('runner_type') == 'agent':
@@ -5195,19 +5435,29 @@ def _execute_document_analysis_workflow(
                     _accumulate_token_usage(token_usage_aggregate, result)
                     return str(result)
 
-                tabular_action_payload = _maybe_execute_tabular_document_action(
-                    DOCUMENT_ACTION_TYPE_ANALYZE,
-                    workflow,
-                    analysis_config,
-                    settings,
-                    conversation_id=conversation_id,
-                    invoke_prompt=invoke_prompt,
-                    thought_tracker=thought_tracker,
-                    live_thought_callback=external_activity_callback,
-                )
+                mixed_source_enabled = bool(settings.get('enable_mixed_source_analyze', False))
+                tabular_action_payload = None
+                if mixed_source_enabled:
+                    analysis_result = _execute_mixed_source_analyze_workflow(
+                        workflow, analysis_config, settings, invoke_prompt,
+                        conversation_id=conversation_id, activity_callback=activity_callback,
+                        thought_tracker=thought_tracker, live_thought_callback=external_activity_callback,
+                        max_documents=workflow_analysis_max_documents,
+                    )
+                else:
+                    tabular_action_payload = _maybe_execute_tabular_document_action(
+                        DOCUMENT_ACTION_TYPE_ANALYZE,
+                        workflow,
+                        analysis_config,
+                        settings,
+                        conversation_id=conversation_id,
+                        invoke_prompt=invoke_prompt,
+                        thought_tracker=thought_tracker,
+                        live_thought_callback=external_activity_callback,
+                    )
                 if tabular_action_payload:
                     analysis_result = tabular_action_payload.get('result') or {}
-                else:
+                elif not mixed_source_enabled:
                     analysis_result = run_document_analysis(
                         user_id=user_id,
                         analysis_prompt=workflow.get('task_prompt', ''),
@@ -5227,11 +5477,19 @@ def _execute_document_analysis_workflow(
                     analysis_result,
                     workflow.get('task_prompt', ''),
                     conversation_id=conversation_id,
-                    primary_generated_outputs=list((tabular_action_payload or {}).get('generated_tabular_outputs') or []),
+                    primary_generated_outputs=list(
+                        (tabular_action_payload or {}).get('generated_tabular_outputs')
+                        or analysis_result.get('generated_tabular_outputs')
+                        or []
+                    ),
                 )
                 agent_citations = _build_agent_citations_from_invocations(user_id, conversation_id)
                 if not agent_citations:
-                    agent_citations = list((tabular_action_payload or {}).get('agent_citations') or [])
+                    agent_citations = list(
+                        (tabular_action_payload or {}).get('agent_citations')
+                        or analysis_result.get('agent_citations')
+                        or []
+                    )
                 alert_targets = _collect_agent_alert_targets(user_id, conversation_id)
                 token_usage = _finalize_token_usage(token_usage_aggregate)
 
@@ -5249,7 +5507,11 @@ def _execute_document_analysis_workflow(
                     'agent_name': getattr(loaded_agent, 'name', None) or requested_name,
                     'agent_display_name': getattr(loaded_agent, 'display_name', None) or selected_agent.get('display_name') or requested_name,
                     'agent_citations': agent_citations,
-                    'generated_tabular_outputs': list((tabular_action_payload or {}).get('generated_tabular_outputs') or []),
+                    'generated_tabular_outputs': list(
+                        (tabular_action_payload or {}).get('generated_tabular_outputs')
+                        or analysis_result.get('generated_tabular_outputs')
+                        or []
+                    ),
                     'alert_targets': alert_targets,
                 }
             finally:
@@ -5310,19 +5572,29 @@ def _execute_document_analysis_workflow(
             return ''
         return _extract_message_text(completion.choices[0].message.content)
 
-    tabular_action_payload = _maybe_execute_tabular_document_action(
-        DOCUMENT_ACTION_TYPE_ANALYZE,
-        workflow,
-        analysis_config,
-        settings,
-        conversation_id=conversation_id,
-        invoke_prompt=invoke_model_prompt,
-        thought_tracker=thought_tracker,
-        live_thought_callback=external_activity_callback,
-    )
+    mixed_source_enabled = bool(settings.get('enable_mixed_source_analyze', False))
+    tabular_action_payload = None
+    if mixed_source_enabled:
+        analysis_result = _execute_mixed_source_analyze_workflow(
+            workflow, analysis_config, settings, invoke_model_prompt,
+            conversation_id=conversation_id, activity_callback=activity_callback,
+            thought_tracker=thought_tracker, live_thought_callback=external_activity_callback,
+            max_documents=workflow_analysis_max_documents,
+        )
+    else:
+        tabular_action_payload = _maybe_execute_tabular_document_action(
+            DOCUMENT_ACTION_TYPE_ANALYZE,
+            workflow,
+            analysis_config,
+            settings,
+            conversation_id=conversation_id,
+            invoke_prompt=invoke_model_prompt,
+            thought_tracker=thought_tracker,
+            live_thought_callback=external_activity_callback,
+        )
     if tabular_action_payload:
         analysis_result = tabular_action_payload.get('result') or {}
-    else:
+    elif not mixed_source_enabled:
         analysis_result = run_document_analysis(
             user_id=user_id,
             analysis_prompt=workflow.get('task_prompt', ''),
@@ -5342,7 +5614,11 @@ def _execute_document_analysis_workflow(
         analysis_result,
         workflow.get('task_prompt', ''),
         conversation_id=conversation_id,
-        primary_generated_outputs=list((tabular_action_payload or {}).get('generated_tabular_outputs') or []),
+        primary_generated_outputs=list(
+            (tabular_action_payload or {}).get('generated_tabular_outputs')
+            or analysis_result.get('generated_tabular_outputs')
+            or []
+        ),
     )
     token_usage = _finalize_token_usage(token_usage_aggregate)
     debug_print(
@@ -5366,8 +5642,16 @@ def _execute_document_analysis_workflow(
         'model_deployment_name': deployment_name,
         'token_usage': token_usage,
         'provider': provider,
-        'agent_citations': list((tabular_action_payload or {}).get('agent_citations') or []),
-        'generated_tabular_outputs': list((tabular_action_payload or {}).get('generated_tabular_outputs') or []),
+        'agent_citations': list(
+            (tabular_action_payload or {}).get('agent_citations')
+            or analysis_result.get('agent_citations')
+            or []
+        ),
+        'generated_tabular_outputs': list(
+            (tabular_action_payload or {}).get('generated_tabular_outputs')
+            or analysis_result.get('generated_tabular_outputs')
+            or []
+        ),
     }
 
 

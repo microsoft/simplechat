@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.066)**
+
+#### New Features
+
+*   **Mixed-Source Combined Analyze**
+    *   Combined Analyze can now resolve a fresh authorization-safe selected-source manifest, dispatch narrative documents to document-window analysis and tables to existing tabular analysis, then reduce their bounded evidence into one coverage-aware answer.
+    *   The default-off `enable_mixed_source_analyze` rollout preserves legacy behavior when disabled and keeps per-document Analyze as separate native executions. The separately staged `enable_mixed_source_analyze_all` flag remains off pending exhaustive catalog enumeration and performance validation.
+    *   (Ref: microsoft/simplechat#1058, parent microsoft/simplechat#1055, prerequisites microsoft/simplechat#1056 and microsoft/simplechat#1057, `functions_workflow_runner.py`, `functions_mixed_source_orchestration.py`, `MIXED_SOURCE_ANALYZE.md`)
+
 ### **(v0.250.065)**
 
 #### Bug Fixes
