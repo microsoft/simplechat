@@ -171,6 +171,67 @@ def _normalize_workspace_document_delete_ids(raw_document_ids):
     return normalized_document_ids
 
 
+def _build_replayed_document_context(original_metadata):
+    """Rebuild document-context intent from stored metadata for retry and edit."""
+    metadata = original_metadata if isinstance(original_metadata, dict) else {}
+    workspace_search = metadata.get('workspace_search')
+    if not isinstance(workspace_search, dict):
+        workspace_search = metadata.get('document_search')
+    workspace_search = workspace_search if isinstance(workspace_search, dict) else {}
+
+    selected_document_ids = (
+        workspace_search.get('requested_document_ids')
+        or workspace_search.get('selected_document_ids')
+        or []
+    )
+    if not isinstance(selected_document_ids, list):
+        selected_document_ids = [selected_document_ids]
+    selected_document_ids = [
+        str(document_id or '').strip()
+        for document_id in selected_document_ids
+        if str(document_id or '').strip()
+    ]
+    selected_document_id = str(
+        workspace_search.get('selected_document_id')
+        or workspace_search.get('document_id')
+        or ''
+    ).strip()
+    if selected_document_id and selected_document_id not in selected_document_ids:
+        selected_document_ids.insert(0, selected_document_id)
+
+    selection_mode = str(workspace_search.get('selection_mode') or '').strip().lower()
+    if selection_mode not in {'selected', 'all', 'history', 'relevance'}:
+        selection_mode = 'selected' if selected_document_ids else 'relevance'
+    document_context_requested = workspace_search.get('document_context_requested')
+    if not isinstance(document_context_requested, bool):
+        document_context_requested = bool(
+            workspace_search.get('search_enabled')
+            or workspace_search.get('enabled')
+            or selected_document_ids
+        )
+
+    return {
+        'hybrid_search': bool(
+            workspace_search.get('hybrid_search_preference')
+            if 'hybrid_search_preference' in workspace_search
+            else workspace_search.get('enabled')
+            or workspace_search.get('search_enabled')
+        ),
+        'selection_mode': selection_mode,
+        'document_context_requested': document_context_requested,
+        'selected_document_id': selected_document_ids[0] if selected_document_ids else None,
+        'selected_document_ids': selected_document_ids,
+        'doc_scope': workspace_search.get('document_scope') or workspace_search.get('scope'),
+        'top_n': workspace_search.get('top_n'),
+        'classifications': (
+            workspace_search.get('classification')
+            or workspace_search.get('classifications')
+        ),
+        'active_group_ids': workspace_search.get('active_group_ids') or [],
+        'active_public_workspace_ids': workspace_search.get('active_public_workspace_ids') or [],
+    }
+
+
 def _get_requested_workspace_document_delete_ids_for_conversation(payload, conversation_id):
     if not isinstance(payload, dict):
         return []
@@ -2641,16 +2702,13 @@ def register_route_backend_conversations(bp):
                 "message_retry_created",
             )
             # Build chat request parameters from original message metadata
+            replayed_document_context = _build_replayed_document_context(original_metadata)
             chat_request = {
                 'message': user_content,
                 'conversation_id': conversation_id,
                 'model_deployment': selected_model or original_metadata.get('model_selection', {}).get('selected_model'),
                 'reasoning_effort': reasoning_effort or original_metadata.get('reasoning_effort'),
-                'hybrid_search': original_metadata.get('document_search', {}).get('enabled', False),
-                'selected_document_id': original_metadata.get('document_search', {}).get('document_id'),
-                'doc_scope': original_metadata.get('document_search', {}).get('scope'),
-                'top_n': original_metadata.get('document_search', {}).get('top_n'),
-                'classifications': original_metadata.get('document_search', {}).get('classifications'),
+                **replayed_document_context,
                 'image_generation': original_metadata.get('image_generation', {}).get('enabled', False),
                 'active_group_id': original_metadata.get('chat_context', {}).get('group_id'),
                 'active_public_workspace_id': original_metadata.get('chat_context', {}).get('public_workspace_id'),
@@ -2864,16 +2922,13 @@ def register_route_backend_conversations(bp):
             )
             # Build chat request parameters from original message metadata
             # Keep all original settings (model, reasoning, doc search, etc.)
+            replayed_document_context = _build_replayed_document_context(original_metadata)
             chat_request = {
                 'message': edited_content,  # Use edited content
                 'conversation_id': conversation_id,
                 'model_deployment': original_metadata.get('model_selection', {}).get('selected_model'),
                 'reasoning_effort': original_metadata.get('reasoning_effort'),
-                'hybrid_search': original_metadata.get('document_search', {}).get('enabled', False),
-                'selected_document_id': original_metadata.get('document_search', {}).get('document_id'),
-                'doc_scope': original_metadata.get('document_search', {}).get('scope'),
-                'top_n': original_metadata.get('document_search', {}).get('top_n'),
-                'classifications': original_metadata.get('document_search', {}).get('classifications'),
+                **replayed_document_context,
                 'image_generation': original_metadata.get('image_generation', {}).get('enabled', False),
                 'active_group_id': original_metadata.get('chat_context', {}).get('group_id'),
                 'active_public_workspace_id': original_metadata.get('chat_context', {}).get('public_workspace_id'),

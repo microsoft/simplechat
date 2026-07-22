@@ -90,6 +90,8 @@ EVIDENCE_COVERAGE_MAX_BYTES = 4096
 EVIDENCE_JSON_MAX_DEPTH = 4
 EVIDENCE_JSON_MAX_COLLECTION_ITEMS = 20
 EVIDENCE_JSON_MAX_STRING_BYTES = 1024
+MIXED_SOURCE_HANDOFF_MAX_BYTES = 49152
+MIXED_SOURCE_HANDOFF_MAX_ENVELOPES = 20
 
 
 def normalize_selection_mode(selection_mode, default=SELECTION_MODE_SELECTED):
@@ -106,6 +108,146 @@ def normalize_selection_mode(selection_mode, default=SELECTION_MODE_SELECTED):
             f"selection_mode must be one of: {', '.join(sorted(SELECTION_MODES))}"
         )
     return normalized_mode
+
+
+def normalize_document_context_request(
+    selection_mode=None,
+    selected_document_ids=None,
+    document_context_requested=None,
+    hybrid_search=False,
+):
+    """Validate the Phase 2 request contract and derive effective context intent."""
+    normalized_document_ids = []
+    seen_document_ids = set()
+    for document_id in _normalize_identifier_list(selected_document_ids):
+        if document_id == "all" or document_id in seen_document_ids:
+            continue
+        seen_document_ids.add(document_id)
+        normalized_document_ids.append(document_id)
+
+    normalized_hybrid_search = _normalize_boolean(
+        hybrid_search,
+        field_name="hybrid_search",
+    )
+    normalized_context_requested = _normalize_optional_boolean(
+        document_context_requested,
+        field_name="document_context_requested",
+    )
+    has_explicit_selection_mode = str(selection_mode or "").strip() != ""
+
+    if normalized_document_ids:
+        normalized_selection_mode = normalize_selection_mode(
+            selection_mode,
+            default=SELECTION_MODE_SELECTED,
+        )
+        if normalized_selection_mode != SELECTION_MODE_SELECTED:
+            raise ValueError(
+                "selection_mode must be selected when selected_document_ids are provided"
+            )
+        normalized_context_requested = True
+    elif has_explicit_selection_mode:
+        normalized_selection_mode = normalize_selection_mode(selection_mode)
+        if normalized_selection_mode == SELECTION_MODE_SELECTED:
+            raise ValueError(
+                "selection_mode selected requires at least one selected_document_id"
+            )
+        if (
+            normalized_selection_mode in {SELECTION_MODE_ALL, SELECTION_MODE_RELEVANCE}
+            and normalized_context_requested is None
+        ):
+            normalized_context_requested = True
+    elif normalized_context_requested is True or normalized_hybrid_search:
+        normalized_selection_mode = SELECTION_MODE_RELEVANCE
+        normalized_context_requested = True
+    else:
+        normalized_selection_mode = None
+        normalized_context_requested = False
+
+    return {
+        "selection_mode": normalized_selection_mode,
+        "selected_document_ids": normalized_document_ids,
+        "document_context_requested": bool(normalized_context_requested),
+        "hybrid_search": normalized_hybrid_search,
+        "explicit_selection": bool(normalized_document_ids),
+    }
+
+
+def should_run_tabular_evidence(user_question, has_narrative_sources=False):
+    """Return whether a mixed-source question needs tabular data or schema evidence."""
+    normalized_question = " ".join(str(user_question or "").strip().lower().split())
+    if not normalized_question:
+        return True
+
+    tabular_markers = (
+        "calculate", "calculation", "count", "average", "mean", "median",
+        "minimum", "maximum", "total", "sum", "percentage", "percent",
+        "rows", "columns", "spreadsheet", "workbook", "worksheet", "sheet",
+        "csv", "xlsx", "xls", "table", "tabular", "data set", "dataset",
+        "trend", "group by", "how many", "highest", "lowest",
+    )
+    collective_markers = (
+        "both files", "both documents", "all files", "all documents",
+        "all selected", "each file", "each document", "each source",
+        "across the files", "across the documents", "across the sources",
+        "mixed sources",
+    )
+    narrative_markers = (
+        "pdf", "docx", "word document", "presentation", "powerpoint",
+        "paragraph", "section", "policy", "procedure", "contract",
+        "agreement", "memo", "letter", "narrative", "prose", "report",
+    )
+
+    if any(marker in normalized_question for marker in tabular_markers):
+        return True
+    if any(marker in normalized_question for marker in collective_markers):
+        return True
+    if has_narrative_sources and any(
+        marker in normalized_question for marker in narrative_markers
+    ):
+        return False
+    if normalized_question in {"summarize", "summary", "summarize the selected sources"}:
+        return True
+    if has_narrative_sources:
+        return False
+    return True
+
+
+def build_tabular_file_contexts_from_manifest(tabular_sources):
+    """Build canonical per-file contexts for the existing tabular runner."""
+    contexts = []
+    seen_source_identities = set()
+    for raw_source in list(tabular_sources or []):
+        source = raw_source if isinstance(raw_source, dict) else {}
+        if (
+            source.get("authorization_status") != AUTHORIZATION_STATUS_AUTHORIZED
+            or source.get("source_kind") != SOURCE_KIND_TABULAR
+        ):
+            continue
+
+        document_id = str(source.get("document_id") or "").strip()
+        file_name = str(source.get("file_name") or "").strip()
+        scope = str(source.get("scope") or "").strip().lower()
+        if not document_id or not file_name or scope not in SOURCE_SCOPES:
+            continue
+        source_hint = "workspace" if scope == SOURCE_SCOPE_PERSONAL else scope
+        source_identity = (
+            document_id,
+            source_hint,
+            str(source.get("scope_id") or "").strip(),
+        )
+        if source_identity in seen_source_identities:
+            continue
+        seen_source_identities.add(source_identity)
+        contexts.append({
+            "document_id": document_id,
+            "file_name": file_name,
+            "source_hint": source_hint,
+            "group_id": source.get("group_id"),
+            "public_workspace_id": source.get("public_workspace_id"),
+            "conversation_id": source.get("conversation_id"),
+            "storage_locator": dict(source.get("storage_locator") or {}),
+        })
+    return contexts
 
 
 def classify_source_kind(file_name, document_item=None):
@@ -152,6 +294,28 @@ def _normalize_identifier_list(values):
     ]
 
 
+def _normalize_boolean(value, field_name):
+    if isinstance(value, bool):
+        return value
+    if value in (None, ""):
+        return False
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        normalized_value = value.strip().lower()
+        if normalized_value in {"true", "1"}:
+            return True
+        if normalized_value in {"false", "0"}:
+            return False
+    raise ValueError(f"{field_name} must be a boolean")
+
+
+def _normalize_optional_boolean(value, field_name):
+    if value is None or value == "":
+        return None
+    return _normalize_boolean(value, field_name=field_name)
+
+
 def _safe_file_name(file_name):
     return str(file_name or "").replace("\\", "/").split("/")[-1].strip()
 
@@ -169,6 +333,7 @@ def _unresolved_manifest_entry(document_id):
         "public_workspace_id": None,
         "conversation_id": None,
         "source_version": None,
+        "storage_locator": None,
         "authorization_status": AUTHORIZATION_STATUS_UNRESOLVED,
     }
 
@@ -199,9 +364,20 @@ def _build_authorized_manifest_entry(document_id, user_id, document_context):
 
     if scope == SOURCE_SCOPE_PERSONAL:
         scope_id = str(document_item.get("user_id") or user_id or "").strip()
+        if scope_id != str(user_id or "").strip() and not any(
+            str(shared_entry or "").strip() == f"{user_id},approved"
+            for shared_entry in document_item.get("shared_user_ids", []) or []
+        ):
+            return _unresolved_manifest_entry(document_id)
     elif scope == SOURCE_SCOPE_GROUP:
         group_id = str(document_context.get("group_id") or "").strip() or None
         scope_id = group_id
+        document_group_id = str(document_item.get("group_id") or "").strip()
+        if document_group_id != group_id and not any(
+            str(shared_entry or "").strip() == f"{group_id},approved"
+            for shared_entry in document_item.get("shared_group_ids", []) or []
+        ):
+            return _unresolved_manifest_entry(document_id)
     elif scope == SOURCE_SCOPE_PUBLIC:
         public_workspace_id = str(
             document_context.get("public_workspace_id") or ""
@@ -226,6 +402,37 @@ def _build_authorized_manifest_entry(document_id, user_id, document_context):
     if source_version is not None and not isinstance(source_version, (str, int, float)):
         source_version = str(source_version)
 
+    storage_locator = None
+    if scope != SOURCE_SCOPE_CHAT:
+        try:
+            from functions_documents import get_document_blob_storage_info
+
+            blob_container, blob_path = get_document_blob_storage_info(
+                document_item,
+                user_id=(
+                    document_item.get("user_id")
+                    if scope == SOURCE_SCOPE_PERSONAL
+                    else None
+                ),
+                group_id=(
+                    document_item.get("group_id")
+                    if scope == SOURCE_SCOPE_GROUP
+                    else None
+                ),
+                public_workspace_id=(
+                    document_item.get("public_workspace_id")
+                    if scope == SOURCE_SCOPE_PUBLIC
+                    else None
+                ),
+            )
+            if blob_container and blob_path:
+                storage_locator = {
+                    "container": str(blob_container),
+                    "blob_path": str(blob_path),
+                }
+        except Exception:
+            storage_locator = None
+
     return {
         "document_id": document_id,
         "display_name": display_name,
@@ -238,6 +445,7 @@ def _build_authorized_manifest_entry(document_id, user_id, document_context):
         "public_workspace_id": public_workspace_id,
         "conversation_id": conversation_id,
         "source_version": source_version,
+        "storage_locator": storage_locator,
         "authorization_status": AUTHORIZATION_STATUS_AUTHORIZED,
     }
 
@@ -257,6 +465,7 @@ def resolve_authorized_source_manifest(
     conversation_id=None,
     active_group_ids=None,
     active_public_workspace_ids=None,
+    doc_scope="all",
     context_resolver=None,
 ):
     """Resolve each unique requested ID once into an ordered, authorized manifest."""
@@ -307,6 +516,9 @@ def resolve_authorized_source_manifest(
         active_public_workspace_ids
     )
     normalized_conversation_id = str(conversation_id or "").strip() or None
+    normalized_doc_scope = str(doc_scope or "all").strip().lower()
+    if normalized_doc_scope not in {"all", "personal", "group", "public"}:
+        raise ValueError("doc_scope must be all, personal, group, or public")
 
     resolved_contexts = None
     if context_resolver is None:
@@ -314,7 +526,7 @@ def resolve_authorized_source_manifest(
             resolved_contexts = _default_document_context_batch_resolver(
                 document_ids=unique_document_ids,
                 user_id=normalized_user_id,
-                doc_scope="all",
+                doc_scope=normalized_doc_scope,
                 active_group_ids=normalized_active_group_ids,
                 active_public_workspace_id=normalized_public_workspace_ids,
                 conversation_id=normalized_conversation_id,
@@ -338,13 +550,20 @@ def resolve_authorized_source_manifest(
                 document_context = context_resolver(
                     document_id=document_id,
                     user_id=normalized_user_id,
-                    doc_scope="all",
+                    doc_scope=normalized_doc_scope,
                     active_group_ids=normalized_active_group_ids,
                     active_public_workspace_id=normalized_public_workspace_ids,
                     conversation_id=normalized_conversation_id,
                 )
             except Exception:
                 resolution_error_count += 1
+        if (
+            isinstance(document_context, dict)
+            and normalized_doc_scope != "all"
+            and str(document_context.get("scope") or "").strip().lower()
+            != normalized_doc_scope
+        ):
+            document_context = None
         manifest.append(
             _build_authorized_manifest_entry(
                 document_id,
@@ -682,3 +901,295 @@ def serialize_evidence_envelope(envelope):
     if len(serialized_envelope.encode("utf-8")) > EVIDENCE_ENVELOPE_MAX_BYTES:
         raise ValueError("Evidence envelope exceeds its serialized size bound")
     return serialized_envelope
+
+
+def build_narrative_evidence_envelopes(
+    narrative_sources,
+    search_results,
+    selection_mode,
+):
+    """Normalize bounded narrative search results into one envelope per source."""
+    normalized_selection_mode = normalize_selection_mode(
+        selection_mode,
+        default=SELECTION_MODE_RELEVANCE,
+    )
+    results_by_document_id = {}
+    for raw_result in list(search_results or []):
+        result = raw_result if isinstance(raw_result, dict) else {}
+        document_id = str(result.get("document_id") or "").strip()
+        if not document_id:
+            continue
+        results_by_document_id.setdefault(document_id, []).append(result)
+
+    envelopes = []
+    for source in list(narrative_sources or []):
+        source = source if isinstance(source, dict) else {}
+        document_id = str(source.get("document_id") or "").strip()
+        if not document_id:
+            continue
+        source_results = results_by_document_id.get(document_id, [])
+        evidence = []
+        citations = []
+        for result in source_results:
+            evidence.append({
+                "chunk_text": result.get("chunk_text"),
+                "page_number": result.get("page_number"),
+                "chunk_sequence": result.get("chunk_sequence"),
+                "score": result.get("score"),
+            })
+            citations.append({
+                "citation_id": result.get("id") or result.get("chunk_id"),
+                "page_number": result.get("page_number"),
+                "chunk_sequence": result.get("chunk_sequence"),
+            })
+
+        result_count = len(source_results)
+        envelopes.append(build_evidence_envelope(
+            document_id=document_id,
+            source_kind=SOURCE_KIND_NARRATIVE,
+            engine=EVIDENCE_ENGINE_HYBRID_SEARCH,
+            status=(
+                EVIDENCE_STATUS_COMPLETED
+                if result_count
+                else EVIDENCE_STATUS_PARTIAL
+            ),
+            summary=(
+                f"Retrieved {result_count} bounded narrative excerpt(s)."
+                if result_count
+                else "No relevant narrative excerpts were returned."
+            ),
+            evidence=evidence,
+            citations=citations,
+            coverage={
+                "selection_mode": normalized_selection_mode,
+                "terminal": True,
+                "result_count": result_count,
+            },
+            error=(
+                None
+                if result_count
+                else "Narrative retrieval returned no relevant excerpts."
+            ),
+        ))
+    return envelopes
+
+
+def execute_tabular_evidence_sources(
+    tabular_sources,
+    execute_source,
+    selection_mode,
+    execute=True,
+):
+    """Execute the existing tabular runner once per source and require terminal coverage."""
+    normalized_selection_mode = normalize_selection_mode(
+        selection_mode,
+        default=SELECTION_MODE_RELEVANCE,
+    )
+    if execute and not callable(execute_source):
+        raise TypeError("execute_source must be callable")
+
+    envelopes = []
+    completed_count = 0
+    failed_count = 0
+    skipped_count = 0
+    for raw_source in list(tabular_sources or []):
+        source = raw_source if isinstance(raw_source, dict) else {}
+        document_id = str(source.get("document_id") or "").strip()
+        if not document_id:
+            continue
+
+        if not execute:
+            skipped_count += 1
+            envelopes.append(build_evidence_envelope(
+                document_id=document_id,
+                source_kind=SOURCE_KIND_TABULAR,
+                engine=EVIDENCE_ENGINE_TABULAR_TOOLS,
+                status=EVIDENCE_STATUS_SKIPPED,
+                summary="Tabular processing was not needed for this narrative-only request.",
+                coverage={
+                    "selection_mode": normalized_selection_mode,
+                    "terminal": True,
+                    "reason": "narrative_only_request",
+                },
+            ))
+            continue
+
+        try:
+            raw_result = execute_source(source)
+            result = raw_result if isinstance(raw_result, dict) else {}
+            summary = str(result.get("summary") or "").strip()
+            if not summary:
+                raise ValueError("Tabular execution returned no bounded summary")
+            completed_count += 1
+            envelopes.append(build_evidence_envelope(
+                document_id=document_id,
+                source_kind=SOURCE_KIND_TABULAR,
+                engine=EVIDENCE_ENGINE_TABULAR_TOOLS,
+                status=EVIDENCE_STATUS_COMPLETED,
+                summary=summary,
+                evidence=result.get("evidence"),
+                citations=result.get("citations"),
+                generated_artifacts=result.get("generated_artifacts"),
+                coverage={
+                    "selection_mode": normalized_selection_mode,
+                    "terminal": True,
+                    **dict(result.get("coverage") or {}),
+                },
+            ))
+        except Exception:
+            failed_count += 1
+            envelopes.append(build_evidence_envelope(
+                document_id=document_id,
+                source_kind=SOURCE_KIND_TABULAR,
+                engine=EVIDENCE_ENGINE_TABULAR_TOOLS,
+                status=EVIDENCE_STATUS_FAILED,
+                summary="Tabular evidence could not be completed for this source.",
+                coverage={
+                    "selection_mode": normalized_selection_mode,
+                    "terminal": True,
+                },
+                error="Tabular evidence could not be completed.",
+            ))
+
+    log_event(
+        "[MixedSourceChatSearch] Tabular source execution reached terminal coverage.",
+        extra={
+            "selection_mode": normalized_selection_mode,
+            "tabular_candidate_count": len(list(tabular_sources or [])),
+            "tabular_completed_count": completed_count,
+            "tabular_failed_count": failed_count,
+            "tabular_skipped_count": skipped_count,
+        },
+        level=logging.INFO,
+    )
+    return envelopes
+
+
+def build_mixed_source_evidence_handoff(
+    manifest,
+    evidence_envelopes,
+    selection_mode,
+):
+    """Build one bounded synthesis handoff from Phase 1 evidence envelopes."""
+    normalized_selection_mode = normalize_selection_mode(
+        selection_mode,
+        default=SELECTION_MODE_RELEVANCE,
+    )
+    manifest_entries = [entry for entry in list(manifest or []) if isinstance(entry, dict)]
+    all_envelopes = [
+        envelope
+        for envelope in list(evidence_envelopes or [])
+        if isinstance(envelope, dict)
+    ]
+    envelopes = all_envelopes[:MIXED_SOURCE_HANDOFF_MAX_ENVELOPES]
+    envelope_by_document_id = {
+        str(envelope.get("document_id") or "").strip(): envelope
+        for envelope in all_envelopes
+        if str(envelope.get("document_id") or "").strip()
+    }
+    evidence_omitted_count = max(0, len(all_envelopes) - len(envelopes))
+
+    source_coverage = []
+    failed_count = 0
+    partial_count = 0
+    skipped_count = 0
+    completed_count = 0
+    for source_index, entry in enumerate(manifest_entries, start=1):
+        document_id = str(entry.get("document_id") or "").strip()
+        envelope = envelope_by_document_id.get(document_id)
+        if entry.get("authorization_status") != AUTHORIZATION_STATUS_AUTHORIZED:
+            status = EVIDENCE_STATUS_FAILED
+            source_label = f"Unavailable selected source {source_index}"
+        elif entry.get("source_kind") == SOURCE_KIND_UNSUPPORTED:
+            status = EVIDENCE_STATUS_FAILED
+            source_label = str(entry.get("display_name") or f"Unsupported source {source_index}")
+        elif envelope:
+            status = envelope.get("status") or EVIDENCE_STATUS_FAILED
+            source_label = str(entry.get("display_name") or f"Source {source_index}")
+        else:
+            status = EVIDENCE_STATUS_FAILED
+            source_label = str(entry.get("display_name") or f"Source {source_index}")
+
+        if status == EVIDENCE_STATUS_COMPLETED:
+            completed_count += 1
+        elif status == EVIDENCE_STATUS_PARTIAL:
+            partial_count += 1
+        elif status == EVIDENCE_STATUS_SKIPPED:
+            skipped_count += 1
+        else:
+            failed_count += 1
+        source_coverage.append({
+            "source": _truncate_utf8(source_label, 128),
+            "source_kind": entry.get("source_kind"),
+            "status": status,
+        })
+
+    coverage = {
+        "selection_mode": normalized_selection_mode,
+        "requested_source_count": len(manifest_entries),
+        "completed_source_count": completed_count,
+        "partial_source_count": partial_count,
+        "failed_source_count": failed_count,
+        "skipped_source_count": skipped_count,
+        "partial_coverage": bool(
+            failed_count or partial_count or evidence_omitted_count
+        ),
+        "evidence_omitted_count": evidence_omitted_count,
+        "sources": source_coverage,
+    }
+    payload = {
+        "coverage": coverage,
+        "evidence_envelopes": envelopes,
+    }
+    serialized_payload = json.dumps(
+        payload,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    if len(serialized_payload.encode("utf-8")) > MIXED_SOURCE_HANDOFF_MAX_BYTES:
+        payload["evidence_envelopes"] = [
+            {
+                "document_id": envelope.get("document_id"),
+                "source_kind": envelope.get("source_kind"),
+                "engine": envelope.get("engine"),
+                "status": envelope.get("status"),
+                "summary": _truncate_utf8(envelope.get("summary"), 512),
+                "coverage": {
+                    "selection_mode": (envelope.get("coverage") or {}).get("selection_mode"),
+                    "terminal": bool((envelope.get("coverage") or {}).get("terminal")),
+                    "result_count": (envelope.get("coverage") or {}).get("result_count"),
+                    "tool_call_count": (envelope.get("coverage") or {}).get("tool_call_count"),
+                },
+            }
+            for envelope in envelopes
+        ]
+        payload["coverage"]["handoff_compacted"] = True
+        payload["coverage"]["partial_coverage"] = True
+        payload["coverage"]["evidence_compacted_count"] = len(envelopes)
+        serialized_payload = json.dumps(
+            payload,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+    if len(serialized_payload.encode("utf-8")) > MIXED_SOURCE_HANDOFF_MAX_BYTES:
+        raise ValueError("Mixed-source evidence handoff exceeds its size bound")
+
+    partial_coverage_instruction = (
+        "State clearly that source coverage was partial and identify unavailable authorized source labels."
+        if coverage["partial_coverage"]
+        else "Do not claim that selected sources were omitted."
+    )
+    return {
+        "role": "system",
+        "content": (
+            "Use the mixed-source evidence handoff below with the other bounded narrative excerpts "
+            "and computed tabular results. Synthesize one answer. Preserve narrative source citations "
+            "and tabular tool citations; do not convert computed table facts into unsupported narrative claims. "
+            "When selection_mode is selected, current selected-source evidence supersedes prior document "
+            "grounding; do not use prior source claims to fill missing current coverage. "
+            f"{partial_coverage_instruction}\n\n{serialized_payload}"
+        ),
+        "mixed_source_coverage": coverage,
+    }

@@ -2,6 +2,23 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.064)**
+
+#### New Features
+
+*   **Mixed-Source Chat and Search Consistency**
+    *   Explicit document selections now remain authoritative when the Search Documents panel is closed, with `hybrid_search` retained only as a compatibility and retrieval preference.
+    *   Standard and streaming Chat plus workflow Search now reauthorize and partition selected narrative and tabular sources, run each through its native bounded engine, and synthesize one response with narrative citations, tabular tool citations, and partial-coverage reporting.
+    *   All Documents remains relevance-bounded through an independently staged, capped authorized schema-candidate search; both `enable_mixed_source_chat_search` and the later `enable_mixed_source_relevance_candidates` stage default off for rollback compatibility.
+    *   (Ref: microsoft/simplechat#1057, parent microsoft/simplechat#1055, Phase 1 microsoft/simplechat#1056, `functions_mixed_source_orchestration.py`, `route_backend_chats.py`, `functions_workflow_runner.py`, `MIXED_SOURCE_CHAT_AND_SEARCH_CONSISTENCY.md`)
+
+#### Bug Fixes
+
+*   **Cosmos Migration JSON and Throttling Recovery**
+    *   Preserved empty and case-distinct JSON property names during Cosmos document migration, recorded nonfatal document write skips in migration state, and continued later documents.
+    *   Added bounded automatic recovery for exhausted HTTP 429 document writes, with pause progress, resumed throttled documents, and durable state reporting.
+    *   (Ref: `scripts/Migration-Cosmos.ps1`, `Migration-State.ps1`, `test_cosmos_migration_document_skip_reporting.py`, `COSMOS_MIGRATION_JSON_PROPERTY_AND_SKIP_REPORTING_FIX.md`)
+
 ### **(v0.250.062)**
 
 #### New Features

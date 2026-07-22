@@ -2,12 +2,13 @@
 # test_mixed_source_manifest_contracts.py
 """
 Functional test for authorized mixed-source manifest and evidence contracts.
-Version: 0.250.062
-Implemented in: 0.250.062
+Version: 0.250.064
+Implemented in: 0.250.062; Phase 2 request/evidence coverage added in 0.250.064
 
 This test ensures Phase 1 of #1056 resolves requested sources once through
 current authorization boundaries, preserves ordering, partitions mixed source
-types, and bounds engine-neutral evidence without implementing #1057-#1061.
+types, and bounds engine-neutral evidence. It also validates the shared Phase 2
+request and evidence primitives for #1057 without implementing #1058-#1061.
 Parent initiative: #1055.
 """
 
@@ -486,6 +487,275 @@ def test_selection_mode_normalization():
         raise AssertionError("Invalid selection_mode must fail validation")
 
 
+def test_phase_2_document_context_request_contract():
+    selected_panel_open = orchestration.normalize_document_context_request(
+        selection_mode="selected",
+        selected_document_ids=["personal-pdf", "personal-xlsx"],
+        document_context_requested=True,
+        hybrid_search=True,
+    )
+    selected_panel_closed = orchestration.normalize_document_context_request(
+        selection_mode="selected",
+        selected_document_ids=["personal-pdf", "personal-xlsx"],
+        document_context_requested=True,
+        hybrid_search=False,
+    )
+
+    assert selected_panel_open["selection_mode"] == "selected"
+    assert selected_panel_closed["selection_mode"] == "selected"
+    assert selected_panel_open["selected_document_ids"] == selected_panel_closed[
+        "selected_document_ids"
+    ]
+    assert selected_panel_open["document_context_requested"] is True
+    assert selected_panel_closed["document_context_requested"] is True
+    assert selected_panel_open["explicit_selection"] is True
+    assert selected_panel_closed["explicit_selection"] is True
+    assert selected_panel_open["hybrid_search"] is True
+    assert selected_panel_closed["hybrid_search"] is False
+
+    legacy_toggle_request = orchestration.normalize_document_context_request(
+        hybrid_search=True,
+    )
+    assert legacy_toggle_request == {
+        "selection_mode": "relevance",
+        "selected_document_ids": [],
+        "document_context_requested": True,
+        "hybrid_search": True,
+        "explicit_selection": False,
+    }
+
+    idle_relevance_request = orchestration.normalize_document_context_request(
+        selection_mode="relevance",
+        selected_document_ids=[],
+        document_context_requested=False,
+        hybrid_search=False,
+    )
+    assert idle_relevance_request["document_context_requested"] is False
+    assert idle_relevance_request["selection_mode"] == "relevance"
+
+    for invalid_request in (
+        {
+            "selection_mode": "history",
+            "selected_document_ids": ["personal-pdf"],
+        },
+        {
+            "selection_mode": "selected",
+            "selected_document_ids": [],
+        },
+        {
+            "document_context_requested": "sometimes",
+        },
+    ):
+        try:
+            orchestration.normalize_document_context_request(**invalid_request)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("Invalid Phase 2 request contracts must fail closed")
+
+
+def test_phase_2_evidence_execution_and_partial_coverage():
+    manifest = [
+        {
+            "document_id": "personal-pdf",
+            "display_name": "Narrative",
+            "source_kind": "narrative",
+            "authorization_status": "authorized",
+        },
+        {
+            "document_id": "personal-xlsx",
+            "display_name": "Table",
+            "source_kind": "tabular",
+            "authorization_status": "authorized",
+        },
+        {
+            "document_id": "missing-source",
+            "display_name": None,
+            "source_kind": "unresolved",
+            "authorization_status": "unresolved",
+        },
+    ]
+    narrative_envelopes = orchestration.build_narrative_evidence_envelopes(
+        [manifest[0]],
+        [{
+            "document_id": "personal-pdf",
+            "chunk_text": "Bounded narrative evidence",
+            "id": "citation-1",
+            "page_number": 2,
+            "score": 0.9,
+        }],
+        "selected",
+    )
+    executor_calls = []
+    tabular_envelopes = orchestration.execute_tabular_evidence_sources(
+        [manifest[1]],
+        lambda source: executor_calls.append(source["document_id"]) or {
+            "summary": "Computed total: 42",
+            "evidence": [{"total": 42}],
+            "citations": [{"tool_name": "count_rows"}],
+            "coverage": {"tool_call_count": 1},
+        },
+        "selected",
+    )
+    handoff = orchestration.build_mixed_source_evidence_handoff(
+        manifest,
+        narrative_envelopes + tabular_envelopes,
+        "selected",
+    )
+
+    assert executor_calls == ["personal-xlsx"]
+    assert narrative_envelopes[0]["status"] == "completed"
+    assert tabular_envelopes[0]["status"] == "completed"
+    assert tabular_envelopes[0]["coverage"]["terminal"] is True
+    assert handoff["mixed_source_coverage"]["partial_coverage"] is True
+    assert handoff["mixed_source_coverage"]["failed_source_count"] == 1
+    assert "missing-source" not in handoff["content"]
+    assert "Unavailable selected source 3" in handoff["content"]
+
+
+def test_phase_2_narrative_only_tabular_skip_is_terminal():
+    assert orchestration.should_run_tabular_evidence(
+        "Calculate the total and average from the spreadsheet.",
+        has_narrative_sources=True,
+    ) is True
+    assert orchestration.should_run_tabular_evidence(
+        "Summarize all selected documents.",
+        has_narrative_sources=True,
+    ) is True
+    assert orchestration.should_run_tabular_evidence(
+        "What policy does the PDF state?",
+        has_narrative_sources=True,
+    ) is False
+
+    executor_calls = []
+    envelopes = orchestration.execute_tabular_evidence_sources(
+        [{"document_id": "personal-xlsx"}],
+        lambda source: executor_calls.append(source),
+        "selected",
+        execute=False,
+    )
+    assert executor_calls == []
+    assert envelopes[0]["status"] == "skipped"
+    assert envelopes[0]["coverage"]["terminal"] is True
+
+
+def test_phase_2_manifest_builds_cross_scope_tabular_contexts():
+    contexts = orchestration.build_tabular_file_contexts_from_manifest([
+        {
+            "document_id": "personal-csv",
+            "file_name": "personal.csv",
+            "source_kind": "tabular",
+            "scope": "personal",
+            "scope_id": "user-1",
+            "authorization_status": "authorized",
+        },
+        {
+            "document_id": "group-xlsx",
+            "file_name": "group.xlsx",
+            "source_kind": "tabular",
+            "scope": "group",
+            "scope_id": "group-a",
+            "group_id": "group-a",
+            "authorization_status": "authorized",
+        },
+        {
+            "document_id": "public-xls",
+            "file_name": "public.xls",
+            "source_kind": "tabular",
+            "scope": "public",
+            "scope_id": "public-a",
+            "public_workspace_id": "public-a",
+            "authorization_status": "authorized",
+        },
+        {
+            "document_id": "chat-csv",
+            "file_name": "chat.csv",
+            "source_kind": "tabular",
+            "scope": "chat",
+            "scope_id": "conversation-1",
+            "conversation_id": "conversation-1",
+            "authorization_status": "authorized",
+        },
+        {
+            "document_id": "unauthorized-csv",
+            "file_name": None,
+            "source_kind": "unresolved",
+            "scope": None,
+            "authorization_status": "unresolved",
+        },
+    ])
+
+    assert [context["source_hint"] for context in contexts] == [
+        "workspace",
+        "group",
+        "public",
+        "chat",
+    ]
+    assert contexts[1]["group_id"] == "group-a"
+    assert contexts[2]["public_workspace_id"] == "public-a"
+    assert contexts[3]["conversation_id"] == "conversation-1"
+    assert all(context["document_id"] != "unauthorized-csv" for context in contexts)
+
+
+def test_restrictive_manifest_scope_fails_closed_and_preserves_storage_locator():
+    contexts = {
+        "personal-table": {
+            "scope": "personal",
+            "document": {
+                "id": "personal-table",
+                "user_id": "user-1",
+                "file_name": "shared.xlsx",
+            },
+        },
+        "group-table": {
+            "scope": "group",
+            "group_id": "group-1",
+            "document": {
+                "id": "group-table",
+                "group_id": "group-1",
+                "file_name": "archive.xlsx",
+                "version": 2,
+                "blob_container": "group-documents",
+                "blob_path": "group-1/family-1/group-table/archive.xlsx",
+                "blob_path_mode": "archived_revision",
+            },
+        },
+        "chat-table": {
+            "scope": "chat",
+            "conversation_id": "conversation-1",
+            "document": {
+                "id": "chat-table",
+                "conversation_id": "conversation-1",
+                "file_name": "chat.csv",
+            },
+        },
+    }
+
+    def resolver(**kwargs):
+        assert kwargs["doc_scope"] == "group"
+        return contexts.get(kwargs["document_id"])
+
+    manifest = orchestration.resolve_authorized_source_manifest(
+        ["personal-table", "group-table", "chat-table"],
+        user_id="user-1",
+        selection_mode="selected",
+        conversation_id="conversation-1",
+        active_group_ids=["group-1"],
+        doc_scope="group",
+        context_resolver=resolver,
+    )
+
+    assert manifest[0]["authorization_status"] == "unresolved"
+    assert manifest[1]["scope"] == "group"
+    assert manifest[1]["storage_locator"] == {
+        "container": "group-documents",
+        "blob_path": "group-1/family-1/group-table/archive.xlsx",
+    }
+    assert manifest[2]["authorization_status"] == "unresolved"
+    tabular_contexts = orchestration.build_tabular_file_contexts_from_manifest(manifest)
+    assert tabular_contexts[0]["storage_locator"] == manifest[1]["storage_locator"]
+
+
 def test_batch_authorization_snapshot_and_source_limit():
     search_service, state, _, _ = build_authorized_resolver_fixture()
     state["group_authorization_count"] = 0
@@ -669,6 +939,11 @@ def run_tests():
         test_unresolved_and_unsupported_do_not_erase_valid_sources,
         test_personal_group_public_and_chat_authorization,
         test_selection_mode_normalization,
+        test_phase_2_document_context_request_contract,
+        test_phase_2_evidence_execution_and_partial_coverage,
+        test_phase_2_narrative_only_tabular_skip_is_terminal,
+        test_phase_2_manifest_builds_cross_scope_tabular_contexts,
+        test_restrictive_manifest_scope_fails_closed_and_preserves_storage_locator,
         test_batch_authorization_snapshot_and_source_limit,
         test_evidence_envelope_serialization_and_bounds,
         test_manifest_diagnostics_are_aggregate_only,

@@ -12,6 +12,7 @@ without changing workflow callers again.
 def _load_chat_helper(helper_name):
     # Import lazily because route_backend_chats imports functions_workflow_runner during app startup.
     from route_backend_chats import (
+        _execute_mixed_source_tabular_evidence,
         augment_tabular_invocations_with_related_document_evidence,
         build_tabular_computed_results_system_message,
         build_tabular_related_document_evidence_summary,
@@ -21,6 +22,7 @@ def _load_chat_helper(helper_name):
     )
 
     helpers = {
+        'execute_mixed_source_tabular_evidence': _execute_mixed_source_tabular_evidence,
         'augment_tabular_invocations_with_related_document_evidence': augment_tabular_invocations_with_related_document_evidence,
         'build_tabular_computed_results_system_message': build_tabular_computed_results_system_message,
         'build_tabular_related_document_evidence_summary': build_tabular_related_document_evidence_summary,
@@ -29,6 +31,10 @@ def _load_chat_helper(helper_name):
         'run_tabular_analysis_with_thought_tracking': run_tabular_analysis_with_thought_tracking,
     }
     return helpers[helper_name]
+
+
+def execute_mixed_source_tabular_evidence(*args, **kwargs):
+    return _load_chat_helper('execute_mixed_source_tabular_evidence')(*args, **kwargs)
 
 
 def augment_tabular_invocations_with_related_document_evidence(*args, **kwargs):
