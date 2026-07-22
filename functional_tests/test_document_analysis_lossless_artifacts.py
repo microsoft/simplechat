@@ -2,10 +2,11 @@
 # test_document_analysis_lossless_artifacts.py
 """
 Functional test for document analysis lossless artifacts.
-Version: 0.241.197
+Version: 0.250.065
 Implemented in: 0.241.040
 Updated in: 0.241.065
 Updated in: 0.241.197
+Updated in: 0.250.065
 
 This test ensures exhaustive/table-style document analysis preserves raw window
 outputs and can build both structured CSV rows and Markdown raw-note artifacts
@@ -21,6 +22,7 @@ import json
 import logging
 import os
 import re
+import sys
 import traceback
 from contextlib import contextmanager
 from typing import Any, Callable, Dict, List, Optional
@@ -40,6 +42,13 @@ WORKFLOW_RUNNER_PATH = os.path.join(
     'functions_workflow_runner.py',
 )
 CONFIG_PATH = os.path.join(REPO_ROOT, 'application', 'single_app', 'config.py')
+APP_ROOT = os.path.join(REPO_ROOT, 'application', 'single_app')
+sys.path.append(APP_ROOT)
+
+from functions_assistant_table_exports import (  # noqa: E402
+    build_safe_csv_headers,
+    neutralize_csv_spreadsheet_formula,
+)
 
 
 def assert_equal(actual, expected, label):
@@ -67,6 +76,7 @@ def load_module_functions(file_path, extra_globals=None):
     namespace = {
         '__builtins__': __builtins__,
         'Any': Any,
+        'build_safe_csv_headers': build_safe_csv_headers,
         'Callable': Callable,
         'Dict': Dict,
         'List': List,
@@ -76,6 +86,7 @@ def load_module_functions(file_path, extra_globals=None):
         'io': io,
         'json': json,
         'logging': logging,
+        'neutralize_csv_spreadsheet_formula': neutralize_csv_spreadsheet_formula,
         'os': os,
         're': re,
     }
@@ -449,7 +460,7 @@ def test_json_artifact_requires_explicit_json_request():
 
 def test_version_alignment():
     print('Testing version alignment...')
-    assert_equal(read_config_version(), '0.241.197', 'config version')
+    assert_equal(read_config_version(), '0.250.065', 'config version')
     print('Version alignment verified.')
 
 

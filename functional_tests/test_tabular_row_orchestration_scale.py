@@ -1,8 +1,8 @@
 # test_tabular_row_orchestration_scale.py
 """
 Functional test for scalable per-row tabular orchestration.
-Version: 0.250.061
-Implemented in: 0.250.060
+Version: 0.250.065
+Implemented in: 0.250.060; generated CSV formula safety in 0.250.065
 
 This test ensures generated exports preserve source identity and row order while
 enforcing one stable output schema across independently generated batches.
@@ -26,10 +26,17 @@ from typing import Any, Dict, Optional
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+APP_ROOT = REPO_ROOT / 'application' / 'single_app'
 EXPORT_MODULE = REPO_ROOT / 'application' / 'single_app' / 'functions_tabular_generated_exports.py'
 CHAT_ROUTE = REPO_ROOT / 'application' / 'single_app' / 'route_backend_chats.py'
 SIMPLECHAT_OPERATIONS = REPO_ROOT / 'application' / 'single_app' / 'functions_simplechat_operations.py'
 CSV_QUERY_MODULE = REPO_ROOT / 'application' / 'single_app' / 'functions_tabular_csv_query.py'
+sys.path.append(str(APP_ROOT))
+
+from functions_assistant_table_exports import (  # noqa: E402
+    build_safe_csv_headers,
+    neutralize_csv_spreadsheet_formula,
+)
 CONTRACT_FUNCTIONS = {
     '_normalize_source_identity_label',
     '_select_source_row_identity',
@@ -246,8 +253,10 @@ def _load_stream_writer(download_json_blob):
         raise AssertionError('Missing bounded output stream writer')
 
     namespace = {
+        'build_safe_csv_headers': build_safe_csv_headers,
         'csv': csv,
         'json': json,
+        'neutralize_csv_spreadsheet_formula': neutralize_csv_spreadsheet_formula,
         '_safe_int': lambda value: int(value or 0),
         '_output_blob_path': lambda user_id, conversation_id, run_id, batch_number: batch_number,
         '_download_json_blob': download_json_blob,
@@ -806,6 +815,39 @@ def test_streaming_finalizer_writes_30000_rows_in_bounded_chunks():
     assert output_sink.max_write_chars < 1000
 
 
+def test_streaming_finalizer_neutralizes_csv_formulas():
+    """Durable CSV assembly neutralizes formula-like headers and values."""
+    def download_batch(batch_number):
+        assert batch_number == 1
+        return [
+            {
+                'source_row_number': 1,
+                'source_row_identity': 'SC-1',
+                '=Result': '=WEBSERVICE("https://example.invalid")',
+                'Amount': '-1,234.50',
+            }
+        ]
+
+    write_output = _load_stream_writer(download_batch)
+    output_stream = io.StringIO()
+    run = {
+        'id': 'run-formula-safety',
+        'user_id': 'user-1',
+        'conversation_id': 'conversation-1',
+        'output_format': 'csv',
+        'row_count': 1,
+        'batch_count': 1,
+        'output_schema': ['source_row_number', 'source_row_identity', '=Result', 'Amount'],
+    }
+
+    written_rows = write_output(run, output_stream)
+    csv_rows = list(csv.DictReader(io.StringIO(output_stream.getvalue())))
+
+    assert written_rows == 1
+    assert csv_rows[0]["'=Result"].startswith("'=")
+    assert csv_rows[0]['Amount'] == '-1,234.50'
+
+
 def test_streaming_finalizer_rejects_source_order_gaps():
     """An ordinal gap fails final validation before the artifact is published."""
     def download_batch(batch_number):
@@ -1202,6 +1244,7 @@ def main():
         test_paginated_candidate_rejects_gaps,
         test_paginated_candidate_rejects_mixed_source_versions,
         test_streaming_finalizer_writes_30000_rows_in_bounded_chunks,
+        test_streaming_finalizer_neutralizes_csv_formulas,
         test_streaming_finalizer_rejects_source_order_gaps,
         test_csv_query_source_reader_scales_and_resumes,
         test_worker_revalidates_conversation_and_workspace_authorization,

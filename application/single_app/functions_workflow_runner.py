@@ -43,6 +43,7 @@ from config import (
 )
 from functions_activity_logging import log_conversation_creation, log_token_usage, log_workflow_run
 from functions_appinsights import log_event
+from functions_assistant_table_exports import build_safe_csv_headers, neutralize_csv_spreadsheet_formula
 from functions_chart_operations import append_proactive_chart_guidance
 from functions_collaboration import (
     create_collaboration_message_notifications,
@@ -803,13 +804,13 @@ def _serialize_document_analysis_csv_value(value):
     if value is None:
         return ''
     if isinstance(value, (dict, list)):
-        return json.dumps(value, ensure_ascii=False, default=str)
+        return neutralize_csv_spreadsheet_formula(json.dumps(value, ensure_ascii=False, default=str))
     if hasattr(value, 'isoformat') and not isinstance(value, str):
         try:
-            return value.isoformat()
+            return neutralize_csv_spreadsheet_formula(value.isoformat())
         except TypeError:
             pass
-    return str(value)
+    return neutralize_csv_spreadsheet_formula(value)
 
 
 def _add_document_analysis_source_context(row, source_context):
@@ -906,13 +907,14 @@ def _build_document_analysis_rows_csv(rows):
         for column_name in row.keys():
             add_column(column_name)
 
+    safe_ordered_columns = build_safe_csv_headers(ordered_columns)
     output_buffer = io.StringIO()
-    writer = csv.DictWriter(output_buffer, fieldnames=ordered_columns, lineterminator='\n')
+    writer = csv.DictWriter(output_buffer, fieldnames=safe_ordered_columns, lineterminator='\n')
     writer.writeheader()
     for row in rows:
         writer.writerow({
-            column_name: _serialize_document_analysis_csv_value(row.get(column_name))
-            for column_name in ordered_columns
+            safe_column_name: _serialize_document_analysis_csv_value(row.get(column_name))
+            for column_name, safe_column_name in zip(ordered_columns, safe_ordered_columns)
         })
     return output_buffer.getvalue()
 
