@@ -78,6 +78,7 @@ from functions_message_artifacts import (
     build_agent_citation_artifact_documents,
     make_json_serializable,
 )
+from functions_mixed_source_orchestration import resolve_authorized_source_manifest
 from model_endpoint_clients import (
     MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
 )
@@ -88,7 +89,14 @@ from functions_public_workspaces import get_user_visible_public_workspace_ids_fr
 from functions_search_service import resolve_document_context, search_documents
 from functions_search import normalize_search_id_list, normalize_search_scope, normalize_search_top_n
 from functions_simplechat_operations import upload_generated_analysis_artifact_for_current_user
-from functions_settings import get_settings, get_user_settings, is_tabular_processing_enabled, normalize_model_endpoints, resolve_model_endpoint_foundry_scope
+from functions_settings import (
+    get_settings,
+    get_user_settings,
+    is_mixed_source_manifest_enabled,
+    is_tabular_processing_enabled,
+    normalize_model_endpoints,
+    resolve_model_endpoint_foundry_scope,
+)
 from functions_source_review import (
     URL_ACCESS_CONTEXT_WORKFLOW,
     compact_source_review_result_for_metadata,
@@ -1562,7 +1570,7 @@ def _normalize_tabular_source_hint(scope):
     return 'workspace'
 
 
-def _resolve_tabular_document_action_documents(action_config, user_id, conversation_id=''):
+def _get_document_action_source_ids(action_config):
     action_config = action_config if isinstance(action_config, dict) else {}
     action_type = str(action_config.get('type') or '').strip().lower()
 
@@ -1588,6 +1596,16 @@ def _resolve_tabular_document_action_documents(action_config, user_id, conversat
             document_ids.append(document_id)
             role_by_document_id[document_id] = 'right'
 
+    return document_ids, role_by_document_id
+
+
+def _resolve_tabular_document_action_documents(
+    action_config,
+    user_id,
+    conversation_id='',
+):
+    action_config = action_config if isinstance(action_config, dict) else {}
+    document_ids, role_by_document_id = _get_document_action_source_ids(action_config)
     if not document_ids:
         return []
 
@@ -2002,11 +2020,34 @@ def _maybe_execute_tabular_document_action(
 ):
     if action_type not in {DOCUMENT_ACTION_TYPE_ANALYZE, DOCUMENT_ACTION_TYPE_COMPARISON}:
         return None
-    if not callable(invoke_prompt) or not is_tabular_processing_enabled(settings):
-        return None
 
     user_id = str(workflow.get('user_id') or '').strip()
     if not user_id:
+        return None
+
+    if is_mixed_source_manifest_enabled(settings):
+        requested_source_ids, _ = _get_document_action_source_ids(action_config)
+        if requested_source_ids:
+            try:
+                resolve_authorized_source_manifest(
+                    requested_source_ids,
+                    user_id=user_id,
+                    selection_mode='selected',
+                    conversation_id=conversation_id,
+                    active_group_ids=action_config.get('active_group_ids'),
+                    active_public_workspace_ids=action_config.get('active_public_workspace_id'),
+                )
+            except Exception:
+                log_event(
+                    '[MixedSourceManifest] Workflow shadow resolution failed.',
+                    extra={
+                        'requested_source_count': len(requested_source_ids),
+                        'selection_mode': 'selected',
+                    },
+                    level=logging.WARNING,
+                )
+
+    if not callable(invoke_prompt) or not is_tabular_processing_enabled(settings):
         return None
 
     tabular_documents = _resolve_tabular_document_action_documents(
