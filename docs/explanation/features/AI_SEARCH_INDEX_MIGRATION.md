@@ -22,6 +22,8 @@ Resumable JSON checkpointing added in version: **0.250.064**
 Acknowledged-batch resume within active indexes added in version:
 **0.250.065**
 
+Parallel indexing batches added in version: **0.250.073**
+
 The application version was updated in `application/single_app/config.py` for
 this feature.
 
@@ -45,8 +47,9 @@ The script uses the Azure AI Search data-plane REST API to:
 4. Create missing index definitions in differential mode or update all source
    index definitions in full mode.
 5. Read documents using server-side paging and keyset paging where supported,
-  streaming each page into destination batches before requesting the next.
-6. Upload documents in batches bounded by document count and serialized size.
+   streaming documents into a bounded destination batch window.
+6. Upload up to eight indexing batches concurrently by default, with every
+   batch bounded by document count and serialized size.
 
 Admin keys are resolved with the stable Azure Resource Manager
 `listAdminKeys` operation through `Invoke-AzRestMethod`. Keys can instead be
@@ -96,6 +99,7 @@ The main parameters are:
 - `ShowProgress`, defaulting to `$true`
 - `ProgressUpdateInterval`, defaulting to every 100 processed documents
 - `BatchSize`, defaulting to 100 documents
+- `MaxConcurrentBatches`, defaulting to 8 indexing requests and accepting 1-64
 - `MaxBatchBytes`, defaulting to 15,000,000 bytes
 - `PageSize`, defaulting to 100 documents to bound vector-heavy responses
 - `MaxRetryCount`, defaulting to 5
@@ -113,9 +117,13 @@ version, and key parameters before validation and request construction.
 The script checkpoints synonym maps as one resource and each index as a
 separate resource. Rerunning the same command skips resources marked
 `completed`. For indexes whose key field is filterable and sortable, every
-acknowledged destination batch records the last committed key and cumulative
-counters. An index left `in_progress` by termination, or marked `failed` after
-a handled error, resumes after that key in both full and differential modes.
+fully acknowledged destination batch window records the last committed key
+and cumulative counters. An index left `in_progress` by termination, or marked
+`failed` after a handled error, resumes after that key in both full and
+differential modes. If one parallel batch fails, the entire uncommitted window
+remains behind the checkpoint. Full mode idempotently reuploads that window;
+differential mode refreshes destination keys and skips batches that succeeded
+before the failure.
 
 If an index cannot support keyset paging, or its source document count changed
 after checkpointing, that active index is conservatively replayed from its
@@ -143,10 +151,10 @@ Progress reporting uses two nested PowerShell progress bars:
   and buffered documents.
 
 The index bar refreshes after the first document, at the configured
-`ProgressUpdateInterval`, at batch boundaries, and at completion. This keeps
-large migrations visible without writing one console record for every Search
-document. Azure AI Search migrates documents or chunks rather than files, so a
-third per-file progress bar is not used.
+`ProgressUpdateInterval`, at batch-window boundaries, and at completion. This
+keeps large migrations visible without writing one console record for every
+Search document. Azure AI Search migrates documents or chunks rather than
+files, so a third per-file progress bar is not used.
 
 Before every Search page request, the active-index bar displays the page
 number, maximum page size, and request timeout. The script logs timing for the
@@ -164,6 +172,7 @@ Progress can be disabled for noninteractive automation:
 - `scripts/Migration-AISearch.ps1`
 - `scripts/Migration-State.ps1`
 - `functional_tests/test_ai_search_all_indexes_migration.py`
+- `functional_tests/test_ai_search_parallel_batch_writes.py`
 - `application/single_app/config.py`
 
 ## Usage
@@ -206,6 +215,14 @@ For Azure Government, set the Search DNS suffix explicitly:
 -SearchDnsSuffix "search.azure.us"
 ```
 
+Tune destination indexing concurrency independently from batch size, or use a
+single request for sequential troubleshooting:
+
+```powershell
+-MaxConcurrentBatches 4
+-MaxConcurrentBatches 1
+```
+
 If a migration is interrupted, stop the old process and rerun the same command.
 Completed indexes are skipped from JSON state, and a keyset-capable active
 index resumes after its last acknowledged batch. Add `-ResetState` only when
@@ -219,14 +236,17 @@ differential key skipping, full replacement uploads, and the no-delete
 contract. It also validates whitespace normalization, page-by-page streaming,
 request timeout propagation, and pre-request progress reporting.
 It also verifies atomic, secret-free state creation and a resumed run that does
-not repeat completed index writes. A forced mid-index failure verifies that the
-next attempt retries an uncommitted document without resending the preceding
-committed batch.
+not repeat completed index writes. Dedicated parallel coverage proves that
+batch requests overlap, source paging remains backpressured, transient batch
+results are retried, and a partially failed window is replayed from its last
+fully acknowledged checkpoint.
 
 Run the test with:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -q functional_tests\test_ai_search_all_indexes_migration.py
+.\.venv\Scripts\python.exe -m pytest -q `
+  functional_tests\test_ai_search_all_indexes_migration.py `
+  functional_tests\test_ai_search_parallel_batch_writes.py
 ```
 
 ### Performance Considerations
@@ -234,6 +254,9 @@ Run the test with:
 - Search indexing requests support at most 1,000 documents and 16 MB per batch.
   The script enforces both limits with configurable lower defaults. Source
   pages default to 100 documents to keep vector payloads bounded.
+- Up to `MaxConcurrentBatches` serialized requests are held in one bounded
+  window. Reduce concurrency when Search throttling dominates or memory is
+  constrained; set it to 1 to use the sequential request path.
 - Transient request and per-document failures use exponential-backoff retries.
 - Requests time out after five minutes by default and timeout failures are
   retried within the configured retry limit.

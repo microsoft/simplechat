@@ -2,10 +2,14 @@
 
 ## Overview
 
-The Cosmos DB migration script copies every container definition and document
-from one Azure Cosmos DB for NoSQL database to another. Containers are
-discovered from the source database at runtime, so new SimpleChat containers
-are included without maintaining a static allowlist.
+The Cosmos DB migration script copies eligible container definitions and
+documents from one Azure Cosmos DB for NoSQL database to another. Containers
+are discovered from the source database at runtime, so new SimpleChat
+containers are included without maintaining a static allowlist.
+
+The log-only `file_processing` container is intentionally excluded. Its
+container definition and documents are not copied in either migration mode,
+including when its name is supplied explicitly with `-Containers`.
 
 The admin application settings document is intentionally excluded in every
 migration mode. The destination `settings/app_settings` document remains
@@ -31,6 +35,9 @@ Backpressured page-by-page copying added in version: **0.250.070**
 Exact source document totals in progress added in version: **0.250.071**
 
 Simplified parallel progress added in version: **0.250.072**
+
+Log-only `file_processing` container exclusion added in version:
+**0.250.074**
 
 The application version was updated in `application/single_app/config.py` for
 this feature.
@@ -87,6 +94,18 @@ a script parameter.
 User preferences in the `user_settings` container and non-admin operational
 documents in the `settings` container are still migrated.
 
+### Log Container Exclusion
+
+The `file_processing` container contains transient file-processing logs and is
+discarded from the selected source container set before destination container
+or document operations begin. It is omitted from progress totals and resume
+state resources. Supplying `file_processing` through `-Containers` does not
+override the exclusion; the script reports that the log-only container is
+being skipped.
+
+An existing destination `file_processing` container is left unchanged because
+the migration never deletes destination-only containers or documents.
+
 ### Migration Modes
 
 Differential mode is enabled by default with
@@ -132,7 +151,8 @@ The main parameters are:
 - Source account, resource group, subscription ID, and database name
 - Destination account, resource group, subscription ID, and database name
 - `Containers`, accepting one or more source container names and defaulting to
-  all discovered source containers when omitted or empty
+  all eligible discovered source containers when omitted or empty;
+  `file_processing` is always excluded
 - `DifferentialMigration`, defaulting to `$true`
 - `ShowProgress`, defaulting to `$true`
 - `ProgressUpdateInterval`, defaulting to every 100 documents
@@ -157,11 +177,11 @@ container. Rerunning the same command automatically skips containers marked
 after a handled error, is replayed from its beginning; document writes are
 safe to repeat in both migration modes.
 
-The state file is bound to the source, destination, selected container set,
-selection mode, migration mode, API version, and admin-settings exclusion. A
-mismatch stops the run instead of applying an old checkpoint to different
-resources. Use a separate `-StateFilePath` for a different migration, or pass
-`-ResetState` to deliberately start over.
+The state file is bound to the source, destination, selected eligible
+container set, selection mode, migration mode, API version, and admin-settings
+exclusion. A mismatch stops the run instead of applying an old checkpoint to
+different resources. Use a separate `-StateFilePath` for a different
+migration, or pass `-ResetState` to deliberately start over.
 
 State includes resource names, timestamps, status, attempts, counts, and error
 text. Account keys and document contents are never persisted. The default
@@ -262,7 +282,8 @@ Run a full overwrite-by-source migration:
 
   Container names are case-sensitive. Empty, duplicate, invalid, or missing
   source names stop the migration before destination database or container
-  writes. Omitting `-Containers` retains the all-container behavior.
+  writes. The reserved `file_processing` name is skipped rather than treated
+  as missing. Omitting `-Containers` migrates all eligible containers.
 
 Disable interactive progress records for automation:
 
@@ -301,6 +322,8 @@ The functional test executes differential and full migration against mocked
 Cosmos DB and Azure Resource Manager APIs. It validates:
 
 - Source container discovery and continuation-token paging
+- Permanent exclusion of the `file_processing` container from automatic and
+  explicit selection
 - Missing database and container creation
 - Differential create-only writes and conflict skips
 - Full container updates and document upserts

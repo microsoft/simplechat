@@ -37,7 +37,7 @@ param(
     [int]$PageSize = 100,
 
     [ValidateRange(1, 64)]
-    [int]$MaxConcurrentDocuments = 100,
+    [int]$MaxConcurrentDocuments = 60,
 
     [ValidateRange(1, 10)]
     [int]$MaxRetryCount = 5,
@@ -57,8 +57,9 @@ $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "Migration-State.ps1")
 $adminSettingsContainerName = "settings"
 $adminSettingsDocumentId = "app_settings"
+$excludedMigrationContainerNames = [string[]]@("file_processing")
 
-function Get-CosmosMigrationProgressPercent {
+function Get-CosmosMigrationProgressPercent { 
     param(
         [long]$ProcessedCount,
         [long]$TotalCount
@@ -201,20 +202,51 @@ function Select-CosmosMigrationContainers {
         [string]$DatabaseName
     )
 
+    $migratableSourceContainers = @(
+        $SourceContainers | Where-Object {
+            $excludedMigrationContainerNames -cnotcontains [string]$_.id
+        }
+    )
+    $effectiveRequestedContainerNames = @(
+        $RequestedContainerNames | Where-Object {
+            $excludedMigrationContainerNames -cnotcontains $_
+        }
+    )
+    $skippedContainerNames = if ($RequestedContainerNames.Count -eq 0) {
+        @(
+            $SourceContainers | Where-Object {
+                $excludedMigrationContainerNames -ccontains [string]$_.id
+            } | ForEach-Object { [string]$_.id }
+        )
+    }
+    else {
+        @(
+            $RequestedContainerNames | Where-Object {
+                $excludedMigrationContainerNames -ccontains $_
+            }
+        )
+    }
+    if ($skippedContainerNames.Count -gt 0) {
+        Write-Host "Skipping log-only Cosmos DB container(s): $($skippedContainerNames -join ', ')"
+    }
+
     if ($RequestedContainerNames.Count -eq 0) {
-        return @($SourceContainers)
+        return $migratableSourceContainers
+    }
+    if ($effectiveRequestedContainerNames.Count -eq 0) {
+        return @()
     }
 
     $sourceContainersByName = [System.Collections.Generic.Dictionary[string, object]]::new(
         [System.StringComparer]::Ordinal
     )
-    foreach ($sourceContainer in $SourceContainers) {
+    foreach ($sourceContainer in $migratableSourceContainers) {
         $sourceContainersByName[[string]$sourceContainer.id] = $sourceContainer
     }
 
     $selectedContainers = [System.Collections.Generic.List[object]]::new()
     $missingContainerNames = [System.Collections.Generic.List[string]]::new()
-    foreach ($containerName in $RequestedContainerNames) {
+    foreach ($containerName in $effectiveRequestedContainerNames) {
         if ($sourceContainersByName.ContainsKey($containerName)) {
             $selectedContainers.Add($sourceContainersByName[$containerName])
         }

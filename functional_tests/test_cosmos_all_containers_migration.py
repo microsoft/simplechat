@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for all-container Azure Cosmos DB migration.
-Version: 0.250.071
+Version: 0.250.074
 Implemented in: 0.250.063
 Resume-state coverage added in: 0.250.064
 Container-selection coverage added in: 0.250.066
@@ -11,11 +11,12 @@ Per-document progress coverage added in: 0.250.068
 Parallel write contract coverage added in: 0.250.069
 Backpressured feed-order coverage added in: 0.250.070
 Source document total coverage added in: 0.250.071
+Log-only container exclusion added in: 0.250.074
 
 This test ensures differential migration creates only missing documents, full
 migration upserts source documents, requested containers can be selected, all
-source containers are discovered by default, and settings/app_settings is
-never migrated.
+eligible source containers are discovered by default, file_processing is
+always skipped, and settings/app_settings is never migrated.
 """
 
 from pathlib import Path
@@ -40,6 +41,7 @@ def test_cosmos_all_containers_migration() -> None:
         "#Requires -Version 7.0",
         '$adminSettingsContainerName = "settings"',
         '$adminSettingsDocumentId = "app_settings"',
+        '$excludedMigrationContainerNames = [string[]]@("file_processing")',
         '"x-ms-documentdb-is-upsert"',
         "listKeys?api-version=$ManagementApiVersion",
         'throw "Source and destination Cosmos DB account/database pairs must be different."',
@@ -143,6 +145,7 @@ $global:mockSourceContainers = @(
     (New-MockContainer -Name "settings" -PartitionKeyPaths @("/id") -DocumentCount 2)
     (New-MockContainer -Name "documents" -PartitionKeyPaths @("/user_id") -DocumentCount 2)
     (New-MockContainer -Name "agent_templates" -PartitionKeyPaths @("/scope/id") -DocumentCount 1)
+    (New-MockContainer -Name "file_processing" -PartitionKeyPaths @("/id") -DocumentCount 1)
 )
 $global:mockDestinationContainers = @(
     (New-MockContainer -Name "settings" -PartitionKeyPaths @("/id") -DocumentCount 2)
@@ -159,6 +162,9 @@ $global:mockSourceDocuments = @{{
     )
     agent_templates = @(
         [pscustomobject]@{{ id = "template-1"; scope = [pscustomobject]@{{ id = "global" }}; name = "Template" }}
+    )
+    file_processing = @(
+        [pscustomobject]@{{ id = "processing-log-1"; status = "Complete" }}
     )
 }}
 $global:mockDestinationDocuments = @{{
@@ -466,7 +472,7 @@ if ($global:mockContainerUpdates.Count -ne 0) {{
     throw "Differential migration unexpectedly replaced a destination container definition."
 }}
 $sourceContainerPages = @($global:mockContainerListRecords | Where-Object {{ $_.IsSource }})
-if ($sourceContainerPages.Count -ne 3 -or $sourceContainerPages[2].Continuation -ne "2") {{
+if ($sourceContainerPages.Count -ne 4 -or $sourceContainerPages[3].Continuation -ne "3") {{
     throw "Source container continuation paging was not followed."
 }}
 
@@ -477,6 +483,9 @@ if (($differentialIds -join ",") -ne "cache_state,existing-doc,new-doc,template-
 }}
 if ($differentialIds -contains "app_settings") {{
     throw "Differential migration attempted to write admin app settings."
+}}
+if (@($global:mockDocumentFeedRecords | Where-Object {{ $_.ContainerName -eq "file_processing" }}).Count -gt 0) {{
+    throw "Differential migration read the excluded file_processing log container."
 }}
 if (@($differentialWrites | Where-Object {{ $_.IsUpsert -eq "true" }}).Count -gt 0) {{
     throw "Differential migration enabled upsert and could overwrite destination documents."
@@ -604,7 +613,7 @@ $global:mockDocumentWrites = @()
 $global:mockDocumentFeedRecords = @()
 $subsetParameters = $commonParameters.Clone()
 $subsetParameters.StateFilePath = $subsetStatePath
-$subsetParameters.Containers = @(" settings ", "documents")
+$subsetParameters.Containers = @(" settings ", "documents", "file_processing")
 & $scriptPath @subsetParameters -DifferentialMigration $true -ShowProgress $false
 
 if ($global:mockContainerCreates.Count -ne 0 -or $global:mockContainerUpdates.Count -ne 0) {{

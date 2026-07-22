@@ -2,9 +2,10 @@
 #!/usr/bin/env python3
 """
 Functional test for all-index Azure AI Search migration.
-Version: 0.250.065
+Version: 0.250.073
 Implemented in: 0.250.065
 Resume-state coverage added in: 0.250.064
+Parallel batch contract coverage added in: 0.250.073
 
 This test ensures differential migration copies only missing document keys and
 missing index definitions, while full migration overwrites source-key matches
@@ -34,6 +35,9 @@ def test_ai_search_all_indexes_migration() -> None:
         "listAdminKeys?api-version=$ManagementApiVersion",
         "Write-AISearchCountProgress",
         'throw "Source and destination AI Search services must be different."',
+        '[int]$MaxConcurrentBatches = 8',
+        'ForEach-Object -Parallel',
+        '-ThrottleLimit $MaxConcurrentBatches',
     ):
         if expected_contract not in script_content:
             raise AssertionError(f"Missing migration contract: {expected_contract}")
@@ -286,6 +290,7 @@ $commonParameters = @{{
     RequestTimeoutSeconds = 45
     PageSize = 1
     BatchSize = 1
+    MaxConcurrentBatches = 1
     StateFilePath = $differentialStatePath
 }}
 

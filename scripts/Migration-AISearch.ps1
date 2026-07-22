@@ -29,6 +29,9 @@ param(
     [ValidateRange(1, 1000)]
     [int]$BatchSize = 100,
 
+    [ValidateRange(1, 64)]
+    [int]$MaxConcurrentBatches = 30,
+
     [ValidateRange(1024, 16777216)]
     [int]$MaxBatchBytes = 15000000,
 
@@ -463,6 +466,202 @@ function Send-AISearchDocumentBatch {
     }
 }
 
+function New-AISearchDocumentBatchWorkItem {
+    param(
+        [System.Collections.Generic.List[object]]$Documents,
+        [long]$Sequence
+    )
+
+    $documentArray = @($Documents.ToArray())
+    return [pscustomobject]@{
+        Sequence = $Sequence
+        DocumentCount = $documentArray.Count
+        Documents = $documentArray
+        Body = @{ value = $documentArray } | ConvertTo-Json -Depth 100 -Compress
+    }
+}
+
+function Invoke-AISearchParallelDocumentBatches {
+    param(
+        [Parameter(ValueFromPipeline)]
+        [object]$WorkItem,
+        [string]$Endpoint,
+        [string]$AdminKey,
+        [string]$IndexName
+    )
+
+    begin {
+        $workItems = [System.Collections.Generic.List[object]]::new()
+    }
+    process {
+        $workItems.Add($WorkItem)
+    }
+    end {
+        if ($workItems.Count -eq 0) {
+            return
+        }
+
+        $encodedIndexName = [Uri]::EscapeDataString($IndexName)
+        $indexUri = New-AISearchUri `
+            -Endpoint $Endpoint `
+            -RelativePath "indexes/$encodedIndexName/docs/index"
+        $retryLimit = $MaxRetryCount
+        $requestTimeout = $RequestTimeoutSeconds
+        $invokeRestMethodCommand = Get-Command "Invoke-RestMethod" -ErrorAction "Stop"
+        $invokeRestMethodOverrideDefinition = if (
+            $invokeRestMethodCommand.CommandType -eq "Function"
+        ) {
+            $invokeRestMethodCommand.Definition
+        }
+        else {
+            ""
+        }
+        $startSleepCommand = Get-Command "Start-Sleep" -ErrorAction "Stop"
+        $startSleepOverrideDefinition = if ($startSleepCommand.CommandType -eq "Function") {
+            $startSleepCommand.Definition
+        }
+        else {
+            ""
+        }
+
+        $workItems | ForEach-Object -Parallel {
+            $currentWorkItem = $_
+            if (-not [string]::IsNullOrWhiteSpace($using:invokeRestMethodOverrideDefinition)) {
+                Set-Item `
+                    -Path "Function:Invoke-RestMethod" `
+                    -Value ([scriptblock]::Create($using:invokeRestMethodOverrideDefinition))
+            }
+            if (-not [string]::IsNullOrWhiteSpace($using:startSleepOverrideDefinition)) {
+                Set-Item `
+                    -Path "Function:Start-Sleep" `
+                    -Value ([scriptblock]::Create($using:startSleepOverrideDefinition))
+            }
+
+            $headers = @{
+                "api-key" = $using:AdminKey
+                "Accept" = "application/json"
+            }
+            for ($attempt = 1; $attempt -le $using:retryLimit; $attempt++) {
+                try {
+                    $response = Invoke-RestMethod `
+                        -Method "POST" `
+                        -Uri $using:indexUri `
+                        -Headers $headers `
+                        -ContentType "application/json" `
+                        -Body $currentWorkItem.Body `
+                        -TimeoutSec $using:requestTimeout `
+                        -ErrorAction "Stop"
+                }
+                catch {
+                    $statusCode = 0
+                    if ($null -ne $_.Exception.Response) {
+                        try {
+                            $statusCode = [int]$_.Exception.Response.StatusCode
+                        }
+                        catch {
+                            $statusCode = 0
+                        }
+                    }
+
+                    $requestTimedOut = $_.Exception.Message -match '(?i)timed out|timeout'
+                    $retryable = $statusCode -in @(409, 422, 429, 503) -or $requestTimedOut
+                    if ($retryable -and $attempt -lt $using:retryLimit) {
+                        $retryDelaySeconds = [int][Math]::Pow(2, $attempt - 1)
+                        Start-Sleep -Seconds $retryDelaySeconds
+                        continue
+                    }
+
+                    [pscustomobject]@{
+                        Sequence = $currentWorkItem.Sequence
+                        DocumentCount = $currentWorkItem.DocumentCount
+                        Succeeded = $false
+                        ErrorMessage = "AI Search batch request failed after $attempt attempt(s): $($_.Exception.Message)"
+                    }
+                    return
+                }
+
+                $failedDocuments = @($response.value | Where-Object { $_.status -ne $true })
+                if ($failedDocuments.Count -eq 0) {
+                    [pscustomobject]@{
+                        Sequence = $currentWorkItem.Sequence
+                        DocumentCount = $currentWorkItem.DocumentCount
+                        Succeeded = $true
+                        ErrorMessage = ""
+                    }
+                    return
+                }
+
+                $permanentFailures = @($failedDocuments | Where-Object {
+                    [int]$_.statusCode -notin @(409, 422, 429, 503)
+                })
+                if ($permanentFailures.Count -gt 0 -or $attempt -eq $using:retryLimit) {
+                    $failureSummary = $failedDocuments | ForEach-Object {
+                        "key=$($_.key), status=$($_.statusCode), error=$($_.errorMessage)"
+                    }
+                    [pscustomobject]@{
+                        Sequence = $currentWorkItem.Sequence
+                        DocumentCount = $currentWorkItem.DocumentCount
+                        Succeeded = $false
+                        ErrorMessage = "Document indexing failed for index '$using:IndexName': $($failureSummary -join '; ')"
+                    }
+                    return
+                }
+
+                $retryDelaySeconds = [int][Math]::Pow(2, $attempt - 1)
+                Start-Sleep -Seconds $retryDelaySeconds
+            }
+        } -ThrottleLimit $MaxConcurrentBatches
+    }
+}
+
+function Send-AISearchDocumentBatchWindow {
+    param(
+        [System.Collections.Generic.List[object]]$WorkItems,
+        [string]$Endpoint,
+        [string]$AdminKey,
+        [string]$IndexName
+    )
+
+    if ($WorkItems.Count -eq 0) {
+        return 0
+    }
+
+    if ($MaxConcurrentBatches -eq 1) {
+        $copiedCount = 0
+        foreach ($workItem in $WorkItems) {
+            $documents = [System.Collections.Generic.List[object]]::new()
+            foreach ($document in @($workItem.Documents)) {
+                $documents.Add($document)
+            }
+            $copiedCount += Send-AISearchDocumentBatch `
+                -Endpoint $Endpoint `
+                -AdminKey $AdminKey `
+                -IndexName $IndexName `
+                -Documents $documents
+        }
+        return $copiedCount
+    }
+
+    $batchResults = @(
+        $WorkItems.ToArray() |
+            Invoke-AISearchParallelDocumentBatches `
+                -Endpoint $Endpoint `
+                -AdminKey $AdminKey `
+                -IndexName $IndexName |
+            Sort-Object Sequence
+    )
+    if ($batchResults.Count -ne $WorkItems.Count) {
+        throw "AI Search parallel batch processing returned $($batchResults.Count) result(s) for $($WorkItems.Count) batch(es)."
+    }
+
+    $failedBatch = @($batchResults | Where-Object { -not $_.Succeeded } | Select-Object -First 1)
+    if ($failedBatch.Count -gt 0) {
+        throw $failedBatch[0].ErrorMessage
+    }
+
+    return [long](($batchResults | Measure-Object -Property DocumentCount -Sum).Sum)
+}
+
 function Copy-AISearchSynonymMaps {
     param(
         [string]$SourceEndpoint,
@@ -655,8 +854,11 @@ function Copy-AISearchIndexDocuments {
 
     $action = "upload"
     $batch = [System.Collections.Generic.List[object]]::new()
+    $pendingBatches = [System.Collections.Generic.List[object]]::new()
     $batchBytes = 12
+    $pendingDocumentCount = 0
     $lastProcessedKey = $lastCommittedKey
+    $nextBatchSequence = $batchCount + 1
 
     Write-AISearchCountProgress `
         -Id 1 `
@@ -690,32 +892,42 @@ function Copy-AISearchIndexDocuments {
             }
         }
 
-        $batchFlushed = $false
+        $windowFlushed = $false
         if (
             -not $documentAlreadyExists -and
             $batch.Count -gt 0 -and
             ($batchBytes + $documentBytes + 1) -gt $MaxBatchBytes
         ) {
-            $copiedCount += Send-AISearchDocumentBatch `
-                -Endpoint $DestinationEndpoint `
-                -AdminKey $DestinationKey `
-                -IndexName $SourceIndex.name `
-                -Documents $batch
-            $batchCount++
-            $batchFlushed = $true
+            $pendingBatches.Add((New-AISearchDocumentBatchWorkItem `
+                -Documents $batch `
+                -Sequence $nextBatchSequence))
+            $nextBatchSequence++
+            $pendingDocumentCount += $batch.Count
             $batch.Clear()
             $batchBytes = 12
-            $lastCommittedKey = $lastProcessedKey
-            Update-AISearchDocumentCheckpoint `
-                -StateContext $StateContext `
-                -ResourceName $ResourceName `
-                -KeyField $sourceKeyField `
-                -SourceDocumentCount $sourceDocumentCount `
-                -LastCommittedKey $lastCommittedKey `
-                -ProcessedCount $processedCount `
-                -CopiedCount $copiedCount `
-                -SkippedCount $skippedCount `
-                -BatchCount $batchCount
+            if ($pendingBatches.Count -ge $MaxConcurrentBatches) {
+                $completedBatchCount = $pendingBatches.Count
+                $copiedCount += Send-AISearchDocumentBatchWindow `
+                    -WorkItems $pendingBatches `
+                    -Endpoint $DestinationEndpoint `
+                    -AdminKey $DestinationKey `
+                    -IndexName $SourceIndex.name
+                $batchCount += $completedBatchCount
+                $pendingBatches.Clear()
+                $pendingDocumentCount = 0
+                $lastCommittedKey = $lastProcessedKey
+                Update-AISearchDocumentCheckpoint `
+                    -StateContext $StateContext `
+                    -ResourceName $ResourceName `
+                    -KeyField $sourceKeyField `
+                    -SourceDocumentCount $sourceDocumentCount `
+                    -LastCommittedKey $lastCommittedKey `
+                    -ProcessedCount $processedCount `
+                    -CopiedCount $copiedCount `
+                    -SkippedCount $skippedCount `
+                    -BatchCount $batchCount
+                $windowFlushed = $true
+            }
         }
 
         $processedCount++
@@ -728,22 +940,26 @@ function Copy-AISearchIndexDocuments {
             $batchBytes += $documentBytes + 1
         }
 
-        $checkpointDue = Test-AISearchProgressCheckpoint `
-            -ProcessedCount $processedCount `
-            -TotalCount $sourceDocumentCount
-        if (
-            $batch.Count -ge $BatchSize -or
-            ($checkpointDue -and $batch.Count -gt 0)
-        ) {
-            $copiedCount += Send-AISearchDocumentBatch `
-                -Endpoint $DestinationEndpoint `
-                -AdminKey $DestinationKey `
-                -IndexName $SourceIndex.name `
-                -Documents $batch
-            $batchCount++
-            $batchFlushed = $true
+        if ($batch.Count -ge $BatchSize) {
+            $pendingBatches.Add((New-AISearchDocumentBatchWorkItem `
+                -Documents $batch `
+                -Sequence $nextBatchSequence))
+            $nextBatchSequence++
+            $pendingDocumentCount += $batch.Count
             $batch.Clear()
             $batchBytes = 12
+        }
+
+        if ($pendingBatches.Count -ge $MaxConcurrentBatches) {
+            $completedBatchCount = $pendingBatches.Count
+            $copiedCount += Send-AISearchDocumentBatchWindow `
+                -WorkItems $pendingBatches `
+                -Endpoint $DestinationEndpoint `
+                -AdminKey $DestinationKey `
+                -IndexName $SourceIndex.name
+            $batchCount += $completedBatchCount
+            $pendingBatches.Clear()
+            $pendingDocumentCount = 0
             $lastCommittedKey = $lastProcessedKey
             Update-AISearchDocumentCheckpoint `
                 -StateContext $StateContext `
@@ -755,8 +971,13 @@ function Copy-AISearchIndexDocuments {
                 -CopiedCount $copiedCount `
                 -SkippedCount $skippedCount `
                 -BatchCount $batchCount
+            $windowFlushed = $true
         }
-        elseif ($checkpointDue -and $batch.Count -eq 0) {
+
+        $checkpointDue = Test-AISearchProgressCheckpoint `
+            -ProcessedCount $processedCount `
+            -TotalCount $sourceDocumentCount
+        if ($checkpointDue -and $batch.Count -eq 0 -and $pendingBatches.Count -eq 0) {
             $lastCommittedKey = $lastProcessedKey
             Update-AISearchDocumentCheckpoint `
                 -StateContext $StateContext `
@@ -770,7 +991,8 @@ function Copy-AISearchIndexDocuments {
                 -BatchCount $batchCount
         }
 
-        if ($batchFlushed -or $checkpointDue) {
+        if ($windowFlushed -or $checkpointDue) {
+            $bufferedCount = $batch.Count + $pendingDocumentCount
             Write-AISearchCountProgress `
                 -Id 1 `
                 -ParentId 0 `
@@ -778,19 +1000,29 @@ function Copy-AISearchIndexDocuments {
                 -Phase "Source documents" `
                 -ProcessedCount $processedCount `
                 -TotalCount $sourceDocumentCount `
-                -CurrentOperation "Copied: $copiedCount | Skipped: $skippedCount | Batches: $batchCount | Buffered: $($batch.Count)"
+                -CurrentOperation "Copied: $copiedCount | Skipped: $skippedCount | Batches: $batchCount | Buffered: $bufferedCount"
         }
     }
 
     if ($batch.Count -gt 0) {
-        $copiedCount += Send-AISearchDocumentBatch `
-            -Endpoint $DestinationEndpoint `
-            -AdminKey $DestinationKey `
-            -IndexName $SourceIndex.name `
-            -Documents $batch
-        $batchCount++
+        $pendingBatches.Add((New-AISearchDocumentBatchWorkItem `
+            -Documents $batch `
+            -Sequence $nextBatchSequence))
+        $pendingDocumentCount += $batch.Count
         $batch.Clear()
         $batchBytes = 12
+    }
+
+    if ($pendingBatches.Count -gt 0) {
+        $completedBatchCount = $pendingBatches.Count
+        $copiedCount += Send-AISearchDocumentBatchWindow `
+            -WorkItems $pendingBatches `
+            -Endpoint $DestinationEndpoint `
+            -AdminKey $DestinationKey `
+            -IndexName $SourceIndex.name
+        $batchCount += $completedBatchCount
+        $pendingBatches.Clear()
+        $pendingDocumentCount = 0
     }
 
     $lastCommittedKey = $lastProcessedKey
@@ -914,6 +1146,7 @@ try {
         -ServiceName $DestinationSearchService
 
     Write-Host "Starting $migrationMode AI Search migration. Destination-only indexes and documents will not be deleted."
+    Write-Host "Document batch concurrency: $MaxConcurrentBatches"
 
     $synonymMapResource = "synonymmaps"
     if (Test-MigrationResourceCompleted `
