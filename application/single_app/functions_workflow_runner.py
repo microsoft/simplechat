@@ -41,10 +41,19 @@ from config import (
     cosmos_messages_container,
     cosmos_public_documents_container,
     cosmos_user_documents_container,
+    storage_account_personal_chat_container_name,
 )
 from functions_activity_logging import log_conversation_creation, log_token_usage, log_workflow_run
 from functions_appinsights import log_event
-from functions_assistant_table_exports import build_safe_csv_headers, neutralize_csv_spreadsheet_formula
+from functions_assistant_table_exports import (
+    build_assistant_table_csv_export,
+    build_csv_output_clarification_guidance,
+    build_safe_csv_headers,
+    extract_assistant_table_entries,
+    get_assistant_csv_export_content,
+    has_generated_tabular_csv_output,
+    neutralize_csv_spreadsheet_formula,
+)
 from functions_chart_operations import append_proactive_chart_guidance
 from functions_collaboration import (
     create_collaboration_message_notifications,
@@ -125,6 +134,7 @@ from functions_simplechat_operations import (
     delete_generated_chat_artifact_for_current_user,
     delete_generated_chat_artifact_for_user,
     upload_generated_analysis_artifact_for_current_user,
+    upload_generated_analysis_artifact_for_user,
 )
 from functions_settings import (
     get_settings,
@@ -136,6 +146,12 @@ from functions_settings import (
     is_tabular_processing_enabled,
     normalize_model_endpoints,
     resolve_model_endpoint_foundry_scope,
+)
+from functions_tabular_generated_exports import (
+    build_background_tabular_generated_output_metadata,
+    build_tabular_generated_output_row_batches,
+    queue_tabular_generated_output_run,
+    should_queue_tabular_generated_output_background,
 )
 from functions_source_review import (
     URL_ACCESS_CONTEXT_WORKFLOW,
@@ -2128,31 +2144,6 @@ def _build_mixed_source_analysis_coverage(handoff):
     return coverage
 
 
-def _raise_legacy_mixed_source_analyze_limitation(
-    analysis_config,
-    user_id,
-    conversation_id='',
-):
-    """Fail closed rather than silently treating tables as narrative evidence on rollback."""
-    requested_ids, _ = _get_document_action_source_ids(analysis_config)
-    if len(requested_ids) < 2:
-        return
-    manifest = resolve_authorized_source_manifest(
-        requested_ids,
-        user_id=user_id,
-        selection_mode=SELECTION_MODE_SELECTED,
-        conversation_id=conversation_id,
-        active_group_ids=analysis_config.get('active_group_ids'),
-        active_public_workspace_ids=analysis_config.get('active_public_workspace_id'),
-        doc_scope=analysis_config.get('doc_scope', 'all'),
-    )
-    partitions = partition_source_manifest(manifest)
-    if partitions['narrative_sources'] and partitions['tabular_sources']:
-        raise ValueError(
-            'Mixed narrative and tabular Analyze is temporarily unavailable while mixed-source Analyze is disabled.'
-        )
-
-
 def _execute_mixed_source_analyze_workflow(
     workflow,
     analysis_config,
@@ -2645,6 +2636,9 @@ def _build_workflow_chat_messages(prompt_text, url_access_context=None, apply_ge
     source_review_content = _get_workflow_url_access_system_content(url_access_context)
     if source_review_content:
         messages.append({'role': 'system', 'content': source_review_content})
+    csv_output_guidance = build_csv_output_clarification_guidance(prompt_text)
+    if csv_output_guidance:
+        messages.append({'role': 'system', 'content': csv_output_guidance})
     messages.append({'role': 'user', 'content': user_content})
     return messages
 
@@ -2652,9 +2646,14 @@ def _build_workflow_chat_messages(prompt_text, url_access_context=None, apply_ge
 def _build_workflow_agent_messages(prompt_text, url_access_context=None, apply_generation_guidance=False):
     user_content = _build_workflow_generation_prompt(prompt_text) if apply_generation_guidance else str(prompt_text or '').strip()
     source_review_content = _get_workflow_url_access_system_content(url_access_context)
-    if source_review_content:
-        user_content = f'{source_review_content}\n\n[Workflow Task]\n{user_content}'
-    return [ChatMessageContent(role='user', content=user_content)]
+    csv_output_guidance = build_csv_output_clarification_guidance(prompt_text)
+    content_sections = [
+        content
+        for content in (csv_output_guidance, source_review_content)
+        if content
+    ]
+    content_sections.append(f'[Workflow Task]\n{user_content}')
+    return [ChatMessageContent(role='user', content='\n\n'.join(content_sections))]
 
 
 def _format_workflow_url_access_error(validation_result):
@@ -4348,6 +4347,121 @@ def _add_workflow_activity_thought(
     )
 
 
+def _maybe_create_workflow_assistant_table_generated_output(
+    workflow,
+    conversation_id,
+    user_question,
+    assistant_content,
+    existing_outputs=None,
+):
+    """Persist a workflow CSV artifact from a valid structured assistant response."""
+    if has_generated_tabular_csv_output(existing_outputs):
+        return None
+
+    export_payload = build_assistant_table_csv_export(user_question, assistant_content)
+    if not export_payload:
+        return None
+
+    normalized_workflow = workflow if isinstance(workflow, dict) else {}
+    user_id = str(normalized_workflow.get('user_id') or '').strip()
+    normalized_conversation_id = str(conversation_id or '').strip()
+    if not user_id or not normalized_conversation_id:
+        return None
+
+    generated_file_name = str(export_payload.get('file_name') or '').strip()
+    row_count = int(export_payload.get('row_count') or 0)
+    table_rows = extract_assistant_table_entries(assistant_content)
+    settings = get_settings()
+    row_batches = build_tabular_generated_output_row_batches(table_rows, settings=settings)
+    if not generated_file_name or row_count <= 0 or not row_batches:
+        return None
+
+    if should_queue_tabular_generated_output_background(row_count, len(row_batches), settings):
+        try:
+            background_run = queue_tabular_generated_output_run(
+                user_id=user_id,
+                conversation_id=normalized_conversation_id,
+                user_question=user_question,
+                source_candidate={
+                    'filename': generated_file_name,
+                    'selected_sheet': '',
+                    'source_authorization': {
+                        'source': 'chat',
+                    },
+                },
+                output_format='csv',
+                row_batches=row_batches,
+                gpt_model='',
+                settings=settings,
+                passthrough_input_rows=True,
+            )
+            return build_background_tabular_generated_output_metadata(background_run)
+        except Exception as exc:
+            log_event(
+                '[Workflow Assistant Table Export] Failed to queue large CSV export',
+                {
+                    'workflow_id': normalized_workflow.get('id'),
+                    'conversation_id': normalized_conversation_id,
+                    'row_count': row_count,
+                    'error': str(exc),
+                },
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return None
+
+    try:
+        upload_result = upload_generated_analysis_artifact_for_user(
+            current_user_id=user_id,
+            conversation_id=normalized_conversation_id,
+            file_name=generated_file_name,
+            file_content=export_payload.get('file_content'),
+            capability='tabular',
+            output_format='csv',
+            summary=export_payload.get('summary'),
+        )
+    except Exception as exc:
+        log_event(
+            '[Workflow Assistant Table Export] Failed to save assistant table CSV artifact',
+            {
+                'workflow_id': normalized_workflow.get('id'),
+                'conversation_id': normalized_conversation_id,
+                'row_count': row_count,
+                'error': str(exc),
+            },
+            debug_only=True,
+        )
+        return None
+
+    uploaded_message = upload_result.get('message') or {}
+    artifact_message_id = uploaded_message.get('id')
+    if not artifact_message_id:
+        return None
+
+    uploaded_file_name = uploaded_message.get('file_name') or generated_file_name
+    log_event(
+        '[Workflow Assistant Table Export] Saved assistant table CSV artifact',
+        {
+            'workflow_id': normalized_workflow.get('id'),
+            'conversation_id': normalized_conversation_id,
+            'artifact_message_id': artifact_message_id,
+            'row_count': row_count,
+        },
+        debug_only=True,
+    )
+    return {
+        'capability': 'tabular',
+        'artifact_message_id': artifact_message_id,
+        'conversation_id': normalized_conversation_id,
+        'storage_scope': 'chat',
+        'file_name': uploaded_file_name,
+        'output_format': 'csv',
+        'row_count': row_count,
+        'preview_rows': export_payload.get('preview_rows') or [],
+        'summary': export_payload.get('summary'),
+    }
+
+
 def _create_assistant_message(conversation, workflow, result, trigger_source, run_id, user_message_doc, assistant_message_id=None):
     assistant_message_id = assistant_message_id or str(uuid.uuid4())
     timestamp = _utc_now_iso()
@@ -4355,6 +4469,18 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
     document_action = _get_document_action_config(workflow)
     workspace_type = _get_workflow_scope(workflow)
     group_id = _get_workflow_group_id(workflow)
+    generated_analysis_artifacts = list(result.get('generated_analysis_artifacts') or [])
+    generated_tabular_outputs = list(result.get('generated_tabular_outputs') or [])
+    assistant_table_generated_output = _maybe_create_workflow_assistant_table_generated_output(
+        workflow=workflow,
+        conversation_id=conversation.get('id'),
+        user_question=workflow.get('task_prompt', ''),
+        assistant_content=get_assistant_csv_export_content(result),
+        existing_outputs=generated_analysis_artifacts + generated_tabular_outputs,
+    )
+    if assistant_table_generated_output:
+        generated_analysis_artifacts.append(assistant_table_generated_output)
+        generated_tabular_outputs.append(assistant_table_generated_output)
     raw_agent_citations = list(result.get('agent_citations') or [])
     web_search_citations = list(result.get('web_search_citations') or [])
     source_review_metadata = result.get('source_review') if isinstance(result.get('source_review'), dict) else {}
@@ -4388,8 +4514,8 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
             'workspace_type': workspace_type,
             'group_id': group_id or None,
             'token_usage': result.get('token_usage'),
-            'generated_analysis_artifacts': list(result.get('generated_analysis_artifacts') or []),
-            'generated_tabular_outputs': list(result.get('generated_tabular_outputs') or []),
+            'generated_analysis_artifacts': generated_analysis_artifacts,
+            'generated_tabular_outputs': generated_tabular_outputs,
             'source_review': source_review_metadata,
             'workflow': {
                 'workflow_id': workflow.get('id'),
@@ -6114,13 +6240,6 @@ def _execute_document_analysis_workflow(
 
         return _combine_per_document_analysis_results(per_document_results)
 
-    if not bool(settings.get('enable_mixed_source_analyze', False)):
-        _raise_legacy_mixed_source_analyze_limitation(
-            analysis_config,
-            user_id,
-            conversation_id=conversation_id,
-        )
-
     token_usage_aggregate = _create_token_usage_aggregate()
 
     if workflow.get('runner_type') == 'agent':
@@ -6191,55 +6310,17 @@ def _execute_document_analysis_workflow(
                 def record_native_token_usage(token_usage):
                     _accumulate_token_usage_summary(token_usage_aggregate, token_usage)
 
-                mixed_source_enabled = bool(settings.get('enable_mixed_source_analyze', False))
-                tabular_action_payload = None
-                if mixed_source_enabled:
-                    analysis_result = _execute_mixed_source_analyze_workflow(
-                        workflow, analysis_config, settings, invoke_prompt,
-                        conversation_id=conversation_id, activity_callback=activity_callback,
-                        thought_tracker=thought_tracker, live_thought_callback=external_activity_callback,
-                        max_documents=workflow_analysis_max_documents,
-                        cancel_requested=cancel_requested,
-                        request_correlation_id=request_correlation_id,
-                        token_usage_callback=record_native_token_usage,
-                    )
-                else:
-                    tabular_action_payload = _maybe_execute_tabular_document_action(
-                        DOCUMENT_ACTION_TYPE_ANALYZE,
-                        workflow,
-                        analysis_config,
-                        settings,
-                        conversation_id=conversation_id,
-                        invoke_prompt=invoke_prompt,
-                        thought_tracker=thought_tracker,
-                        live_thought_callback=external_activity_callback,
-                        cancel_requested=cancel_requested,
-                        request_correlation_id=request_correlation_id,
-                        token_usage_callback=record_native_token_usage,
-                    )
-                if tabular_action_payload:
-                    analysis_result = tabular_action_payload.get('result') or {}
-                elif not mixed_source_enabled:
-                    analysis_result = run_document_analysis(
-                        user_id=user_id,
-                        analysis_prompt=workflow.get('task_prompt', ''),
-                        document_ids=analysis_config.get('document_ids'),
-                        invoke_prompt=invoke_prompt,
-                        doc_scope=analysis_config.get('doc_scope'),
-                        active_group_ids=analysis_config.get('active_group_ids'),
-                        active_public_workspace_id=analysis_config.get('active_public_workspace_id'),
-                        window_unit=analysis_config.get('window_unit'),
-                        window_size=analysis_config.get('window_size'),
-                        window_percent=analysis_config.get('window_percent'),
-                        max_retries_per_window=analysis_config.get('max_retries_per_window'),
-                        activity_callback=activity_callback,
-                        max_documents=workflow_analysis_max_documents,
-                        cancel_requested=cancel_requested,
-                        request_correlation_id=request_correlation_id,
-                    )
+                analysis_result = _execute_mixed_source_analyze_workflow(
+                    workflow, analysis_config, settings, invoke_prompt,
+                    conversation_id=conversation_id, activity_callback=activity_callback,
+                    thought_tracker=thought_tracker, live_thought_callback=external_activity_callback,
+                    max_documents=workflow_analysis_max_documents,
+                    cancel_requested=cancel_requested,
+                    request_correlation_id=request_correlation_id,
+                    token_usage_callback=record_native_token_usage,
+                )
                 primary_generated_outputs = list(
-                    (tabular_action_payload or {}).get('generated_tabular_outputs')
-                    or analysis_result.get('generated_tabular_outputs')
+                    analysis_result.get('generated_tabular_outputs')
                     or []
                 )
                 _reauthorize_mixed_source_workflow_result(
@@ -6285,8 +6366,7 @@ def _execute_document_analysis_workflow(
                 agent_citations = _build_agent_citations_from_invocations(user_id, conversation_id)
                 if not agent_citations:
                     agent_citations = list(
-                        (tabular_action_payload or {}).get('agent_citations')
-                        or analysis_result.get('agent_citations')
+                        analysis_result.get('agent_citations')
                         or []
                     )
                 alert_targets = _collect_agent_alert_targets(user_id, conversation_id)
@@ -6314,8 +6394,7 @@ def _execute_document_analysis_workflow(
                     'agent_display_name': getattr(loaded_agent, 'display_name', None) or selected_agent.get('display_name') or requested_name,
                     'agent_citations': agent_citations,
                     'generated_tabular_outputs': list(
-                        (tabular_action_payload or {}).get('generated_tabular_outputs')
-                        or analysis_result.get('generated_tabular_outputs')
+                        analysis_result.get('generated_tabular_outputs')
                         or []
                     ),
                     'alert_targets': alert_targets,
@@ -6381,55 +6460,17 @@ def _execute_document_analysis_workflow(
     def record_native_token_usage(token_usage):
         _accumulate_token_usage_summary(token_usage_aggregate, token_usage)
 
-    mixed_source_enabled = bool(settings.get('enable_mixed_source_analyze', False))
-    tabular_action_payload = None
-    if mixed_source_enabled:
-        analysis_result = _execute_mixed_source_analyze_workflow(
-            workflow, analysis_config, settings, invoke_model_prompt,
-            conversation_id=conversation_id, activity_callback=activity_callback,
-            thought_tracker=thought_tracker, live_thought_callback=external_activity_callback,
-            max_documents=workflow_analysis_max_documents,
-            cancel_requested=cancel_requested,
-            request_correlation_id=request_correlation_id,
-            token_usage_callback=record_native_token_usage,
-        )
-    else:
-        tabular_action_payload = _maybe_execute_tabular_document_action(
-            DOCUMENT_ACTION_TYPE_ANALYZE,
-            workflow,
-            analysis_config,
-            settings,
-            conversation_id=conversation_id,
-            invoke_prompt=invoke_model_prompt,
-            thought_tracker=thought_tracker,
-            live_thought_callback=external_activity_callback,
-            cancel_requested=cancel_requested,
-            request_correlation_id=request_correlation_id,
-            token_usage_callback=record_native_token_usage,
-        )
-    if tabular_action_payload:
-        analysis_result = tabular_action_payload.get('result') or {}
-    elif not mixed_source_enabled:
-        analysis_result = run_document_analysis(
-            user_id=user_id,
-            analysis_prompt=workflow.get('task_prompt', ''),
-            document_ids=analysis_config.get('document_ids'),
-            invoke_prompt=invoke_model_prompt,
-            doc_scope=analysis_config.get('doc_scope'),
-            active_group_ids=analysis_config.get('active_group_ids'),
-            active_public_workspace_id=analysis_config.get('active_public_workspace_id'),
-            window_unit=analysis_config.get('window_unit'),
-            window_size=analysis_config.get('window_size'),
-            window_percent=analysis_config.get('window_percent'),
-            max_retries_per_window=analysis_config.get('max_retries_per_window'),
-            activity_callback=activity_callback,
-            max_documents=workflow_analysis_max_documents,
-            cancel_requested=cancel_requested,
-            request_correlation_id=request_correlation_id,
-        )
+    analysis_result = _execute_mixed_source_analyze_workflow(
+        workflow, analysis_config, settings, invoke_model_prompt,
+        conversation_id=conversation_id, activity_callback=activity_callback,
+        thought_tracker=thought_tracker, live_thought_callback=external_activity_callback,
+        max_documents=workflow_analysis_max_documents,
+        cancel_requested=cancel_requested,
+        request_correlation_id=request_correlation_id,
+        token_usage_callback=record_native_token_usage,
+    )
     primary_generated_outputs = list(
-        (tabular_action_payload or {}).get('generated_tabular_outputs')
-        or analysis_result.get('generated_tabular_outputs')
+        analysis_result.get('generated_tabular_outputs')
         or []
     )
     _reauthorize_mixed_source_workflow_result(
@@ -6502,13 +6543,11 @@ def _execute_document_analysis_workflow(
         'token_usage': token_usage,
         'provider': provider,
         'agent_citations': list(
-            (tabular_action_payload or {}).get('agent_citations')
-            or analysis_result.get('agent_citations')
+            analysis_result.get('agent_citations')
             or []
         ),
         'generated_tabular_outputs': list(
-            (tabular_action_payload or {}).get('generated_tabular_outputs')
-            or analysis_result.get('generated_tabular_outputs')
+            analysis_result.get('generated_tabular_outputs')
             or []
         ),
     }

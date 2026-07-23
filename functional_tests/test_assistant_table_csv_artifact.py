@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for assistant-rendered table CSV artifacts.
-Version: 0.250.070
-Implemented in: 0.241.050; non-tabular document CSV parsing in 0.250.065
+Version: 0.250.071
+Implemented in: 0.241.050; non-tabular document CSV parsing in 0.250.065; universal CSV intent in 0.250.071
 
 This test ensures that explicit table-format requests with assistant-rendered
 tables, including CSV rows extracted from non-tabular documents, are converted
@@ -25,15 +25,17 @@ CONFIG_FILE = APP_DIR / 'config.py'
 CHAT_ROUTE_FILE = APP_DIR / 'route_backend_chats.py'
 BACKGROUND_EXPORT_FILE = APP_DIR / 'functions_tabular_generated_exports.py'
 WORKFLOW_RUNNER_FILE = APP_DIR / 'functions_workflow_runner.py'
-EXPECTED_VERSION = '0.250.070'
+EXPECTED_VERSION = '0.250.071'
 
 sys.path.append(str(APP_DIR))
 
 from functions_assistant_table_exports import (  # noqa: E402
     assistant_table_export_requested,
+    build_csv_output_clarification_guidance,
     build_safe_csv_headers,
     build_assistant_table_csv_export,
     extract_assistant_table_entries,
+    get_assistant_csv_export_content,
     neutralize_csv_spreadsheet_formula,
 )
 
@@ -79,6 +81,22 @@ def load_csv_writer_helpers(source_file, function_names):
     extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
     exec(compile(extracted_module, str(source_file), 'exec'), namespace)
     return {function_name: namespace[function_name] for function_name in function_names}
+
+
+def load_workflow_assistant_table_export_helper(namespace):
+    module_tree = ast.parse(read_text(WORKFLOW_RUNNER_FILE), filename=str(WORKFLOW_RUNNER_FILE))
+    selected_nodes = [
+        node
+        for node in module_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == '_maybe_create_workflow_assistant_table_generated_output'
+    ]
+    if len(selected_nodes) != 1:
+        raise AssertionError('Expected workflow assistant-table CSV artifact helper.')
+
+    extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
+    exec(compile(extracted_module, str(WORKFLOW_RUNNER_FILE), 'exec'), namespace)
+    return namespace['_maybe_create_workflow_assistant_table_generated_output']
 
 
 def test_markdown_table_response_builds_csv_export():
@@ -153,6 +171,32 @@ Source: ParkingPrint.pdf, Page: 1
         csv_rows[0]['Notes'] == 'Includes parking, taxes, and fees',
         'Expected quoted commas in generated CSV values to be preserved.',
     )
+
+
+def test_document_action_analysis_reply_builds_csv_export():
+    print('Testing structured document-action CSV source selection...')
+
+    assistant_result = {
+        'reply': 'The detailed analysis is available in the attached artifact.',
+        'analysis_result': {
+            'analysis_reply': '''```csv
+Name,Invoice Number
+Contoso,DCAW1366188
+```''',
+        },
+    }
+    selected_content = get_assistant_csv_export_content(assistant_result)
+    export_payload = build_assistant_table_csv_export(
+        'turn these into a single CSV',
+        selected_content,
+    )
+
+    assert_true(
+        export_payload is not None,
+        'Expected a structured document-action analysis reply to produce a CSV artifact.',
+    )
+    csv_rows = parse_csv_rows(export_payload.get('file_content'))
+    assert_true(csv_rows[0]['Invoice Number'] == 'DCAW1366188', 'Expected the analysis reply row to be exported.')
 
 
 def test_plain_document_csv_response_excludes_surrounding_prose_and_citation():
@@ -626,6 +670,163 @@ def test_natural_csv_and_create_table_phrases_are_recognized():
         )
 
 
+def test_universal_csv_request_variants_are_recognized():
+    print('Testing universal CSV request variants...')
+
+    assistant_content = """| Name | Amount |
+| --- | --- |
+| Contoso | 42 |
+"""
+    request_phrases = (
+        'turn these into a single CSV',
+        'turn these into one CSV',
+        'turn these into a combined CSV',
+        'create a single CSV file',
+        'save one CSV',
+    )
+
+    for request_phrase in request_phrases:
+        assert_true(
+            assistant_table_export_requested(request_phrase),
+            f"Expected '{request_phrase}' to request a CSV artifact.",
+        )
+        assert_true(
+            build_assistant_table_csv_export(request_phrase, assistant_content) is not None,
+            f"Expected '{request_phrase}' to produce an assistant table CSV export.",
+        )
+
+
+def test_csv_schema_clarification_guidance_is_specific_and_resumable():
+    print('Testing CSV schema clarification guidance...')
+
+    ambiguous_guidance = build_csv_output_clarification_guidance('turn these into a single CSV')
+    assert_true(
+        'ask exactly one concise clarification' in ambiguous_guidance,
+        'Expected ambiguous CSV requests to instruct one schema clarification.',
+    )
+    assert_true(
+        'latest answer instead of asking again' in ambiguous_guidance,
+        'Expected a prior CSV clarification to be resumed from conversation history.',
+    )
+
+    explicit_guidance = build_csv_output_clarification_guidance(
+        'Create a CSV with one row per document and columns: file name, invoice number, amount.',
+    )
+    assert_true(
+        'explicitly specified CSV row or column structure' in explicit_guidance,
+        'Expected explicit row and column instructions to bypass a schema clarification.',
+    )
+    assert_true(
+        'ask exactly one concise clarification' not in explicit_guidance,
+        'Expected explicit schema requests not to request a clarification.',
+    )
+    assert_true(
+        build_csv_output_clarification_guidance('Summarize the selected sources.') == '',
+        'Expected non-CSV requests not to receive CSV clarification guidance.',
+    )
+
+
+def test_workflow_assistant_table_csv_artifacts_reuse_shared_contract():
+    print('Testing workflow assistant-table CSV artifact finalization...')
+
+    uploaded_requests = []
+    queue_requests = []
+    shared_namespace = {
+        'build_assistant_table_csv_export': build_assistant_table_csv_export,
+        'extract_assistant_table_entries': extract_assistant_table_entries,
+        'has_generated_tabular_csv_output': lambda outputs: any(
+            output.get('output_format') == 'csv'
+            for output in outputs or []
+            if isinstance(output, dict)
+        ),
+        'get_settings': lambda: {},
+        'build_tabular_generated_output_row_batches': lambda rows, settings=None: [rows],
+        'should_queue_tabular_generated_output_background': lambda *args: False,
+        'queue_tabular_generated_output_run': lambda **kwargs: queue_requests.append(kwargs),
+        'build_background_tabular_generated_output_metadata': lambda run: run,
+        'upload_generated_analysis_artifact_for_user': (
+            lambda **kwargs: uploaded_requests.append(kwargs) or {
+                'message': {'id': 'workflow-csv-artifact', 'file_name': kwargs['file_name']},
+            }
+        ),
+        'log_event': lambda *args, **kwargs: None,
+        'logging': type('Logging', (), {'ERROR': 'ERROR'}),
+        'storage_account_personal_chat_container_name': 'personal-chat',
+    }
+    helper = load_workflow_assistant_table_export_helper(shared_namespace)
+    workflow = {
+        'id': 'workflow-1',
+        'user_id': 'user-1',
+        'task_prompt': 'turn these into a single CSV',
+    }
+    assistant_content = '''| Name | Invoice Number |
+| --- | --- |
+| Contoso | DCAW1366188 |
+
+Source: ParkingPrint.pdf, Page: 1
+'''
+
+    artifact = helper(
+        workflow,
+        'conversation-1',
+        workflow['task_prompt'],
+        assistant_content,
+    )
+    assert_true(artifact is not None, 'Expected a workflow CSV artifact for valid assistant rows.')
+    assert_true(artifact['artifact_message_id'] == 'workflow-csv-artifact', 'Expected uploaded workflow artifact metadata.')
+    assert_true(len(uploaded_requests) == 1, 'Expected one authorized artifact upload.')
+    assert_true(uploaded_requests[0]['current_user_id'] == 'user-1', 'Expected upload to use the workflow owner.')
+    assert_true(uploaded_requests[0]['output_format'] == 'csv', 'Expected a CSV artifact upload.')
+    assert_true(
+        helper(
+            workflow,
+            'conversation-1',
+            workflow['task_prompt'],
+            assistant_content,
+            [{'capability': 'tabular', 'output_format': 'csv'}],
+        ) is None,
+        'Expected existing tabular CSV output to suppress a duplicate workflow artifact.',
+    )
+
+    background_namespace = dict(shared_namespace)
+    background_namespace.update({
+        'should_queue_tabular_generated_output_background': lambda *args: True,
+        'queue_tabular_generated_output_run': (
+            lambda **kwargs: queue_requests.append(kwargs) or {'id': 'workflow-export-run'}
+        ),
+        'build_background_tabular_generated_output_metadata': (
+            lambda run: {
+                'background_export': True,
+                'export_run_id': run['id'],
+                'suppress_assistant_table_export': True,
+            }
+        ),
+    })
+    background_helper = load_workflow_assistant_table_export_helper(background_namespace)
+    background_artifact = background_helper(
+        workflow,
+        'conversation-1',
+        workflow['task_prompt'],
+        assistant_content,
+    )
+    assert_true(background_artifact['background_export'] is True, 'Expected large workflow exports to queue durably.')
+    assert_true(queue_requests[-1]['passthrough_input_rows'] is True, 'Expected workflow rows to avoid a second model call.')
+    assert_true(
+        queue_requests[-1]['source_candidate']['source_authorization'] == {'source': 'chat'},
+        'Expected staged workflow rows to use valid chat authorization without a source blob path.',
+    )
+
+    workflow_runner_content = read_text(WORKFLOW_RUNNER_FILE)
+    assert_true(
+        'assistant_table_generated_output = _maybe_create_workflow_assistant_table_generated_output(' in workflow_runner_content,
+        'Expected workflow assistant messages to finalize shared CSV artifacts.',
+    )
+    assert_true(
+        'generated_analysis_artifacts.append(assistant_table_generated_output)' in workflow_runner_content,
+        'Expected workflow CSV metadata to reach the generic artifact UI.',
+    )
+
+
 def test_chat_route_wires_assistant_table_artifacts():
     print('Testing chat route assistant-table artifact plumbing...')
 
@@ -666,6 +867,23 @@ def test_chat_route_wires_assistant_table_artifacts():
         'Expected normal and streaming assistant messages to include assistant table CSV artifacts.',
     )
     assert_true(
+        'assistant_content=get_assistant_csv_export_content(execution_result)' in chat_route_content,
+        'Expected document-action CSV exports to use the structured analysis reply when available.',
+    )
+    assert_true(
+        'assistant_content=get_assistant_csv_export_content(result)' in read_text(WORKFLOW_RUNNER_FILE),
+        'Expected workflow CSV exports to use the structured analysis reply when available.',
+    )
+    assert_true(
+        chat_route_content.count('build_csv_output_clarification_guidance(user_message)') == 2,
+        'Expected normal and streaming Chat to apply the same CSV clarification guidance.',
+    )
+    workflow_runner_content = read_text(WORKFLOW_RUNNER_FILE)
+    assert_true(
+        workflow_runner_content.count('build_csv_output_clarification_guidance(prompt_text)') == 2,
+        'Expected workflow model and agent execution to apply CSV clarification guidance.',
+    )
+    assert_true(
         'if assistant_table_export_requested(user_question):' in chat_route_content,
         'Expected tabular output format detection to use the shared CSV/table intent predicate.',
     )
@@ -680,6 +898,7 @@ def run_tests() -> bool:
         test_markdown_table_response_builds_csv_export,
         test_tab_separated_table_response_builds_rows,
         test_non_tabular_document_csv_response_builds_export,
+        test_document_action_analysis_reply_builds_csv_export,
         test_plain_document_csv_response_excludes_surrounding_prose_and_citation,
         test_document_csv_response_preserves_multiline_and_escaped_quotes,
         test_fenced_document_csv_preserves_sentence_shaped_rows,
@@ -699,6 +918,9 @@ def run_tests() -> bool:
         test_non_table_requests_do_not_create_exports,
         test_natural_table_request_phrase_is_recognized,
         test_natural_csv_and_create_table_phrases_are_recognized,
+        test_universal_csv_request_variants_are_recognized,
+        test_csv_schema_clarification_guidance_is_specific_and_resumable,
+        test_workflow_assistant_table_csv_artifacts_reuse_shared_contract,
         test_chat_route_wires_assistant_table_artifacts,
     ]
 

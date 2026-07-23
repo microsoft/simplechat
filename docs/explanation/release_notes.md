@@ -2,6 +2,22 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.071)**
+
+#### New Features
+
+*   **Universal CSV Generation**
+    *   CSV requests such as "turn these into a single CSV" now use one artifact path across standard and streaming Chat, Chat Search, selected agents, Analyze, Compare, workflows, and source-free structured responses.
+    *   Ambiguous row or column requests ask one persisted conversation clarification; explicit schema instructions proceed directly. Large outputs reuse the authorized, durable background export flow.
+    *   (Ref: microsoft/simplechat#1071, `functions_assistant_table_exports.py`, `route_backend_chats.py`, `functions_workflow_runner.py`, `functions_tabular_generated_exports.py`, `UNIVERSAL_CSV_GENERATION.md`)
+
+#### Bug Fixes
+
+*   **Mixed-Source Analyze Availability**
+    *   Removed the default-off internal gate that could reject a combined Analyze selection containing both narrative and tabular documents.
+    *   Combined Analyze now automatically uses the native mixed-source workflow for selected sources, without requiring an administrator or deployment setting change.
+    *   (Ref: microsoft/simplechat#1058, `functions_workflow_runner.py`, `functions_settings.py`, `test_mixed_source_analyze_workflow.py`, `MIXED_SOURCE_ANALYZE_GATING_REMOVAL_FIX.md`)
+
 ### **(v0.250.070)**
 
 #### New Features

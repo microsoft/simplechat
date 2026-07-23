@@ -1,8 +1,8 @@
 # test_tabular_row_orchestration_scale.py
 """
 Functional test for scalable per-row tabular orchestration.
-Version: 0.250.065
-Implemented in: 0.250.060; generated CSV formula safety in 0.250.065
+Version: 0.250.071
+Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; shared CSV queue authorization in 0.250.071
 
 This test ensures generated exports preserve source identity and row order while
 enforcing one stable output schema across independently generated batches.
@@ -35,6 +35,7 @@ sys.path.append(str(APP_ROOT))
 
 from functions_assistant_table_exports import (  # noqa: E402
     build_safe_csv_headers,
+    has_generated_tabular_csv_output,
     neutralize_csv_spreadsheet_formula,
 )
 CONTRACT_FUNCTIONS = {
@@ -485,6 +486,7 @@ def _load_failed_export_helpers():
         '_build_tabular_generated_output_file_name': (
             lambda filename, output_format: f"{Path(filename).stem}_generated.{output_format}"
         ),
+        'has_generated_tabular_csv_output': has_generated_tabular_csv_output,
     }
     extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
     exec(compile(extracted_module, str(CHAT_ROUTE), 'exec'), namespace)
@@ -964,6 +966,16 @@ def test_worker_revalidates_conversation_and_workspace_authorization():
     }
     assert authorize_personal(personal_run)['user_id'] == 'user-1'
 
+    staged_chat_run = {
+        'id': 'run-staged-chat',
+        'user_id': 'user-1',
+        'conversation_id': 'conversation-1',
+        'source_authorization': {
+            'source': 'chat',
+        },
+    }
+    assert authorize_personal(staged_chat_run)['user_id'] == 'user-1'
+
     authorize_wrong_owner = _load_authorization_helper('different-user')
     try:
         authorize_wrong_owner(personal_run)
@@ -1203,6 +1215,17 @@ def test_route_queues_replayable_pages_and_suppresses_summary_fallback():
     assert 'source_descriptor=source_descriptor' in route_source
     assert "output_metadata.get('background_export')" in route_source
     assert '_has_generated_tabular_csv_output(existing_outputs)' in route_source
+
+    route_module = ast.parse(route_source, filename=str(CHAT_ROUTE))
+    assistant_table_export = next(
+        node
+        for node in route_module.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == 'maybe_create_assistant_table_generated_output'
+    )
+    assistant_table_export_source = ast.get_source_segment(route_source, assistant_table_export)
+    assert "'source': 'chat'," in assistant_table_export_source
+    assert "'container': storage_account_personal_chat_container_name" not in assistant_table_export_source
 
     helpers = _load_failed_export_helpers()
     failed_output = helpers['_build_failed_tabular_generated_output_metadata'](

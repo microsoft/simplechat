@@ -2,12 +2,12 @@
 # test_mixed_source_analyze_workflow.py
 """
 Functional test for Phase 3 mixed-source combined Analyze.
-Version: 0.250.066
-Implemented in: 0.250.066
+Version: 0.250.071
+Implemented in: 0.250.071
 
 This test ensures #1058 composes native narrative and tabular analysis behind
-the default-off rollout flag, retains terminal coverage after either branch
-fails, and keeps per-document execution non-collective. Parent: #1055.
+automatic combined Analyze routing, retains terminal coverage after either
+branch fails, and keeps per-document execution non-collective. Parent: #1055.
 Prerequisites: #1056 and #1057.
 """
 
@@ -57,20 +57,26 @@ def test_phase_3_mixed_analyze_contracts_are_wired():
     assert "'agent_citations': tabular_agent_citations" in helper_source
 
 
-def test_phase_3_flag_default_and_per_document_guard():
-    """Rollout must remain off by default and never add collective reduction to per-document mode."""
+def test_phase_3_mixed_analyze_is_automatic_and_preserves_per_document_mode():
+    """Combined Analyze must use native mixed-source execution without a feature gate."""
     settings_source = SETTINGS.read_text(encoding='utf-8')
     workflow_source = WORKFLOW_RUNNER.read_text(encoding='utf-8')
+    tree = ast.parse(workflow_source)
+    runner = next(
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == '_execute_document_analysis_workflow'
+    )
+    runner_source = ast.get_source_segment(workflow_source, runner) or ''
 
-    assert "'enable_mixed_source_analyze': False" in settings_source
-    assert "'enable_mixed_source_analyze_all': False" in settings_source
-    assert 'def is_mixed_source_analyze_enabled(settings):' in settings_source
-    assert 'def is_mixed_source_analyze_all_enabled(settings):' in settings_source
-    assert workflow_source.count("mixed_source_enabled = bool(settings.get('enable_mixed_source_analyze', False))") == 2
-    assert 'def _raise_legacy_mixed_source_analyze_limitation(' in workflow_source
-    assert 'Mixed narrative and tabular Analyze is temporarily unavailable while mixed-source Analyze is disabled.' in workflow_source
-    assert "or analysis_result.get('generated_tabular_outputs')" in workflow_source
-    assert "or analysis_result.get('agent_citations')" in workflow_source
+    assert 'enable_mixed_source_analyze' not in settings_source
+    assert 'enable_mixed_source_analyze' not in workflow_source
+    assert 'def _raise_legacy_mixed_source_analyze_limitation(' not in workflow_source
+    assert runner_source.count('analysis_result = _execute_mixed_source_analyze_workflow(') == 2
+    assert '_is_per_document_analysis_mode(analysis_config)' in runner_source
+    assert 'return _combine_per_document_analysis_results(per_document_results)' in runner_source
+    assert "analysis_result.get('generated_tabular_outputs')" in runner_source
+    assert "analysis_result.get('agent_citations')" in runner_source
 
 
 def test_phase_3_reduction_prompt_requires_evidence_separation_and_failures():

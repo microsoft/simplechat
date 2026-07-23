@@ -13,24 +13,25 @@ CSV_FENCE_LANGUAGES = {'', 'csv', 'md', 'markdown', 'plaintext', 'text', 'text/c
 CSV_OUTPUT_REQUEST_PATTERNS = (
     re.compile(
         r'\b(?:build|create|download|export|generate|make|prepare|save)\b'
-        r'.{0,120}\b(?:a\s+)?csv(?:\s+(?:file|format|output))?\b'
+        r'.{0,120}\b(?:a\s+)?(?:(?:single|combined|one)\s+)?csv(?:\s+(?:file|format|output))?\b'
     ),
     re.compile(
         r'\b(?:respond|return|provide|output)\b'
-        r'(?:(?!\bfrom\b).){0,80}\b(?:as|in|to\s+)?(?:a\s+)?csv\b'
+        r'(?:(?!\bfrom\b).){0,80}\b(?:as|in|to\s+)?(?:a\s+)?(?:(?:single|combined|one)\s+)?csv\b'
     ),
     re.compile(
-        r'\b(?:convert|format|put|turn)\b.{0,80}\b(?:as|in|into|to)\s+(?:a\s+)?csv\b'
+        r'\b(?:convert|format|put|turn)\b.{0,80}\b(?:as|in|into|to)\s+(?:a\s+)?(?:(?:single|combined|one)\s+)?csv\b'
     ),
-    re.compile(r'\b(?:get|give)\s+(?:me\s+)?(?:a|the)\s+csv\b'),
+    re.compile(r'\b(?:get|give)\s+(?:me\s+)?(?:a|the|one)\s+(?:(?:single|combined)\s+)?csv\b'),
     re.compile(
-        r'\b(?:need|want)\s+(?:(?:a|the)\s+)?(?:direct\s+)?csv'
+        r'\b(?:need|want)\s+(?:(?:a|the|one)\s+)?(?:direct\s+)?(?:(?:single|combined)\s+)?csv'
         r'(?:\s+(?:file|format|output))?\b'
     ),
     re.compile(
         r'\b(?:need|want)\b.{0,40}\b(?:results?|output|answer|response|fields?|rows?|data|this|that|it)\b'
-        r'.{0,40}\b(?:as|in)\s+csv\b'
+        r'.{0,40}\b(?:as|in)\s+(?:(?:single|combined|one)\s+)?csv\b'
     ),
+    re.compile(r'\b(?:single|combined|one)\s+csv(?:\s+(?:file|format|output))?\b'),
     re.compile(r'\bcsv\s+(?:output|version)\b'),
     re.compile(r'^\s*(?:a\s+)?csv\s+file\s*(?:,?\s*please)?[.!?]?\s*$'),
     re.compile(
@@ -146,6 +147,14 @@ TABLE_EXPORT_REQUEST_MARKERS = (
 )
 
 
+CSV_EXPLICIT_ROW_SCHEMA_PATTERNS = (
+    re.compile(r'\b(?:one|a|each)\s+(?:row|record|line|entry|object)\s+(?:per|for|of)\b'),
+    re.compile(r'\b(?:one|a|each)\s+(?:file|document|source|record|item)\s+per\s+row\b'),
+    re.compile(r'\b(?:columns?|fields?)\s*(?::|=|are|should|must|include|with)\b'),
+    re.compile(r'\b(?:include|with|using)\s+(?:the\s+)?(?:columns?|fields?)\b'),
+)
+
+
 def assistant_table_export_requested(user_question: str) -> bool:
     """Return True when the user asked for table-shaped output or a CSV export."""
     normalized_question = re.sub(r'\s+', ' ', str(user_question or '').strip().casefold())
@@ -185,6 +194,29 @@ def assistant_table_export_requested(user_question: str) -> bool:
     )
 
 
+def build_csv_output_clarification_guidance(user_question: str) -> str:
+    """Return model guidance for a CSV request that may need one schema clarification."""
+    if not assistant_table_export_requested(user_question):
+        return ''
+
+    normalized_question = re.sub(r'\s+', ' ', str(user_question or '').strip().casefold())
+    if any(pattern.search(normalized_question) for pattern in CSV_EXPLICIT_ROW_SCHEMA_PATTERNS):
+        return (
+            'The user explicitly specified CSV row or column structure. Preserve that structure, '
+            'produce valid structured rows, and do not ask a clarification unless the requested '
+            'evidence itself is contradictory.'
+        )
+
+    return (
+        'The user requested a CSV artifact. If the authorized evidence and request do not establish '
+        'one stable row unit and column schema, ask exactly one concise clarification before generating '
+        'a file: whether each row should represent files, documents, or extracted records, and which '
+        'columns to include. Do not create an empty or guessed CSV. If the schema is clear from the '
+        'request or evidence, generate valid structured rows directly. If this conversation already '
+        'contains that clarification, use the user\'s latest answer instead of asking again.'
+    )
+
+
 def build_assistant_table_csv_export(user_question: str, assistant_content: str) -> Optional[Dict[str, Any]]:
     """Build CSV export metadata from the largest table found in the assistant response."""
     if not assistant_table_export_requested(user_question):
@@ -206,6 +238,41 @@ def build_assistant_table_csv_export(user_question: str, assistant_content: str)
             'in the assistant response.'
         ),
     }
+
+
+def has_generated_tabular_csv_output(generated_outputs: List[Dict[str, Any]]) -> bool:
+    """Return whether a tabular CSV result already suppresses a duplicate table export."""
+    for generated_output in generated_outputs or []:
+        if not isinstance(generated_output, dict):
+            continue
+
+        capability = str(generated_output.get('capability') or '').strip().lower()
+        if generated_output.get('suppress_assistant_table_export') and (
+            not capability or capability == 'tabular'
+        ):
+            return True
+        output_format = str(generated_output.get('output_format') or '').strip().lower()
+        file_name = str(generated_output.get('file_name') or '').strip().lower()
+        if (output_format == 'csv' or file_name.endswith('.csv')) and (
+            not capability or capability == 'tabular'
+        ):
+            return True
+
+    return False
+
+
+def get_assistant_csv_export_content(assistant_result: Any) -> str:
+    """Return the structured document-action reply when it supersedes a concise artifact reply."""
+    if not isinstance(assistant_result, dict):
+        return str(assistant_result or '')
+
+    analysis_result = assistant_result.get('analysis_result')
+    if isinstance(analysis_result, dict):
+        analysis_reply = str(analysis_result.get('analysis_reply') or '').strip()
+        if analysis_reply:
+            return analysis_reply
+
+    return str(assistant_result.get('reply') or '')
 
 
 def extract_assistant_table_entries(assistant_content: str) -> List[Dict[str, str]]:

@@ -1243,6 +1243,46 @@ def should_queue_tabular_generated_output_background(row_count, batch_count, set
     return _safe_int(row_count) > inline_max_rows or _safe_int(batch_count) > inline_max_batches
 
 
+def build_tabular_generated_output_row_batches(rows, settings=None):
+    """Split structured rows using the shared generated-export size budget."""
+    settings = settings or {}
+    max_batch_rows = _settings_int(
+        settings,
+        'tabular_generated_output_max_batch_rows',
+        TABULAR_EXPORT_DEFAULT_SOURCE_BATCH_ROWS,
+        minimum=1,
+        maximum=100,
+    )
+    max_batch_chars = _settings_int(
+        settings,
+        'tabular_generated_output_max_batch_chars',
+        TABULAR_EXPORT_DEFAULT_SOURCE_BATCH_CHARS,
+        minimum=6000,
+        maximum=120000,
+    )
+    batches = []
+    current_batch = []
+    current_batch_chars = 0
+
+    for row in rows or []:
+        row_text = json.dumps(row, default=str, ensure_ascii=False, separators=(',', ':'))
+        if current_batch and (
+            len(current_batch) >= max_batch_rows
+            or current_batch_chars + len(row_text) > max_batch_chars
+        ):
+            batches.append(current_batch)
+            current_batch = []
+            current_batch_chars = 0
+
+        current_batch.append(row)
+        current_batch_chars += len(row_text)
+
+    if current_batch:
+        batches.append(current_batch)
+
+    return batches
+
+
 def _parse_iso_datetime(value):
     normalized_value = str(value or '').strip()
     if not normalized_value:

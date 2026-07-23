@@ -233,19 +233,6 @@ def is_mixed_source_conversation_continuity_enabled(settings):
     )
 
 
-def is_mixed_source_analyze_enabled(settings):
-    """Return whether Phase 3 explicit mixed-source Analyze behavior is enabled."""
-    return bool((settings or {}).get('enable_mixed_source_analyze', False))
-
-
-def is_mixed_source_analyze_all_enabled(settings):
-    """Return whether the separately staged exhaustive Analyze All behavior is enabled."""
-    return bool(
-        (settings or {}).get('enable_mixed_source_analyze', False)
-        and (settings or {}).get('enable_mixed_source_analyze_all', False)
-    )
-
-
 def is_cross_format_compare_enabled(settings):
     """Return whether Phase 4 native mixed-source Compare behavior is enabled."""
     return bool((settings or {}).get('enable_cross_format_compare', False))
@@ -821,8 +808,6 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_mixed_source_chat_search': False,
         'enable_mixed_source_relevance_candidates': False,
         'enable_mixed_source_conversation_continuity': False,
-        'enable_mixed_source_analyze': False,
-        'enable_mixed_source_analyze_all': False,
         'enable_cross_format_compare': False,
         'enable_cross_format_compare_one_to_many': False,
         'max_rounds_per_agent': 1,

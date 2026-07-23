@@ -120,9 +120,12 @@ from functions_chat import *
 from functions_content import generate_embedding, generate_embeddings_batch
 from functions_assistant_table_exports import (
     assistant_table_export_requested,
+    build_csv_output_clarification_guidance,
     build_safe_csv_headers,
     build_assistant_table_csv_export,
     extract_assistant_table_entries,
+    get_assistant_csv_export_content,
+    has_generated_tabular_csv_output,
     neutralize_csv_spreadsheet_formula,
 )
 from functions_chart_operations import (
@@ -189,6 +192,7 @@ from functions_tabular_generated_exports import (
     _normalize_generated_batch_entries,
     _prepare_tabular_source_rows,
     build_background_tabular_generated_output_metadata,
+    build_tabular_generated_output_row_batches,
     cancel_tabular_generated_output_run,
     get_tabular_generated_output_run_status,
     queue_tabular_generated_output_run,
@@ -2043,22 +2047,7 @@ def _maybe_create_deep_research_ledger_artifact(settings, conversation_id, ledge
 
 
 def _has_generated_tabular_csv_output(generated_outputs):
-    for generated_output in generated_outputs or []:
-        if not isinstance(generated_output, dict):
-            continue
-
-        capability = str(generated_output.get('capability') or '').strip().lower()
-        if generated_output.get('suppress_assistant_table_export') and (
-            not capability or capability == 'tabular'
-        ):
-            return True
-        output_format = str(generated_output.get('output_format') or '').strip().lower()
-        file_name = str(generated_output.get('file_name') or '').strip().lower()
-        if output_format == 'csv' or file_name.endswith('.csv'):
-            if not capability or capability == 'tabular':
-                return True
-
-    return False
+    return has_generated_tabular_csv_output(generated_outputs)
 
 
 def maybe_create_assistant_table_generated_output(
@@ -2101,7 +2090,6 @@ def maybe_create_assistant_table_generated_output(
                     'selected_sheet': '',
                     'source_authorization': {
                         'source': 'chat',
-                        'container': storage_account_personal_chat_container_name,
                     },
                 },
                 output_format='csv',
@@ -5069,30 +5057,7 @@ def _build_tabular_generated_output_file_name(source_file_name, output_format):
 
 
 def _build_tabular_generated_output_row_batches(rows, settings=None):
-    budget = _get_tabular_generated_output_batch_budget(settings)
-    max_batch_rows = budget['max_rows']
-    max_batch_chars = budget['max_chars']
-    batches = []
-    current_batch = []
-    current_batch_chars = 0
-
-    for row in rows or []:
-        row_text = _dump_tabular_generated_output_json(row)
-        if current_batch and (
-            len(current_batch) >= max_batch_rows
-            or current_batch_chars + len(row_text) > max_batch_chars
-        ):
-            batches.append(current_batch)
-            current_batch = []
-            current_batch_chars = 0
-
-        current_batch.append(row)
-        current_batch_chars += len(row_text)
-
-    if current_batch:
-        batches.append(current_batch)
-
-    return batches
+    return build_tabular_generated_output_row_batches(rows, settings=settings)
 
 
 def _build_tabular_generated_output_candidate_diagnostic(invocation):
@@ -13852,7 +13817,7 @@ def register_route_backend_chats(bp):
             )
             assistant_table_generated_output = maybe_create_assistant_table_generated_output(
                 user_question=user_message,
-                assistant_content=execution_result.get('reply', ''),
+                assistant_content=get_assistant_csv_export_content(execution_result),
                 conversation_id=conversation_id,
                 existing_outputs=document_generated_analysis_artifacts + document_generated_tabular_outputs,
                 cancel_requested=cancel_requested,
@@ -14503,6 +14468,12 @@ def register_route_backend_chats(bp):
             generated_tabular_outputs_list = []
             generated_analysis_artifacts_list = []
             system_messages_for_augmentation = [] # Collect system messages from search
+            csv_output_guidance = build_csv_output_clarification_guidance(user_message)
+            if csv_output_guidance:
+                system_messages_for_augmentation.append({
+                    'role': 'system',
+                    'content': csv_output_guidance,
+                })
             search_results = []
             mixed_source_narrative_retrieval_failed = False
             selected_agent = None  # Initialize selected_agent early to prevent NameError
@@ -18623,6 +18594,12 @@ def register_route_backend_chats(bp):
                 generated_tabular_outputs_list = []
                 generated_analysis_artifacts_list = []
                 system_messages_for_augmentation = []
+                csv_output_guidance = build_csv_output_clarification_guidance(user_message)
+                if csv_output_guidance:
+                    system_messages_for_augmentation.append({
+                        'role': 'system',
+                        'content': csv_output_guidance,
+                    })
                 search_results = []
                 mixed_source_narrative_retrieval_failed = False
                 selected_agent = None
