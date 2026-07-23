@@ -215,6 +215,24 @@ Control how document citations are displayed and linked.
 4. Enable enhanced citations feature
 5. Verify citation links in chat interface
 
+#### Mixed-Source Rollout Controls
+
+Mixed-source document orchestration uses independently reversible settings. Keep every stage off until the preceding stage has acceptable omission, error, and latency metrics:
+
+| Stage | Setting | Default |
+|---|---|---|
+| Manifest diagnostics | `enable_mixed_source_manifest` | Off |
+| Chat and workflow Search | `enable_mixed_source_chat_search` | Off |
+| Combined Analyze | `enable_mixed_source_analyze` | Off |
+| Cross-format Compare | `enable_cross_format_compare` | Off |
+| Reauthorized continuity | `enable_mixed_source_conversation_continuity` | Off |
+| Relevance table candidates | `enable_mixed_source_relevance_candidates` | Off |
+| Bounded Analyze All | `enable_mixed_source_analyze_all` | Off |
+| One-to-many mixed Compare | `enable_cross_format_compare_one_to_many` | Off |
+| Aggregate development telemetry | `enable_mixed_source_development_telemetry` | Off |
+
+Analyze All requires a ready document access index and uses the configured workflow Analyze document limit. A catalog above that limit is rejected rather than truncated. Development telemetry contains allowlisted aggregate counts and timings only; source identifiers, filenames, prompts, evidence, paths, locators, credentials, and raw settings are prohibited.
+
 ### 7. Safety Configuration
 
 Configure content moderation and user feedback systems.

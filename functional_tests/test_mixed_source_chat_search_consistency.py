@@ -415,10 +415,34 @@ def _load_workflow_search_helpers(flag_enabled, manifest, search_calls, tabular_
         },
         "resolve_authorized_source_manifest": lambda *args, **kwargs: list(manifest),
         "partition_source_manifest": orchestration.partition_source_manifest,
+        "build_failed_narrative_evidence_envelopes": orchestration.build_failed_narrative_evidence_envelopes,
         "build_narrative_evidence_envelopes": orchestration.build_narrative_evidence_envelopes,
+        "deduplicate_mixed_source_references": orchestration.deduplicate_mixed_source_references,
         "_workflow_mixed_source_execution_context": lambda *args, **kwargs: nullcontext(),
         "_resolve_tabular_document_action_model_name": lambda workflow, settings: "test-model",
         "build_mixed_source_evidence_handoff": orchestration.build_mixed_source_evidence_handoff,
+        "normalize_mixed_source_correlation_id": orchestration.normalize_mixed_source_correlation_id,
+        "_create_token_usage_aggregate": lambda: {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "request_count": 0,
+        },
+        "_accumulate_token_usage_summary": lambda aggregate, usage: aggregate.update({
+            key: aggregate.get(key, 0) + int((usage or {}).get(key, 0) or 0)
+            for key in ("prompt_tokens", "completion_tokens", "total_tokens", "request_count")
+        }),
+        "_finalize_token_usage": lambda aggregate: (
+            dict(aggregate) if aggregate.get("request_count") else None
+        ),
+        "_merge_token_usage_summaries": lambda results: next(
+            (
+                dict(item.get("token_usage") or {})
+                for item in results
+                if isinstance(item, dict) and item.get("token_usage")
+            ),
+            None,
+        ),
         "_add_workflow_activity_thought": lambda *args, **kwargs: None,
     }
     _load_functions(
@@ -605,6 +629,64 @@ def test_group_workflow_search_forces_stored_group_scope():
     assert prepared_action["doc_scope"] == "group"
     assert prepared_action["active_group_ids"] == ["group-safe"]
     assert prepared_action["active_public_workspace_id"] == []
+
+
+def test_workflow_search_narrative_failure_keeps_available_table_evidence():
+    """A failed narrative cohort remains terminal while the table branch still answers."""
+    manifest = [
+        _source("narrative-doc", "brief.docx", "narrative"),
+        _source("table-doc", "facts.csv", "tabular"),
+    ]
+    search_calls = []
+    tabular_calls = []
+    namespace, tabular_stub = _load_workflow_search_helpers(
+        True,
+        manifest,
+        search_calls,
+        tabular_calls,
+    )
+
+    def fail_narrative_search(**kwargs):
+        search_calls.append(kwargs)
+        raise RuntimeError("bounded narrative failure")
+
+    namespace["search_documents"] = fail_narrative_search
+    previous_tabular_module = sys.modules.get("functions_tabular_analysis")
+    sys.modules["functions_tabular_analysis"] = tabular_stub
+    try:
+        context = namespace["_prepare_workflow_search_context"](
+            {
+                "user_id": "user-1",
+                "task_prompt": "Calculate totals and summarize the brief.",
+                "runner_type": "model",
+            },
+            {
+                "type": "search",
+                "target_mode": "selected",
+                "document_ids": ["narrative-doc", "table-doc"],
+                "doc_scope": "all",
+            },
+            {"enable_mixed_source_chat_search": True},
+            conversation_id="conversation-1",
+        )
+    finally:
+        if previous_tabular_module is None:
+            sys.modules.pop("functions_tabular_analysis", None)
+        else:
+            sys.modules["functions_tabular_analysis"] = previous_tabular_module
+
+    assert len(search_calls) == 1
+    assert len(tabular_calls) == 1
+    assert "Computed total: 42" in context["workflow"]["task_prompt"]
+    assert context["coverage"]["partial_coverage"] is True
+    statuses = {
+        entry["document_id"]: entry["status"]
+        for entry in context["coverage"]["terminal_ledger"]
+    }
+    assert statuses == {
+        "narrative-doc": "failed",
+        "table-doc": "completed",
+    }
 
 
 def test_replay_collaboration_foundry_and_chat_path_contracts():

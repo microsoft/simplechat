@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
 Functional test for durable tabular generated-output background exports.
-Version: 0.250.061
-Implemented in: 0.241.060
+Version: 0.250.070
+Implemented in: 0.241.060; throughput and timeout hardening in: 0.250.070
 
 This test ensures that large tabular structured exports are wired through the
 durable background queue, status API, queued retry recovery, and chat progress
 UI without requiring live Azure services.
 """
 
+import asyncio
 import ast
 import sys
 from pathlib import Path
@@ -125,15 +126,74 @@ def test_export_runner_module():
 def test_background_runner_bounded_batch_concurrency():
     """Validate Phase 4 bounded model-batch concurrency in the background runner."""
     source_text = read_text(EXPORT_MODULE)
-    assert_contains(source_text, 'TABULAR_EXPORT_DEFAULT_BATCH_CONCURRENCY = 2', 'default batch concurrency')
+    assert_contains(source_text, 'TABULAR_EXPORT_DEFAULT_BATCH_CONCURRENCY = 3', 'default batch concurrency')
     assert_contains(source_text, 'TABULAR_EXPORT_MAX_BATCH_CONCURRENCY = 5', 'maximum batch concurrency')
+    assert_contains(source_text, 'TABULAR_EXPORT_DEFAULT_BATCH_TIMEOUT_SECONDS = 300', 'bounded batch timeout')
     assert_contains(source_text, 'tabular_generated_output_batch_concurrency', 'settings override for batch concurrency')
+    assert_contains(source_text, 'tabular_generated_output_batch_timeout_seconds', 'settings override for batch timeout')
     assert_contains(source_text, '_generate_batch_window_entries', 'async batch window generation helper')
     assert_contains(source_text, 'asyncio.Semaphore', 'bounded async batch semaphore')
     assert_contains(source_text, 'asyncio.gather(*tasks, return_exceptions=True)', 'bounded window gather with exception capture')
+    assert_contains(source_text, 'asyncio.wait_for(', 'bounded model-call timeout')
     assert_contains(source_text, '_checkpoint_generated_batch_results', 'checkpoint successful concurrent batches')
     assert_contains(source_text, '_advance_run_progress_for_window', 'contiguous progress advancement after batch window')
     assert_contains(source_text, 'Building background structured export batch window', 'batch window diagnostics')
+
+
+def test_background_batch_timeout_prevents_indefinite_model_wait():
+    """A stalled model call must fail as retryable timeout before a worker can hang indefinitely."""
+    module_tree = parse_python(EXPORT_MODULE)
+    helper_node = get_function(module_tree, '_generate_batch_entries')
+    if helper_node is None:
+        raise AssertionError('_generate_batch_entries was not found')
+
+    class FakeChatHistory:
+        def add_system_message(self, _message):
+            return None
+
+        def add_user_message(self, _message):
+            return None
+
+    class FakeExecutionSettings:
+        def __init__(self, service_id):
+            self.service_id = service_id
+
+    class SlowChatService:
+        async def get_chat_message_contents(self, _history, _settings):
+            await asyncio.sleep(0.01)
+            return []
+
+    namespace = {
+        'asyncio': asyncio,
+        'SKChatHistory': FakeChatHistory,
+        'AzureChatPromptExecutionSettings': FakeExecutionSettings,
+        'TABULAR_EXPORT_DEFAULT_BATCH_TIMEOUT_SECONDS': 300,
+        '_safe_float': lambda value, default=0.0: float(value) if value is not None else default,
+        '_build_batch_prompt': lambda *args, **kwargs: 'test prompt',
+    }
+    extracted_module = ast.Module(body=[helper_node], type_ignores=[])
+    ast.fix_missing_locations(extracted_module)
+    exec(compile(extracted_module, str(EXPORT_MODULE), 'exec'), namespace)
+
+    try:
+        asyncio.run(
+            namespace['_generate_batch_entries'](
+                SlowChatService(),
+                'Create a CSV.',
+                [{'name': 'Example'}],
+                0,
+                1,
+                'example.csv',
+                '',
+                1,
+                'run-1',
+                batch_timeout_seconds=0.001,
+            )
+        )
+    except TimeoutError as exc:
+        assert 'timed out after' in str(exc), exc
+    else:
+        raise AssertionError('Expected a stalled background model call to time out')
 
 
 def test_chat_route_wires_background_exports():
@@ -223,6 +283,7 @@ def main():
     tests = [
         test_export_runner_module,
         test_background_runner_bounded_batch_concurrency,
+        test_background_batch_timeout_prevents_indefinite_model_wait,
         test_chat_route_wires_background_exports,
         test_generated_export_batch_packing_phase_three,
         test_background_scheduler_and_config_registered,

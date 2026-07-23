@@ -610,6 +610,70 @@ def upload_generated_analysis_artifact_for_current_user(
     )
 
 
+def delete_generated_chat_artifact_for_current_user(
+    conversation_id: str,
+    artifact_message_id: str,
+) -> bool:
+    """Delete one generated artifact after reauthorizing its conversation and stored identity."""
+    current_user_info = _require_current_user_info()
+    current_user_id = str(current_user_info.get("userId") or "").strip()
+    return delete_generated_chat_artifact_for_user(
+        current_user_id,
+        conversation_id,
+        artifact_message_id,
+    )
+
+
+def delete_generated_chat_artifact_for_user(
+    current_user_id: str,
+    conversation_id: str,
+    artifact_message_id: str,
+) -> bool:
+    """Delete one generated artifact for a known user after object-level authorization."""
+    current_user_id = str(current_user_id or "").strip()
+    normalized_conversation_id = str(conversation_id or "").strip()
+    normalized_message_id = str(artifact_message_id or "").strip()
+    if not current_user_id or not normalized_conversation_id or not normalized_message_id:
+        return False
+
+    try:
+        conversation_item = cosmos_conversations_container.read_item(
+            item=normalized_conversation_id,
+            partition_key=normalized_conversation_id,
+        )
+        message_item = cosmos_messages_container.read_item(
+            item=normalized_message_id,
+            partition_key=normalized_conversation_id,
+        )
+    except CosmosResourceNotFoundError:
+        return False
+
+    if str(conversation_item.get("user_id") or "").strip() != current_user_id:
+        raise PermissionError("Forbidden")
+    message_metadata = message_item.get("metadata") if isinstance(message_item.get("metadata"), dict) else {}
+    if (
+        str(message_item.get("conversation_id") or "").strip() != normalized_conversation_id
+        or message_item.get("role") != "file"
+        or not message_metadata.get("is_generated_chat_artifact")
+    ):
+        raise PermissionError("Forbidden")
+
+    delete_blob_backed_chat_message_files([message_item])
+    cosmos_messages_container.delete_item(
+        item=normalized_message_id,
+        partition_key=normalized_conversation_id,
+    )
+    log_event(
+        "[SimpleChat] Generated chat artifact rolled back after cancellation",
+        {
+            "artifact_count": 1,
+            "rollback_reason": "cancellation",
+        },
+        debug_only=True,
+    )
+    return True
+
+
 def upload_generated_analysis_artifact_for_user(
     current_user_id: str,
     conversation_id: str,

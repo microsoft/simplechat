@@ -5,6 +5,10 @@ import logging
 
 from functions_appinsights import log_event
 from functions_debug import debug_print
+from functions_mixed_source_orchestration import (
+    MixedSourceCancellationError,
+    raise_if_mixed_source_cancelled,
+)
 from functions_document_actions import DOCUMENT_ACTION_TYPE_COMPARISON
 from functions_document_analysis import (
     build_document_analysis_progress_snapshot,
@@ -230,6 +234,8 @@ def run_evidence_document_comparison(
     right_sources,
     invoke_prompt,
     activity_callback=None,
+    cancel_requested=None,
+    request_correlation_id=None,
 ):
     """Run the established one-left-to-many comparison over native evidence envelopes."""
     normalized_prompt = str(comparison_prompt or '').strip()
@@ -240,11 +246,26 @@ def run_evidence_document_comparison(
     right_sources = [source for source in list(right_sources or []) if isinstance(source, dict)]
     left_name = str(left_source.get('document_name') or 'Source').strip() or 'Source'
     left_summary = str(left_source.get('summary') or '').strip()
+    left_status = str(left_source.get('status') or '').strip().lower()
+    if left_status not in {'completed', 'partial'} or not left_summary:
+        raise RuntimeError('The comparison Source could not be prepared from native evidence.')
+    if cancel_requested is not None:
+        raise_if_mixed_source_cancelled(
+            cancel_requested,
+            'comparison',
+            request_correlation_id=request_correlation_id,
+        )
     comparison_items = []
     compared_targets = []
     failed_targets = []
 
     for comparison_index, right_source in enumerate(right_sources, start=1):
+        if cancel_requested is not None:
+            raise_if_mixed_source_cancelled(
+                cancel_requested,
+                'comparison',
+                request_correlation_id=request_correlation_id,
+            )
         right_name = str(right_source.get('document_name') or f'Target {comparison_index}').strip() or f'Target {comparison_index}'
         right_status = str(right_source.get('status') or '').strip().lower()
         if right_status not in {'completed', 'partial'} or not left_summary:
@@ -261,22 +282,34 @@ def run_evidence_document_comparison(
                 'comparison_index': comparison_index,
                 'comparison_count': len(right_sources),
             })
-        pairwise_text = str(invoke_prompt(
-            _build_pairwise_comparison_prompt(
-                normalized_prompt,
-                left_name,
-                right_name,
-                left_summary,
-                str(right_source.get('summary') or ''),
-            ),
-            stage='comparison',
-            metadata={
-                'comparison_index': comparison_index,
-                'comparison_count': len(right_sources),
-                'left_document_id': left_source.get('document_id'),
-                'right_document_id': right_source.get('document_id'),
-            },
-        ) or '').strip()
+        try:
+            pairwise_text = str(invoke_prompt(
+                _build_pairwise_comparison_prompt(
+                    normalized_prompt,
+                    left_name,
+                    right_name,
+                    left_summary,
+                    str(right_source.get('summary') or ''),
+                ),
+                stage='comparison',
+                metadata={
+                    'comparison_index': comparison_index,
+                    'comparison_count': len(right_sources),
+                    'left_document_id': left_source.get('document_id'),
+                    'right_document_id': right_source.get('document_id'),
+                },
+            ) or '').strip()
+            if cancel_requested is not None:
+                raise_if_mixed_source_cancelled(
+                    cancel_requested,
+                    'comparison',
+                    request_correlation_id=request_correlation_id,
+                )
+        except MixedSourceCancellationError:
+            raise
+        except Exception:
+            failed_targets.append(right_name)
+            continue
         if not pairwise_text:
             failed_targets.append(right_name)
             continue
@@ -302,11 +335,23 @@ def run_evidence_document_comparison(
     elif len(comparison_items) == 1:
         final_reply = comparison_items[0]['text']
     else:
+        if cancel_requested is not None:
+            raise_if_mixed_source_cancelled(
+                cancel_requested,
+                'comparison_reduction',
+                request_correlation_id=request_correlation_id,
+            )
         final_reply = str(invoke_prompt(
             _build_comparison_reduction_prompt(normalized_prompt, left_name, comparison_items),
             stage='comparison_reduction',
             metadata={'comparison_count': len(comparison_items), 'left_document_id': left_source.get('document_id')},
         ) or '').strip() or 'The completed target comparisons could not be reduced into a final response.'
+        if cancel_requested is not None:
+            raise_if_mixed_source_cancelled(
+                cancel_requested,
+                'comparison_reduction',
+                request_correlation_id=request_correlation_id,
+            )
 
     evidence_engines = sorted({
         str(source.get('engine') or 'unknown')
@@ -323,7 +368,7 @@ def run_evidence_document_comparison(
     )
     return {
         'reply': f'{final_reply}{coverage_note}',
-        'analysis_reply': final_reply,
+        'analysis_reply': f'{final_reply}{coverage_note}',
         'coverage': {'document_count': 1 + len(right_sources), 'partial_coverage': bool(failed_targets), 'failed_targets': failed_targets},
         'documents': [left_source, *right_sources],
         'left_document': {'document_id': left_source.get('document_id'), 'document_name': left_name},
@@ -342,6 +387,8 @@ def run_document_comparison(
     invoke_prompt,
     activity_callback=None,
     conversation_id=None,
+    cancel_requested=None,
+    request_correlation_id=None,
 ):
     normalized_prompt = str(comparison_prompt or '').strip()
     if not normalized_prompt:
@@ -356,6 +403,11 @@ def run_document_comparison(
     right_document_ids = list(action_config.get('right_document_ids') or [])
     if not left_document_id or not right_document_ids:
         raise ValueError('Document comparison requires one Source document and at least one Target document.')
+    raise_if_mixed_source_cancelled(
+        cancel_requested,
+        'comparison_manifest',
+        request_correlation_id=request_correlation_id,
+    )
 
     debug_print(
         '[DocumentComparison] Starting comparison | '
@@ -399,6 +451,11 @@ def run_document_comparison(
 
     document_summaries = {}
     for document_index, document_id in enumerate(document_order, start=1):
+        raise_if_mixed_source_cancelled(
+            cancel_requested,
+            'comparison',
+            request_correlation_id=request_correlation_id,
+        )
         document_state = document_states[document_id]
         role_label = document_state.get('role_label', 'right')
         debug_print(
@@ -458,6 +515,8 @@ def run_document_comparison(
             activity_callback=summary_activity_callback,
             max_documents=1,
             include_coverage_summary=False,
+            cancel_requested=cancel_requested,
+            request_correlation_id=request_correlation_id,
         )
         document_summaries[document_id] = summary_result
         document_state['document_name'] = (
@@ -481,6 +540,11 @@ def run_document_comparison(
     left_document_name = document_states[left_document_id].get('document_name') or left_document_id
     comparison_items = []
     for comparison_index, right_document_id in enumerate(right_document_ids, start=1):
+        raise_if_mixed_source_cancelled(
+            cancel_requested,
+            'comparison',
+            request_correlation_id=request_correlation_id,
+        )
         right_document_name = document_states[right_document_id].get('document_name') or right_document_id
         comparison_progress_percent = ((comparison_index - 1) / len(right_document_ids)) * 100 if right_document_ids else 0
         _set_comparison_progress_meta(
@@ -528,6 +592,11 @@ def run_document_comparison(
                 'right_document_id': right_document_id,
             },
         ) or '').strip()
+        raise_if_mixed_source_cancelled(
+            cancel_requested,
+            'comparison',
+            request_correlation_id=request_correlation_id,
+        )
         if not pairwise_text:
             debug_print(
                 '[DocumentComparison] Pairwise comparison failed | '
@@ -577,6 +646,11 @@ def run_document_comparison(
     if len(comparison_items) == 1:
         final_reply = comparison_items[0].get('text', '').strip()
     else:
+        raise_if_mixed_source_cancelled(
+            cancel_requested,
+            'comparison_reduction',
+            request_correlation_id=request_correlation_id,
+        )
         _set_comparison_progress_meta(
             coverage,
             phase='reducing',
@@ -612,6 +686,11 @@ def run_document_comparison(
                 'left_document_id': left_document_id,
             },
         ) or '').strip()
+        raise_if_mixed_source_cancelled(
+            cancel_requested,
+            'comparison_reduction',
+            request_correlation_id=request_correlation_id,
+        )
         if not final_reply:
             debug_print(
                 '[DocumentComparison] Comparison reduction failed | '
@@ -624,6 +703,11 @@ def run_document_comparison(
             f'comparison_count={len(comparison_items)}'
         )
 
+    raise_if_mixed_source_cancelled(
+        cancel_requested,
+        'comparison_finalization',
+        request_correlation_id=request_correlation_id,
+    )
     _set_comparison_progress_meta(
         coverage,
         phase='completed',

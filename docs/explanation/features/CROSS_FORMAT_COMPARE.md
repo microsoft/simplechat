@@ -39,3 +39,7 @@ The final comparison reports compared targets, failed or partial targets, partic
 ## Limitations
 
 This phase does not add many-to-many Compare, all-document discovery, persisted follow-up source reuse, Phase 5 selection semantics, or Phase 6 broad extraction and rollout completion. Table-to-table row-level assertions require a validated structured table operation; bounded prose evidence alone is not treated as row-level proof.
+
+## Phase 6 Hardening
+
+Version **0.250.070** applies the [#1061](https://github.com/microsoft/simplechat/issues/1061) failure policy: an unprepared Source fails the operation, while a failed Target or pairwise Target reduction remains visible and later valid Targets continue. Mixed Compare citations and generated tabular outputs now survive the outer model and agent return paths with stable deduplication. Cancellation prevents later pairwise work, final reduction, or artifact publication.

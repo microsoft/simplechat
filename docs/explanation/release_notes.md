@@ -2,6 +2,24 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.070)**
+
+#### New Features
+
+*   **Mixed-Source Hardening, Extraction, and Staged Rollout**
+    *   Added one manifest-aligned terminal coverage ledger for Chat, workflow Search, Analyze, Compare, and continuity, with consistent mode-specific partial-failure behavior and no table-to-narrative fallback.
+    *   Propagated cancellation and one privacy-safe correlation ID across manifest, native engines, reductions, exports, finalization, citations, artifacts, and token-bearing workflow execution. Fresh authorization and source versions are checked again before publication.
+    *   Added bounded, fail-closed Analyze All catalog enumeration behind its existing default-off flag, extracted reusable tabular invocation slicing with a route compatibility shim, and added independently default-off aggregate development telemetry.
+    *   All mixed-source and subordinate rollout flags remain off pending production omission/error/latency evidence and explicit approval.
+    *   (Ref: microsoft/simplechat#1061, parent microsoft/simplechat#1055, prerequisites microsoft/simplechat#1056, microsoft/simplechat#1057, microsoft/simplechat#1058, microsoft/simplechat#1059, and microsoft/simplechat#1060, `MIXED_SOURCE_HARDENING_EXTRACTION_AND_ROLLOUT.md`, `functions_mixed_source_orchestration.py`, `functions_workflow_runner.py`, `route_backend_chats.py`)
+
+#### Bug Fixes
+
+*   **Background CSV Export Throughput and Timeout Recovery**
+    *   Increased safe post-schema concurrent batch generation from two to three batches and added a bounded model-call timeout, so a stalled batch is retried from its durable checkpoint instead of holding the background worker indefinitely.
+    *   Preserved serial schema discovery, ordered output, checkpointing, authorization, and idempotent artifact publication while reducing the number of execution windows for common multi-batch exports.
+    *   (Ref: microsoft/simplechat#1071, `functions_tabular_generated_exports.py`, `test_tabular_background_generated_exports.py`, `BACKGROUND_CSV_EXPORT_THROUGHPUT_AND_TIMEOUT_FIX.md`)
+
 ### **(v0.250.068)**
 
 #### New Features

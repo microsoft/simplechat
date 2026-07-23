@@ -60,3 +60,9 @@ The focused coverage verifies native partitioning, bounded collective reduction 
 This Phase 3 increment does not enable Analyze All Documents. The current action contract exposes selected and recent targets only, so enabling an `all` mode before a dedicated exhaustive authorized catalog enumerator exists would violate the Analyze contract. The separate `enable_mixed_source_analyze_all` flag remains disabled until that enumerator, count preflight rejection, object-boundary reauthorization, and performance validation are delivered.
 
 This phase does not implement cross-format Compare (#1059), persisted follow-up source reuse, Phase 5 conversation-selection semantics, or Phase 6 route extraction and rollout completion.
+
+## Phase 6 Hardening
+
+Version **0.250.070** completes the bounded backend contract for `enable_mixed_source_analyze_all` under [#1061](https://github.com/microsoft/simplechat/issues/1061). The ready document access index enumerates current candidates using the configured Analyze limit plus one, rejects over-limit catalogs without truncation, and sends every candidate through the existing authorized source manifest before execution. The flag remains default off and the workflow selector is not newly exposed pending staged production approval.
+
+Combined Analyze now reduces only when at least one source succeeds. Terminal coverage, cancellation, generated outputs, citations, and finalization reauthorization are preserved across narrative and table branches.

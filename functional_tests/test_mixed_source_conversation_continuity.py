@@ -2,7 +2,7 @@
 # test_mixed_source_conversation_continuity.py
 """
 Functional test for Phase 5 mixed-source conversation continuity.
-Version: 0.250.068
+Version: 0.250.070
 Implemented in: 0.250.068
 
 This test ensures #1060 preserves compact source continuity only as a
@@ -111,14 +111,14 @@ def test_flag_and_standard_streaming_wiring_are_present():
     config_source = _read_file(CONFIG_FILE)
     assert "'enable_mixed_source_conversation_continuity': False" in settings_source
     assert 'def is_mixed_source_conversation_continuity_enabled(settings):' in settings_source
-    assert route_source.count('is_mixed_source_conversation_continuity_enabled(settings)') == 4
-    assert route_source.count('_build_reauthorized_continuity_decision(') == 3
+    assert route_source.count('is_mixed_source_conversation_continuity_enabled(settings)') == 5
+    assert route_source.count('_build_reauthorized_continuity_decision(') == 4
     assert route_source.count('_build_mixed_source_continuity_refs(') == 3
     assert route_source.count("selection_mode='history'") == 0
     assert route_source.count("'history',") >= 2
     assert 'source_continuity_refs=None' in metadata_source
     assert 'source_continuity_refs=source_continuity_refs' in metadata_source
-    assert 'VERSION = "0.250.068"' in config_source
+    assert 'VERSION = "0.250.070"' in config_source
     print('PASS: flag and Chat parity wiring')
 
 

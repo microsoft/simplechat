@@ -6,6 +6,7 @@ import logging
 import math
 import os
 import time
+import uuid
 
 from functions_appinsights import log_event
 
@@ -92,6 +93,222 @@ EVIDENCE_JSON_MAX_COLLECTION_ITEMS = 20
 EVIDENCE_JSON_MAX_STRING_BYTES = 1024
 MIXED_SOURCE_HANDOFF_MAX_BYTES = 49152
 MIXED_SOURCE_HANDOFF_MAX_ENVELOPES = 20
+MIXED_SOURCE_MODES = frozenset({"chat", "search", "analyze", "compare"})
+MIXED_SOURCE_TERMINAL_REASON_MAX_BYTES = 128
+MIXED_SOURCE_TELEMETRY_EVENTS = frozenset({
+    "authorization_failure",
+    "background_export",
+    "cancellation",
+    "continuity",
+    "native_execution",
+    "reduction",
+    "terminal_coverage",
+})
+MIXED_SOURCE_TELEMETRY_METRICS = frozenset({
+    "artifact_count",
+    "authorization_failure_count",
+    "background_export_count",
+    "cancellation_count",
+    "citation_count",
+    "completed_source_count",
+    "duplicate_evidence_count",
+    "engine_call_count",
+    "evidence_omitted_count",
+    "failed_source_count",
+    "history_rerun_count",
+    "history_reuse_count",
+    "history_source_count",
+    "latency_ms",
+    "missing_coverage_violation_count",
+    "model_request_count",
+    "narrative_source_count",
+    "partial_failure_count",
+    "partial_source_count",
+    "prompt_tokens",
+    "request_count",
+    "skipped_source_count",
+    "successful_source_count",
+    "tabular_source_count",
+    "token_request_count",
+    "total_source_count",
+    "total_tokens",
+    "unexpected_evidence_count",
+    "unsupported_source_count",
+    "unresolved_source_count",
+})
+MIXED_SOURCE_TELEMETRY_DIMENSIONS = frozenset({
+    "cancellation_phase",
+    "continuity_decision",
+    "outcome_status",
+    "selection_mode",
+})
+
+
+class MixedSourceCancellationError(RuntimeError):
+    """Stop mixed-source work without converting cancellation into source failure."""
+
+    def __init__(self, phase="unknown"):
+        self.phase = str(phase or "unknown").strip().lower() or "unknown"
+        super().__init__(f"Mixed-source execution canceled during {self.phase}.")
+
+
+class MixedSourceFinalizationError(RuntimeError):
+    """Prevent publication when a fresh manifest no longer matches execution evidence."""
+
+    def __init__(self, reason):
+        self.reason = str(reason or "finalization_failed").strip().lower()
+        super().__init__("Mixed-source evidence changed or became unavailable before publication.")
+
+
+def normalize_mixed_source_correlation_id(request_correlation_id=None):
+    """Return an internal UUID correlation value without trusting caller-shaped text."""
+    try:
+        return str(uuid.UUID(str(request_correlation_id or "").strip()))
+    except (TypeError, ValueError, AttributeError):
+        return str(uuid.uuid4())
+
+
+def raise_if_mixed_source_cancelled(
+    cancel_requested,
+    phase,
+    request_correlation_id=None,
+):
+    """Raise the shared cancellation signal when an optional predicate is set."""
+    if cancel_requested is None:
+        return
+    if not callable(cancel_requested):
+        raise TypeError("cancel_requested must be callable")
+    if not cancel_requested():
+        return
+
+    normalized_phase = str(phase or "unknown").strip().lower() or "unknown"
+    log_event(
+        "[MixedSourceLifecycle] Execution canceled.",
+        extra={
+            "request_correlation_id": normalize_mixed_source_correlation_id(
+                request_correlation_id
+            ),
+            "cancellation_phase": normalized_phase,
+        },
+        level=logging.INFO,
+    )
+    raise MixedSourceCancellationError(normalized_phase)
+
+
+def emit_mixed_source_telemetry(
+    settings,
+    event_name,
+    mode,
+    request_correlation_id=None,
+    metrics=None,
+    dimensions=None,
+):
+    """Emit only allowlisted aggregate lifecycle telemetry when explicitly enabled."""
+    if not bool((settings or {}).get("enable_mixed_source_development_telemetry", False)):
+        return False
+
+    normalized_event_name = str(event_name or "").strip().lower()
+    normalized_mode = str(mode or "").strip().lower()
+    if normalized_event_name not in MIXED_SOURCE_TELEMETRY_EVENTS:
+        raise ValueError(f"Unsupported mixed-source telemetry event: {normalized_event_name}")
+    if normalized_mode not in MIXED_SOURCE_MODES:
+        raise ValueError(f"Unsupported mixed-source telemetry mode: {normalized_mode}")
+
+    metrics = metrics if isinstance(metrics, dict) else {}
+    dimensions = dimensions if isinstance(dimensions, dict) else {}
+    unknown_metrics = set(metrics) - MIXED_SOURCE_TELEMETRY_METRICS
+    unknown_dimensions = set(dimensions) - MIXED_SOURCE_TELEMETRY_DIMENSIONS
+    if unknown_metrics or unknown_dimensions:
+        raise ValueError("Mixed-source telemetry contains non-allowlisted fields")
+
+    extra = {
+        "request_correlation_id": normalize_mixed_source_correlation_id(
+            request_correlation_id
+        ),
+        "event_name": normalized_event_name,
+        "mode": normalized_mode,
+    }
+    for field_name, raw_value in metrics.items():
+        if isinstance(raw_value, bool):
+            metric_value = int(raw_value)
+        elif isinstance(raw_value, (int, float)) and math.isfinite(raw_value):
+            metric_value = max(0, raw_value)
+        else:
+            raise ValueError("Mixed-source telemetry metrics must be finite numbers")
+        extra[field_name] = metric_value
+    for field_name, raw_value in dimensions.items():
+        extra[field_name] = _truncate_utf8(
+            str(raw_value or "").strip().lower(),
+            64,
+        )
+
+    log_event(
+        "[MixedSourceTelemetry] Aggregate lifecycle metrics.",
+        extra=extra,
+        level=logging.INFO,
+    )
+    return True
+
+
+def emit_mixed_source_coverage_telemetry(
+    settings,
+    mode,
+    coverage,
+    request_correlation_id=None,
+):
+    """Emit terminal status and source-kind counts derived from the bounded ledger."""
+    coverage = coverage if isinstance(coverage, dict) else {}
+    terminal_ledger = [
+        entry
+        for entry in list(coverage.get("terminal_ledger") or [])
+        if isinstance(entry, dict)
+    ]
+    source_kind_counts = {source_kind: 0 for source_kind in SOURCE_KINDS}
+    for entry in terminal_ledger:
+        source_kind = str(entry.get("source_kind") or "").strip().lower()
+        if source_kind in source_kind_counts:
+            source_kind_counts[source_kind] += 1
+
+    outcome_status = (
+        EVIDENCE_STATUS_PARTIAL
+        if coverage.get("partial_coverage")
+        else EVIDENCE_STATUS_COMPLETED
+    )
+    if coverage.get("successful_source_count", 0) == 0 and coverage.get(
+        "requested_source_count",
+        0,
+    ):
+        outcome_status = EVIDENCE_STATUS_FAILED
+    return emit_mixed_source_telemetry(
+        settings,
+        "terminal_coverage",
+        mode,
+        request_correlation_id=request_correlation_id,
+        metrics={
+            "total_source_count": coverage.get("requested_source_count", 0),
+            "completed_source_count": coverage.get("completed_source_count", 0),
+            "partial_source_count": coverage.get("partial_source_count", 0),
+            "failed_source_count": coverage.get("failed_source_count", 0),
+            "skipped_source_count": coverage.get("skipped_source_count", 0),
+            "successful_source_count": coverage.get("successful_source_count", 0),
+            "tabular_source_count": source_kind_counts[SOURCE_KIND_TABULAR],
+            "narrative_source_count": source_kind_counts[SOURCE_KIND_NARRATIVE],
+            "unsupported_source_count": source_kind_counts[SOURCE_KIND_UNSUPPORTED],
+            "unresolved_source_count": source_kind_counts[SOURCE_KIND_UNRESOLVED],
+            "missing_coverage_violation_count": coverage.get(
+                "missing_coverage_violation_count",
+                0,
+            ),
+            "duplicate_evidence_count": coverage.get("duplicate_evidence_count", 0),
+            "unexpected_evidence_count": coverage.get("unexpected_evidence_count", 0),
+            "evidence_omitted_count": coverage.get("evidence_omitted_count", 0),
+            "partial_failure_count": int(bool(coverage.get("partial_coverage"))),
+        },
+        dimensions={
+            "selection_mode": coverage.get("selection_mode") or "selected",
+            "outcome_status": outcome_status,
+        },
+    )
 
 
 def normalize_selection_mode(selection_mode, default=SELECTION_MODE_SELECTED):
@@ -467,8 +684,18 @@ def resolve_authorized_source_manifest(
     active_public_workspace_ids=None,
     doc_scope="all",
     context_resolver=None,
+    cancel_requested=None,
+    request_correlation_id=None,
 ):
     """Resolve each unique requested ID once into an ordered, authorized manifest."""
+    request_correlation_id = normalize_mixed_source_correlation_id(
+        request_correlation_id
+    )
+    raise_if_mixed_source_cancelled(
+        cancel_requested,
+        "manifest",
+        request_correlation_id=request_correlation_id,
+    )
     normalized_selection_mode = normalize_selection_mode(selection_mode)
     normalized_user_id = str(user_id or "").strip()
     if not normalized_user_id:
@@ -523,6 +750,11 @@ def resolve_authorized_source_manifest(
     resolved_contexts = None
     if context_resolver is None:
         try:
+            raise_if_mixed_source_cancelled(
+                cancel_requested,
+                "manifest",
+                request_correlation_id=request_correlation_id,
+            )
             resolved_contexts = _default_document_context_batch_resolver(
                 document_ids=unique_document_ids,
                 user_id=normalized_user_id,
@@ -531,6 +763,13 @@ def resolve_authorized_source_manifest(
                 active_public_workspace_id=normalized_public_workspace_ids,
                 conversation_id=normalized_conversation_id,
             )
+            raise_if_mixed_source_cancelled(
+                cancel_requested,
+                "manifest",
+                request_correlation_id=request_correlation_id,
+            )
+        except MixedSourceCancellationError:
+            raise
         except Exception:
             resolved_contexts = [None] * len(unique_document_ids)
             resolution_error_count = len(unique_document_ids)
@@ -542,6 +781,11 @@ def resolve_authorized_source_manifest(
             resolution_error_count = len(unique_document_ids)
 
     for document_index, document_id in enumerate(unique_document_ids):
+        raise_if_mixed_source_cancelled(
+            cancel_requested,
+            "manifest",
+            request_correlation_id=request_correlation_id,
+        )
         document_context = None
         if resolved_contexts is not None:
             document_context = resolved_contexts[document_index]
@@ -555,6 +799,13 @@ def resolve_authorized_source_manifest(
                     active_public_workspace_id=normalized_public_workspace_ids,
                     conversation_id=normalized_conversation_id,
                 )
+                raise_if_mixed_source_cancelled(
+                    cancel_requested,
+                    "manifest",
+                    request_correlation_id=request_correlation_id,
+                )
+            except MixedSourceCancellationError:
+                raise
             except Exception:
                 resolution_error_count += 1
         if (
@@ -596,6 +847,7 @@ def resolve_authorized_source_manifest(
             "resolution_error_count": resolution_error_count,
             "scope_distribution": scope_distribution,
             "manifest_resolution_duration_ms": duration_ms,
+            "request_correlation_id": request_correlation_id,
         },
         level=logging.INFO,
     )
@@ -742,6 +994,80 @@ def _bound_json_list(values):
     return bounded_values, was_truncated
 
 
+def deduplicate_mixed_source_references(references, reference_type="citation"):
+    """Deduplicate structured citations or artifacts while preserving first payloads."""
+    normalized_reference_type = str(reference_type or "citation").strip().lower()
+    if normalized_reference_type not in {"citation", "artifact"}:
+        raise ValueError("reference_type must be citation or artifact")
+
+    deduplicated = []
+    seen_keys = set()
+    for reference in list(references or []):
+        if not isinstance(reference, dict):
+            dedupe_key = ("scalar", str(reference))
+        elif normalized_reference_type == "artifact":
+            identity_value = (
+                reference.get("artifact_message_id")
+                or reference.get("document_id")
+                or reference.get("export_run_id")
+            )
+            dedupe_key = (
+                ("artifact_id", str(identity_value).strip())
+                if identity_value
+                else (
+                    "artifact_location",
+                    str(reference.get("file_name") or "").strip(),
+                    str(reference.get("output_format") or "").strip().lower(),
+                    str(reference.get("capability") or "").strip().lower(),
+                )
+            )
+        else:
+            identity_value = (
+                reference.get("artifact_id")
+                or reference.get("citation_id")
+                or reference.get("chunk_id")
+            )
+            plugin_name = str(reference.get("plugin_name") or "").strip()
+            function_name = str(reference.get("function_name") or "").strip()
+            tool_name = str(reference.get("tool_name") or "").strip()
+            if identity_value:
+                dedupe_key = ("citation_id", str(identity_value).strip())
+            elif plugin_name or function_name or tool_name:
+                tool_arguments = (
+                    reference.get("function_arguments")
+                    if reference.get("function_arguments") is not None
+                    else reference.get("parameters")
+                )
+                dedupe_key = (
+                    "tool_citation",
+                    plugin_name,
+                    function_name,
+                    tool_name,
+                    json.dumps(
+                        tool_arguments,
+                        allow_nan=False,
+                        default=str,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ),
+                )
+            else:
+                dedupe_key = (
+                    "citation_location",
+                    str(reference.get("document_id") or "").strip(),
+                    str(reference.get("file_name") or "").strip(),
+                    str(reference.get("page_number") or "").strip(),
+                    str(reference.get("chunk_sequence") or "").strip(),
+                    str(reference.get("sheet_name") or "").strip(),
+                )
+        if dedupe_key in seen_keys:
+            continue
+        seen_keys.add(dedupe_key)
+        deduplicated.append(reference)
+    return deduplicated
+
+
 def _build_truncated_coverage(coverage, coverage_was_truncated=False):
     normalized_coverage = dict(coverage or {})
     normalized_coverage["evidence_envelope_truncated"] = True
@@ -793,8 +1119,12 @@ def build_evidence_envelope(
         raise ValueError("coverage must be a dictionary")
 
     bounded_evidence, evidence_was_truncated = _bound_json_list(evidence)
-    bounded_citations, citations_were_truncated = _bound_json_list(citations)
-    bounded_artifacts, artifacts_were_truncated = _bound_json_list(generated_artifacts)
+    bounded_citations, citations_were_truncated = _bound_json_list(
+        deduplicate_mixed_source_references(citations, reference_type="citation")
+    )
+    bounded_artifacts, artifacts_were_truncated = _bound_json_list(
+        deduplicate_mixed_source_references(generated_artifacts, reference_type="artifact")
+    )
     normalized_summary = _truncate_utf8(summary, EVIDENCE_SUMMARY_MAX_BYTES)
     normalized_error = (
         _truncate_utf8(error, EVIDENCE_ERROR_MAX_BYTES)
@@ -974,16 +1304,57 @@ def build_narrative_evidence_envelopes(
     return envelopes
 
 
+def build_failed_narrative_evidence_envelopes(
+    narrative_sources,
+    selection_mode,
+    reason="narrative_retrieval_failed",
+):
+    """Build one scrubbed terminal failure for every narrative source in a failed cohort."""
+    normalized_selection_mode = normalize_selection_mode(
+        selection_mode,
+        default=SELECTION_MODE_RELEVANCE,
+    )
+    normalized_reason = _truncate_utf8(
+        str(reason or "narrative_retrieval_failed").strip().lower(),
+        MIXED_SOURCE_TERMINAL_REASON_MAX_BYTES,
+    )
+    envelopes = []
+    for source in list(narrative_sources or []):
+        source = source if isinstance(source, dict) else {}
+        document_id = str(source.get("document_id") or "").strip()
+        if not document_id:
+            continue
+        envelopes.append(build_evidence_envelope(
+            document_id=document_id,
+            source_kind=SOURCE_KIND_NARRATIVE,
+            engine=EVIDENCE_ENGINE_HYBRID_SEARCH,
+            status=EVIDENCE_STATUS_FAILED,
+            summary="Narrative evidence could not be retrieved for this source.",
+            coverage={
+                "selection_mode": normalized_selection_mode,
+                "terminal": True,
+                "reason": normalized_reason,
+            },
+            error="Narrative retrieval could not be completed.",
+        ))
+    return envelopes
+
+
 def execute_tabular_evidence_sources(
     tabular_sources,
     execute_source,
     selection_mode,
     execute=True,
+    cancel_requested=None,
+    request_correlation_id=None,
 ):
     """Execute the existing tabular runner once per source and require terminal coverage."""
     normalized_selection_mode = normalize_selection_mode(
         selection_mode,
         default=SELECTION_MODE_RELEVANCE,
+    )
+    request_correlation_id = normalize_mixed_source_correlation_id(
+        request_correlation_id
     )
     if execute and not callable(execute_source):
         raise TypeError("execute_source must be callable")
@@ -993,6 +1364,11 @@ def execute_tabular_evidence_sources(
     failed_count = 0
     skipped_count = 0
     for raw_source in list(tabular_sources or []):
+        raise_if_mixed_source_cancelled(
+            cancel_requested,
+            "tabular",
+            request_correlation_id=request_correlation_id,
+        )
         source = raw_source if isinstance(raw_source, dict) else {}
         document_id = str(source.get("document_id") or "").strip()
         if not document_id:
@@ -1016,6 +1392,11 @@ def execute_tabular_evidence_sources(
 
         try:
             raw_result = execute_source(source)
+            raise_if_mixed_source_cancelled(
+                cancel_requested,
+                "tabular",
+                request_correlation_id=request_correlation_id,
+            )
             result = raw_result if isinstance(raw_result, dict) else {}
             summary = str(result.get("summary") or "").strip()
             if not summary:
@@ -1036,6 +1417,8 @@ def execute_tabular_evidence_sources(
                     **dict(result.get("coverage") or {}),
                 },
             ))
+        except MixedSourceCancellationError:
+            raise
         except Exception:
             failed_count += 1
             envelopes.append(build_evidence_envelope(
@@ -1059,16 +1442,269 @@ def execute_tabular_evidence_sources(
             "tabular_completed_count": completed_count,
             "tabular_failed_count": failed_count,
             "tabular_skipped_count": skipped_count,
+            "request_correlation_id": request_correlation_id,
         },
         level=logging.INFO,
     )
     return envelopes
 
 
+def _get_terminal_reason(status, source, envelope=None):
+    """Return one bounded, non-sensitive reason for a terminal non-success state."""
+    envelope = envelope if isinstance(envelope, dict) else {}
+    coverage = envelope.get("coverage") if isinstance(envelope.get("coverage"), dict) else {}
+    explicit_reason = str(coverage.get("reason") or "").strip().lower()
+    if explicit_reason:
+        return _truncate_utf8(explicit_reason, MIXED_SOURCE_TERMINAL_REASON_MAX_BYTES)
+    if source.get("authorization_status") != AUTHORIZATION_STATUS_AUTHORIZED:
+        return "source_unavailable"
+    if source.get("source_kind") == SOURCE_KIND_UNSUPPORTED:
+        return "unsupported_source"
+    if status == EVIDENCE_STATUS_SKIPPED:
+        return "bounded_policy_skip"
+    if status == EVIDENCE_STATUS_PARTIAL:
+        return "incomplete_native_coverage"
+    if status == EVIDENCE_STATUS_FAILED:
+        return "native_execution_failed"
+    return None
+
+
+def build_terminal_coverage_ledger(
+    manifest,
+    evidence_envelopes,
+    max_handoff_envelopes=MIXED_SOURCE_HANDOFF_MAX_ENVELOPES,
+):
+    """Align exactly one terminal state and bounded evidence item to each manifest source."""
+    manifest_entries = [entry for entry in list(manifest or []) if isinstance(entry, dict)]
+    raw_envelopes = [
+        envelope
+        for envelope in list(evidence_envelopes or [])
+        if isinstance(envelope, dict)
+    ]
+    manifest_document_ids = {
+        str(entry.get("document_id") or "").strip()
+        for entry in manifest_entries
+        if str(entry.get("document_id") or "").strip()
+    }
+    envelopes_by_document_id = {}
+    unexpected_evidence_count = 0
+    for envelope in raw_envelopes:
+        document_id = str(envelope.get("document_id") or "").strip()
+        if not document_id or document_id not in manifest_document_ids:
+            unexpected_evidence_count += 1
+            continue
+        envelopes_by_document_id.setdefault(document_id, []).append(envelope)
+
+    ledger_entries = []
+    aligned_envelopes = []
+    status_counts = {status: 0 for status in EVIDENCE_STATUSES}
+    missing_coverage_violation_count = 0
+    duplicate_evidence_count = 0
+    evidence_omitted_count = 0
+
+    for request_order, source in enumerate(manifest_entries):
+        document_id = str(source.get("document_id") or "").strip()
+        source_kind = str(source.get("source_kind") or SOURCE_KIND_UNRESOLVED).strip().lower()
+        source_envelopes = envelopes_by_document_id.get(document_id, [])
+        envelope = source_envelopes[0] if len(source_envelopes) == 1 else None
+        reason = None
+
+        if len(source_envelopes) > 1:
+            status = EVIDENCE_STATUS_FAILED
+            reason = "duplicate_terminal_evidence"
+            duplicate_evidence_count += len(source_envelopes) - 1
+            missing_coverage_violation_count += 1
+        elif source.get("authorization_status") != AUTHORIZATION_STATUS_AUTHORIZED:
+            status = EVIDENCE_STATUS_FAILED
+            reason = "source_unavailable"
+        elif source_kind == SOURCE_KIND_UNSUPPORTED:
+            status = EVIDENCE_STATUS_SKIPPED
+            reason = "unsupported_source"
+        elif envelope is None:
+            status = EVIDENCE_STATUS_FAILED
+            reason = "missing_terminal_evidence"
+            missing_coverage_violation_count += 1
+        elif str(envelope.get("source_kind") or "").strip().lower() != source_kind:
+            status = EVIDENCE_STATUS_FAILED
+            reason = "evidence_identity_mismatch"
+            missing_coverage_violation_count += 1
+            envelope = None
+        else:
+            status = str(envelope.get("status") or "").strip().lower()
+            if status not in EVIDENCE_STATUSES:
+                status = EVIDENCE_STATUS_FAILED
+                reason = "invalid_terminal_status"
+                missing_coverage_violation_count += 1
+                envelope = None
+            else:
+                reason = _get_terminal_reason(status, source, envelope=envelope)
+
+        status_counts[status] += 1
+        handoff_included = False
+        if envelope is not None:
+            if len(aligned_envelopes) < max(0, int(max_handoff_envelopes)):
+                aligned_envelopes.append(envelope)
+                handoff_included = True
+            else:
+                evidence_omitted_count += 1
+
+        source_role = str(
+            source.get("comparison_role")
+            or source.get("source_role")
+            or source.get("role")
+            or "selected"
+        ).strip().lower() or "selected"
+        ledger_entry = {
+            "document_id": document_id,
+            "scope": source.get("scope"),
+            "scope_id": source.get("scope_id"),
+            "source_version": source.get("source_version"),
+            "source_kind": source_kind,
+            "role": source_role,
+            "request_order": request_order,
+            "status": status,
+            "reason": reason,
+            "handoff_included": handoff_included,
+        }
+        ledger_entries.append(ledger_entry)
+
+    partial_coverage = bool(
+        status_counts[EVIDENCE_STATUS_PARTIAL]
+        or status_counts[EVIDENCE_STATUS_FAILED]
+        or status_counts[EVIDENCE_STATUS_SKIPPED]
+        or missing_coverage_violation_count
+        or duplicate_evidence_count
+        or unexpected_evidence_count
+        or evidence_omitted_count
+    )
+    return {
+        "entries": ledger_entries,
+        "evidence_envelopes": aligned_envelopes,
+        "requested_source_count": len(manifest_entries),
+        "completed_source_count": status_counts[EVIDENCE_STATUS_COMPLETED],
+        "partial_source_count": status_counts[EVIDENCE_STATUS_PARTIAL],
+        "failed_source_count": status_counts[EVIDENCE_STATUS_FAILED],
+        "skipped_source_count": status_counts[EVIDENCE_STATUS_SKIPPED],
+        "successful_source_count": (
+            status_counts[EVIDENCE_STATUS_COMPLETED]
+            + status_counts[EVIDENCE_STATUS_PARTIAL]
+        ),
+        "missing_coverage_violation_count": missing_coverage_violation_count,
+        "duplicate_evidence_count": duplicate_evidence_count,
+        "unexpected_evidence_count": unexpected_evidence_count,
+        "evidence_omitted_count": evidence_omitted_count,
+        "partial_coverage": partial_coverage,
+    }
+
+
+def evaluate_mixed_source_mode_outcome(mode, coverage_ledger):
+    """Apply the Phase 6 terminal failure policy to one aggregate-only ledger."""
+    normalized_mode = str(mode or "").strip().lower()
+    if normalized_mode not in MIXED_SOURCE_MODES:
+        raise ValueError(f"Unsupported mixed-source mode: {normalized_mode}")
+
+    coverage_ledger = coverage_ledger if isinstance(coverage_ledger, dict) else {}
+    entries = [
+        entry
+        for entry in list(coverage_ledger.get("entries") or [])
+        if isinstance(entry, dict)
+    ]
+    successful_statuses = {EVIDENCE_STATUS_COMPLETED, EVIDENCE_STATUS_PARTIAL}
+    successful_source_count = sum(
+        str(entry.get("status") or "").strip().lower() in successful_statuses
+        for entry in entries
+    )
+    partial_coverage = bool(coverage_ledger.get("partial_coverage"))
+    should_reduce = successful_source_count > 0
+    reason = None
+
+    if normalized_mode == "compare":
+        source_entry = next(
+            (
+                entry
+                for entry in entries
+                if str(entry.get("role") or "").strip().lower() in {"left", "source"}
+            ),
+            entries[0] if entries else None,
+        )
+        source_succeeded = bool(
+            source_entry
+            and str(source_entry.get("status") or "").strip().lower() in successful_statuses
+        )
+        target_entries = [entry for entry in entries if entry is not source_entry]
+        successful_target_count = sum(
+            str(entry.get("status") or "").strip().lower() in successful_statuses
+            for entry in target_entries
+        )
+        should_reduce = source_succeeded and successful_target_count > 0
+        if not source_succeeded:
+            reason = "source_preparation_failed"
+        elif not successful_target_count:
+            reason = "no_target_prepared"
+        partial_coverage = partial_coverage or successful_target_count < len(target_entries)
+
+    if not should_reduce:
+        status = EVIDENCE_STATUS_FAILED
+        reason = reason or "no_successful_source"
+    elif partial_coverage:
+        status = EVIDENCE_STATUS_PARTIAL
+    else:
+        status = EVIDENCE_STATUS_COMPLETED
+
+    return {
+        "mode": normalized_mode,
+        "status": status,
+        "should_reduce": should_reduce,
+        "successful_source_count": successful_source_count,
+        "partial_coverage": partial_coverage,
+        "reason": reason,
+    }
+
+
+def compare_reauthorized_source_manifests(execution_manifest, fresh_manifest):
+    """Return aggregate canonical-identity and version differences for authorized sources."""
+    fresh_by_document_id = {
+        str(source.get("document_id") or "").strip(): source
+        for source in list(fresh_manifest or [])
+        if isinstance(source, dict) and str(source.get("document_id") or "").strip()
+    }
+    authorization_failure_count = 0
+    source_version_changed_count = 0
+    for source in list(execution_manifest or []):
+        if (
+            not isinstance(source, dict)
+            or source.get("authorization_status") != AUTHORIZATION_STATUS_AUTHORIZED
+        ):
+            continue
+        document_id = str(source.get("document_id") or "").strip()
+        fresh_source = fresh_by_document_id.get(document_id) or {}
+        same_canonical_identity = (
+            fresh_source.get("authorization_status") == AUTHORIZATION_STATUS_AUTHORIZED
+            and str(fresh_source.get("scope") or "").strip().lower()
+            == str(source.get("scope") or "").strip().lower()
+            and str(fresh_source.get("scope_id") or "").strip()
+            == str(source.get("scope_id") or "").strip()
+        )
+        if not same_canonical_identity:
+            authorization_failure_count += 1
+            continue
+        prior_version = source.get("source_version")
+        fresh_version = fresh_source.get("source_version")
+        if prior_version != fresh_version:
+            source_version_changed_count += 1
+    return {
+        "authorization_failure_count": authorization_failure_count,
+        "source_version_changed_count": source_version_changed_count,
+    }
+
+
 def build_mixed_source_evidence_handoff(
     manifest,
     evidence_envelopes,
     selection_mode,
+    mode=None,
+    telemetry_settings=None,
+    request_correlation_id=None,
 ):
     """Build one bounded synthesis handoff from Phase 1 evidence envelopes."""
     normalized_selection_mode = normalize_selection_mode(
@@ -1076,69 +1712,51 @@ def build_mixed_source_evidence_handoff(
         default=SELECTION_MODE_RELEVANCE,
     )
     manifest_entries = [entry for entry in list(manifest or []) if isinstance(entry, dict)]
-    all_envelopes = [
-        envelope
-        for envelope in list(evidence_envelopes or [])
-        if isinstance(envelope, dict)
-    ]
-    envelopes = all_envelopes[:MIXED_SOURCE_HANDOFF_MAX_ENVELOPES]
-    envelope_by_document_id = {
-        str(envelope.get("document_id") or "").strip(): envelope
-        for envelope in all_envelopes
-        if str(envelope.get("document_id") or "").strip()
-    }
-    evidence_omitted_count = max(0, len(all_envelopes) - len(envelopes))
-
+    ledger = build_terminal_coverage_ledger(manifest_entries, evidence_envelopes)
+    envelopes = list(ledger["evidence_envelopes"])
     source_coverage = []
-    failed_count = 0
-    partial_count = 0
-    skipped_count = 0
-    completed_count = 0
-    for source_index, entry in enumerate(manifest_entries, start=1):
-        document_id = str(entry.get("document_id") or "").strip()
-        envelope = envelope_by_document_id.get(document_id)
+    for source_index, (entry, ledger_entry) in enumerate(
+        zip(manifest_entries, ledger["entries"]),
+        start=1,
+    ):
         if entry.get("authorization_status") != AUTHORIZATION_STATUS_AUTHORIZED:
-            status = EVIDENCE_STATUS_FAILED
             source_label = f"Unavailable selected source {source_index}"
         elif entry.get("source_kind") == SOURCE_KIND_UNSUPPORTED:
-            status = EVIDENCE_STATUS_FAILED
             source_label = str(entry.get("display_name") or f"Unsupported source {source_index}")
-        elif envelope:
-            status = envelope.get("status") or EVIDENCE_STATUS_FAILED
-            source_label = str(entry.get("display_name") or f"Source {source_index}")
         else:
-            status = EVIDENCE_STATUS_FAILED
             source_label = str(entry.get("display_name") or f"Source {source_index}")
-
-        if status == EVIDENCE_STATUS_COMPLETED:
-            completed_count += 1
-        elif status == EVIDENCE_STATUS_PARTIAL:
-            partial_count += 1
-        elif status == EVIDENCE_STATUS_SKIPPED:
-            skipped_count += 1
-        else:
-            failed_count += 1
         source_coverage.append({
             "source": _truncate_utf8(source_label, 128),
-            "source_kind": entry.get("source_kind"),
-            "status": status,
+            "source_kind": ledger_entry.get("source_kind"),
+            "status": ledger_entry.get("status"),
+            "reason": ledger_entry.get("reason"),
         })
 
     coverage = {
         "selection_mode": normalized_selection_mode,
-        "requested_source_count": len(manifest_entries),
-        "completed_source_count": completed_count,
-        "partial_source_count": partial_count,
-        "failed_source_count": failed_count,
-        "skipped_source_count": skipped_count,
-        "partial_coverage": bool(
-            failed_count or partial_count or evidence_omitted_count
-        ),
-        "evidence_omitted_count": evidence_omitted_count,
+        **{
+            key: value
+            for key, value in ledger.items()
+            if key not in {"entries", "evidence_envelopes"}
+        },
         "sources": source_coverage,
+        "terminal_ledger": ledger["entries"],
     }
+    prompt_terminal_ledger = []
+    for entry, ledger_entry in zip(manifest_entries, ledger["entries"]):
+        prompt_entry = dict(ledger_entry)
+        if entry.get("authorization_status") != AUTHORIZATION_STATUS_AUTHORIZED:
+            prompt_entry.update({
+                "document_id": None,
+                "scope": None,
+                "scope_id": None,
+                "source_version": None,
+            })
+        prompt_terminal_ledger.append(prompt_entry)
+    prompt_coverage = dict(coverage)
+    prompt_coverage["terminal_ledger"] = prompt_terminal_ledger
     payload = {
-        "coverage": coverage,
+        "coverage": prompt_coverage,
         "evidence_envelopes": envelopes,
     }
     serialized_payload = json.dumps(
@@ -1167,6 +1785,9 @@ def build_mixed_source_evidence_handoff(
         payload["coverage"]["handoff_compacted"] = True
         payload["coverage"]["partial_coverage"] = True
         payload["coverage"]["evidence_compacted_count"] = len(envelopes)
+        coverage["handoff_compacted"] = True
+        coverage["partial_coverage"] = True
+        coverage["evidence_compacted_count"] = len(envelopes)
         serialized_payload = json.dumps(
             payload,
             allow_nan=False,
@@ -1181,6 +1802,13 @@ def build_mixed_source_evidence_handoff(
         if coverage["partial_coverage"]
         else "Do not claim that selected sources were omitted."
     )
+    if mode:
+        emit_mixed_source_coverage_telemetry(
+            telemetry_settings,
+            mode,
+            coverage,
+            request_correlation_id=request_correlation_id,
+        )
     return {
         "role": "system",
         "content": (
@@ -1192,4 +1820,5 @@ def build_mixed_source_evidence_handoff(
             f"{partial_coverage_instruction}\n\n{serialized_payload}"
         ),
         "mixed_source_coverage": coverage,
+        "evidence_envelopes": list(payload["evidence_envelopes"]),
     }

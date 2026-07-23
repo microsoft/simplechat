@@ -68,6 +68,7 @@ DOCUMENT_ACCESS_CACHE_VERSION_MIN_TTL_SECONDS = 3600
 DOCUMENT_ACCESS_CACHE_VERSION_MAX_TTL_SECONDS = 86400
 DOCUMENT_ACCESS_CACHE_VERSION_TTL_MULTIPLIER = 4
 DOCUMENT_ACCESS_CACHE_VERSION_HYGIENE_BATCH_SIZE = 100
+DOCUMENT_ACCESS_BOUNDED_CATALOG_MAX_SCOPES = 25
 DOCUMENT_ACCESS_CACHE_VERSION_HYGIENE_MAX_SCAN_ITERATIONS = 5
 DOCUMENT_ACCESS_CACHE_KEY_PREFIX = 'DAI_LIST_CACHE'
 DOCUMENT_ACCESS_CACHE_VERSION_KEY_PREFIX = 'DAI_LIST_CACHE_VERSION'
@@ -2127,7 +2128,7 @@ def _query_projection_rows_for_scope_with_diagnostics(scope_key, source_scope):
         'WHERE c.type = @type '
         'AND c.source_scope = @source_scope '
         'AND c.scope_key = @scope_key '
-        'AND (c.access_granted = true OR c.approval_status = @approval_not_approved) '
+        'AND c.access_granted = true '
         'AND c.is_current_version = true '
         'AND c.projection_version = @projection_version'
     )
@@ -2139,7 +2140,6 @@ def _query_projection_rows_for_scope_with_diagnostics(scope_key, source_scope):
             {'name': '@type', 'value': DOCUMENT_ACCESS_INDEX_TYPE},
             {'name': '@source_scope', 'value': source_scope},
             {'name': '@scope_key', 'value': scope_key},
-            {'name': '@approval_not_approved', 'value': DOCUMENT_ACCESS_APPROVAL_NOT_APPROVED},
             {'name': '@projection_version', 'value': DOCUMENT_ACCESS_INDEX_SCHEMA_VERSION},
         ],
         partition_key=scope_key,
@@ -2162,7 +2162,7 @@ def _query_candidate_projection_rows_for_scope(scope_key, source_scope):
         'WHERE c.type = @type '
         'AND c.source_scope = @source_scope '
         'AND c.scope_key = @scope_key '
-        'AND (c.access_granted = true OR c.approval_status = @approval_not_approved) '
+        'AND c.access_granted = true '
         'AND c.is_current_version = true '
         'AND c.projection_version = @projection_version'
     )
@@ -2174,11 +2174,128 @@ def _query_candidate_projection_rows_for_scope(scope_key, source_scope):
             {'name': '@type', 'value': DOCUMENT_ACCESS_INDEX_TYPE},
             {'name': '@source_scope', 'value': source_scope},
             {'name': '@scope_key', 'value': scope_key},
-            {'name': '@approval_not_approved', 'value': DOCUMENT_ACCESS_APPROVAL_NOT_APPROVED},
             {'name': '@projection_version', 'value': DOCUMENT_ACCESS_INDEX_SCHEMA_VERSION},
         ],
         partition_key=scope_key,
     )
+
+
+def _query_bounded_projection_rows_for_scope(scope_key, source_scope, max_rows):
+    normalized_max_rows = max(1, min(_safe_int(max_rows), 1001))
+    query = (
+        f'SELECT TOP {normalized_max_rows} c.document_id, c.source_document_id, c.version, '
+        'c.revision_family_id, c.source_ts, c.file_name, '
+        'c.owner_user_id, c.owner_group_id, c.owner_public_workspace_id '
+        'FROM c '
+        'WHERE c.type = @type '
+        'AND c.source_scope = @source_scope '
+        'AND c.scope_key = @scope_key '
+        'AND c.access_granted = true '
+        'AND c.is_current_version = true '
+        'AND c.projection_version = @projection_version '
+        'ORDER BY c.source_ts DESC'
+    )
+    return list(cosmos_document_access_index_container.query_items(
+        query=query,
+        parameters=[
+            {'name': '@type', 'value': DOCUMENT_ACCESS_INDEX_TYPE},
+            {'name': '@source_scope', 'value': source_scope},
+            {'name': '@scope_key', 'value': scope_key},
+            {'name': '@projection_version', 'value': DOCUMENT_ACCESS_INDEX_SCHEMA_VERSION},
+        ],
+        partition_key=scope_key,
+    ))
+
+
+def enumerate_bounded_document_access_index_ids(
+    source_scope,
+    max_documents,
+    user_id=None,
+    group_ids=None,
+    public_workspace_id=None,
+    public_workspace_ids=None,
+    settings=None,
+):
+    """Return current candidate IDs only when the ready access-index catalog fits the bound."""
+    source_scope = str(source_scope or '').strip().lower()
+    if source_scope not in DOCUMENT_ACCESS_SOURCE_SCOPES:
+        return {'success': False, 'status': 'invalid_source_scope', 'document_ids': []}
+    max_documents = _safe_int(max_documents)
+    if max_documents <= 0:
+        return {'success': False, 'status': 'invalid_document_limit', 'document_ids': []}
+
+    readiness = _get_document_access_index_readiness(source_scope, settings=settings)
+    if not readiness.get('ready'):
+        return {
+            'success': False,
+            'status': readiness.get('status'),
+            'document_ids': [],
+            'readiness': readiness,
+        }
+    scope_keys = [
+        scope_key
+        for scope_key in _build_shadow_scope(
+            source_scope,
+            user_id=user_id,
+            group_ids=group_ids,
+            public_workspace_id=public_workspace_id,
+            public_workspace_ids=public_workspace_ids,
+        )
+        if scope_key
+    ]
+    if not scope_keys:
+        return {'success': False, 'status': 'missing_scope_keys', 'document_ids': []}
+    if len(scope_keys) > DOCUMENT_ACCESS_BOUNDED_CATALOG_MAX_SCOPES:
+        return {
+            'success': False,
+            'status': 'scope_limit_exceeded',
+            'document_ids': [],
+            'scope_count': len(scope_keys),
+        }
+
+    rows_by_identity = {}
+    query_limit = max_documents + 1
+    for scope_key in scope_keys:
+        for row in _query_bounded_projection_rows_for_scope(
+            scope_key,
+            source_scope,
+            query_limit,
+        ):
+            identity = _document_family_identity(row, source_scope)
+            if not identity:
+                continue
+            rows_by_identity[identity] = _prefer_projection_row(
+                rows_by_identity.get(identity),
+                row,
+            )
+            if len(rows_by_identity) > max_documents:
+                return {
+                    'success': False,
+                    'status': 'document_limit_exceeded',
+                    'document_ids': [],
+                    'document_count_lower_bound': max_documents + 1,
+                }
+
+    ordered_rows = sorted(
+        rows_by_identity.values(),
+        key=lambda row: (
+            _safe_int(row.get('source_ts')),
+            str(row.get('source_document_id') or row.get('document_id') or ''),
+        ),
+        reverse=True,
+    )
+    document_ids = [
+        str(row.get('source_document_id') or row.get('document_id') or '').strip()
+        for row in ordered_rows
+        if str(row.get('source_document_id') or row.get('document_id') or '').strip()
+    ]
+    return {
+        'success': True,
+        'status': 'bounded_catalog_ready',
+        'document_ids': document_ids,
+        'document_count': len(document_ids),
+        'scope_count': len(scope_keys),
+    }
 
 
 def _query_tag_projection_rows_for_scope(scope_key, source_scope):
