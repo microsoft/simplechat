@@ -233,6 +233,19 @@ def is_mixed_source_analyze_all_enabled(settings):
     )
 
 
+def is_cross_format_compare_enabled(settings):
+    """Return whether Phase 4 native mixed-source Compare behavior is enabled."""
+    return bool((settings or {}).get('enable_cross_format_compare', False))
+
+
+def is_cross_format_compare_one_to_many_enabled(settings):
+    """Return whether the separately staged one-to-many mixed-target rollout is enabled."""
+    return bool(
+        (settings or {}).get('enable_cross_format_compare', False)
+        and (settings or {}).get('enable_cross_format_compare_one_to_many', False)
+    )
+
+
 def is_mixed_source_relevance_candidates_enabled(settings):
     """Return whether Phase 2 relevance-mode table candidates are enabled."""
     return bool(
@@ -795,6 +808,8 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_mixed_source_relevance_candidates': False,
         'enable_mixed_source_analyze': False,
         'enable_mixed_source_analyze_all': False,
+        'enable_cross_format_compare': False,
+        'enable_cross_format_compare_one_to_many': False,
         'max_rounds_per_agent': 1,
         'workflow_max_auto_invoke_attempts': 60,
         'enable_semantic_kernel': False,
