@@ -67,7 +67,7 @@ from functions_document_actions import (
     normalize_document_action_analysis_mode,
 )
 from functions_documents import select_current_documents, sort_documents
-from functions_document_comparison import run_document_comparison
+from functions_document_comparison import run_document_comparison, run_evidence_document_comparison
 from functions_debug import debug_print
 from functions_document_analysis import run_document_analysis
 from functions_file_sync import get_authorized_sync_source, queue_file_sync_source_run
@@ -110,6 +110,8 @@ from functions_settings import (
     get_user_settings,
     is_mixed_source_chat_search_enabled,
     is_mixed_source_manifest_enabled,
+    is_cross_format_compare_enabled,
+    is_cross_format_compare_one_to_many_enabled,
     is_tabular_processing_enabled,
     normalize_model_endpoints,
     resolve_model_endpoint_foundry_scope,
@@ -2037,6 +2039,154 @@ def _execute_mixed_source_analyze_workflow(
         'generated_tabular_outputs': generated_tabular_outputs,
         'agent_citations': tabular_agent_citations,
     }
+
+def _resolve_cross_format_comparison_manifest(comparison_config, user_id, conversation_id):
+    """Resolve the Source and ordered Targets once for the mixed Compare decision."""
+    requested_ids, role_by_document_id = _get_document_action_source_ids(comparison_config)
+    manifest = resolve_authorized_source_manifest(
+        requested_ids,
+        user_id=user_id,
+        selection_mode=SELECTION_MODE_SELECTED,
+        conversation_id=conversation_id,
+        active_group_ids=comparison_config.get('active_group_ids'),
+        active_public_workspace_ids=comparison_config.get('active_public_workspace_id'),
+        doc_scope=comparison_config.get('doc_scope', 'all'),
+    )
+    for source in manifest:
+        source['comparison_role'] = role_by_document_id.get(source.get('document_id'), 'target')
+    return manifest
+
+
+def _raise_legacy_cross_format_compare_limitation(comparison_config, user_id, conversation_id=''):
+    """Fail closed when rollback would otherwise route a table through chunk analysis."""
+    manifest = _resolve_cross_format_comparison_manifest(comparison_config, user_id, conversation_id)
+    partitions = partition_source_manifest(manifest)
+    if partitions['narrative_sources'] and partitions['tabular_sources']:
+        raise ValueError(
+            'Mixed narrative and tabular Compare is temporarily unavailable while cross-format Compare is disabled.'
+        )
+
+
+def _execute_cross_format_comparison_workflow(
+    workflow,
+    comparison_config,
+    settings,
+    invoke_prompt,
+    conversation_id='',
+    activity_callback=None,
+    thought_tracker=None,
+    live_thought_callback=None,
+):
+    """Prepare native envelopes for a mixed Source/Target Compare, then reuse pairwise reduction."""
+    user_id = str(workflow.get('user_id') or '').strip()
+    manifest = _resolve_cross_format_comparison_manifest(comparison_config, user_id, conversation_id)
+    partitions = partition_source_manifest(manifest)
+    if not (partitions['narrative_sources'] and partitions['tabular_sources']):
+        return None
+    target_sources = [source for source in manifest if source.get('comparison_role') == 'right']
+    if len(target_sources) > 1 and not is_cross_format_compare_one_to_many_enabled(settings):
+        raise ValueError('Cross-format Compare currently supports one Target while one-to-many rollout is disabled.')
+    if callable(activity_callback):
+        activity_callback({'type': 'mixed_source_progress', 'phase': 'resolving_sources', 'label': 'Resolving Source and Targets'})
+
+    evidence_by_id = {}
+    generated_tabular_outputs = []
+    tabular_agent_citations = []
+    for source in partitions['narrative_sources']:
+        if callable(activity_callback):
+            activity_callback({'type': 'mixed_source_progress', 'phase': 'analyzing_narrative', 'label': 'Analyzing narrative source'})
+        try:
+            narrative_result = run_document_analysis(
+                user_id=user_id,
+                analysis_prompt=workflow.get('task_prompt', ''),
+                document_ids=[source.get('document_id')],
+                invoke_prompt=invoke_prompt,
+                doc_scope=comparison_config.get('doc_scope'),
+                active_group_ids=comparison_config.get('active_group_ids'),
+                active_public_workspace_id=comparison_config.get('active_public_workspace_id'),
+                conversation_id=conversation_id,
+                window_unit=comparison_config.get('window_unit'),
+                window_size=comparison_config.get('window_size'),
+                window_percent=comparison_config.get('window_percent'),
+                max_retries_per_window=comparison_config.get('max_retries_per_window'),
+                activity_callback=activity_callback,
+                max_documents=1,
+                include_coverage_summary=False,
+            )
+            document_coverage = list((narrative_result.get('coverage') or {}).get('documents') or [{}])[0]
+            status = EVIDENCE_STATUS_COMPLETED if not document_coverage.get('failed_windows') else 'partial'
+            evidence_by_id[source.get('document_id')] = build_evidence_envelope(
+                document_id=source.get('document_id'), source_kind='narrative',
+                engine=EVIDENCE_ENGINE_DOCUMENT_ANALYSIS, status=status,
+                summary=str(narrative_result.get('analysis_reply') or narrative_result.get('reply') or ''),
+                coverage={'terminal': True, 'source_version': source.get('source_version'), **document_coverage},
+            )
+        except Exception:
+            evidence_by_id[source.get('document_id')] = build_evidence_envelope(
+                document_id=source.get('document_id'), source_kind='narrative',
+                engine=EVIDENCE_ENGINE_DOCUMENT_ANALYSIS, status=EVIDENCE_STATUS_FAILED,
+                summary='Narrative evidence could not be completed for this source.',
+                coverage={'terminal': True, 'source_version': source.get('source_version')},
+                error='Narrative analysis could not be completed.',
+            )
+
+    for source in partitions['tabular_sources']:
+        if callable(activity_callback):
+            activity_callback({'type': 'mixed_source_progress', 'phase': 'analyzing_tabular', 'label': 'Analyzing tabular source'})
+        tabular_config = dict(comparison_config)
+        tabular_payload = _maybe_execute_tabular_document_action(
+            DOCUMENT_ACTION_TYPE_ANALYZE, workflow, {
+                **tabular_config,
+                'type': DOCUMENT_ACTION_TYPE_ANALYZE,
+                'document_ids': [source.get('document_id')],
+            },
+            settings, conversation_id=conversation_id, invoke_prompt=invoke_prompt,
+            thought_tracker=thought_tracker, live_thought_callback=live_thought_callback,
+        )
+        tabular_result = (tabular_payload or {}).get('result') or {}
+        if tabular_result.get('analysis_reply'):
+            evidence_by_id[source.get('document_id')] = build_evidence_envelope(
+                document_id=source.get('document_id'), source_kind='tabular',
+                engine=EVIDENCE_ENGINE_TABULAR_TOOLS, status=EVIDENCE_STATUS_COMPLETED,
+                summary=str(tabular_result.get('analysis_reply') or ''),
+                citations=list((tabular_payload or {}).get('agent_citations') or []),
+                generated_artifacts=list((tabular_payload or {}).get('generated_tabular_outputs') or []),
+                coverage={'terminal': True, 'source_version': source.get('source_version'), 'tool_call_count': 1},
+            )
+            generated_tabular_outputs.extend((tabular_payload or {}).get('generated_tabular_outputs') or [])
+            tabular_agent_citations.extend((tabular_payload or {}).get('agent_citations') or [])
+        else:
+            evidence_by_id[source.get('document_id')] = build_evidence_envelope(
+                document_id=source.get('document_id'), source_kind='tabular',
+                engine=EVIDENCE_ENGINE_TABULAR_TOOLS, status=EVIDENCE_STATUS_FAILED,
+                summary='Tabular evidence could not be completed for this source.',
+                coverage={'terminal': True, 'source_version': source.get('source_version')},
+                error='Tabular analysis could not be completed.',
+            )
+
+    handoff = build_mixed_source_evidence_handoff(manifest, list(evidence_by_id.values()), SELECTION_MODE_SELECTED)
+    envelopes = {envelope.get('document_id'): envelope for envelope in handoff.get('evidence_envelopes') or []}
+    def source_payload(source):
+        envelope = dict(envelopes.get(source.get('document_id')) or {})
+        envelope['document_name'] = source.get('display_name') or ('Source' if source.get('comparison_role') == 'left' else 'Target')
+        role_label = 'Source' if source.get('comparison_role') == 'left' else 'Target'
+        evidence_type = 'computed tabular facts' if envelope.get('source_kind') == 'tabular' else 'narrative document analysis'
+        envelope['summary'] = (
+            f'Role: {role_label}. Evidence type: {evidence_type}.\n'
+            f"{str(envelope.get('summary') or '').strip()}"
+        )
+        return envelope
+    left_source = next((source for source in manifest if source.get('comparison_role') == 'left'), {})
+    comparison_result = run_evidence_document_comparison(
+        workflow.get('task_prompt', ''), source_payload(left_source),
+        [source_payload(source) for source in target_sources], invoke_prompt, activity_callback=activity_callback,
+    )
+    comparison_result['coverage'] = _build_mixed_source_analysis_coverage(handoff)
+    comparison_result['mixed_source_manifest'] = manifest
+    comparison_result['mixed_source_evidence'] = handoff.get('evidence_envelopes') or []
+    comparison_result['generated_tabular_outputs'] = generated_tabular_outputs
+    comparison_result['agent_citations'] = tabular_agent_citations
+    return comparison_result
 
 
 def _build_workflow_generation_prompt(task_prompt):
@@ -5751,17 +5901,24 @@ def _execute_document_comparison_workflow(
                     _accumulate_token_usage(token_usage_aggregate, result)
                     return str(result)
 
-                tabular_action_payload = _maybe_execute_tabular_document_action(
-                    DOCUMENT_ACTION_TYPE_COMPARISON,
-                    workflow,
-                    comparison_config,
-                    settings,
-                    conversation_id=conversation_id,
-                    invoke_prompt=invoke_prompt,
-                    thought_tracker=thought_tracker,
-                    live_thought_callback=external_activity_callback,
+                mixed_comparison_enabled = is_cross_format_compare_enabled(settings)
+                mixed_comparison_result = (
+                    _execute_cross_format_comparison_workflow(
+                        workflow, comparison_config, settings, invoke_prompt,
+                        conversation_id=conversation_id, activity_callback=activity_callback,
+                        thought_tracker=thought_tracker, live_thought_callback=external_activity_callback,
+                    ) if mixed_comparison_enabled else None
                 )
-                if tabular_action_payload:
+                if not mixed_comparison_enabled:
+                    _raise_legacy_cross_format_compare_limitation(comparison_config, user_id, conversation_id)
+                tabular_action_payload = None if mixed_comparison_result else _maybe_execute_tabular_document_action(
+                    DOCUMENT_ACTION_TYPE_COMPARISON, workflow, comparison_config, settings,
+                    conversation_id=conversation_id, invoke_prompt=invoke_prompt,
+                    thought_tracker=thought_tracker, live_thought_callback=external_activity_callback,
+                )
+                if mixed_comparison_result:
+                    comparison_result = mixed_comparison_result
+                elif tabular_action_payload:
                     comparison_result = tabular_action_payload.get('result') or {}
                 else:
                     comparison_result = run_document_comparison(
@@ -5858,17 +6015,24 @@ def _execute_document_comparison_workflow(
             return ''
         return _extract_message_text(completion.choices[0].message.content)
 
-    tabular_action_payload = _maybe_execute_tabular_document_action(
-        DOCUMENT_ACTION_TYPE_COMPARISON,
-        workflow,
-        comparison_config,
-        settings,
-        conversation_id=conversation_id,
-        invoke_prompt=invoke_model_prompt,
-        thought_tracker=thought_tracker,
-        live_thought_callback=external_activity_callback,
+    mixed_comparison_enabled = is_cross_format_compare_enabled(settings)
+    mixed_comparison_result = (
+        _execute_cross_format_comparison_workflow(
+            workflow, comparison_config, settings, invoke_model_prompt,
+            conversation_id=conversation_id, activity_callback=activity_callback,
+            thought_tracker=thought_tracker, live_thought_callback=external_activity_callback,
+        ) if mixed_comparison_enabled else None
     )
-    if tabular_action_payload:
+    if not mixed_comparison_enabled:
+        _raise_legacy_cross_format_compare_limitation(comparison_config, user_id, conversation_id)
+    tabular_action_payload = None if mixed_comparison_result else _maybe_execute_tabular_document_action(
+        DOCUMENT_ACTION_TYPE_COMPARISON, workflow, comparison_config, settings,
+        conversation_id=conversation_id, invoke_prompt=invoke_model_prompt,
+        thought_tracker=thought_tracker, live_thought_callback=external_activity_callback,
+    )
+    if mixed_comparison_result:
+        comparison_result = mixed_comparison_result
+    elif tabular_action_payload:
         comparison_result = tabular_action_payload.get('result') or {}
     else:
         comparison_result = run_document_comparison(

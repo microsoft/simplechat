@@ -224,6 +224,117 @@ def _format_comparison_coverage_summary(coverage, left_document_name, right_docu
     return '\n'.join(lines)
 
 
+def run_evidence_document_comparison(
+    comparison_prompt,
+    left_source,
+    right_sources,
+    invoke_prompt,
+    activity_callback=None,
+):
+    """Run the established one-left-to-many comparison over native evidence envelopes."""
+    normalized_prompt = str(comparison_prompt or '').strip()
+    if not normalized_prompt or not callable(invoke_prompt):
+        raise ValueError('A comparison prompt and callable invoke_prompt handler are required.')
+
+    left_source = left_source if isinstance(left_source, dict) else {}
+    right_sources = [source for source in list(right_sources or []) if isinstance(source, dict)]
+    left_name = str(left_source.get('document_name') or 'Source').strip() or 'Source'
+    left_summary = str(left_source.get('summary') or '').strip()
+    comparison_items = []
+    compared_targets = []
+    failed_targets = []
+
+    for comparison_index, right_source in enumerate(right_sources, start=1):
+        right_name = str(right_source.get('document_name') or f'Target {comparison_index}').strip() or f'Target {comparison_index}'
+        right_status = str(right_source.get('status') or '').strip().lower()
+        if right_status not in {'completed', 'partial'} or not left_summary:
+            failed_targets.append(right_name)
+            continue
+
+        if callable(activity_callback):
+            activity_callback({
+                'type': 'comparison_started',
+                'left_document_id': left_source.get('document_id'),
+                'left_document_name': left_name,
+                'right_document_id': right_source.get('document_id'),
+                'right_document_name': right_name,
+                'comparison_index': comparison_index,
+                'comparison_count': len(right_sources),
+            })
+        pairwise_text = str(invoke_prompt(
+            _build_pairwise_comparison_prompt(
+                normalized_prompt,
+                left_name,
+                right_name,
+                left_summary,
+                str(right_source.get('summary') or ''),
+            ),
+            stage='comparison',
+            metadata={
+                'comparison_index': comparison_index,
+                'comparison_count': len(right_sources),
+                'left_document_id': left_source.get('document_id'),
+                'right_document_id': right_source.get('document_id'),
+            },
+        ) or '').strip()
+        if not pairwise_text:
+            failed_targets.append(right_name)
+            continue
+        compared_targets.append(right_name)
+        comparison_items.append({
+            'right_document_id': right_source.get('document_id'),
+            'right_document_name': right_name,
+            'text': pairwise_text,
+        })
+        if callable(activity_callback):
+            activity_callback({
+                'type': 'comparison_completed',
+                'left_document_id': left_source.get('document_id'),
+                'left_document_name': left_name,
+                'right_document_id': right_source.get('document_id'),
+                'right_document_name': right_name,
+                'comparison_index': comparison_index,
+                'comparison_count': len(right_sources),
+            })
+
+    if not comparison_items:
+        final_reply = 'No target comparison could be completed from the available source evidence.'
+    elif len(comparison_items) == 1:
+        final_reply = comparison_items[0]['text']
+    else:
+        final_reply = str(invoke_prompt(
+            _build_comparison_reduction_prompt(normalized_prompt, left_name, comparison_items),
+            stage='comparison_reduction',
+            metadata={'comparison_count': len(comparison_items), 'left_document_id': left_source.get('document_id')},
+        ) or '').strip() or 'The completed target comparisons could not be reduced into a final response.'
+
+    evidence_engines = sorted({
+        str(source.get('engine') or 'unknown')
+        for source in [left_source, *right_sources]
+    })
+    conclusion_level = 'aggregate or narrative'
+    if all(str(source.get('source_kind') or '') == 'tabular' for source in [left_source, *right_sources]):
+        conclusion_level = 'aggregate; row-level conclusions require validated structured table operations'
+    coverage_note = (
+        f'\n\n## Comparison Coverage\n- Targets compared: {len(compared_targets)}\n'
+        f'- Failed or partial targets: {len(failed_targets)}\n'
+        f'- Evidence engines: {", ".join(evidence_engines)}\n'
+        f'- Conclusion level: {conclusion_level}'
+    )
+    return {
+        'reply': f'{final_reply}{coverage_note}',
+        'analysis_reply': final_reply,
+        'coverage': {'document_count': 1 + len(right_sources), 'partial_coverage': bool(failed_targets), 'failed_targets': failed_targets},
+        'documents': [left_source, *right_sources],
+        'left_document': {'document_id': left_source.get('document_id'), 'document_name': left_name},
+        'right_documents': [
+            {'document_id': source.get('document_id'), 'document_name': source.get('document_name')}
+            for source in right_sources
+        ],
+        'comparison_items': comparison_items,
+    }
+
+
 def run_document_comparison(
     user_id,
     comparison_prompt,

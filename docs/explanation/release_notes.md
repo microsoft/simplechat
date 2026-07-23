@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.067)**
+
+#### New Features
+
+*   **Cross-Format Compare Native Evidence**
+    *   Compare can now, behind a default-off rollout flag, resolve one authorization-safe Source/Target manifest and combine document-window narrative evidence with tool-backed tabular evidence without silently routing tables through document chunks.
+    *   The staged one-to-many mixed-target rollout remains off until pairwise coverage and performance are verified; partial target failures remain visible in final comparison coverage.
+    *   (Ref: microsoft/simplechat#1059, parent microsoft/simplechat#1055, prerequisites microsoft/simplechat#1056, microsoft/simplechat#1057, and microsoft/simplechat#1058, `functions_workflow_runner.py`, `functions_document_comparison.py`, `CROSS_FORMAT_COMPARE.md`)
+
 ### **(v0.250.066)**
 
 #### New Features
