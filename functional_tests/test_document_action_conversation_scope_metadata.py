@@ -2,8 +2,8 @@
 # test_document_action_conversation_scope_metadata.py
 """
 Functional test for document-action conversation scope metadata.
-Version: 0.241.124
-Implemented in: 0.241.124
+Version: 0.250.068
+Implemented in: 0.241.124; Updated in: 0.250.068
 
 This test ensures Analyze and tabular document-action results can assign
 conversation workspace metadata from selected document summaries when no
@@ -20,7 +20,7 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 METADATA_FILE = os.path.join(ROOT_DIR, 'application', 'single_app', 'functions_conversation_metadata.py')
 ROUTE_FILE = os.path.join(ROOT_DIR, 'application', 'single_app', 'route_backend_chats.py')
 CONFIG_FILE = os.path.join(ROOT_DIR, 'application', 'single_app', 'config.py')
-FIX_VERSION = '0.241.124'
+FIX_VERSION = '0.250.068'
 TEST_USER_ID = 'scope-user-1'
 CRIMSON_GROUP_ID = 'crimson-group-1'
 PUBLIC_WORKSPACE_ID = 'public-workspace-1'

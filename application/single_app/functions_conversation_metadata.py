@@ -139,8 +139,34 @@ def _extract_document_id_from_search_result(doc):
     return chunk_identifier
 
 
-def _build_last_grounded_document_refs(document_map):
+def _build_last_grounded_document_refs(document_map, source_continuity_refs=None):
     """Build the exact reusable grounded document set for the latest search-backed turn."""
+    if isinstance(source_continuity_refs, list):
+        safe_continuity_refs = []
+        for raw_ref in source_continuity_refs[:100]:
+            if not isinstance(raw_ref, dict):
+                continue
+            document_id = str(raw_ref.get('document_id') or '').strip()
+            scope = str(raw_ref.get('scope') or '').strip().lower()
+            scope_id = str(raw_ref.get('scope_id') or '').strip()
+            if not document_id or not scope or not scope_id:
+                continue
+            safe_ref = {
+                key: raw_ref.get(key)
+                for key in (
+                    'document_id', 'scope', 'scope_id', 'group_id',
+                    'public_workspace_id', 'user_id', 'source_role',
+                    'requested_order', 'source_kind', 'engine',
+                    'source_version', 'status', 'coverage',
+                    'selection_origin', 'action_mode',
+                    'citation_count', 'artifact_count',
+                )
+                if raw_ref.get(key) is not None
+            }
+            safe_continuity_refs.append(safe_ref)
+        if safe_continuity_refs:
+            return safe_continuity_refs
+
     grounded_refs = []
 
     for document_id, doc_info in document_map.items():
@@ -273,7 +299,8 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
                                 image_gen_enabled=False, selected_documents=None, 
                                 selected_agent=None, selected_agent_details=None, search_results=None, web_search_results=None,
                                 conversation_item=None, additional_participants=None,
-                                active_group_ids=None, active_public_workspace_id=None, active_public_workspace_ids=None):
+                                active_group_ids=None, active_public_workspace_id=None, active_public_workspace_ids=None,
+                                source_continuity_refs=None):
     """
     Collect comprehensive metadata for a conversation based on the user's interaction.
     
@@ -736,8 +763,11 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
             current_tags[semantic_key] = semantic_tag    # Update the tags array
     conversation_item['tags'] = list(current_tags.values())
 
-    if document_map:
-        conversation_item['last_grounded_document_refs'] = _build_last_grounded_document_refs(document_map)
+    if document_map or source_continuity_refs:
+        conversation_item['last_grounded_document_refs'] = _build_last_grounded_document_refs(
+            document_map,
+            source_continuity_refs=source_continuity_refs,
+        )
 
     # --- Scope Lock Logic ---
     current_scope_locked = conversation_item.get('scope_locked')
