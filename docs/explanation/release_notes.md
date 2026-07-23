@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.068)**
+
+#### New Features
+
+*   **Mixed-Source Conversation Continuity**
+    *   Chat now preserves a default-off, compact record of the most recent mixed-source grounding so follow-up turns can reauthorize those sources before native retrieval or tabular execution.
+    *   Current explicit selections remain authoritative, while changed, revoked, unresolved, partial, or failed prior sources cannot be silently reused as current evidence.
+    *   (Ref: microsoft/simplechat#1060, parent microsoft/simplechat#1055, prerequisites microsoft/simplechat#1056, microsoft/simplechat#1057, microsoft/simplechat#1058, and microsoft/simplechat#1059, `route_backend_chats.py`, `functions_conversation_metadata.py`, `MIXED_SOURCE_CONVERSATION_CONTINUITY.md`)
+
 ### **(v0.250.067)**
 
 #### New Features

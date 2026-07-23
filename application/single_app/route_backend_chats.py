@@ -434,6 +434,100 @@ def _resolve_chat_mixed_source_partition(
     }
 
 
+def _build_mixed_source_continuity_refs(manifest, evidence_envelopes, selection_origin):
+    """Persist only compact source identity and terminal state for later reauthorization."""
+    evidence_by_document_id = {
+        str(envelope.get('document_id') or '').strip(): envelope
+        for envelope in list(evidence_envelopes or [])
+        if isinstance(envelope, dict) and str(envelope.get('document_id') or '').strip()
+    }
+    continuity_refs = []
+    for requested_order, source in enumerate(list(manifest or [])[:100]):
+        if not isinstance(source, dict) or source.get('authorization_status') != 'authorized':
+            continue
+        document_id = str(source.get('document_id') or '').strip()
+        scope = str(source.get('scope') or '').strip().lower()
+        scope_id = str(source.get('scope_id') or '').strip()
+        if not document_id or not scope or not scope_id:
+            continue
+        envelope = evidence_by_document_id.get(document_id) or {}
+        coverage = envelope.get('coverage') if isinstance(envelope.get('coverage'), dict) else {}
+        continuity_ref = {
+            'document_id': document_id,
+            'scope': scope,
+            'scope_id': scope_id,
+            'source_role': str(source.get('source_role') or 'selected'),
+            'requested_order': requested_order,
+            'source_kind': source.get('source_kind'),
+            'engine': envelope.get('engine'),
+            'source_version': source.get('source_version'),
+            'status': envelope.get('status') or 'unavailable',
+            'coverage': {
+                'partial_coverage': bool(coverage.get('partial_coverage')),
+                'evidence_envelope_truncated': bool(coverage.get('evidence_envelope_truncated')),
+                'failed': str(envelope.get('status') or '').strip().lower() in {'failed', 'unavailable'},
+            },
+            'selection_origin': selection_origin,
+            'action_mode': 'chat',
+            'citation_count': len(envelope.get('citations') or []),
+            'artifact_count': len(envelope.get('generated_artifacts') or []),
+        }
+        if scope == 'group':
+            continuity_ref['group_id'] = scope_id
+        elif scope == 'public':
+            continuity_ref['public_workspace_id'] = scope_id
+        else:
+            continuity_ref['user_id'] = scope_id
+        continuity_refs.append(continuity_ref)
+    return continuity_refs
+
+
+def _build_reauthorized_continuity_decision(prior_refs, manifest, explicit_selection):
+    """Describe a fresh manifest decision without treating persisted refs as authority."""
+    if explicit_selection:
+        return {
+            'selection_origin': 'selected',
+            'prior_source_count': 0,
+            'reauthorized_source_count': 0,
+            'unavailable_source_count': 0,
+            'source_version_changed_count': 0,
+            'requires_native_execution': False,
+        }
+
+    prior_by_document_id = {
+        str(ref.get('document_id') or '').strip(): ref
+        for ref in list(prior_refs or [])
+        if isinstance(ref, dict) and str(ref.get('document_id') or '').strip()
+    }
+    unavailable_source_count = 0
+    source_version_changed_count = 0
+    reauthorized_source_count = 0
+    for source in list(manifest or []):
+        document_id = str((source or {}).get('document_id') or '').strip()
+        prior_ref = prior_by_document_id.get(document_id)
+        if not prior_ref:
+            continue
+        if source.get('authorization_status') != 'authorized':
+            unavailable_source_count += 1
+            continue
+        reauthorized_source_count += 1
+        prior_version = prior_ref.get('source_version')
+        current_version = source.get('source_version')
+        if prior_version is not None and current_version is not None and str(prior_version) != str(current_version):
+            source_version_changed_count += 1
+
+    return {
+        'selection_origin': 'history',
+        'prior_source_count': len(prior_by_document_id),
+        'reauthorized_source_count': reauthorized_source_count,
+        'unavailable_source_count': unavailable_source_count,
+        'source_version_changed_count': source_version_changed_count,
+        'requires_native_execution': bool(
+            unavailable_source_count or source_version_changed_count
+        ),
+    }
+
+
 def _resolve_chat_mixed_source_relevance_context(
     *,
     settings,
@@ -13766,6 +13860,7 @@ def register_route_backend_chats(bp):
             history_grounded_search_used = False
             history_only_answerability = None
             prior_grounded_document_refs = []
+            continuity_decision = None
             effective_document_scope = document_scope
             effective_selected_document_ids = list(selected_document_ids or [])
             effective_selected_document_id = selected_document_id
@@ -14761,6 +14856,12 @@ def register_route_backend_chats(bp):
                 mixed_source_tabular_sources = list(
                     history_context.get('tabular_sources') or []
                 )
+                if is_mixed_source_conversation_continuity_enabled(settings):
+                    continuity_decision = _build_reauthorized_continuity_decision(
+                        prior_grounded_document_refs,
+                        mixed_source_manifest,
+                        explicit_selection=False,
+                    )
                 effective_selected_document_ids = (
                     mixed_source_narrative_document_ids
                     + _get_manifest_partition_document_ids(
@@ -15641,6 +15742,8 @@ def register_route_backend_chats(bp):
                     {},
                 )
                 user_metadata['mixed_source_coverage'] = mixed_source_coverage
+                if continuity_decision:
+                    user_metadata['source_continuity'] = continuity_decision
                 user_message_doc['metadata'] = user_metadata
                 cosmos_messages_container.upsert_item(user_message_doc)
                 log_event(
@@ -17218,6 +17321,16 @@ def register_route_backend_chats(bp):
                 selected_agent_name = None
                 if selected_agent:
                     selected_agent_name = getattr(selected_agent, 'name', None)
+                source_continuity_refs = None
+                if (
+                    is_mixed_source_conversation_continuity_enabled(settings)
+                    and mixed_source_manifest
+                ):
+                    source_continuity_refs = _build_mixed_source_continuity_refs(
+                        mixed_source_manifest,
+                        mixed_source_evidence_envelopes,
+                        effective_mixed_source_selection_mode,
+                    )
 
                 # Collect metadata for this conversation interaction
                 conversation_item = collect_conversation_metadata(
@@ -17237,7 +17350,8 @@ def register_route_backend_chats(bp):
                     search_results=search_results if 'search_results' in locals() else None,
                     conversation_item=conversation_item,
                     active_public_workspace_id=effective_active_public_workspace_id,
-                    active_public_workspace_ids=effective_active_public_workspace_ids
+                    active_public_workspace_ids=effective_active_public_workspace_ids,
+                    source_continuity_refs=source_continuity_refs,
                 )
             except Exception as e:
                 debug_print(f"Error collecting conversation metadata: {e}")
@@ -17745,6 +17859,7 @@ def register_route_backend_chats(bp):
                 history_grounded_search_used = False
                 history_only_answerability = None
                 prior_grounded_document_refs = []
+                continuity_decision = None
                 effective_document_scope = document_scope
                 effective_selected_document_ids = list(selected_document_ids or [])
                 effective_selected_document_id = selected_document_id
@@ -18726,6 +18841,12 @@ def register_route_backend_chats(bp):
                     mixed_source_tabular_sources = list(
                         history_context.get('tabular_sources') or []
                     )
+                    if is_mixed_source_conversation_continuity_enabled(settings):
+                        continuity_decision = _build_reauthorized_continuity_decision(
+                            prior_grounded_document_refs,
+                            mixed_source_manifest,
+                            explicit_selection=False,
+                        )
                     effective_selected_document_ids = (
                         mixed_source_narrative_document_ids
                         + _get_manifest_partition_document_ids(
@@ -19190,6 +19311,8 @@ def register_route_backend_chats(bp):
                         or mixed_source_tabular_sources
                     )
                     user_metadata['mixed_source_coverage'] = mixed_source_coverage
+                    if continuity_decision:
+                        user_metadata['source_continuity'] = continuity_decision
                     user_message_doc['metadata'] = user_metadata
                     cosmos_messages_container.upsert_item(user_message_doc)
                     log_event(
@@ -20628,6 +20751,16 @@ def register_route_backend_chats(bp):
                         debug_print(f"Warning: Could not update streaming user message metadata: {e}")
 
                     try:
+                        source_continuity_refs = None
+                        if (
+                            is_mixed_source_conversation_continuity_enabled(settings)
+                            and mixed_source_manifest
+                        ):
+                            source_continuity_refs = _build_mixed_source_continuity_refs(
+                                mixed_source_manifest,
+                                mixed_source_evidence_envelopes,
+                                effective_mixed_source_selection_mode,
+                            )
                         conversation_item = collect_conversation_metadata(
                             user_message=user_message,
                             conversation_id=conversation_id,
@@ -20645,7 +20778,8 @@ def register_route_backend_chats(bp):
                             search_results=search_results if search_results else None,
                             conversation_item=conversation_item,
                             active_public_workspace_id=effective_active_public_workspace_id,
-                            active_public_workspace_ids=effective_active_public_workspace_ids
+                            active_public_workspace_ids=effective_active_public_workspace_ids,
+                            source_continuity_refs=source_continuity_refs,
                         )
                     except Exception as e:
                         debug_print(f"Error collecting conversation metadata: {e}")
