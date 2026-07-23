@@ -5240,7 +5240,7 @@ def _prepare_workflow_search_context(
     scoped_action['active_public_workspace_id'] = manifest_public_workspace_ids
 
     if not is_mixed_source_chat_search_enabled(settings):
-        search_top_n = normalize_search_top_n(max(12, len(document_ids) * 3 if document_ids else 12))
+        search_top_n = normalize_search_top_n(max(50, len(document_ids) * 3 if document_ids else 50))
         search_result = search_documents(
             query=query,
             user_id=user_id,
@@ -5319,7 +5319,7 @@ def _prepare_workflow_search_context(
             manifest_public_workspace_ids.append(public_workspace_id)
 
     search_top_n = normalize_search_top_n(
-        max(12, len(narrative_document_ids) * 3 if narrative_document_ids else 12)
+        max(50, len(narrative_document_ids) * 3 if narrative_document_ids else 50)
     )
     search_result = {
         'results': [],

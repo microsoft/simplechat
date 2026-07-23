@@ -1,8 +1,8 @@
 # test_tabular_row_orchestration_scale.py
 """
 Functional test for scalable per-row tabular orchestration.
-Version: 0.250.072
-Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072
+Version: 0.250.073
+Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; updated in 0.250.073
 
 This test ensures generated exports preserve source identity and row order while
 enforcing one stable output schema across independently generated batches.

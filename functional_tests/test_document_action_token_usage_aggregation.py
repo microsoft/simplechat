@@ -1,8 +1,8 @@
 # test_document_action_token_usage_aggregation.py
 """
 Functional test for document action token usage aggregation.
-Version: 0.250.072
-Implemented in: 0.241.116; updated for generated file exports in 0.250.072
+Version: 0.250.073
+Implemented in: 0.241.116; updated for generated file exports in 0.250.072; updated in 0.250.073
 
 This test ensures analysis and comparison aggregate tokens across
 all internal model calls and persist the aggregate usage on assistant metadata.
@@ -373,7 +373,7 @@ def test_version_update():
     with open(CONFIG_PATH, 'r', encoding='utf-8') as handle:
         content = handle.read()
 
-    assert_in('VERSION = "0.250.072"', content, 'config version update')
+    assert_in('VERSION = "0.250.073"', content, 'config version update')
     print('Version update passed.')
     return True
 

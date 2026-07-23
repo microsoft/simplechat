@@ -1343,7 +1343,7 @@ def search_directory_users(query: str, limit: int = 10) -> List[Dict[str, str]]:
                 f"or startswith(mail, '{escaped_query}') "
                 f"or startswith(userPrincipalName, '{escaped_query}')"
             ),
-            "$top": max(1, min(int(limit or 10), 25)),
+            "$top": max(1, min(int(limit or 10), 50)),
             "$select": "id,displayName,mail,userPrincipalName",
         },
     )

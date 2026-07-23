@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.073)**
+
+#### New Features
+
+*   **Expanded Search Retrieval Capacity**
+    *   Increased default search, workflow, assigned-knowledge, directory, and document-metadata retrieval limits so broader authorized result sets can reach Chat, agents, and workflows.
+    *   Expanded mixed-source tabular candidate discovery while retaining authorization and existing maximum bounds.
+    *   (Ref: `functions_search.py`, `functions_search_service.py`, `route_backend_chats.py`, `functions_workflow_runner.py`, `test_document_search_api_and_plugin.py`, `test_mixed_source_manifest_contracts.py`)
+
 ### **(v0.250.072)**
 
 #### New Features

@@ -211,7 +211,7 @@ ASSIGNED_KNOWLEDGE_DOCUMENT_ACTION_MAP = {
     DOCUMENT_ACTION_TYPE_ANALYZE: ASSIGNED_KNOWLEDGE_USER_ACTION_ANALYZE,
     DOCUMENT_ACTION_TYPE_COMPARISON: ASSIGNED_KNOWLEDGE_USER_ACTION_COMPARE,
 }
-ASSIGNED_KNOWLEDGE_CONTEXT_TOP_N = 12
+ASSIGNED_KNOWLEDGE_CONTEXT_TOP_N = 50
 ASSIGNED_KNOWLEDGE_CONTEXT_EXCERPT_MAX_CHARS = 1800
 MIXED_SOURCE_CHAT_RELEVANCE_SOURCE_LIMIT = 48
 FOUNDRY_SELECTED_AGENT_TYPES = {'aifoundry', 'new_foundry', 'foundry_workflow'}
@@ -4315,7 +4315,7 @@ def _resolve_tabular_related_document_evidence(document_match, user_question, us
         search_payload = search_documents(
             query=search_query,
             user_id=user_id,
-            top_n=2,
+            top_n=10,
             doc_scope=doc_scope,
             document_ids=[document_id],
             active_group_ids=active_group_ids,
@@ -19787,7 +19787,7 @@ def register_route_backend_chats(bp):
                         search_args = {
                             "query": search_query,
                             "user_id": user_id,
-                            "top_n": 12,
+                            "top_n": 50,
                             "doc_scope": effective_document_scope,
                         }
 

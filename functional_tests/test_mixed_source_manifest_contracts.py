@@ -117,7 +117,7 @@ def load_isolated_search_service():
     public_stub.get_user_visible_public_workspace_ids_from_settings = lambda user_id: []
 
     search_stub = types.ModuleType("functions_search")
-    search_stub.SEARCH_DEFAULT_TOP_N = 12
+    search_stub.SEARCH_DEFAULT_TOP_N = 50
     search_stub.SEARCH_MAX_TOP_N = 500
     search_stub.hybrid_search = lambda **kwargs: []
     search_stub.normalize_search_id_list = _normalize_id_list
