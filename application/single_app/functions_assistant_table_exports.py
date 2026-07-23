@@ -154,7 +154,6 @@ CSV_EXPLICIT_ROW_SCHEMA_PATTERNS = (
     re.compile(r'\b(?:include|with|using)\s+(?:the\s+)?(?:columns?|fields?)\b'),
 )
 
-
 def assistant_table_export_requested(user_question: str) -> bool:
     """Return True when the user asked for table-shaped output or a CSV export."""
     normalized_question = re.sub(r'\s+', ' ', str(user_question or '').strip().casefold())
@@ -261,20 +260,6 @@ def has_generated_tabular_csv_output(generated_outputs: List[Dict[str, Any]]) ->
     return False
 
 
-def get_assistant_csv_export_content(assistant_result: Any) -> str:
-    """Return the structured document-action reply when it supersedes a concise artifact reply."""
-    if not isinstance(assistant_result, dict):
-        return str(assistant_result or '')
-
-    analysis_result = assistant_result.get('analysis_result')
-    if isinstance(analysis_result, dict):
-        analysis_reply = str(analysis_result.get('analysis_reply') or '').strip()
-        if analysis_reply:
-            return analysis_reply
-
-    return str(assistant_result.get('reply') or '')
-
-
 def extract_assistant_table_entries(assistant_content: str) -> List[Dict[str, str]]:
     """Extract table rows from Markdown, tab-separated, or CSV assistant output."""
     normalized_content = str(assistant_content or '').replace('\r\n', '\n').replace('\r', '\n')
@@ -310,14 +295,16 @@ def build_assistant_table_csv(table_rows: List[Dict[str, Any]]) -> str:
     if not ordered_columns:
         ordered_columns = ['value']
 
+    safe_columns = build_safe_csv_headers(ordered_columns)
+
     output_buffer = io.StringIO()
-    writer = csv.DictWriter(output_buffer, fieldnames=ordered_columns, extrasaction='ignore')
+    writer = csv.DictWriter(output_buffer, fieldnames=safe_columns, extrasaction='ignore')
     writer.writeheader()
     for table_row in table_rows or []:
         serialized_row = {}
         if isinstance(table_row, dict):
-            for column_name in ordered_columns:
-                serialized_row[column_name] = _serialize_table_cell(table_row.get(column_name))
+            for source_column, safe_column in zip(ordered_columns, safe_columns):
+                serialized_row[safe_column] = _serialize_table_cell(table_row.get(source_column))
         writer.writerow(serialized_row)
     return output_buffer.getvalue()
 

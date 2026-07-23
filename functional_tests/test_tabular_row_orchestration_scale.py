@@ -1,8 +1,8 @@
 # test_tabular_row_orchestration_scale.py
 """
 Functional test for scalable per-row tabular orchestration.
-Version: 0.250.071
-Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; shared CSV queue authorization in 0.250.071
+Version: 0.250.072
+Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072
 
 This test ensures generated exports preserve source identity and row order while
 enforcing one stable output schema across independently generated batches.
@@ -1217,15 +1217,15 @@ def test_route_queues_replayable_pages_and_suppresses_summary_fallback():
     assert '_has_generated_tabular_csv_output(existing_outputs)' in route_source
 
     route_module = ast.parse(route_source, filename=str(CHAT_ROUTE))
-    assistant_table_export = next(
+    generated_file_export = next(
         node
         for node in route_module.body
         if isinstance(node, ast.FunctionDef)
-        and node.name == 'maybe_create_assistant_table_generated_output'
+        and node.name == 'maybe_create_generated_file_output'
     )
-    assistant_table_export_source = ast.get_source_segment(route_source, assistant_table_export)
-    assert "'source': 'chat'," in assistant_table_export_source
-    assert "'container': storage_account_personal_chat_container_name" not in assistant_table_export_source
+    generated_file_export_source = ast.get_source_segment(route_source, generated_file_export)
+    assert "'source': 'chat'," in generated_file_export_source
+    assert "'container': storage_account_personal_chat_container_name" not in generated_file_export_source
 
     helpers = _load_failed_export_helpers()
     failed_output = helpers['_build_failed_tabular_generated_output_metadata'](

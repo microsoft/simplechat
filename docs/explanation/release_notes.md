@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.072)**
+
+#### New Features
+
+*   **Generated File Export Framework**
+    *   Added one first-class output framework for CSV, DOCX, and PDF artifacts across Chat, streaming Chat, agents, actions, Analyze, Compare, workflows, and source-free responses.
+    *   Successful structured function results now feed the same authorized artifact pipeline as final assistant content, while tabular-plugin results retain their coverage-aware export path.
+    *   (Ref: microsoft/simplechat#1071, `functions_generated_file_exports.py`, `route_backend_chats.py`, `functions_workflow_runner.py`, `GENERATED_FILE_EXPORT_FRAMEWORK.md`)
+
 ### **(v0.250.071)**
 
 #### New Features

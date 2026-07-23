@@ -1,8 +1,8 @@
 # test_document_action_token_usage_aggregation.py
 """
 Functional test for document action token usage aggregation.
-Version: 0.250.071
-Implemented in: 0.241.116; updated for universal CSV artifacts in 0.250.071
+Version: 0.250.072
+Implemented in: 0.241.116; updated for generated file exports in 0.250.072
 
 This test ensures analysis and comparison aggregate tokens across
 all internal model calls and persist the aggregate usage on assistant metadata.
@@ -299,8 +299,8 @@ def test_workflow_assistant_persists_token_usage():
             '_get_document_action_config': lambda workflow: workflow.get('document_action', {}),
             '_get_workflow_scope': lambda workflow: 'personal',
             '_get_workflow_group_id': lambda workflow: '',
-            '_maybe_create_workflow_assistant_table_generated_output': lambda **kwargs: None,
-            'get_assistant_csv_export_content': lambda result: result.get('reply', ''),
+            '_maybe_create_workflow_generated_file_output': lambda **kwargs: None,
+            'get_generated_file_export_content': lambda result: result.get('reply', ''),
             '_persist_agent_citation_artifacts': lambda **kwargs: [],
             'cosmos_messages_container': message_container,
             'cosmos_conversations_container': conversation_container,
@@ -373,7 +373,7 @@ def test_version_update():
     with open(CONFIG_PATH, 'r', encoding='utf-8') as handle:
         content = handle.read()
 
-    assert_in('VERSION = "0.250.071"', content, 'config version update')
+    assert_in('VERSION = "0.250.072"', content, 'config version update')
     print('Version update passed.')
     return True
 

@@ -574,19 +574,30 @@ def test_export_cancellation_rolls_back_queued_and_uploaded_artifacts():
 
     def load_export_helpers(queue_background):
         return _load_route_helpers(
-            {"_has_generated_tabular_csv_output", "maybe_create_assistant_table_generated_output"},
+            {"_has_generated_tabular_csv_output", "maybe_create_generated_file_output"},
             namespace={
                 "MixedSourceCancellationError": orchestration.MixedSourceCancellationError,
                 "raise_if_mixed_source_cancelled": orchestration.raise_if_mixed_source_cancelled,
-                "build_assistant_table_csv_export": lambda question, content: {
+                "has_generated_tabular_csv_output": lambda outputs: False,
+                "get_requested_generated_file_format": lambda question: "csv",
+                "has_generated_file_output": lambda outputs, output_format: False,
+                "build_generated_file_export": lambda *args, **kwargs: {
+                    "capability": "file_export",
                     "file_name": "answer.csv",
                     "file_content": "name,value\nalpha,1\n",
+                    "output_format": "csv",
                     "row_count": 1,
                     "summary": "One row.",
+                    "_structured_rows": [{"name": "alpha", "value": 1}],
+                },
+                "build_generated_file_artifact_metadata": lambda export_payload, upload_result, conversation_id: {
+                    "artifact_message_id": upload_result["message"]["id"],
+                    "conversation_id": conversation_id,
+                    "file_name": upload_result["message"]["file_name"],
+                    "output_format": export_payload["output_format"],
                 },
                 "_safe_int": lambda value: int(value or 0),
                 "get_settings": lambda: {},
-                "extract_assistant_table_entries": lambda content: [{"name": "alpha", "value": 1}],
                 "_build_tabular_generated_output_row_batches": lambda rows, settings=None: [rows],
                 "should_queue_tabular_generated_output_background": lambda *args: queue_background,
                 "queue_tabular_generated_output_run": lambda **kwargs: (
@@ -607,7 +618,7 @@ def test_export_cancellation_rolls_back_queued_and_uploaded_artifacts():
                 "log_event": lambda *args, **kwargs: None,
                 "logging": __import__("logging"),
             },
-        )["maybe_create_assistant_table_generated_output"]
+        )["maybe_create_generated_file_output"]
 
     queued_helper = load_export_helpers(queue_background=True)
     queued_checks = iter([False, True])

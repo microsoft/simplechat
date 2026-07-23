@@ -40,6 +40,7 @@ category: Version History
 
 ## Versioned Features
 
+- [Generated File Export Framework](GENERATED_FILE_EXPORT_FRAMEWORK.md)
 - [Microsoft Teams App SSO](v0.242.072/TEAMS_APP_SSO.md)
 - [Tabular SK Large Result Pagination](v0.242.067/TABULAR_SK_LARGE_RESULT_PAGINATION.md)
 - [Universal CSV Generation](UNIVERSAL_CSV_GENERATION.md)

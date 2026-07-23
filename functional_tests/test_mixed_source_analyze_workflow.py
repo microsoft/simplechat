@@ -2,8 +2,8 @@
 # test_mixed_source_analyze_workflow.py
 """
 Functional test for Phase 3 mixed-source combined Analyze.
-Version: 0.250.071
-Implemented in: 0.250.071
+Version: 0.250.072
+Implemented in: 0.250.072
 
 This test ensures #1058 composes native narrative and tabular analysis behind
 automatic combined Analyze routing, retains terminal coverage after either

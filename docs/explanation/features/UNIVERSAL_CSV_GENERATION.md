@@ -1,14 +1,16 @@
 # Universal CSV Generation
 
-Implemented in version: **0.250.071**
+Implemented in version: **0.250.072**
 
 GitHub issue: [#1071](https://github.com/microsoft/simplechat/issues/1071)
 
-Related config.py update: `VERSION = "0.250.071"`
+Related config.py update: `VERSION = "0.250.072"`
 
 ## Overview
 
 CSV is a shared response-output capability rather than a CSV/XLSX-only feature. When a user requests CSV and a response contains valid structured rows, SimpleChat creates one downloadable CSV artifact through the existing authorized chat-artifact contract.
+
+CSV is the durable tabular renderer in the broader [Generated File Export Framework](GENERATED_FILE_EXPORT_FRAMEWORK.md). The framework can also render DOCX and PDF artifacts from final responses and current-turn structured function results.
 
 The finalizer is source-neutral. Native evidence adapters continue to handle PDF, Office, text, image/media-derived, CSV, XLSX, and mixed-source evidence; once a response has a valid Markdown table, tab-separated table, or CSV-shaped result, the same CSV artifact path is used.
 
@@ -40,6 +42,8 @@ The exporter accepts valid structured response forms:
 - CSV-shaped output in supported fenced blocks
 
 Every generated CSV uses safe headers and neutralizes spreadsheet formula-like values while preserving signed numeric text.
+
+Successful current-turn structured function results are also accepted through the generated file export framework when the assistant summarizes an action rather than reproducing its rows. Sensitive fields are excluded, merged action rows carry source provenance, and tabular-plugin results remain on the existing coverage-aware tabular export path.
 
 ### Row and Schema Clarification
 
