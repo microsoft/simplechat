@@ -21,6 +21,10 @@ category: Version History
 ## Agent and Action Features
 
 - [Action Type Governance](v0.242.064/ACTION_TYPE_GOVERNANCE.md)
+- [Mixed-Source Hardening, Extraction, and Rollout](MIXED_SOURCE_HARDENING_EXTRACTION_AND_ROLLOUT.md)
+- [Mixed-Source Chat and Search Consistency](MIXED_SOURCE_CHAT_AND_SEARCH_CONSISTENCY.md)
+- [Mixed-Source Analyze](MIXED_SOURCE_ANALYZE.md)
+- [Cross-Format Compare](CROSS_FORMAT_COMPARE.md)
 - [Agents Page Customization](v0.241.229/AGENTS_PAGE_CUSTOMIZATION.md)
 - [Microsoft Graph Send Mail Action](MSGRAPH_SEND_MAIL_ACTION.md)
 - [Snowflake Action](v0.250.006/SNOWFLAKE_ACTION.md)

@@ -2193,7 +2193,7 @@ export class PluginModalStepper {
 
   populateDocumentSearchForm(additionalFields = {}) {
     document.getElementById('document-search-scope').value = additionalFields.default_doc_scope || 'all';
-    document.getElementById('document-search-top-n').value = additionalFields.default_top_n || 12;
+    document.getElementById('document-search-top-n').value = additionalFields.default_top_n || 25;
     document.getElementById('document-search-window-unit').value = additionalFields.default_window_unit || 'pages';
     document.getElementById('document-search-window-size').value = additionalFields.default_window_size || '';
     document.getElementById('document-search-window-percent').value = additionalFields.default_window_percent || '';
@@ -5103,7 +5103,7 @@ export class PluginModalStepper {
 
     const config = this.getDocumentSearchAdditionalFields();
     document.getElementById('summary-search-scope').textContent = this.formatDocumentScope(config.default_doc_scope);
-    document.getElementById('summary-search-top-n').textContent = String(config.default_top_n || 12);
+    document.getElementById('summary-search-top-n').textContent = String(config.default_top_n || 25);
     document.getElementById('summary-search-chunk-behavior').textContent = 'Returns all chunks by default';
     document.getElementById('summary-search-windowing').textContent = this.formatDocumentSearchWindowing(config);
     document.getElementById('summary-search-window-target-length').textContent = config.default_window_target_length || '2 pages';

@@ -4395,7 +4395,7 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
                     json.dumps(meta_data),
                     user_id,
                     document_id=document_id,
-                    top_n=12,
+                    top_n=25,
                     doc_scope=document_scope
                 )
             elif document_scope == "group":
@@ -4403,7 +4403,7 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
                     json.dumps(meta_data),
                     user_id,
                     document_id=document_id,
-                    top_n=12,
+                    top_n=25,
                     doc_scope=document_scope,
                     active_group_id=scope_id
                 )
@@ -4412,7 +4412,7 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
                     json.dumps(meta_data),
                     user_id,
                     document_id=document_id,
-                    top_n=12,
+                    top_n=25,
                     doc_scope=document_scope,
                     active_public_workspace_id=scope_id
                 )
@@ -4424,7 +4424,7 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
                         json.dumps(meta_data),
                         user_id,
                         document_id=document_id,
-                        top_n=12,
+                        top_n=50,
                         doc_scope="public",
                         active_public_workspace_id=public_workspace_id
                     )

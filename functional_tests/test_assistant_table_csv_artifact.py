@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for assistant-rendered table CSV artifacts.
-Version: 0.250.065
+Version: 0.250.070
 Implemented in: 0.241.050; non-tabular document CSV parsing in 0.250.065
 
 This test ensures that explicit table-format requests with assistant-rendered
@@ -25,7 +25,7 @@ CONFIG_FILE = APP_DIR / 'config.py'
 CHAT_ROUTE_FILE = APP_DIR / 'route_backend_chats.py'
 BACKGROUND_EXPORT_FILE = APP_DIR / 'functions_tabular_generated_exports.py'
 WORKFLOW_RUNNER_FILE = APP_DIR / 'functions_workflow_runner.py'
-EXPECTED_VERSION = '0.250.065'
+EXPECTED_VERSION = '0.250.070'
 
 sys.path.append(str(APP_DIR))
 

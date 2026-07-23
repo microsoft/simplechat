@@ -66,8 +66,9 @@ TABULAR_EXPORT_DEFAULT_LEASE_SECONDS = 300
 TABULAR_EXPORT_DEFAULT_STALE_SECONDS = 420
 TABULAR_EXPORT_DEFAULT_SCAN_LIMIT = 5
 TABULAR_EXPORT_DEFAULT_MAX_TRANSIENT_FAILURES = 20
-TABULAR_EXPORT_DEFAULT_BATCH_CONCURRENCY = 2
+TABULAR_EXPORT_DEFAULT_BATCH_CONCURRENCY = 3
 TABULAR_EXPORT_MAX_BATCH_CONCURRENCY = 5
+TABULAR_EXPORT_DEFAULT_BATCH_TIMEOUT_SECONDS = 300
 TABULAR_EXPORT_FINAL_SPOOL_MAX_MEMORY_BYTES = 1024 * 1024
 TABULAR_EXPORT_DEFAULT_SOURCE_CHUNK_ROWS = 1000
 TABULAR_EXPORT_DEFAULT_SOURCE_BATCH_ROWS = 50
@@ -1051,6 +1052,7 @@ async def _generate_batch_entries(
     retry_attempts,
     run_id,
     expected_output_schema=None,
+    batch_timeout_seconds=TABULAR_EXPORT_DEFAULT_BATCH_TIMEOUT_SECONDS,
 ):
     batch_number = batch_index + 1
     batch_prompt = _build_batch_prompt(
@@ -1067,6 +1069,13 @@ async def _generate_batch_entries(
     raw_response_content = ''
     mismatch_count = 0
     last_validation_error = None
+    timeout_seconds = max(
+        _safe_float(
+            batch_timeout_seconds,
+            default=TABULAR_EXPORT_DEFAULT_BATCH_TIMEOUT_SECONDS,
+        ),
+        0.001,
+    )
     for attempt_number in range(1, retry_attempts + 1):
         chat_history = SKChatHistory()
         chat_history.add_system_message(
@@ -1082,7 +1091,16 @@ async def _generate_batch_entries(
         chat_history.add_user_message(batch_prompt)
 
         execution_settings = AzureChatPromptExecutionSettings(service_id='tabular-generated-output-background')
-        result = await chat_service.get_chat_message_contents(chat_history, execution_settings)
+        try:
+            result = await asyncio.wait_for(
+                chat_service.get_chat_message_contents(chat_history, execution_settings),
+                timeout=timeout_seconds,
+            )
+        except asyncio.TimeoutError as exc:
+            raise TimeoutError(
+                f'Background structured export batch {batch_number}/{total_batches} '
+                f'timed out after {timeout_seconds:g} seconds.'
+            ) from exc
         raw_response_content = result[0].content if result and result[0].content else ''
         parsed_entries = _parse_generated_json_entries(raw_response_content) if raw_response_content else None
         parsed_entry_count = len(parsed_entries) if parsed_entries is not None else 0
@@ -1134,6 +1152,7 @@ async def _generate_batch_entries_for_window(
     retry_attempts,
     run_id,
     expected_output_schema,
+    batch_timeout_seconds,
 ):
     async with semaphore:
         batch_started_at = time.monotonic()
@@ -1148,6 +1167,7 @@ async def _generate_batch_entries_for_window(
             retry_attempts,
             run_id,
             expected_output_schema=expected_output_schema,
+            batch_timeout_seconds=batch_timeout_seconds,
         )
         return {
             'batch_number': batch_request['batch_number'],
@@ -1171,6 +1191,7 @@ async def _generate_batch_window_entries(
     run_id,
     batch_concurrency,
     expected_output_schema=None,
+    batch_timeout_seconds=TABULAR_EXPORT_DEFAULT_BATCH_TIMEOUT_SECONDS,
 ):
     semaphore = asyncio.Semaphore(max(1, batch_concurrency))
     tasks = [
@@ -1185,6 +1206,7 @@ async def _generate_batch_window_entries(
             retry_attempts,
             run_id,
             expected_output_schema,
+            batch_timeout_seconds,
         )
         for batch_request in batch_requests
     ]
@@ -2545,6 +2567,22 @@ def process_tabular_generated_output_run(run_id, user_id):
             minimum=1,
             maximum=TABULAR_EXPORT_MAX_BATCH_CONCURRENCY,
         )
+        stale_seconds = _settings_int(
+            settings,
+            'tabular_generated_output_stale_seconds',
+            TABULAR_EXPORT_DEFAULT_STALE_SECONDS,
+            minimum=60,
+        )
+        batch_timeout_seconds = min(
+            _settings_int(
+                settings,
+                'tabular_generated_output_batch_timeout_seconds',
+                TABULAR_EXPORT_DEFAULT_BATCH_TIMEOUT_SECONDS,
+                minimum=30,
+                maximum=900,
+            ),
+            max(30, stale_seconds - 30),
+        )
         chat_service = None
         if not run.get('passthrough_input_rows'):
             chat_service = _build_chat_service(
@@ -2575,6 +2613,7 @@ def process_tabular_generated_output_run(run_id, user_id):
                 'batch_count': batch_count,
                 'resume_completed_batches': completed_batches,
                 'batch_concurrency': batch_concurrency,
+                'batch_timeout_seconds': batch_timeout_seconds,
             },
             level=logging.INFO,
         )
@@ -2607,6 +2646,7 @@ def process_tabular_generated_output_run(run_id, user_id):
                         'window_end': window_end,
                         'batch_count': batch_count,
                         'batch_concurrency': batch_concurrency,
+                        'batch_timeout_seconds': batch_timeout_seconds,
                         'generation_request_count': len(batch_requests),
                     },
                     debug_only=True,
@@ -2626,6 +2666,7 @@ def process_tabular_generated_output_run(run_id, user_id):
                             normalized_run_id,
                             batch_concurrency,
                             expected_output_schema=run.get('output_schema'),
+                            batch_timeout_seconds=batch_timeout_seconds,
                         )
                     )
                 _raise_if_tabular_export_canceled(run)

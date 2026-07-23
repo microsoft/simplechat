@@ -36,3 +36,7 @@ The continuity record contains document ID, canonical scope identity, source rol
 - Python compilation and editor diagnostics for changed modules
 
 Related version update: `application/single_app/config.py` moved from **0.250.067** to **0.250.068**.
+
+## Phase 6 Hardening
+
+Version **0.250.070** preserves source version, terminal status, bounded coverage, role, and order through continuity normalization. A fresh manifest decision is now evaluated before history-only reuse, so revoked, changed, partial, failed, or truncated prior grounding forces native execution even when the history assessor would otherwise reuse an earlier answer. Chat-upload hints are filtered through fresh conversation ownership.

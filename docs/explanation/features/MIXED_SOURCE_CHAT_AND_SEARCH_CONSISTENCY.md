@@ -162,3 +162,7 @@ Chat and Search remain relevance-bounded. Analyze and Compare behavior is otherw
 ## Related Version Update
 
 `application/single_app/config.py` was updated from **0.250.062** to **0.250.064** after preserving a concurrent application version increment while completing the Phase 2 delivery associated with #1057.
+
+## Phase 6 Hardening
+
+Version **0.250.070** adds manifest-aligned terminal coverage, standard/streaming failure parity, and reference deduplication under [#1061](https://github.com/microsoft/simplechat/issues/1061). When a mixed request still has successful table evidence, a narrative retrieval or quota failure becomes an explicit per-source omission instead of aborting the available native branch. Chat and Search remain relevance bounded; no full catalog enumeration was added to either mode.

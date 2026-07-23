@@ -8,6 +8,10 @@ from typing import Any, Callable, Dict, List, Optional
 
 from functions_appinsights import log_event
 from functions_debug import debug_print
+from functions_mixed_source_orchestration import (
+    MixedSourceCancellationError,
+    raise_if_mixed_source_cancelled,
+)
 from functions_search import normalize_search_id_list, normalize_search_scope
 
 
@@ -679,6 +683,8 @@ def _reduce_document_analysis_items(
     failed_range_labels,
     reduction_batch_size,
     max_reduction_rounds,
+    cancel_requested=None,
+    request_correlation_id=None,
 ):
     current_items = list(items or [])
     reduction_round = 1
@@ -687,6 +693,11 @@ def _reduce_document_analysis_items(
         next_items = []
         batches = _build_reduction_batches(current_items, reduction_batch_size)
         for batch_index, batch_items in enumerate(batches, start=1):
+            raise_if_mixed_source_cancelled(
+                cancel_requested,
+                'narrative_reduction',
+                request_correlation_id=request_correlation_id,
+            )
             reduction_prompt = _build_document_reduction_prompt(
                 analysis_prompt,
                 document_name,
@@ -705,6 +716,11 @@ def _reduce_document_analysis_items(
                     'item_count': len(batch_items),
                 },
             ) or '').strip()
+            raise_if_mixed_source_cancelled(
+                cancel_requested,
+                'narrative_reduction',
+                request_correlation_id=request_correlation_id,
+            )
             if not reduced_text:
                 raise RuntimeError(
                     f'Document analysis document reduction returned an empty response for {document_name} '
@@ -784,12 +800,19 @@ def run_document_analysis(
     activity_callback=None,
     max_documents=None,
     include_coverage_summary=True,
+    cancel_requested=None,
+    request_correlation_id=None,
 ):
     normalized_analysis_prompt = str(analysis_prompt or '').strip()
     if not normalized_analysis_prompt:
         raise ValueError('An analysis prompt is required for document analysis.')
     if not callable(invoke_prompt):
         raise ValueError('A callable invoke_prompt handler is required for document analysis.')
+    raise_if_mixed_source_cancelled(
+        cancel_requested,
+        'narrative_manifest',
+        request_correlation_id=request_correlation_id,
+    )
 
     build_document_chunk_windows, get_document_chunks_payload = _get_search_service_helpers()
 
@@ -861,6 +884,11 @@ def run_document_analysis(
     json_code_block_requested = analysis_intent.get('json_code_block_requested')
 
     for document_index, document_id in enumerate(targets.get('document_ids', []), start=1):
+        raise_if_mixed_source_cancelled(
+            cancel_requested,
+            'narrative_manifest',
+            request_correlation_id=request_correlation_id,
+        )
         document_payload = get_document_chunks_payload(
             document_id=document_id,
             user_id=user_id,
@@ -871,6 +899,11 @@ def run_document_analysis(
             window_unit=targets.get('window_unit'),
             window_size=targets.get('window_size'),
             window_percent=targets.get('window_percent'),
+        )
+        raise_if_mixed_source_cancelled(
+            cancel_requested,
+            'narrative_manifest',
+            request_correlation_id=request_correlation_id,
         )
         windows = build_document_chunk_windows(
             document_payload.get('chunks', []),
@@ -919,6 +952,11 @@ def run_document_analysis(
         })
 
     for document_run in document_runs:
+        raise_if_mixed_source_cancelled(
+            cancel_requested,
+            'narrative',
+            request_correlation_id=request_correlation_id,
+        )
         document_id = document_run.get('document_id')
         document_payload = document_run.get('document_payload') or {}
         document_metadata = document_payload.get('document') if isinstance(document_payload.get('document'), dict) else {}
@@ -963,6 +1001,11 @@ def run_document_analysis(
             })
 
         for window_payload in windows:
+            raise_if_mixed_source_cancelled(
+                cancel_requested,
+                'narrative',
+                request_correlation_id=request_correlation_id,
+            )
             window_range = _serialize_window_range(window_payload)
             document_summary['ranges'].append(window_range)
             window_label = _build_window_label(document_name, window_range)
@@ -1004,6 +1047,11 @@ def run_document_analysis(
             last_error = ''
             max_attempts = targets.get('max_retries_per_window', DEFAULT_MAX_RETRIES_PER_WINDOW) + 1
             for attempt_number in range(1, max_attempts + 1):
+                raise_if_mixed_source_cancelled(
+                    cancel_requested,
+                    'narrative',
+                    request_correlation_id=request_correlation_id,
+                )
                 if attempt_number > 1:
                     coverage['retries'] += 1
 
@@ -1024,9 +1072,16 @@ def run_document_analysis(
                             'attempt_number': attempt_number,
                         },
                     ) or '').strip()
+                    raise_if_mixed_source_cancelled(
+                        cancel_requested,
+                        'narrative',
+                        request_correlation_id=request_correlation_id,
+                    )
                     if not analysis_text:
                         raise ValueError('The analysis runner returned an empty response.')
                     break
+                except MixedSourceCancellationError:
+                    raise
                 except Exception as exc:
                     last_error = str(exc)
                     debug_print(
@@ -1165,6 +1220,8 @@ def run_document_analysis(
                     document_summary.get('failed_ranges', []),
                     reduction_batch_size,
                     max_reduction_rounds,
+                    cancel_requested=cancel_requested,
+                    request_correlation_id=request_correlation_id,
                 )
 
             document_result_text = str(document_result.get('text', '') or '').strip()
@@ -1264,6 +1321,11 @@ def run_document_analysis(
             next_items = []
             batches = _build_reduction_batches(current_items, reduction_batch_size)
             for batch_index, batch_items in enumerate(batches, start=1):
+                raise_if_mixed_source_cancelled(
+                    cancel_requested,
+                    'narrative_reduction',
+                    request_correlation_id=request_correlation_id,
+                )
                 reduction_step_index = completed_reduction_steps + 1
                 reduction_progress_percent = 90
                 if reduction_step_total > 0:
@@ -1316,6 +1378,11 @@ def run_document_analysis(
                         'item_count': len(batch_items),
                     },
                 ) or '').strip()
+                raise_if_mixed_source_cancelled(
+                    cancel_requested,
+                    'narrative_reduction',
+                    request_correlation_id=request_correlation_id,
+                )
                 if not reduced_text:
                     debug_print(
                         '[DocumentAnalysis] Reduction failed | '
@@ -1350,6 +1417,11 @@ def run_document_analysis(
 
         final_analysis_reply = current_items[0].get('text', '').strip()
 
+    raise_if_mixed_source_cancelled(
+        cancel_requested,
+        'narrative_finalization',
+        request_correlation_id=request_correlation_id,
+    )
     _set_progress_meta(
         coverage,
         phase='completed',

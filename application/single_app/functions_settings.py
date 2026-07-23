@@ -215,6 +215,11 @@ def is_mixed_source_manifest_enabled(settings):
     return bool((settings or {}).get('enable_mixed_source_manifest', False))
 
 
+def is_mixed_source_development_telemetry_enabled(settings):
+    """Return whether aggregate-only mixed-source development telemetry is enabled."""
+    return bool((settings or {}).get('enable_mixed_source_development_telemetry', False))
+
+
 def is_mixed_source_chat_search_enabled(settings):
     """Return whether Phase 2 mixed-source Chat and Search behavior is enabled."""
     return bool((settings or {}).get('enable_mixed_source_chat_search', False))
@@ -811,6 +816,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_fact_memory_plugin': True,
         'enable_tabular_processing_plugin': False,
         'enable_multi_agent_orchestration': False,
+        'enable_mixed_source_development_telemetry': False,
         'enable_mixed_source_manifest': False,
         'enable_mixed_source_chat_search': False,
         'enable_mixed_source_relevance_candidates': False,

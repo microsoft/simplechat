@@ -2,10 +2,10 @@
 """
 Reusable tabular analysis helpers for chat and workflow execution.
 
-This module is the non-route import surface for tabular analysis behavior that
-is still implemented in route_backend_chats.py. Keeping workflow code pointed at
-this module lets the implementation move out of the chat route incrementally
-without changing workflow callers again.
+This module owns extracted tabular coordination helpers and provides the
+non-route import surface for behavior still implemented in
+route_backend_chats.py. Keeping workflow code pointed here lets the remaining
+implementation move incrementally without changing workflow callers again.
 """
 
 
@@ -16,7 +16,6 @@ def _load_chat_helper(helper_name):
         augment_tabular_invocations_with_related_document_evidence,
         build_tabular_computed_results_system_message,
         build_tabular_related_document_evidence_summary,
-        get_new_plugin_invocations,
         maybe_create_tabular_generated_output,
         run_tabular_analysis_with_thought_tracking,
     )
@@ -26,7 +25,6 @@ def _load_chat_helper(helper_name):
         'augment_tabular_invocations_with_related_document_evidence': augment_tabular_invocations_with_related_document_evidence,
         'build_tabular_computed_results_system_message': build_tabular_computed_results_system_message,
         'build_tabular_related_document_evidence_summary': build_tabular_related_document_evidence_summary,
-        'get_new_plugin_invocations': get_new_plugin_invocations,
         'maybe_create_tabular_generated_output': maybe_create_tabular_generated_output,
         'run_tabular_analysis_with_thought_tracking': run_tabular_analysis_with_thought_tracking,
     }
@@ -49,8 +47,18 @@ def build_tabular_related_document_evidence_summary(*args, **kwargs):
     return _load_chat_helper('build_tabular_related_document_evidence_summary')(*args, **kwargs)
 
 
-def get_new_plugin_invocations(*args, **kwargs):
-    return _load_chat_helper('get_new_plugin_invocations')(*args, **kwargs)
+def get_new_plugin_invocations(invocations, baseline_count):
+    """Return only the plugin invocations created after the baseline count."""
+    if not invocations:
+        return []
+
+    if baseline_count <= 0:
+        return list(invocations)
+
+    if baseline_count >= len(invocations):
+        return []
+
+    return list(invocations[baseline_count:])
 
 
 async def maybe_create_tabular_generated_output(*args, **kwargs):

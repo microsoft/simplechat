@@ -1,7 +1,7 @@
 # test_document_action_token_usage_aggregation.py
 """
 Functional test for document action token usage aggregation.
-Version: 0.241.023
+Version: 0.250.070
 Implemented in: 0.241.116
 
 This test ensures analysis and comparison aggregate tokens across
@@ -11,6 +11,15 @@ all internal model calls and persist the aggregate usage on assistant metadata.
 import ast
 import os
 import uuid
+
+from pathlib import Path
+
+
+sys_path = str(Path(__file__).resolve().parents[1] / 'application' / 'single_app')
+if sys_path not in os.sys.path:
+    os.sys.path.insert(0, sys_path)
+
+import functions_mixed_source_orchestration as orchestration
 
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -119,12 +128,17 @@ def test_document_analysis_token_aggregation():
         extra_globals={
             'DOCUMENT_ACTION_TYPE_ANALYZE': 'analyze',
             'DOCUMENT_ACTION_CONTEXT_WORKFLOW': 'workflow',
+            'raise_if_mixed_source_cancelled': orchestration.raise_if_mixed_source_cancelled,
             'get_document_action_max_documents': lambda *args, **kwargs: 10,
+            '_is_per_document_analysis_mode': lambda action: False,
+            '_raise_legacy_mixed_source_analyze_limitation': lambda *args, **kwargs: None,
             '_chain_activity_callbacks': lambda *callbacks: None,
             '_build_document_action_activity_callback': lambda *args, **kwargs: None,
             '_maybe_execute_tabular_document_action': lambda *args, **kwargs: None,
             '_maybe_create_document_analysis_generated_artifacts': lambda *args, **kwargs: {'artifacts': [], 'assistant_reply': None},
+            '_reauthorize_mixed_source_workflow_result': lambda *args, **kwargs: None,
             '_resolve_model_workflow_client': lambda *args, **kwargs: (fake_client, 'gpt-5.4', 'aoai'),
+            '_build_workflow_chat_messages': lambda prompt, **kwargs: [{'role': 'user', 'content': prompt}],
             'run_document_analysis': lambda **kwargs: (
                 kwargs['invoke_prompt']('analysis window 1', stage='window_analysis'),
                 kwargs['invoke_prompt']('analysis window 2', stage='reduction'),
@@ -193,11 +207,17 @@ def test_document_comparison_token_aggregation():
         },
         extra_globals={
             'DOCUMENT_ACTION_TYPE_COMPARISON': 'comparison',
+            'raise_if_mixed_source_cancelled': orchestration.raise_if_mixed_source_cancelled,
+            'deduplicate_mixed_source_references': orchestration.deduplicate_mixed_source_references,
+            'is_cross_format_compare_enabled': lambda settings: False,
+            '_raise_legacy_cross_format_compare_limitation': lambda *args, **kwargs: None,
             '_chain_activity_callbacks': lambda *callbacks: None,
             '_build_document_action_activity_callback': lambda *args, **kwargs: None,
             '_maybe_execute_tabular_document_action': lambda *args, **kwargs: None,
             '_maybe_create_comparison_generated_artifacts': lambda *args, **kwargs: {'artifacts': [], 'assistant_reply': None},
+            '_reauthorize_mixed_source_workflow_result': lambda *args, **kwargs: None,
             '_resolve_model_workflow_client': lambda *args, **kwargs: (fake_client, 'gpt-5.4', 'aoai'),
+            '_build_workflow_chat_messages': lambda prompt, **kwargs: [{'role': 'user', 'content': prompt}],
             'run_document_comparison': lambda **kwargs: (
                 kwargs['invoke_prompt']('summary left', stage='summary'),
                 kwargs['invoke_prompt']('summary right', stage='summary'),
@@ -260,6 +280,8 @@ def test_workflow_assistant_persists_token_usage():
         extra_globals={
             '_utc_now_iso': lambda: '2025-01-01T00:00:00+00:00',
             '_get_document_action_config': lambda workflow: workflow.get('document_action', {}),
+            '_get_workflow_scope': lambda workflow: 'personal',
+            '_get_workflow_group_id': lambda workflow: '',
             '_persist_agent_citation_artifacts': lambda **kwargs: [],
             'cosmos_messages_container': message_container,
             'cosmos_conversations_container': conversation_container,
@@ -332,7 +354,7 @@ def test_version_update():
     with open(CONFIG_PATH, 'r', encoding='utf-8') as handle:
         content = handle.read()
 
-    assert_in('VERSION = "0.241.023"', content, 'config version update')
+    assert_in('VERSION = "0.250.070"', content, 'config version update')
     print('Version update passed.')
     return True
 

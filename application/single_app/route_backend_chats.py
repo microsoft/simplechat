@@ -38,14 +38,24 @@ from functions_model_endpoint_runtime import (
     build_semantic_kernel_chat_service_for_model,
 )
 from functions_mixed_source_orchestration import (
+    MixedSourceCancellationError,
+    MixedSourceFinalizationError,
+    build_failed_narrative_evidence_envelopes,
     build_mixed_source_evidence_handoff,
     build_narrative_evidence_envelopes,
     build_tabular_file_contexts_from_manifest,
+    compare_reauthorized_source_manifests,
+    emit_mixed_source_telemetry,
     execute_tabular_evidence_sources,
+    normalize_mixed_source_correlation_id,
     normalize_document_context_request,
     partition_source_manifest,
     resolve_authorized_source_manifest,
+    raise_if_mixed_source_cancelled,
     should_run_tabular_evidence,
+)
+from functions_tabular_analysis import (
+    get_new_plugin_invocations as _shared_get_new_plugin_invocations,
 )
 import builtins
 import asyncio, types
@@ -170,6 +180,7 @@ from functions_thoughts import ThoughtTracker
 from functions_tabular_csv_query import validate_tabular_csv_query_expression
 from functions_workflow_runner import _execute_document_action_workflow
 from functions_simplechat_operations import (
+    delete_generated_chat_artifact_for_current_user,
     derive_conversation_title_from_message,
     upload_chat_image_bytes_for_user,
     upload_generated_analysis_artifact_for_current_user,
@@ -295,6 +306,37 @@ def _safe_metadata_int(value):
         return 0
 
 
+def _merge_chat_token_usage(*token_summaries):
+    """Merge observed token summaries without estimating missing provider usage."""
+    merged = {
+        'prompt_tokens': 0,
+        'completion_tokens': 0,
+        'total_tokens': 0,
+        'request_count': 0,
+    }
+    has_usage = False
+    for token_summary in token_summaries:
+        if not isinstance(token_summary, dict):
+            continue
+        summary_has_usage = False
+        for key in ('prompt_tokens', 'completion_tokens', 'total_tokens'):
+            try:
+                value = max(0, int(token_summary.get(key) or 0))
+            except (TypeError, ValueError):
+                value = 0
+            merged[key] += value
+            summary_has_usage = summary_has_usage or bool(value)
+        try:
+            request_count = max(0, int(token_summary.get('request_count') or 0))
+        except (TypeError, ValueError):
+            request_count = 0
+        if not request_count and summary_has_usage:
+            request_count = 1
+        merged['request_count'] += request_count
+        has_usage = has_usage or summary_has_usage or bool(request_count)
+    return merged if has_usage else None
+
+
 def _normalize_capability_action(document_action_type):
     normalized_action_type = str(document_action_type or DOCUMENT_ACTION_TYPE_NONE).strip().lower()
     if normalized_action_type == DOCUMENT_ACTION_TYPE_ANALYZE:
@@ -377,6 +419,8 @@ def _resolve_chat_mixed_source_manifest(
     selection_mode,
     active_group_ids=None,
     active_public_workspace_ids=None,
+    cancel_requested=None,
+    request_correlation_id=None,
 ):
     """Resolve a fresh Phase 1 manifest for Phase 2 Chat evidence preparation."""
     if not is_mixed_source_chat_search_enabled(settings):
@@ -391,6 +435,8 @@ def _resolve_chat_mixed_source_manifest(
         conversation_id=conversation_id,
         active_group_ids=active_group_ids,
         active_public_workspace_ids=active_public_workspace_ids,
+        cancel_requested=cancel_requested,
+        request_correlation_id=request_correlation_id,
     )
 
 
@@ -411,6 +457,8 @@ def _resolve_chat_mixed_source_partition(
     selection_mode,
     active_group_ids=None,
     active_public_workspace_ids=None,
+    cancel_requested=None,
+    request_correlation_id=None,
 ):
     """Resolve and partition one current authorization-safe source manifest."""
     manifest = _resolve_chat_mixed_source_manifest(
@@ -421,6 +469,8 @@ def _resolve_chat_mixed_source_partition(
         selection_mode,
         active_group_ids=active_group_ids,
         active_public_workspace_ids=active_public_workspace_ids,
+        cancel_requested=cancel_requested,
+        request_correlation_id=request_correlation_id,
     )
     partitions = partition_source_manifest(manifest)
     return {
@@ -482,6 +532,117 @@ def _build_mixed_source_continuity_refs(manifest, evidence_envelopes, selection_
     return continuity_refs
 
 
+def _reauthorize_document_action_finalization(
+    normalized_action,
+    execution_result,
+    user_id,
+    conversation_id,
+    cancel_requested=None,
+    request_correlation_id=None,
+    settings=None,
+):
+    """Reauthorize every action source and exact version before publishing output."""
+    raise_if_mixed_source_cancelled(
+        cancel_requested,
+        'finalization',
+        request_correlation_id=request_correlation_id,
+    )
+    normalized_action = normalized_action if isinstance(normalized_action, dict) else {}
+    analysis_result = (
+        execution_result.get('analysis_result')
+        if isinstance(execution_result, dict)
+        and isinstance(execution_result.get('analysis_result'), dict)
+        else {}
+    )
+    execution_manifest = analysis_result.get('mixed_source_manifest')
+    requested_ids = [
+        str(document_id or '').strip()
+        for document_id in list(normalized_action.get('document_ids') or [])
+        if str(document_id or '').strip()
+    ]
+    if not requested_ids and isinstance(execution_manifest, list):
+        requested_ids = [
+            str(source.get('document_id') or '').strip()
+            for source in execution_manifest
+            if isinstance(source, dict) and str(source.get('document_id') or '').strip()
+        ]
+    if not requested_ids:
+        return
+
+    finalization_selection_mode = str(
+        normalized_action.get('target_mode') or 'selected'
+    ).strip().lower()
+    if finalization_selection_mode not in {'selected', 'all', 'history', 'relevance'}:
+        finalization_selection_mode = 'selected'
+    fresh_manifest = resolve_authorized_source_manifest(
+        requested_ids,
+        user_id=user_id,
+        selection_mode=finalization_selection_mode,
+        conversation_id=conversation_id,
+        active_group_ids=normalized_action.get('active_group_ids'),
+        active_public_workspace_ids=normalized_action.get('active_public_workspace_id'),
+        doc_scope=normalized_action.get('doc_scope', 'all'),
+        cancel_requested=cancel_requested,
+        request_correlation_id=request_correlation_id,
+    )
+    if isinstance(execution_manifest, list):
+        _validate_reauthorized_manifest_finalization(
+            execution_manifest,
+            fresh_manifest,
+            settings=settings,
+            mode=(
+                'compare'
+                if normalized_action.get('type') == DOCUMENT_ACTION_TYPE_COMPARISON
+                else 'analyze'
+            ),
+            request_correlation_id=request_correlation_id,
+        )
+    elif len(fresh_manifest) != len(requested_ids) or any(
+        source.get('authorization_status') != 'authorized'
+        for source in fresh_manifest
+    ):
+        raise PermissionError('One or more selected sources are no longer available.')
+
+
+def _validate_reauthorized_manifest_finalization(
+    execution_manifest,
+    fresh_manifest,
+    settings=None,
+    mode='chat',
+    request_correlation_id=None,
+):
+    """Require every previously authorized source to retain identity and version."""
+    finalization_result = compare_reauthorized_source_manifests(
+        execution_manifest,
+        fresh_manifest,
+    )
+    authorization_failure_count = finalization_result['authorization_failure_count']
+    source_version_changed_count = finalization_result['source_version_changed_count']
+
+    if authorization_failure_count:
+        emit_mixed_source_telemetry(
+            settings,
+            'authorization_failure',
+            mode,
+            request_correlation_id=request_correlation_id,
+            metrics={
+                'authorization_failure_count': authorization_failure_count,
+            },
+            dimensions={'outcome_status': 'failed'},
+        )
+        raise MixedSourceFinalizationError('authorization_lost')
+    if source_version_changed_count:
+        log_event(
+            '[MixedSourceLifecycle] Finalization source version changed.',
+            extra={
+                'request_correlation_id': request_correlation_id,
+                'source_version_changed_count': source_version_changed_count,
+            },
+            level=logging.WARNING,
+        )
+        raise MixedSourceFinalizationError('source_version_changed')
+
+
 def _build_reauthorized_continuity_decision(prior_refs, manifest, explicit_selection):
     """Describe a fresh manifest decision without treating persisted refs as authority."""
     if explicit_selection:
@@ -501,6 +662,7 @@ def _build_reauthorized_continuity_decision(prior_refs, manifest, explicit_selec
     }
     unavailable_source_count = 0
     source_version_changed_count = 0
+    incomplete_prior_source_count = 0
     reauthorized_source_count = 0
     for source in list(manifest or []):
         document_id = str((source or {}).get('document_id') or '').strip()
@@ -511,6 +673,19 @@ def _build_reauthorized_continuity_decision(prior_refs, manifest, explicit_selec
             unavailable_source_count += 1
             continue
         reauthorized_source_count += 1
+        prior_status = str(prior_ref.get('status') or '').strip().lower()
+        prior_coverage = (
+            prior_ref.get('coverage')
+            if isinstance(prior_ref.get('coverage'), dict)
+            else {}
+        )
+        if (
+            prior_status not in {'completed'}
+            or prior_coverage.get('partial_coverage')
+            or prior_coverage.get('failed')
+            or prior_coverage.get('evidence_envelope_truncated')
+        ):
+            incomplete_prior_source_count += 1
         prior_version = prior_ref.get('source_version')
         current_version = source.get('source_version')
         if prior_version is not None and current_version is not None and str(prior_version) != str(current_version):
@@ -522,10 +697,66 @@ def _build_reauthorized_continuity_decision(prior_refs, manifest, explicit_selec
         'reauthorized_source_count': reauthorized_source_count,
         'unavailable_source_count': unavailable_source_count,
         'source_version_changed_count': source_version_changed_count,
+        'incomplete_prior_source_count': incomplete_prior_source_count,
         'requires_native_execution': bool(
-            unavailable_source_count or source_version_changed_count
+            unavailable_source_count
+            or source_version_changed_count
+            or incomplete_prior_source_count
         ),
     }
+
+
+def _resolve_reauthorized_continuity_decision(
+    settings,
+    user_id,
+    conversation_id,
+    prior_refs,
+    request_correlation_id=None,
+):
+    """Resolve persisted continuity hints through a fresh authorized manifest."""
+    if not is_mixed_source_conversation_continuity_enabled(settings):
+        return None
+    requested_document_ids = [
+        str(ref.get('document_id') or '').strip()
+        for ref in list(prior_refs or [])
+        if isinstance(ref, dict) and str(ref.get('document_id') or '').strip()
+    ]
+    if not requested_document_ids:
+        return None
+
+    search_parameters = build_prior_grounded_document_search_parameters(prior_refs)
+    search_parameters = revalidate_prior_grounded_document_search_parameters(
+        user_id,
+        search_parameters,
+    )
+    manifest = _resolve_chat_mixed_source_manifest(
+        settings,
+        user_id,
+        conversation_id,
+        requested_document_ids,
+        'history',
+        active_group_ids=search_parameters.get('active_group_ids'),
+        active_public_workspace_ids=search_parameters.get('active_public_workspace_ids'),
+        request_correlation_id=request_correlation_id,
+    )
+    return _build_reauthorized_continuity_decision(
+        prior_refs,
+        manifest,
+        explicit_selection=False,
+    )
+
+
+def _can_reuse_prior_grounded_history(history_assessment, continuity_decision):
+    """Return whether existing history is complete enough to avoid fresh native evidence."""
+    if (
+        isinstance(continuity_decision, dict)
+        and continuity_decision.get('requires_native_execution')
+    ):
+        return False
+    return bool(
+        isinstance(history_assessment, dict)
+        and history_assessment.get('can_answer_from_history')
+    )
 
 
 def _resolve_chat_mixed_source_relevance_context(
@@ -540,6 +771,8 @@ def _resolve_chat_mixed_source_relevance_context(
     tags_filter=None,
     active_group_ids=None,
     active_public_workspace_ids=None,
+    cancel_requested=None,
+    request_correlation_id=None,
 ):
     """Add bounded schema candidates and reauthorize all relevance-derived sources."""
     if not is_mixed_source_chat_search_enabled(settings):
@@ -594,6 +827,8 @@ def _resolve_chat_mixed_source_relevance_context(
         'relevance',
         active_group_ids=active_group_ids,
         active_public_workspace_ids=active_public_workspace_ids,
+        cancel_requested=cancel_requested,
+        request_correlation_id=request_correlation_id,
     )
     narrative_document_id_set = set(
         resolved_context.get('narrative_document_ids') or []
@@ -1435,6 +1670,124 @@ def _strip_agent_citation_artifact_refs(agent_citations):
     return compact_citations
 
 
+def _rollback_agent_citation_artifacts(conversation_id, compact_citations):
+    """Remove current-message citation artifacts and chunks after aborted publication."""
+    normalized_conversation_id = str(conversation_id or '').strip()
+    artifact_ids = []
+    for citation in list(compact_citations or []):
+        if not isinstance(citation, dict):
+            continue
+        artifact_id = str(citation.get('artifact_id') or '').strip()
+        if artifact_id and artifact_id not in artifact_ids:
+            artifact_ids.append(artifact_id)
+
+    deleted_artifact_count = 0
+    rollback_failure_count = 0
+    for artifact_id in artifact_ids:
+        try:
+            chunk_documents = list(cosmos_messages_container.query_items(
+                query='SELECT c.id FROM c WHERE c.parent_message_id = @parent_message_id',
+                parameters=[{'name': '@parent_message_id', 'value': artifact_id}],
+                partition_key=normalized_conversation_id,
+            ))
+            for chunk_document in chunk_documents:
+                chunk_id = str((chunk_document or {}).get('id') or '').strip()
+                if chunk_id:
+                    cosmos_messages_container.delete_item(
+                        item=chunk_id,
+                        partition_key=normalized_conversation_id,
+                    )
+            cosmos_messages_container.delete_item(
+                item=artifact_id,
+                partition_key=normalized_conversation_id,
+            )
+            deleted_artifact_count += 1
+        except Exception:
+            rollback_failure_count += 1
+
+    if artifact_ids:
+        log_event(
+            '[MixedSourceLifecycle] Citation artifact rollback completed.',
+            extra={
+                'citation_artifact_count': len(artifact_ids),
+                'deleted_artifact_count': deleted_artifact_count,
+                'rollback_failure_count': rollback_failure_count,
+            },
+            level=logging.INFO if not rollback_failure_count else logging.WARNING,
+        )
+    return {
+        'deleted_artifact_count': deleted_artifact_count,
+        'rollback_failure_count': rollback_failure_count,
+    }
+
+
+def _rollback_mixed_source_chat_publication(
+    user_id,
+    conversation_id,
+    generated_outputs=None,
+    compact_citations=None,
+):
+    """Cancel queued exports and remove artifacts created before mixed publication stopped."""
+    normalized_user_id = str(user_id or '').strip()
+    normalized_conversation_id = str(conversation_id or '').strip()
+    export_run_ids = []
+    artifact_message_ids = []
+    for output in list(generated_outputs or []):
+        if not isinstance(output, dict):
+            continue
+        export_run_id = str(output.get('export_run_id') or '').strip()
+        artifact_message_id = str(output.get('artifact_message_id') or '').strip()
+        if export_run_id and export_run_id not in export_run_ids:
+            export_run_ids.append(export_run_id)
+        if artifact_message_id and artifact_message_id not in artifact_message_ids:
+            artifact_message_ids.append(artifact_message_id)
+
+    canceled_export_count = 0
+    deleted_generated_artifact_count = 0
+    rollback_failure_count = 0
+    for export_run_id in export_run_ids:
+        try:
+            cancel_result = cancel_tabular_generated_output_run(
+                normalized_user_id,
+                export_run_id,
+            )
+            if isinstance(cancel_result, dict) and cancel_result.get('canceled'):
+                canceled_export_count += 1
+        except Exception:
+            rollback_failure_count += 1
+    for artifact_message_id in artifact_message_ids:
+        try:
+            if delete_generated_chat_artifact_for_current_user(
+                normalized_conversation_id,
+                artifact_message_id,
+            ):
+                deleted_generated_artifact_count += 1
+        except Exception:
+            rollback_failure_count += 1
+
+    citation_rollback = _rollback_agent_citation_artifacts(
+        normalized_conversation_id,
+        compact_citations,
+    )
+    rollback_failure_count += citation_rollback.get('rollback_failure_count', 0)
+    log_event(
+        '[MixedSourceLifecycle] Chat publication rollback completed.',
+        extra={
+            'canceled_export_count': canceled_export_count,
+            'deleted_generated_artifact_count': deleted_generated_artifact_count,
+            'deleted_citation_artifact_count': citation_rollback.get('deleted_artifact_count', 0),
+            'rollback_failure_count': rollback_failure_count,
+        },
+        level=logging.INFO if not rollback_failure_count else logging.WARNING,
+    )
+    return {
+        'canceled_export_count': canceled_export_count,
+        'deleted_generated_artifact_count': deleted_generated_artifact_count,
+        'deleted_citation_artifact_count': citation_rollback.get('deleted_artifact_count', 0),
+        'rollback_failure_count': rollback_failure_count,
+    }
+
+
 FACT_MEMORY_TYPE_FACT = 'fact'
 FACT_MEMORY_TYPE_INSTRUCTION = 'instruction'
 FACT_MEMORY_TYPE_LEGACY_DESCRIBER = 'describer'
@@ -1713,8 +2066,15 @@ def maybe_create_assistant_table_generated_output(
     assistant_content,
     conversation_id,
     existing_outputs=None,
+    cancel_requested=None,
+    request_correlation_id=None,
 ):
     """Save a CSV artifact when a table-request answer contains a parseable table."""
+    raise_if_mixed_source_cancelled(
+        cancel_requested,
+        'artifact_publication',
+        request_correlation_id=request_correlation_id,
+    )
     if _has_generated_tabular_csv_output(existing_outputs):
         return None
 
@@ -1750,7 +2110,22 @@ def maybe_create_assistant_table_generated_output(
                 settings=settings,
                 passthrough_input_rows=True,
             )
-            return build_background_tabular_generated_output_metadata(background_run)
+            background_metadata = build_background_tabular_generated_output_metadata(background_run)
+            try:
+                raise_if_mixed_source_cancelled(
+                    cancel_requested,
+                    'export',
+                    request_correlation_id=request_correlation_id,
+                )
+            except MixedSourceCancellationError:
+                cancel_tabular_generated_output_run(
+                    get_current_user_id(),
+                    background_metadata.get('export_run_id'),
+                )
+                raise
+            return background_metadata
+        except MixedSourceCancellationError:
+            raise
         except Exception as exc:
             log_event(
                 '[Assistant Table Export] Failed to queue large CSV export',
@@ -1766,6 +2141,11 @@ def maybe_create_assistant_table_generated_output(
             return None
 
     try:
+        raise_if_mixed_source_cancelled(
+            cancel_requested,
+            'artifact_publication',
+            request_correlation_id=request_correlation_id,
+        )
         upload_result = upload_generated_analysis_artifact_for_current_user(
             conversation_id=conversation_id,
             file_name=generated_file_name,
@@ -1774,6 +2154,20 @@ def maybe_create_assistant_table_generated_output(
             output_format='csv',
             summary=export_payload.get('summary'),
         )
+        try:
+            raise_if_mixed_source_cancelled(
+                cancel_requested,
+                'artifact_publication',
+                request_correlation_id=request_correlation_id,
+            )
+        except MixedSourceCancellationError:
+            delete_generated_chat_artifact_for_current_user(
+                conversation_id,
+                (upload_result.get('message') or {}).get('id'),
+            )
+            raise
+    except MixedSourceCancellationError:
+        raise
     except Exception as exc:
         log_event(
             '[Assistant Table Export] Failed to save assistant table CSV artifact',
@@ -2971,6 +3365,8 @@ def persist_agent_citation_artifacts(
     agent_citations,
     created_timestamp,
     user_info=None,
+    cancel_requested=None,
+    request_correlation_id=None,
 ):
     """Persist raw agent citation payloads outside the primary assistant message doc."""
     if not agent_citations:
@@ -2984,10 +3380,43 @@ def persist_agent_citation_artifacts(
         user_info=user_info,
     )
 
+    persisted_artifact_ids = []
     try:
+        raise_if_mixed_source_cancelled(
+            cancel_requested,
+            'artifact_publication',
+            request_correlation_id=request_correlation_id,
+        )
         for artifact_doc in artifact_docs:
+            raise_if_mixed_source_cancelled(
+                cancel_requested,
+                'artifact_publication',
+                request_correlation_id=request_correlation_id,
+            )
             cosmos_messages_container.upsert_item(artifact_doc)
+            artifact_id = str(artifact_doc.get('id') or '').strip()
+            if artifact_id:
+                persisted_artifact_ids.append(artifact_id)
+        raise_if_mixed_source_cancelled(
+            cancel_requested,
+            'artifact_publication',
+            request_correlation_id=request_correlation_id,
+        )
         return compact_citations
+    except MixedSourceCancellationError:
+        for artifact_id in reversed(persisted_artifact_ids):
+            try:
+                cosmos_messages_container.delete_item(
+                    item=artifact_id,
+                    partition_key=conversation_id,
+                )
+            except Exception:
+                log_event(
+                    '[Agent Citations] Citation rollback after cancellation failed.',
+                    extra={'citation_artifact_rollback_failure_count': 1},
+                    level=logging.WARNING,
+                )
+        raise
     except Exception as exc:
         log_event(
             f"[Agent Citations] Failed to persist assistant artifacts: {exc}",
@@ -5138,6 +5567,7 @@ async def _generate_tabular_structured_output_entries(
     user_id=None,
     conversation_id=None,
     model_context=None,
+    token_usage_callback=None,
 ):
     from semantic_kernel.contents.chat_history import ChatHistory as SKChatHistory
 
@@ -5310,6 +5740,11 @@ async def _generate_tabular_structured_output_entries(
 
             execution_settings = AzureChatPromptExecutionSettings(service_id='tabular-generated-output')
             result = await chat_service.get_chat_message_contents(chat_history, execution_settings)
+            if result:
+                _publish_tabular_response_token_usage(
+                    result[0],
+                    token_usage_callback,
+                )
             raw_response_content = result[0].content if result and result[0].content else ''
             if result and result[0].content:
                 parsed_entries = _parse_tabular_generated_json_entries(raw_response_content)
@@ -5389,8 +5824,16 @@ async def maybe_create_tabular_generated_output(
     thought_callback=None,
     user_id=None,
     model_context=None,
+    cancel_requested=None,
+    request_correlation_id=None,
+    token_usage_callback=None,
 ):
     """Build, upload, and describe a generated tabular JSON/CSV export when requested."""
+    raise_if_mixed_source_cancelled(
+        cancel_requested,
+        'export',
+        request_correlation_id=request_correlation_id,
+    )
     if not question_requests_tabular_generated_output(user_question):
         return None
 
@@ -5494,6 +5937,11 @@ async def maybe_create_tabular_generated_output(
         and not exceeds_background_threshold
     )
     if should_queue_materialized_pages:
+        raise_if_mixed_source_cancelled(
+            cancel_requested,
+            'export',
+            request_correlation_id=request_correlation_id,
+        )
         background_run = queue_tabular_generated_output_run(
             user_id=user_id,
             conversation_id=conversation_id,
@@ -5506,6 +5954,18 @@ async def maybe_create_tabular_generated_output(
             model_context=model_context,
         )
         background_metadata = build_background_tabular_generated_output_metadata(background_run)
+        try:
+            raise_if_mixed_source_cancelled(
+                cancel_requested,
+                'export',
+                request_correlation_id=request_correlation_id,
+            )
+        except MixedSourceCancellationError:
+            cancel_tabular_generated_output_run(
+                user_id,
+                background_metadata.get('export_run_id'),
+            )
+            raise
         await emit_tabular_post_processing_thought(
             thought_callback,
             f"Queued exhaustive {str(output_format or 'json').upper()} export from validated tabular pages",
@@ -5536,6 +5996,11 @@ async def maybe_create_tabular_generated_output(
     )
     if should_queue_source_backed_run:
         try:
+            raise_if_mixed_source_cancelled(
+                cancel_requested,
+                'export',
+                request_correlation_id=request_correlation_id,
+            )
             background_run = queue_tabular_generated_output_run(
                 user_id=user_id,
                 conversation_id=conversation_id,
@@ -5548,6 +6013,8 @@ async def maybe_create_tabular_generated_output(
                 model_context=model_context,
                 source_descriptor=source_descriptor,
             )
+        except MixedSourceCancellationError:
+            raise
         except Exception as exc:
             log_event(
                 '[Tabular Generated Output] Durable source-backed export queueing failed',
@@ -5566,6 +6033,18 @@ async def maybe_create_tabular_generated_output(
                 'The exhaustive export could not be queued. No partial CSV was created.',
             )
         background_metadata = build_background_tabular_generated_output_metadata(background_run)
+        try:
+            raise_if_mixed_source_cancelled(
+                cancel_requested,
+                'export',
+                request_correlation_id=request_correlation_id,
+            )
+        except MixedSourceCancellationError:
+            cancel_tabular_generated_output_run(
+                user_id,
+                background_metadata.get('export_run_id'),
+            )
+            raise
         await emit_tabular_post_processing_thought(
             thought_callback,
             f"Queued exhaustive {str(output_format or 'json').upper()} export from the authorized source query",
@@ -5623,6 +6102,11 @@ async def maybe_create_tabular_generated_output(
         return None
 
     if question_requests_tabular_structured_object_output(user_question):
+        raise_if_mixed_source_cancelled(
+            cancel_requested,
+            'export',
+            request_correlation_id=request_correlation_id,
+        )
         output_entries = await _generate_tabular_structured_output_entries(
             user_question,
             source_candidate,
@@ -5633,6 +6117,11 @@ async def maybe_create_tabular_generated_output(
             user_id=user_id,
             conversation_id=conversation_id,
             model_context=model_context,
+        )
+        raise_if_mixed_source_cancelled(
+            cancel_requested,
+            'export',
+            request_correlation_id=request_correlation_id,
         )
         if output_entries is None:
             return _build_failed_tabular_generated_output_metadata(
@@ -5690,6 +6179,18 @@ async def maybe_create_tabular_generated_output(
             'in this chat as a downloadable export.'
         ),
     )
+    try:
+        raise_if_mixed_source_cancelled(
+            cancel_requested,
+            'artifact_publication',
+            request_correlation_id=request_correlation_id,
+        )
+    except MixedSourceCancellationError:
+        delete_generated_chat_artifact_for_current_user(
+            conversation_id,
+            (upload_result.get('message') or {}).get('id'),
+        )
+        raise
 
     preview_rows = output_entries[:TABULAR_GENERATED_OUTPUT_PREVIEW_ROWS]
     uploaded_file_name = upload_result.get('message', {}).get('file_name') or generated_file_name
@@ -6589,17 +7090,8 @@ CHAT_STREAM_REGISTRY = ActiveConversationStreamRegistry()
 
 
 def get_new_plugin_invocations(invocations, baseline_count):
-    """Return only the plugin invocations created after the baseline count."""
-    if not invocations:
-        return []
-
-    if baseline_count <= 0:
-        return list(invocations)
-
-    if baseline_count >= len(invocations):
-        return []
-
-    return list(invocations[baseline_count:])
+    """Compatibility shim for existing chat-route imports and call sites."""
+    return _shared_get_new_plugin_invocations(invocations, baseline_count)
 
 
 def split_tabular_plugin_invocations(invocations):
@@ -8427,6 +8919,42 @@ def derive_tabular_follow_up_calls_from_invocations(user_question, invocations):
     return follow_up_calls[:2]
 
 
+def _extract_tabular_response_token_usage(response):
+    """Return observed token usage from a Semantic Kernel response metadata payload."""
+    metadata = getattr(response, 'metadata', None)
+    metadata = metadata if isinstance(metadata, dict) else {}
+    usage = metadata.get('usage') or metadata.get('token_usage')
+    usage = usage if isinstance(usage, dict) else {}
+
+    def as_nonnegative_int(value):
+        try:
+            return max(0, int(value or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    prompt_tokens = as_nonnegative_int(usage.get('prompt_tokens'))
+    completion_tokens = as_nonnegative_int(usage.get('completion_tokens'))
+    total_tokens = as_nonnegative_int(usage.get('total_tokens'))
+    if not total_tokens and (prompt_tokens or completion_tokens):
+        total_tokens = prompt_tokens + completion_tokens
+    if not any((prompt_tokens, completion_tokens, total_tokens)):
+        return None
+    return {
+        'prompt_tokens': prompt_tokens,
+        'completion_tokens': completion_tokens,
+        'total_tokens': total_tokens,
+        'request_count': 1,
+    }
+
+
+def _publish_tabular_response_token_usage(response, token_usage_callback=None):
+    """Publish observed native model usage without changing existing return contracts."""
+    token_usage = _extract_tabular_response_token_usage(response)
+    if token_usage and callable(token_usage_callback):
+        token_usage_callback(token_usage)
+    return token_usage
+
+
 async def maybe_recover_tabular_analysis_with_llm_reviewer(chat_service, kernel,
                                                            tabular_plugin, plugin_logger,
                                                            user_question, schema_context,
@@ -8443,7 +8971,8 @@ async def maybe_recover_tabular_analysis_with_llm_reviewer(chat_service, kernel,
                                                            discovery_feedback_messages=None,
                                                            fallback_source_hint='workspace',
                                                            fallback_group_id=None,
-                                                           fallback_public_workspace_id=None):
+                                                           fallback_public_workspace_id=None,
+                                                           token_usage_callback=None):
     """Use an LLM reviewer to choose analytical tool calls when the main SK loop stalls."""
     reviewer_allowed_function_names = [
         function_name for function_name in (allowed_function_names or [])
@@ -8529,6 +9058,10 @@ async def maybe_recover_tabular_analysis_with_llm_reviewer(chat_service, kernel,
 
     reviewer_text = ''
     if reviewer_result and reviewer_result[0].content:
+        _publish_tabular_response_token_usage(
+            reviewer_result[0],
+            token_usage_callback,
+        )
         reviewer_text = reviewer_result[0].content.strip()
 
     reviewer_calls = parse_tabular_reviewer_plan(reviewer_text)
@@ -9747,7 +10280,8 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                                    execution_mode='analysis',
                                    tabular_file_contexts=None,
                                    thought_callback=None,
-                                   model_context=None):
+                                   model_context=None,
+                                   token_usage_callback=None):
     """Run lightweight SK with tabular analysis and attachment follow-up support.
 
     Creates a temporary Kernel with TabularProcessingPlugin plus document-search
@@ -10438,6 +10972,11 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 result = await chat_service.get_chat_message_contents(
                     chat_history, execution_settings, kernel=kernel
                 )
+                if result:
+                    _publish_tabular_response_token_usage(
+                        result[0],
+                        token_usage_callback,
+                    )
             except Exception as exc:
                 synthesis_exception = exc
                 log_event(
@@ -10782,6 +11321,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 fallback_source_hint=source_hint,
                 fallback_group_id=group_id,
                 fallback_public_workspace_id=public_workspace_id,
+                token_usage_callback=token_usage_callback,
             )
             if reviewer_recovery and reviewer_recovery.get('fallback'):
                 return reviewer_recovery['fallback']
@@ -10867,6 +11407,8 @@ def _execute_mixed_source_tabular_evidence(
     thought_tracker=None,
     live_thought_callback=None,
     model_context=None,
+    cancel_requested=None,
+    request_correlation_id=None,
 ):
     """Run the existing tabular engine once per manifest source with terminal coverage."""
     source_contexts = build_tabular_file_contexts_from_manifest(tabular_sources)
@@ -10891,6 +11433,21 @@ def _execute_mixed_source_tabular_evidence(
     agent_citations = []
     generated_outputs = []
     all_invocations = []
+    token_usage = {
+        'prompt_tokens': 0,
+        'completion_tokens': 0,
+        'total_tokens': 0,
+        'request_count': 0,
+    }
+
+    def record_token_usage(usage):
+        if not isinstance(usage, dict):
+            return
+        for key in ('prompt_tokens', 'completion_tokens', 'total_tokens', 'request_count'):
+            try:
+                token_usage[key] += max(0, int(usage.get(key) or 0))
+            except (TypeError, ValueError):
+                continue
     if not is_tabular_processing_enabled(settings):
         def fail_unavailable_tabular_source(source):
             del source
@@ -10901,12 +11458,15 @@ def _execute_mixed_source_tabular_evidence(
                 tabular_sources,
                 fail_unavailable_tabular_source,
                 selection_mode,
+                cancel_requested=cancel_requested,
+                request_correlation_id=request_correlation_id,
             ),
             'system_messages': [],
             'agent_citations': [],
             'generated_outputs': [],
             'invocations': [],
             'executed': False,
+            'token_usage': None,
         }
 
     execute_tabular = should_run_tabular_evidence(
@@ -10961,6 +11521,7 @@ def _execute_mixed_source_tabular_evidence(
                 thought_tracker=thought_tracker,
                 live_thought_callback=live_thought_callback,
                 model_context=model_context,
+                token_usage_callback=record_token_usage,
             )
         )
         if not str(tabular_analysis or '').strip():
@@ -11030,6 +11591,9 @@ def _execute_mixed_source_tabular_evidence(
             thought_callback=publish_post_processing_thought,
             user_id=user_id,
             model_context=model_context,
+            cancel_requested=cancel_requested,
+            request_correlation_id=request_correlation_id,
+            token_usage_callback=record_token_usage,
         ))
         if generated_output:
             generated_outputs.append(generated_output)
@@ -11076,6 +11640,8 @@ def _execute_mixed_source_tabular_evidence(
         execute_source,
         selection_mode,
         execute=execute_tabular,
+        cancel_requested=cancel_requested,
+        request_correlation_id=request_correlation_id,
     )
     return {
         'evidence_envelopes': evidence_envelopes,
@@ -11084,6 +11650,7 @@ def _execute_mixed_source_tabular_evidence(
         'generated_outputs': generated_outputs,
         'invocations': all_invocations,
         'executed': execute_tabular,
+        'token_usage': token_usage if token_usage['request_count'] else None,
     }
 
 
@@ -11573,7 +12140,8 @@ async def run_tabular_analysis_with_multi_file_support(user_question, tabular_fi
                                                        execution_mode='analysis',
                                                        tabular_file_contexts=None,
                                                        thought_callback=None,
-                                                       model_context=None):
+                                                       model_context=None,
+                                                       token_usage_callback=None):
     """Run deterministic multi-file helpers first, then fall back to the SK planner."""
     analysis_file_contexts = normalize_tabular_file_contexts_for_analysis(
         tabular_filenames=tabular_filenames,
@@ -11620,6 +12188,7 @@ async def run_tabular_analysis_with_multi_file_support(user_question, tabular_fi
         execution_mode=execution_mode,
         thought_callback=thought_callback,
         model_context=model_context,
+        token_usage_callback=token_usage_callback,
     )
 
 
@@ -11631,7 +12200,8 @@ async def run_tabular_analysis_with_thought_tracking(user_question, tabular_file
                                                      tabular_file_contexts=None,
                                                      thought_tracker=None,
                                                      live_thought_callback=None,
-                                                     model_context=None):
+                                                     model_context=None,
+                                                     token_usage_callback=None):
     """Run tabular analysis while streaming/persisting live tool thoughts when available."""
     plugin_logger = get_plugin_logger()
     callback_key = None
@@ -11690,6 +12260,7 @@ async def run_tabular_analysis_with_thought_tracking(user_question, tabular_file
             execution_mode=execution_mode,
             thought_callback=tabular_progress_callback,
             model_context=model_context,
+            token_usage_callback=token_usage_callback,
         )
 
         if callable(tabular_progress_callback):
@@ -12796,8 +13367,17 @@ def register_route_backend_chats(bp):
         invalidate_conversation_cache_for_item(conversation_item, reason="conversation_created")
         return conversation_item
 
-    def execute_document_action_chat_request(data=None, publish_background_event=None, forced_action_type=None):
+    def execute_document_action_chat_request(
+        data=None,
+        publish_background_event=None,
+        forced_action_type=None,
+        cancel_requested=None,
+        request_correlation_id=None,
+    ):
         settings = get_settings()
+        request_correlation_id = normalize_mixed_source_correlation_id(
+            request_correlation_id
+        )
         data = data if isinstance(data, dict) else (request.get_json() or {})
         user_id = get_current_user_id()
         if not user_id:
@@ -13169,7 +13749,22 @@ def register_route_backend_chats(bp):
                 run_id=assistant_message_id,
                 thought_tracker=thought_tracker,
                 external_activity_callback=stream_activity_callback,
+                cancel_requested=cancel_requested,
+                request_correlation_id=request_correlation_id,
             )
+        except MixedSourceCancellationError as exc:
+            if thought_tracker.enabled:
+                thought_tracker.add_thought(
+                    'cancellation',
+                    'Document action canceled before final output publication',
+                    detail=f'phase={exc.phase}',
+                )
+            return {
+                'canceled': True,
+                'conversation_id': conversation_id,
+                'user_message_id': user_message_id,
+                'request_correlation_id': request_correlation_id,
+            }, 409
         except Exception as exc:
             debug_print(
                 '[ChatDocumentAction] Execution failed | '
@@ -13191,29 +13786,121 @@ def register_route_backend_chats(bp):
             )
             return {'error': str(exc), 'conversation_id': conversation_id, 'user_message_id': user_message_id}, 500
 
+        try:
+            _reauthorize_document_action_finalization(
+                normalized_action,
+                execution_result,
+                user_id,
+                conversation_id,
+                cancel_requested=cancel_requested,
+                request_correlation_id=request_correlation_id,
+                settings=settings,
+            )
+        except MixedSourceCancellationError as exc:
+            if thought_tracker.enabled:
+                thought_tracker.add_thought(
+                    'cancellation',
+                    'Document action canceled before final output publication',
+                    detail=f'phase={exc.phase}',
+                )
+            return {
+                'canceled': True,
+                'conversation_id': conversation_id,
+                'user_message_id': user_message_id,
+                'request_correlation_id': request_correlation_id,
+            }, 409
+        except PermissionError as exc:
+            return {
+                'error': str(exc),
+                'conversation_id': conversation_id,
+                'user_message_id': user_message_id,
+            }, 403
+        except RuntimeError as exc:
+            return {
+                'error': str(exc),
+                'conversation_id': conversation_id,
+                'user_message_id': user_message_id,
+            }, 409
+
         assistant_timestamp = datetime.utcnow().isoformat()
         hybrid_citations_list = _build_document_action_hybrid_citations(execution_result)
         if assigned_knowledge_context_citations:
             hybrid_citations_list.extend(assigned_knowledge_context_citations)
             hybrid_citations_list.sort(key=_build_hybrid_citation_sort_key, reverse=True)
-        prepared_agent_citations = persist_agent_citation_artifacts(
-            conversation_id=conversation_id,
-            assistant_message_id=assistant_message_id,
-            agent_citations=execution_result.get('agent_citations') or [],
-            created_timestamp=assistant_timestamp,
-            user_info=response_message_context.get('user_info'),
-        )
+        prepared_agent_citations = []
         document_generated_analysis_artifacts = list(execution_result.get('generated_analysis_artifacts') or [])
         document_generated_tabular_outputs = list(execution_result.get('generated_tabular_outputs') or [])
-        assistant_table_generated_output = maybe_create_assistant_table_generated_output(
-            user_question=user_message,
-            assistant_content=execution_result.get('reply', ''),
-            conversation_id=conversation_id,
-            existing_outputs=document_generated_analysis_artifacts + document_generated_tabular_outputs,
-        )
-        if assistant_table_generated_output:
-            document_generated_analysis_artifacts.append(assistant_table_generated_output)
-            document_generated_tabular_outputs.append(assistant_table_generated_output)
+        try:
+            raise_if_mixed_source_cancelled(
+                cancel_requested,
+                'artifact_publication',
+                request_correlation_id=request_correlation_id,
+            )
+            prepared_agent_citations = persist_agent_citation_artifacts(
+                conversation_id=conversation_id,
+                assistant_message_id=assistant_message_id,
+                agent_citations=execution_result.get('agent_citations') or [],
+                created_timestamp=assistant_timestamp,
+                user_info=response_message_context.get('user_info'),
+                cancel_requested=cancel_requested,
+                request_correlation_id=request_correlation_id,
+            )
+            raise_if_mixed_source_cancelled(
+                cancel_requested,
+                'artifact_publication',
+                request_correlation_id=request_correlation_id,
+            )
+            assistant_table_generated_output = maybe_create_assistant_table_generated_output(
+                user_question=user_message,
+                assistant_content=execution_result.get('reply', ''),
+                conversation_id=conversation_id,
+                existing_outputs=document_generated_analysis_artifacts + document_generated_tabular_outputs,
+                cancel_requested=cancel_requested,
+                request_correlation_id=request_correlation_id,
+            )
+            if assistant_table_generated_output:
+                document_generated_analysis_artifacts.append(assistant_table_generated_output)
+                document_generated_tabular_outputs.append(assistant_table_generated_output)
+            _reauthorize_document_action_finalization(
+                normalized_action,
+                execution_result,
+                user_id,
+                conversation_id,
+                cancel_requested=cancel_requested,
+                request_correlation_id=request_correlation_id,
+                settings=settings,
+            )
+        except MixedSourceCancellationError as exc:
+            _rollback_mixed_source_chat_publication(
+                user_id,
+                conversation_id,
+                document_generated_analysis_artifacts + document_generated_tabular_outputs,
+                compact_citations=prepared_agent_citations,
+            )
+            if thought_tracker.enabled:
+                thought_tracker.add_thought(
+                    'cancellation',
+                    'Document action canceled before final output publication',
+                    detail=f'phase={exc.phase}',
+                )
+            return {
+                'canceled': True,
+                'conversation_id': conversation_id,
+                'user_message_id': user_message_id,
+                'request_correlation_id': request_correlation_id,
+            }, 409
+        except MixedSourceFinalizationError:
+            _rollback_mixed_source_chat_publication(
+                user_id,
+                conversation_id,
+                document_generated_analysis_artifacts + document_generated_tabular_outputs,
+                compact_citations=prepared_agent_citations,
+            )
+            return {
+                'error': 'Selected source state changed before final output could be published.',
+                'conversation_id': conversation_id,
+                'user_message_id': user_message_id,
+            }, 409
         generated_analysis_metadata = _build_generated_analysis_metadata(
             generated_analysis_artifacts=document_generated_analysis_artifacts,
             generated_tabular_outputs=document_generated_tabular_outputs,
@@ -13266,6 +13953,42 @@ def register_route_backend_chats(bp):
             },
         })
         cosmos_messages_container.upsert_item(assistant_doc)
+        try:
+            raise_if_mixed_source_cancelled(
+                cancel_requested,
+                'finalization',
+                request_correlation_id=request_correlation_id,
+            )
+        except MixedSourceCancellationError as exc:
+            try:
+                cosmos_messages_container.delete_item(
+                    item=assistant_message_id,
+                    partition_key=conversation_id,
+                )
+            except Exception:
+                log_event(
+                    '[MixedSourceLifecycle] Assistant rollback after cancellation failed.',
+                    extra={'assistant_message_rollback_failure_count': 1},
+                    level=logging.WARNING,
+                )
+            _rollback_mixed_source_chat_publication(
+                user_id,
+                conversation_id,
+                document_generated_analysis_artifacts + document_generated_tabular_outputs,
+                compact_citations=prepared_agent_citations,
+            )
+            if thought_tracker.enabled:
+                thought_tracker.add_thought(
+                    'cancellation',
+                    'Document action canceled before final output publication',
+                    detail=f'phase={exc.phase}',
+                )
+            return {
+                'canceled': True,
+                'conversation_id': conversation_id,
+                'user_message_id': user_message_id,
+                'request_correlation_id': request_correlation_id,
+            }, 409
 
         token_usage = execution_result.get('token_usage') if isinstance(execution_result.get('token_usage'), dict) else None
         if token_usage and token_usage.get('total_tokens'):
@@ -13372,11 +14095,18 @@ def register_route_backend_chats(bp):
             'metadata': assistant_doc.get('metadata', {}),
         }), 200
 
-    def execute_analyze_chat_request(data=None, publish_background_event=None):
+    def execute_analyze_chat_request(
+        data=None,
+        publish_background_event=None,
+        cancel_requested=None,
+        request_correlation_id=None,
+    ):
         return execute_document_action_chat_request(
             data=data,
             publish_background_event=publish_background_event,
             forced_action_type=DOCUMENT_ACTION_TYPE_ANALYZE,
+            cancel_requested=cancel_requested,
+            request_correlation_id=request_correlation_id,
         )
 
     @bp.route('/api/chat/document-action', methods=['POST'])
@@ -13405,6 +14135,7 @@ def register_route_backend_chats(bp):
         data['conversation_id'] = conversation_id
         g.conversation_id = conversation_id
         stream_session = CHAT_STREAM_REGISTRY.start_session(user_id, conversation_id)
+        request_correlation_id = normalize_mixed_source_correlation_id()
 
         def generate_document_action_response(publish_background_event=None):
             try:
@@ -13418,7 +14149,17 @@ def register_route_backend_chats(bp):
                 payload, status_code = execute_document_action_chat_request(
                     data=data,
                     publish_background_event=publish_background_event,
+                    cancel_requested=stream_session.is_cancel_requested,
+                    request_correlation_id=request_correlation_id,
                 )
+                if payload.get('canceled'):
+                    yield _build_stream_cancel_event(
+                        payload.get('conversation_id') or conversation_id,
+                        user_message_id=payload.get('user_message_id'),
+                        reason=stream_session.get_cancel_reason(),
+                        message_persisted=False,
+                    )
+                    return
                 if stream_session and stream_session.is_cancel_requested():
                     yield _build_stream_cancel_event(
                         payload.get('conversation_id') or conversation_id,
@@ -13466,6 +14207,7 @@ def register_route_backend_chats(bp):
         data['conversation_id'] = conversation_id
         g.conversation_id = conversation_id
         stream_session = CHAT_STREAM_REGISTRY.start_session(user_id, conversation_id)
+        request_correlation_id = normalize_mixed_source_correlation_id()
 
         def generate_analyze_response(publish_background_event=None):
             try:
@@ -13479,7 +14221,17 @@ def register_route_backend_chats(bp):
                 payload, status_code = execute_analyze_chat_request(
                     data=data,
                     publish_background_event=publish_background_event,
+                    cancel_requested=stream_session.is_cancel_requested,
+                    request_correlation_id=request_correlation_id,
                 )
+                if payload.get('canceled'):
+                    yield _build_stream_cancel_event(
+                        payload.get('conversation_id') or conversation_id,
+                        user_message_id=payload.get('user_message_id'),
+                        reason=stream_session.get_cancel_reason(),
+                        message_persisted=False,
+                    )
+                    return
                 if stream_session and stream_session.is_cancel_requested():
                     yield _build_stream_cancel_event(
                         payload.get('conversation_id') or conversation_id,
@@ -13752,6 +14504,7 @@ def register_route_backend_chats(bp):
             generated_analysis_artifacts_list = []
             system_messages_for_augmentation = [] # Collect system messages from search
             search_results = []
+            mixed_source_narrative_retrieval_failed = False
             selected_agent = None  # Initialize selected_agent early to prevent NameError
             # --- Configuration ---
             # History / Summarization Settings
@@ -14189,6 +14942,8 @@ def register_route_backend_chats(bp):
             mixed_source_narrative_document_ids = []
             mixed_source_tabular_sources = []
             mixed_source_evidence_envelopes = []
+            mixed_source_native_token_usage = None
+            mixed_source_request_correlation_id = normalize_mixed_source_correlation_id()
             if mixed_source_explicit_selection:
                 try:
                     mixed_source_manifest = _resolve_chat_mixed_source_manifest(
@@ -14199,6 +14954,7 @@ def register_route_backend_chats(bp):
                         'selected',
                         active_group_ids=effective_active_group_ids,
                         active_public_workspace_ids=effective_active_public_workspace_ids,
+                        request_correlation_id=mixed_source_request_correlation_id,
                     )
                 except ValueError as manifest_error:
                     return jsonify({'error': str(manifest_error)}), 400
@@ -14724,6 +15480,13 @@ def register_route_backend_chats(bp):
             ):
                 prior_grounded_document_refs = _normalize_prior_grounded_document_refs(conversation_item)
                 if prior_grounded_document_refs:
+                    continuity_decision = _resolve_reauthorized_continuity_decision(
+                        settings,
+                        user_id,
+                        conversation_id,
+                        prior_grounded_document_refs,
+                        request_correlation_id=mixed_source_request_correlation_id,
+                    )
                     thought_tracker.add_thought(
                         'history_context',
                         'Checking whether prior conversation context already answers the question',
@@ -14762,7 +15525,10 @@ def register_route_backend_chats(bp):
                             f"[History Fallback] History-only sufficiency assessment failed: {assessment_error}"
                         )
 
-                    if history_only_answerability and history_only_answerability.get('can_answer_from_history'):
+                    if _can_reuse_prior_grounded_history(
+                        history_only_answerability,
+                        continuity_decision,
+                    ):
                         thought_tracker.add_thought(
                             'history_context',
                             'Prior conversation context appears sufficient without new document retrieval',
@@ -14847,6 +15613,7 @@ def register_route_backend_chats(bp):
                     'history',
                     active_group_ids=effective_active_group_ids,
                     active_public_workspace_ids=effective_active_public_workspace_ids,
+                    request_correlation_id=mixed_source_request_correlation_id,
                 )
                 mixed_source_manifest = history_context.get('manifest') or []
                 mixed_source_partitions = history_context.get('partitions') or {}
@@ -15077,6 +15844,7 @@ def register_route_backend_chats(bp):
                             tags_filter=tags_filter,
                             active_group_ids=effective_active_group_ids,
                             active_public_workspace_ids=effective_active_public_workspace_ids,
+                            request_correlation_id=mixed_source_request_correlation_id,
                         )
                         mixed_source_manifest = relevance_context.get('manifest') or []
                         mixed_source_partitions = relevance_context.get('partitions') or {}
@@ -15091,17 +15859,32 @@ def register_route_backend_chats(bp):
                         )
                 except SemanticSearchQuotaExceededError as e:
                     debug_print(f"Semantic search quota exceeded during hybrid search: {e}")
-                    return jsonify({
-                        'error': e.user_message,
-                        'warning_type': SEMANTIC_SEARCH_QUOTA_WARNING_TYPE,
-                        'service_health_warning': True,
-                    }), 503
+                    if (
+                        is_mixed_source_chat_search_enabled(settings)
+                        and mixed_source_manifest
+                        and mixed_source_tabular_sources
+                    ):
+                        mixed_source_narrative_retrieval_failed = True
+                        search_results = []
+                    else:
+                        return jsonify({
+                            'error': e.user_message,
+                            'warning_type': SEMANTIC_SEARCH_QUOTA_WARNING_TYPE,
+                            'service_health_warning': True,
+                        }), 503
                 except Exception as e:
                     debug_print(f"Error during hybrid search: {e}")
-                    # Only treat as error if the exception is from embedding failure
-                    return jsonify({
-                        'error': 'There was an issue with the embedding process. Please check with an admin on embedding configuration.'
-                    }), 500
+                    if (
+                        is_mixed_source_chat_search_enabled(settings)
+                        and mixed_source_manifest
+                        and mixed_source_tabular_sources
+                    ):
+                        mixed_source_narrative_retrieval_failed = True
+                        search_results = []
+                    else:
+                        return jsonify({
+                            'error': 'There was an issue with the embedding process. Please check with an admin on embedding configuration.'
+                        }), 500
 
                 if search_results:
                     unique_doc_names = set(doc.get('file_name', 'Unknown') for doc in search_results)
@@ -15701,7 +16484,12 @@ def register_route_backend_chats(bp):
                     else 'relevance'
                 )
                 mixed_source_evidence_envelopes.extend(
-                    build_narrative_evidence_envelopes(
+                    build_failed_narrative_evidence_envelopes(
+                        mixed_source_partitions.get('narrative_sources') or [],
+                        effective_mixed_source_selection_mode,
+                    )
+                    if mixed_source_narrative_retrieval_failed
+                    else build_narrative_evidence_envelopes(
                         mixed_source_partitions.get('narrative_sources') or [],
                         search_results,
                         effective_mixed_source_selection_mode,
@@ -15718,10 +16506,12 @@ def register_route_backend_chats(bp):
                     settings=settings,
                     thought_tracker=thought_tracker,
                     model_context=tabular_model_context,
+                    request_correlation_id=mixed_source_request_correlation_id,
                 )
                 mixed_source_evidence_envelopes.extend(
                     mixed_source_tabular_result.get('evidence_envelopes') or []
                 )
+                mixed_source_native_token_usage = mixed_source_tabular_result.get('token_usage')
                 agent_citations_list.extend(
                     mixed_source_tabular_result.get('agent_citations') or []
                 )
@@ -15735,6 +16525,9 @@ def register_route_backend_chats(bp):
                     mixed_source_manifest,
                     mixed_source_evidence_envelopes,
                     effective_mixed_source_selection_mode,
+                    mode='chat',
+                    telemetry_settings=settings,
+                    request_correlation_id=mixed_source_request_correlation_id,
                 )
                 system_messages_for_augmentation.append(mixed_source_handoff)
                 mixed_source_coverage = mixed_source_handoff.get(
@@ -15746,6 +16539,44 @@ def register_route_backend_chats(bp):
                     user_metadata['source_continuity'] = continuity_decision
                 user_message_doc['metadata'] = user_metadata
                 cosmos_messages_container.upsert_item(user_message_doc)
+                if continuity_decision:
+                    emit_mixed_source_telemetry(
+                        settings,
+                        'continuity',
+                        'chat',
+                        request_correlation_id=mixed_source_request_correlation_id,
+                        metrics={
+                            'history_source_count': continuity_decision.get('prior_source_count', 0),
+                            'history_rerun_count': int(bool(continuity_decision.get('requires_native_execution'))),
+                            'history_reuse_count': int(not continuity_decision.get('requires_native_execution')),
+                        },
+                        dimensions={
+                            'selection_mode': effective_mixed_source_selection_mode,
+                            'continuity_decision': (
+                                'rerun'
+                                if continuity_decision.get('requires_native_execution')
+                                else 'reuse'
+                            ),
+                        },
+                    )
+                emit_mixed_source_telemetry(
+                    settings,
+                    'background_export',
+                    'chat',
+                    request_correlation_id=mixed_source_request_correlation_id,
+                    metrics={
+                        'background_export_count': sum(
+                            bool(output.get('background_export'))
+                            for output in generated_tabular_outputs_list
+                            if isinstance(output, dict)
+                        ),
+                        'artifact_count': len(generated_analysis_artifacts_list),
+                        'citation_count': len(agent_citations_list) + len(hybrid_citations_list),
+                    },
+                    dimensions={
+                        'selection_mode': effective_mixed_source_selection_mode,
+                    },
+                )
                 log_event(
                     '[MixedSourceChatSearch] Prepared bounded mixed-source synthesis evidence.',
                     extra={
@@ -17057,7 +17888,6 @@ def register_route_backend_chats(bp):
             else:
                 ai_message, final_model_used, chat_mode, kernel_fallback_notice = fallback_result
                 token_usage_data = None
-
             ai_message = _append_inline_chart_blocks_to_message(ai_message, agent_citations_list)
 
             # Emit responded thought for non-agent paths (agent paths emit their own inside callbacks)
@@ -17104,6 +17934,25 @@ def register_route_backend_chats(bp):
                         exceptionTraceback=True
                     )
 
+            token_usage_data = _merge_chat_token_usage(
+                mixed_source_native_token_usage,
+                token_usage_data,
+            )
+            if mixed_source_manifest:
+                emit_mixed_source_telemetry(
+                    settings,
+                    'native_execution',
+                    'chat',
+                    request_correlation_id=mixed_source_request_correlation_id,
+                    metrics={
+                        'prompt_tokens': (token_usage_data or {}).get('prompt_tokens', 0),
+                        'completion_tokens': (token_usage_data or {}).get('completion_tokens', 0),
+                        'total_tokens': (token_usage_data or {}).get('total_tokens', 0),
+                        'token_request_count': (token_usage_data or {}).get('request_count', 0),
+                        'request_count': (token_usage_data or {}).get('request_count', 0),
+                    },
+                )
+
         # region 7 - Save GPT Response
             # ---------------------------------------------------------------------
             # 7) Save GPT response (or error message)
@@ -17149,6 +17998,24 @@ def register_route_backend_chats(bp):
 
             # Assistant message should be part of the same thread as the user message
             # Only system/augmentation messages create new threads within a conversation
+            if mixed_source_manifest:
+                fresh_finalization_manifest = resolve_authorized_source_manifest(
+                    [source.get('document_id') for source in mixed_source_manifest],
+                    user_id=user_id,
+                    selection_mode=effective_mixed_source_selection_mode,
+                    conversation_id=conversation_id,
+                    active_group_ids=effective_active_group_ids,
+                    active_public_workspace_ids=effective_active_public_workspace_ids,
+                    doc_scope=effective_document_scope,
+                    request_correlation_id=mixed_source_request_correlation_id,
+                )
+                _validate_reauthorized_manifest_finalization(
+                    mixed_source_manifest,
+                    fresh_finalization_manifest,
+                    settings=settings,
+                    mode='chat',
+                    request_correlation_id=mixed_source_request_correlation_id,
+                )
             assistant_timestamp = datetime.utcnow().isoformat()
             prepared_agent_citations = persist_agent_citation_artifacts(
                 conversation_id=conversation_id,
@@ -17757,6 +18624,7 @@ def register_route_backend_chats(bp):
                 generated_analysis_artifacts_list = []
                 system_messages_for_augmentation = []
                 search_results = []
+                mixed_source_narrative_retrieval_failed = False
                 selected_agent = None
 
                 # Configuration
@@ -18213,6 +19081,8 @@ def register_route_backend_chats(bp):
                 mixed_source_narrative_document_ids = []
                 mixed_source_tabular_sources = []
                 mixed_source_evidence_envelopes = []
+                mixed_source_native_token_usage = None
+                mixed_source_request_correlation_id = normalize_mixed_source_correlation_id()
                 if mixed_source_explicit_selection:
                     try:
                         explicit_context = _resolve_chat_mixed_source_partition(
@@ -18223,6 +19093,8 @@ def register_route_backend_chats(bp):
                             'selected',
                             active_group_ids=effective_active_group_ids,
                             active_public_workspace_ids=effective_active_public_workspace_ids,
+                            cancel_requested=stream_cancel_requested,
+                            request_correlation_id=mixed_source_request_correlation_id,
                         )
                     except ValueError as manifest_error:
                         yield f"data: {json.dumps({'error': str(manifest_error)})}\n\n"
@@ -18708,6 +19580,13 @@ def register_route_backend_chats(bp):
                 ):
                     prior_grounded_document_refs = _normalize_prior_grounded_document_refs(conversation_item)
                     if prior_grounded_document_refs:
+                        continuity_decision = _resolve_reauthorized_continuity_decision(
+                            settings,
+                            user_id,
+                            conversation_id,
+                            prior_grounded_document_refs,
+                            request_correlation_id=mixed_source_request_correlation_id,
+                        )
                         yield emit_thought(
                             'history_context',
                             'Checking whether prior conversation context already answers the question',
@@ -18746,7 +19625,10 @@ def register_route_backend_chats(bp):
                                 f"[Streaming][History Fallback] History-only sufficiency assessment failed: {assessment_error}"
                             )
 
-                        if history_only_answerability and history_only_answerability.get('can_answer_from_history'):
+                        if _can_reuse_prior_grounded_history(
+                            history_only_answerability,
+                            continuity_decision,
+                        ):
                             yield emit_thought(
                                 'history_context',
                                 'Prior conversation context appears sufficient without new document retrieval',
@@ -18832,6 +19714,8 @@ def register_route_backend_chats(bp):
                         'history',
                         active_group_ids=effective_active_group_ids,
                         active_public_workspace_ids=effective_active_public_workspace_ids,
+                        cancel_requested=stream_cancel_requested,
+                        request_correlation_id=mixed_source_request_correlation_id,
                     )
                     mixed_source_manifest = history_context.get('manifest') or []
                     mixed_source_partitions = history_context.get('partitions') or {}
@@ -18981,6 +19865,8 @@ def register_route_backend_chats(bp):
                                 tags_filter=tags_filter,
                                 active_group_ids=effective_active_group_ids,
                                 active_public_workspace_ids=effective_active_public_workspace_ids,
+                                cancel_requested=stream_cancel_requested,
+                                request_correlation_id=mixed_source_request_correlation_id,
                             )
                             mixed_source_manifest = relevance_context.get('manifest') or []
                             mixed_source_partitions = relevance_context.get('partitions') or {}
@@ -18998,15 +19884,34 @@ def register_route_backend_chats(bp):
                         )
                     except SemanticSearchQuotaExceededError as e:
                         debug_print(f"Semantic search quota exceeded during streaming hybrid search: {e}")
-                        yield emit_thought(
-                            'search',
-                            'Workspace search warning: Semantic Ranker quota has been exceeded.',
-                            detail=e.user_message,
-                        )
-                        yield f"data: {json.dumps({'error': e.user_message, 'warning_type': SEMANTIC_SEARCH_QUOTA_WARNING_TYPE, 'service_health_warning': True})}\n\n"
-                        return
+                        if (
+                            is_mixed_source_chat_search_enabled(settings)
+                            and mixed_source_manifest
+                            and mixed_source_tabular_sources
+                        ):
+                            mixed_source_narrative_retrieval_failed = True
+                            search_results = []
+                            yield emit_thought(
+                                'search',
+                                'Narrative search was unavailable; continuing with available table evidence.',
+                            )
+                        else:
+                            yield emit_thought(
+                                'search',
+                                'Workspace search warning: Semantic Ranker quota has been exceeded.',
+                                detail=e.user_message,
+                            )
+                            yield f"data: {json.dumps({'error': e.user_message, 'warning_type': SEMANTIC_SEARCH_QUOTA_WARNING_TYPE, 'service_health_warning': True})}\n\n"
+                            return
                     except Exception as e:
                         debug_print(f"Error during hybrid search: {e}")
+                        if (
+                            is_mixed_source_chat_search_enabled(settings)
+                            and mixed_source_manifest
+                            and mixed_source_tabular_sources
+                        ):
+                            mixed_source_narrative_retrieval_failed = True
+                            search_results = []
 
                     if search_results:
                         unique_doc_names_stream = set(doc.get('file_name', 'Unknown') for doc in search_results)
@@ -19265,7 +20170,12 @@ def register_route_backend_chats(bp):
                         else 'relevance'
                     )
                     mixed_source_evidence_envelopes.extend(
-                        build_narrative_evidence_envelopes(
+                        build_failed_narrative_evidence_envelopes(
+                            mixed_source_partitions.get('narrative_sources') or [],
+                            effective_mixed_source_selection_mode,
+                        )
+                        if mixed_source_narrative_retrieval_failed
+                        else build_narrative_evidence_envelopes(
                             mixed_source_partitions.get('narrative_sources') or [],
                             search_results,
                             effective_mixed_source_selection_mode,
@@ -19283,10 +20193,13 @@ def register_route_backend_chats(bp):
                         thought_tracker=thought_tracker,
                         live_thought_callback=publish_live_plugin_thought,
                         model_context=tabular_model_context,
+                        cancel_requested=stream_cancel_requested,
+                        request_correlation_id=mixed_source_request_correlation_id,
                     )
                     mixed_source_evidence_envelopes.extend(
                         mixed_source_tabular_result.get('evidence_envelopes') or []
                     )
+                    mixed_source_native_token_usage = mixed_source_tabular_result.get('token_usage')
                     agent_citations_list.extend(
                         mixed_source_tabular_result.get('agent_citations') or []
                     )
@@ -19300,6 +20213,9 @@ def register_route_backend_chats(bp):
                         mixed_source_manifest,
                         mixed_source_evidence_envelopes,
                         effective_mixed_source_selection_mode,
+                        mode='chat',
+                        telemetry_settings=settings,
+                        request_correlation_id=mixed_source_request_correlation_id,
                     )
                     system_messages_for_augmentation.append(mixed_source_handoff)
                     mixed_source_coverage = mixed_source_handoff.get(
@@ -19315,6 +20231,44 @@ def register_route_backend_chats(bp):
                         user_metadata['source_continuity'] = continuity_decision
                     user_message_doc['metadata'] = user_metadata
                     cosmos_messages_container.upsert_item(user_message_doc)
+                    if continuity_decision:
+                        emit_mixed_source_telemetry(
+                            settings,
+                            'continuity',
+                            'chat',
+                            request_correlation_id=mixed_source_request_correlation_id,
+                            metrics={
+                                'history_source_count': continuity_decision.get('prior_source_count', 0),
+                                'history_rerun_count': int(bool(continuity_decision.get('requires_native_execution'))),
+                                'history_reuse_count': int(not continuity_decision.get('requires_native_execution')),
+                            },
+                            dimensions={
+                                'selection_mode': effective_mixed_source_selection_mode,
+                                'continuity_decision': (
+                                    'rerun'
+                                    if continuity_decision.get('requires_native_execution')
+                                    else 'reuse'
+                                ),
+                            },
+                        )
+                    emit_mixed_source_telemetry(
+                        settings,
+                        'background_export',
+                        'chat',
+                        request_correlation_id=mixed_source_request_correlation_id,
+                        metrics={
+                            'background_export_count': sum(
+                                bool(output.get('background_export'))
+                                for output in generated_tabular_outputs_list
+                                if isinstance(output, dict)
+                            ),
+                            'artifact_count': len(generated_analysis_artifacts_list),
+                            'citation_count': len(agent_citations_list) + len(hybrid_citations_list),
+                        },
+                        dimensions={
+                            'selection_mode': effective_mixed_source_selection_mode,
+                        },
+                    )
                     log_event(
                         '[MixedSourceChatSearch] Prepared streaming bounded mixed-source synthesis evidence.',
                         extra={
@@ -20032,6 +20986,24 @@ def register_route_backend_chats(bp):
                         'cancel_reason': cancel_reason,
                     }
 
+                    if mixed_source_manifest:
+                        _rollback_mixed_source_chat_publication(
+                            user_id,
+                            conversation_id,
+                            generated_analysis_artifacts_list + generated_tabular_outputs_list,
+                        )
+                        return _build_stream_cancel_event(
+                            conversation_id,
+                            user_message_id=user_message_id,
+                            reason=cancel_reason,
+                            message_persisted=False,
+                            extra_payload={
+                                'augmented': bool(system_messages_for_augmentation),
+                                'metadata': cancel_metadata,
+                                'thoughts_enabled': thought_tracker.enabled,
+                            },
+                        )
+
                     if partial_content:
                         assistant_timestamp = datetime.utcnow().isoformat()
                         prepared_agent_citations = persist_agent_citation_artifacts(
@@ -20595,6 +21567,25 @@ def register_route_backend_chats(bp):
                         yield finalize_cancelled_stream_response()
                         return
 
+                    token_usage_data = _merge_chat_token_usage(
+                        mixed_source_native_token_usage,
+                        token_usage_data,
+                    )
+                    if mixed_source_manifest:
+                        emit_mixed_source_telemetry(
+                            settings,
+                            'native_execution',
+                            'chat',
+                            request_correlation_id=mixed_source_request_correlation_id,
+                            metrics={
+                                'prompt_tokens': (token_usage_data or {}).get('prompt_tokens', 0),
+                                'completion_tokens': (token_usage_data or {}).get('completion_tokens', 0),
+                                'total_tokens': (token_usage_data or {}).get('total_tokens', 0),
+                                'token_request_count': (token_usage_data or {}).get('request_count', 0),
+                                'request_count': (token_usage_data or {}).get('request_count', 0),
+                            },
+                        )
+
                     # Stream complete - save message and send final metadata
                     accumulated_content_before_chart_append = accumulated_content
                     accumulated_content = _append_inline_chart_blocks_to_message(accumulated_content, agent_citations_list)
@@ -20607,6 +21598,30 @@ def register_route_backend_chats(bp):
                     user_info_for_assistant = response_message_context.get('user_info')
                     user_thread_id = response_message_context.get('thread_id')
                     user_previous_thread_id = response_message_context.get('previous_thread_id')
+                    if mixed_source_manifest:
+                        raise_if_mixed_source_cancelled(
+                            stream_cancel_requested,
+                            'finalization',
+                            request_correlation_id=mixed_source_request_correlation_id,
+                        )
+                        fresh_finalization_manifest = resolve_authorized_source_manifest(
+                            [source.get('document_id') for source in mixed_source_manifest],
+                            user_id=user_id,
+                            selection_mode=effective_mixed_source_selection_mode,
+                            conversation_id=conversation_id,
+                            active_group_ids=effective_active_group_ids,
+                            active_public_workspace_ids=effective_active_public_workspace_ids,
+                            doc_scope=effective_document_scope,
+                            cancel_requested=stream_cancel_requested,
+                            request_correlation_id=mixed_source_request_correlation_id,
+                        )
+                        _validate_reauthorized_manifest_finalization(
+                            mixed_source_manifest,
+                            fresh_finalization_manifest,
+                            settings=settings,
+                            mode='chat',
+                            request_correlation_id=mixed_source_request_correlation_id,
+                        )
                     assistant_timestamp = datetime.utcnow().isoformat()
                     prepared_agent_citations = persist_agent_citation_artifacts(
                         conversation_id=conversation_id,
@@ -20614,16 +21629,44 @@ def register_route_backend_chats(bp):
                         agent_citations=agent_citations_list,
                         created_timestamp=assistant_timestamp,
                         user_info=user_info_for_assistant,
+                        cancel_requested=stream_cancel_requested,
+                        request_correlation_id=mixed_source_request_correlation_id,
+                    )
+                    raise_if_mixed_source_cancelled(
+                        stream_cancel_requested,
+                        'artifact_publication',
+                        request_correlation_id=mixed_source_request_correlation_id,
                     )
                     assistant_table_generated_output = maybe_create_assistant_table_generated_output(
                         user_question=user_message,
                         assistant_content=accumulated_content,
                         conversation_id=conversation_id,
                         existing_outputs=generated_analysis_artifacts_list + generated_tabular_outputs_list,
+                        cancel_requested=stream_cancel_requested,
+                        request_correlation_id=mixed_source_request_correlation_id,
                     )
                     if assistant_table_generated_output:
                         generated_analysis_artifacts_list.append(assistant_table_generated_output)
                         generated_tabular_outputs_list.append(assistant_table_generated_output)
+                    if mixed_source_manifest:
+                        fresh_finalization_manifest = resolve_authorized_source_manifest(
+                            [source.get('document_id') for source in mixed_source_manifest],
+                            user_id=user_id,
+                            selection_mode=effective_mixed_source_selection_mode,
+                            conversation_id=conversation_id,
+                            active_group_ids=effective_active_group_ids,
+                            active_public_workspace_ids=effective_active_public_workspace_ids,
+                            doc_scope=effective_document_scope,
+                            cancel_requested=stream_cancel_requested,
+                            request_correlation_id=mixed_source_request_correlation_id,
+                        )
+                        _validate_reauthorized_manifest_finalization(
+                            mixed_source_manifest,
+                            fresh_finalization_manifest,
+                            settings=settings,
+                            mode='chat',
+                            request_correlation_id=mixed_source_request_correlation_id,
+                        )
                     generated_analysis_metadata = _build_generated_analysis_metadata(
                         generated_analysis_artifacts=generated_analysis_artifacts_list,
                         generated_tabular_outputs=generated_tabular_outputs_list,
@@ -20674,6 +21717,11 @@ def register_route_backend_chats(bp):
                         }
                     })
                     cosmos_messages_container.upsert_item(assistant_doc)
+                    raise_if_mixed_source_cancelled(
+                        stream_cancel_requested,
+                        'finalization',
+                        request_correlation_id=mixed_source_request_correlation_id,
+                    )
                     if use_agent_streaming and agent_name_used:
                         agent_scope_for_usage = 'personal'
                         agent_group_id_for_usage = None
@@ -20847,6 +21895,52 @@ def register_route_backend_chats(bp):
                     )
                     yield f"data: {json.dumps(final_data)}\n\n"
 
+                except MixedSourceCancellationError:
+                    if mixed_source_manifest:
+                        try:
+                            cosmos_messages_container.delete_item(
+                                item=assistant_message_id,
+                                partition_key=conversation_id,
+                            )
+                        except Exception:
+                            pass
+                        _rollback_mixed_source_chat_publication(
+                            user_id,
+                            conversation_id,
+                            generated_analysis_artifacts_list + generated_tabular_outputs_list,
+                            compact_citations=locals().get('prepared_agent_citations') or [],
+                        )
+                        yield _build_stream_cancel_event(
+                            conversation_id,
+                            user_message_id=user_message_id,
+                            reason=stream_session.get_cancel_reason() if stream_session else 'user_requested',
+                            message_persisted=False,
+                            extra_payload={
+                                'augmented': bool(system_messages_for_augmentation),
+                                'thoughts_enabled': thought_tracker.enabled,
+                            },
+                        )
+                        return
+                    yield finalize_cancelled_stream_response()
+                    return
+                except MixedSourceFinalizationError:
+                    if mixed_source_manifest:
+                        try:
+                            cosmos_messages_container.delete_item(
+                                item=assistant_message_id,
+                                partition_key=conversation_id,
+                            )
+                        except Exception:
+                            pass
+                        _rollback_mixed_source_chat_publication(
+                            user_id,
+                            conversation_id,
+                            generated_analysis_artifacts_list + generated_tabular_outputs_list,
+                            compact_citations=locals().get('prepared_agent_citations') or [],
+                        )
+                        yield f"data: {json.dumps({'error': 'Selected source state changed before final output could be published.', 'conversation_id': conversation_id})}\n\n"
+                        return
+                    raise
                 except Exception as e:
                     error_msg = str(e)
                     debug_print(f"Error during streaming: {error_msg}")
@@ -21567,6 +22661,17 @@ def _normalize_prior_grounded_document_refs(conversation_item):
             'scope_id': scope_id,
             'file_name': raw_ref.get('file_name') or raw_ref.get('title'),
             'classification': raw_ref.get('classification'),
+            'source_role': raw_ref.get('source_role'),
+            'requested_order': raw_ref.get('requested_order'),
+            'source_kind': raw_ref.get('source_kind'),
+            'engine': raw_ref.get('engine'),
+            'source_version': raw_ref.get('source_version'),
+            'status': raw_ref.get('status'),
+            'coverage': dict(raw_ref.get('coverage') or {}),
+            'selection_origin': raw_ref.get('selection_origin'),
+            'action_mode': raw_ref.get('action_mode'),
+            'citation_count': _safe_metadata_int(raw_ref.get('citation_count')),
+            'artifact_count': _safe_metadata_int(raw_ref.get('artifact_count')),
         }
 
         if scope == 'group':
@@ -21605,6 +22710,8 @@ def build_prior_grounded_document_search_parameters(grounded_refs):
     document_ids = []
     group_ids = []
     public_workspace_ids = []
+    chat_conversation_ids = []
+    document_scopes = {}
     scope_types = set()
 
     for ref in grounded_refs or []:
@@ -21619,6 +22726,10 @@ def build_prior_grounded_document_search_parameters(grounded_refs):
         if not scope:
             continue
         scope_types.add(scope)
+        document_scopes[document_id] = {
+            'scope': scope,
+            'scope_id': str(ref.get('scope_id') or '').strip(),
+        }
 
         if scope == 'group':
             group_id = str(ref.get('group_id') or ref.get('scope_id') or '').strip()
@@ -21628,6 +22739,10 @@ def build_prior_grounded_document_search_parameters(grounded_refs):
             public_workspace_id = str(ref.get('public_workspace_id') or ref.get('scope_id') or '').strip()
             if public_workspace_id and public_workspace_id not in public_workspace_ids:
                 public_workspace_ids.append(public_workspace_id)
+        elif scope == 'chat':
+            chat_conversation_id = str(ref.get('scope_id') or '').strip()
+            if chat_conversation_id and chat_conversation_id not in chat_conversation_ids:
+                chat_conversation_ids.append(chat_conversation_id)
 
     if len(scope_types) == 1:
         doc_scope = next(iter(scope_types))
@@ -21641,6 +22756,8 @@ def build_prior_grounded_document_search_parameters(grounded_refs):
         'active_group_id': group_ids[0] if group_ids else None,
         'active_public_workspace_ids': public_workspace_ids,
         'active_public_workspace_id': public_workspace_ids[0] if public_workspace_ids else None,
+        'chat_conversation_ids': chat_conversation_ids,
+        'document_scopes': document_scopes,
         'scope_types': sorted(scope_types),
     }
 
@@ -21656,6 +22773,13 @@ def revalidate_prior_grounded_document_search_parameters(user_id, search_paramet
     )
     allowed_group_ids = scope_context['active_group_ids']
     allowed_public_workspace_ids = scope_context['active_public_workspace_ids']
+    allowed_chat_conversation_ids = []
+    for conversation_id in normalized_parameters.get('chat_conversation_ids') or []:
+        try:
+            _authorize_personal_conversation_access(user_id, conversation_id)
+            allowed_chat_conversation_ids.append(conversation_id)
+        except (LookupError, PermissionError):
+            continue
 
     allowed_scope_types = []
     if 'personal' in scope_types:
@@ -21664,12 +22788,25 @@ def revalidate_prior_grounded_document_search_parameters(user_id, search_paramet
         allowed_scope_types.append('group')
     if allowed_public_workspace_ids:
         allowed_scope_types.append('public')
+    if allowed_chat_conversation_ids:
+        allowed_scope_types.append('chat')
 
     normalized_parameters['active_group_ids'] = allowed_group_ids
     normalized_parameters['active_group_id'] = scope_context['active_group_id']
     normalized_parameters['active_public_workspace_ids'] = allowed_public_workspace_ids
     normalized_parameters['active_public_workspace_id'] = scope_context['active_public_workspace_id']
+    normalized_parameters['chat_conversation_ids'] = allowed_chat_conversation_ids
     normalized_parameters['scope_types'] = allowed_scope_types
+    document_scopes = normalized_parameters.get('document_scopes') or {}
+    normalized_parameters['document_ids'] = [
+        document_id
+        for document_id in normalized_parameters.get('document_ids') or []
+        if (
+            (document_scopes.get(document_id) or {}).get('scope') != 'chat'
+            or (document_scopes.get(document_id) or {}).get('scope_id')
+            in allowed_chat_conversation_ids
+        )
+    ]
 
     if not allowed_scope_types:
         normalized_parameters['document_ids'] = []
@@ -21677,7 +22814,9 @@ def revalidate_prior_grounded_document_search_parameters(user_id, search_paramet
         return normalized_parameters
 
     normalized_parameters['doc_scope'] = (
-        allowed_scope_types[0] if len(allowed_scope_types) == 1 else 'all'
+        allowed_scope_types[0]
+        if len(allowed_scope_types) == 1 and allowed_scope_types[0] != 'chat'
+        else 'all'
     )
     return normalized_parameters
 

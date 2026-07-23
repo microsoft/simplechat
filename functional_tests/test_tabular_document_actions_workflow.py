@@ -2,7 +2,7 @@
 # test_tabular_document_actions_workflow.py
 """
 Functional test for tabular document-action workflow support.
-Version: 0.250.062
+Version: 0.250.070
 Implemented in: 0.241.038; mixed-source manifest coverage added in 0.250.062
 
 This test ensures tabular document actions reuse the shared tabular analysis
@@ -93,8 +93,8 @@ def test_analyze_and_compare_dispatch_use_tabular_helper() -> None:
     assert "related_document_evidence_summary=left_document.get('related_document_evidence_summary') or ''" in workflow_runner_content, (
         "Expected tabular comparison prompts to carry source-document related evidence into synthesis."
     )
-    assert "'generated_tabular_outputs': list((tabular_action_payload or {}).get('generated_tabular_outputs') or [])" in workflow_runner_content, (
-        "Expected workflow execution results to expose generated tabular outputs when the shared helper is used."
+    assert "'generated_tabular_outputs': generated_tabular_outputs" in workflow_runner_content, (
+        "Expected workflow execution results to expose deduplicated generated tabular outputs."
     )
 
     print("Analyze and comparison dispatch checks passed")
@@ -190,6 +190,7 @@ def test_manifest_flag_does_not_change_workflow_dispatch() -> None:
     namespace = {
         "DOCUMENT_ACTION_TYPE_ANALYZE": "analyze",
         "DOCUMENT_ACTION_TYPE_COMPARISON": "comparison",
+        "raise_if_mixed_source_cancelled": orchestration.raise_if_mixed_source_cancelled,
         "is_tabular_processing_enabled": lambda settings: True,
         "is_mixed_source_manifest_enabled": lambda settings: bool(
             settings.get("enable_mixed_source_manifest")
