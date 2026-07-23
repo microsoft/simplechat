@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for assistant-rendered table CSV artifacts.
-Version: 0.250.071
-Implemented in: 0.241.050; non-tabular document CSV parsing in 0.250.065; universal CSV intent in 0.250.071
+Version: 0.250.073
+Implemented in: 0.241.050; non-tabular document CSV parsing in 0.250.065; generated file export framework in 0.250.072; updated in 0.250.073
 
 This test ensures that explicit table-format requests with assistant-rendered
 tables, including CSV rows extracted from non-tabular documents, are converted
@@ -25,7 +25,7 @@ CONFIG_FILE = APP_DIR / 'config.py'
 CHAT_ROUTE_FILE = APP_DIR / 'route_backend_chats.py'
 BACKGROUND_EXPORT_FILE = APP_DIR / 'functions_tabular_generated_exports.py'
 WORKFLOW_RUNNER_FILE = APP_DIR / 'functions_workflow_runner.py'
-EXPECTED_VERSION = '0.250.071'
+EXPECTED_VERSION = '0.250.073'
 
 sys.path.append(str(APP_DIR))
 
@@ -35,8 +35,14 @@ from functions_assistant_table_exports import (  # noqa: E402
     build_safe_csv_headers,
     build_assistant_table_csv_export,
     extract_assistant_table_entries,
-    get_assistant_csv_export_content,
     neutralize_csv_spreadsheet_formula,
+)
+from functions_generated_file_exports import (  # noqa: E402
+    build_generated_file_artifact_metadata,
+    build_generated_file_export,
+    get_generated_file_export_content,
+    get_requested_generated_file_format,
+    has_generated_file_output,
 )
 
 
@@ -83,20 +89,20 @@ def load_csv_writer_helpers(source_file, function_names):
     return {function_name: namespace[function_name] for function_name in function_names}
 
 
-def load_workflow_assistant_table_export_helper(namespace):
+def load_workflow_generated_file_export_helper(namespace):
     module_tree = ast.parse(read_text(WORKFLOW_RUNNER_FILE), filename=str(WORKFLOW_RUNNER_FILE))
     selected_nodes = [
         node
         for node in module_tree.body
         if isinstance(node, ast.FunctionDef)
-        and node.name == '_maybe_create_workflow_assistant_table_generated_output'
+        and node.name == '_maybe_create_workflow_generated_file_output'
     ]
     if len(selected_nodes) != 1:
-        raise AssertionError('Expected workflow assistant-table CSV artifact helper.')
+        raise AssertionError('Expected workflow generated-file artifact helper.')
 
     extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
     exec(compile(extracted_module, str(WORKFLOW_RUNNER_FILE), 'exec'), namespace)
-    return namespace['_maybe_create_workflow_assistant_table_generated_output']
+    return namespace['_maybe_create_workflow_generated_file_output']
 
 
 def test_markdown_table_response_builds_csv_export():
@@ -185,7 +191,7 @@ Contoso,DCAW1366188
 ```''',
         },
     }
-    selected_content = get_assistant_csv_export_content(assistant_result)
+    selected_content = get_generated_file_export_content(assistant_result)
     export_payload = build_assistant_table_csv_export(
         'turn these into a single CSV',
         selected_content,
@@ -197,6 +203,126 @@ Contoso,DCAW1366188
     )
     csv_rows = parse_csv_rows(export_payload.get('file_content'))
     assert_true(csv_rows[0]['Invoice Number'] == 'DCAW1366188', 'Expected the analysis reply row to be exported.')
+
+
+def test_structured_action_result_builds_csv_when_assistant_summarizes():
+    print('Testing structured action-result CSV export fallback...')
+
+    action_results = [{
+        'plugin_name': 'BillingPlugin',
+        'function_name': 'list_invoices',
+        'success': True,
+        'function_result': {
+            'rows': [
+                {'Invoice Number': 'DCAW1366188', 'Amount': '=42.50', 'api_key': 'must-not-export'},
+                {'Invoice Number': 'DCAW1366189', 'Amount': '-10.00', 'api_key': 'must-not-export'},
+            ],
+        },
+    }]
+    export_payload = build_generated_file_export(
+        'save the action results as one CSV',
+        'The billing action returned two invoices.',
+        function_results=action_results,
+    )
+
+    assert_true(export_payload is not None, 'Expected structured action data to produce a CSV when the assistant summarizes it.')
+    assert_true(export_payload.get('row_source') == 'structured function result', 'Expected function-result CSV provenance.')
+    csv_rows = parse_csv_rows(export_payload.get('file_content'))
+    assert_true(len(csv_rows) == 2, 'Expected both action result rows in the CSV artifact.')
+    assert_true(csv_rows[0]['Invoice Number'] == 'DCAW1366188', 'Expected action result fields to be preserved.')
+    assert_true(csv_rows[0]['Amount'].startswith("'="), 'Expected action result formulas to be neutralized.')
+    assert_true('api_key' not in csv_rows[0], 'Expected sensitive action result fields to be omitted.')
+
+
+def test_structured_action_results_combine_and_preserve_assistant_priority():
+    print('Testing combined action-result CSV rows and assistant table priority...')
+
+    action_results = [
+        {
+            'plugin_name': 'DirectoryPlugin',
+            'function_name': 'list_people',
+            'success': True,
+            'function_result': '{"value":[{"Name":"Ada","Department":"Engineering"}]}',
+        },
+        {
+            'plugin_name': 'DirectoryPlugin',
+            'function_name': 'list_contractors',
+            'success': True,
+            'function_result': {'items': [{'Name': 'Grace', 'Department': 'Operations'}]},
+        },
+    ]
+    action_export = build_generated_file_export(
+        'create a combined CSV',
+        'The directory actions completed.',
+        function_results=action_results,
+    )
+    action_rows = parse_csv_rows(action_export.get('file_content'))
+    assert_true(len(action_rows) == 2, 'Expected data rows from both action results.')
+    assert_true(
+        {row['Source action'] for row in action_rows} == {'list_people', 'list_contractors'},
+        'Expected combined action rows to retain their source action.',
+    )
+
+    assistant_export = build_generated_file_export(
+        'create a combined CSV',
+        '''| Name | Department |
+| --- | --- |
+| Assistant-selected | Finance |
+''',
+        function_results=action_results,
+    )
+    assistant_rows = parse_csv_rows(assistant_export.get('file_content'))
+    assert_true(len(assistant_rows) == 1, 'Expected a valid assistant table to take priority over action rows.')
+    assert_true(assistant_rows[0]['Name'] == 'Assistant-selected', 'Expected assistant-selected table data to remain authoritative.')
+
+
+def test_tabular_action_result_does_not_bypass_coverage_aware_exports():
+    print('Testing tabular action-result exclusion...')
+
+    export_payload = build_generated_file_export(
+        'download CSV',
+        'The table query returned a partial page.',
+        function_results=[{
+            'plugin_name': 'TabularProcessingPlugin',
+            'function_name': 'query_tabular_data',
+            'success': True,
+            'function_result': {'data': [{'Case ID': 'SC-1'}]},
+        }],
+    )
+    assert_true(
+        export_payload is None,
+        'Expected tabular action rows to remain on their coverage-aware export path.',
+    )
+
+
+def test_function_results_render_docx_and_pdf_capabilities():
+    print('Testing DOCX and PDF function-result export capabilities...')
+
+    function_results = [{
+        'plugin_name': 'DirectoryPlugin',
+        'function_name': 'list_people',
+        'success': True,
+        'function_result': {'value': [{'Name': 'Ada', 'Department': 'Engineering'}]},
+    }]
+    docx_export = build_generated_file_export(
+        'create a Word document from the action results',
+        'The directory action completed successfully.',
+        function_results=function_results,
+    )
+    pdf_export = build_generated_file_export(
+        'export the action results to PDF',
+        'The directory action completed successfully.',
+        function_results=function_results,
+    )
+
+    assert_true(get_requested_generated_file_format('create a Word document') == 'docx', 'Expected DOCX output intent.')
+    assert_true(get_requested_generated_file_format('export to PDF') == 'pdf', 'Expected PDF output intent.')
+    assert_true(get_requested_generated_file_format('I need a DOCX') == 'docx', 'Expected natural DOCX output intent.')
+    assert_true(get_requested_generated_file_format('Give me a PDF') == 'pdf', 'Expected natural PDF output intent.')
+    assert_true(docx_export is not None and docx_export['file_content'].startswith(b'PK'), 'Expected a DOCX file export.')
+    assert_true(pdf_export is not None and pdf_export['file_content'].startswith(b'%PDF'), 'Expected a PDF file export.')
+    assert_true(docx_export['row_source'] == 'structured function result', 'Expected DOCX to include function-result rows.')
+    assert_true(pdf_export['row_source'] == 'structured function result', 'Expected PDF to include function-result rows.')
 
 
 def test_plain_document_csv_response_excludes_surrounding_prose_and_citation():
@@ -726,14 +852,16 @@ def test_csv_schema_clarification_guidance_is_specific_and_resumable():
     )
 
 
-def test_workflow_assistant_table_csv_artifacts_reuse_shared_contract():
-    print('Testing workflow assistant-table CSV artifact finalization...')
+def test_workflow_generated_file_artifacts_reuse_shared_contract():
+    print('Testing workflow generated-file artifact finalization...')
 
     uploaded_requests = []
     queue_requests = []
     shared_namespace = {
-        'build_assistant_table_csv_export': build_assistant_table_csv_export,
-        'extract_assistant_table_entries': extract_assistant_table_entries,
+        'build_generated_file_artifact_metadata': build_generated_file_artifact_metadata,
+        'build_generated_file_export': build_generated_file_export,
+        'get_requested_generated_file_format': get_requested_generated_file_format,
+        'has_generated_file_output': has_generated_file_output,
         'has_generated_tabular_csv_output': lambda outputs: any(
             output.get('output_format') == 'csv'
             for output in outputs or []
@@ -753,7 +881,7 @@ def test_workflow_assistant_table_csv_artifacts_reuse_shared_contract():
         'logging': type('Logging', (), {'ERROR': 'ERROR'}),
         'storage_account_personal_chat_container_name': 'personal-chat',
     }
-    helper = load_workflow_assistant_table_export_helper(shared_namespace)
+    helper = load_workflow_generated_file_export_helper(shared_namespace)
     workflow = {
         'id': 'workflow-1',
         'user_id': 'user-1',
@@ -777,13 +905,34 @@ Source: ParkingPrint.pdf, Page: 1
     assert_true(len(uploaded_requests) == 1, 'Expected one authorized artifact upload.')
     assert_true(uploaded_requests[0]['current_user_id'] == 'user-1', 'Expected upload to use the workflow owner.')
     assert_true(uploaded_requests[0]['output_format'] == 'csv', 'Expected a CSV artifact upload.')
+
+    word_workflow = {
+        **workflow,
+        'task_prompt': 'create a Word document from the action results',
+    }
+    word_artifact = helper(
+        word_workflow,
+        'conversation-1',
+        word_workflow['task_prompt'],
+        'The directory action completed successfully.',
+        function_results=[{
+            'plugin_name': 'DirectoryPlugin',
+            'function_name': 'list_people',
+            'success': True,
+            'function_result': {'rows': [{'Name': 'Ada', 'Department': 'Engineering'}]},
+        }],
+    )
+    assert_true(word_artifact is not None, 'Expected a workflow DOCX artifact from structured function results.')
+    assert_true(uploaded_requests[-1]['output_format'] == 'docx', 'Expected workflow DOCX artifact metadata.')
+    assert_true(uploaded_requests[-1]['capability'] == 'file_export', 'Expected generic file-export capability metadata.')
+    assert_true(uploaded_requests[-1]['file_content'].startswith(b'PK'), 'Expected a rendered DOCX upload payload.')
     assert_true(
         helper(
             workflow,
             'conversation-1',
             workflow['task_prompt'],
             assistant_content,
-            [{'capability': 'tabular', 'output_format': 'csv'}],
+            existing_outputs=[{'capability': 'tabular', 'output_format': 'csv'}],
         ) is None,
         'Expected existing tabular CSV output to suppress a duplicate workflow artifact.',
     )
@@ -802,7 +951,7 @@ Source: ParkingPrint.pdf, Page: 1
             }
         ),
     })
-    background_helper = load_workflow_assistant_table_export_helper(background_namespace)
+    background_helper = load_workflow_generated_file_export_helper(background_namespace)
     background_artifact = background_helper(
         workflow,
         'conversation-1',
@@ -818,12 +967,12 @@ Source: ParkingPrint.pdf, Page: 1
 
     workflow_runner_content = read_text(WORKFLOW_RUNNER_FILE)
     assert_true(
-        'assistant_table_generated_output = _maybe_create_workflow_assistant_table_generated_output(' in workflow_runner_content,
-        'Expected workflow assistant messages to finalize shared CSV artifacts.',
+        'generated_file_output = _maybe_create_workflow_generated_file_output(' in workflow_runner_content,
+        'Expected workflow assistant messages to finalize shared file artifacts.',
     )
     assert_true(
-        'generated_analysis_artifacts.append(assistant_table_generated_output)' in workflow_runner_content,
-        'Expected workflow CSV metadata to reach the generic artifact UI.',
+        'generated_analysis_artifacts.append(generated_file_output)' in workflow_runner_content,
+        'Expected workflow generated-file metadata to reach the generic artifact UI.',
     )
 
 
@@ -839,12 +988,12 @@ def test_chat_route_wires_assistant_table_artifacts():
         'Expected route_backend_chats.py to reuse the shared assistant table export intent predicate.',
     )
     assert_true(
-        'def maybe_create_assistant_table_generated_output(' in chat_route_content,
-        'Expected route_backend_chats.py to expose assistant table artifact creation.',
+        'def maybe_create_generated_file_output(' in chat_route_content,
+        'Expected route_backend_chats.py to expose generic generated-file artifact creation.',
     )
     assert_true(
-        'should_queue_tabular_generated_output_background(row_count, len(row_batches), settings)' in chat_route_content,
-        'Expected large assistant-derived CSV artifacts to use the durable background export threshold.',
+        "output_format == 'csv' and should_queue_tabular_generated_output_background(" in chat_route_content,
+        'Expected large generated CSV artifacts to use the durable background export threshold.',
     )
     assert_true(
         'queue_tabular_generated_output_run(' in chat_route_content,
@@ -859,29 +1008,41 @@ def test_chat_route_wires_assistant_table_artifacts():
         'Expected queued assistant exports to reuse standard background-export metadata.',
     )
     assert_true(
-        'document_generated_analysis_artifacts.append(assistant_table_generated_output)' in chat_route_content,
-        'Expected document-action assistant messages to include assistant table CSV artifacts.',
+        'document_generated_analysis_artifacts.append(generated_file_output)' in chat_route_content,
+        'Expected document-action assistant messages to include generated file artifacts.',
     )
     assert_true(
-        'generated_analysis_artifacts_list.append(assistant_table_generated_output)' in chat_route_content,
-        'Expected normal and streaming assistant messages to include assistant table CSV artifacts.',
+        'generated_analysis_artifacts_list.append(generated_file_output)' in chat_route_content,
+        'Expected normal and streaming assistant messages to include generated file artifacts.',
     )
     assert_true(
-        'assistant_content=get_assistant_csv_export_content(execution_result)' in chat_route_content,
-        'Expected document-action CSV exports to use the structured analysis reply when available.',
+        'assistant_content=get_generated_file_export_content(execution_result)' in chat_route_content,
+        'Expected document-action file exports to use the structured analysis reply when available.',
     )
     assert_true(
-        'assistant_content=get_assistant_csv_export_content(result)' in read_text(WORKFLOW_RUNNER_FILE),
-        'Expected workflow CSV exports to use the structured analysis reply when available.',
+        'assistant_content=get_generated_file_export_content(result)' in read_text(WORKFLOW_RUNNER_FILE),
+        'Expected workflow file exports to use the structured analysis reply when available.',
     )
     assert_true(
-        chat_route_content.count('build_csv_output_clarification_guidance(user_message)') == 2,
-        'Expected normal and streaming Chat to apply the same CSV clarification guidance.',
+        chat_route_content.count('build_generated_file_output_guidance(user_message)') == 2,
+        'Expected normal and streaming Chat to apply the same file-output guidance.',
     )
     workflow_runner_content = read_text(WORKFLOW_RUNNER_FILE)
     assert_true(
-        workflow_runner_content.count('build_csv_output_clarification_guidance(prompt_text)') == 2,
-        'Expected workflow model and agent execution to apply CSV clarification guidance.',
+        workflow_runner_content.count('build_generated_file_output_guidance(prompt_text)') == 2,
+        'Expected workflow model and agent execution to apply the same file-output guidance.',
+    )
+    assert_true(
+        chat_route_content.count('function_results=agent_citations_list') == 2,
+        'Expected normal and streaming Chat to pass current-turn action results to generated-file exports.',
+    )
+    assert_true(
+        'function_results=execution_result.get(\'agent_citations\') or []' in chat_route_content,
+        'Expected document actions to pass current-turn action results to generated-file exports.',
+    )
+    assert_true(
+        'function_results=raw_agent_citations' in workflow_runner_content,
+        'Expected workflows to pass current-turn action results to generated-file exports.',
     )
     assert_true(
         'if assistant_table_export_requested(user_question):' in chat_route_content,
@@ -899,6 +1060,10 @@ def run_tests() -> bool:
         test_tab_separated_table_response_builds_rows,
         test_non_tabular_document_csv_response_builds_export,
         test_document_action_analysis_reply_builds_csv_export,
+        test_structured_action_result_builds_csv_when_assistant_summarizes,
+        test_structured_action_results_combine_and_preserve_assistant_priority,
+        test_tabular_action_result_does_not_bypass_coverage_aware_exports,
+        test_function_results_render_docx_and_pdf_capabilities,
         test_plain_document_csv_response_excludes_surrounding_prose_and_citation,
         test_document_csv_response_preserves_multiline_and_escaped_quotes,
         test_fenced_document_csv_preserves_sentence_shaped_rows,
@@ -920,7 +1085,7 @@ def run_tests() -> bool:
         test_natural_csv_and_create_table_phrases_are_recognized,
         test_universal_csv_request_variants_are_recognized,
         test_csv_schema_clarification_guidance_is_specific_and_resumable,
-        test_workflow_assistant_table_csv_artifacts_reuse_shared_contract,
+        test_workflow_generated_file_artifacts_reuse_shared_contract,
         test_chat_route_wires_assistant_table_artifacts,
     ]
 

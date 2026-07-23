@@ -101,7 +101,7 @@ def search_all_groups(search_query, limit=10):
         parameters=params,
         enable_cross_partition_query=True
     ))
-    return results[:max(1, min(int(limit or 10), 25))]
+    return results[:max(1, min(int(limit or 10), 50))]
 
 def get_user_groups(user_id):
     """

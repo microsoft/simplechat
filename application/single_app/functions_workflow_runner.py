@@ -46,13 +46,17 @@ from config import (
 from functions_activity_logging import log_conversation_creation, log_token_usage, log_workflow_run
 from functions_appinsights import log_event
 from functions_assistant_table_exports import (
-    build_assistant_table_csv_export,
-    build_csv_output_clarification_guidance,
     build_safe_csv_headers,
-    extract_assistant_table_entries,
-    get_assistant_csv_export_content,
     has_generated_tabular_csv_output,
     neutralize_csv_spreadsheet_formula,
+)
+from functions_generated_file_exports import (
+    build_generated_file_artifact_metadata,
+    build_generated_file_export,
+    build_generated_file_output_guidance,
+    get_generated_file_export_content,
+    get_requested_generated_file_format,
+    has_generated_file_output,
 )
 from functions_chart_operations import append_proactive_chart_guidance
 from functions_collaboration import (
@@ -2636,9 +2640,9 @@ def _build_workflow_chat_messages(prompt_text, url_access_context=None, apply_ge
     source_review_content = _get_workflow_url_access_system_content(url_access_context)
     if source_review_content:
         messages.append({'role': 'system', 'content': source_review_content})
-    csv_output_guidance = build_csv_output_clarification_guidance(prompt_text)
-    if csv_output_guidance:
-        messages.append({'role': 'system', 'content': csv_output_guidance})
+    generated_file_output_guidance = build_generated_file_output_guidance(prompt_text)
+    if generated_file_output_guidance:
+        messages.append({'role': 'system', 'content': generated_file_output_guidance})
     messages.append({'role': 'user', 'content': user_content})
     return messages
 
@@ -2646,10 +2650,10 @@ def _build_workflow_chat_messages(prompt_text, url_access_context=None, apply_ge
 def _build_workflow_agent_messages(prompt_text, url_access_context=None, apply_generation_guidance=False):
     user_content = _build_workflow_generation_prompt(prompt_text) if apply_generation_guidance else str(prompt_text or '').strip()
     source_review_content = _get_workflow_url_access_system_content(url_access_context)
-    csv_output_guidance = build_csv_output_clarification_guidance(prompt_text)
+    generated_file_output_guidance = build_generated_file_output_guidance(prompt_text)
     content_sections = [
         content
-        for content in (csv_output_guidance, source_review_content)
+        for content in (generated_file_output_guidance, source_review_content)
         if content
     ]
     content_sections.append(f'[Workflow Task]\n{user_content}')
@@ -4347,18 +4351,28 @@ def _add_workflow_activity_thought(
     )
 
 
-def _maybe_create_workflow_assistant_table_generated_output(
+def _maybe_create_workflow_generated_file_output(
     workflow,
     conversation_id,
     user_question,
     assistant_content,
+    function_results=None,
     existing_outputs=None,
 ):
-    """Persist a workflow CSV artifact from a valid structured assistant response."""
-    if has_generated_tabular_csv_output(existing_outputs):
+    """Persist a requested workflow CSV, DOCX, or PDF artifact."""
+    output_format = get_requested_generated_file_format(user_question)
+    if not output_format:
+        return None
+    if output_format == 'csv' and has_generated_tabular_csv_output(existing_outputs):
+        return None
+    if has_generated_file_output(existing_outputs, output_format):
         return None
 
-    export_payload = build_assistant_table_csv_export(user_question, assistant_content)
+    export_payload = build_generated_file_export(
+        user_question,
+        assistant_content,
+        function_results=function_results,
+    )
     if not export_payload:
         return None
 
@@ -4370,13 +4384,19 @@ def _maybe_create_workflow_assistant_table_generated_output(
 
     generated_file_name = str(export_payload.get('file_name') or '').strip()
     row_count = int(export_payload.get('row_count') or 0)
-    table_rows = extract_assistant_table_entries(assistant_content)
     settings = get_settings()
-    row_batches = build_tabular_generated_output_row_batches(table_rows, settings=settings)
-    if not generated_file_name or row_count <= 0 or not row_batches:
+    structured_rows = export_payload.get('_structured_rows') or []
+    row_batches = []
+    if output_format == 'csv':
+        row_batches = build_tabular_generated_output_row_batches(structured_rows, settings=settings)
+    if not generated_file_name:
         return None
 
-    if should_queue_tabular_generated_output_background(row_count, len(row_batches), settings):
+    if output_format == 'csv' and should_queue_tabular_generated_output_background(
+        row_count,
+        len(row_batches),
+        settings,
+    ):
         try:
             background_run = queue_tabular_generated_output_run(
                 user_id=user_id,
@@ -4389,7 +4409,7 @@ def _maybe_create_workflow_assistant_table_generated_output(
                         'source': 'chat',
                     },
                 },
-                output_format='csv',
+                output_format=output_format,
                 row_batches=row_batches,
                 gpt_model='',
                 settings=settings,
@@ -4398,11 +4418,12 @@ def _maybe_create_workflow_assistant_table_generated_output(
             return build_background_tabular_generated_output_metadata(background_run)
         except Exception as exc:
             log_event(
-                '[Workflow Assistant Table Export] Failed to queue large CSV export',
+                '[Workflow Generated File Export] Failed to queue large CSV export',
                 {
                     'workflow_id': normalized_workflow.get('id'),
                     'conversation_id': normalized_conversation_id,
                     'row_count': row_count,
+                    'output_format': output_format,
                     'error': str(exc),
                 },
                 level=logging.ERROR,
@@ -4416,50 +4437,49 @@ def _maybe_create_workflow_assistant_table_generated_output(
             conversation_id=normalized_conversation_id,
             file_name=generated_file_name,
             file_content=export_payload.get('file_content'),
-            capability='tabular',
-            output_format='csv',
+            capability=export_payload.get('capability') or 'file_export',
+            output_format=output_format,
             summary=export_payload.get('summary'),
         )
     except Exception as exc:
         log_event(
-            '[Workflow Assistant Table Export] Failed to save assistant table CSV artifact',
+            '[Workflow Generated File Export] Failed to save generated file artifact',
             {
                 'workflow_id': normalized_workflow.get('id'),
                 'conversation_id': normalized_conversation_id,
                 'row_count': row_count,
+                'output_format': output_format,
                 'error': str(exc),
             },
             debug_only=True,
         )
         return None
 
-    uploaded_message = upload_result.get('message') or {}
-    artifact_message_id = uploaded_message.get('id')
-    if not artifact_message_id:
+    artifact_metadata = build_generated_file_artifact_metadata(
+        export_payload,
+        upload_result,
+        normalized_conversation_id,
+    )
+    if not artifact_metadata:
         return None
 
-    uploaded_file_name = uploaded_message.get('file_name') or generated_file_name
     log_event(
-        '[Workflow Assistant Table Export] Saved assistant table CSV artifact',
+        '[Workflow Generated File Export] Saved generated file artifact',
         {
             'workflow_id': normalized_workflow.get('id'),
             'conversation_id': normalized_conversation_id,
-            'artifact_message_id': artifact_message_id,
+            'artifact_message_id': artifact_metadata.get('artifact_message_id'),
             'row_count': row_count,
+            'output_format': output_format,
         },
         debug_only=True,
     )
-    return {
-        'capability': 'tabular',
-        'artifact_message_id': artifact_message_id,
-        'conversation_id': normalized_conversation_id,
-        'storage_scope': 'chat',
-        'file_name': uploaded_file_name,
-        'output_format': 'csv',
-        'row_count': row_count,
-        'preview_rows': export_payload.get('preview_rows') or [],
-        'summary': export_payload.get('summary'),
-    }
+    return artifact_metadata
+
+
+def _maybe_create_workflow_assistant_table_generated_output(*args, **kwargs):
+    """Backward-compatible wrapper for the generic workflow file-output finalizer."""
+    return _maybe_create_workflow_generated_file_output(*args, **kwargs)
 
 
 def _create_assistant_message(conversation, workflow, result, trigger_source, run_id, user_message_doc, assistant_message_id=None):
@@ -4471,17 +4491,19 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
     group_id = _get_workflow_group_id(workflow)
     generated_analysis_artifacts = list(result.get('generated_analysis_artifacts') or [])
     generated_tabular_outputs = list(result.get('generated_tabular_outputs') or [])
-    assistant_table_generated_output = _maybe_create_workflow_assistant_table_generated_output(
+    raw_agent_citations = list(result.get('agent_citations') or [])
+    generated_file_output = _maybe_create_workflow_generated_file_output(
         workflow=workflow,
         conversation_id=conversation.get('id'),
         user_question=workflow.get('task_prompt', ''),
-        assistant_content=get_assistant_csv_export_content(result),
+        assistant_content=get_generated_file_export_content(result),
+        function_results=raw_agent_citations,
         existing_outputs=generated_analysis_artifacts + generated_tabular_outputs,
     )
-    if assistant_table_generated_output:
-        generated_analysis_artifacts.append(assistant_table_generated_output)
-        generated_tabular_outputs.append(assistant_table_generated_output)
-    raw_agent_citations = list(result.get('agent_citations') or [])
+    if generated_file_output:
+        generated_analysis_artifacts.append(generated_file_output)
+        if generated_file_output.get('output_format') == 'csv':
+            generated_tabular_outputs.append(generated_file_output)
     web_search_citations = list(result.get('web_search_citations') or [])
     source_review_metadata = result.get('source_review') if isinstance(result.get('source_review'), dict) else {}
     url_access_metadata = result.get('url_access') if isinstance(result.get('url_access'), dict) else {}
@@ -5218,7 +5240,7 @@ def _prepare_workflow_search_context(
     scoped_action['active_public_workspace_id'] = manifest_public_workspace_ids
 
     if not is_mixed_source_chat_search_enabled(settings):
-        search_top_n = normalize_search_top_n(max(12, len(document_ids) * 3 if document_ids else 12))
+        search_top_n = normalize_search_top_n(max(50, len(document_ids) * 3 if document_ids else 50))
         search_result = search_documents(
             query=query,
             user_id=user_id,
@@ -5297,7 +5319,7 @@ def _prepare_workflow_search_context(
             manifest_public_workspace_ids.append(public_workspace_id)
 
     search_top_n = normalize_search_top_n(
-        max(12, len(narrative_document_ids) * 3 if narrative_document_ids else 12)
+        max(50, len(narrative_document_ids) * 3 if narrative_document_ids else 50)
     )
     search_result = {
         'results': [],

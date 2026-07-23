@@ -120,13 +120,17 @@ from functions_chat import *
 from functions_content import generate_embedding, generate_embeddings_batch
 from functions_assistant_table_exports import (
     assistant_table_export_requested,
-    build_csv_output_clarification_guidance,
     build_safe_csv_headers,
-    build_assistant_table_csv_export,
-    extract_assistant_table_entries,
-    get_assistant_csv_export_content,
     has_generated_tabular_csv_output,
     neutralize_csv_spreadsheet_formula,
+)
+from functions_generated_file_exports import (
+    build_generated_file_artifact_metadata,
+    build_generated_file_export,
+    build_generated_file_output_guidance,
+    get_generated_file_export_content,
+    get_requested_generated_file_format,
+    has_generated_file_output,
 )
 from functions_chart_operations import (
     CORE_CHART_PLUGIN_NAME,
@@ -207,7 +211,7 @@ ASSIGNED_KNOWLEDGE_DOCUMENT_ACTION_MAP = {
     DOCUMENT_ACTION_TYPE_ANALYZE: ASSIGNED_KNOWLEDGE_USER_ACTION_ANALYZE,
     DOCUMENT_ACTION_TYPE_COMPARISON: ASSIGNED_KNOWLEDGE_USER_ACTION_COMPARE,
 }
-ASSIGNED_KNOWLEDGE_CONTEXT_TOP_N = 12
+ASSIGNED_KNOWLEDGE_CONTEXT_TOP_N = 50
 ASSIGNED_KNOWLEDGE_CONTEXT_EXCERPT_MAX_CHARS = 1800
 MIXED_SOURCE_CHAT_RELEVANCE_SOURCE_LIMIT = 48
 FOUNDRY_SELECTED_AGENT_TYPES = {'aifoundry', 'new_foundry', 'foundry_workflow'}
@@ -2050,36 +2054,54 @@ def _has_generated_tabular_csv_output(generated_outputs):
     return has_generated_tabular_csv_output(generated_outputs)
 
 
-def maybe_create_assistant_table_generated_output(
+def maybe_create_generated_file_output(
     user_question,
     assistant_content,
     conversation_id,
+    function_results=None,
     existing_outputs=None,
     cancel_requested=None,
     request_correlation_id=None,
 ):
-    """Save a CSV artifact when a table-request answer contains a parseable table."""
+    """Save a requested CSV, DOCX, or PDF artifact from response and action evidence."""
     raise_if_mixed_source_cancelled(
         cancel_requested,
         'artifact_publication',
         request_correlation_id=request_correlation_id,
     )
-    if _has_generated_tabular_csv_output(existing_outputs):
+    output_format = get_requested_generated_file_format(user_question)
+    if not output_format:
+        return None
+    if output_format == 'csv' and _has_generated_tabular_csv_output(existing_outputs):
+        return None
+    if has_generated_file_output(existing_outputs, output_format):
         return None
 
-    export_payload = build_assistant_table_csv_export(user_question, assistant_content)
+    export_payload = build_generated_file_export(
+        user_question,
+        assistant_content,
+        function_results=function_results,
+    )
     if not export_payload:
         return None
 
-    generated_file_name = export_payload.get('file_name')
+    generated_file_name = str(export_payload.get('file_name') or '').strip()
+    if not generated_file_name:
+        return None
     row_count = _safe_int(export_payload.get('row_count'))
     settings = get_settings()
-    table_rows = extract_assistant_table_entries(assistant_content)
-    row_batches = _build_tabular_generated_output_row_batches(
-        table_rows,
-        settings=settings,
-    )
-    if should_queue_tabular_generated_output_background(row_count, len(row_batches), settings):
+    structured_rows = export_payload.get('_structured_rows') or []
+    row_batches = []
+    if output_format == 'csv':
+        row_batches = _build_tabular_generated_output_row_batches(
+            structured_rows,
+            settings=settings,
+        )
+    if output_format == 'csv' and should_queue_tabular_generated_output_background(
+        row_count,
+        len(row_batches),
+        settings,
+    ):
         try:
             background_run = queue_tabular_generated_output_run(
                 user_id=get_current_user_id(),
@@ -2092,7 +2114,7 @@ def maybe_create_assistant_table_generated_output(
                         'source': 'chat',
                     },
                 },
-                output_format='csv',
+                output_format=output_format,
                 row_batches=row_batches,
                 gpt_model='',
                 settings=settings,
@@ -2116,11 +2138,12 @@ def maybe_create_assistant_table_generated_output(
             raise
         except Exception as exc:
             log_event(
-                '[Assistant Table Export] Failed to queue large CSV export',
+                '[Generated File Export] Failed to queue large CSV export',
                 {
                     'conversation_id': conversation_id,
                     'generated_file_name': generated_file_name,
                     'row_count': row_count,
+                    'output_format': output_format,
                     'error': str(exc),
                 },
                 level=logging.ERROR,
@@ -2138,8 +2161,8 @@ def maybe_create_assistant_table_generated_output(
             conversation_id=conversation_id,
             file_name=generated_file_name,
             file_content=export_payload.get('file_content'),
-            capability='tabular',
-            output_format='csv',
+            capability=export_payload.get('capability') or 'file_export',
+            output_format=output_format,
             summary=export_payload.get('summary'),
         )
         try:
@@ -2158,43 +2181,43 @@ def maybe_create_assistant_table_generated_output(
         raise
     except Exception as exc:
         log_event(
-            '[Assistant Table Export] Failed to save assistant table CSV artifact',
+            '[Generated File Export] Failed to save generated file artifact',
             {
                 'conversation_id': conversation_id,
                 'generated_file_name': generated_file_name,
                 'row_count': row_count,
+                'output_format': output_format,
                 'error': str(exc),
             },
             debug_only=True,
         )
         return None
 
-    artifact_message_id = upload_result.get('message', {}).get('id')
-    if not artifact_message_id:
+    artifact_metadata = build_generated_file_artifact_metadata(
+        export_payload,
+        upload_result,
+        conversation_id,
+    )
+    if not artifact_metadata:
         return None
 
-    uploaded_file_name = upload_result.get('message', {}).get('file_name') or generated_file_name
     log_event(
-        '[Assistant Table Export] Saved assistant table CSV artifact',
+        '[Generated File Export] Saved generated file artifact',
         {
             'conversation_id': conversation_id,
-            'artifact_message_id': artifact_message_id,
-            'generated_file_name': uploaded_file_name,
+            'artifact_message_id': artifact_metadata.get('artifact_message_id'),
+            'generated_file_name': artifact_metadata.get('file_name'),
             'row_count': row_count,
+            'output_format': output_format,
         },
         debug_only=True,
     )
-    return {
-        'capability': 'tabular',
-        'artifact_message_id': artifact_message_id,
-        'conversation_id': conversation_id,
-        'storage_scope': 'chat',
-        'file_name': uploaded_file_name,
-        'output_format': 'csv',
-        'row_count': row_count,
-        'preview_rows': export_payload.get('preview_rows') or [],
-        'summary': export_payload.get('summary'),
-    }
+    return artifact_metadata
+
+
+def maybe_create_assistant_table_generated_output(*args, **kwargs):
+    """Backward-compatible wrapper for the generic generated-file finalizer."""
+    return maybe_create_generated_file_output(*args, **kwargs)
 
 
 def _safe_int(value, default=0):
@@ -4292,7 +4315,7 @@ def _resolve_tabular_related_document_evidence(document_match, user_question, us
         search_payload = search_documents(
             query=search_query,
             user_id=user_id,
-            top_n=2,
+            top_n=10,
             doc_scope=doc_scope,
             document_ids=[document_id],
             active_group_ids=active_group_ids,
@@ -13815,17 +13838,19 @@ def register_route_backend_chats(bp):
                 'artifact_publication',
                 request_correlation_id=request_correlation_id,
             )
-            assistant_table_generated_output = maybe_create_assistant_table_generated_output(
+            generated_file_output = maybe_create_generated_file_output(
                 user_question=user_message,
-                assistant_content=get_assistant_csv_export_content(execution_result),
+                assistant_content=get_generated_file_export_content(execution_result),
                 conversation_id=conversation_id,
+                function_results=execution_result.get('agent_citations') or [],
                 existing_outputs=document_generated_analysis_artifacts + document_generated_tabular_outputs,
                 cancel_requested=cancel_requested,
                 request_correlation_id=request_correlation_id,
             )
-            if assistant_table_generated_output:
-                document_generated_analysis_artifacts.append(assistant_table_generated_output)
-                document_generated_tabular_outputs.append(assistant_table_generated_output)
+            if generated_file_output:
+                document_generated_analysis_artifacts.append(generated_file_output)
+                if generated_file_output.get('output_format') == 'csv':
+                    document_generated_tabular_outputs.append(generated_file_output)
             _reauthorize_document_action_finalization(
                 normalized_action,
                 execution_result,
@@ -14468,11 +14493,11 @@ def register_route_backend_chats(bp):
             generated_tabular_outputs_list = []
             generated_analysis_artifacts_list = []
             system_messages_for_augmentation = [] # Collect system messages from search
-            csv_output_guidance = build_csv_output_clarification_guidance(user_message)
-            if csv_output_guidance:
+            generated_file_output_guidance = build_generated_file_output_guidance(user_message)
+            if generated_file_output_guidance:
                 system_messages_for_augmentation.append({
                     'role': 'system',
-                    'content': csv_output_guidance,
+                    'content': generated_file_output_guidance,
                 })
             search_results = []
             mixed_source_narrative_retrieval_failed = False
@@ -17995,15 +18020,17 @@ def register_route_backend_chats(bp):
                 created_timestamp=assistant_timestamp,
                 user_info=user_info_for_assistant,
             )
-            assistant_table_generated_output = maybe_create_assistant_table_generated_output(
+            generated_file_output = maybe_create_generated_file_output(
                 user_question=user_message,
                 assistant_content=ai_message,
                 conversation_id=conversation_id,
+                function_results=agent_citations_list,
                 existing_outputs=generated_analysis_artifacts_list + generated_tabular_outputs_list,
             )
-            if assistant_table_generated_output:
-                generated_analysis_artifacts_list.append(assistant_table_generated_output)
-                generated_tabular_outputs_list.append(assistant_table_generated_output)
+            if generated_file_output:
+                generated_analysis_artifacts_list.append(generated_file_output)
+                if generated_file_output.get('output_format') == 'csv':
+                    generated_tabular_outputs_list.append(generated_file_output)
             generated_analysis_metadata = _build_generated_analysis_metadata(
                 generated_analysis_artifacts=generated_analysis_artifacts_list,
                 generated_tabular_outputs=generated_tabular_outputs_list,
@@ -18594,11 +18621,11 @@ def register_route_backend_chats(bp):
                 generated_tabular_outputs_list = []
                 generated_analysis_artifacts_list = []
                 system_messages_for_augmentation = []
-                csv_output_guidance = build_csv_output_clarification_guidance(user_message)
-                if csv_output_guidance:
+                generated_file_output_guidance = build_generated_file_output_guidance(user_message)
+                if generated_file_output_guidance:
                     system_messages_for_augmentation.append({
                         'role': 'system',
-                        'content': csv_output_guidance,
+                        'content': generated_file_output_guidance,
                     })
                 search_results = []
                 mixed_source_narrative_retrieval_failed = False
@@ -19760,7 +19787,7 @@ def register_route_backend_chats(bp):
                         search_args = {
                             "query": search_query,
                             "user_id": user_id,
-                            "top_n": 12,
+                            "top_n": 50,
                             "doc_scope": effective_document_scope,
                         }
 
@@ -21614,17 +21641,19 @@ def register_route_backend_chats(bp):
                         'artifact_publication',
                         request_correlation_id=mixed_source_request_correlation_id,
                     )
-                    assistant_table_generated_output = maybe_create_assistant_table_generated_output(
+                    generated_file_output = maybe_create_generated_file_output(
                         user_question=user_message,
                         assistant_content=accumulated_content,
                         conversation_id=conversation_id,
+                        function_results=agent_citations_list,
                         existing_outputs=generated_analysis_artifacts_list + generated_tabular_outputs_list,
                         cancel_requested=stream_cancel_requested,
                         request_correlation_id=mixed_source_request_correlation_id,
                     )
-                    if assistant_table_generated_output:
-                        generated_analysis_artifacts_list.append(assistant_table_generated_output)
-                        generated_tabular_outputs_list.append(assistant_table_generated_output)
+                    if generated_file_output:
+                        generated_analysis_artifacts_list.append(generated_file_output)
+                        if generated_file_output.get('output_format') == 'csv':
+                            generated_tabular_outputs_list.append(generated_file_output)
                     if mixed_source_manifest:
                         fresh_finalization_manifest = resolve_authorized_source_manifest(
                             [source.get('document_id') for source in mixed_source_manifest],

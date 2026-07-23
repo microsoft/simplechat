@@ -22,7 +22,7 @@ from functions_service_health import (
 logger = logging.getLogger(__name__)
 
 
-SEARCH_DEFAULT_TOP_N = 25
+SEARCH_DEFAULT_TOP_N = 50
 SEARCH_MAX_TOP_N = 500
 VALID_SEARCH_SCOPES = {"all", "personal", "group", "public"}
 BASE_SEARCH_SELECT_FIELDS = [
@@ -259,7 +259,7 @@ def _build_odata_any_eq(collection_field: str, iterator_name: str, value: Any) -
     escaped_value = _escape_odata_literal(value)
     return f"{collection_field}/any({iterator_name}: {iterator_name} eq '{escaped_value}')"
 
-def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=25, doc_scope="all", active_group_id=None, active_group_ids=None, active_public_workspace_id=None, enable_file_sharing=True, tags_filter=None, document_filter_mode="intersection", enforce_public_workspace_visibility=True):
+def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=50, doc_scope="all", active_group_id=None, active_group_ids=None, active_public_workspace_id=None, enable_file_sharing=True, tags_filter=None, document_filter_mode="intersection", enforce_public_workspace_visibility=True):
     """
     Hybrid search that queries the user doc index, group doc index, or public doc index
     depending on doc type.
