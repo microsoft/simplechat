@@ -17,6 +17,7 @@ category: Version History
 - [AI Voice Conversations Setup Guide](AI_VOICE_CONVERSATIONS_SETUP_GUIDE.md)
 - [Activity Log Auto-Refresh](CONTROL_CENTER_ACTIVITY_LOG_AUTO_REFRESH.md)
 - [Activity Log Layout Presets](ACTIVITY_LOG_LAYOUT_PRESETS.md)
+- [Content Safety Violation Messages](CONTENT_SAFETY_VIOLATION_MESSAGES.md)
 
 ## Agent and Action Features
 

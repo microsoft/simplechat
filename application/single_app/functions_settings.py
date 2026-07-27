@@ -6,6 +6,9 @@ from flask import g, has_request_context, jsonify, request, session
 
 from config import *
 from functions_appinsights import log_event
+from functions_content_safety import (
+    CONTENT_SAFETY_VIOLATION_MESSAGE_DEFAULT,
+)
 from functions_cosmos_throughput import get_default_cosmos_throughput_settings
 from functions_document_actions import get_default_document_action_capabilities
 from functions_icon_utils import normalize_icon_payload
@@ -1063,6 +1066,8 @@ def get_settings(use_cosmos=False, include_source=False):
 
         # Safety (Content Safety) Settings
         'enable_content_safety': False,
+        'content_safety_violation_message': CONTENT_SAFETY_VIOLATION_MESSAGE_DEFAULT,
+        'content_safety_include_trigger_information': True,
         'require_member_of_safety_violation_admin': False,
         'require_member_of_control_center_admin': False,
         'require_member_of_control_center_dashboard_reader': False,

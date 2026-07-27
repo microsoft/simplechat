@@ -59,6 +59,7 @@ from functions_service_health import (
     SEMANTIC_SEARCH_QUOTA_WARNING_TYPE,
     SemanticSearchQuotaExceededError,
 )
+from functions_content_safety import build_content_safety_violation_message
 from functions_settings import *
 from functions_assigned_knowledge import (
     ASSIGNED_KNOWLEDGE_USER_ACTION_ANALYZE,
@@ -2706,7 +2707,6 @@ def _build_safety_message_doc(
             },
         },
     })
-
 
 def _build_fact_memory_context_lines(
     scope_id,
@@ -13410,21 +13410,12 @@ def register_route_backend_chats(bp):
                         cosmos_safety_container.upsert_item(safety_item)
 
                         # Instead of 403, we'll add a "safety" message
-                        blocked_msg_content = (
-                            "Your message was blocked by Content Safety.\n\n"
-                            f"**Reason**: {', '.join(block_reasons)}\n"
-                            "Triggered categories:\n"
+                        blocked_msg_content = build_content_safety_violation_message(
+                            settings=settings,
+                            block_reasons=block_reasons,
+                            triggered_categories=triggered_categories,
+                            blocklist_matches=blocklist_matches,
                         )
-                        for cat in triggered_categories:
-                            blocked_msg_content += (
-                                f" - {cat['category']} (severity={cat['severity']})\n"
-                            )
-                        if blocklist_matches:
-                            blocked_msg_content += (
-                                "\nBlocklist Matches:\n" +
-                                "\n".join([f" - {m['blocklistItemText']} (in {m['blocklistName']})"
-                                        for m in blocklist_matches])
-                            )
 
                         # Insert a special "role": "safety" or "blocked"
                         safety_doc = _build_safety_message_doc(
@@ -17039,21 +17030,12 @@ def register_route_backend_chats(bp):
                             cosmos_safety_container.upsert_item(safety_item)
 
                             # Build blocked message
-                            blocked_msg_content = (
-                                "Your message was blocked by Content Safety.\n\n"
-                                f"**Reason**: {', '.join(block_reasons)}\n"
-                                "Triggered categories:\n"
+                            blocked_msg_content = build_content_safety_violation_message(
+                                settings=settings,
+                                block_reasons=block_reasons,
+                                triggered_categories=triggered_categories,
+                                blocklist_matches=blocklist_matches,
                             )
-                            for cat in triggered_categories:
-                                blocked_msg_content += (
-                                    f" - {cat['category']} (severity={cat['severity']})\n"
-                                )
-                            if blocklist_matches:
-                                blocked_msg_content += (
-                                    "\nBlocklist Matches:\n" +
-                                    "\n".join([f" - {m['blocklistItemText']} (in {m['blocklistName']})"
-                                            for m in blocklist_matches])
-                                )
 
                             # Insert safety message
                             safety_doc = _build_safety_message_doc(
