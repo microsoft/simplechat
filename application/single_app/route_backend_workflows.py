@@ -1220,11 +1220,26 @@ def register_route_backend_workflows(bp):
         try:
             group_id, _ = _resolve_group_workflow_request_group(user_id)
         except ValueError as exc:
-            return jsonify({'error': str(exc)}), 400
+            logging.exception(
+                "Invalid group workflow request during cancellation. user_id=%s workflow_id=%s",
+                user_id,
+                workflow_id,
+            )
+            return jsonify({'error': 'Invalid group workflow request.'}), 400
         except LookupError as exc:
-            return jsonify({'error': str(exc)}), 404
+            logging.exception(
+                "Group workspace lookup failed during workflow cancellation. user_id=%s workflow_id=%s",
+                user_id,
+                workflow_id,
+            )
+            return jsonify({'error': 'Group workspace not found.'}), 404
         except PermissionError as exc:
-            return jsonify({'error': str(exc)}), 403
+            logging.exception(
+                "Unauthorized group workflow cancellation attempt. user_id=%s workflow_id=%s",
+                user_id,
+                workflow_id,
+            )
+            return jsonify({'error': 'Not authorized to access this group workspace.'}), 403
 
         workflow = get_group_workflow(group_id, workflow_id)
         if not workflow:
