@@ -34,7 +34,9 @@ def _normalize_status(value):
     normalized_value = _normalize_text(value).lower()
     if normalized_value in {'running', 'pending', 'in_progress', 'in-progress'}:
         return 'running'
-    if normalized_value in {'failed', 'error', 'cancelled', 'canceled'}:
+    if normalized_value in {'cancelled', 'canceled'}:
+        return 'cancelled'
+    if normalized_value in {'failed', 'error'}:
         return 'failed'
     if normalized_value in {'completed', 'complete', 'succeeded', 'success', 'done'}:
         return 'completed'
@@ -346,5 +348,5 @@ def build_workflow_activity_snapshot(run_record=None, workflow=None, conversatio
         'run': _serialize_run(run_record),
         'activities': activities,
         'lane_count': max(1, len(lane_order) or 1),
-        'live': _normalize_status((run_record or {}).get('status')) == 'running',
+        'live': _normalize_text((run_record or {}).get('status')).lower() in {'running', 'cancelling'},
     }

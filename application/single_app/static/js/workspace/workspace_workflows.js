@@ -396,7 +396,9 @@ function buildStatusBadge(status) {
                 ? "warning"
             : normalizedStatus === "running"
                 ? "primary"
-                : "secondary";
+                    : normalizedStatus === "cancelling"
+                        ? "warning"
+                        : "secondary";
     const label = normalizedStatus.charAt(0).toUpperCase() + normalizedStatus.slice(1);
     return `<span class="badge bg-${variant}">${escapeHtml(label)}</span>`;
 }
@@ -1603,37 +1605,42 @@ function buildWorkflowSearchText(workflow) {
 
 function getWorkflowDisplayStatus(workflow) {
     const runtimeStatus = normalizeText(workflow?.status).toLowerCase();
-    if (runtimeStatus === "running") {
-        return "running";
+    if (["running", "cancelling"].includes(runtimeStatus)) {
+        return runtimeStatus;
     }
 
     return normalizeText(workflow?.last_run_status).toLowerCase();
 }
 
+function isWorkflowRunActive(workflow) {
+    return ["running", "cancelling"].includes(getWorkflowDisplayStatus(workflow));
+}
+
 function getWorkflowActivityState(workflow) {
     const conversationId = normalizeText(workflow?.conversation_id);
-    const displayStatus = getWorkflowDisplayStatus(workflow);
     const hasRecordedRun = Boolean(normalizeText(workflow?.last_run_status) || normalizeText(workflow?.last_run_at));
     return {
-        isAvailable: Boolean(conversationId && (displayStatus === "running" || hasRecordedRun)),
+        isAvailable: Boolean(conversationId && (isWorkflowRunActive(workflow) || hasRecordedRun)),
         url: buildWorkflowActivityUrl(conversationId, "", normalizeText(workflow?.id)),
     };
 }
 
 function getWorkflowRunTimestamp(workflow) {
-    return getWorkflowDisplayStatus(workflow) === "running"
+    return isWorkflowRunActive(workflow)
         ? normalizeText(workflow?.last_run_started_at || workflow?.last_run_at)
         : normalizeText(workflow?.last_run_at);
 }
 
 function buildWorkflowActionButtons(workflow) {
     const workflowId = escapeHtml(normalizeText(workflow.id));
-    const isRunning = getWorkflowDisplayStatus(workflow) === "running";
     const activityState = getWorkflowActivityState(workflow);
     const buttons = [
-        `<button type="button" class="btn btn-sm btn-primary" data-action="run" data-workflow-id="${workflowId}" ${isRunning ? "disabled" : ""} title="Run workflow">${isRunning ? '<i class="bi bi-hourglass-split me-1"></i>Running' : '<i class="bi bi-play-fill me-1"></i>Run'}</button>`,
+        buildWorkflowRunButton(workflow, true),
     ];
 
+    if (isWorkflowRunActive(workflow)) {
+        buttons.push(buildWorkflowCancelButton(workflow, true));
+    }
     if (activityState.isAvailable) {
         buttons.push(`<button type="button" class="btn btn-sm btn-outline-info" data-action="activity" data-workflow-id="${workflowId}" title="Open activity view"><i class="bi bi-activity me-1"></i>Activity</button>`);
     }
@@ -1647,11 +1654,20 @@ function buildWorkflowActionButtons(workflow) {
 
 function buildWorkflowRunButton(workflow, includeLabel = true) {
     const workflowId = escapeHtml(normalizeText(workflow.id));
-    const isRunning = getWorkflowDisplayStatus(workflow) === "running";
-    const label = isRunning ? "Running" : "Run";
-    const iconClass = isRunning ? "bi bi-hourglass-split" : "bi bi-play-fill";
+    const displayStatus = getWorkflowDisplayStatus(workflow);
+    const isActive = isWorkflowRunActive(workflow);
+    const label = displayStatus === "cancelling" ? "Cancelling" : displayStatus === "running" ? "Running" : "Run";
+    const iconClass = isActive ? "bi bi-hourglass-split" : "bi bi-play-fill";
     const iconSpacing = includeLabel ? " me-1" : "";
-    return `<button type="button" class="btn btn-sm btn-primary" data-action="run" data-workflow-id="${workflowId}" ${isRunning ? "disabled" : ""} title="Run workflow" aria-label="Run workflow"><i class="${iconClass}${iconSpacing}"></i>${includeLabel ? label : ""}</button>`;
+    return `<button type="button" class="btn btn-sm btn-primary" data-action="run" data-workflow-id="${workflowId}" ${isActive ? "disabled" : ""} title="Run workflow" aria-label="Run workflow"><i class="${iconClass}${iconSpacing}"></i>${includeLabel ? label : ""}</button>`;
+}
+
+function buildWorkflowCancelButton(workflow, includeLabel = true) {
+    const workflowId = escapeHtml(normalizeText(workflow.id));
+    const isCancelling = getWorkflowDisplayStatus(workflow) === "cancelling";
+    const iconSpacing = includeLabel ? " me-1" : "";
+    const label = isCancelling ? "Cancelling" : "Cancel";
+    return `<button type="button" class="btn btn-sm btn-outline-danger" data-action="cancel" data-workflow-id="${workflowId}" ${isCancelling ? "disabled" : ""} title="Cancel workflow run" aria-label="Cancel workflow run"><i class="bi bi-x-circle${iconSpacing}"></i>${includeLabel ? label : ""}</button>`;
 }
 
 function buildWorkflowActivityButton(workflow, includeLabel = true) {
@@ -1663,10 +1679,14 @@ function buildWorkflowActivityButton(workflow, includeLabel = true) {
 
 function buildWorkflowCardMenu(workflow) {
     const workflowId = escapeHtml(normalizeText(workflow.id));
-    const isRunning = getWorkflowDisplayStatus(workflow) === "running";
+    const isActive = isWorkflowRunActive(workflow);
+    const isCancelling = getWorkflowDisplayStatus(workflow) === "cancelling";
     const activityState = getWorkflowActivityState(workflow);
-    const runDisabled = isRunning ? "disabled" : "";
+    const runDisabled = isActive ? "disabled" : "";
     const activityDisabled = activityState.isAvailable ? "" : "disabled";
+    const cancelItem = isActive
+        ? `<li><button type="button" class="dropdown-item text-danger" data-action="cancel" data-workflow-id="${workflowId}" ${isCancelling ? "disabled" : ""}><i class="bi bi-x-circle me-2"></i>${isCancelling ? "Cancelling" : "Cancel"}</button></li>`
+        : "";
 
     return `
         <div class="dropdown workflow-card-menu">
@@ -1675,6 +1695,7 @@ function buildWorkflowCardMenu(workflow) {
             </button>
             <ul class="dropdown-menu dropdown-menu-end">
                 <li><button type="button" class="dropdown-item" data-action="run" data-workflow-id="${workflowId}" ${runDisabled}><i class="bi bi-play-fill me-2"></i>Run</button></li>
+                ${cancelItem}
                 <li><button type="button" class="dropdown-item" data-action="activity" data-workflow-id="${workflowId}" ${activityDisabled}><i class="bi bi-activity me-2"></i>Activity</button></li>
                 <li><button type="button" class="dropdown-item" data-action="history" data-workflow-id="${workflowId}"><i class="bi bi-clock-history me-2"></i>History</button></li>
                 <li><button type="button" class="dropdown-item" data-action="edit" data-workflow-id="${workflowId}"><i class="bi bi-pencil me-2"></i>Edit</button></li>
@@ -1689,6 +1710,7 @@ function buildWorkflowCardActions(workflow) {
     return `
         <div class="workflow-card-primary-actions d-flex flex-wrap gap-1">
             ${buildWorkflowRunButton(workflow, true)}
+            ${isWorkflowRunActive(workflow) ? buildWorkflowCancelButton(workflow, true) : ""}
             ${buildWorkflowActivityButton(workflow, true)}
         </div>
         ${buildWorkflowCardMenu(workflow)}
@@ -1814,8 +1836,8 @@ function renderWorkflowTable(items) {
         const lastRunAt = runTimestamp
             ? `<div class="small text-muted mt-1">${escapeHtml(formatDateTime(runTimestamp))}</div>`
             : "";
-        const lastRunPreview = displayStatus === "running"
-            ? '<div class="workflow-meta text-primary mt-1">Run in progress. Open Activity to follow the live timeline.</div>'
+        const lastRunPreview = isWorkflowRunActive(workflow)
+            ? `<div class="workflow-meta ${displayStatus === "cancelling" ? "text-warning" : "text-primary"} mt-1">${displayStatus === "cancelling" ? "Cancellation requested. Open Activity to follow cleanup." : "Run in progress. Open Activity to follow the live timeline."}</div>`
             : normalizeText(workflow.last_run_response_preview)
             ? `<div class="workflow-meta workflow-response-preview mt-1">${escapeHtml(truncateDescription(workflow.last_run_response_preview, 160))}</div>`
             : normalizeText(workflow.last_run_error)
@@ -1886,8 +1908,10 @@ function renderWorkflowGrid(items) {
         const displayStatus = getWorkflowDisplayStatus(workflow);
         const statusBadge = displayStatus ? buildStatusBadge(displayStatus) : '<span class="text-muted small">Never run</span>';
         const runTimestamp = getWorkflowRunTimestamp(workflow);
-        const previewText = displayStatus === "running"
-            ? "Run in progress. Open Activity to follow the live timeline."
+        const previewText = isWorkflowRunActive(workflow)
+            ? displayStatus === "cancelling"
+                ? "Cancellation requested. Open Activity to follow cleanup."
+                : "Run in progress. Open Activity to follow the live timeline."
             : normalizeText(workflow.last_run_response_preview) || normalizeText(workflow.last_run_error) || "No recent response preview available.";
         const runnerLabel = escapeHtml(getWorkflowRunnerLabel(workflow));
         const triggerLabel = escapeHtml(getWorkflowTriggerLabel(workflow));
@@ -2838,11 +2862,16 @@ function renderRunHistory(runs) {
         const conversationId = normalizeText(run.conversation_id);
         const conversationUrl = buildWorkflowConversationUrl(conversationId);
         const activityUrl = buildWorkflowActivityUrl(conversationId, normalizeText(run.id), currentHistoryWorkflowId);
+        const runStatus = normalizeText(run.status).toLowerCase();
         const failedWindows = Number(run.analysis_coverage?.failed_windows || 0);
         const canResumeFailed = normalizeText(run.status).toLowerCase() === "failed" || failedWindows > 0;
         const resumeFailedButton = canResumeFailed
             ? `<button type="button" class="btn btn-sm btn-outline-warning" data-resume-run-id="${escapeHtml(normalizeText(run.id))}"><i class="bi bi-arrow-clockwise me-1"></i>Resume failed</button>`
             : "";
+        const cancelRunButton = ["running", "cancelling"].includes(runStatus)
+            ? `<button type="button" class="btn btn-sm btn-outline-danger" data-cancel-run-id="${escapeHtml(normalizeText(run.id))}" ${runStatus === "cancelling" ? "disabled" : ""}><i class="bi bi-x-circle me-1"></i>${runStatus === "cancelling" ? "Cancelling" : "Cancel"}</button>`
+            : "";
+        const runActionButtons = `${cancelRunButton}${resumeFailedButton}`;
         const details = normalizeText(run.error)
             ? `<div class="text-danger small">${escapeHtml(run.error)}</div>`
             : normalizeText(run.response_preview)
@@ -2853,11 +2882,11 @@ function renderRunHistory(runs) {
                 <div class="d-flex flex-wrap gap-2">
                     <a class="btn btn-sm btn-outline-primary" href="${escapeHtml(conversationUrl)}" target="_blank" rel="noopener"><i class="bi bi-chat-dots-fill me-1"></i>Open workflow conversation</a>
                     <a class="btn btn-sm btn-outline-info" href="${escapeHtml(activityUrl)}" target="_blank" rel="noopener"><i class="bi bi-activity me-1"></i>Open activity view</a>
-                    ${resumeFailedButton}
+                    ${runActionButtons}
                 </div>
                 <div class="small text-muted mt-1">${escapeHtml(conversationId)}</div>
             `
-            : resumeFailedButton || '<div class="text-muted small">Not created yet.</div>';
+            : runActionButtons || '<div class="text-muted small">Not created yet.</div>';
 
         return `
             <tr>
@@ -2955,6 +2984,60 @@ function openWorkflowActivity(workflow) {
     }
 }
 
+async function cancelWorkflow(workflow, runId = "") {
+    if (!workflow) {
+        return;
+    }
+
+    const normalizedRunId = normalizeText(runId);
+    const previousRuntimeFields = {
+        status: workflow.status,
+        last_run_status: workflow.last_run_status,
+        active_run_id: workflow.active_run_id,
+        cancellation_requested_at: workflow.cancellation_requested_at,
+        cancellation_requested_by: workflow.cancellation_requested_by,
+    };
+
+    workflow.status = "cancelling";
+    workflow.last_run_status = "cancelling";
+    filterWorkflows();
+
+    try {
+        const workflowId = encodeURIComponent(normalizeText(workflow.id));
+        const cancelPath = normalizedRunId
+            ? `${workflowId}/runs/${encodeURIComponent(normalizedRunId)}/cancel`
+            : `${workflowId}/cancel`;
+        const response = await fetch(buildWorkflowApiUrl(cancelPath), {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            credentials: "same-origin",
+            body: JSON.stringify({}),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || data.success === false) {
+            throw new Error(data.run?.error || data.error || "Unable to cancel the workflow run.");
+        }
+
+        if (data.workflow && typeof data.workflow === "object") {
+            Object.assign(workflow, data.workflow);
+        }
+        showToast("Cancellation requested. The workflow will stop at its next safe boundary.", "info");
+        await fetchUserWorkflows();
+
+        if (currentHistoryWorkflowId && currentHistoryWorkflowId === normalizeText(workflow.id)) {
+            const refreshedWorkflow = workflows.find((item) => normalizeText(item.id) === currentHistoryWorkflowId) || workflow;
+            await openHistoryModalForWorkflow(refreshedWorkflow);
+        }
+    } catch (error) {
+        Object.assign(workflow, previousRuntimeFields);
+        filterWorkflows();
+        showToast(escapeHtml(error.message || "Unable to cancel the workflow run."), "danger");
+        await fetchUserWorkflows();
+    }
+}
+
 async function runWorkflow(workflow) {
     if (!workflow) {
         return;
@@ -2986,7 +3069,11 @@ async function runWorkflow(workflow) {
         }
 
         const runStatus = normalizeText(data.run?.status).toLowerCase();
-        showToast(runStatus === "skipped" ? "Workflow skipped; no File Sync changes were found." : "Workflow run completed.", "success");
+        if (runStatus === "cancelled" || runStatus === "canceled") {
+            showToast("Workflow run cancelled.", "info");
+        } else {
+            showToast(runStatus === "skipped" ? "Workflow skipped; no File Sync changes were found." : "Workflow run completed.", "success");
+        }
         window.dispatchEvent(new CustomEvent("workflow-alert-refresh-requested"));
         await fetchUserWorkflows();
 
@@ -3071,6 +3158,8 @@ function handleWorkflowActionClick(event) {
     const action = button.getAttribute("data-action");
     if (action === "run") {
         runWorkflow(workflow);
+    } else if (action === "cancel") {
+        cancelWorkflow(workflow);
     } else if (action === "activity") {
         openWorkflowActivity(workflow);
     } else if (action === "history") {
@@ -3171,6 +3260,19 @@ function initializeWorkflowEvents() {
     workflowDraftInstructionsBtn?.addEventListener("click", draftWorkflowInstructions);
     workflowDeleteConfirmBtn?.addEventListener("click", deleteWorkflow);
     workflowHistoryBody?.addEventListener("click", (event) => {
+        const cancelButton = event.target.closest("button[data-cancel-run-id]");
+        if (cancelButton && !cancelButton.disabled) {
+            const workflow = findWorkflowById(currentHistoryWorkflowId);
+            if (!workflow) {
+                return;
+            }
+            cancelButton.disabled = true;
+            cancelWorkflow(workflow, cancelButton.getAttribute("data-cancel-run-id")).finally(() => {
+                cancelButton.disabled = false;
+            });
+            return;
+        }
+
         const resumeButton = event.target.closest("button[data-resume-run-id]");
         if (!resumeButton || resumeButton.disabled) {
             return;

@@ -11,6 +11,14 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Container initialization now re-reads and returns the existing container when another worker creates it first, preserving normal startup behavior for already-provisioned environments.
     *   (Ref: `config.py`, `test_cosmos_container_conflict_recovery.py`, `COSMOS_CONTAINER_STARTUP_CONFLICT_FIX.md`)
 
+#### New Features
+
+*   **Workflow Run Cancellation**
+    *   Personal and group workflows can now be cancelled from workspace rows and cards, run history, or the workflow activity view while a run is active.
+    *   Cancellation is persisted for the active run and cooperatively stops further File Sync, document action, model, agent, artifact, notification, and scheduling work after any in-flight external request returns.
+    *   Cancelled scheduled and File Sync workflows return to an idle state and advance to their next scheduled run instead of immediately restarting.
+    *   (Ref: microsoft/simplechat#990, `route_backend_workflows.py`, `functions_workflow_runner.py`, `workspace_workflows.js`)
+
 ### **(v0.250.061)**
 
 #### New Features

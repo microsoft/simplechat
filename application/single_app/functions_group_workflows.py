@@ -506,6 +506,9 @@ def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
         'last_run_response_preview': (existing_workflow or {}).get('last_run_response_preview', ''),
         'last_run_trigger_source': (existing_workflow or {}).get('last_run_trigger_source', ''),
         'run_count': int((existing_workflow or {}).get('run_count') or 0),
+        'active_run_id': (existing_workflow or {}).get('active_run_id', ''),
+        'cancellation_requested_at': (existing_workflow or {}).get('cancellation_requested_at'),
+        'cancellation_requested_by': (existing_workflow or {}).get('cancellation_requested_by', ''),
     }
 
     if trigger_type in {'interval', 'file_sync'} and is_enabled:
