@@ -1257,12 +1257,15 @@ def register_route_backend_workflows(bp):
         user_id = get_current_user_id()
         try:
             group_id, _ = _resolve_group_workflow_request_group(user_id)
-        except ValueError as exc:
-            return jsonify({'error': str(exc)}), 400
-        except LookupError as exc:
-            return jsonify({'error': str(exc)}), 404
-        except PermissionError as exc:
-            return jsonify({'error': str(exc)}), 403
+        except ValueError:
+            logging.exception('Invalid group workflow cancellation request.')
+            return jsonify({'error': 'Invalid request.'}), 400
+        except LookupError:
+            logging.exception('Group not found while cancelling workflow run.')
+            return jsonify({'error': 'Group not found.'}), 404
+        except PermissionError:
+            logging.exception('Permission denied while cancelling workflow run.')
+            return jsonify({'error': 'Forbidden.'}), 403
 
         workflow = get_group_workflow(group_id, workflow_id)
         if not workflow:
