@@ -894,10 +894,22 @@ def register_route_backend_workflows(bp):
                 save_run=lambda requested_run: save_personal_workflow_run(user_id, requested_run),
                 update_runtime_fields=lambda updates: update_personal_workflow_runtime_fields(user_id, workflow_id, updates),
             )
-        except LookupError as exc:
-            return jsonify({'error': str(exc)}), 404
-        except WorkflowCancellationConflictError as exc:
-            return jsonify({'error': str(exc)}), 409
+        except LookupError:
+            logging.exception(
+                "LookupError while cancelling personal workflow run. workflow_id=%s run_id=%s user_id=%s",
+                workflow_id,
+                run_id,
+                user_id,
+            )
+            return jsonify({'error': 'Workflow run not found.'}), 404
+        except WorkflowCancellationConflictError:
+            logging.exception(
+                "WorkflowCancellationConflictError while cancelling personal workflow run. workflow_id=%s run_id=%s user_id=%s",
+                workflow_id,
+                run_id,
+                user_id,
+            )
+            return jsonify({'error': 'Workflow run cancellation conflict.'}), 409
 
         return jsonify({'success': True, 'workflow': updated_workflow, 'run': run_record}), 202
 
