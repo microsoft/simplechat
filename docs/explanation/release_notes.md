@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.060)**
+
+#### New Features
+
+*   **Configurable Content Safety Violation Messages**
+    *   Administrators can now configure the Markdown message shown when Content Safety blocks a chat request using the standard Markdown editor toolbar.
+    *   A new setting controls whether the block reason, detected categories and severities, and blocklist matches are included beneath the custom message.
+    *   (Ref: microsoft/simplechat#989, `functions_content_safety.py`, `admin_settings.html`, `route_backend_chats.py`)
+
 ### **(v0.250.059)**
 
 #### New Features

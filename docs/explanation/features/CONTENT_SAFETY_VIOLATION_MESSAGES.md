@@ -25,13 +25,13 @@ Administrators can configure the Markdown message shown when Azure Content Safet
 ## Usage Instructions
 
 1. Open **Admin Settings** and enable Content Safety.
-2. Enter the desired Markdown in **Safety Violation Message**.
+2. Use the standard Markdown toolbar in **Safety Violation Message** to format the desired text.
 3. Keep **Include Trigger Information** selected to append the block reason, categories, severities, and blocklist matches. Clear it to show only the configured message.
 4. Save the settings. Newly blocked chat messages use the saved configuration.
 
 ## Testing and Validation
 
-- `functional_tests/test_content_safety_violation_message.py` validates default output, Markdown template preservation, trigger-information suppression, and blank-template fallback.
+- `functional_tests/test_content_safety_violation_message.py` validates the Markdown editor toolbar, default output, Markdown template preservation, trigger-information suppression, and blank-template fallback.
 - Admin Settings validation verifies message normalization, seed defaults, and the form controls.
 - Version was updated in `application/single_app/config.py` to `0.250.060` for traceability.
 

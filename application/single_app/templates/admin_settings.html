@@ -11160,6 +11160,7 @@
     // Existing SimpleMDE script...
      // We’ll store the SimpleMDE instance globally so we can destroy or read its content
     let simplemde = null;
+    let contentSafetyViolationMessageEditor = null;
 
     // Grab references to the toggle, the editor container, and the preview container
     const toggleLandingPageEditor = document.getElementById("toggleLandingPageEditor");
@@ -11217,6 +11218,31 @@
             showPreview();
         }
     }
+
+    function initializeContentSafetyViolationMessageEditor() {
+        if (contentSafetyViolationMessageEditor || typeof SimpleMDE === "undefined") {
+            return;
+        }
+
+        const contentSafetyViolationMessageInput = document.getElementById(
+            "content_safety_violation_message"
+        );
+        if (!contentSafetyViolationMessageInput) {
+            return;
+        }
+
+        try {
+            contentSafetyViolationMessageEditor = new SimpleMDE({
+                element: contentSafetyViolationMessageInput,
+                spellChecker: false,
+                autoDownloadFontAwesome: false
+            });
+        } catch (error) {
+            console.error("Failed to initialize SimpleMDE for Content Safety violation messages:", error);
+        }
+    }
+
+    initializeContentSafetyViolationMessageEditor();
 </script>
 
 <script>

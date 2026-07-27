@@ -11,6 +11,7 @@ and choose whether blocked-chat trigger information is included.
 
 import os
 import sys
+from pathlib import Path
 
 
 APPLICATION_PATH = os.path.join(
@@ -19,6 +20,7 @@ APPLICATION_PATH = os.path.join(
     'application',
     'single_app',
 )
+ADMIN_SETTINGS_TEMPLATE_PATH = Path(APPLICATION_PATH) / 'templates' / 'admin_settings.html'
 sys.path.insert(0, APPLICATION_PATH)
 
 from functions_content_safety import (
@@ -53,6 +55,21 @@ def test_message_normalization_preserves_safe_admin_defaults():
             'x' * (CONTENT_SAFETY_VIOLATION_MESSAGE_MAX_LENGTH + 1)
         )
     ) == CONTENT_SAFETY_VIOLATION_MESSAGE_MAX_LENGTH
+
+
+def test_admin_settings_uses_the_markdown_editor_toolbar():
+    """The Content Safety message field uses the standard local Markdown toolbar."""
+    admin_settings_template = ADMIN_SETTINGS_TEMPLATE_PATH.read_text(encoding='utf-8')
+
+    assert '<script src="/static/js/simplemde/simplemde.min.js"></script>' in admin_settings_template
+    assert 'id="content_safety_violation_message"' in admin_settings_template
+    assert 'let contentSafetyViolationMessageEditor = null;' in admin_settings_template
+    assert 'function initializeContentSafetyViolationMessageEditor()' in admin_settings_template
+    assert 'contentSafetyViolationMessageEditor = new SimpleMDE({' in admin_settings_template
+    assert 'element: contentSafetyViolationMessageInput,' in admin_settings_template
+    assert 'spellChecker: false,' in admin_settings_template
+    assert 'autoDownloadFontAwesome: false' in admin_settings_template
+    assert 'initializeContentSafetyViolationMessageEditor();' in admin_settings_template
 
 
 def test_default_message_preserves_trigger_information():
@@ -121,6 +138,7 @@ def test_trigger_information_can_be_hidden_and_blank_templates_fall_back():
 
 if __name__ == '__main__':
     test_message_normalization_preserves_safe_admin_defaults()
+    test_admin_settings_uses_the_markdown_editor_toolbar()
     test_default_message_preserves_trigger_information()
     test_custom_markdown_message_precedes_trigger_information()
     test_trigger_information_can_be_hidden_and_blank_templates_fall_back()
