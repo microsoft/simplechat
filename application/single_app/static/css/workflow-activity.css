@@ -278,6 +278,14 @@
     background: #1f6feb;
 }
 
+.workflow-activity-node[data-status="cancelling"] {
+    background: #bf8700;
+}
+
+.workflow-activity-node[data-status="cancelled"] {
+    background: #6f42c1;
+}
+
 .workflow-activity-node[data-status="failed"] {
     background: #cf222e;
 }
@@ -302,6 +310,14 @@
 
 .workflow-activity-card[data-status="running"] {
     border-left: 4px solid #1f6feb;
+}
+
+.workflow-activity-card[data-status="cancelling"] {
+    border-left: 4px solid #bf8700;
+}
+
+.workflow-activity-card[data-status="cancelled"] {
+    border-left: 4px solid #6f42c1;
 }
 
 .workflow-activity-card[data-status="completed"] {
@@ -360,6 +376,16 @@
 .workflow-activity-badge[data-status="running"] {
     background: rgba(31, 111, 235, 0.12);
     color: #1f6feb;
+}
+
+.workflow-activity-badge[data-status="cancelling"] {
+    background: rgba(191, 135, 0, 0.14);
+    color: #8a6100;
+}
+
+.workflow-activity-badge[data-status="cancelled"] {
+    background: rgba(111, 66, 193, 0.14);
+    color: #6f42c1;
 }
 
 .workflow-activity-badge[data-status="completed"] {

@@ -47,7 +47,7 @@ from functions_group_workflows import (
     update_group_workflow_runtime_fields,
 )
 from functions_settings import get_settings, is_group_workflows_enabled_for_group, update_settings
-from functions_workflow_runner import run_group_workflow, run_personal_workflow
+from functions_workflow_runner import create_workflow_run_id, run_group_workflow, run_personal_workflow
 
 
 def _get_lock_holder_id():
@@ -514,18 +514,26 @@ def check_due_workflows_once():
                         pass
 
                 started_at = datetime.now(timezone.utc).isoformat()
+                active_run_id = create_workflow_run_id()
                 update_personal_workflow_runtime_fields(
                     user_id,
                     workflow_id,
                     {
                         'status': 'running',
+                        'active_run_id': active_run_id,
+                        'cancellation_requested_at': None,
+                        'cancellation_requested_by': '',
                         'last_run_started_at': started_at,
                         'last_run_trigger_source': trigger_source,
                         'last_run_error': '',
                     },
                 )
 
-                result = run_personal_workflow(refreshed_workflow, trigger_source=trigger_source)
+                result = run_personal_workflow(
+                    refreshed_workflow,
+                    trigger_source=trigger_source,
+                    run_id=active_run_id,
+                )
                 update_fields = dict(result.get('workflow_updates') or {})
                 update_fields['status'] = 'idle'
                 update_fields['next_run_at'] = compute_next_run_at(refreshed_workflow, from_time=datetime.now(timezone.utc))
@@ -590,18 +598,26 @@ def check_due_workflows_once():
                         pass
 
                 started_at = datetime.now(timezone.utc).isoformat()
+                active_run_id = create_workflow_run_id()
                 update_group_workflow_runtime_fields(
                     group_id,
                     workflow_id,
                     {
                         'status': 'running',
+                        'active_run_id': active_run_id,
+                        'cancellation_requested_at': None,
+                        'cancellation_requested_by': '',
                         'last_run_started_at': started_at,
                         'last_run_trigger_source': trigger_source,
                         'last_run_error': '',
                     },
                 )
 
-                result = run_group_workflow(refreshed_workflow, trigger_source=trigger_source)
+                result = run_group_workflow(
+                    refreshed_workflow,
+                    trigger_source=trigger_source,
+                    run_id=active_run_id,
+                )
                 update_fields = dict(result.get('workflow_updates') or {})
                 update_fields['status'] = 'idle'
                 update_fields['next_run_at'] = compute_next_run_at(refreshed_workflow, from_time=datetime.now(timezone.utc))
