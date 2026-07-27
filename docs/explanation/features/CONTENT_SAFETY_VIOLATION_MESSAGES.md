@@ -1,8 +1,8 @@
 # Content Safety Violation Messages
 
-Implemented in version: **0.250.060**
+Implemented in version: **0.250.061**
 
-Related config.py version update: `application/single_app/config.py` is **0.250.060** for this implementation.
+Related config.py version update: `application/single_app/config.py` is **0.250.061** for this implementation.
 
 ## Overview
 
@@ -21,6 +21,7 @@ Administrators can configure the Markdown message shown when Azure Content Safet
 - Blank or missing templates fall back to the default message, and saved templates are limited to 3,000 characters.
 - Normal and streaming chat requests call the same backend formatter before persisting and returning a `safety` message.
 - The chat UI renders safety messages through `DOMPurify.sanitize(marked.parse(...))`; no remote browser assets are added.
+- The editor refreshes after the hidden Safety tab becomes visible, and Markdown-only edits enable Save Settings and synchronize to the submitted form value.
 
 ## Usage Instructions
 
@@ -33,7 +34,7 @@ Administrators can configure the Markdown message shown when Azure Content Safet
 
 - `functional_tests/test_content_safety_violation_message.py` validates the Markdown editor toolbar, default output, Markdown template preservation, trigger-information suppression, and blank-template fallback.
 - Admin Settings validation verifies message normalization, seed defaults, and the form controls.
-- Version was updated in `application/single_app/config.py` to `0.250.060` for traceability.
+- Version was updated in `application/single_app/config.py` to `0.250.061` for traceability.
 
 ## Known Limitations
 

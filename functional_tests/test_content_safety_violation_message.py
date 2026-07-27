@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for configurable Content Safety violation messages.
-Version: 0.250.060
-Implemented in: 0.250.060
+Version: 0.250.061
+Implemented in: 0.250.061
 
 This test ensures that administrators can provide a Markdown safety message
 and choose whether blocked-chat trigger information is included.
@@ -69,7 +69,16 @@ def test_admin_settings_uses_the_markdown_editor_toolbar():
     assert 'element: contentSafetyViolationMessageInput,' in admin_settings_template
     assert 'spellChecker: false,' in admin_settings_template
     assert 'autoDownloadFontAwesome: false' in admin_settings_template
+    assert 'forceSync: true' in admin_settings_template
+    assert 'contentSafetyViolationMessageEditor.codemirror.on("change", () => {' in admin_settings_template
+    assert 'window.markFormAsModified();' in admin_settings_template
     assert 'initializeContentSafetyViolationMessageEditor();' in admin_settings_template
+    assert 'function refreshContentSafetyViolationMessageEditor()' in admin_settings_template
+    assert 'contentSafetyViolationMessageEditor.codemirror.refresh();' in admin_settings_template
+    assert 'window.setTimeout(() => {' in admin_settings_template
+    assert '}, 100);' in admin_settings_template
+    assert 'safetyTab.addEventListener("shown.bs.tab", refreshContentSafetyViolationMessageEditor);' in admin_settings_template
+    assert 'window.addEventListener("load", refreshContentSafetyViolationMessageEditor);' in admin_settings_template
 
 
 def test_default_message_preserves_trigger_information():

@@ -11235,14 +11235,39 @@
             contentSafetyViolationMessageEditor = new SimpleMDE({
                 element: contentSafetyViolationMessageInput,
                 spellChecker: false,
-                autoDownloadFontAwesome: false
+                autoDownloadFontAwesome: false,
+                forceSync: true
+            });
+            contentSafetyViolationMessageEditor.codemirror.on("change", () => {
+                if (typeof window.markFormAsModified === "function") {
+                    window.markFormAsModified();
+                }
             });
         } catch (error) {
             console.error("Failed to initialize SimpleMDE for Content Safety violation messages:", error);
         }
     }
 
+    function refreshContentSafetyViolationMessageEditor() {
+        if (!contentSafetyViolationMessageEditor?.codemirror) {
+            return;
+        }
+
+        window.setTimeout(() => {
+            contentSafetyViolationMessageEditor.codemirror.refresh();
+        }, 100);
+    }
+
     initializeContentSafetyViolationMessageEditor();
+
+    const safetyTab = document.getElementById("safety-tab");
+    if (safetyTab) {
+        safetyTab.addEventListener("shown.bs.tab", refreshContentSafetyViolationMessageEditor);
+    }
+    if (document.getElementById("safety")?.classList.contains("show")) {
+        refreshContentSafetyViolationMessageEditor();
+    }
+    window.addEventListener("load", refreshContentSafetyViolationMessageEditor);
 </script>
 
 <script>
