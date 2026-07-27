@@ -9,6 +9,7 @@ from flask import current_app
 
 from functions_keyvault import keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_save_helper, redact_model_endpoint_secret_values
 from functions_settings import *
+from functions_content_safety import normalize_content_safety_violation_message
 from functions_file_sync import FILE_SYNC_DEFAULTS, get_file_sync_config
 from functions_source_review import SOURCE_REVIEW_DEFAULTS, get_source_review_config, get_source_review_runtime_capabilities, normalize_source_review_js_rendering_enabled, parse_source_review_list
 from functions_control_center import (
@@ -125,6 +126,7 @@ def normalize_agents_page_text(value, fallback, max_length):
     if not candidate:
         candidate = fallback
     return candidate[:max_length]
+
 
 def register_route_frontend_admin_settings(bp):
     @bp.route('/admin/settings', methods=['GET', 'POST'])
@@ -720,6 +722,12 @@ def register_route_frontend_admin_settings(bp):
             file_download_allowed_public_workspace_ids = normalize_file_download_allowed_public_workspace_ids(
                 form_data.get('file_download_allowed_public_workspace_ids', '')
             )
+            content_safety_violation_message = normalize_content_safety_violation_message(
+                form_data.get('content_safety_violation_message')
+            )
+            content_safety_include_trigger_information = form_data.get(
+                'content_safety_include_trigger_information'
+            ) == 'on'
             require_member_of_safety_violation_admin = form_data.get('require_member_of_safety_violation_admin') == 'on'
             require_member_of_control_center_admin = form_data.get('require_member_of_control_center_admin') == 'on'
             require_member_of_control_center_dashboard_reader = form_data.get('require_member_of_control_center_dashboard_reader') == 'on'
@@ -2105,6 +2113,8 @@ def register_route_frontend_admin_settings(bp):
 
                 # Safety (Content Safety Direct & APIM)
                 'enable_content_safety': form_data.get('enable_content_safety') == 'on',
+                'content_safety_violation_message': content_safety_violation_message,
+                'content_safety_include_trigger_information': content_safety_include_trigger_information,
                 'content_safety_endpoint': form_data.get('content_safety_endpoint', '').strip(),
                 'content_safety_key': admin_secret('content_safety_key'),
                 'content_safety_authentication_type': form_data.get('content_safety_authentication_type', 'key'),

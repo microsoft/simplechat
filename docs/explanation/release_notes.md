@@ -2,8 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
-<<<<<<< HEAD
-### **(v0.250.058)**
+### **(v0.250.062)**
 
 #### Bug Fixes
 
@@ -11,7 +10,17 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Fixed a local Docker startup failure where multiple gunicorn workers could race while creating first-run Cosmos containers, causing a `NotFound` followed by a `Conflict` during app import.
     *   Container initialization now re-reads and returns the existing container when another worker creates it first, preserving normal startup behavior for already-provisioned environments.
     *   (Ref: `config.py`, `test_cosmos_container_conflict_recovery.py`, `COSMOS_CONTAINER_STARTUP_CONFLICT_FIX.md`)
-=======
+
+### **(v0.250.061)**
+
+#### New Features
+
+*   **Configurable Content Safety Violation Messages**
+    *   Administrators can now configure the Markdown message shown when Content Safety blocks a chat request using the standard Markdown editor toolbar.
+    *   A new setting controls whether the block reason, detected categories and severities, and blocklist matches are included beneath the custom message.
+    *   The editor now renders correctly when the hidden Safety tab opens, and Markdown-only edits activate Save Settings before submission.
+    *   (Ref: microsoft/simplechat#989, `functions_content_safety.py`, `admin_settings.html`, `route_backend_chats.py`)
+
 ### **(v0.250.059)**
 
 #### New Features
@@ -21,7 +30,6 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The hidden state is version-aware, so Latest Features automatically appears again after the app version changes.
     *   Added a development-only `is_development=true` environment override that hides Latest Features nav entries without affecting production behavior when unset or false.
     *   (Ref: microsoft/simplechat#987, `latestFeaturesHiddenVersion`, `_sidebar_nav.html`, `_top_nav.html`, `profile.html`, `latest-features-nav.js`)
->>>>>>> Development
 
 ### **(v0.250.057)**
 
