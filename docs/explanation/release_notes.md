@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.062)**
+
+#### New Features
+
+*   **Workflow Run Cancellation**
+    *   Personal and group workflows can now be cancelled from workspace rows and cards, run history, or the workflow activity view while a run is active.
+    *   Cancellation is persisted for the active run and cooperatively stops further File Sync, document action, model, agent, artifact, notification, and scheduling work after any in-flight external request returns.
+    *   Cancelled scheduled and File Sync workflows return to an idle state and advance to their next scheduled run instead of immediately restarting.
+    *   (Ref: microsoft/simplechat#990, `route_backend_workflows.py`, `functions_workflow_runner.py`, `workspace_workflows.js`)
+
 ### **(v0.250.061)**
 
 #### New Features
