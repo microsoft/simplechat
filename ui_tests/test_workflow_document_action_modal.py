@@ -1,12 +1,12 @@
 # test_workflow_document_action_modal.py
 """
 UI test for workflow document action modal.
-Version: 0.241.182
-Implemented in: 0.241.103
+Version: 0.250.063
+Implemented in: 0.250.063
 
-This test ensures the workflow modal exposes the renamed Search/Analyze/Compare
-selector states, uses Source/Target wording, and submits version-aware
-comparison payloads. It also validates the per-document Analyze mode payload.
+This test ensures the workflow modal supports generic no-document automation,
+uses Source/Target wording for comparison, and submits version-aware comparison
+and per-document Analyze payloads.
 """
 
 import json
@@ -145,6 +145,55 @@ def _open_workflows_tab(page):
 
 
 @pytest.mark.ui
+def test_workflow_modal_saves_generic_automation_without_documents():
+    """Validate a workflow can be saved with instructions and a runner only."""
+    _require_ui_env()
+    playwright_sync = _require_playwright()
+
+    with playwright_sync.sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        context = browser.new_context(
+            storage_state=STORAGE_STATE,
+            viewport={"width": 1440, "height": 900},
+        )
+        page = context.new_page()
+        workflow_state = {"items": [], "saved_payloads": []}
+
+        _route_workflow_api(page, workflow_state)
+        _route_agent_api(page)
+        _route_document_apis(page)
+
+        try:
+            response = page.goto(f"{BASE_URL}/workspace", wait_until="networkidle")
+            assert response is not None and response.ok, "Expected /workspace to load successfully."
+
+            _open_workflows_tab(page)
+            page.get_by_role("button", name="New Workflow").click()
+            expect(page.locator("#workflowModal")).to_be_visible()
+
+            action_options = page.locator("#workflow-document-action-type option").all_text_contents()
+            assert action_options[:2] == ["No document action", "Search"]
+            expect(page.locator("#workflow-document-action-type")).to_have_value("none")
+            expect(page.locator("#workflow-document-targets-fields")).to_be_hidden()
+            expect(page.locator("#workflow-analysis-retries-group")).to_be_hidden()
+
+            page.fill("#workflow-name", "Scheduled Status Summary")
+            page.fill("#workflow-task-prompt", "Summarize the current status and propose next steps.")
+            page.click("#workflow-save-btn")
+
+            assert workflow_state["saved_payloads"], "Expected the workflow save handler to capture the modal payload."
+            saved_payload = workflow_state["saved_payloads"][0]
+            assert saved_payload["runner_type"] == "model"
+            assert saved_payload["chat_capabilities_enabled"] is True
+            assert saved_payload["document_action"]["type"] == "none"
+            assert saved_payload["document_action"]["document_ids"] == []
+            assert saved_payload["analyze"]["enabled"] is False
+        finally:
+            context.close()
+            browser.close()
+
+
+@pytest.mark.ui
 def test_workflow_document_action_modal_comparison():
     """Validate the workflow modal shows the updated action labels and saves compare payloads."""
     _require_ui_env()
@@ -173,10 +222,10 @@ def test_workflow_document_action_modal_comparison():
             expect(page.locator("#workflowModal")).to_be_visible()
 
             action_options = page.locator("#workflow-document-action-type option").all_text_contents()
-            assert action_options[:3] == ["Search", "Analyze", "Compare"]
+            assert action_options[:4] == ["No document action", "Search", "Analyze", "Compare"]
             expect(page.locator("#workflow-document-action-type")).to_have_attribute(
                 "title",
-                "Find relevant information with the normal prompt flow instead of binding the workflow to fixed document targets.",
+                "Run the workflow instructions without workspace document context.",
             )
 
             page.fill("#workflow-name", "Compare Contract Baseline")

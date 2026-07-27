@@ -24,6 +24,9 @@ from azure.identity import (
 from flask import Flask, g, has_request_context, session
 from openai import AzureOpenAI
 from semantic_kernel import Kernel
+from semantic_kernel.connectors.ai.function_choice_behavior import FunctionChoiceBehavior
+from semantic_kernel.connectors.ai.prompt_execution_settings import PromptExecutionSettings
+from semantic_kernel.contents.chat_history import ChatHistory
 from semantic_kernel.contents.chat_message_content import ChatMessageContent
 
 from collaboration_models import (
@@ -87,7 +90,10 @@ from functions_message_artifacts import (
 from model_endpoint_clients import (
     MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
 )
-from functions_model_endpoint_runtime import build_model_endpoint_sync_chat_client
+from functions_model_endpoint_runtime import (
+    build_model_endpoint_sync_chat_client,
+    build_semantic_kernel_chat_service_for_model,
+)
 from functions_notifications import create_workflow_priority_notification
 from functions_personal_workflows import (
     get_personal_workflow,
@@ -108,7 +114,11 @@ from functions_source_review import (
     validate_url_access_request,
 )
 from functions_thoughts import ThoughtTracker
-from semantic_kernel_loader import load_user_semantic_kernel
+from semantic_kernel_loader import (
+    get_max_auto_invoke_attempts,
+    load_core_plugins_only,
+    load_user_semantic_kernel,
+)
 from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger, sanitize_plugin_invocation_value
 from semantic_kernel_plugins.plugin_invocation_thoughts import register_plugin_invocation_thought_callback
 
@@ -4819,7 +4829,7 @@ def _combine_per_document_analysis_results(document_results):
     }
 
 
-def _execute_model_workflow(workflow, settings, run_id=None, thought_tracker=None, url_access_context=None):
+def _execute_raw_model_workflow(workflow, settings, run_id=None, thought_tracker=None, url_access_context=None):
     _raise_if_workflow_run_cancelled(workflow, run_id)
     if thought_tracker and run_id:
         _add_workflow_activity_thought(
@@ -4872,6 +4882,218 @@ def _execute_model_workflow(workflow, settings, run_id=None, thought_tracker=Non
         'model_deployment_name': deployment_name,
         'provider': provider,
     }
+
+
+def _workflow_model_chat_capabilities_enabled(workflow):
+    value = (workflow or {}).get('chat_capabilities_enabled', False)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {'1', 'true', 'yes', 'on'}
+    return bool(value)
+
+
+def _build_workflow_model_context(workflow, deployment_name, provider):
+    workflow = workflow if isinstance(workflow, dict) else {}
+    binding_summary = workflow.get('model_binding_summary') if isinstance(workflow.get('model_binding_summary'), dict) else {}
+    endpoint_id = str(workflow.get('model_endpoint_id') or binding_summary.get('endpoint_id') or '').strip()
+    model_id = str(workflow.get('model_id') or binding_summary.get('model_id') or '').strip()
+    model_context = {
+        'user_id': str(workflow.get('user_id') or '').strip(),
+        'model_deployment': str(deployment_name or '').strip(),
+        'provider': str(provider or workflow.get('model_provider') or binding_summary.get('provider') or '').strip().lower(),
+    }
+    if endpoint_id:
+        model_context['endpoint_id'] = endpoint_id
+    if model_id:
+        model_context['model_id'] = model_id
+
+    group_id = _get_workflow_group_id(workflow)
+    if group_id:
+        model_context['active_group_ids'] = [group_id]
+
+    return model_context
+
+
+@contextmanager
+def _workflow_model_core_execution_context(workflow, conversation_id, run_id):
+    workflow = workflow if isinstance(workflow, dict) else {}
+    user_id = str(workflow.get('user_id') or '').strip()
+    group_id = _get_workflow_group_id(workflow)
+    context_values = {
+        'conversation_id': str(conversation_id or '').strip(),
+        'workflow_id': str(workflow.get('id') or '').strip(),
+        'workflow_run_id': str(run_id or '').strip(),
+        'conversation_group_id': group_id,
+        'authorized_chat_context': None,
+    }
+    if group_id:
+        context_values['authorized_chat_context'] = {
+            'user_id': user_id,
+            'conversation_id': str(conversation_id or '').strip(),
+            'active_group_ids': [group_id],
+            'active_group_id': group_id,
+            'active_public_workspace_ids': [],
+            'active_public_workspace_id': None,
+            'fact_memory_scope_id': group_id,
+            'fact_memory_scope_type': 'group',
+        }
+
+    with _ensure_execution_context(user_id):
+        previous_values = {
+            name: (hasattr(g, name), getattr(g, name, None))
+            for name in context_values
+        }
+        for name, value in context_values.items():
+            setattr(g, name, value)
+
+        try:
+            yield
+        finally:
+            for name, (was_defined, value) in previous_values.items():
+                if was_defined:
+                    setattr(g, name, value)
+                elif hasattr(g, name):
+                    delattr(g, name)
+
+
+def _execute_model_workflow_with_core_capabilities(
+    workflow,
+    settings,
+    conversation_id='',
+    run_id=None,
+    thought_tracker=None,
+    url_access_context=None,
+):
+    _raise_if_workflow_run_cancelled(workflow, run_id)
+    user_id = str(workflow.get('user_id') or '').strip()
+    if not user_id:
+        raise ValueError('Direct model workflows require an owning user.')
+
+    if thought_tracker and run_id:
+        _add_workflow_activity_thought(
+            thought_tracker,
+            workflow,
+            run_id,
+            step_type='generation',
+            content='Starting direct model execution with core capabilities',
+            detail=None,
+            activity_key=f'generation:{run_id}',
+            kind='model_execution',
+            title='Model execution',
+            status='running',
+        )
+
+    _, deployment_name, provider = _resolve_model_workflow_client(workflow, settings)
+    model_context = _build_workflow_model_context(workflow, deployment_name, provider)
+    workflow_kernel_settings = get_workflow_kernel_settings(settings)
+
+    with _workflow_model_core_execution_context(workflow, conversation_id, run_id):
+        plugin_logger = get_plugin_logger()
+        callback_key = None
+        if conversation_id:
+            plugin_logger.clear_invocations_for_conversation(user_id, conversation_id)
+        if thought_tracker and run_id and conversation_id:
+            callback_key = register_plugin_invocation_thought_callback(
+                plugin_logger,
+                thought_tracker,
+                user_id,
+                conversation_id,
+                actor_label='Workflow model',
+            )
+
+        try:
+            kernel = Kernel()
+            load_core_plugins_only(kernel, workflow_kernel_settings)
+            chat_service, _ = build_semantic_kernel_chat_service_for_model(
+                deployment_name,
+                settings,
+                service_id=f"workflow-model-{workflow.get('id') or 'default'}",
+                model_context=model_context,
+            )
+            kernel.add_service(chat_service)
+
+            chat_history = ChatHistory()
+            for message in _build_workflow_chat_messages(
+                workflow.get('task_prompt', ''),
+                url_access_context=url_access_context,
+                apply_generation_guidance=True,
+            ):
+                chat_history.add_message(message)
+
+            execution_settings = PromptExecutionSettings()
+            execution_settings.function_choice_behavior = FunctionChoiceBehavior.Auto(
+                maximum_auto_invoke_attempts=get_max_auto_invoke_attempts(workflow_kernel_settings)
+            )
+            completion_messages = _execute_cancelable_workflow_step(
+                workflow,
+                run_id,
+                lambda: asyncio.run(
+                    chat_service.get_chat_message_contents(
+                        chat_history,
+                        execution_settings,
+                        kernel=kernel,
+                    )
+                ),
+            )
+            reply = _extract_message_text(
+                completion_messages[0].content if completion_messages else ''
+            )
+            agent_citations = _build_agent_citations_from_invocations(user_id, conversation_id)
+            alert_targets = _collect_agent_alert_targets(user_id, conversation_id)
+        finally:
+            if callback_key:
+                plugin_logger.deregister_callbacks(callback_key)
+
+    if thought_tracker and run_id:
+        _add_workflow_activity_thought(
+            thought_tracker,
+            workflow,
+            run_id,
+            step_type='generation',
+            content=f'Direct model execution completed with {deployment_name}',
+            detail=f'provider={provider}; core_capabilities=true',
+            activity_key=f'generation:{run_id}',
+            kind='model_execution',
+            title='Model execution',
+            status='completed',
+        )
+
+    return {
+        'reply': reply,
+        'model_deployment_name': deployment_name,
+        'provider': provider,
+        'agent_citations': agent_citations,
+        'alert_targets': alert_targets,
+        'core_capabilities_enabled': True,
+    }
+
+
+def _execute_model_workflow(
+    workflow,
+    settings,
+    conversation_id='',
+    run_id=None,
+    thought_tracker=None,
+    url_access_context=None,
+):
+    if _workflow_model_chat_capabilities_enabled(workflow):
+        return _execute_model_workflow_with_core_capabilities(
+            workflow,
+            settings,
+            conversation_id=conversation_id,
+            run_id=run_id,
+            thought_tracker=thought_tracker,
+            url_access_context=url_access_context,
+        )
+
+    return _execute_raw_model_workflow(
+        workflow,
+        settings,
+        run_id=run_id,
+        thought_tracker=thought_tracker,
+        url_access_context=url_access_context,
+    )
 
 
 def _execute_document_analysis_workflow(
@@ -6026,6 +6248,7 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
                 lambda: _execute_model_workflow(
                     execution_workflow,
                     settings,
+                    conversation_id=str(conversation.get('id') or ''),
                     run_id=run_id,
                     thought_tracker=thought_tracker,
                     url_access_context=url_access_context,

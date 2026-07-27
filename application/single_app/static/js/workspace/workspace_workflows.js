@@ -169,6 +169,7 @@ const workflowAnalysisPublicWorkspaceIdsInput = document.getElementById("workflo
 const workflowAnalysisWindowUnitSelect = document.getElementById("workflow-analysis-window-unit");
 const workflowAnalysisWindowSizeInput = document.getElementById("workflow-analysis-window-size");
 const workflowAnalysisWindowPercentInput = document.getElementById("workflow-analysis-window-percent");
+const workflowAnalysisRetriesGroup = document.getElementById("workflow-analysis-retries-group");
 const workflowAnalysisRetriesInput = document.getElementById("workflow-analysis-retries");
 const workflowUseSelectedDocumentsBtn = document.getElementById("workflow-use-selected-documents-btn");
 const workflowSelectedDocumentsSummary = document.getElementById("workflow-selected-documents-summary");
@@ -212,7 +213,10 @@ function getWorkflowDocumentActionMaxDocuments(actionType) {
 }
 
 function getDocumentActionDisplayLabel(actionType) {
-    if (actionType === DOCUMENT_ACTION_SEARCH || actionType === DOCUMENT_ACTION_NONE) {
+    if (actionType === DOCUMENT_ACTION_NONE) {
+        return "No document action";
+    }
+    if (actionType === DOCUMENT_ACTION_SEARCH) {
         return "Search";
     }
     if (actionType === DOCUMENT_ACTION_COMPARISON) {
@@ -265,7 +269,7 @@ function syncWorkflowDocumentActionTooltip() {
     const description = normalizeText(
         selectedOption?.dataset.actionDescription
         || selectedOption?.getAttribute("title")
-        || getDocumentActionDescription(normalizeText(workflowDocumentActionTypeSelect.value) || DOCUMENT_ACTION_SEARCH)
+        || getDocumentActionDescription(normalizeText(workflowDocumentActionTypeSelect.value) || DOCUMENT_ACTION_NONE)
     );
 
     workflowDocumentActionTypeSelect.title = description;
@@ -712,7 +716,7 @@ function syncWorkflowPickerActionType() {
         return;
     }
 
-    const actionType = normalizeText(workflowDocumentActionTypeSelect.value) || DOCUMENT_ACTION_SEARCH;
+    const actionType = normalizeText(workflowDocumentActionTypeSelect.value) || DOCUMENT_ACTION_NONE;
     chatDocumentActionSelect.value = actionType;
     chatDocumentActionSelect.dispatchEvent(new Event("change", { bubbles: true }));
 }
@@ -734,6 +738,13 @@ function setWorkflowPickerError(message = "") {
 
 async function initializeWorkflowDocumentPicker(documentAction = {}) {
     if (!workflowDocumentPickerCard) {
+        return;
+    }
+
+    const actionType = normalizeText(documentAction.type || workflowDocumentActionTypeSelect?.value) || DOCUMENT_ACTION_NONE;
+    if (actionType === DOCUMENT_ACTION_NONE) {
+        setWorkflowPickerError("");
+        setWorkflowPickerLoadingState(false);
         return;
     }
 
@@ -1465,6 +1476,10 @@ function getDocumentActionConfig(workflow) {
 
 function getWorkflowDocumentActionSummary(workflow) {
     const config = getDocumentActionConfig(workflow);
+    if (config.type === DOCUMENT_ACTION_NONE) {
+        return "No document action";
+    }
+
     if (config.type === DOCUMENT_ACTION_SEARCH) {
         const documentCount = config.document_ids.length;
         if (config.target_mode === DOCUMENT_ANALYSIS_TARGET_RECENT) {
@@ -1503,7 +1518,7 @@ function getWorkflowDocumentActionSummary(workflow) {
         return `Compare one source to ${rightCount || 0} ${rightCount === 1 ? "target" : "targets"}`;
     }
 
-    return "Search";
+    return "No document action";
 }
 
 function updateSelectedDocumentsSummary() {
@@ -1529,14 +1544,16 @@ function updateWorkflowAnalysisTargetModeFields() {
 }
 
 function updateDocumentActionFields() {
-    const actionType = normalizeText(workflowDocumentActionTypeSelect?.value) || DOCUMENT_ACTION_SEARCH;
+    const actionType = normalizeText(workflowDocumentActionTypeSelect?.value) || DOCUMENT_ACTION_NONE;
     const hasDocumentAction = actionType !== DOCUMENT_ACTION_NONE;
+    const hasWindowedDocumentAction = [DOCUMENT_ACTION_ANALYZE, DOCUMENT_ACTION_COMPARISON].includes(actionType);
     const targetMode = normalizeText(workflowAnalysisTargetModeSelect?.value) || DOCUMENT_ANALYSIS_TARGET_SELECTED;
     const isRecentMode = targetMode === DOCUMENT_ANALYSIS_TARGET_RECENT;
     setElementVisibility(workflowDocumentTargetsFields, hasDocumentAction);
     setElementVisibility(workflowAnalysisTargetFields, hasDocumentAction);
     setElementVisibility(workflowAnalysisPerDocumentGroup, actionType === DOCUMENT_ACTION_ANALYZE);
     setElementVisibility(workflowComparisonTargetFields, actionType === DOCUMENT_ACTION_COMPARISON && !isRecentMode);
+    setElementVisibility(workflowAnalysisRetriesGroup, hasWindowedDocumentAction);
     syncWorkflowPickerActionType();
     syncWorkflowDocumentActionTooltip();
     updateWorkflowAnalysisTargetModeFields();
@@ -1567,7 +1584,10 @@ async function applySelectedWorkspaceDocumentsToWorkflow() {
         return;
     }
 
-    const actionType = normalizeText(workflowDocumentActionTypeSelect?.value) || DOCUMENT_ACTION_SEARCH;
+    const actionType = normalizeText(workflowDocumentActionTypeSelect?.value) || DOCUMENT_ACTION_NONE;
+    if (actionType === DOCUMENT_ACTION_NONE) {
+        return;
+    }
     const workflowMaxDocuments = getWorkflowDocumentActionMaxDocuments(actionType);
 
     const limitedSelectedIds = selectedIds.slice(0, workflowMaxDocuments);
@@ -2315,7 +2335,7 @@ function resetWorkflowForm() {
         workflowAlertPrioritySelect.value = "none";
     }
     if (workflowDocumentActionTypeSelect) {
-        workflowDocumentActionTypeSelect.value = DOCUMENT_ACTION_SEARCH;
+        workflowDocumentActionTypeSelect.value = DOCUMENT_ACTION_NONE;
     }
     if (workflowAnalysisTargetModeSelect) {
         workflowAnalysisTargetModeSelect.value = DOCUMENT_ANALYSIS_TARGET_SELECTED;
@@ -2520,7 +2540,7 @@ async function openWorkflowModal(workflow = null) {
 function buildWorkflowPayload() {
     const runnerType = normalizeText(workflowRunnerTypeSelect?.value) || "model";
     const triggerType = normalizeText(workflowTriggerTypeSelect?.value) || "manual";
-    const documentActionType = normalizeText(workflowDocumentActionTypeSelect?.value) || DOCUMENT_ACTION_SEARCH;
+    const documentActionType = normalizeText(workflowDocumentActionTypeSelect?.value) || DOCUMENT_ACTION_NONE;
     const analysisTargetMode = normalizeText(workflowAnalysisTargetModeSelect?.value) === DOCUMENT_ANALYSIS_TARGET_RECENT
         ? DOCUMENT_ANALYSIS_TARGET_RECENT
         : DOCUMENT_ANALYSIS_TARGET_SELECTED;
@@ -2554,6 +2574,9 @@ function buildWorkflowPayload() {
         task_prompt: normalizeText(workflowTaskPromptInput?.value),
         url_access_enabled: isWorkflowUrlAccessAvailable() ? Boolean(workflowUrlAccessEnabledToggle?.checked) : false,
         runner_type: runnerType,
+        chat_capabilities_enabled: currentEditingWorkflow
+            ? Boolean(currentEditingWorkflow.chat_capabilities_enabled)
+            : true,
         trigger_type: triggerType,
         alert_priority: normalizeText(workflowAlertPrioritySelect?.value).toLowerCase() || "none",
         is_enabled: ["interval", "file_sync"].includes(triggerType) ? Boolean(workflowEnabledToggle?.checked) : true,

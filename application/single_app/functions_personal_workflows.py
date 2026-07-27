@@ -545,6 +545,15 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
     alert_priority = _normalize_alert_priority(
         workflow_data.get('alert_priority', (existing_workflow or {}).get('alert_priority', 'none'))
     )
+    default_chat_capabilities_enabled = (
+        (existing_workflow or {}).get('chat_capabilities_enabled', False)
+        if existing_workflow
+        else True
+    )
+    chat_capabilities_enabled = _normalize_bool(
+        workflow_data.get('chat_capabilities_enabled', default_chat_capabilities_enabled),
+        default=default_chat_capabilities_enabled,
+    )
     file_sync = _normalize_file_sync_config(user_id, workflow_data, existing_workflow=existing_workflow)
     allow_empty_file_sync_targets = bool(file_sync.get('enabled') and file_sync.get('use_changed_documents'))
     document_action = _normalize_document_action_config(
@@ -594,6 +603,7 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
         'description': description,
         'task_prompt': task_prompt,
         'runner_type': runner_type,
+        'chat_capabilities_enabled': chat_capabilities_enabled,
         'trigger_type': trigger_type,
         'is_enabled': is_enabled,
         'url_access_enabled': url_access_enabled,

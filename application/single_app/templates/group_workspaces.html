@@ -2086,10 +2086,13 @@ app_settings.app_title }} {% endblock %} {% block head %}
         {% endif %}
 
         <div class="card p-3 mb-3">
+          <h6 class="mb-1">Workspace documents</h6>
+          <div class="form-text mb-3">Optional. Use a document action only when this workflow needs workspace document context.</div>
           <div class="row g-3 mb-2">
             <div class="col-md-6">
-              <label for="workflow-document-action-type" class="form-label">Action Type</label>
-              <select class="form-select" id="workflow-document-action-type" title="Search selected or recent documents and use matching excerpts as workflow context.">
+              <label for="workflow-document-action-type" class="form-label">Document action</label>
+              <select class="form-select" id="workflow-document-action-type" title="Run the workflow instructions without workspace document context.">
+                <option value="none" data-action-description="Run the workflow instructions without workspace document context." title="Run the workflow instructions without workspace document context.">No document action</option>
                 <option value="search" data-action-description="Search selected or recent documents and use matching excerpts as workflow context." title="Search selected or recent documents and use matching excerpts as workflow context.">Search</option>
                 {% if settings.document_action_capabilities.analyze.enabled %}
                 <option value="analyze" data-action-description="Perform an in-depth analysis across all selected documents based on your request." title="Perform an in-depth analysis across all selected documents based on your request.">Analyze</option>
@@ -2099,12 +2102,12 @@ app_settings.app_title }} {% endblock %} {% block head %}
                 {% endif %}
               </select>
             </div>
-            <div class="col-md-6">
+            <div class="col-md-6 d-none" id="workflow-analysis-retries-group">
               <label for="workflow-analysis-retries" class="form-label">Retries Per Window</label>
               <input type="number" class="form-control" id="workflow-analysis-retries" min="0" max="5" value="1" />
             </div>
           </div>
-          <div class="form-text mt-2" id="workflow-document-action-help">Search selected or recent documents and use matching excerpts as workflow context.</div>
+          <div class="form-text mt-2" id="workflow-document-action-help">Run the workflow instructions without workspace document context.</div>
 
           <div id="workflow-document-targets-fields" class="mt-3 d-none">
             <input type="hidden" id="workflow-analysis-doc-scope" value="group" />
@@ -2145,6 +2148,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
               </div>
               <div id="workflow-document-picker-error" class="alert alert-warning py-2 d-none" role="alert"></div>
               <select class="d-none" id="document-action-select" aria-label="Workflow document action">
+                <option value="none">No document action</option>
                 <option value="search">Search</option>
                 {% if settings.document_action_capabilities.analyze.enabled %}
                 <option value="analyze">Analyze</option>
