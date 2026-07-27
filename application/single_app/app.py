@@ -29,6 +29,7 @@ from semantic_kernel_loader import initialize_semantic_kernel
 from functions_authentication import *
 from functions_content import *
 from functions_documents import *
+from functions_latest_features_nav import should_hide_latest_features_nav
 from functions_search import *
 from functions_settings import *
 from functions_appinsights import *
@@ -115,6 +116,7 @@ executor = Executor()
 executor.init_app(app)
 app.config['SESSION_TYPE'] = SESSION_TYPE
 app.config['VERSION'] = VERSION
+app.config['IS_DEVELOPMENT'] = IS_DEVELOPMENT
 app.config['SECRET_KEY'] = SECRET_KEY
 app.config['SESSION_COOKIE_SAMESITE'] = SESSION_COOKIE_SAMESITE
 app.config['SESSION_COOKIE_HTTPONLY'] = SESSION_COOKIE_HTTPONLY
@@ -572,19 +574,29 @@ def inject_settings():
         log_event(f"[CustomPages] Error injecting custom page navigation: {e}", level=logging.ERROR, exceptionTraceback=True)
     # Inject per-user settings if logged in
     user_settings = {}
+    latest_features_nav_hidden = IS_DEVELOPMENT
     try:
         user_id = get_current_user_id()
         if user_id:
             from functions_settings import get_user_ui_settings
             user_settings = get_user_ui_settings(user_id) or {}
+            latest_features_nav_hidden = should_hide_latest_features_nav(
+                user_settings,
+                VERSION,
+                is_development=IS_DEVELOPMENT
+            )
     except Exception as e:
         print(f"Error injecting user settings: {e}")
         log_event(f"Error injecting user settings: {e}", level=logging.ERROR)
         user_settings = {}
+        latest_features_nav_hidden = IS_DEVELOPMENT
     return dict(
         app_settings=public_settings,
         user_settings=user_settings,
         custom_pages_nav=custom_pages_nav,
+        latest_features_current_version=VERSION,
+        latest_features_nav_hidden=latest_features_nav_hidden,
+        latest_features_nav_hidden_by_development=IS_DEVELOPMENT,
         idle_timeout_enabled=idle_timeout_enabled,
         idle_timeout_minutes=idle_timeout_minutes,
         idle_warning_minutes=idle_warning_minutes
