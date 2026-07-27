@@ -1,6 +1,7 @@
 # Generic Workflow Automation
 
 Implemented in version: **0.250.063**
+Enhanced in version: **0.250.064**
 
 Related issue: #1082
 
@@ -15,7 +16,7 @@ to the task.
 Fixed/Implemented in version: **0.250.063**
 
 Related version update:
-- `application/single_app/config.py` reports version `0.250.063`.
+- `application/single_app/config.py` reports version `0.250.064`.
 
 Dependencies:
 - `application/single_app/functions_personal_workflows.py`
@@ -40,6 +41,11 @@ Dependencies:
   without requiring document analysis.
 - Each run records its messages and result in the workflow conversation and
   retains the normal workflow run history.
+- A workflow can contain up to 20 ordered instruction tasks. Every task uses the
+   selected workflow runner and receives a bounded copy of the previous task's
+   response as context.
+- Global task error handling supports 0-5 retries and either stops the workflow
+   after the final failed attempt or records the failure and continues.
 
 New workflow definitions set `chat_capabilities_enabled` to `true`. Existing
 saved Direct Model workflows remain on their prior raw-completion behavior when
@@ -72,6 +78,10 @@ workflows. Document picker and analysis controls are initialized only after a
 document action is selected. Search, Analyze, and Compare continue to use the
 existing document-specialized execution paths and validation.
 
+For ordered workflows, the configured document action applies to the first
+task. Later tasks consume the prior task response without repeating document
+retrieval or analysis. File Sync remains a single optional pre-run input stage.
+
 File Sync remains independent of document selection. A workflow can run after
 syncing sources and then execute its model or agent instruction without a
 document action. A File Sync trigger still requires the existing completion and
@@ -89,16 +99,17 @@ enabled plugins.
 ## Usage Instructions
 
 1. Open the Personal Workspace or a Group Workspace and select Workflows.
-2. Create a workflow, provide a name and instructions, and choose Direct Model
-   or Agent.
-3. Leave `Workspace documents` set to `No document action` for prompt-only or
-   agent-only automation.
-4. Optionally choose Search, Analyze, or Compare when the workflow needs
-   workspace document context.
-5. Choose Manual, Interval, or File Sync trigger behavior. Configure File Sync
-   only when the workflow needs to synchronize sources before it runs.
-6. Save the workflow and review results, citations, and supported artifacts in
-   its workflow conversation and run history.
+2. In `General`, provide a name and choose Direct Model or Agent.
+3. In `Trigger`, choose Manual, Interval, or File Sync behavior and configure
+   optional URL or File Sync inputs.
+4. In `Tasks`, add, edit, remove, or reorder instruction tasks. Leave
+   `Workspace documents` set to `No document action` for prompt-only or
+   agent-only automation, or choose Search, Analyze, or Compare for task one.
+5. In `Reliability`, choose the task retry count and whether execution stops or
+   continues after a failed task.
+6. In `Review`, confirm the workflow and choose its completion alert priority.
+7. Save the workflow and review task outcomes, citations, and supported
+   artifacts in its workflow conversation and run history.
 
 ## Testing And Validation
 
@@ -108,11 +119,17 @@ Functional coverage:
 - `functional_tests/test_workflow_model_core_capabilities.py` verifies saved
   model binding, kernel-based core capability invocation, default-model binding,
   and legacy Direct Model compatibility.
+- `functional_tests/test_workflow_task_sequence.py` verifies ordered execution,
+   bounded result chaining, retries, continue-on-error behavior, and legacy
+   dispatch compatibility.
+- `functional_tests/test_workflow_stepped_builder.py` verifies the shared
+   five-step modal, browser payload, safe task rendering, and existing route
+   reuse.
 
 UI coverage:
 - `ui_tests/test_workflow_document_action_modal.py` verifies that a new
-  workflow defaults to `No document action`, hides document-only fields, and
-  submits a document-free Direct Model payload.
+   workflow navigates all five steps, builds an ordered task sequence, configures
+   error handling and alert priority, and preserves document action workflows.
 
 Validation should include the focused functional tests, JavaScript syntax
 validation, and the UI test against an authenticated `SIMPLECHAT_UI_BASE_URL`

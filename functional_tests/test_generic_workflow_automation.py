@@ -1,8 +1,9 @@
 # test_generic_workflow_automation.py
 """
 Functional test for generic workflow automation.
-Version: 0.250.063
+Version: 0.250.064
 Implemented in: 0.250.063
+Enhanced in: 0.250.064
 
 This test ensures a workflow requires instructions and a selected model or
 agent, while workspace document actions remain explicitly optional.
@@ -12,7 +13,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_VERSION = "0.250.063"
+EXPECTED_VERSION = "0.250.064"
 
 
 def read_text(relative_path: str) -> str:
@@ -35,7 +36,7 @@ def test_generic_workflow_ui_defaults_to_no_document_action() -> None:
 
     assert f'VERSION = "{EXPECTED_VERSION}"' in config_content
     assert "# Generic Workflow Automation" in feature_doc_content
-    assert f"Implemented in version: **{EXPECTED_VERSION}**" in feature_doc_content
+    assert f"Enhanced in version: **{EXPECTED_VERSION}**" in feature_doc_content
     assert "No document action" in feature_doc_content
     assert "workflowDocumentActionTypeSelect.value = DOCUMENT_ACTION_NONE;" in workflow_js_content
     assert "const documentActionType = normalizeText(workflowDocumentActionTypeSelect?.value) || DOCUMENT_ACTION_NONE;" in workflow_js_content
@@ -64,7 +65,7 @@ def test_generic_workflow_runner_retains_direct_execution_paths() -> None:
     workflow_runner_content = read_text("application/single_app/functions_workflow_runner.py")
     workflow_js_content = read_text("application/single_app/static/js/workspace/workspace_workflows.js")
 
-    assert "task_prompt = _normalize_text(workflow_data.get('task_prompt'), 'Task prompt', required=True)" in workflow_store_content
+    assert "workflow_data.get('task_prompt') or (tasks[0].get('instructions') if tasks else '')" in workflow_store_content
     assert "runner_type = _normalize_text(workflow_data.get('runner_type'), 'Runner type', required=True).lower()" in workflow_store_content
     assert "'chat_capabilities_enabled': chat_capabilities_enabled," in workflow_store_content
     assert "'chat_capabilities_enabled': chat_capabilities_enabled," in group_workflow_store_content
@@ -72,6 +73,8 @@ def test_generic_workflow_runner_retains_direct_execution_paths() -> None:
     assert "elif execution_workflow.get('runner_type') == 'agent':" in workflow_runner_content
     assert "lambda: _execute_agent_workflow(" in workflow_runner_content
     assert "lambda: _execute_model_workflow(" in workflow_runner_content
+    assert "if execution_workflow.get('tasks'):" in workflow_runner_content
+    assert "execution_result = _execute_workflow_dispatch(" in workflow_runner_content
 
     print("PASS: generic workflow execution retains direct model and agent paths")
 

@@ -132,6 +132,7 @@ DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_LINE_LENGTH = 220
 TABULAR_DOCUMENT_EXTENSIONS = {'.csv', '.xls', '.xlsx', '.xlsm'}
 WORKFLOW_CONVERSATION_ACCESS_ERROR = 'Workflow conversation not found or access denied.'
 WORKFLOW_RUN_CANCELLED_MESSAGE = 'Workflow cancellation was requested.'
+WORKFLOW_TASK_CONTEXT_MAX_CHARS = 12000
 
 
 class WorkflowRunCancelledError(BaseException):
@@ -4349,6 +4350,7 @@ def _apply_file_sync_context_to_workflow(workflow, file_sync_result):
     file_sync_context = _format_workflow_file_sync_context(file_sync_result)
     if file_sync_context:
         prepared_workflow['task_prompt'] = f"{workflow.get('task_prompt', '')}\n\n{file_sync_context}".strip()
+        prepared_workflow['file_sync_prompt_context'] = file_sync_context
 
     config = _get_workflow_file_sync_config(workflow)
     changed_document_ids = list(file_sync_result.get('changed_document_ids') or [])
@@ -5953,6 +5955,405 @@ def _execute_agent_workflow(workflow, settings, conversation_id='', run_id=None,
                 g.authorized_chat_context = previous_authorized_chat_context
 
 
+def _truncate_workflow_task_context(value, max_chars=WORKFLOW_TASK_CONTEXT_MAX_CHARS):
+    normalized = str(value or '').strip()
+    if len(normalized) <= max_chars:
+        return normalized
+
+    head_length = max_chars // 2
+    tail_length = max_chars - head_length
+    return (
+        f'{normalized[:head_length].rstrip()}\n\n'
+        '[Previous task output truncated]\n\n'
+        f'{normalized[-tail_length:].lstrip()}'
+    )
+
+
+def _build_workflow_task_execution_workflow(workflow, task, previous_reply='', include_document_action=False):
+    task = task if isinstance(task, dict) else {}
+    prepared_workflow = dict(workflow or {})
+    task_instructions = str(task.get('instructions') or '').strip()
+    file_sync_context = str(workflow.get('file_sync_prompt_context') or '').strip()
+    if include_document_action and file_sync_context:
+        task_instructions = (
+            f'{task_instructions}\n\n'
+            '[Workflow input context]\n'
+            f'{file_sync_context}'
+        ).strip()
+    previous_context = _truncate_workflow_task_context(previous_reply)
+    if previous_context:
+        task_instructions = (
+            f'{task_instructions}\n\n'
+            '[Previous workflow task output]\n'
+            f'{previous_context}\n\n'
+            'Use the previous task output as context. Complete only the current task instructions.'
+        ).strip()
+
+    prepared_workflow['task_prompt'] = task_instructions
+    prepared_workflow['active_task'] = {
+        'id': str(task.get('id') or '').strip(),
+        'name': str(task.get('name') or '').strip(),
+        'order': int(task.get('order') or 0),
+    }
+    if not include_document_action:
+        prepared_workflow['document_action'] = {'type': DOCUMENT_ACTION_TYPE_NONE}
+        prepared_workflow['analyze'] = build_analyze_config(prepared_workflow['document_action'])
+    return prepared_workflow
+
+
+def _workflow_task_run_item_id(run_id, task_id):
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f'workflow-task:{run_id}:{task_id}'))
+
+
+def _save_workflow_task_run_item(
+    workflow,
+    run_id,
+    task,
+    status,
+    attempt_count=0,
+    error='',
+    output_summary='',
+    created_at=None,
+):
+    task = task if isinstance(task, dict) else {}
+    task_id = str(task.get('id') or '').strip()
+    now_iso = _utc_now_iso()
+    item = {
+        'id': _workflow_task_run_item_id(run_id, task_id),
+        'type': 'workflow_run_item',
+        'item_type': 'task',
+        'run_id': run_id,
+        'user_id': str(workflow.get('user_id') or '').strip(),
+        'workflow_id': workflow.get('id'),
+        'group_id': _get_workflow_group_id(workflow) or None,
+        'workflow_name': workflow.get('name'),
+        'task_id': task_id,
+        'task_type': str(task.get('type') or 'instructions').strip(),
+        'task_order': int(task.get('order') or 0),
+        'label': str(task.get('name') or f"Task {task.get('order') or ''}").strip(),
+        'status': status,
+        'attempt_count': int(attempt_count or 0),
+        'error': str(error or '')[:2000],
+        'output_summary': str(output_summary or '')[:4000],
+        'created_at': created_at or now_iso,
+        'updated_at': now_iso,
+    }
+    if status == 'running':
+        item['started_at'] = now_iso
+    if status in {'succeeded', 'failed', 'skipped', 'cancelled'}:
+        item['completed_at'] = now_iso
+    return _save_workflow_run_item_record(workflow, item)
+
+
+def _execute_workflow_dispatch(
+    execution_workflow,
+    settings,
+    conversation_id,
+    run_id,
+    thought_tracker,
+    url_access_context,
+    file_sync_result=None,
+):
+    document_action = _get_document_action_config(execution_workflow)
+    workflow_search_context = None
+    if document_action.get('type') == DOCUMENT_ACTION_TYPE_SEARCH:
+        workflow_search_context = _execute_cancelable_workflow_step(
+            execution_workflow,
+            run_id,
+            lambda: _prepare_workflow_search_context(
+                execution_workflow,
+                document_action,
+                settings,
+                thought_tracker=thought_tracker,
+                run_id=run_id,
+            ),
+        )
+        execution_workflow = workflow_search_context.get('workflow') or execution_workflow
+        document_action = _get_document_action_config(execution_workflow)
+
+    if document_action.get('type') in {DOCUMENT_ACTION_TYPE_ANALYZE, DOCUMENT_ACTION_TYPE_COMPARISON}:
+        _raise_if_workflow_run_cancelled(execution_workflow, run_id)
+        document_action = _resolve_recent_document_action_targets(execution_workflow, document_action, settings)
+        execution_workflow = _apply_runtime_document_action_config(execution_workflow, document_action)
+        run_item_callback = _build_run_item_activity_callback(
+            execution_workflow,
+            run_id,
+            file_sync_result=file_sync_result or {},
+        )
+        _initialize_document_run_items(
+            execution_workflow,
+            run_id,
+            document_action,
+            file_sync_result=file_sync_result or {},
+        )
+        execution_result = _execute_cancelable_workflow_step(
+            execution_workflow,
+            run_id,
+            lambda: _execute_document_action_workflow(
+                execution_workflow,
+                settings,
+                conversation_id=conversation_id,
+                run_id=run_id,
+                thought_tracker=thought_tracker,
+                external_activity_callback=run_item_callback,
+                url_access_context=url_access_context,
+            ),
+        )
+    elif execution_workflow.get('runner_type') == 'agent':
+        execution_result = _execute_cancelable_workflow_step(
+            execution_workflow,
+            run_id,
+            lambda: _execute_agent_workflow(
+                execution_workflow,
+                settings,
+                conversation_id=conversation_id,
+                run_id=run_id,
+                thought_tracker=thought_tracker,
+                url_access_context=url_access_context,
+            ),
+        )
+    else:
+        execution_result = _execute_cancelable_workflow_step(
+            execution_workflow,
+            run_id,
+            lambda: _execute_model_workflow(
+                execution_workflow,
+                settings,
+                conversation_id=conversation_id,
+                run_id=run_id,
+                thought_tracker=thought_tracker,
+                url_access_context=url_access_context,
+            ),
+        )
+
+    if workflow_search_context:
+        execution_result.update({
+            'hybrid_citations': workflow_search_context.get('citations') or [],
+            'augmented': bool(workflow_search_context.get('citations')),
+            'document_search': {
+                'query': workflow_search_context.get('query'),
+                'result_count': workflow_search_context.get('result_count', 0),
+                'document_count': workflow_search_context.get('document_count', 0),
+            },
+        })
+    return execution_result
+
+
+def _merge_workflow_task_execution_results(task_results):
+    task_results = list(task_results or [])
+    successful_results = [item for item in task_results if item.get('status') == 'succeeded']
+    reply_sections = []
+    for item in task_results:
+        task = item.get('task') if isinstance(item.get('task'), dict) else {}
+        task_name = str(task.get('name') or f"Task {task.get('order') or ''}").strip()
+        if item.get('status') == 'succeeded':
+            reply_text = str((item.get('result') or {}).get('reply') or '').strip()
+            reply_sections.extend([f'## {task_name}', '', reply_text or 'No response was generated.', ''])
+        else:
+            reply_sections.extend([
+                f'## {task_name}',
+                '',
+                f"Task failed: {item.get('error') or 'Unknown error'}",
+                '',
+            ])
+
+    final_source = (successful_results[-1].get('result') or {}) if successful_results else {}
+    merged_result = dict(final_source)
+    merged_result['reply'] = '\n'.join(reply_sections).strip()
+    merged_result['task_results'] = [
+        {
+            'task_id': str((item.get('task') or {}).get('id') or '').strip(),
+            'task_name': str((item.get('task') or {}).get('name') or '').strip(),
+            'task_order': int((item.get('task') or {}).get('order') or 0),
+            'status': item.get('status'),
+            'attempt_count': int(item.get('attempt_count') or 0),
+            'error': str(item.get('error') or ''),
+            'response_preview': _build_response_preview((item.get('result') or {}).get('reply')),
+        }
+        for item in task_results
+    ]
+    merged_result['task_error_count'] = sum(1 for item in task_results if item.get('status') == 'failed')
+    merged_result['token_usage'] = _merge_token_usage_summaries([
+        item.get('result') or {}
+        for item in successful_results
+    ])
+
+    for field in (
+        'agent_citations',
+        'hybrid_citations',
+        'web_search_citations',
+        'generated_analysis_artifacts',
+        'generated_tabular_outputs',
+        'alert_targets',
+    ):
+        merged_result[field] = [
+            value
+            for item in successful_results
+            for value in list((item.get('result') or {}).get(field) or [])
+        ]
+    merged_result['augmented'] = any(
+        bool((item.get('result') or {}).get('augmented'))
+        for item in successful_results
+    )
+    return merged_result
+
+
+def _execute_workflow_task_sequence(
+    workflow,
+    settings,
+    conversation_id,
+    run_id,
+    thought_tracker,
+    url_access_context,
+    file_sync_result=None,
+):
+    tasks = list(workflow.get('tasks') or [])
+    error_handling = workflow.get('error_handling') if isinstance(workflow.get('error_handling'), dict) else {}
+    error_strategy = str(error_handling.get('strategy') or 'halt').strip().lower()
+    retry_count = max(0, min(5, int(error_handling.get('retry_count') or 0)))
+    previous_reply = ''
+    task_results = []
+
+    for task_index, raw_task in enumerate(tasks):
+        task = dict(raw_task or {})
+        task['order'] = task_index + 1
+        task_id = str(task.get('id') or f'task-{task_index + 1}').strip()
+        task['id'] = task_id
+        created_at = _utc_now_iso()
+        _save_workflow_task_run_item(workflow, run_id, task, 'queued', created_at=created_at)
+        if thought_tracker and run_id:
+            _add_workflow_activity_thought(
+                thought_tracker,
+                workflow,
+                run_id,
+                step_type='task',
+                content=f"Starting task {task_index + 1}: {task.get('name') or task_id}",
+                detail=None,
+                activity_key=f'task:{run_id}:{task_id}',
+                kind='workflow_task',
+                title=str(task.get('name') or f'Task {task_index + 1}'),
+                status='running',
+            )
+        prepared_workflow = _build_workflow_task_execution_workflow(
+            workflow,
+            task,
+            previous_reply=previous_reply,
+            include_document_action=task_index == 0,
+        )
+
+        task_result = None
+        task_error = ''
+        attempt_count = 0
+        for attempt_index in range(retry_count + 1):
+            attempt_count = attempt_index + 1
+            _save_workflow_task_run_item(
+                workflow,
+                run_id,
+                task,
+                'running',
+                attempt_count=attempt_count,
+                created_at=created_at,
+            )
+            try:
+                task_result = _execute_workflow_dispatch(
+                    prepared_workflow,
+                    settings,
+                    conversation_id,
+                    run_id,
+                    thought_tracker,
+                    url_access_context,
+                    file_sync_result=file_sync_result,
+                )
+                task_error = ''
+                break
+            except Exception as exc:
+                task_error = str(exc)
+                if attempt_index >= retry_count:
+                    break
+                if thought_tracker and run_id:
+                    _add_workflow_activity_thought(
+                        thought_tracker,
+                        workflow,
+                        run_id,
+                        step_type='task',
+                        content=f"Retrying task {task_index + 1}: {task.get('name') or task_id}",
+                        detail=f'attempt={attempt_count + 1}',
+                        activity_key=f'task:{run_id}:{task_id}',
+                        kind='workflow_task',
+                        title=str(task.get('name') or f'Task {task_index + 1}'),
+                        status='running',
+                    )
+
+        if task_result is not None:
+            _save_workflow_task_run_item(
+                workflow,
+                run_id,
+                task,
+                'succeeded',
+                attempt_count=attempt_count,
+                output_summary=_build_response_preview(task_result.get('reply'), max_length=4000),
+                created_at=created_at,
+            )
+            task_results.append({
+                'task': task,
+                'status': 'succeeded',
+                'attempt_count': attempt_count,
+                'result': task_result,
+                'error': '',
+            })
+            if thought_tracker and run_id:
+                _add_workflow_activity_thought(
+                    thought_tracker,
+                    workflow,
+                    run_id,
+                    step_type='task',
+                    content=f"Completed task {task_index + 1}: {task.get('name') or task_id}",
+                    detail=f'attempts={attempt_count}',
+                    activity_key=f'task:{run_id}:{task_id}',
+                    kind='workflow_task',
+                    title=str(task.get('name') or f'Task {task_index + 1}'),
+                    status='completed',
+                )
+            previous_reply = str(task_result.get('reply') or '').strip()
+            continue
+
+        _save_workflow_task_run_item(
+            workflow,
+            run_id,
+            task,
+            'failed',
+            attempt_count=attempt_count,
+            error=task_error,
+            created_at=created_at,
+        )
+        task_results.append({
+            'task': task,
+            'status': 'failed',
+            'attempt_count': attempt_count,
+            'result': {},
+            'error': task_error,
+        })
+        if thought_tracker and run_id:
+            _add_workflow_activity_thought(
+                thought_tracker,
+                workflow,
+                run_id,
+                step_type='task',
+                content=f"Failed task {task_index + 1}: {task.get('name') or task_id}",
+                detail=task_error,
+                activity_key=f'task:{run_id}:{task_id}',
+                kind='workflow_task',
+                title=str(task.get('name') or f'Task {task_index + 1}'),
+                status='failed',
+            )
+        if error_strategy != 'continue':
+            raise RuntimeError(
+                f"Workflow task '{task.get('name') or task_id}' failed after {attempt_count} attempt(s): {task_error}"
+            )
+
+    return _merge_workflow_task_execution_results(task_results)
+
+
 def _finalize_cancelled_workflow_run(
     workflow,
     run_record,
@@ -6161,11 +6562,19 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
             status='running',
         )
 
+        url_access_workflow = execution_workflow
+        if execution_workflow.get('tasks'):
+            url_access_workflow = dict(execution_workflow)
+            url_access_workflow['task_prompt'] = '\n\n'.join(
+                str(task.get('instructions') or '').strip()
+                for task in execution_workflow.get('tasks') or []
+                if str(task.get('instructions') or '').strip()
+            )
         url_access_context = _execute_cancelable_workflow_step(
             execution_workflow,
             run_id,
             lambda: _prepare_workflow_url_access_context(
-                execution_workflow,
+                url_access_workflow,
                 settings,
                 conversation.get('id'),
                 run_id,
@@ -6173,97 +6582,27 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
                 user_roles=user_roles,
             ),
         )
-        document_action = _get_document_action_config(execution_workflow)
-        workflow_search_context = None
-        if document_action.get('type') == DOCUMENT_ACTION_TYPE_SEARCH:
-            workflow_search_context = _execute_cancelable_workflow_step(
+        conversation_id = str(conversation.get('id') or '')
+        if execution_workflow.get('tasks'):
+            execution_result = _execute_workflow_task_sequence(
                 execution_workflow,
+                settings,
+                conversation_id,
                 run_id,
-                lambda: _prepare_workflow_search_context(
-                    execution_workflow,
-                    document_action,
-                    settings,
-                    thought_tracker=thought_tracker,
-                    run_id=run_id,
-                ),
+                thought_tracker,
+                url_access_context,
+                file_sync_result=file_sync_result,
             )
-            execution_workflow = workflow_search_context.get('workflow') or execution_workflow
-            document_action = _get_document_action_config(execution_workflow)
-
-        if document_action.get('type') in {DOCUMENT_ACTION_TYPE_ANALYZE, DOCUMENT_ACTION_TYPE_COMPARISON}:
-            _raise_if_workflow_run_cancelled(execution_workflow, run_id)
-            document_action = _resolve_recent_document_action_targets(execution_workflow, document_action, settings)
-            execution_workflow = _apply_runtime_document_action_config(execution_workflow, document_action)
-            run_item_callback = _build_run_item_activity_callback(
-                execution_workflow,
-                run_id,
-                file_sync_result=file_sync_result or {},
-            )
-            _initialize_document_run_items(
-                execution_workflow,
-                run_id,
-                document_action,
-                file_sync_result=file_sync_result or {},
-            )
-            execution_result = _execute_cancelable_workflow_step(
-                execution_workflow,
-                run_id,
-                lambda: _execute_document_action_workflow(
-                    execution_workflow,
-                    settings,
-                    conversation_id=conversation.get('id'),
-                    run_id=run_id,
-                    thought_tracker=thought_tracker,
-                    external_activity_callback=run_item_callback,
-                    url_access_context=url_access_context,
-                ),
-            )
-        elif execution_workflow.get('runner_type') == 'agent':
-            execution_result = _execute_cancelable_workflow_step(
-                execution_workflow,
-                run_id,
-                lambda: _execute_agent_workflow(
-                    execution_workflow,
-                    settings,
-                    conversation_id=conversation.get('id'),
-                    run_id=run_id,
-                    thought_tracker=thought_tracker,
-                    url_access_context=url_access_context,
-                ),
-            )
-            if workflow_search_context:
-                execution_result.update({
-                    'hybrid_citations': workflow_search_context.get('citations') or [],
-                    'augmented': bool(workflow_search_context.get('citations')),
-                    'document_search': {
-                        'query': workflow_search_context.get('query'),
-                        'result_count': workflow_search_context.get('result_count', 0),
-                        'document_count': workflow_search_context.get('document_count', 0),
-                    },
-                })
         else:
-            execution_result = _execute_cancelable_workflow_step(
+            execution_result = _execute_workflow_dispatch(
                 execution_workflow,
+                settings,
+                conversation_id,
                 run_id,
-                lambda: _execute_model_workflow(
-                    execution_workflow,
-                    settings,
-                    conversation_id=str(conversation.get('id') or ''),
-                    run_id=run_id,
-                    thought_tracker=thought_tracker,
-                    url_access_context=url_access_context,
-                ),
+                thought_tracker,
+                url_access_context,
+                file_sync_result=file_sync_result,
             )
-            if workflow_search_context:
-                execution_result.update({
-                    'hybrid_citations': workflow_search_context.get('citations') or [],
-                    'augmented': bool(workflow_search_context.get('citations')),
-                    'document_search': {
-                        'query': workflow_search_context.get('query'),
-                        'result_count': workflow_search_context.get('result_count', 0),
-                        'document_count': workflow_search_context.get('document_count', 0),
-                    },
-                })
         _raise_if_workflow_run_cancelled(execution_workflow, run_id)
         execution_result = _attach_workflow_url_access_result(execution_result, url_access_context)
 
@@ -6311,6 +6650,8 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
             'agent_name': execution_result.get('agent_name'),
             'agent_display_name': execution_result.get('agent_display_name'),
             'analysis_coverage': execution_result.get('analysis_coverage') or {},
+            'task_results': execution_result.get('task_results') or [],
+            'task_error_count': int(execution_result.get('task_error_count') or 0),
             'url_access': execution_result.get('url_access') or {},
             'source_review': execution_result.get('source_review') or {},
             'file_sync': file_sync_result or {},

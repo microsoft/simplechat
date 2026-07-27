@@ -1,8 +1,9 @@
 # test_workflow_document_action_modal.py
 """
 UI test for workflow document action modal.
-Version: 0.250.063
+Version: 0.250.064
 Implemented in: 0.250.063
+Enhanced in: 0.250.064
 
 This test ensures the workflow modal supports generic no-document automation,
 uses Source/Target wording for comparison, and submits version-aware comparison
@@ -144,6 +145,28 @@ def _open_workflows_tab(page):
     expect(page.locator("#workflows-tab")).to_be_visible()
 
 
+def _advance_workflow_builder_to_tasks(page, workflow_name, instructions):
+    """Complete General and Trigger, then initialize the first task."""
+    expect(page.locator("[data-workflow-step-target='general']")).to_have_class("workflow-step-nav__item is-active")
+    expect(page.locator("#workflow-trigger-settings-card")).to_be_hidden()
+    page.fill("#workflow-name", workflow_name)
+    page.click("#workflow-step-next-btn")
+    expect(page.locator("#workflow-trigger-settings-card")).to_be_visible()
+    page.click("#workflow-step-next-btn")
+    expect(page.locator("#workflow-task-list .workflow-task-item")).to_have_count(1)
+    page.fill("#workflow-task-name", "Primary task")
+    page.fill("#workflow-task-prompt", instructions)
+
+
+def _advance_workflow_builder_to_review(page):
+    """Advance from Tasks through Reliability to Review."""
+    page.click("#workflow-step-next-btn")
+    expect(page.locator("#workflow-task-retry-count")).to_be_visible()
+    page.click("#workflow-step-next-btn")
+    expect(page.locator("#workflow-review-summary")).to_be_visible()
+    expect(page.locator("#workflow-save-btn")).to_be_visible()
+
+
 @pytest.mark.ui
 def test_workflow_modal_saves_generic_automation_without_documents():
     """Validate a workflow can be saved with instructions and a runner only."""
@@ -174,17 +197,31 @@ def test_workflow_modal_saves_generic_automation_without_documents():
             action_options = page.locator("#workflow-document-action-type option").all_text_contents()
             assert action_options[:2] == ["No document action", "Search"]
             expect(page.locator("#workflow-document-action-type")).to_have_value("none")
+            _advance_workflow_builder_to_tasks(
+                page,
+                "Scheduled Status Summary",
+                "Summarize the current status and propose next steps.",
+            )
             expect(page.locator("#workflow-document-targets-fields")).to_be_hidden()
-            expect(page.locator("#workflow-analysis-retries-group")).to_be_hidden()
-
-            page.fill("#workflow-name", "Scheduled Status Summary")
-            page.fill("#workflow-task-prompt", "Summarize the current status and propose next steps.")
+            page.click("#workflow-add-task-btn")
+            page.fill("#workflow-task-name", "Recommend actions")
+            page.fill("#workflow-task-prompt", "Turn the summary into ordered next actions.")
+            expect(page.locator("#workflow-task-list .workflow-task-item")).to_have_count(2)
+            page.click("#workflow-step-next-btn")
+            page.check("#workflow-error-strategy-continue")
+            page.fill("#workflow-task-retry-count", "2")
+            page.click("#workflow-step-next-btn")
+            page.select_option("#workflow-alert-priority", "high")
             page.click("#workflow-save-btn")
 
             assert workflow_state["saved_payloads"], "Expected the workflow save handler to capture the modal payload."
             saved_payload = workflow_state["saved_payloads"][0]
             assert saved_payload["runner_type"] == "model"
             assert saved_payload["chat_capabilities_enabled"] is True
+            assert [task["name"] for task in saved_payload["tasks"]] == ["Primary task", "Recommend actions"]
+            assert saved_payload["task_prompt"] == "Summarize the current status and propose next steps."
+            assert saved_payload["error_handling"] == {"strategy": "continue", "retry_count": 2}
+            assert saved_payload["alert_priority"] == "high"
             assert saved_payload["document_action"]["type"] == "none"
             assert saved_payload["document_action"]["document_ids"] == []
             assert saved_payload["analyze"]["enabled"] is False
@@ -228,8 +265,11 @@ def test_workflow_document_action_modal_comparison():
                 "Run the workflow instructions without workspace document context.",
             )
 
-            page.fill("#workflow-name", "Compare Contract Baseline")
-            page.fill("#workflow-task-prompt", "Compare the baseline contract against the latest amendments.")
+            _advance_workflow_builder_to_tasks(
+                page,
+                "Compare Contract Baseline",
+                "Compare the baseline contract against the latest amendments.",
+            )
             page.select_option("#workflow-document-action-type", "comparison")
 
             expect(page.locator("#workflow-document-action-type")).to_have_attribute(
@@ -258,6 +298,7 @@ def test_workflow_document_action_modal_comparison():
             page.select_option("#workflow-comparison-target-document-ids", ["doc-v2", "doc-v1"])
             expect(page.locator("#workflow-comparison-left-document-id option")).to_have_count(2)
             page.select_option("#workflow-comparison-left-document-id", "doc-v1")
+            _advance_workflow_builder_to_review(page)
             page.click("#workflow-save-btn")
 
             assert workflow_state["saved_payloads"], "Expected the workflow save handler to capture the modal payload."
@@ -300,8 +341,11 @@ def test_workflow_document_action_modal_per_document_analysis():
             page.get_by_role("button", name="New Workflow").click()
             expect(page.locator("#workflowModal")).to_be_visible()
 
-            page.fill("#workflow-name", "Analyze Each Policy")
-            page.fill("#workflow-task-prompt", "Summarize each selected policy.")
+            _advance_workflow_builder_to_tasks(
+                page,
+                "Analyze Each Policy",
+                "Summarize each selected policy.",
+            )
             page.select_option("#workflow-document-action-type", "analyze")
 
             expect(page.locator("#workflow-analysis-target-fields")).to_be_visible()
@@ -310,6 +354,7 @@ def test_workflow_document_action_modal_per_document_analysis():
 
             page.fill("#workflow-analysis-document-ids", "doc-alpha, doc-beta")
             page.check("#workflow-analysis-per-document")
+            _advance_workflow_builder_to_review(page)
             page.click("#workflow-save-btn")
 
             assert workflow_state["saved_payloads"], "Expected the workflow save handler to capture the modal payload."
