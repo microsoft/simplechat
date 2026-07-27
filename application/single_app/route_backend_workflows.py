@@ -1297,9 +1297,11 @@ def register_route_backend_workflows(bp):
                 update_runtime_fields=lambda updates: update_group_workflow_runtime_fields(group_id, workflow_id, updates),
             )
         except LookupError as exc:
-            return jsonify({'error': str(exc)}), 404
+            logging.exception('Group workflow run cancellation failed due to missing resource.')
+            return jsonify({'error': 'Run not found.'}), 404
         except WorkflowCancellationConflictError as exc:
-            return jsonify({'error': str(exc)}), 409
+            logging.exception('Group workflow run cancellation conflict.')
+            return jsonify({'error': 'Unable to cancel run in its current state.'}), 409
 
         return jsonify({'success': True, 'workflow': updated_workflow, 'run': run_record}), 202
 
