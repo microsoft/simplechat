@@ -2,8 +2,9 @@
 # test_file_sync_onedrive_personal.py
 """
 Functional test for personal OneDrive File Sync support.
-Version: 0.241.178
+Version: 0.250.067
 Implemented in: 0.241.128
+Updated in: 0.250.067
 
 This test ensures OneDrive sync source code remains wired as personal-only File
 Sync support while the admin source-type control keeps OneDrive marked as coming
@@ -39,7 +40,7 @@ def test_version_and_source_defaults():
     settings_text = read_text("application/single_app/functions_settings.py")
     file_sync_text = read_text("application/single_app/functions_file_sync.py")
 
-    assert 'VERSION = "0.241.178"' in config_text
+    assert 'VERSION = "0.250.067"' in config_text
     assert "FILE_SYNC_SOURCE_TYPE_ONEDRIVE = \"onedrive\"" in file_sync_text
     assert "FILE_SYNC_SOURCE_TYPE_ONEDRIVE" in file_sync_text
     assert "FILE_SYNC_SOURCE_TYPE_ONEDRIVE: {\"client_secret\"}" in file_sync_text
@@ -84,14 +85,14 @@ def test_global_connector_identity_supports_cloud_drive_sync():
     identity_js = read_text("application/single_app/static/js/workspace/workspace-identities.js")
     admin_template = read_text("application/single_app/templates/admin_settings.html")
 
-    assert '"file_sync": ["smb", "azure_files", "onedrive", "google_drive", "google_shared_drive"]' in identity_text
+    assert '"file_sync": ["smb", "azure_files", "azure_blob", "onedrive", "google_drive", "google_shared_drive"]' in identity_text
     assert 'allowed_usage_contexts = {"file_sync", "action"}' in identity_text
     assert "admin/workspace-identities/global" in admin_template
     assert 'data-capability-options="file_sync,action"' in admin_template
     assert "Cloud drive connector identities" in admin_template
     assert "OneDrive, SharePoint, and Google Workspace File Sync connectors are coming soon" in admin_template
     assert "admin-approved cloud drive connectors" in identity_js
-    assert "'smb', 'azure_files', 'onedrive', 'google_drive', 'google_shared_drive'" in identity_js
+    assert "'smb', 'azure_files', 'azure_blob', 'onedrive', 'google_drive', 'google_shared_drive'" in identity_js
 
 
 def test_file_sync_browse_routes_are_registered():

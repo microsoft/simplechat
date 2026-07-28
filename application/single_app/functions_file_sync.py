@@ -16,6 +16,7 @@ from urllib.parse import quote, unquote, urlparse
 from azure.core.exceptions import ResourceNotFoundError as AzureResourceNotFoundError
 from azure.identity import ClientSecretCredential, DefaultAzureCredential
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
+from azure.storage.blob import BlobServiceClient
 from flask import current_app, has_app_context
 from msal import ConfidentialClientApplication
 
@@ -78,12 +79,14 @@ FILE_SYNC_SCOPE_PUBLIC = "public"
 FILE_SYNC_SCOPES = {FILE_SYNC_SCOPE_PERSONAL, FILE_SYNC_SCOPE_GROUP, FILE_SYNC_SCOPE_PUBLIC}
 FILE_SYNC_SOURCE_TYPE_SMB = "smb"
 FILE_SYNC_SOURCE_TYPE_AZURE_FILES = "azure_files"
+FILE_SYNC_SOURCE_TYPE_AZURE_BLOB = "azure_blob"
 FILE_SYNC_SOURCE_TYPE_ONEDRIVE = "onedrive"
 FILE_SYNC_SOURCE_TYPE_SHAREPOINT_ON_PREM = "sharepoint_on_prem"
 FILE_SYNC_SOURCE_TYPE_GOOGLE_WORKSPACE = "google_workspace"
 FILE_SYNC_KNOWN_SOURCE_TYPES = {
     FILE_SYNC_SOURCE_TYPE_SMB,
     FILE_SYNC_SOURCE_TYPE_AZURE_FILES,
+    FILE_SYNC_SOURCE_TYPE_AZURE_BLOB,
     FILE_SYNC_SOURCE_TYPE_ONEDRIVE,
     FILE_SYNC_SOURCE_TYPE_SHAREPOINT_ON_PREM,
     FILE_SYNC_SOURCE_TYPE_GOOGLE_WORKSPACE,
@@ -91,15 +94,18 @@ FILE_SYNC_KNOWN_SOURCE_TYPES = {
 FILE_SYNC_IMPLEMENTED_SOURCE_TYPES = {
     FILE_SYNC_SOURCE_TYPE_SMB,
     FILE_SYNC_SOURCE_TYPE_AZURE_FILES,
+    FILE_SYNC_SOURCE_TYPE_AZURE_BLOB,
     FILE_SYNC_SOURCE_TYPE_ONEDRIVE,
 }
 FILE_SYNC_ADMIN_VISIBLE_SOURCE_TYPES = {
     FILE_SYNC_SOURCE_TYPE_SMB,
     FILE_SYNC_SOURCE_TYPE_AZURE_FILES,
+    FILE_SYNC_SOURCE_TYPE_AZURE_BLOB,
 }
 FILE_SYNC_SOURCE_TYPE_LABELS = {
     FILE_SYNC_SOURCE_TYPE_SMB: "SMB",
     FILE_SYNC_SOURCE_TYPE_AZURE_FILES: "Azure Files",
+    FILE_SYNC_SOURCE_TYPE_AZURE_BLOB: "Azure Blob Storage",
     FILE_SYNC_SOURCE_TYPE_ONEDRIVE: "OneDrive",
     FILE_SYNC_SOURCE_TYPE_SHAREPOINT_ON_PREM: "On-prem SharePoint",
     FILE_SYNC_SOURCE_TYPE_GOOGLE_WORKSPACE: "Google Workspace",
@@ -137,6 +143,7 @@ FILE_SYNC_DELETE_ACTIONS = {"delete_only", "ignore_remote"}
 FILE_SYNC_IDENTITY_AUTH_TYPES_BY_SOURCE = {
     FILE_SYNC_SOURCE_TYPE_SMB: {"username_password", "anonymous"},
     FILE_SYNC_SOURCE_TYPE_AZURE_FILES: {"managed_identity", "client_secret", "connection_string"},
+    FILE_SYNC_SOURCE_TYPE_AZURE_BLOB: {"managed_identity", "client_secret", "connection_string"},
     FILE_SYNC_SOURCE_TYPE_ONEDRIVE: {"client_secret"},
 }
 FILE_SYNC_IDENTITY_AUTH_TYPES = set().union(*FILE_SYNC_IDENTITY_AUTH_TYPES_BY_SOURCE.values())
@@ -250,11 +257,17 @@ def _file_sync_auth_types_for_source_type(source_type: str) -> set:
     return FILE_SYNC_IDENTITY_AUTH_TYPES_BY_SOURCE.get(normalized_source_type, {"username_password", "anonymous"})
 
 
+def _assert_azure_blob_auth_storage(auth: Dict[str, Any]) -> None:
+    auth_type = _normalize_text((auth or {}).get("auth_type"), 50).lower()
+    if auth_type in {"client_secret", "connection_string"} and not (auth or {}).get("secret_secret_name"):
+        raise ValueError("Azure Blob Storage secret credentials must be stored in Azure Key Vault")
+
+
 def _default_auth_type_for_source_type(source_type: str) -> str:
     normalized_source_type = _normalize_source_type(source_type)
     if normalized_source_type == FILE_SYNC_SOURCE_TYPE_ONEDRIVE:
         return "global_identity"
-    if normalized_source_type == FILE_SYNC_SOURCE_TYPE_AZURE_FILES:
+    if normalized_source_type in {FILE_SYNC_SOURCE_TYPE_AZURE_FILES, FILE_SYNC_SOURCE_TYPE_AZURE_BLOB}:
         return "managed_identity"
     return "username_password"
 
@@ -520,6 +533,8 @@ def _get_file_sync_identity(
         auth_types=_file_sync_auth_types_for_source_type(normalized_source_type),
     ):
         raise ValueError(f"Selected workspace identity cannot be used for {_source_type_label(normalized_source_type)} File Sync")
+    if normalized_source_type == FILE_SYNC_SOURCE_TYPE_AZURE_BLOB:
+        _assert_azure_blob_auth_storage(identity.get("auth") or {})
     return identity
 
 
@@ -713,6 +728,75 @@ def _normalize_azure_files_connection(
     }
 
 
+def _normalize_azure_blob_url(value: Any) -> Tuple[str, List[str]]:
+    raw_url = _normalize_text(value, max_length=2048)
+    if not raw_url:
+        return "", []
+    if "://" not in raw_url:
+        if re.match(r"^[a-z0-9]{3,24}$", raw_url):
+            raw_url = f"https://{raw_url}.blob.core.windows.net"
+        else:
+            raw_url = f"https://{raw_url}"
+
+    parsed_url = urlparse(raw_url)
+    if parsed_url.scheme != "https" or not parsed_url.netloc:
+        raise ValueError("Azure Blob Storage sources require an HTTPS blob service URL or storage account name")
+
+    path_parts = [unquote(path_part) for path_part in parsed_url.path.split("/") if path_part]
+    return f"{parsed_url.scheme}://{parsed_url.netloc}".rstrip("/"), path_parts
+
+
+def _normalize_azure_container_name(value: Any) -> str:
+    container_name = _normalize_text(value, 63).lower()
+    if container_name == "$root":
+        return container_name
+    if (
+        not re.match(r"^[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])$", container_name)
+        or "--" in container_name
+    ):
+        raise ValueError("Azure Blob Storage container name must be 3-63 lowercase letters, numbers, or hyphens")
+    return container_name
+
+
+def _normalize_azure_blob_connection(
+    connection: Dict[str, Any],
+    existing_connection: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    connection = connection or {}
+    existing_connection = existing_connection or {}
+    raw_url = (
+        connection.get("account_url")
+        or connection.get("blob_service_url")
+        or connection.get("account_name")
+        or existing_connection.get("account_url")
+        or existing_connection.get("blob_service_url")
+        or existing_connection.get("account_name")
+        or ""
+    )
+    account_url, url_path_parts = _normalize_azure_blob_url(raw_url)
+    if not account_url:
+        raise ValueError("Azure Blob Storage sources require a blob service URL or storage account name")
+
+    container_name = _normalize_text(
+        connection.get("container_name", existing_connection.get("container_name", "")),
+        63,
+    )
+    if not container_name and url_path_parts:
+        container_name = url_path_parts[0]
+    container_name = _normalize_azure_container_name(container_name)
+
+    raw_blob_prefix = connection.get("blob_prefix", existing_connection.get("blob_prefix", ""))
+    if not raw_blob_prefix and len(url_path_parts) > 1:
+        raw_blob_prefix = "/".join(url_path_parts[1:])
+    blob_prefix = _normalize_selected_path(raw_blob_prefix)
+    return {
+        "account_url": account_url,
+        "container_name": container_name,
+        "blob_prefix": blob_prefix,
+        "selected_paths": _normalize_selected_paths(connection.get("selected_paths", existing_connection.get("selected_paths", []))),
+    }
+
+
 def _normalize_onedrive_connection(
     connection: Dict[str, Any],
     existing_connection: Optional[Dict[str, Any]] = None,
@@ -728,6 +812,8 @@ def _normalize_connection_payload(source_type: str, connection: Dict[str, Any], 
     normalized_source_type = _normalize_source_type(source_type)
     if normalized_source_type == FILE_SYNC_SOURCE_TYPE_AZURE_FILES:
         return _normalize_azure_files_connection(connection, existing_connection)
+    if normalized_source_type == FILE_SYNC_SOURCE_TYPE_AZURE_BLOB:
+        return _normalize_azure_blob_connection(connection, existing_connection)
     if normalized_source_type == FILE_SYNC_SOURCE_TYPE_ONEDRIVE:
         return _normalize_onedrive_connection(connection, existing_connection)
     return {
@@ -812,6 +898,18 @@ def _prepare_auth_payload(
 
     if normalized_source_type == FILE_SYNC_SOURCE_TYPE_AZURE_FILES:
         return _prepare_azure_files_auth_payload(scope_type, scope_id, source_id, raw_credentials, existing_auth, auth_type)
+    if normalized_source_type == FILE_SYNC_SOURCE_TYPE_AZURE_BLOB:
+        prepared_auth = _prepare_azure_files_auth_payload(
+            scope_type,
+            scope_id,
+            source_id,
+            raw_credentials,
+            existing_auth,
+            auth_type,
+            source_label="Azure Blob Storage",
+        )
+        _assert_azure_blob_auth_storage(prepared_auth)
+        return prepared_auth
 
     username = _normalize_text(raw_credentials.get("username", existing_auth.get("username", "")), 255)
     domain = _normalize_text(raw_credentials.get("domain", existing_auth.get("domain", "")), 255)
@@ -872,6 +970,7 @@ def _prepare_azure_files_auth_payload(
     raw_credentials: Dict[str, Any],
     existing_auth: Dict[str, Any],
     auth_type: str,
+    source_label: str = "Azure Files",
 ) -> Dict[str, Any]:
     prepared_auth = {"auth_type": auth_type}
     if auth_type == "managed_identity":
@@ -886,7 +985,7 @@ def _prepare_azure_files_auth_payload(
     if auth_type == "client_secret":
         client_id = _normalize_text(raw_credentials.get("client_id", raw_credentials.get("identity", existing_auth.get("identity", ""))), 255)
         if not client_id:
-            raise ValueError("Azure Files service principal identities require a client ID")
+            raise ValueError(f"{source_label} service principal identities require a client ID")
         prepared_auth["identity"] = client_id
         tenant_id = _normalize_text(raw_credentials.get("tenant_id", existing_auth.get("tenant_id", "")), 255)
         if tenant_id:
@@ -898,7 +997,7 @@ def _prepare_azure_files_auth_payload(
             elif existing_auth.get("secret"):
                 prepared_auth["secret"] = existing_auth["secret"]
             else:
-                raise ValueError("Azure Files service principal identities require a client secret")
+                raise ValueError(f"{source_label} service principal identities require a client secret")
             return prepared_auth
         return _store_prepared_secret(scope_type, scope_id, source_id, prepared_auth, "secret", str(secret_value))
 
@@ -909,7 +1008,7 @@ def _prepare_azure_files_auth_payload(
         elif existing_auth.get("secret"):
             prepared_auth["secret"] = existing_auth["secret"]
         else:
-            raise ValueError("Azure Files connection string identities require a connection string")
+            raise ValueError(f"{source_label} connection string identities require a connection string")
         return prepared_auth
     return _store_prepared_secret(scope_type, scope_id, source_id, prepared_auth, "secret", str(secret_value))
 
@@ -1056,6 +1155,13 @@ def _prepare_connection_test_auth(
 
     if normalized_source_type == FILE_SYNC_SOURCE_TYPE_AZURE_FILES:
         return _prepare_connection_test_azure_files_auth(raw_credentials, existing_auth, auth_type)
+    if normalized_source_type == FILE_SYNC_SOURCE_TYPE_AZURE_BLOB:
+        return _prepare_connection_test_azure_files_auth(
+            raw_credentials,
+            existing_auth,
+            auth_type,
+            source_label="Azure Blob Storage",
+        )
 
     prepared_auth = {
         "auth_type": auth_type,
@@ -1082,6 +1188,7 @@ def _prepare_connection_test_azure_files_auth(
     raw_credentials: Dict[str, Any],
     existing_auth: Dict[str, Any],
     auth_type: str,
+    source_label: str = "Azure Files",
 ) -> Dict[str, Any]:
     prepared_auth = {"auth_type": auth_type}
     if auth_type == "managed_identity":
@@ -1096,7 +1203,7 @@ def _prepare_connection_test_azure_files_auth(
     if auth_type == "client_secret":
         client_id = _normalize_text(raw_credentials.get("client_id", raw_credentials.get("identity", existing_auth.get("identity", ""))), 255)
         if not client_id:
-            raise ValueError("Azure Files service principal identities require a client ID")
+            raise ValueError(f"{source_label} service principal identities require a client ID")
         prepared_auth["identity"] = client_id
         tenant_id = _normalize_text(raw_credentials.get("tenant_id", existing_auth.get("tenant_id", "")), 255)
         if tenant_id:
@@ -1108,7 +1215,7 @@ def _prepare_connection_test_azure_files_auth(
             elif existing_auth.get("secret"):
                 prepared_auth["secret"] = existing_auth["secret"]
             else:
-                raise ValueError("Azure Files service principal identities require a client secret")
+                raise ValueError(f"{source_label} service principal identities require a client secret")
         else:
             prepared_auth["secret"] = str(secret_value)
         return prepared_auth
@@ -1120,7 +1227,7 @@ def _prepare_connection_test_azure_files_auth(
         elif existing_auth.get("secret"):
             prepared_auth["secret"] = existing_auth["secret"]
         else:
-            raise ValueError("Azure Files connection string identities require a connection string")
+            raise ValueError(f"{source_label} connection string identities require a connection string")
     else:
         prepared_auth["secret"] = str(secret_value)
     return prepared_auth
@@ -1183,6 +1290,8 @@ def test_file_sync_source_connection(
         return _test_onedrive_connection(source)
     if source.get("source_type") == FILE_SYNC_SOURCE_TYPE_AZURE_FILES:
         return _test_azure_files_connection(source)
+    if source.get("source_type") == FILE_SYNC_SOURCE_TYPE_AZURE_BLOB:
+        return _test_azure_blob_connection(source)
 
     try:
         smbclient = _register_smb_session(source)
@@ -1227,6 +1336,8 @@ def browse_file_sync_source_path(
         entries = _browse_onedrive_path(source, browse_path)
     elif source.get("source_type") == FILE_SYNC_SOURCE_TYPE_AZURE_FILES:
         entries = _browse_azure_files_path(source, browse_path)
+    elif source.get("source_type") == FILE_SYNC_SOURCE_TYPE_AZURE_BLOB:
+        entries = _browse_azure_blob_path(source, browse_path)
     else:
         entries = _browse_smb_path(source, browse_path)
     return {
@@ -1266,6 +1377,35 @@ def _test_azure_files_connection(source: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError("Azure Files connection test failed. Verify the file endpoint, share, and identity permissions.") from error
     except Exception as error:
         raise ValueError("Azure Files connection test failed. Verify the file endpoint, share, and identity permissions.") from error
+
+
+def _test_azure_blob_connection(source: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        container_client = _get_azure_blob_container_client(source)
+        container_client.get_container_properties()
+        blob_prefix = source.get("connection", {}).get("blob_prefix", "")
+        browse_prefix = f"{blob_prefix.rstrip('/')}/" if blob_prefix else ""
+        entries_checked = 0
+        files_seen = 0
+        folders_seen = 0
+        for entry in container_client.walk_blobs(name_starts_with=browse_prefix, delimiter="/"):
+            entries_checked += 1
+            if _azure_blob_item_is_folder(entry):
+                folders_seen += 1
+            else:
+                files_seen += 1
+            if entries_checked >= 25:
+                break
+        return {
+            "success": True,
+            "source_type": source["source_type"],
+            "recursive": source.get("recursive", True),
+            "entries_checked": entries_checked,
+            "files_seen": files_seen,
+            "folders_seen": folders_seen,
+        }
+    except Exception as error:
+        raise ValueError("Azure Blob Storage connection test failed. Verify the blob endpoint, container, prefix, and identity permissions.") from error
 
 
 def delete_file_sync_source(scope_type: str, scope_id: str, source_id: str, deleted_by: str, delete_associated_files: bool = False) -> Dict[str, Any]:
@@ -1713,6 +1853,8 @@ def _list_remote_files(source: Dict[str, Any], config: Dict[str, Any]) -> List[D
         return _list_onedrive_files(source, config)
     if source_type == FILE_SYNC_SOURCE_TYPE_AZURE_FILES:
         return _list_azure_files(source, config)
+    if source_type == FILE_SYNC_SOURCE_TYPE_AZURE_BLOB:
+        return _list_azure_blobs(source, config)
     return _list_smb_files(source, config)
 
 
@@ -1721,6 +1863,8 @@ def _stage_remote_file(source: Dict[str, Any], remote_file: Dict[str, Any]) -> T
         return _stage_onedrive_file(source, remote_file)
     if source.get("source_type") == FILE_SYNC_SOURCE_TYPE_AZURE_FILES:
         return _stage_azure_files_file(source, remote_file)
+    if source.get("source_type") == FILE_SYNC_SOURCE_TYPE_AZURE_BLOB:
+        return _stage_azure_blob_file(source, remote_file)
     return _stage_smb_file(source, remote_file["remote_path"], remote_file["file_name"])
 
 
@@ -2052,6 +2196,44 @@ def _get_azure_files_share_client(source: Dict[str, Any]):
     return _get_azure_files_service_client(source).get_share_client(share_name)
 
 
+def _get_azure_blob_service_client(source: Dict[str, Any]):
+    connection = source.get("connection") or {}
+    auth = _get_identity_auth_for_source(source) or source.get("auth") or {}
+    auth_type = _normalize_text(auth.get("auth_type"), 50).lower() or "managed_identity"
+    if auth_type == "connection_string":
+        connection_string = _resolved_auth_secret(auth)
+        if not connection_string:
+            raise ValueError("Azure Blob Storage connection string authentication requires a connection string")
+        return BlobServiceClient.from_connection_string(connection_string)
+
+    account_url = connection.get("account_url") or ""
+    if not account_url:
+        raise ValueError("Azure Blob Storage source is missing an account URL")
+    if auth_type == "client_secret":
+        client_id = auth.get("identity") or ""
+        client_secret = _resolved_auth_secret(auth)
+        tenant_id = auth.get("tenant_id") or TENANT_ID
+        if not tenant_id or not client_id or not client_secret:
+            raise ValueError("Azure Blob Storage service principal authentication requires tenant ID, client ID, and client secret")
+        credential = ClientSecretCredential(
+            tenant_id=tenant_id,
+            client_id=client_id,
+            client_secret=client_secret,
+        )
+    elif auth_type == "managed_identity":
+        credential = DefaultAzureCredential(managed_identity_client_id=auth.get("managed_identity_client_id") or None)
+    else:
+        raise ValueError("Azure Blob Storage sources require managed identity, service principal, or connection string authentication")
+    return BlobServiceClient(account_url=account_url, credential=credential)
+
+
+def _get_azure_blob_container_client(source: Dict[str, Any]):
+    container_name = source.get("connection", {}).get("container_name") or ""
+    if not container_name:
+        raise ValueError("Azure Blob Storage source is missing a container name")
+    return _get_azure_blob_service_client(source).get_container_client(container_name)
+
+
 def _resolved_auth_secret(auth: Dict[str, Any]) -> str:
     if auth.get("secret_secret_name"):
         return retrieve_secret_from_key_vault_by_full_name(auth["secret_secret_name"])
@@ -2091,6 +2273,138 @@ def _azure_files_item_change_token(item: Any) -> Optional[str]:
     if hasattr(item, "get"):
         return item.get("etag") or item.get("ETag")
     return getattr(item, "etag", None) or getattr(item, "ETag", None)
+
+
+def _azure_blob_item_value(item: Any, field_name: str, default_value: Any = None) -> Any:
+    if hasattr(item, "get"):
+        return item.get(field_name, default_value)
+    return getattr(item, field_name, default_value)
+
+
+def _azure_blob_item_name(item: Any) -> str:
+    return str(_azure_blob_item_value(item, "name", "") or "")
+
+
+def _azure_blob_item_is_folder(item: Any) -> bool:
+    metadata = _azure_blob_item_value(item, "metadata", {}) or {}
+    metadata_is_folder = isinstance(metadata, dict) and str(metadata.get("hdi_isfolder", "")).lower() == "true"
+    resource_type = str(_azure_blob_item_value(item, "resource_type", "") or "").lower()
+    return (
+        type(item).__name__ == "BlobPrefix"
+        or _azure_blob_item_name(item).endswith("/")
+        or metadata_is_folder
+        or resource_type == "directory"
+    )
+
+
+def _azure_blob_item_size(item: Any) -> int:
+    try:
+        return int(_azure_blob_item_value(item, "size", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _azure_blob_item_modified_at(item: Any) -> Optional[str]:
+    return _format_smb_modified_at(_azure_blob_item_value(item, "last_modified"))
+
+
+def _azure_blob_item_change_token(item: Any) -> Optional[str]:
+    change_token = _azure_blob_item_value(item, "etag")
+    return str(change_token) if change_token is not None else None
+
+
+def _join_azure_blob_path(parent_path: str, child_path: str) -> str:
+    parent = str(parent_path or "").strip("/")
+    child = str(child_path or "").strip("/")
+    if not parent:
+        return child
+    if not child:
+        return parent
+    return f"{parent}/{child}"
+
+
+def _relative_azure_blob_path(blob_prefix: str, blob_name: str) -> str:
+    normalized_prefix = str(blob_prefix or "").strip("/")
+    normalized_blob_name = str(blob_name or "").strip("/")
+    if normalized_prefix and normalized_blob_name.lower().startswith(normalized_prefix.lower()):
+        return normalized_blob_name[len(normalized_prefix):].lstrip("/")
+    return normalized_blob_name
+
+
+def _build_azure_blob_url(account_url: str, container_name: str, blob_name: str) -> str:
+    encoded_container = quote(container_name, safe="")
+    encoded_blob_name = "/".join(quote(part, safe="") for part in str(blob_name or "").split("/"))
+    return f"{account_url.rstrip('/')}/{encoded_container}/{encoded_blob_name}"
+
+
+def _browse_azure_blob_path(source: Dict[str, Any], browse_path: str) -> List[Dict[str, Any]]:
+    container_client = _get_azure_blob_container_client(source)
+    blob_prefix = source.get("connection", {}).get("blob_prefix", "")
+    full_path = _join_azure_blob_path(blob_prefix, browse_path)
+    browse_prefix = f"{full_path.rstrip('/')}/" if full_path else ""
+    entries = []
+    for entry in container_client.walk_blobs(name_starts_with=browse_prefix, delimiter="/"):
+        entry_name = _azure_blob_item_name(entry)
+        if not entry_name:
+            continue
+        relative_path = _relative_azure_blob_path(blob_prefix, entry_name).rstrip("/")
+        display_name = relative_path.split("/")[-1]
+        if not display_name:
+            continue
+        entries.append(
+            {
+                "name": display_name,
+                "path": relative_path,
+                "type": "folder" if _azure_blob_item_is_folder(entry) else "file",
+                "size": _azure_blob_item_size(entry),
+                "modified_at": _azure_blob_item_modified_at(entry),
+            }
+        )
+        if len(entries) >= 100:
+            break
+    return entries
+
+
+def _list_azure_blobs(source: Dict[str, Any], config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    container_client = _get_azure_blob_container_client(source)
+    connection = source.get("connection") or {}
+    account_url = connection.get("account_url", "")
+    container_name = connection.get("container_name", "")
+    blob_prefix = connection.get("blob_prefix", "")
+    selected_paths = connection.get("selected_paths") or [""]
+    recursive_enabled = bool(source.get("recursive", True) and config.get("file_sync_allow_recursive_sources", True))
+    max_items = config["file_sync_max_files_per_run"] * 2
+    remote_files = []
+    seen_blob_names = set()
+
+    for selected_path in selected_paths:
+        selection_prefix = _join_azure_blob_path(blob_prefix, selected_path)
+        for blob in container_client.list_blobs(name_starts_with=selection_prefix or None):
+            blob_name = _azure_blob_item_name(blob)
+            if not blob_name or _azure_blob_item_is_folder(blob) or blob_name in seen_blob_names:
+                continue
+            if selected_path and blob_name != selection_prefix and not blob_name.startswith(f"{selection_prefix.rstrip('/')}/"):
+                continue
+
+            selection_remainder = blob_name[len(selection_prefix):].lstrip("/") if selection_prefix else blob_name
+            if not recursive_enabled and "/" in selection_remainder:
+                continue
+
+            seen_blob_names.add(blob_name)
+            remote_files.append(
+                {
+                    "remote_path": _build_azure_blob_url(account_url, container_name, blob_name),
+                    "relative_path": _relative_azure_blob_path(blob_prefix, blob_name),
+                    "file_name": blob_name.rstrip("/").split("/")[-1],
+                    "size": _azure_blob_item_size(blob),
+                    "modified_at": _azure_blob_item_modified_at(blob),
+                    "remote_change_token": _azure_blob_item_change_token(blob),
+                    "azure_blob_name": blob_name,
+                }
+            )
+            if len(remote_files) >= max_items:
+                return remote_files
+    return remote_files
 
 
 def _join_azure_file_path(parent_path: str, child_name: str) -> str:
@@ -2346,6 +2660,23 @@ def _stage_azure_files_file(source: Dict[str, Any], remote_file: Dict[str, Any])
     sha256_hash = hashlib.sha256()
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix, dir=temp_dir) as temp_file:
         downloader = file_client.download_file()
+        for chunk in downloader.chunks():
+            if not chunk:
+                continue
+            temp_file.write(chunk)
+            sha256_hash.update(chunk)
+        return temp_file.name, sha256_hash.hexdigest()
+
+
+def _stage_azure_blob_file(source: Dict[str, Any], remote_file: Dict[str, Any]) -> Tuple[str, str]:
+    container_client = _get_azure_blob_container_client(source)
+    blob_name = remote_file.get("azure_blob_name") or remote_file.get("relative_path") or remote_file.get("file_name")
+    blob_client = container_client.get_blob_client(blob_name)
+    suffix = os.path.splitext(remote_file.get("file_name") or "")[1] or ".bin"
+    temp_dir = "/sc-temp-files" if os.path.exists("/sc-temp-files") else None
+    sha256_hash = hashlib.sha256()
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix, dir=temp_dir) as temp_file:
+        downloader = blob_client.download_blob()
         for chunk in downloader.chunks():
             if not chunk:
                 continue

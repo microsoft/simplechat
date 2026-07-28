@@ -7314,6 +7314,13 @@
                                 </div>
                                 <div class="col-md-4">
                                     <div class="form-check">
+                                        <input type="checkbox" class="form-check-input" id="file_sync_visible_source_type_azure_blob" name="file_sync_visible_source_types" value="azure_blob" {% if 'azure_blob' in file_sync_visible_source_types %}checked{% endif %}>
+                                        <label class="form-check-label" for="file_sync_visible_source_type_azure_blob">Azure Blob Storage</label>
+                                        <div class="form-text">Available now.</div>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="form-check">
                                         <input type="checkbox" class="form-check-input" id="file_sync_visible_source_type_onedrive" value="onedrive" disabled>
                                         <label class="form-check-label" for="file_sync_visible_source_type_onedrive">OneDrive</label>
                                         <div class="form-text">Coming Soon.</div>

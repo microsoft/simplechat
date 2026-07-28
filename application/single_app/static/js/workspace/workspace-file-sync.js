@@ -39,6 +39,12 @@ function initializeFileSyncRoot(root) {
             enabled: true,
         },
         {
+            value: 'azure_blob',
+            label: 'Azure Blob Storage',
+            description: 'Blobs from an Azure Storage container.',
+            enabled: true,
+        },
+        {
             value: 'onedrive',
             label: 'OneDrive',
             description: 'Files and folders from a personal OneDrive.',
@@ -112,6 +118,7 @@ function initializeFileSyncRoot(root) {
     const sourceTypeAuthTypes = {
         smb: ['username_password', 'anonymous'],
         azure_files: ['managed_identity', 'client_secret', 'connection_string'],
+        azure_blob: ['managed_identity', 'client_secret', 'connection_string'],
         onedrive: ['global_identity'],
     };
     const authTypeLabels = {
@@ -860,6 +867,8 @@ function initializeFileSyncRoot(root) {
         accountUrl: source.connection?.account_url || source.connection?.share_url || '',
         shareName: source.connection?.share_name || '',
         directoryPath: source.connection?.directory_path || '',
+        containerName: source.connection?.container_name || '',
+        blobPrefix: source.connection?.blob_prefix || '',
         selectedPaths: source.connection?.selected_paths || [],
         identityId: source.identity_id || '',
         authType: source.credentials?.auth_type || 'username_password',
@@ -989,6 +998,9 @@ function initializeFileSyncRoot(root) {
         const accountUrlField = buildLabeledInput('file-sync-account-url', 'File service URL', 'url', values.accountUrl);
         const shareNameField = buildLabeledInput('file-sync-share-name', 'Share name', 'text', values.shareName);
         const directoryPathField = buildLabeledInput('file-sync-directory-path', 'Directory path', 'text', values.directoryPath);
+        const blobAccountUrlField = buildLabeledInput('file-sync-blob-account-url', 'Blob service URL or account name', 'text', values.accountUrl);
+        const containerNameField = buildLabeledInput('file-sync-container-name', 'Container name', 'text', values.containerName);
+        const blobPrefixField = buildLabeledInput('file-sync-blob-prefix', 'Blob prefix', 'text', values.blobPrefix);
         const enabledField = buildCheckbox('file-sync-enabled', 'Enabled', values.enabled);
         const recursiveField = buildCheckbox(
             'file-sync-recursive',
@@ -1000,6 +1012,8 @@ function initializeFileSyncRoot(root) {
         formGrid.appendChild(nameField.wrapper);
         if (selectedSourceType === 'azure_files') {
             appendChildren(formGrid, [accountUrlField.wrapper, shareNameField.wrapper, directoryPathField.wrapper]);
+        } else if (selectedSourceType === 'azure_blob') {
+            appendChildren(formGrid, [blobAccountUrlField.wrapper, containerNameField.wrapper, blobPrefixField.wrapper]);
         } else if (selectedSourceType === 'onedrive') {
             const oneDriveSummary = createElement('div', { className: 'col-12 text-muted small', text: 'OneDrive sync uses an admin-managed global connector identity with Microsoft Graph application permissions.' });
             formGrid.appendChild(oneDriveSummary);
@@ -1027,6 +1041,10 @@ function initializeFileSyncRoot(root) {
         const globalConnectorNotice = createElement('div', {
             className: 'alert alert-info py-2 mb-0',
             text: 'OneDrive uses the admin-managed global File Sync connector identity. Personal users choose what to sync, not tenant credentials.',
+        });
+        const azureBlobCredentialNotice = createElement('div', {
+            className: 'alert alert-info py-2 mb-3',
+            text: 'Managed identity is recommended. Client secret and connection string authentication require Azure Key Vault secret storage.',
         });
 
         const localCredentialsWrapper = createElement('div', { className: 'row g-3' });
@@ -1119,10 +1137,17 @@ function initializeFileSyncRoot(root) {
             intervalField.wrapper.classList.toggle('d-none', !scheduleField.input.checked);
         });
 
+        let identityAndAuthenticationChildren = [identityWrapper, localCredentialsWrapper];
+        if (selectedSourceType === 'onedrive') {
+            identityAndAuthenticationChildren = [globalConnectorNotice];
+        } else if (selectedSourceType === 'azure_blob') {
+            identityAndAuthenticationChildren = [azureBlobCredentialNotice, identityWrapper, localCredentialsWrapper];
+        }
+
         appendChildren(content, [
             typeSummary,
             createConfigCard('General', [formGrid, generalSwitches]),
-            createConfigCard('Identity and Authentication', selectedSourceType === 'onedrive' ? [globalConnectorNotice] : [identityWrapper, localCredentialsWrapper]),
+            createConfigCard('Identity and Authentication', identityAndAuthenticationChildren),
             createConfigCard('Selection, Subfolders, and Filters', [recursiveField.wrapper, selectedPathControl.wrapper, patternControl.wrapper, extensionControl.wrapper, folderGrid]),
             createConfigCard('Tags', [tagsField.wrapper]),
             createConfigCard('Sync Schedule', [scheduleField.wrapper, intervalField.wrapper]),
@@ -1154,21 +1179,31 @@ function initializeFileSyncRoot(root) {
                 credentials.connection_string = '';
             }
             const selectedPaths = selectedPathControl.getValues();
-            const connection = selectedSourceType === 'azure_files'
-                ? {
+            let connection;
+            if (selectedSourceType === 'azure_files') {
+                connection = {
                     account_url: accountUrlField.input.value.trim(),
                     share_name: shareNameField.input.value.trim(),
                     directory_path: directoryPathField.input.value.trim(),
                     selected_paths: selectedPaths,
-                }
-                : selectedSourceType === 'onedrive'
-                    ? {
-                        selected_paths: selectedPaths,
-                    }
-                    : {
-                        unc_path: uncField.input.value.trim(),
-                        selected_paths: selectedPaths,
-                    };
+                };
+            } else if (selectedSourceType === 'azure_blob') {
+                connection = {
+                    account_url: blobAccountUrlField.input.value.trim(),
+                    container_name: containerNameField.input.value.trim(),
+                    blob_prefix: blobPrefixField.input.value.trim(),
+                    selected_paths: selectedPaths,
+                };
+            } else if (selectedSourceType === 'onedrive') {
+                connection = {
+                    selected_paths: selectedPaths,
+                };
+            } else {
+                connection = {
+                    unc_path: uncField.input.value.trim(),
+                    selected_paths: selectedPaths,
+                };
+            }
             return {
                 name: nameField.input.value.trim(),
                 source_type: selectedSourceType,

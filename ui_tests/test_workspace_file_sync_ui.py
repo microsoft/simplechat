@@ -1,8 +1,9 @@
 # test_workspace_file_sync_ui.py
 """
 UI test for workspace File Sync tab.
-Version: 0.241.129
+Version: 0.250.067
 Implemented in: 0.241.042
+Updated in: 0.250.067
 
 This test ensures the workspace Sync tab renders, loads source rows, opens the
 source workflow modal, and queues a manual sync without browser console errors.
@@ -202,6 +203,12 @@ def test_workspace_file_sync_tab():
             expect(identity_view_modal).to_be_hidden()
 
         page.locator("#sync-tab-btn").click()
+        page.locator("#file-sync-root").evaluate("""root => {
+            root.dataset.visibleSourceTypes = 'smb,azure_files,azure_blob';
+            delete root.dataset.fileSyncInitialized;
+            root.replaceChildren();
+            window.initializeFileSyncRoot(root);
+        }""")
         expect(page.get_by_role("button", name="Add Source")).to_be_visible()
         expect(page.get_by_role("button", name="Identities")).to_have_count(0)
         expect(page.get_by_text("Finance Share")).to_be_visible()
@@ -218,9 +225,13 @@ def test_workspace_file_sync_tab():
         source_modal = page.locator('[data-file-sync-source-modal="true"]')
         expect(source_modal.get_by_role("heading", name="Add Sync Source")).to_be_visible()
         expect(source_modal.get_by_text("SMB Share")).to_be_visible()
+        expect(source_modal.get_by_text("Azure Blob Storage")).to_be_visible()
+        source_modal.get_by_role("button", name=re.compile("^Azure Blob Storage")).click()
         source_modal.get_by_role("button", name="Configure Source").click()
         expect(source_modal.get_by_text("Source Type")).to_be_visible()
-        expect(source_modal.get_by_label("UNC path")).to_be_visible()
+        expect(source_modal.get_by_label("Blob service URL or account name")).to_be_visible()
+        expect(source_modal.get_by_label("Container name")).to_be_visible()
+        expect(source_modal.get_by_label("Blob prefix")).to_be_visible()
         expect(source_modal.get_by_text("Identity and Authentication")).to_be_visible()
         expect(source_modal.get_by_label("Reusable identity")).to_be_visible()
         expect(source_modal.get_by_text("Selection, Subfolders, and Filters")).to_be_visible()
