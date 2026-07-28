@@ -2,10 +2,11 @@
 # test_file_sync_azure_files_identity.py
 """
 Functional test for Azure Files File Sync identity support.
-Version: 0.250.068
+Version: 0.250.069
 Implemented in: 0.241.127
 Updated in: 0.250.067
 Updated in: 0.250.068
+Updated in: 0.250.069
 
 This test ensures Azure Files sync sources are wired to managed identity,
 service principal, and connection string authentication without requiring live
@@ -41,7 +42,7 @@ def test_version_and_dependency_pin():
     config_text = read_text("application/single_app/config.py")
     requirements_text = read_text("application/single_app/requirements.txt")
 
-    assert 'VERSION = "0.250.068"' in config_text
+    assert 'VERSION = "0.250.069"' in config_text
     assert "azure-storage-file-share==12.25.0" in requirements_text
 
 

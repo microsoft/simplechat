@@ -12,6 +12,7 @@ from functions_file_sync import (
     FILE_SYNC_SCOPE_PERSONAL,
     FILE_SYNC_SCOPE_PUBLIC,
     FILE_SYNC_SOURCE_TYPE_SMB,
+    FileSyncPublicValidationError,
     assert_public_workspace_role,
     browse_file_sync_source_path,
     create_file_sync_source,
@@ -131,6 +132,8 @@ def register_route_backend_file_sync(bp):
             },
             exceptionTraceback=not expected_error,
         )
+        if isinstance(error, FileSyncPublicValidationError):
+            return _error(error.public_message, 400)
         if isinstance(error, PermissionError):
             return _error("You do not have permission to perform this File Sync operation.", 403)
         if isinstance(error, LookupError):

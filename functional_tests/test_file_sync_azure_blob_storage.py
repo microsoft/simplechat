@@ -2,9 +2,10 @@
 # test_file_sync_azure_blob_storage.py
 """
 Functional test for Azure Blob Storage File Sync.
-Version: 0.250.068
+Version: 0.250.069
 Implemented in: 0.250.067
 Security hardening in: 0.250.068
+Container SAS support in: 0.250.069
 
 This test ensures Azure Blob Storage is wired into the shared File Sync
 pipeline for every supported workspace scope without requiring live Azure
@@ -18,9 +19,10 @@ import os
 import re
 import sys
 import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import parse_qsl, quote, unquote, urlparse
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -54,15 +56,20 @@ def load_functions(relative_path, names, additional_globals=None):
     namespace = {
         "Any": Any,
         "Dict": Dict,
+        "FileSyncPublicValidationError": ValueError,
         "List": List,
         "Optional": Optional,
         "Tuple": Tuple,
+        "datetime": datetime,
         "hashlib": hashlib,
         "json": json,
         "os": os,
+        "parse_qsl": parse_qsl,
         "quote": quote,
         "re": re,
         "tempfile": tempfile,
+        "timedelta": timedelta,
+        "timezone": timezone,
         "unquote": unquote,
         "urlparse": urlparse,
     }
@@ -76,7 +83,7 @@ def test_version_and_dependency_pin():
     config_text = read_text("application/single_app/config.py")
     requirements_text = read_text("application/single_app/requirements.txt")
 
-    assert 'VERSION = "0.250.068"' in config_text
+    assert 'VERSION = "0.250.069"' in config_text
     assert "azure-storage-blob==12.24.1" in requirements_text
 
 
@@ -190,6 +197,13 @@ def test_azure_blob_endpoints_block_server_side_request_forgery():
             "_normalize_text",
             "_azure_blob_endpoint_suffix_for_hostname",
             "_normalize_azure_blob_url",
+            "_parse_azure_blob_sas_parameters",
+            "_parse_azure_blob_sas_datetime",
+            "_azure_blob_permission_labels",
+            "_azure_blob_sas_metadata",
+            "_parse_azure_blob_connection_string",
+            "_parse_azure_blob_sas_url",
+            "_parse_azure_blob_credential",
             "_validate_azure_blob_connection_string",
         },
         {"AZURE_STORAGE_ENDPOINT_SUFFIXES": endpoint_suffixes},
@@ -272,7 +286,17 @@ def test_azure_blob_service_client_revalidates_endpoints_before_sdk_use():
             "_normalize_text",
             "_azure_blob_endpoint_suffix_for_hostname",
             "_normalize_azure_blob_url",
+            "_normalize_azure_container_name",
+            "_now",
+            "_parse_azure_blob_sas_parameters",
+            "_parse_azure_blob_sas_datetime",
+            "_azure_blob_permission_labels",
+            "_azure_blob_sas_metadata",
+            "_parse_azure_blob_connection_string",
+            "_parse_azure_blob_sas_url",
+            "_parse_azure_blob_credential",
             "_validate_azure_blob_connection_string",
+            "_validate_azure_blob_sas_for_container",
             "_get_azure_blob_service_client",
         },
         {
@@ -326,11 +350,356 @@ def test_azure_blob_service_client_revalidates_endpoints_before_sdk_use():
     assert FakeBlobServiceClient.connection_string_calls == []
 
 
+def test_azure_blob_container_sas_scope_permissions_and_expiry():
+    """Validate container SAS connection strings and safe metadata extraction."""
+    functions = load_functions(
+        "functions_file_sync.py",
+        {
+            "_normalize_text",
+            "_azure_blob_endpoint_suffix_for_hostname",
+            "_normalize_azure_blob_url",
+            "_normalize_azure_container_name",
+            "_now",
+            "_parse_azure_blob_sas_parameters",
+            "_parse_azure_blob_sas_datetime",
+            "_azure_blob_permission_labels",
+            "_azure_blob_sas_metadata",
+            "_parse_azure_blob_connection_string",
+            "_parse_azure_blob_sas_url",
+            "_parse_azure_blob_credential",
+            "_validate_azure_blob_connection_string",
+            "_validate_azure_blob_sas_for_container",
+        },
+        {
+            "AZURE_STORAGE_ENDPOINT_SUFFIXES": ("core.windows.net",),
+            "AZURE_BLOB_SAS_PERMISSION_LABELS": {
+                "r": "Read",
+                "l": "List",
+                "w": "Write",
+                "d": "Delete",
+            },
+        },
+    )
+    parse_connection_string = functions["_parse_azure_blob_connection_string"]
+    parse_credential = functions["_parse_azure_blob_credential"]
+    validate_for_container = functions["_validate_azure_blob_sas_for_container"]
+
+    container_sas = (
+        "BlobEndpoint=https://contosodata.blob.core.windows.net/documents;"
+        "SharedAccessSignature=sv=2022-11-02&spr=https&"
+        "st=2026-07-28T00%3A00%3A00Z&se=2030-07-28T00%3A00%3A00Z&"
+        "sr=c&sp=rl&sig=fake-container-signature"
+    )
+    parsed_container_sas = parse_connection_string(container_sas)
+    validate_for_container(parsed_container_sas, "documents")
+    assert parsed_container_sas["account_url"] == "https://contosodata.blob.core.windows.net"
+    assert parsed_container_sas["endpoint_container_name"] == "documents"
+    assert parsed_container_sas["sas_token"].endswith("sig=fake-container-signature")
+    assert parsed_container_sas["sas_metadata"] == {
+        "credential_type": "sas",
+        "sas_scope": "container",
+        "permissions": "rl",
+        "starts_at": "2026-07-28T00:00:00+00:00",
+        "expires_at": "2030-07-28T00:00:00+00:00",
+        "https_only": True,
+        "stored_access_policy": False,
+        "signed_version": "2022-11-02",
+        "ip_range": "",
+        "services": "",
+        "resource_types": "",
+        "warnings": [],
+    }
+    assert "sig" not in parsed_container_sas["sas_metadata"]
+    assert "signature" not in str(parsed_container_sas["sas_metadata"]).lower()
+
+    container_sas_url = (
+        "https://contosodata.blob.core.windows.net/documents?"
+        "sv=2022-11-02&spr=https&sr=c&sp=rl&"
+        "se=2030-07-28T00%3A00%3A00Z&sig=fake-container-signature"
+    )
+    parsed_sas_url = parse_credential(container_sas_url)
+    validate_for_container(parsed_sas_url, "documents", "https://contosodata.blob.core.windows.net")
+    assert parsed_sas_url["endpoint_container_name"] == "documents"
+    assert parsed_sas_url["sas_metadata"]["permissions"] == "rl"
+
+    standalone_sas_token = (
+        "?sv=2022-11-02&spr=https&sr=c&sp=rl&"
+        "se=2030-07-28T00%3A00%3A00Z&sig=fake-container-signature"
+    )
+    parsed_sas_token = parse_credential(
+        standalone_sas_token,
+        account_url="https://contosodata.blob.core.windows.net",
+        container_name="documents",
+    )
+    validate_for_container(parsed_sas_token, "documents", "https://contosodata.blob.core.windows.net")
+    assert parsed_sas_token["account_url"] == "https://contosodata.blob.core.windows.net"
+    assert parsed_sas_token["endpoint_container_name"] == "documents"
+
+    read_only_sas_url = container_sas_url.replace("sp=rl", "sp=r")
+    try:
+        validate_for_container(parse_credential(read_only_sas_url), "documents")
+        raise AssertionError("Container SAS without List was accepted")
+    except ValueError as exc:
+        assert "Read and List" in str(exc)
+
+    try:
+        validate_for_container(parsed_container_sas, "other-container")
+        raise AssertionError("Container SAS must match the selected container")
+    except ValueError as exc:
+        assert "selected container" in str(exc)
+
+    extra_permission_container_sas = container_sas.replace("sr=c&sp=rl", "sr=c&sp=rlwd")
+    parsed_extra_permission_sas = parse_connection_string(extra_permission_container_sas)
+    validate_for_container(parsed_extra_permission_sas, "documents")
+    assert any(
+        "Write, Delete" in warning and "Read and List are sufficient" in warning
+        for warning in parsed_extra_permission_sas["sas_metadata"]["warnings"]
+    )
+
+    account_sas = (
+        "BlobEndpoint=https://contosodata.blob.core.windows.net;"
+        "SharedAccessSignature=sv=2022-11-02&spr=https&ss=b&srt=co&"
+        "sp=rlwd&se=2030-07-28T00%3A00%3A00Z&sig=fake-account-signature"
+    )
+    parsed_account_sas = parse_connection_string(account_sas)
+    validate_for_container(parsed_account_sas, "documents")
+    assert parsed_account_sas["sas_metadata"]["sas_scope"] == "account"
+    assert any("more access than this single-container source needs" in warning for warning in parsed_account_sas["sas_metadata"]["warnings"])
+    assert any("Write, Delete" in warning for warning in parsed_account_sas["sas_metadata"]["warnings"])
+
+    blocked_sas_values = [
+        (
+            "BlobEndpoint=https://contosodata.blob.core.windows.net/documents/report.pdf;"
+            "SharedAccessSignature=sv=2022-11-02&spr=https&sr=b&sp=r&"
+            "se=2030-07-28T00%3A00%3A00Z&sig=fake-blob-signature"
+        ),
+        (
+            "BlobEndpoint=https://contosodata.blob.core.windows.net/documents;"
+            "SharedAccessSignature=sv=2022-11-02&spr=https&sr=c&sp=r&"
+            "se=2030-07-28T00%3A00%3A00Z&sig=missing-list"
+        ),
+        (
+            "BlobEndpoint=https://contosodata.blob.core.windows.net/documents;"
+            "SharedAccessSignature=sv=2022-11-02&spr=https&sr=c&sp=rl&"
+            "se=2020-07-28T00%3A00%3A00Z&sig=expired"
+        ),
+        (
+            "BlobEndpoint=https://contosodata.blob.core.windows.net/documents;"
+            "SharedAccessSignature=sv=2022-11-02&spr=https&sr=c&sp=rl&"
+            "se=2030-07-28T00%3A00%3A00Z"
+        ),
+        (
+            "BlobEndpoint=https://contosodata.blob.core.windows.net/documents;"
+            "SharedAccessSignature=spr=https&sr=c&sp=rl&"
+            "se=2030-07-28T00%3A00%3A00Z&sig=missing-version"
+        ),
+    ]
+    for blocked_sas in blocked_sas_values:
+        try:
+            validate_for_container(parse_connection_string(blocked_sas), "documents")
+            raise AssertionError("Unsuitable SAS credential was accepted")
+        except ValueError as exc:
+            assert any(
+                expected_text in str(exc)
+                for expected_text in ("blob/object SAS", "Read and List", "expired", "incomplete")
+            )
+
+
+def test_azure_blob_container_sas_uses_container_client_without_token_disclosure():
+    """Validate container SAS credentials construct only the selected container client."""
+    class FakeContainerClient:
+        calls = []
+
+        def __init__(self, account_url, container_name, credential):
+            self.calls.append((account_url, container_name, credential))
+
+    class FakeBlobServiceClient:
+        calls = []
+
+        @classmethod
+        def from_connection_string(cls, connection_string):
+            cls.calls.append(connection_string)
+            raise AssertionError("Container SAS must not use BlobServiceClient.from_connection_string")
+
+    connection_string = (
+        "BlobEndpoint=https://contosodata.blob.core.windows.net/documents;"
+        "SharedAccessSignature=sv=2022-11-02&spr=https&sr=c&sp=rl&"
+        "se=2030-07-28T00%3A00%3A00Z&sig=fake-container-signature"
+    )
+    functions = load_functions(
+        "functions_file_sync.py",
+        {
+            "_normalize_text",
+            "_azure_blob_endpoint_suffix_for_hostname",
+            "_normalize_azure_blob_url",
+            "_normalize_azure_container_name",
+            "_now",
+            "_parse_azure_blob_sas_parameters",
+            "_parse_azure_blob_sas_datetime",
+            "_azure_blob_sas_metadata",
+            "_parse_azure_blob_connection_string",
+            "_parse_azure_blob_sas_url",
+            "_parse_azure_blob_credential",
+            "_validate_azure_blob_connection_string",
+            "_validate_azure_blob_sas_for_container",
+            "_get_azure_blob_service_client",
+            "_get_azure_blob_container_client",
+        },
+        {
+            "AZURE_STORAGE_ENDPOINT_SUFFIXES": ("core.windows.net",),
+            "ContainerClient": FakeContainerClient,
+            "BlobServiceClient": FakeBlobServiceClient,
+            "_get_identity_auth_for_source": lambda source: None,
+            "_resolved_auth_secret": lambda auth: str(auth.get("secret") or ""),
+        },
+    )
+    source = {
+        "connection": {
+            "account_url": "https://contosodata.blob.core.windows.net",
+            "container_name": "documents",
+        },
+        "auth": {"auth_type": "connection_string", "secret": connection_string},
+    }
+    functions["_get_azure_blob_container_client"](source)
+
+    assert FakeContainerClient.calls == [
+        (
+            "https://contosodata.blob.core.windows.net",
+            "documents",
+            "sv=2022-11-02&spr=https&sr=c&sp=rl&se=2030-07-28T00%3A00%3A00Z&sig=fake-container-signature",
+        )
+    ]
+    assert FakeBlobServiceClient.calls == []
+
+
+def test_azure_blob_sas_url_hydrates_safe_connection_fields():
+    """Validate pasted SAS URLs derive account/container without persisting the token in connection data."""
+    functions = load_functions(
+        "functions_file_sync.py",
+        {
+            "_normalize_text",
+            "_get_file_sync_secret_value",
+            "_azure_blob_endpoint_suffix_for_hostname",
+            "_parse_azure_blob_sas_parameters",
+            "_parse_azure_blob_sas_datetime",
+            "_azure_blob_sas_metadata",
+            "_parse_azure_blob_sas_url",
+            "_parse_azure_blob_connection_string",
+            "_normalize_azure_blob_url",
+            "_normalize_azure_container_name",
+            "_parse_azure_blob_credential",
+            "_hydrate_azure_blob_connection_from_credential",
+        },
+        {
+            "AZURE_STORAGE_ENDPOINT_SUFFIXES": ("core.windows.net",),
+            "ui_trigger_word": "__stored__",
+        },
+    )
+    sas_url = (
+        "https://contosodata.blob.core.windows.net/documents?"
+        "sv=2022-11-02&spr=https&sr=c&sp=rl&"
+        "se=2030-07-28T00%3A00%3A00Z&sig=fake-container-signature"
+    )
+    connection, credentials = functions["_hydrate_azure_blob_connection_from_credential"](
+        {"account_url": sas_url},
+        {},
+        {},
+    )
+
+    assert connection == {
+        "account_url": "https://contosodata.blob.core.windows.net",
+        "container_name": "documents",
+    }
+    assert credentials["connection_string"] == sas_url
+    assert "sig=" not in json.dumps(connection)
+
+    client_secret_connection, client_secret_credentials = functions["_hydrate_azure_blob_connection_from_credential"](
+        {
+            "account_url": "https://contosodata.blob.core.windows.net",
+            "container_name": "documents",
+        },
+        {},
+        {"auth_type": "client_secret", "secret": "not-a-sas-token"},
+    )
+    assert client_secret_connection["container_name"] == "documents"
+    assert client_secret_credentials["secret"] == "not-a-sas-token"
+
+    standalone_connection, standalone_credentials = functions["_hydrate_azure_blob_connection_from_credential"](
+        {
+            "account_url": "https://contosodata.blob.core.windows.net",
+            "container_name": "documents",
+        },
+        {},
+        {
+            "auth_type": "connection_string",
+            "secret": "?sv=2022-11-02&spr=https&sr=c&sp=rl&se=2030-07-28T00%3A00%3A00Z&sig=fake",
+        },
+    )
+    assert standalone_connection["container_name"] == "documents"
+    assert standalone_credentials["auth_type"] == "connection_string"
+
+
+def test_azure_blob_new_credentials_are_validated_before_secret_storage():
+    """Validate rejected Blob credentials cannot write a new Key Vault secret version."""
+    file_sync_text = read_text("application/single_app/functions_file_sync.py")
+    normalize_source_text = file_sync_text.split("def _normalize_source_payload", 1)[1].split(
+        "def create_file_sync_source", 1
+    )[0]
+
+    assert "def _prevalidate_new_azure_blob_credential" in file_sync_text
+    assert normalize_source_text.index("_prevalidate_new_azure_blob_credential(") < normalize_source_text.index(
+        "_prepare_auth_payload("
+    )
+    assert "and not identity_id" in normalize_source_text
+
+
+def test_azure_blob_identity_and_read_fallback_guards_are_wired():
+    """Validate identity rotations refresh metadata and fallback reads avoid false warnings."""
+    file_sync_text = read_text("application/single_app/functions_file_sync.py")
+    file_sync_js = read_text("application/single_app/static/js/workspace/workspace-file-sync.js")
+
+    assert "resolved_identity_auth = get_workspace_identity_auth" in file_sync_text
+    assert "tolerate_validation_errors=True" in file_sync_text
+    assert "if not read_verified:" in file_sync_text
+    assert "files_seen += 1" in file_sync_text
+    assert "if (identitySelect.value)" in file_sync_js
+    assert "credentials.connection_string = '';" in file_sync_js
+
+
+def test_azure_blob_sas_metadata_is_non_secret_and_frontend_visible():
+    """Validate source serialization and UI expose SAS status without the token."""
+    file_sync_text = read_text("application/single_app/functions_file_sync.py")
+    file_sync_js = read_text("application/single_app/static/js/workspace/workspace-file-sync.js")
+
+    for marker in [
+        '"credential_metadata": credential_metadata',
+        'sanitized_source["credential_metadata"]',
+        'source.get("credential_metadata")',
+    ]:
+        assert marker in file_sync_text
+    for marker in [
+        "Container SAS",
+        "Account SAS",
+        "Blob connection string or SAS",
+        "Blob connection string, SAS URL, or SAS token",
+        "full container SAS URL",
+        "standalone SAS token",
+        "Expires",
+        "Expiry is controlled by a stored access policy",
+        "grant broader access",
+        "Each source syncs one container",
+        "Blob Sync",
+    ]:
+        assert marker in file_sync_js
+
+
 def test_file_sync_routes_do_not_disclose_exception_details():
     """Validate detailed backend exceptions are logged but never returned."""
     route_text = read_text("application/single_app/route_backend_file_sync.py")
 
     assert "from functions_appinsights import log_event" in route_text
+    assert "FileSyncPublicValidationError" in route_text
+    assert "error.public_message" in route_text
     assert '"[FileSync] Request failed."' in route_text
     assert '"error": str(error)' in route_text
     assert "return _error(str(error)" not in route_text
@@ -548,7 +917,8 @@ def test_frontend_source_workflow_supports_azure_blob():
         "Blob service URL or account name",
         "Container name",
         "Blob prefix",
-        "Managed identity is recommended. Client secret and connection string authentication require Azure Key Vault secret storage.",
+        "A container SAS needs Read and List only.",
+        "To sync multiple containers, create one source per container.",
         "container_name: containerNameField.input.value.trim()",
         "blob_prefix: blobPrefixField.input.value.trim()",
     ]:
@@ -582,6 +952,12 @@ def run_tests():
         test_azure_blob_connection_normalization_behavior,
         test_azure_blob_endpoints_block_server_side_request_forgery,
         test_azure_blob_service_client_revalidates_endpoints_before_sdk_use,
+        test_azure_blob_container_sas_scope_permissions_and_expiry,
+        test_azure_blob_container_sas_uses_container_client_without_token_disclosure,
+        test_azure_blob_sas_url_hydrates_safe_connection_fields,
+        test_azure_blob_new_credentials_are_validated_before_secret_storage,
+        test_azure_blob_identity_and_read_fallback_guards_are_wired,
+        test_azure_blob_sas_metadata_is_non_secret_and_frontend_visible,
         test_file_sync_routes_do_not_disclose_exception_details,
         test_file_sync_run_and_item_errors_are_client_safe,
         test_azure_blob_secret_credentials_require_key_vault_references,

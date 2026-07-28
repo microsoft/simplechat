@@ -2,6 +2,7 @@
 
 Implemented in version: **0.250.067**
 Security hardening in version: **0.250.068**
+Container SAS support and credential visibility in version: **0.250.069**
 
 Related issue: [#1027](https://github.com/microsoft/simplechat/issues/1027)
 
@@ -16,7 +17,7 @@ Azure Blob Storage is available as an admin-controlled File Sync source for pers
 - The existing `azure-storage-blob==12.24.1` dependency provides Blob service access.
 - Managed identity requires an Azure Storage data-plane role such as **Storage Blob Data Reader** on the target account or container.
 - Client-secret and connection-string authentication require Azure Key Vault secret storage. Saved Azure Blob sources and reusable identities cannot persist these secrets inline in Cosmos DB records.
-- The application version was updated in `application/single_app/config.py` to `0.250.068` for endpoint and error-disclosure hardening.
+- The application version was updated in `application/single_app/config.py` to `0.250.069` for container SAS support and credential visibility.
 
 ## Technical Specifications
 
@@ -36,9 +37,17 @@ Azure Blob Storage is available as an admin-controlled File Sync source for pers
 - **Managed identity** is the recommended authentication mode.
 - **Service principal** authentication uses tenant ID, client ID, and a Key Vault-backed client secret.
 - **Connection string** authentication uses a Key Vault-backed storage connection string.
+- The Blob credential field accepts three Azure-provided formats: a storage connection string, a full container SAS URL, or a standalone SAS token. A standalone token uses the Blob service URL and container entered in the source form.
+- **Container SAS** is the recommended secret-based option for a source that syncs one container. It must grant **Read** (`r`) and **List** (`l`) and require HTTPS. Write, Create, Add, Delete, tag, move, ownership, and policy permissions are not required; they are accepted but shown as least-privilege warnings.
+- **Account SAS** and storage account keys are accepted for compatibility but are identified as broader than a single-container source needs. Account SAS must include the Blob service, Container and Object resource types, and Read and List permissions.
+- **Blob/object SAS** is rejected because File Sync must list the selected container before reading blobs.
 - Reusable workspace identities can declare Azure Blob Storage support for personal, group, or public scopes.
 - Unsaved connection tests may use credentials in memory, but saving rejects secret-based credentials that do not resolve through Key Vault.
 - Detailed SDK and network failures are written through sanitized server logging. API responses, run history, activity records, and failed item records use fixed public messages instead of returning exception text.
+
+Each File Sync source targets one container. To synchronize multiple containers, create one source per container. Account-wide container discovery is not performed by this feature.
+
+SAS scope, non-secret permission letters, start time, expiry, HTTPS status, optional IP range, and least-privilege warnings are stored as non-secret metadata. The source list shows the credential scope, named permissions, exact expiry, and days remaining without exposing the SAS token.
 
 ### Admin Configuration
 
@@ -55,7 +64,11 @@ Azure Blob Storage is opt-in. Existing installations retain the SMB and Azure Fi
 1. Open the **Sync** tab in an enabled personal, group, or public workspace.
 2. Select **Add Source**, then choose **Azure Blob Storage**.
 3. Enter the Blob service URL or storage account name, container name, and optional blob prefix.
+	- Alternatively, paste the full container SAS URL into either **Blob service URL or account name** or **Blob connection string, SAS URL, or SAS token**. The form derives the non-secret Blob service URL, container, and default source name, switches to Blob credential authentication, and promotes the SAS URL into Key Vault-backed secret storage.
 4. Select managed identity or a compatible Key Vault-backed reusable identity. Source-local service-principal and connection-string credentials also require Key Vault.
+	- For a container SAS connection string, use `BlobEndpoint=https://<account>.blob.core.windows.net/<container>` plus `SharedAccessSignature=<token>`.
+	- A full SAS URL uses `https://<account>.blob.core.windows.net/<container>?<token>`. A standalone token begins with `?` or the first SAS parameter and requires the account/container fields above.
+	- Select **Read** and **List**, set **Allowed protocols** to HTTPS only, and choose an expiry that covers the intended schedule and rotation window.
 5. Use **Browse** or **Add Path** to narrow the source, then configure recursion, filters, tags, schedule, and remote-delete behavior.
 6. Test the connection before saving, then run the source manually or on its schedule.
 
@@ -78,6 +91,10 @@ The functional test executes account and URL normalization, container validation
 
 Security coverage rejects non-Azure and internal endpoints in direct URLs and connection strings, verifies HTTPS-only Azure cloud suffixes, and confirms backend exception details never cross API, run-history, activity, or item-response boundaries.
 
+Container SAS coverage validates endpoint/container matching, required Read and List permissions, extra-permission warnings, account-SAS breadth warnings, object-SAS rejection, expiry and start times, stored access policies, non-secret metadata serialization, and direct container-client construction.
+
+Credential-format coverage verifies storage connection strings, full SAS URLs, and standalone SAS tokens. A SAS URL pasted into the account or credential field is promoted into Key Vault-backed secret storage; only its canonical account and container remain in source connection metadata.
+
 Neighboring Azure Files and OneDrive regression suites confirm that adding Azure Blob Storage does not remove existing source types or compatible identity behavior. Playwright coverage validates the admin switch and Blob-specific source fields.
 
 ## Known Limitations
@@ -86,3 +103,8 @@ Neighboring Azure Files and OneDrive regression suites confirm that adding Azure
 - Blob names are shown as virtual folders; Azure Blob Storage does not provide physical directories unless hierarchical namespace features are enabled.
 - Secret-based authentication cannot be saved when Azure Key Vault secret storage is disabled. Use managed identity in that configuration.
 - Custom domains, Azurite/development storage, Azure Stack endpoints, and direct private-link hostnames are not accepted. Use the standard Azure Blob service hostname; Azure Private Endpoint DNS can resolve that hostname privately.
+- SAS tokens using a stored access policy may omit explicit permissions or expiry. File Sync reports that these values are policy-controlled, validates List and Read through the connection test when blobs are available, and cannot display the policy's expiry without querying Azure control data.
+- A connection test can verify List immediately. Read is verified against the first available blob; an empty source reports that Read could not be exercised.
+- SAS IP restrictions must include the App Service outbound address that performs sync. An administrator should account for all active outbound addresses and deployment slots.
+- Avoid setting a SAS start time exactly to the current time because clock skew can delay usability. Omit it or set it several minutes in the past.
+- SAS credentials do not rotate automatically. Replace the source or reusable-identity secret before expiry; the source list shows remaining days to support this process.

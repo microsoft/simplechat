@@ -48,4 +48,4 @@ Existing sources using standard Azure Blob service hostnames continue to work. A
 
 - Before: arbitrary HTTPS hosts could reach Blob SDK client construction, and raw backend exceptions could be returned or persisted for client-visible history.
 - After: only canonical allowlisted Azure Blob endpoints reach the SDK, while client-visible failures are generic and detailed sanitized diagnostics stay server-side.
-- The application version in `application/single_app/config.py` is `0.250.068`.
+- The application version was updated to `0.250.068` for this security fix.
