@@ -2,7 +2,8 @@
 
 Fixed in version: **0.250.068**
 
-Related issue: [#1027](https://github.com/microsoft/simplechat/issues/1027)  
+Related issue: [#1027](https://github.com/microsoft/simplechat/issues/1027)
+
 Related pull request: [#1088](https://github.com/microsoft/simplechat/pull/1088)
 
 ## Issue Description
