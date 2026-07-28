@@ -2,6 +2,24 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.065)**
+
+#### New Features
+
+*   **Task-Level Workflow Model and Agent Selection**
+    *   Each ordered workflow task can now inherit the workflow's Default Runner or select its own authorized Direct Model or Agent.
+    *   Task runners are normalized on save and revalidated before execution, including current personal/group/global agent scope, group membership, and enabled model endpoint/model availability.
+    *   Unavailable runners follow the workflow's retry and stop-or-continue strategy, while task run items record non-secret runner audit details, execution deployment/provider, output preview, and token usage when available.
+    *   Existing tasks without runner configuration inherit the workflow default, and workflows without task sequences retain the legacy execution path.
+    *   (Ref: microsoft/simplechat#1084, `functions_personal_workflows.py`, `functions_group_workflows.py`, `functions_workflow_runner.py`)
+
+#### User Interface Enhancements
+
+*   **Per-Task Runner Controls**
+    *   Renamed the workflow-level Runner field to Default Runner and added Workflow default, Direct Model, and Agent selection to each task editor.
+    *   Task rows and Review now show the resolved runner, with responsive conditional model/agent controls and text-safe rendering for endpoint, model, and agent labels.
+    *   (Ref: microsoft/simplechat#1084, `workspace.html`, `group_workspaces.html`, `workspace_workflows.js`)
+
 ### **(v0.250.064)**
 
 #### New Features

@@ -49,6 +49,7 @@ WORKFLOW_ERROR_STRATEGIES = {'halt', 'continue'}
 WORKFLOW_MAX_TASKS = 20
 WORKFLOW_TASK_INSTRUCTIONS_MAX_LENGTH = 12000
 WORKFLOW_TASK_NAME_MAX_LENGTH = 120
+WORKFLOW_TASK_RUNNER_TYPES = {'inherit', 'agent', 'model'}
 WORKFLOW_CONVERSATION_ACCESS_ERROR = 'Workflow conversation not found or access denied.'
 
 
@@ -138,16 +139,16 @@ def _normalize_alert_priority(value):
     return normalized
 
 
-def _normalize_workflow_tasks(workflow_data, existing_workflow=None):
+def _normalize_workflow_tasks(workflow_data, existing_workflow=None, task_runner_normalizer=None):
     workflow_data = workflow_data if isinstance(workflow_data, dict) else {}
     existing_workflow = existing_workflow if isinstance(existing_workflow, dict) else {}
-    if 'tasks' not in workflow_data:
-        return list(existing_workflow.get('tasks') or []) if existing_workflow else []
-
-    raw_tasks = workflow_data.get('tasks')
+    tasks_supplied = 'tasks' in workflow_data
+    raw_tasks = workflow_data.get('tasks') if tasks_supplied else existing_workflow.get('tasks') or []
     if not isinstance(raw_tasks, list):
         raise ValueError('Workflow tasks must be a list.')
     if not raw_tasks:
+        if not tasks_supplied:
+            return []
         raise ValueError('Add at least one workflow task.')
     if len(raw_tasks) > WORKFLOW_MAX_TASKS:
         raise ValueError(f'Workflows support up to {WORKFLOW_MAX_TASKS} tasks.')
@@ -177,12 +178,24 @@ def _normalize_workflow_tasks(workflow_data, existing_workflow=None):
                 f'Task instructions must be {WORKFLOW_TASK_INSTRUCTIONS_MAX_LENGTH} characters or fewer.'
             )
 
+        raw_runner = raw_task.get('runner') if isinstance(raw_task.get('runner'), dict) else {}
+        runner_type = _normalize_text(raw_runner.get('type') or 'inherit', 'Task runner type').lower()
+        if runner_type not in WORKFLOW_TASK_RUNNER_TYPES:
+            raise ValueError(f'Workflow task {index + 1} has an unsupported runner type.')
+        if runner_type == 'inherit':
+            runner = {'type': 'inherit'}
+        elif callable(task_runner_normalizer):
+            runner = task_runner_normalizer(raw_runner)
+        else:
+            raise ValueError(f'Workflow task {index + 1} runner could not be authorized.')
+
         normalized_tasks.append({
             'id': task_id,
             'type': task_type,
             'name': name,
             'instructions': instructions,
             'order': index + 1,
+            'runner': runner,
         })
 
     return normalized_tasks
@@ -371,8 +384,14 @@ def _find_matching_agent(candidates, requested_agent):
     return None
 
 
-def _normalize_selected_agent(user_id, settings, requested_agent):
-    candidates = _build_selectable_agents(user_id, settings, requested_agent=requested_agent)
+def _normalize_selected_agent(user_id, settings, requested_agent, strict_permissions=False):
+    candidates = _build_selectable_agents(
+        user_id,
+        settings,
+        requested_agent=None if strict_permissions else requested_agent,
+    )
+    if strict_permissions:
+        candidates = [candidate for candidate in candidates if candidate.get('is_enabled', True)]
     matched_agent = _find_matching_agent(candidates, requested_agent)
     if not matched_agent:
         raise ValueError('Select a valid personal or merged global agent.')
@@ -493,6 +512,50 @@ def _summarize_model_binding(candidates, endpoint_id, model_id):
     }
 
 
+def normalize_personal_workflow_task_runner(user_id, requested_runner, settings=None):
+    """Resolve a task runner against the user's currently authorized options."""
+    requested_runner = requested_runner if isinstance(requested_runner, dict) else {}
+    runner_type = _normalize_text(requested_runner.get('type') or 'inherit', 'Task runner type').lower()
+    if runner_type not in WORKFLOW_TASK_RUNNER_TYPES:
+        raise ValueError('Task runner type must be inherit, model, or agent.')
+    if runner_type == 'inherit':
+        return {'type': 'inherit'}
+
+    settings = settings or get_settings()
+    if runner_type == 'agent':
+        if not settings.get('enable_semantic_kernel', False):
+            raise ValueError('Agents must be enabled before selecting a task agent.')
+        if not settings.get('allow_user_agents', False):
+            raise ValueError('User agents must be enabled before selecting a task agent.')
+        selected_agent = _normalize_selected_agent(
+            user_id,
+            settings,
+            requested_runner.get('selected_agent'),
+            strict_permissions=True,
+        )
+        return {
+            'type': 'agent',
+            'selected_agent': selected_agent,
+        }
+
+    model_endpoint_id = _normalize_text(requested_runner.get('model_endpoint_id'), 'Task model endpoint')
+    model_id = _normalize_text(requested_runner.get('model_id'), 'Task model')
+    model_binding_summary = _summarize_model_binding(
+        _build_model_endpoint_candidates(user_id, settings),
+        model_endpoint_id,
+        model_id,
+    )
+    if not model_binding_summary:
+        raise ValueError('Select a model endpoint and model for the task override.')
+    return {
+        'type': 'model',
+        'model_endpoint_id': model_endpoint_id,
+        'model_id': model_id,
+        'model_provider': str(model_binding_summary.get('provider') or '').strip().lower(),
+        'model_binding_summary': model_binding_summary,
+    }
+
+
 def compute_next_run_at(workflow, from_time=None):
     """Return the next scheduled run timestamp for a scheduled workflow."""
     workflow = workflow if isinstance(workflow, dict) else {}
@@ -595,7 +658,15 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
 
     workflow_name = _normalize_text(workflow_data.get('name'), 'Workflow name', required=True)
     description = _normalize_text(workflow_data.get('description'), 'Description')
-    tasks = _normalize_workflow_tasks(workflow_data, existing_workflow=existing_workflow)
+    tasks = _normalize_workflow_tasks(
+        workflow_data,
+        existing_workflow=existing_workflow,
+        task_runner_normalizer=lambda runner: normalize_personal_workflow_task_runner(
+            user_id,
+            runner,
+            settings=settings,
+        ),
+    )
     task_prompt = _normalize_text(
         workflow_data.get('task_prompt') or (tasks[0].get('instructions') if tasks else ''),
         'Task prompt',
