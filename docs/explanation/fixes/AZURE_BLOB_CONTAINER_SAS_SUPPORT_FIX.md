@@ -39,6 +39,8 @@ The SSRF-hardened connection-string validator required `BlobEndpoint` to be a se
 - Accepts extra permissions but emits named least-privilege warnings. Account SAS and account keys are identified as broader than required.
 - Stores and returns only non-secret metadata: credential type, scope, permission letters, validity window, expiry, HTTPS state, IP range, resource scope, and warnings.
 - Shows credential scope, named permissions, exact expiry, days remaining, and warnings in the source workflow and source list.
+- Logs only non-secret Azure diagnostics for failed tests: exception type, Azure error code, HTTP status, request ID, credential scope, and permission letters. The SAS token, signed URL, and raw SDK message are excluded.
+- Returns reviewed guidance for Azure permission mismatch, authentication/signature failure, SAS IP restrictions, and missing containers while leaving unknown SDK failures generic.
 
 ## Validation
 
@@ -49,6 +51,7 @@ The SSRF-hardened connection-string validator required `BlobEndpoint` to be a se
 - Account SAS remains accepted with breadth and extra-permission warnings.
 - SAS tokens and signatures are not included in credential metadata or browser responses.
 - Connection tests validate List and, when a blob exists, Read access.
+- Azure permission failures identify the missing Read/List requirement; authentication failures point to account/container/signature/start/expiry checks; IP failures point to App Service outbound and storage network policy configuration.
 
 ## Operational Guidance
 

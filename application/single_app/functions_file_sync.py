@@ -2016,8 +2016,50 @@ def _test_azure_blob_connection(source: Dict[str, Any]) -> Dict[str, Any]:
             "read_verified": read_verified,
             "credential_metadata": credential_metadata,
         }
+    except FileSyncPublicValidationError:
+        raise
     except Exception as error:
+        diagnostics = _azure_blob_error_diagnostics(error, source)
+        log_event(
+            "[FileSync] Azure Blob connection test failed.",
+            level=logging.WARNING,
+            extra=diagnostics,
+            exceptionTraceback=True,
+        )
+        error_code = diagnostics.get("error_code", "").lower()
+        if error_code in {"authorizationpermissionmismatch", "authorizationfailure"}:
+            raise FileSyncPublicValidationError(
+                "Azure rejected the Blob operation. A container SAS must include both Read and List permissions."
+            ) from error
+        if error_code in {"authenticationfailed", "invalidauthenticationinfo"}:
+            raise FileSyncPublicValidationError(
+                "Azure could not authenticate the Blob credential. Check the account, container, signature, start time, and expiry."
+            ) from error
+        if error_code in {"authorizationipmismatch", "ipsourcenotallowed", "ipauthorizationfailure"}:
+            raise FileSyncPublicValidationError(
+                "Azure blocked the Blob request because of an IP or network restriction. Include the app's outbound addresses or adjust the storage network policy."
+            ) from error
+        if error_code in {"containernotfound", "resourcenotfound"} or isinstance(error, AzureResourceNotFoundError):
+            raise FileSyncPublicValidationError(
+                "Azure could not find the selected Blob container, or the credential cannot access it."
+            ) from error
         raise ValueError("Azure Blob Storage connection test failed. Verify the blob endpoint, container, prefix, and identity permissions.") from error
+
+
+def _azure_blob_error_diagnostics(error: Exception, source: Dict[str, Any]) -> Dict[str, Any]:
+    response = getattr(error, "response", None)
+    headers = getattr(response, "headers", {}) or {}
+    credential_metadata = _sanitize_azure_blob_credential_metadata(source.get("credential_metadata"))
+    return {
+        "exception_type": type(error).__name__,
+        "error_code": _normalize_text(getattr(error, "error_code", ""), 100),
+        "status_code": getattr(error, "status_code", None) or getattr(response, "status_code", None),
+        "request_id": _normalize_text(headers.get("x-ms-request-id", ""), 100),
+        "source_id": source.get("id"),
+        "credential_type": credential_metadata.get("credential_type", ""),
+        "sas_scope": credential_metadata.get("sas_scope", ""),
+        "permissions": credential_metadata.get("permissions", ""),
+    }
 
 
 def delete_file_sync_source(scope_type: str, scope_id: str, source_id: str, deleted_by: str, delete_associated_files: bool = False) -> Dict[str, Any]:

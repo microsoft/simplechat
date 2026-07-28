@@ -666,6 +666,64 @@ def test_azure_blob_identity_and_read_fallback_guards_are_wired():
     assert "credentials.connection_string = '';" in file_sync_js
 
 
+def test_azure_blob_failure_diagnostics_are_non_secret_and_actionable():
+    """Validate Azure failure logs contain useful codes but no signed URLs or tokens."""
+    class FakeResponse:
+        status_code = 403
+        headers = {"x-ms-request-id": "request-123"}
+
+    class FakeAzureError(Exception):
+        error_code = "AuthorizationPermissionMismatch"
+        status_code = 403
+        response = FakeResponse()
+
+    functions = load_functions(
+        "functions_file_sync.py",
+        {
+            "_normalize_text",
+            "_sanitize_azure_blob_credential_metadata",
+            "_azure_blob_error_diagnostics",
+        },
+    )
+    diagnostics = functions["_azure_blob_error_diagnostics"](
+        FakeAzureError("signed URL must not be logged"),
+        {
+            "id": "source-1",
+            "credential_metadata": {
+                "credential_type": "sas",
+                "sas_scope": "container",
+                "permissions": "rl",
+                "expires_at": "2030-07-28T00:00:00+00:00",
+                "warnings": [],
+            },
+        },
+    )
+
+    assert diagnostics == {
+        "exception_type": "FakeAzureError",
+        "error_code": "AuthorizationPermissionMismatch",
+        "status_code": 403,
+        "request_id": "request-123",
+        "source_id": "source-1",
+        "credential_type": "sas",
+        "sas_scope": "container",
+        "permissions": "rl",
+    }
+    assert "signed URL" not in json.dumps(diagnostics)
+    file_sync_text = read_text("application/single_app/functions_file_sync.py")
+    for public_message in [
+        "A container SAS must include both Read and List permissions.",
+        "Check the account, container, signature, start time, and expiry.",
+        "Include the app's outbound addresses or adjust the storage network policy.",
+        "Azure could not find the selected Blob container",
+    ]:
+        assert public_message in file_sync_text
+    connection_test_block = file_sync_text.split("def _test_azure_blob_connection", 1)[1].split(
+        "def _azure_blob_error_diagnostics", 1
+    )[0]
+    assert '"error": str(error)' not in connection_test_block
+
+
 def test_azure_blob_sas_metadata_is_non_secret_and_frontend_visible():
     """Validate source serialization and UI expose SAS status without the token."""
     file_sync_text = read_text("application/single_app/functions_file_sync.py")
@@ -957,6 +1015,7 @@ def run_tests():
         test_azure_blob_sas_url_hydrates_safe_connection_fields,
         test_azure_blob_new_credentials_are_validated_before_secret_storage,
         test_azure_blob_identity_and_read_fallback_guards_are_wired,
+        test_azure_blob_failure_diagnostics_are_non_secret_and_actionable,
         test_azure_blob_sas_metadata_is_non_secret_and_frontend_visible,
         test_file_sync_routes_do_not_disclose_exception_details,
         test_file_sync_run_and_item_errors_are_client_safe,
