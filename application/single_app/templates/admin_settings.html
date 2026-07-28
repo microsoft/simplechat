@@ -8213,7 +8213,7 @@
                                 {# Iterate all enabled endpoints and models, filter to vision-capable #}
                                 {% for endpoint in settings.model_endpoints if endpoint.enabled %}
                                     {% for m in endpoint.models if m.enabled %}
-                                        {% if is_vision_capable_model(m) %}
+                                        {% if is_vision_capable_model is defined and is_vision_capable_model(m) %}
                                             {% set option_value = m.deploymentName %}
                                             <option value="{{ option_value }}"
                                                 data-endpoint-id="{{ endpoint.id or '' }}"
@@ -8230,7 +8230,7 @@
                                 {# Legacy APIM-based GPT configuration #}
                                 {% for d in (settings.azure_apim_gpt_deployment or '').split(',') if d %}
                                     {% set d_trim = d.strip() %}
-                                    {% if is_vision_capable_model(d_trim) %}
+                                    {% if is_vision_capable_model is defined and is_vision_capable_model(d_trim) %}
                                         <option value="{{ d_trim }}"
                                             {% if settings.multimodal_vision_model == d_trim %}selected{% endif %}>
                                             {{ d_trim }}
@@ -8240,7 +8240,7 @@
                             {% else %}
                                 {# Legacy single-endpoint GPT configuration #}
                                 {% for m in settings.gpt_model.selected %}
-                                    {% if is_vision_capable_model(m) %}
+                                    {% if is_vision_capable_model is defined and is_vision_capable_model(m) %}
                                         <option value="{{ m.deploymentName }}"
                                             {% if settings.multimodal_vision_model == m.deploymentName %}selected{% endif %}>
                                             {{ m.deploymentName }}{% if m.modelName %} ({{ m.modelName }}){% endif %}

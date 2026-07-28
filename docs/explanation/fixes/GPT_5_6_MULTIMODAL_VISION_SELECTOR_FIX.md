@@ -37,6 +37,8 @@ name as `GPT 5.6` did not match.
 - Evaluated model, display, deployment, and fallback name fields.
 - Applied the same capability contract during initial server rendering and
   client-side endpoint updates.
+- Allowed templates loaded ahead of a restarted application worker to fall
+  back to client-side option population instead of returning a Jinja error.
 - Preserved filtering for disabled endpoints, disabled models, and unsupported
   model families.
 - Incremented `config.py` from `0.250.065` to `0.250.066`.
@@ -49,9 +51,11 @@ requiring one exact metadata field or separator format.
 
 ## Validation
 
-The focused Playwright regression test executes the production matcher and
-dropdown population functions with GPT 5.6 Luna, Sol, Terra, GPT 5.7, GPT-4o,
-disabled model, disabled endpoint, and non-GPT cases.
+The focused Playwright regression test executes the production matcher, actual
+Jinja selector, and dropdown population functions with GPT 5.6 Luna, Sol,
+Terra, GPT 5.7, GPT-4o, disabled model, disabled endpoint, and non-GPT cases.
+It also renders the selector without the route helper to verify that a stale
+worker cannot return an `UndefinedError`.
 
 Before the fix, only the placeholder and GPT-4o option were rendered. After the
 fix, all enabled supported options render while excluded models remain absent.

@@ -121,15 +121,21 @@ def test_multimodal_vision_options_include_gpt_5_6_and_later_aliases():
             vision_select_template = Environment(autoescape=True).from_string(
                 _extract_vision_select_template(template_source)
             )
+            settings = {
+                "enable_multi_model_endpoints": True,
+                "model_endpoints": model_endpoints,
+                "multimodal_vision_model": "N-gpt-5.6-terra",
+                "enable_gpt_apim": False,
+                "azure_apim_gpt_deployment": "",
+                "gpt_model": {"selected": []},
+            }
+
+            fallback_html = vision_select_template.render(settings=settings)
+            page.set_content(fallback_html)
+            expect(page.locator("#multimodal_vision_model option")).to_have_count(1)
+
             page.set_content(vision_select_template.render(
-                settings={
-                    "enable_multi_model_endpoints": True,
-                    "model_endpoints": model_endpoints,
-                    "multimodal_vision_model": "N-gpt-5.6-terra",
-                    "enable_gpt_apim": False,
-                    "azure_apim_gpt_deployment": "",
-                    "gpt_model": {"selected": []},
-                },
+                settings=settings,
                 is_vision_capable_model=is_vision_capable_model,
             ))
             _assert_expected_options(page)
