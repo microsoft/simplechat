@@ -2037,15 +2037,25 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
 {% if settings.allow_group_workflows %}
 <div class="modal fade" id="workflowModal" tabindex="-1" aria-labelledby="workflowModalLabel" aria-hidden="true">
-  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
     <form class="modal-content" id="workflow-form" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
       <div class="modal-header">
-        <h5 class="modal-title" id="workflowModalLabel">Create Group Workflow</h5>
+        <div>
+          <h5 class="modal-title" id="workflowModalLabel">Create Group Workflow</h5>
+          <div class="text-muted small mt-1" id="workflow-step-description">Name the workflow and choose its runner.</div>
+        </div>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
-      <div class="modal-body">
+      <div class="modal-body workflow-builder-body">
         <input type="hidden" id="workflow-id" />
-        <div class="row g-3 mb-3">
+        <nav class="workflow-step-nav" aria-label="Workflow setup steps">
+          <button type="button" class="workflow-step-nav__item is-active" data-workflow-step-target="general" aria-current="step"><span>1</span>General</button>
+          <button type="button" class="workflow-step-nav__item" data-workflow-step-target="trigger"><span>2</span>Trigger</button>
+          <button type="button" class="workflow-step-nav__item" data-workflow-step-target="tasks"><span>3</span>Tasks</button>
+          <button type="button" class="workflow-step-nav__item" data-workflow-step-target="reliability"><span>4</span>Reliability</button>
+          <button type="button" class="workflow-step-nav__item" data-workflow-step-target="review"><span>5</span>Review</button>
+        </nav>
+        <div class="row g-3 mb-3 workflow-step-block" data-workflow-step="general">
           <div class="col-md-7">
             <label for="workflow-name" class="form-label">Workflow Name</label>
             <input type="text" class="form-control" id="workflow-name" maxlength="120" required />
@@ -2058,11 +2068,27 @@ app_settings.app_title }} {% endblock %} {% block head %}
             </select>
           </div>
         </div>
-        <div class="mb-3">
+        <div class="mb-3 workflow-step-block" data-workflow-step="general">
           <label for="workflow-description" class="form-label">Description</label>
           <input type="text" class="form-control" id="workflow-description" maxlength="240" placeholder="Optional summary for the workflow list." />
         </div>
-        <div class="mb-3">
+        <div class="workflow-step-block" data-workflow-step="tasks">
+          <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+            <div>
+              <h6 class="mb-1">Task sequence</h6>
+              <div class="form-text mt-0">Tasks run from top to bottom with the selected runner.</div>
+            </div>
+            <button type="button" class="btn btn-outline-primary btn-sm" id="workflow-add-task-btn">
+              <i class="bi bi-plus-circle me-1" aria-hidden="true"></i>Add Task
+            </button>
+          </div>
+          <div id="workflow-task-list" class="workflow-task-list mb-3" aria-live="polite"></div>
+          <div class="workflow-task-editor border rounded-2 p-3 mb-3" id="workflow-task-editor">
+            <label for="workflow-task-name" class="form-label">Task Name</label>
+            <input type="text" class="form-control" id="workflow-task-name" maxlength="120" placeholder="e.g., Summarize findings" />
+          </div>
+        </div>
+        <div class="mb-3 workflow-step-block" data-workflow-step="tasks">
           <label for="workflow-task-brief" class="form-label">Task Brief</label>
           <textarea class="form-control" id="workflow-task-brief" rows="3" placeholder="Briefly describe what this workflow should accomplish."></textarea>
           <div class="d-flex align-items-center gap-2 mt-2">
@@ -2072,24 +2098,27 @@ app_settings.app_title }} {% endblock %} {% block head %}
             <span class="text-muted small" id="workflow-draft-instructions-status" aria-live="polite"></span>
           </div>
         </div>
-        <div class="mb-3">
-          <label for="workflow-task-prompt" class="form-label">Workflow Instructions</label>
-          <textarea class="form-control" id="workflow-task-prompt" rows="7" placeholder="Describe exactly what this workflow should do each time it runs." required></textarea>
-          <div class="form-text">This instruction will be used to guide the workflow's behavior in each run.</div>
+        <div class="mb-3 workflow-step-block" data-workflow-step="tasks">
+          <label for="workflow-task-prompt" class="form-label">Task Instructions</label>
+          <textarea class="form-control" id="workflow-task-prompt" rows="7" placeholder="Describe exactly what this task should do each time it runs."></textarea>
+          <div class="form-text">The next task receives this task's response as bounded context.</div>
         </div>
         {% if settings.enable_url_access %}
-        <div class="form-check form-switch mb-3" id="workflow-url-access-group">
+        <div class="form-check form-switch mb-3 workflow-step-block" id="workflow-url-access-group" data-workflow-step="trigger">
           <input class="form-check-input" type="checkbox" id="workflow-url-access-enabled" />
           <label class="form-check-label ms-2" for="workflow-url-access-enabled">Allow URL Access for this workflow</label>
           <div class="form-text">Workflow runs can review up to {{ settings.url_access_max_workflow_urls_per_run|default(50, true) }} HTTP(S) URLs from the task prompt using the shared admin domain policy.</div>
         </div>
         {% endif %}
 
-        <div class="card p-3 mb-3">
+        <div class="card p-3 mb-3 workflow-step-block" data-workflow-step="tasks">
+          <h6 class="mb-1">Workspace documents</h6>
+          <div class="form-text mb-3">Optional. Use a document action only when this workflow needs workspace document context.</div>
           <div class="row g-3 mb-2">
             <div class="col-md-6">
-              <label for="workflow-document-action-type" class="form-label">Action Type</label>
-              <select class="form-select" id="workflow-document-action-type" title="Search selected or recent documents and use matching excerpts as workflow context.">
+              <label for="workflow-document-action-type" class="form-label">Document action</label>
+              <select class="form-select" id="workflow-document-action-type" title="Run the workflow instructions without workspace document context.">
+                <option value="none" data-action-description="Run the workflow instructions without workspace document context." title="Run the workflow instructions without workspace document context.">No document action</option>
                 <option value="search" data-action-description="Search selected or recent documents and use matching excerpts as workflow context." title="Search selected or recent documents and use matching excerpts as workflow context.">Search</option>
                 {% if settings.document_action_capabilities.analyze.enabled %}
                 <option value="analyze" data-action-description="Perform an in-depth analysis across all selected documents based on your request." title="Perform an in-depth analysis across all selected documents based on your request.">Analyze</option>
@@ -2099,12 +2128,12 @@ app_settings.app_title }} {% endblock %} {% block head %}
                 {% endif %}
               </select>
             </div>
-            <div class="col-md-6">
+            <div class="col-md-6 d-none" id="workflow-analysis-retries-group">
               <label for="workflow-analysis-retries" class="form-label">Retries Per Window</label>
               <input type="number" class="form-control" id="workflow-analysis-retries" min="0" max="5" value="1" />
             </div>
           </div>
-          <div class="form-text mt-2" id="workflow-document-action-help">Search selected or recent documents and use matching excerpts as workflow context.</div>
+          <div class="form-text mt-2" id="workflow-document-action-help">Run the workflow instructions without workspace document context.</div>
 
           <div id="workflow-document-targets-fields" class="mt-3 d-none">
             <input type="hidden" id="workflow-analysis-doc-scope" value="group" />
@@ -2145,6 +2174,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
               </div>
               <div id="workflow-document-picker-error" class="alert alert-warning py-2 d-none" role="alert"></div>
               <select class="d-none" id="document-action-select" aria-label="Workflow document action">
+                <option value="none">No document action</option>
                 <option value="search">Search</option>
                 {% if settings.document_action_capabilities.analyze.enabled %}
                 <option value="analyze">Analyze</option>
@@ -2247,7 +2277,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
           </div>
         </div>
 
-        <div class="card p-3 mb-3" id="workflow-file-sync-card">
+        <div class="card p-3 mb-3 workflow-step-block" id="workflow-file-sync-card" data-workflow-step="trigger">
           <div class="d-flex flex-wrap gap-2 justify-content-between align-items-start mb-3">
             <div>
               <label class="form-label mb-0" for="workflow-file-sync-enabled">File Sync Before Run</label>
@@ -2286,7 +2316,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
           </div>
         </div>
 
-        <div id="workflow-agent-fields" class="card p-3 mb-3 d-none">
+        <div id="workflow-agent-fields" class="card p-3 mb-3 d-none workflow-step-block" data-workflow-step="general">
           <div class="mb-0">
             <label for="workflow-agent-select" class="form-label">Selected Agent</label>
             <select class="form-select" id="workflow-agent-select"></select>
@@ -2294,7 +2324,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
           </div>
         </div>
 
-        <div id="workflow-model-fields" class="card p-3 mb-3">
+        <div id="workflow-model-fields" class="card p-3 mb-3 workflow-step-block" data-workflow-step="general">
           <div class="row g-3">
             <div class="col-md-4">
               <label for="workflow-model-source" class="form-label">Model Source</label>
@@ -2315,7 +2345,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
           <div class="form-text mt-2" id="workflow-model-help">The default app model follows your admin-configured default selection or legacy GPT settings.</div>
         </div>
 
-        <div class="card p-3 mb-3">
+        <div class="card p-3 mb-3 workflow-step-block" data-workflow-step="review">
           <div class="row g-3 align-items-end">
             <div class="col-md-5">
               <label for="workflow-alert-priority" class="form-label">Pop-up Alert Priority</label>
@@ -2332,7 +2362,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
           </div>
         </div>
 
-        <div class="card p-3">
+        <div class="card p-3 workflow-step-block" id="workflow-trigger-settings-card" data-workflow-step="trigger">
           <div class="row g-3 align-items-end">
             <div class="col-md-4">
               <label for="workflow-trigger-type" class="form-label">Trigger</label>
@@ -2361,10 +2391,33 @@ app_settings.app_title }} {% endblock %} {% block head %}
           </div>
           <div class="form-text mt-2" id="workflow-trigger-help">Manual workflows run only when you trigger them from the group workspace.</div>
         </div>
+        <div class="workflow-step-block" data-workflow-step="reliability">
+          <div class="card p-3">
+            <h6 class="mb-3">Error strategy</h6>
+            <div class="form-check mb-2">
+              <input class="form-check-input" type="radio" name="workflow-error-strategy" id="workflow-error-strategy-halt" value="halt" checked />
+              <label class="form-check-label" for="workflow-error-strategy-halt">Stop when a task still fails after retries</label>
+            </div>
+            <div class="form-check mb-3">
+              <input class="form-check-input" type="radio" name="workflow-error-strategy" id="workflow-error-strategy-continue" value="continue" />
+              <label class="form-check-label" for="workflow-error-strategy-continue">Record the failure and continue to the next task</label>
+            </div>
+            <div class="border-top pt-3">
+              <label for="workflow-task-retry-count" class="form-label">Task Retry Count</label>
+              <input type="number" class="form-control workflow-retry-input" id="workflow-task-retry-count" min="0" max="5" value="0" />
+              <div class="form-text">Retries apply to each task before the selected error strategy.</div>
+            </div>
+          </div>
+        </div>
+        <div class="workflow-step-block" id="workflow-review-summary-block" data-workflow-step="review">
+          <div class="workflow-review-summary" id="workflow-review-summary" aria-live="polite"></div>
+        </div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
-        <button type="submit" class="btn btn-primary" id="workflow-save-btn">Save Workflow</button>
+        <button type="button" class="btn btn-outline-secondary d-none" id="workflow-step-back-btn"><i class="bi bi-arrow-left me-1" aria-hidden="true"></i>Back</button>
+        <button type="button" class="btn btn-primary" id="workflow-step-next-btn">Next<i class="bi bi-arrow-right ms-1" aria-hidden="true"></i></button>
+        <button type="submit" class="btn btn-primary d-none" id="workflow-save-btn">Save Workflow</button>
       </div>
     </form>
   </div>

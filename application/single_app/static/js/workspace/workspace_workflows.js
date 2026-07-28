@@ -75,10 +75,18 @@ const workflowModal = workflowModalEl && window.bootstrap ? bootstrap.Modal.getO
 const workflowForm = document.getElementById("workflow-form");
 const workflowModalLabel = document.getElementById("workflowModalLabel");
 const workflowSaveBtn = document.getElementById("workflow-save-btn");
+const workflowStepDescription = document.getElementById("workflow-step-description");
+const workflowStepNavButtons = Array.from(document.querySelectorAll("[data-workflow-step-target]"));
+const workflowStepBlocks = Array.from(document.querySelectorAll("[data-workflow-step]"));
+const workflowStepBackBtn = document.getElementById("workflow-step-back-btn");
+const workflowStepNextBtn = document.getElementById("workflow-step-next-btn");
 
 const workflowIdInput = document.getElementById("workflow-id");
 const workflowNameInput = document.getElementById("workflow-name");
 const workflowDescriptionInput = document.getElementById("workflow-description");
+const workflowTaskList = document.getElementById("workflow-task-list");
+const workflowAddTaskBtn = document.getElementById("workflow-add-task-btn");
+const workflowTaskNameInput = document.getElementById("workflow-task-name");
 const workflowTaskBriefInput = document.getElementById("workflow-task-brief");
 const workflowDraftInstructionsBtn = document.getElementById("workflow-draft-instructions-btn");
 const workflowDraftInstructionsStatus = document.getElementById("workflow-draft-instructions-status");
@@ -111,6 +119,18 @@ const workflowFileSyncContinueModeSelect = document.getElementById("workflow-fil
 const workflowFileSyncUseChangedDocumentsToggle = document.getElementById("workflow-file-sync-use-changed-documents");
 const workflowFileSyncHelp = document.getElementById("workflow-file-sync-help");
 const workflowAlertPrioritySelect = document.getElementById("workflow-alert-priority");
+const workflowErrorStrategyInputs = Array.from(document.querySelectorAll('input[name="workflow-error-strategy"]'));
+const workflowTaskRetryCountInput = document.getElementById("workflow-task-retry-count");
+const workflowReviewSummary = document.getElementById("workflow-review-summary");
+const WORKFLOW_STEPS = ["general", "trigger", "tasks", "reliability", "review"];
+const WORKFLOW_STEP_DESCRIPTIONS = {
+    general: "Name the workflow and choose its runner.",
+    trigger: "Choose when the workflow runs and configure optional inputs.",
+    tasks: "Build the ordered instruction sequence.",
+    reliability: "Choose retry and failure behavior.",
+    review: "Review the workflow and completion alert before saving.",
+};
+const WORKFLOW_MAX_TASKS = 20;
 const DOCUMENT_ACTION_NONE = "none";
 const DOCUMENT_ACTION_SEARCH = "search";
 const DOCUMENT_ACTION_ANALYZE = "analyze";
@@ -169,6 +189,7 @@ const workflowAnalysisPublicWorkspaceIdsInput = document.getElementById("workflo
 const workflowAnalysisWindowUnitSelect = document.getElementById("workflow-analysis-window-unit");
 const workflowAnalysisWindowSizeInput = document.getElementById("workflow-analysis-window-size");
 const workflowAnalysisWindowPercentInput = document.getElementById("workflow-analysis-window-percent");
+const workflowAnalysisRetriesGroup = document.getElementById("workflow-analysis-retries-group");
 const workflowAnalysisRetriesInput = document.getElementById("workflow-analysis-retries");
 const workflowUseSelectedDocumentsBtn = document.getElementById("workflow-use-selected-documents-btn");
 const workflowSelectedDocumentsSummary = document.getElementById("workflow-selected-documents-summary");
@@ -212,7 +233,10 @@ function getWorkflowDocumentActionMaxDocuments(actionType) {
 }
 
 function getDocumentActionDisplayLabel(actionType) {
-    if (actionType === DOCUMENT_ACTION_SEARCH || actionType === DOCUMENT_ACTION_NONE) {
+    if (actionType === DOCUMENT_ACTION_NONE) {
+        return "No document action";
+    }
+    if (actionType === DOCUMENT_ACTION_SEARCH) {
         return "Search";
     }
     if (actionType === DOCUMENT_ACTION_COMPARISON) {
@@ -234,7 +258,10 @@ function getWorkflowUrlAccessMaxUrls() {
 }
 
 function getWorkflowPromptUrls() {
-    const promptText = normalizeText(workflowTaskPromptInput?.value);
+    syncActiveWorkflowTaskFromEditor();
+    const promptText = workflowTasks.length
+        ? workflowTasks.map((task) => normalizeText(task.instructions)).filter(Boolean).join("\n")
+        : normalizeText(workflowTaskPromptInput?.value);
     if (!promptText) {
         return [];
     }
@@ -265,7 +292,7 @@ function syncWorkflowDocumentActionTooltip() {
     const description = normalizeText(
         selectedOption?.dataset.actionDescription
         || selectedOption?.getAttribute("title")
-        || getDocumentActionDescription(normalizeText(workflowDocumentActionTypeSelect.value) || DOCUMENT_ACTION_SEARCH)
+        || getDocumentActionDescription(normalizeText(workflowDocumentActionTypeSelect.value) || DOCUMENT_ACTION_NONE)
     );
 
     workflowDocumentActionTypeSelect.title = description;
@@ -290,6 +317,9 @@ let workflowComparisonVersionLoadToken = 0;
 let workflowPickerDocumentIds = [];
 let workflowSavedComparisonTargetIds = [];
 let workflowSavedComparisonPreferredLeftId = "";
+let workflowTasks = [];
+let activeWorkflowTaskId = "";
+let currentWorkflowStepIndex = 0;
 
 function normalizeText(value) {
     return String(value || "").trim();
@@ -310,6 +340,320 @@ function clearElementChildren(element) {
     while (element.firstChild) {
         element.firstChild.remove();
     }
+}
+
+function createWorkflowTaskId() {
+    if (window.crypto?.randomUUID) {
+        return window.crypto.randomUUID();
+    }
+    return `task-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function getActiveWorkflowTask() {
+    return workflowTasks.find((task) => task.id === activeWorkflowTaskId) || null;
+}
+
+function syncActiveWorkflowTaskFromEditor() {
+    const activeTask = getActiveWorkflowTask();
+    if (!activeTask) {
+        return;
+    }
+    activeTask.name = normalizeText(workflowTaskNameInput?.value);
+    activeTask.instructions = normalizeText(workflowTaskPromptInput?.value);
+}
+
+function populateWorkflowTaskEditor() {
+    const activeTask = getActiveWorkflowTask();
+    if (workflowTaskNameInput) {
+        workflowTaskNameInput.value = activeTask?.name || "";
+    }
+    if (workflowTaskPromptInput) {
+        workflowTaskPromptInput.value = activeTask?.instructions || "";
+    }
+    if (workflowTaskBriefInput) {
+        workflowTaskBriefInput.value = "";
+    }
+    if (workflowDraftInstructionsStatus) {
+        workflowDraftInstructionsStatus.textContent = "";
+    }
+}
+
+function createWorkflowTaskActionButton(iconClass, label, handler, disabled = false) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "btn btn-sm btn-outline-secondary";
+    button.title = label;
+    button.setAttribute("aria-label", label);
+    button.disabled = disabled;
+    const icon = document.createElement("i");
+    icon.className = iconClass;
+    icon.setAttribute("aria-hidden", "true");
+    button.appendChild(icon);
+    button.addEventListener("click", handler);
+    return button;
+}
+
+function renderWorkflowTasks() {
+    if (!workflowTaskList) {
+        return;
+    }
+    clearElementChildren(workflowTaskList);
+
+    workflowTasks.forEach((task, index) => {
+        task.order = index + 1;
+        const item = document.createElement("div");
+        item.className = "workflow-task-item";
+        item.classList.toggle("is-selected", task.id === activeWorkflowTaskId);
+
+        const number = document.createElement("span");
+        number.className = "workflow-task-item__number";
+        number.textContent = String(index + 1);
+
+        const content = document.createElement("div");
+        content.className = "workflow-task-item__content";
+        const name = document.createElement("div");
+        name.className = "workflow-task-item__name";
+        name.textContent = task.name || `Task ${index + 1}`;
+        const preview = document.createElement("div");
+        preview.className = "workflow-task-item__preview";
+        preview.textContent = task.instructions || "Add task instructions";
+        content.append(name, preview);
+
+        const actions = document.createElement("div");
+        actions.className = "workflow-task-item__actions";
+        actions.append(
+            createWorkflowTaskActionButton("bi bi-arrow-up", `Move ${name.textContent} up`, () => moveWorkflowTask(task.id, -1), index === 0),
+            createWorkflowTaskActionButton("bi bi-arrow-down", `Move ${name.textContent} down`, () => moveWorkflowTask(task.id, 1), index === workflowTasks.length - 1),
+            createWorkflowTaskActionButton("bi bi-pencil", `Edit ${name.textContent}`, () => selectWorkflowTask(task.id)),
+            createWorkflowTaskActionButton("bi bi-trash", `Delete ${name.textContent}`, () => removeWorkflowTask(task.id), workflowTasks.length === 1),
+        );
+        item.append(number, content, actions);
+        workflowTaskList.appendChild(item);
+    });
+}
+
+function selectWorkflowTask(taskId) {
+    syncActiveWorkflowTaskFromEditor();
+    if (!workflowTasks.some((task) => task.id === taskId)) {
+        return;
+    }
+    activeWorkflowTaskId = taskId;
+    populateWorkflowTaskEditor();
+    renderWorkflowTasks();
+    workflowTaskNameInput?.focus();
+}
+
+function addWorkflowTask() {
+    syncActiveWorkflowTaskFromEditor();
+    if (workflowTasks.length >= WORKFLOW_MAX_TASKS) {
+        showToast(`Workflows support up to ${WORKFLOW_MAX_TASKS} tasks.`, "warning");
+        return;
+    }
+    const task = {
+        id: createWorkflowTaskId(),
+        type: "instructions",
+        name: `Task ${workflowTasks.length + 1}`,
+        instructions: "",
+        order: workflowTasks.length + 1,
+    };
+    workflowTasks.push(task);
+    activeWorkflowTaskId = task.id;
+    populateWorkflowTaskEditor();
+    renderWorkflowTasks();
+    workflowTaskNameInput?.focus();
+}
+
+function moveWorkflowTask(taskId, offset) {
+    syncActiveWorkflowTaskFromEditor();
+    const currentIndex = workflowTasks.findIndex((task) => task.id === taskId);
+    const nextIndex = currentIndex + offset;
+    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= workflowTasks.length) {
+        return;
+    }
+    const [task] = workflowTasks.splice(currentIndex, 1);
+    workflowTasks.splice(nextIndex, 0, task);
+    renderWorkflowTasks();
+}
+
+function removeWorkflowTask(taskId) {
+    if (workflowTasks.length === 1) {
+        showToast("A workflow requires at least one task.", "warning");
+        return;
+    }
+    const taskIndex = workflowTasks.findIndex((task) => task.id === taskId);
+    if (taskIndex < 0) {
+        return;
+    }
+    workflowTasks.splice(taskIndex, 1);
+    const replacementTask = workflowTasks[Math.min(taskIndex, workflowTasks.length - 1)];
+    activeWorkflowTaskId = replacementTask.id;
+    populateWorkflowTaskEditor();
+    renderWorkflowTasks();
+}
+
+function initializeWorkflowTasks(workflow = null) {
+    const storedTasks = Array.isArray(workflow?.tasks) ? workflow.tasks : [];
+    workflowTasks = storedTasks.length
+        ? storedTasks.map((task, index) => ({
+            id: normalizeText(task.id) || createWorkflowTaskId(),
+            type: "instructions",
+            name: normalizeText(task.name) || `Task ${index + 1}`,
+            instructions: normalizeText(task.instructions),
+            order: index + 1,
+        }))
+        : [{
+            id: createWorkflowTaskId(),
+            type: "instructions",
+            name: "Task 1",
+            instructions: normalizeText(workflow?.task_prompt),
+            order: 1,
+        }];
+    activeWorkflowTaskId = workflowTasks[0].id;
+    populateWorkflowTaskEditor();
+    renderWorkflowTasks();
+}
+
+function getWorkflowErrorStrategy() {
+    return normalizeText(workflowErrorStrategyInputs.find((input) => input.checked)?.value) || "halt";
+}
+
+function addWorkflowReviewItem(labelText, valueText) {
+    if (!workflowReviewSummary) {
+        return;
+    }
+    const item = document.createElement("div");
+    item.className = "workflow-review-summary__item";
+    const label = document.createElement("span");
+    label.className = "workflow-review-summary__label";
+    label.textContent = labelText;
+    const value = document.createElement("div");
+    value.className = "workflow-review-summary__value";
+    value.textContent = valueText;
+    item.append(label, value);
+    workflowReviewSummary.appendChild(item);
+}
+
+function renderWorkflowReview() {
+    if (!workflowReviewSummary) {
+        return;
+    }
+    syncActiveWorkflowTaskFromEditor();
+    clearElementChildren(workflowReviewSummary);
+    const runnerLabel = workflowRunnerTypeSelect?.selectedOptions?.[0]?.textContent || "Direct Model";
+    const triggerLabel = workflowTriggerTypeSelect?.selectedOptions?.[0]?.textContent || "Manual";
+    const documentActionLabel = workflowDocumentActionTypeSelect?.selectedOptions?.[0]?.textContent || "No document action";
+    const alertLabel = workflowAlertPrioritySelect?.selectedOptions?.[0]?.textContent || "No notification";
+    const retryCount = Number(workflowTaskRetryCountInput?.value || 0);
+    const strategyLabel = getWorkflowErrorStrategy() === "continue" ? "Continue after failure" : "Stop after failure";
+
+    addWorkflowReviewItem("Workflow", normalizeText(workflowNameInput?.value) || "Untitled workflow");
+    addWorkflowReviewItem("Runner", normalizeText(runnerLabel));
+    addWorkflowReviewItem("Trigger", normalizeText(triggerLabel));
+    addWorkflowReviewItem("Tasks", `${workflowTasks.length} ordered ${workflowTasks.length === 1 ? "task" : "tasks"}`);
+    addWorkflowReviewItem("Workspace documents", normalizeText(documentActionLabel));
+    addWorkflowReviewItem("File Sync", workflowFileSyncEnabledToggle?.checked ? "Before each run" : "Not used");
+    addWorkflowReviewItem("Failure handling", `${strategyLabel}; ${retryCount} ${retryCount === 1 ? "retry" : "retries"}`);
+    addWorkflowReviewItem("Completion alert", normalizeText(alertLabel));
+}
+
+function validateWorkflowTasks() {
+    syncActiveWorkflowTaskFromEditor();
+    for (let index = 0; index < workflowTasks.length; index += 1) {
+        const task = workflowTasks[index];
+        if (!normalizeText(task.name) || !normalizeText(task.instructions)) {
+            activeWorkflowTaskId = task.id;
+            populateWorkflowTaskEditor();
+            renderWorkflowTasks();
+            showToast(`Add a name and instructions for task ${index + 1}.`, "warning");
+            (normalizeText(task.name) ? workflowTaskPromptInput : workflowTaskNameInput)?.focus();
+            return false;
+        }
+    }
+    return true;
+}
+
+function validateWorkflowStep(stepName) {
+    if (stepName === "general") {
+        if (!normalizeText(workflowNameInput?.value)) {
+            showToast("Workflow name is required.", "warning");
+            workflowNameInput?.focus();
+            return false;
+        }
+        if (normalizeText(workflowRunnerTypeSelect?.value) === "agent" && !getSelectedAgentOption()) {
+            showToast("Select an agent for this workflow.", "warning");
+            workflowAgentSelect?.focus();
+            return false;
+        }
+    }
+    if (stepName === "trigger") {
+        const triggerType = normalizeText(workflowTriggerTypeSelect?.value) || "manual";
+        const fileSyncEnabled = Boolean(workflowFileSyncEnabledToggle?.checked) || triggerType === "file_sync";
+        if (fileSyncEnabled && !getSelectedFileSyncSources().length) {
+            showToast("Select at least one File Sync source for this workflow.", "warning");
+            workflowFileSyncSourcesSelect?.focus();
+            return false;
+        }
+    }
+    if (stepName === "tasks") {
+        if (!validateWorkflowTasks()) {
+            return false;
+        }
+        try {
+            buildWorkflowPayload();
+        } catch (error) {
+            showToast(escapeHtml(error.message || "Complete the task configuration before continuing."), "warning");
+            return false;
+        }
+    }
+    if (stepName === "reliability") {
+        const retryCount = Number(workflowTaskRetryCountInput?.value || 0);
+        if (!Number.isInteger(retryCount) || retryCount < 0 || retryCount > 5) {
+            showToast("Task retry count must be between 0 and 5.", "warning");
+            workflowTaskRetryCountInput?.focus();
+            return false;
+        }
+    }
+    return true;
+}
+
+function showWorkflowStep(stepIndex) {
+    currentWorkflowStepIndex = Math.max(0, Math.min(WORKFLOW_STEPS.length - 1, stepIndex));
+    const stepName = WORKFLOW_STEPS[currentWorkflowStepIndex];
+    workflowStepBlocks.forEach((block) => {
+        block.classList.toggle("workflow-step-hidden", block.dataset.workflowStep !== stepName);
+    });
+    workflowStepNavButtons.forEach((button, index) => {
+        const isActive = index === currentWorkflowStepIndex;
+        button.classList.toggle("is-active", isActive);
+        button.classList.toggle("is-complete", index < currentWorkflowStepIndex);
+        if (isActive) {
+            button.setAttribute("aria-current", "step");
+        } else {
+            button.removeAttribute("aria-current");
+        }
+    });
+    if (workflowStepDescription) {
+        workflowStepDescription.textContent = WORKFLOW_STEP_DESCRIPTIONS[stepName] || "";
+    }
+    setElementVisibility(workflowStepBackBtn, currentWorkflowStepIndex > 0);
+    setElementVisibility(workflowStepNextBtn, currentWorkflowStepIndex < WORKFLOW_STEPS.length - 1);
+    setElementVisibility(workflowSaveBtn, currentWorkflowStepIndex === WORKFLOW_STEPS.length - 1);
+    if (stepName === "review") {
+        renderWorkflowReview();
+    }
+    workflowModalEl?.querySelector(".modal-body")?.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function navigateWorkflowStep(targetIndex) {
+    if (targetIndex > currentWorkflowStepIndex) {
+        for (let index = currentWorkflowStepIndex; index < targetIndex; index += 1) {
+            if (!validateWorkflowStep(WORKFLOW_STEPS[index])) {
+                showWorkflowStep(index);
+                return;
+            }
+        }
+    }
+    showWorkflowStep(targetIndex);
 }
 
 function formatDateTime(value) {
@@ -712,7 +1056,7 @@ function syncWorkflowPickerActionType() {
         return;
     }
 
-    const actionType = normalizeText(workflowDocumentActionTypeSelect.value) || DOCUMENT_ACTION_SEARCH;
+    const actionType = normalizeText(workflowDocumentActionTypeSelect.value) || DOCUMENT_ACTION_NONE;
     chatDocumentActionSelect.value = actionType;
     chatDocumentActionSelect.dispatchEvent(new Event("change", { bubbles: true }));
 }
@@ -734,6 +1078,13 @@ function setWorkflowPickerError(message = "") {
 
 async function initializeWorkflowDocumentPicker(documentAction = {}) {
     if (!workflowDocumentPickerCard) {
+        return;
+    }
+
+    const actionType = normalizeText(documentAction.type || workflowDocumentActionTypeSelect?.value) || DOCUMENT_ACTION_NONE;
+    if (actionType === DOCUMENT_ACTION_NONE) {
+        setWorkflowPickerError("");
+        setWorkflowPickerLoadingState(false);
         return;
     }
 
@@ -1465,6 +1816,10 @@ function getDocumentActionConfig(workflow) {
 
 function getWorkflowDocumentActionSummary(workflow) {
     const config = getDocumentActionConfig(workflow);
+    if (config.type === DOCUMENT_ACTION_NONE) {
+        return "No document action";
+    }
+
     if (config.type === DOCUMENT_ACTION_SEARCH) {
         const documentCount = config.document_ids.length;
         if (config.target_mode === DOCUMENT_ANALYSIS_TARGET_RECENT) {
@@ -1503,7 +1858,7 @@ function getWorkflowDocumentActionSummary(workflow) {
         return `Compare one source to ${rightCount || 0} ${rightCount === 1 ? "target" : "targets"}`;
     }
 
-    return "Search";
+    return "No document action";
 }
 
 function updateSelectedDocumentsSummary() {
@@ -1529,14 +1884,16 @@ function updateWorkflowAnalysisTargetModeFields() {
 }
 
 function updateDocumentActionFields() {
-    const actionType = normalizeText(workflowDocumentActionTypeSelect?.value) || DOCUMENT_ACTION_SEARCH;
+    const actionType = normalizeText(workflowDocumentActionTypeSelect?.value) || DOCUMENT_ACTION_NONE;
     const hasDocumentAction = actionType !== DOCUMENT_ACTION_NONE;
+    const hasWindowedDocumentAction = [DOCUMENT_ACTION_ANALYZE, DOCUMENT_ACTION_COMPARISON].includes(actionType);
     const targetMode = normalizeText(workflowAnalysisTargetModeSelect?.value) || DOCUMENT_ANALYSIS_TARGET_SELECTED;
     const isRecentMode = targetMode === DOCUMENT_ANALYSIS_TARGET_RECENT;
     setElementVisibility(workflowDocumentTargetsFields, hasDocumentAction);
     setElementVisibility(workflowAnalysisTargetFields, hasDocumentAction);
     setElementVisibility(workflowAnalysisPerDocumentGroup, actionType === DOCUMENT_ACTION_ANALYZE);
     setElementVisibility(workflowComparisonTargetFields, actionType === DOCUMENT_ACTION_COMPARISON && !isRecentMode);
+    setElementVisibility(workflowAnalysisRetriesGroup, hasWindowedDocumentAction);
     syncWorkflowPickerActionType();
     syncWorkflowDocumentActionTooltip();
     updateWorkflowAnalysisTargetModeFields();
@@ -1567,7 +1924,10 @@ async function applySelectedWorkspaceDocumentsToWorkflow() {
         return;
     }
 
-    const actionType = normalizeText(workflowDocumentActionTypeSelect?.value) || DOCUMENT_ACTION_SEARCH;
+    const actionType = normalizeText(workflowDocumentActionTypeSelect?.value) || DOCUMENT_ACTION_NONE;
+    if (actionType === DOCUMENT_ACTION_NONE) {
+        return;
+    }
     const workflowMaxDocuments = getWorkflowDocumentActionMaxDocuments(actionType);
 
     const limitedSelectedIds = selectedIds.slice(0, workflowMaxDocuments);
@@ -2277,6 +2637,7 @@ function resetWorkflowForm() {
     if (workflowTaskPromptInput) {
         workflowTaskPromptInput.value = "";
     }
+    initializeWorkflowTasks();
     if (workflowUrlAccessEnabledToggle) {
         workflowUrlAccessEnabledToggle.checked = false;
     }
@@ -2314,8 +2675,14 @@ function resetWorkflowForm() {
     if (workflowAlertPrioritySelect) {
         workflowAlertPrioritySelect.value = "none";
     }
+    workflowErrorStrategyInputs.forEach((input) => {
+        input.checked = input.value === "halt";
+    });
+    if (workflowTaskRetryCountInput) {
+        workflowTaskRetryCountInput.value = "0";
+    }
     if (workflowDocumentActionTypeSelect) {
-        workflowDocumentActionTypeSelect.value = DOCUMENT_ACTION_SEARCH;
+        workflowDocumentActionTypeSelect.value = DOCUMENT_ACTION_NONE;
     }
     if (workflowAnalysisTargetModeSelect) {
         workflowAnalysisTargetModeSelect.value = DOCUMENT_ANALYSIS_TARGET_SELECTED;
@@ -2377,6 +2744,7 @@ function resetWorkflowForm() {
     updateTriggerFields();
     updateFileSyncFields();
     updateDocumentActionFields();
+    showWorkflowStep(0);
 }
 
 async function openWorkflowModal(workflow = null) {
@@ -2420,6 +2788,15 @@ async function openWorkflowModal(workflow = null) {
         }
         if (workflowAlertPrioritySelect) {
             workflowAlertPrioritySelect.value = normalizeText(workflow.alert_priority).toLowerCase() || "none";
+        }
+        const errorHandling = workflow.error_handling && typeof workflow.error_handling === "object"
+            ? workflow.error_handling
+            : {};
+        workflowErrorStrategyInputs.forEach((input) => {
+            input.checked = input.value === (normalizeText(errorHandling.strategy) || "halt");
+        });
+        if (workflowTaskRetryCountInput) {
+            workflowTaskRetryCountInput.value = String(errorHandling.retry_count ?? 0);
         }
         const fileSyncConfig = workflow.file_sync && typeof workflow.file_sync === "object" ? workflow.file_sync : {};
         if (workflowFileSyncEnabledToggle) {
@@ -2497,6 +2874,7 @@ async function openWorkflowModal(workflow = null) {
         }
     }
 
+    initializeWorkflowTasks(workflow);
     const documentAction = workflow ? getDocumentActionConfig(workflow) : null;
     if (documentAction?.type === DOCUMENT_ACTION_COMPARISON) {
         const savedTargetIds = [documentAction.left_document_id, ...documentAction.right_document_ids].filter(Boolean);
@@ -2513,14 +2891,23 @@ async function openWorkflowModal(workflow = null) {
     updateTriggerFields();
     updateFileSyncFields();
     updateDocumentActionFields();
+    showWorkflowStep(0);
     workflowModal.show();
     await initializeWorkflowDocumentPicker(documentAction || {});
 }
 
 function buildWorkflowPayload() {
+    syncActiveWorkflowTaskFromEditor();
+    const tasks = workflowTasks.map((task, index) => ({
+        id: normalizeText(task.id) || createWorkflowTaskId(),
+        type: "instructions",
+        name: normalizeText(task.name),
+        instructions: normalizeText(task.instructions),
+        order: index + 1,
+    }));
     const runnerType = normalizeText(workflowRunnerTypeSelect?.value) || "model";
     const triggerType = normalizeText(workflowTriggerTypeSelect?.value) || "manual";
-    const documentActionType = normalizeText(workflowDocumentActionTypeSelect?.value) || DOCUMENT_ACTION_SEARCH;
+    const documentActionType = normalizeText(workflowDocumentActionTypeSelect?.value) || DOCUMENT_ACTION_NONE;
     const analysisTargetMode = normalizeText(workflowAnalysisTargetModeSelect?.value) === DOCUMENT_ANALYSIS_TARGET_RECENT
         ? DOCUMENT_ANALYSIS_TARGET_RECENT
         : DOCUMENT_ANALYSIS_TARGET_SELECTED;
@@ -2551,9 +2938,17 @@ function buildWorkflowPayload() {
         id: normalizeText(workflowIdInput?.value),
         name: normalizeText(workflowNameInput?.value),
         description: normalizeText(workflowDescriptionInput?.value),
-        task_prompt: normalizeText(workflowTaskPromptInput?.value),
+        task_prompt: normalizeText(tasks[0]?.instructions),
+        tasks,
+        error_handling: {
+            strategy: getWorkflowErrorStrategy(),
+            retry_count: Number(workflowTaskRetryCountInput?.value || 0),
+        },
         url_access_enabled: isWorkflowUrlAccessAvailable() ? Boolean(workflowUrlAccessEnabledToggle?.checked) : false,
         runner_type: runnerType,
+        chat_capabilities_enabled: currentEditingWorkflow
+            ? Boolean(currentEditingWorkflow.chat_capabilities_enabled)
+            : true,
         trigger_type: triggerType,
         alert_priority: normalizeText(workflowAlertPrioritySelect?.value).toLowerCase() || "none",
         is_enabled: ["interval", "file_sync"].includes(triggerType) ? Boolean(workflowEnabledToggle?.checked) : true,
@@ -2611,8 +3006,15 @@ function buildWorkflowPayload() {
     if (!payload.name) {
         throw new Error("Workflow name is required.");
     }
-    if (!payload.task_prompt) {
-        throw new Error("Task prompt is required.");
+    if (!payload.tasks.length) {
+        throw new Error("Add at least one workflow task.");
+    }
+    const incompleteTaskIndex = payload.tasks.findIndex((task) => !task.name || !task.instructions);
+    if (incompleteTaskIndex >= 0) {
+        throw new Error(`Add a name and instructions for task ${incompleteTaskIndex + 1}.`);
+    }
+    if (!Number.isInteger(payload.error_handling.retry_count) || payload.error_handling.retry_count < 0 || payload.error_handling.retry_count > 5) {
+        throw new Error("Task retry count must be between 0 and 5.");
     }
     if (payload.url_access_enabled) {
         const promptUrls = getWorkflowPromptUrls();
@@ -3257,6 +3659,20 @@ function initializeWorkflowEvents() {
     workflowsGridView?.addEventListener("click", handleWorkflowGridClick);
     workflowsGridView?.addEventListener("keydown", handleWorkflowGridKeydown);
     workflowForm?.addEventListener("submit", saveWorkflow);
+    workflowAddTaskBtn?.addEventListener("click", addWorkflowTask);
+    workflowTaskNameInput?.addEventListener("input", () => {
+        syncActiveWorkflowTaskFromEditor();
+        renderWorkflowTasks();
+    });
+    workflowTaskPromptInput?.addEventListener("input", () => {
+        syncActiveWorkflowTaskFromEditor();
+        renderWorkflowTasks();
+    });
+    workflowStepBackBtn?.addEventListener("click", () => navigateWorkflowStep(currentWorkflowStepIndex - 1));
+    workflowStepNextBtn?.addEventListener("click", () => navigateWorkflowStep(currentWorkflowStepIndex + 1));
+    workflowStepNavButtons.forEach((button, index) => {
+        button.addEventListener("click", () => navigateWorkflowStep(index));
+    });
     workflowDraftInstructionsBtn?.addEventListener("click", draftWorkflowInstructions);
     workflowDeleteConfirmBtn?.addEventListener("click", deleteWorkflow);
     workflowHistoryBody?.addEventListener("click", (event) => {
@@ -3289,6 +3705,7 @@ function initializeWorkflowEvents() {
         updateModelHelpText();
     });
     workflowModelSelect?.addEventListener("change", updateModelHelpText);
+    workflowAlertPrioritySelect?.addEventListener("change", renderWorkflowReview);
     workflowTriggerTypeSelect?.addEventListener("change", updateTriggerFields);
     workflowScheduleUnitSelect?.addEventListener("change", updateScheduleConstraints);
     workflowFileSyncEnabledToggle?.addEventListener("change", updateFileSyncFields);

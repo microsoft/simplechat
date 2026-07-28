@@ -39,6 +39,8 @@ from functions_personal_workflows import (
     _normalize_document_action_config,
     _normalize_schedule,
     _normalize_text,
+    _normalize_workflow_error_handling,
+    _normalize_workflow_tasks,
     _strip_cosmos_metadata,
     _utc_now_iso,
     compute_next_run_at,
@@ -381,7 +383,12 @@ def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
 
     workflow_name = _normalize_text(workflow_data.get('name'), 'Workflow name', required=True)
     description = _normalize_text(workflow_data.get('description'), 'Description')
-    task_prompt = _normalize_text(workflow_data.get('task_prompt'), 'Task prompt', required=True)
+    tasks = _normalize_workflow_tasks(workflow_data, existing_workflow=existing_workflow)
+    task_prompt = _normalize_text(
+        workflow_data.get('task_prompt') or (tasks[0].get('instructions') if tasks else ''),
+        'Task prompt',
+        required=True,
+    )
     runner_type = _normalize_text(workflow_data.get('runner_type'), 'Runner type', required=True).lower()
     if runner_type not in WORKFLOW_RUNNER_TYPES:
         raise ValueError('Runner type must be agent or model.')
@@ -407,6 +414,16 @@ def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
     ) if url_access_enabled else False
     alert_priority = _normalize_alert_priority(
         workflow_data.get('alert_priority', (existing_workflow or {}).get('alert_priority', 'none'))
+    )
+    error_handling = _normalize_workflow_error_handling(workflow_data, existing_workflow=existing_workflow)
+    default_chat_capabilities_enabled = (
+        (existing_workflow or {}).get('chat_capabilities_enabled', False)
+        if existing_workflow
+        else True
+    )
+    chat_capabilities_enabled = _normalize_bool(
+        workflow_data.get('chat_capabilities_enabled', default_chat_capabilities_enabled),
+        default=default_chat_capabilities_enabled,
     )
     file_sync = _normalize_file_sync_config(
         actor_user_id,
@@ -465,7 +482,10 @@ def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
         'name': workflow_name,
         'description': description,
         'task_prompt': task_prompt,
+        'tasks': tasks,
+        'error_handling': error_handling,
         'runner_type': runner_type,
+        'chat_capabilities_enabled': chat_capabilities_enabled,
         'trigger_type': trigger_type,
         'is_enabled': is_enabled,
         'url_access_enabled': url_access_enabled,

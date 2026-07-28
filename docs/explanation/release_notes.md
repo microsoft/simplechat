@@ -2,6 +2,24 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.064)**
+
+#### New Features
+
+*   **Repeatable AI Workflow Task Sequences**
+    *   Personal and group workflows can now run with only instructions and a selected model or agent; workspace documents, File Sync, URL access, schedules, and completion alerts remain optional.
+    *   Workflows support ordered instruction tasks that share the selected runner and receive bounded prior-task output as context.
+    *   Added per-task retries and stop-or-continue error handling, with task outcomes recorded in run history and workflow activity.
+    *   Existing document Search, Analyze, and Compare behavior remains available as optional input for the first task, while existing workflows without task sequences retain their prior execution path.
+    *   (Ref: microsoft/simplechat#1082, `functions_personal_workflows.py`, `functions_group_workflows.py`, `functions_workflow_runner.py`)
+
+#### User Interface Enhancements
+
+*   **Stepped Workflow Builder**
+    *   Replaced the single-pane personal and group workflow form with a five-step General, Trigger, Tasks, Reliability, and Review builder.
+    *   Users can add, edit, remove, and reorder tasks, configure retry and failure behavior, and review runner, trigger, document input, File Sync, and pop-up alert settings before saving.
+    *   (Ref: microsoft/simplechat#1082, `workspace.html`, `group_workspaces.html`, `workspace_workflows.js`, `workspace-responsive.css`)
+
 ### **(v0.250.062)**
 
 #### New Features
