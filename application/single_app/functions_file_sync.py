@@ -110,8 +110,16 @@ FILE_SYNC_SOURCE_TYPE_LABELS = {
     FILE_SYNC_SOURCE_TYPE_SHAREPOINT_ON_PREM: "On-prem SharePoint",
     FILE_SYNC_SOURCE_TYPE_GOOGLE_WORKSPACE: "Google Workspace",
 }
+AZURE_STORAGE_ENDPOINT_SUFFIXES = (
+    "core.windows.net",
+    "core.usgovcloudapi.net",
+    "core.chinacloudapi.cn",
+    "core.cloudapi.de",
+)
 FILE_SYNC_MANAGER_ROLES = ("Owner", "Admin", "DocumentManager")
 FILE_SYNC_PERSONAL_APP_ROLE = "PersonalFileSyncUser"
+FILE_SYNC_PUBLIC_RUN_ERROR_MESSAGE = "File Sync run failed. Contact an administrator if the problem continues."
+FILE_SYNC_PUBLIC_ITEM_ERROR_MESSAGE = "File Sync could not process this item. Contact an administrator if the problem continues."
 
 FILE_SYNC_DEFAULTS = {
     "enable_file_sync": False,
@@ -602,7 +610,7 @@ def sanitize_file_sync_source(source: Dict[str, Any]) -> Dict[str, Any]:
 def sanitize_file_sync_run(run: Dict[str, Any]) -> Dict[str, Any]:
     sanitized_run = dict(run or {})
     if sanitized_run.get("error_message"):
-        sanitized_run["error_message"] = str(sanitized_run["error_message"])[:1000]
+        sanitized_run["error_message"] = FILE_SYNC_PUBLIC_RUN_ERROR_MESSAGE
     return sanitized_run
 
 
@@ -728,6 +736,18 @@ def _normalize_azure_files_connection(
     }
 
 
+def _azure_blob_endpoint_suffix_for_hostname(hostname: Any) -> Tuple[str, str]:
+    normalized_hostname = str(hostname or "").strip().lower()
+    for endpoint_suffix in AZURE_STORAGE_ENDPOINT_SUFFIXES:
+        blob_hostname_suffix = f".blob.{endpoint_suffix}"
+        if not normalized_hostname.endswith(blob_hostname_suffix):
+            continue
+        account_name = normalized_hostname[:-len(blob_hostname_suffix)]
+        if re.fullmatch(r"[a-z0-9]{3,24}", account_name):
+            return account_name, endpoint_suffix
+    raise ValueError("Azure Blob Storage endpoint must use a supported Azure Blob service hostname")
+
+
 def _normalize_azure_blob_url(value: Any) -> Tuple[str, List[str]]:
     raw_url = _normalize_text(value, max_length=2048)
     if not raw_url:
@@ -739,11 +759,64 @@ def _normalize_azure_blob_url(value: Any) -> Tuple[str, List[str]]:
             raw_url = f"https://{raw_url}"
 
     parsed_url = urlparse(raw_url)
-    if parsed_url.scheme != "https" or not parsed_url.netloc:
+    try:
+        parsed_port = parsed_url.port
+    except ValueError as error:
+        raise ValueError("Azure Blob Storage endpoint is invalid") from error
+    if (
+        parsed_url.scheme != "https"
+        or not parsed_url.hostname
+        or parsed_url.username is not None
+        or parsed_url.password is not None
+        or parsed_port is not None
+        or parsed_url.query
+        or parsed_url.fragment
+        or parsed_url.params
+    ):
         raise ValueError("Azure Blob Storage sources require an HTTPS blob service URL or storage account name")
 
+    account_name, endpoint_suffix = _azure_blob_endpoint_suffix_for_hostname(parsed_url.hostname)
     path_parts = [unquote(path_part) for path_part in parsed_url.path.split("/") if path_part]
-    return f"{parsed_url.scheme}://{parsed_url.netloc}".rstrip("/"), path_parts
+    return f"https://{account_name}.blob.{endpoint_suffix}", path_parts
+
+
+def _validate_azure_blob_connection_string(connection_string: Any) -> None:
+    raw_connection_string = str(connection_string or "").strip()
+    if not raw_connection_string:
+        raise ValueError("Azure Blob Storage connection string is required")
+
+    fields = {}
+    for segment in raw_connection_string.split(";"):
+        if not segment.strip():
+            continue
+        if "=" not in segment:
+            raise ValueError("Azure Blob Storage connection string is invalid")
+        raw_key, raw_value = segment.split("=", 1)
+        key = raw_key.strip().lower()
+        if not key or key in fields:
+            raise ValueError("Azure Blob Storage connection string is invalid")
+        fields[key] = raw_value.strip()
+
+    if fields.get("usedevelopmentstorage", "").lower() == "true":
+        raise ValueError("Azure Blob Storage development endpoints are not allowed")
+
+    blob_endpoint = fields.get("blobendpoint", "")
+    if blob_endpoint:
+        _, endpoint_path_parts = _normalize_azure_blob_url(blob_endpoint)
+        if endpoint_path_parts:
+            raise ValueError("Azure Blob Storage connection string endpoint must be a service URL")
+        return
+
+    if fields.get("defaultendpointsprotocol", "").lower() != "https":
+        raise ValueError("Azure Blob Storage connection strings require HTTPS endpoints")
+
+    account_name = fields.get("accountname", "").lower()
+    endpoint_suffix = fields.get("endpointsuffix", "").lower()
+    if not re.fullmatch(r"[a-z0-9]{3,24}", account_name):
+        raise ValueError("Azure Blob Storage connection string account name is invalid")
+    if endpoint_suffix not in AZURE_STORAGE_ENDPOINT_SUFFIXES:
+        raise ValueError("Azure Blob Storage connection string endpoint is not allowed")
+    _normalize_azure_blob_url(f"https://{account_name}.blob.{endpoint_suffix}")
 
 
 def _normalize_azure_container_name(value: Any) -> str:
@@ -1747,19 +1820,33 @@ def _process_file_sync_source(
         _log_file_sync_activity(source, triggered_by, "run_completed", {"run_id": run["id"], "counts": counts})
         return run
     except Exception as error:
-        error_message = str(error)
+        detailed_error_message = str(error)
         run = _update_run(
             run,
             {
                 "status": "failed",
                 "counts": counts,
                 "completed_at": _now_iso(),
-                "error_message": error_message,
+                "error_message": FILE_SYNC_PUBLIC_RUN_ERROR_MESSAGE,
             },
         )
         _update_source_after_run(source, run)
-        _log_file_sync_activity(source, triggered_by, "run_failed", {"run_id": run["id"], "error": error_message})
-        log_event(f"[FileSync] Run failed for source {source.get('id')}: {error_message}", level=logging.ERROR, exceptionTraceback=True)
+        _log_file_sync_activity(
+            source,
+            triggered_by,
+            "run_failed",
+            {"run_id": run["id"], "error": FILE_SYNC_PUBLIC_RUN_ERROR_MESSAGE},
+        )
+        log_event(
+            "[FileSync] Run failed.",
+            level=logging.ERROR,
+            extra={
+                "source_id": source.get("id"),
+                "run_id": run.get("id"),
+                "error": detailed_error_message,
+            },
+            exceptionTraceback=True,
+        )
         return run
 
 
@@ -2204,11 +2291,14 @@ def _get_azure_blob_service_client(source: Dict[str, Any]):
         connection_string = _resolved_auth_secret(auth)
         if not connection_string:
             raise ValueError("Azure Blob Storage connection string authentication requires a connection string")
+        _validate_azure_blob_connection_string(connection_string)
         return BlobServiceClient.from_connection_string(connection_string)
 
-    account_url = connection.get("account_url") or ""
-    if not account_url:
+    safe_account_url, account_path_parts = _normalize_azure_blob_url(connection.get("account_url"))
+    if not safe_account_url:
         raise ValueError("Azure Blob Storage source is missing an account URL")
+    if account_path_parts:
+        raise ValueError("Azure Blob Storage source account URL must be a service URL")
     if auth_type == "client_secret":
         client_id = auth.get("identity") or ""
         client_secret = _resolved_auth_secret(auth)
@@ -2224,7 +2314,7 @@ def _get_azure_blob_service_client(source: Dict[str, Any]):
         credential = DefaultAzureCredential(managed_identity_client_id=auth.get("managed_identity_client_id") or None)
     else:
         raise ValueError("Azure Blob Storage sources require managed identity, service principal, or connection string authentication")
-    return BlobServiceClient(account_url=account_url, credential=credential)
+    return BlobServiceClient(account_url=safe_account_url, credential=credential)
 
 
 def _get_azure_blob_container_client(source: Dict[str, Any]):
@@ -2931,7 +3021,7 @@ def _upsert_failed_item(
             "remote_change_token": remote_file.get("remote_change_token"),
             "remote_web_url": remote_file.get("web_url"),
             "status": "failed",
-            "error_message": str(error)[:1000],
+            "error_message": FILE_SYNC_PUBLIC_ITEM_ERROR_MESSAGE,
             "last_sync_run_id": run_id,
             "last_sync_action": "failed",
             "last_seen_at": now_iso,
@@ -2956,8 +3046,18 @@ def _handle_remote_deletes(source: Dict[str, Any], existing_items: Dict[str, Dic
                 counts["deleted"] = counts.get("deleted", 0) + 1
             except Exception as delete_error:
                 item["status"] = "delete_failed"
-                item["error_message"] = str(delete_error)[:1000]
+                item["error_message"] = FILE_SYNC_PUBLIC_ITEM_ERROR_MESSAGE
                 counts["failed"] = counts.get("failed", 0) + 1
+                log_event(
+                    "[FileSync] Remote document deletion failed.",
+                    level=logging.ERROR,
+                    extra={
+                        "source_id": source.get("id"),
+                        "document_id": item.get("document_id"),
+                        "error": str(delete_error),
+                    },
+                    exceptionTraceback=True,
+                )
         else:
             item["status"] = "remote_missing"
         item["updated_at"] = now_iso

@@ -1,6 +1,7 @@
 # Azure Blob Storage File Sync
 
 Implemented in version: **0.250.067**
+Security hardening in version: **0.250.068**
 
 Related issue: [#1027](https://github.com/microsoft/simplechat/issues/1027)
 
@@ -15,7 +16,7 @@ Azure Blob Storage is available as an admin-controlled File Sync source for pers
 - The existing `azure-storage-blob==12.24.1` dependency provides Blob service access.
 - Managed identity requires an Azure Storage data-plane role such as **Storage Blob Data Reader** on the target account or container.
 - Client-secret and connection-string authentication require Azure Key Vault secret storage. Saved Azure Blob sources and reusable identities cannot persist these secrets inline in Cosmos DB records.
-- The application version was updated in `application/single_app/config.py` to `0.250.067`.
+- The application version was updated in `application/single_app/config.py` to `0.250.068` for endpoint and error-disclosure hardening.
 
 ## Technical Specifications
 
@@ -23,7 +24,8 @@ Azure Blob Storage is available as an admin-controlled File Sync source for pers
 
 - The source type is stored as `source_type: "azure_blob"` in the existing personal, group, or public File Sync source container.
 - Connection data contains `account_url`, `container_name`, optional `blob_prefix`, and optional `selected_paths`.
-- Storage account names are expanded to `https://<account>.blob.core.windows.net`; full HTTPS Blob service and container URLs are also accepted.
+- Storage account names are expanded to `https://<account>.blob.core.windows.net`. Full service and container URLs are accepted only when their host is a valid Azure Blob endpoint in the supported public, US Government, China, or Germany cloud suffixes.
+- Blob service URLs and connection-string endpoints are validated again immediately before SDK client construction. Loopback, link-local, arbitrary custom, development-storage, userinfo, nonstandard-port, query-string, and fragment endpoints are rejected.
 - Blob names are presented as virtual folders in the existing source browser. Directory-marker blobs are ignored during synchronization.
 - Blob ETags, last-modified timestamps, and content lengths are translated into the shared remote-file contract for change detection.
 - Downloads are streamed in chunks into the existing temporary-file ingestion path, preserving file limits, supported-format checks, document processing, tags, and source attribution.
@@ -36,6 +38,7 @@ Azure Blob Storage is available as an admin-controlled File Sync source for pers
 - **Connection string** authentication uses a Key Vault-backed storage connection string.
 - Reusable workspace identities can declare Azure Blob Storage support for personal, group, or public scopes.
 - Unsaved connection tests may use credentials in memory, but saving rejects secret-based credentials that do not resolve through Key Vault.
+- Detailed SDK and network failures are written through sanitized server logging. API responses, run history, activity records, and failed item records use fixed public messages instead of returning exception text.
 
 ### Admin Configuration
 
@@ -73,6 +76,8 @@ Azure Blob Storage is opt-in. Existing installations retain the SMB and Azure Fi
 
 The functional test executes account and URL normalization, container validation, Key Vault secret enforcement, virtual-path browsing, recursive and non-recursive listing, ETag metadata mapping, streamed downloads, and SHA-256 generation with fake Blob SDK clients. It also verifies the shared source workflow is connected to personal, group, and public workspace roots.
 
+Security coverage rejects non-Azure and internal endpoints in direct URLs and connection strings, verifies HTTPS-only Azure cloud suffixes, and confirms backend exception details never cross API, run-history, activity, or item-response boundaries.
+
 Neighboring Azure Files and OneDrive regression suites confirm that adding Azure Blob Storage does not remove existing source types or compatible identity behavior. Playwright coverage validates the admin switch and Blob-specific source fields.
 
 ## Known Limitations
@@ -80,3 +85,4 @@ Neighboring Azure Files and OneDrive regression suites confirm that adding Azure
 - Blob snapshots, versions, deleted blobs, and soft-deleted records are not synchronized.
 - Blob names are shown as virtual folders; Azure Blob Storage does not provide physical directories unless hierarchical namespace features are enabled.
 - Secret-based authentication cannot be saved when Azure Key Vault secret storage is disabled. Use managed identity in that configuration.
+- Custom domains, Azurite/development storage, Azure Stack endpoints, and direct private-link hostnames are not accepted. Use the standard Azure Blob service hostname; Azure Private Endpoint DNS can resolve that hostname privately.

@@ -2,9 +2,10 @@
 # test_file_sync_onedrive_personal.py
 """
 Functional test for personal OneDrive File Sync support.
-Version: 0.250.067
+Version: 0.250.068
 Implemented in: 0.241.128
 Updated in: 0.250.067
+Updated in: 0.250.068
 
 This test ensures OneDrive sync source code remains wired as personal-only File
 Sync support while the admin source-type control keeps OneDrive marked as coming
@@ -40,7 +41,7 @@ def test_version_and_source_defaults():
     settings_text = read_text("application/single_app/functions_settings.py")
     file_sync_text = read_text("application/single_app/functions_file_sync.py")
 
-    assert 'VERSION = "0.250.067"' in config_text
+    assert 'VERSION = "0.250.068"' in config_text
     assert "FILE_SYNC_SOURCE_TYPE_ONEDRIVE = \"onedrive\"" in file_sync_text
     assert "FILE_SYNC_SOURCE_TYPE_ONEDRIVE" in file_sync_text
     assert "FILE_SYNC_SOURCE_TYPE_ONEDRIVE: {\"client_secret\"}" in file_sync_text

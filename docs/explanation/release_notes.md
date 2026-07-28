@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.068)**
+
+#### Bug Fixes
+
+*   **Azure Blob File Sync Endpoint and Error Hardening**
+    *   Restricted Azure Blob File Sync URLs and connection strings to validated HTTPS Azure Blob endpoints, blocking arbitrary, internal, development-storage, and credential-bearing endpoint forms before SDK requests are created.
+    *   Replaced raw File Sync route, run-history, activity, and item exception text with fixed client-safe messages while retaining detailed sanitized diagnostics in server logs.
+    *   (Ref: microsoft/simplechat#1027, PR #1088 security review, `functions_file_sync.py`, `route_backend_file_sync.py`)
+
 ### **(v0.250.067)**
 
 #### New Features

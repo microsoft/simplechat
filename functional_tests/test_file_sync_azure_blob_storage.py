@@ -2,8 +2,9 @@
 # test_file_sync_azure_blob_storage.py
 """
 Functional test for Azure Blob Storage File Sync.
-Version: 0.250.067
+Version: 0.250.068
 Implemented in: 0.250.067
+Security hardening in: 0.250.068
 
 This test ensures Azure Blob Storage is wired into the shared File Sync
 pipeline for every supported workspace scope without requiring live Azure
@@ -75,7 +76,7 @@ def test_version_and_dependency_pin():
     config_text = read_text("application/single_app/config.py")
     requirements_text = read_text("application/single_app/requirements.txt")
 
-    assert 'VERSION = "0.250.067"' in config_text
+    assert 'VERSION = "0.250.068"' in config_text
     assert "azure-storage-blob==12.24.1" in requirements_text
 
 
@@ -131,11 +132,16 @@ def test_azure_blob_connection_normalization_behavior():
         "_normalize_text",
         "_normalize_selected_path",
         "_normalize_selected_paths",
+        "_azure_blob_endpoint_suffix_for_hostname",
         "_normalize_azure_blob_url",
         "_normalize_azure_container_name",
         "_normalize_azure_blob_connection",
     }
-    functions = load_functions("functions_file_sync.py", names)
+    functions = load_functions(
+        "functions_file_sync.py",
+        names,
+        {"AZURE_STORAGE_ENDPOINT_SUFFIXES": ("core.windows.net",)},
+    )
     normalize_connection = functions["_normalize_azure_blob_connection"]
 
     normalized = normalize_connection({
@@ -168,6 +174,199 @@ def test_azure_blob_connection_normalization_behavior():
         raise AssertionError("Invalid container names must be rejected")
     except ValueError as exc:
         assert "container name" in str(exc)
+
+
+def test_azure_blob_endpoints_block_server_side_request_forgery():
+    """Validate Blob URLs and connection strings stay on Azure-owned endpoints."""
+    endpoint_suffixes = (
+        "core.windows.net",
+        "core.usgovcloudapi.net",
+        "core.chinacloudapi.cn",
+        "core.cloudapi.de",
+    )
+    functions = load_functions(
+        "functions_file_sync.py",
+        {
+            "_normalize_text",
+            "_azure_blob_endpoint_suffix_for_hostname",
+            "_normalize_azure_blob_url",
+            "_validate_azure_blob_connection_string",
+        },
+        {"AZURE_STORAGE_ENDPOINT_SUFFIXES": endpoint_suffixes},
+    )
+    normalize_url = functions["_normalize_azure_blob_url"]
+    validate_connection_string = functions["_validate_azure_blob_connection_string"]
+
+    allowed_urls = [
+        "https://contosodata.blob.core.windows.net",
+        "https://contosodata.blob.core.usgovcloudapi.net",
+        "https://contosodata.blob.core.chinacloudapi.cn",
+        "https://contosodata.blob.core.cloudapi.de",
+    ]
+    for allowed_url in allowed_urls:
+        normalized_url, path_parts = normalize_url(allowed_url)
+        assert normalized_url == allowed_url
+        assert path_parts == []
+
+    blocked_urls = [
+        "https://127.0.0.1",
+        "https://169.254.169.254/latest/meta-data",
+        "https://localhost",
+        "https://internal.example.com",
+        "https://contosodata.blob.core.windows.net.evil.example",
+        "https://user:password@contosodata.blob.core.windows.net",
+        "https://contosodata.blob.core.windows.net:444",
+        "https://contosodata.blob.core.windows.net?sig=secret",
+        "https://contosodata.blob.core.windows.net#fragment",
+    ]
+    for blocked_url in blocked_urls:
+        try:
+            normalize_url(blocked_url)
+            raise AssertionError(f"Unsafe Blob URL was accepted: {blocked_url}")
+        except ValueError as exc:
+            assert "Azure Blob Storage" in str(exc)
+
+    validate_connection_string(
+        "DefaultEndpointsProtocol=https;AccountName=contosodata;"
+        "AccountKey=ZmFrZQ==;EndpointSuffix=core.windows.net"
+    )
+    validate_connection_string(
+        "BlobEndpoint=https://contosodata.blob.core.windows.net;"
+        "SharedAccessSignature=sv=fake&sig=secret"
+    )
+    blocked_connection_strings = [
+        "UseDevelopmentStorage=true",
+        "DefaultEndpointsProtocol=http;AccountName=contosodata;AccountKey=ZmFrZQ==;EndpointSuffix=core.windows.net",
+        "DefaultEndpointsProtocol=https;AccountName=contosodata;AccountKey=ZmFrZQ==;EndpointSuffix=example.com",
+        "BlobEndpoint=https://127.0.0.1;SharedAccessSignature=sv=fake&sig=secret",
+        "BlobEndpoint=https://internal.example.com;SharedAccessSignature=sv=fake&sig=secret",
+    ]
+    for connection_string in blocked_connection_strings:
+        try:
+            validate_connection_string(connection_string)
+            raise AssertionError("Unsafe Blob connection string was accepted")
+        except ValueError as exc:
+            assert "Azure Blob Storage" in str(exc)
+
+
+def test_azure_blob_service_client_revalidates_endpoints_before_sdk_use():
+    """Validate stored endpoint values cannot bypass checks at the SDK boundary."""
+    endpoint_suffixes = ("core.windows.net",)
+
+    class FakeBlobServiceClient:
+        constructor_calls = []
+        connection_string_calls = []
+
+        def __init__(self, account_url, credential):
+            self.constructor_calls.append((account_url, credential))
+
+        @classmethod
+        def from_connection_string(cls, connection_string):
+            cls.connection_string_calls.append(connection_string)
+            return cls("from-connection-string", None)
+
+    functions = load_functions(
+        "functions_file_sync.py",
+        {
+            "_normalize_text",
+            "_azure_blob_endpoint_suffix_for_hostname",
+            "_normalize_azure_blob_url",
+            "_validate_azure_blob_connection_string",
+            "_get_azure_blob_service_client",
+        },
+        {
+            "AZURE_STORAGE_ENDPOINT_SUFFIXES": endpoint_suffixes,
+            "BlobServiceClient": FakeBlobServiceClient,
+            "DefaultAzureCredential": lambda managed_identity_client_id=None: {
+                "managed_identity_client_id": managed_identity_client_id,
+            },
+            "ClientSecretCredential": lambda **kwargs: kwargs,
+            "TENANT_ID": "tenant",
+            "_get_identity_auth_for_source": lambda source: None,
+            "_resolved_auth_secret": lambda auth: str(auth.get("secret") or ""),
+        },
+    )
+    get_service_client = functions["_get_azure_blob_service_client"]
+
+    safe_source = {
+        "connection": {"account_url": "https://contosodata.blob.core.windows.net"},
+        "auth": {"auth_type": "managed_identity"},
+    }
+    get_service_client(safe_source)
+    assert FakeBlobServiceClient.constructor_calls == [
+        ("https://contosodata.blob.core.windows.net", {"managed_identity_client_id": None})
+    ]
+
+    unsafe_sources = [
+        {
+            "connection": {"account_url": "https://169.254.169.254/latest/meta-data"},
+            "auth": {"auth_type": "managed_identity"},
+        },
+        {
+            "connection": {"account_url": "https://internal.example.com"},
+            "auth": {"auth_type": "managed_identity"},
+        },
+        {
+            "connection": {},
+            "auth": {
+                "auth_type": "connection_string",
+                "secret": "BlobEndpoint=https://127.0.0.1;SharedAccessSignature=sv=fake&sig=secret",
+            },
+        },
+    ]
+    for unsafe_source in unsafe_sources:
+        try:
+            get_service_client(unsafe_source)
+            raise AssertionError("Unsafe endpoint reached BlobServiceClient")
+        except ValueError as exc:
+            assert "Azure Blob Storage" in str(exc)
+
+    assert len(FakeBlobServiceClient.constructor_calls) == 1
+    assert FakeBlobServiceClient.connection_string_calls == []
+
+
+def test_file_sync_routes_do_not_disclose_exception_details():
+    """Validate detailed backend exceptions are logged but never returned."""
+    route_text = read_text("application/single_app/route_backend_file_sync.py")
+
+    assert "from functions_appinsights import log_event" in route_text
+    assert '"[FileSync] Request failed."' in route_text
+    assert '"error": str(error)' in route_text
+    assert "return _error(str(error)" not in route_text
+    for public_message in [
+        "You do not have permission to perform this File Sync operation.",
+        "The requested File Sync resource was not found.",
+        "The File Sync request could not be completed. Verify the source configuration and try again.",
+        "An unexpected error occurred while processing the File Sync request.",
+    ]:
+        assert public_message in route_text
+
+
+def test_file_sync_run_and_item_errors_are_client_safe():
+    """Validate persisted and serialized failure messages do not expose SDK details."""
+    public_run_error = "File Sync run failed. Contact an administrator if the problem continues."
+    public_item_error = "File Sync could not process this item. Contact an administrator if the problem continues."
+    functions = load_functions(
+        "functions_file_sync.py",
+        {"sanitize_file_sync_run"},
+        {"FILE_SYNC_PUBLIC_RUN_ERROR_MESSAGE": public_run_error},
+    )
+    sanitized_run = functions["sanitize_file_sync_run"]({
+        "id": "run-1",
+        "status": "failed",
+        "error_message": "Request to https://internal.example?sig=secret failed",
+    })
+
+    assert sanitized_run["error_message"] == public_run_error
+    assert "internal.example" not in sanitized_run["error_message"]
+    assert "secret" not in sanitized_run["error_message"]
+
+    file_sync_text = read_text("application/single_app/functions_file_sync.py")
+    assert f'FILE_SYNC_PUBLIC_RUN_ERROR_MESSAGE = "{public_run_error}"' in file_sync_text
+    assert f'FILE_SYNC_PUBLIC_ITEM_ERROR_MESSAGE = "{public_item_error}"' in file_sync_text
+    assert '"error_message": str(error)[:1000]' not in file_sync_text
+    assert 'item["error_message"] = str(delete_error)[:1000]' not in file_sync_text
+    assert '"run_failed", {"run_id": run["id"], "error": error_message}' not in file_sync_text
 
 
 def test_azure_blob_secret_credentials_require_key_vault_references():
@@ -380,6 +579,10 @@ def run_tests():
         test_file_sync_backend_azure_blob_wiring,
         test_azure_blob_connection_contract,
         test_azure_blob_connection_normalization_behavior,
+        test_azure_blob_endpoints_block_server_side_request_forgery,
+        test_azure_blob_service_client_revalidates_endpoints_before_sdk_use,
+        test_file_sync_routes_do_not_disclose_exception_details,
+        test_file_sync_run_and_item_errors_are_client_safe,
         test_azure_blob_secret_credentials_require_key_vault_references,
         test_azure_blob_list_browse_and_stage_behavior,
         test_workspace_identity_catalog_supports_azure_blob,
