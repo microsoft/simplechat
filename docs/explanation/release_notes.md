@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.066)**
+
+#### Bug Fixes
+
+*   **GPT 5.6+ Multi-Modal Vision Model Selection**
+    *   Enabled GPT 5.6 Luna, Sol, Terra, and later supported GPT deployments to appear in the Multi-Modal Vision Analysis selector across Azure OpenAI and Foundry endpoints.
+    *   Model detection now evaluates model, display, and deployment names with normalized separators while preserving disabled-model and unsupported-family filtering.
+    *   (Ref: microsoft/simplechat#1086, `admin_settings.js`, `test_admin_multimodal_vision_model_options.py`)
+
 ### **(v0.250.065)**
 
 #### New Features

@@ -8213,19 +8213,7 @@
                                 {# Iterate all enabled endpoints and models, filter to vision-capable #}
                                 {% for endpoint in settings.model_endpoints if endpoint.enabled %}
                                     {% for m in endpoint.models if m.enabled %}
-                                        {% set model_lower = (m.modelName or m.displayName or '').lower() %}
-                                        {% set is_vision =
-                                            'vision' in model_lower or
-                                            'gpt-4o' in model_lower or
-                                            'gpt-4.1' in model_lower or
-                                            'gpt-4.5' in model_lower or
-                                            '-5' in model_lower or
-                                            model_lower.startswith('o1') or
-                                            model_lower.startswith('o3') or
-                                            'o1-' in model_lower or
-                                            'o3-' in model_lower
-                                        %}
-                                        {% if is_vision %}
+                                        {% if is_vision_capable_model(m) %}
                                             {% set option_value = m.deploymentName %}
                                             <option value="{{ option_value }}"
                                                 data-endpoint-id="{{ endpoint.id or '' }}"
@@ -8233,7 +8221,7 @@
                                                 data-provider="{{ endpoint.provider or '' }}"
                                                 data-model-name="{{ m.modelName or '' }}"
                                                 {% if settings.multimodal_vision_model == option_value %}selected{% endif %}>
-                                                {{ m.displayName or m.deploymentName }} ({{ m.modelName }})
+                                                {{ m.displayName or m.deploymentName }}{% if m.modelName %} ({{ m.modelName }}){% endif %}
                                             </option>
                                         {% endif %}
                                     {% endfor %}
@@ -8242,19 +8230,7 @@
                                 {# Legacy APIM-based GPT configuration #}
                                 {% for d in (settings.azure_apim_gpt_deployment or '').split(',') if d %}
                                     {% set d_trim = d.strip() %}
-                                    {% set model_lower = d_trim.lower() %}
-                                    {% set is_vision =
-                                        'vision' in model_lower or
-                                        'gpt-4o' in model_lower or
-                                        'gpt-4.1' in model_lower or
-                                        'gpt-4.5' in model_lower or
-                                        '-5' in model_lower or
-                                        model_lower.startswith('o1') or
-                                        model_lower.startswith('o3') or
-                                        'o1-' in model_lower or
-                                        'o3-' in model_lower
-                                    %}
-                                    {% if is_vision %}
+                                    {% if is_vision_capable_model(d_trim) %}
                                         <option value="{{ d_trim }}"
                                             {% if settings.multimodal_vision_model == d_trim %}selected{% endif %}>
                                             {{ d_trim }}
@@ -8264,28 +8240,16 @@
                             {% else %}
                                 {# Legacy single-endpoint GPT configuration #}
                                 {% for m in settings.gpt_model.selected %}
-                                    {% set model_lower = (m.modelName or '').lower() %}
-                                    {% set is_vision =
-                                        'vision' in model_lower or
-                                        'gpt-4o' in model_lower or
-                                        'gpt-4.1' in model_lower or
-                                        'gpt-4.5' in model_lower or
-                                        'gpt-5' in model_lower or
-                                        model_lower.startswith('o1') or
-                                        model_lower.startswith('o3') or
-                                        'o1-' in model_lower or
-                                        'o3-' in model_lower
-                                    %}
-                                    {% if is_vision %}
+                                    {% if is_vision_capable_model(m) %}
                                         <option value="{{ m.deploymentName }}"
                                             {% if settings.multimodal_vision_model == m.deploymentName %}selected{% endif %}>
-                                            {{ m.deploymentName }} ({{ m.modelName }})
+                                            {{ m.deploymentName }}{% if m.modelName %} ({{ m.modelName }}){% endif %}
                                         </option>
                                     {% endif %}
                                 {% endfor %}
                             {% endif %}
                         </select>
-                        <div class="form-text">Select a GPT model with vision capabilities (e.g., gpt-4o, gpt-4-vision, gpt-5, gpt-5-nano, etc.). Only vision-capable models are shown.</div>
+                        <div class="form-text">Select a GPT model with vision capabilities (for example, gpt-4o or supported GPT 5 and later models). Only vision-capable models are shown.</div>
 
                         <button type="button" class="btn btn-secondary mt-3" id="test_multimodal_vision_button">
                             <i class="bi bi-clipboard-check me-1"></i>Test Vision Analysis

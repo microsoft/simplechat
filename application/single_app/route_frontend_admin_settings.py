@@ -27,6 +27,7 @@ from functions_activity_logging import log_web_search_consent_acceptance, log_ge
 from functions_notifications import broadcast_system_notification
 from functions_logging import *
 from functions_document_actions import normalize_document_action_capabilities
+from functions_model_capabilities import is_vision_capable_model
 from functions_terms_of_use import (
     TERMS_OF_USE_DEFAULT_REDIRECT,
     TERMS_OF_USE_MAX_BUTTON_TEXT_LENGTH,
@@ -596,7 +597,8 @@ def register_route_frontend_admin_settings(bp):
                 chunk_size_cap=get_chunk_size_cap(settings),
                 chunk_size_effective=get_chunk_size_config(settings),
                 audio_runtime_capabilities=audio_runtime_capabilities,
-                source_review_runtime_capabilities=source_review_runtime_capabilities
+                source_review_runtime_capabilities=source_review_runtime_capabilities,
+                is_vision_capable_model=is_vision_capable_model,
                 # You don't need to pass deployments separately if they are added to settings['..._model']['all']
                 # gpt_deployments=gpt_deployments,
                 # embedding_deployments=embedding_deployments,

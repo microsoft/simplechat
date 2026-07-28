@@ -8364,18 +8364,22 @@ const visionToggle = document.getElementById('enable_multimodal_vision');
 const visionModelDiv = document.getElementById('multimodal_vision_model_settings');
 const visionSelect = document.getElementById('multimodal_vision_model');
 
-function isVisionCapableModelName(modelName) {
-    const modelNameLower = (modelName || '').toLowerCase();
-    return (
-        modelNameLower.includes('vision') ||
-        modelNameLower.includes('gpt-4o') ||
-        modelNameLower.includes('gpt-4.1') ||
-        modelNameLower.includes('gpt-4.5') ||
-        modelNameLower.includes('gpt-5') ||
-        /^o\d+/.test(modelNameLower) ||
-        modelNameLower.includes('o1-') ||
-        modelNameLower.includes('o3-')
-    );
+function isVisionCapableModelName(...modelNames) {
+    return modelNames.some(modelName => {
+        const normalizedName = String(modelName || '')
+            .trim()
+            .toLowerCase()
+            .replace(/[\s_.]+/g, '-');
+
+        return (
+            normalizedName.includes('vision') ||
+            normalizedName.includes('gpt-4o') ||
+            normalizedName.includes('gpt-4-1') ||
+            normalizedName.includes('gpt-4-5') ||
+            /(?:^|-)gpt-(?:[5-9]|\d{2,})(?:-|$)/.test(normalizedName) ||
+            /(?:^|-)o\d+(?:-|$)/.test(normalizedName)
+        );
+    });
 }
 
 function getSelectedVisionModelOption() {
@@ -8401,10 +8405,18 @@ function populateVisionModels() {
             .filter(ep => ep && ep.enabled)
             .forEach(ep => {
                 (ep.models || [])
-                    .filter(m => m && m.enabled && isVisionCapableModelName(m.modelName || m.displayName))
+                    .filter(m => m && m.enabled && isVisionCapableModelName(
+                        m.modelName,
+                        m.displayName,
+                        m.deploymentName,
+                        m.deployment,
+                        m.name
+                    ))
                     .forEach(m => {
                         const value = m.deploymentName;
-                        const label = `${m.displayName || m.deploymentName} (${m.modelName})`;
+                        const label = m.modelName
+                            ? `${m.displayName || m.deploymentName} (${m.modelName})`
+                            : (m.displayName || m.deploymentName);
                         const opt = new Option(label, value);
                         opt.dataset.endpointId = ep.id || '';
                         opt.dataset.modelId = m.id || '';
