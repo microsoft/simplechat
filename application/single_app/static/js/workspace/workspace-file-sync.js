@@ -1050,7 +1050,7 @@ function initializeFileSyncRoot(root) {
         });
         const azureBlobCredentialNotice = createElement('div', {
             className: 'alert alert-info py-2 mb-3',
-            text: 'Each source syncs one container. A container SAS needs Read and List only. Extra permissions are accepted but are not needed and will be flagged. Account SAS and storage account keys work but grant broader access. To sync multiple containers, create one source per container. Managed identity is recommended; secret credentials require Azure Key Vault secret storage.',
+            text: 'Each source syncs one container. A container SAS needs Read and List only. Extra permissions are accepted but are not needed and will be flagged. Account SAS and storage account keys work but grant broader access. To sync multiple containers, create one source per container. Managed identity is recommended. Secret credentials use Azure Key Vault when enabled; otherwise they use the existing File Sync source or identity credential storage.',
         });
         const azureBlobCredentialAssessment = createElement('div', { className: 'd-none' });
         renderCredentialMetadata(azureBlobCredentialAssessment, source?.credential_metadata, false);

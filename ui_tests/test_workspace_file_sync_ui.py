@@ -1,11 +1,12 @@
 # test_workspace_file_sync_ui.py
 """
 UI test for workspace File Sync tab.
-Version: 0.250.069
+Version: 0.250.070
 Implemented in: 0.241.042
 Updated in: 0.250.067
 Updated in: 0.250.068
 Updated in: 0.250.069
+Updated in: 0.250.070
 
 This test ensures the workspace Sync tab renders, loads source rows, opens the
 source workflow modal, and queues a manual sync without browser console errors.

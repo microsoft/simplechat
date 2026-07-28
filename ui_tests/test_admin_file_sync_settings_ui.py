@@ -2,13 +2,14 @@
 """
 UI test for Admin Settings File Sync management.
 
-Version: 0.250.069
+Version: 0.250.070
 Implemented in: 0.241.073
 Updated in: 0.241.178
 Updated in: 0.241.180
 Updated in: 0.250.067
 Updated in: 0.250.068
 Updated in: 0.250.069
+Updated in: 0.250.070
 
 This test ensures the Admin Settings File Sync tab renders as its own section,
 uses personal app-role and workspace assignment gate controls, stacks scope cards

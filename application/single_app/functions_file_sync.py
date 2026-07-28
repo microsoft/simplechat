@@ -290,12 +290,6 @@ def _file_sync_auth_types_for_source_type(source_type: str) -> set:
     return FILE_SYNC_IDENTITY_AUTH_TYPES_BY_SOURCE.get(normalized_source_type, {"username_password", "anonymous"})
 
 
-def _assert_azure_blob_auth_storage(auth: Dict[str, Any]) -> None:
-    auth_type = _normalize_text((auth or {}).get("auth_type"), 50).lower()
-    if auth_type in {"client_secret", "connection_string"} and not (auth or {}).get("secret_secret_name"):
-        raise ValueError("Azure Blob Storage secret credentials must be stored in Azure Key Vault")
-
-
 def _default_auth_type_for_source_type(source_type: str) -> str:
     normalized_source_type = _normalize_source_type(source_type)
     if normalized_source_type == FILE_SYNC_SOURCE_TYPE_ONEDRIVE:
@@ -566,8 +560,6 @@ def _get_file_sync_identity(
         auth_types=_file_sync_auth_types_for_source_type(normalized_source_type),
     ):
         raise ValueError(f"Selected workspace identity cannot be used for {_source_type_label(normalized_source_type)} File Sync")
-    if normalized_source_type == FILE_SYNC_SOURCE_TYPE_AZURE_BLOB:
-        _assert_azure_blob_auth_storage(identity.get("auth") or {})
     return identity
 
 
@@ -1450,7 +1442,6 @@ def _prepare_auth_payload(
             auth_type,
             source_label="Azure Blob Storage",
         )
-        _assert_azure_blob_auth_storage(prepared_auth)
         return prepared_auth
 
     username = _normalize_text(raw_credentials.get("username", existing_auth.get("username", "")), 255)
@@ -1972,7 +1963,6 @@ def _test_azure_files_connection(source: Dict[str, Any]) -> Dict[str, Any]:
 def _test_azure_blob_connection(source: Dict[str, Any]) -> Dict[str, Any]:
     try:
         container_client = _get_azure_blob_container_client(source)
-        container_client.get_container_properties()
         blob_prefix = source.get("connection", {}).get("blob_prefix", "")
         browse_prefix = f"{blob_prefix.rstrip('/')}/" if blob_prefix else ""
         entries_checked = 0
@@ -2026,10 +2016,14 @@ def _test_azure_blob_connection(source: Dict[str, Any]) -> Dict[str, Any]:
             extra=diagnostics,
             exceptionTraceback=True,
         )
-        error_code = diagnostics.get("error_code", "").lower()
-        if error_code in {"authorizationpermissionmismatch", "authorizationfailure"}:
+        error_code = diagnostics.get("error_code", "")
+        if error_code == "authorizationpermissionmismatch":
             raise FileSyncPublicValidationError(
                 "Azure rejected the Blob operation. A container SAS must include both Read and List permissions."
+            ) from error
+        if error_code == "authorizationfailure":
+            raise FileSyncPublicValidationError(
+                "Azure denied the Blob request. Confirm the SAS matches the account and container, is within its start/expiry window, and is allowed by the storage account network policy."
             ) from error
         if error_code in {"authenticationfailed", "invalidauthenticationinfo"}:
             raise FileSyncPublicValidationError(
@@ -2052,14 +2046,21 @@ def _azure_blob_error_diagnostics(error: Exception, source: Dict[str, Any]) -> D
     credential_metadata = _sanitize_azure_blob_credential_metadata(source.get("credential_metadata"))
     return {
         "exception_type": type(error).__name__,
-        "error_code": _normalize_text(getattr(error, "error_code", ""), 100),
+        "error_code": _normalize_azure_storage_error_code(getattr(error, "error_code", "")),
         "status_code": getattr(error, "status_code", None) or getattr(response, "status_code", None),
         "request_id": _normalize_text(headers.get("x-ms-request-id", ""), 100),
         "source_id": source.get("id"),
-        "credential_type": credential_metadata.get("credential_type", ""),
-        "sas_scope": credential_metadata.get("sas_scope", ""),
+        "auth_kind": credential_metadata.get("credential_type", ""),
+        "scope_kind": credential_metadata.get("sas_scope", ""),
         "permissions": credential_metadata.get("permissions", ""),
     }
+
+
+def _normalize_azure_storage_error_code(value: Any) -> str:
+    raw_value = str(getattr(value, "value", value) or "").strip()
+    if "." in raw_value:
+        raw_value = raw_value.rsplit(".", 1)[-1]
+    return re.sub(r"[^a-z0-9]", "", raw_value.lower())[:100]
 
 
 def delete_file_sync_source(scope_type: str, scope_id: str, source_id: str, deleted_by: str, delete_associated_files: bool = False) -> Dict[str, Any]:

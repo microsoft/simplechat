@@ -2,10 +2,11 @@
 # test_file_sync_azure_blob_storage.py
 """
 Functional test for Azure Blob Storage File Sync.
-Version: 0.250.069
+Version: 0.250.070
 Implemented in: 0.250.067
 Security hardening in: 0.250.068
 Container SAS support in: 0.250.069
+Non-Key-Vault and List/Read validation fix in: 0.250.070
 
 This test ensures Azure Blob Storage is wired into the shared File Sync
 pipeline for every supported workspace scope without requiring live Azure
@@ -15,6 +16,7 @@ Storage or Cosmos DB access.
 import ast
 import hashlib
 import json
+import logging
 import os
 import re
 import sys
@@ -83,7 +85,7 @@ def test_version_and_dependency_pin():
     config_text = read_text("application/single_app/config.py")
     requirements_text = read_text("application/single_app/requirements.txt")
 
-    assert 'VERSION = "0.250.069"' in config_text
+    assert 'VERSION = "0.250.070"' in config_text
     assert "azure-storage-blob==12.24.1" in requirements_text
 
 
@@ -93,7 +95,6 @@ def test_file_sync_backend_azure_blob_wiring():
     names = function_names(parse_app("functions_file_sync.py"))
 
     expected_functions = {
-        "_assert_azure_blob_auth_storage",
         "_normalize_azure_blob_connection",
         "_test_azure_blob_connection",
         "_get_azure_blob_service_client",
@@ -113,7 +114,7 @@ def test_file_sync_backend_azure_blob_wiring():
     assert '"remote_change_token":' in file_sync_text
     assert '"azure_blob_name":' in file_sync_text
     assert "downloader.chunks()" in file_sync_text
-    assert "Azure Blob Storage secret credentials must be stored in Azure Key Vault" in file_sync_text
+    assert "Azure Blob Storage secret credentials must be stored in Azure Key Vault" not in file_sync_text
 
 
 def test_azure_blob_connection_contract():
@@ -127,9 +128,12 @@ def test_azure_blob_connection_contract():
         '"selected_paths": _normalize_selected_paths',
         "list_blobs(name_starts_with=",
         "walk_blobs(name_starts_with=",
-        "get_container_properties()",
     ]:
         assert marker in file_sync_text
+    connection_test_block = file_sync_text.split("def _test_azure_blob_connection", 1)[1].split(
+        "def _azure_blob_error_diagnostics", 1
+    )[0]
+    assert "get_container_properties" not in connection_test_block
 
 
 def test_azure_blob_connection_normalization_behavior():
@@ -673,7 +677,10 @@ def test_azure_blob_failure_diagnostics_are_non_secret_and_actionable():
         headers = {"x-ms-request-id": "request-123"}
 
     class FakeAzureError(Exception):
-        error_code = "AuthorizationPermissionMismatch"
+        class ErrorCode:
+            value = "AuthorizationPermissionMismatch"
+
+        error_code = ErrorCode()
         status_code = 403
         response = FakeResponse()
 
@@ -681,6 +688,7 @@ def test_azure_blob_failure_diagnostics_are_non_secret_and_actionable():
         "functions_file_sync.py",
         {
             "_normalize_text",
+            "_normalize_azure_storage_error_code",
             "_sanitize_azure_blob_credential_metadata",
             "_azure_blob_error_diagnostics",
         },
@@ -701,12 +709,12 @@ def test_azure_blob_failure_diagnostics_are_non_secret_and_actionable():
 
     assert diagnostics == {
         "exception_type": "FakeAzureError",
-        "error_code": "AuthorizationPermissionMismatch",
+        "error_code": "authorizationpermissionmismatch",
         "status_code": 403,
         "request_id": "request-123",
         "source_id": "source-1",
-        "credential_type": "sas",
-        "sas_scope": "container",
+        "auth_kind": "sas",
+        "scope_kind": "container",
         "permissions": "rl",
     }
     assert "signed URL" not in json.dumps(diagnostics)
@@ -722,6 +730,66 @@ def test_azure_blob_failure_diagnostics_are_non_secret_and_actionable():
         "def _azure_blob_error_diagnostics", 1
     )[0]
     assert '"error": str(error)' not in connection_test_block
+
+
+def test_azure_blob_connection_test_uses_only_list_and_read_operations():
+    """Validate container SAS testing avoids unneeded container-properties access."""
+    class FakeBlobClient:
+        def get_blob_properties(self):
+            return {"etag": "etag-1"}
+
+    class FakeContainerClient:
+        def get_container_properties(self):
+            raise AssertionError("Get Container Properties is not required for File Sync")
+
+        def walk_blobs(self, name_starts_with=None, delimiter=None):
+            assert name_starts_with == "reports/"
+            assert delimiter == "/"
+            return [{"name": "reports/example.pdf", "size": 10}]
+
+        def list_blobs(self, name_starts_with=None):
+            raise AssertionError("Fallback listing should not run after a readable top-level blob")
+
+        def get_blob_client(self, blob_name):
+            assert blob_name == "reports/example.pdf"
+            return FakeBlobClient()
+
+    functions = load_functions(
+        "functions_file_sync.py",
+        {
+            "_normalize_text",
+            "_azure_blob_item_value",
+            "_azure_blob_item_name",
+            "_azure_blob_item_is_folder",
+            "_sanitize_azure_blob_credential_metadata",
+            "_test_azure_blob_connection",
+        },
+        {
+            "_get_azure_blob_container_client": lambda source: FakeContainerClient(),
+            "FileSyncPublicValidationError": ValueError,
+            "AzureResourceNotFoundError": RuntimeError,
+            "log_event": lambda *args, **kwargs: None,
+            "logging": logging,
+        },
+    )
+    result = functions["_test_azure_blob_connection"]({
+        "id": "source-1",
+        "source_type": "azure_blob",
+        "recursive": True,
+        "connection": {"blob_prefix": "reports"},
+        "credential_metadata": {
+            "credential_type": "sas",
+            "sas_scope": "container",
+            "permissions": "rl",
+            "warnings": [],
+        },
+    })
+
+    assert result["success"] is True
+    assert result["entries_checked"] == 1
+    assert result["files_seen"] == 1
+    assert result["read_verified"] is True
+    assert result["credential_metadata"]["warnings"] == []
 
 
 def test_azure_blob_sas_metadata_is_non_secret_and_frontend_visible():
@@ -797,27 +865,43 @@ def test_file_sync_run_and_item_errors_are_client_safe():
     assert '"run_failed", {"run_id": run["id"], "error": error_message}' not in file_sync_text
 
 
-def test_azure_blob_secret_credentials_require_key_vault_references():
-    """Validate saved Blob secrets cannot remain inline in Cosmos records."""
-    functions = load_functions(
+def test_azure_blob_secret_credentials_support_optional_key_vault_storage():
+    """Validate Blob secrets use Key Vault when enabled and source storage otherwise."""
+    store_calls = []
+    disabled_functions = load_functions(
         "functions_file_sync.py",
-        {"_normalize_text", "_assert_azure_blob_auth_storage"},
+        {"_as_bool", "_store_file_sync_secret"},
+        {
+            "get_settings": lambda: {
+                "enable_key_vault_secret_storage": False,
+                "key_vault_name": "",
+            },
+            "store_secret_in_key_vault": lambda **kwargs: store_calls.append(kwargs),
+            "_keyvault_scope": lambda scope_type: scope_type,
+        },
     )
-    assert_auth_storage = functions["_assert_azure_blob_auth_storage"]
+    inline_secret = disabled_functions["_store_file_sync_secret"](
+        "personal", "user-1", "source-1", "secret", "sas-secret"
+    )
+    assert inline_secret == "sas-secret"
+    assert store_calls == []
 
-    assert_auth_storage({"auth_type": "managed_identity"})
-    assert_auth_storage({"auth_type": "client_secret", "secret_secret_name": "https://vault/secrets/client"})
-    assert_auth_storage({"auth_type": "connection_string", "secret_secret_name": "https://vault/secrets/connection"})
-
-    for auth in [
-        {"auth_type": "client_secret", "secret": "raw-secret"},
-        {"auth_type": "connection_string", "secret": "raw-connection-string"},
-    ]:
-        try:
-            assert_auth_storage(auth)
-            raise AssertionError("Inline Azure Blob secrets must be rejected")
-        except ValueError as exc:
-            assert "Azure Key Vault" in str(exc)
+    enabled_functions = load_functions(
+        "functions_file_sync.py",
+        {"_as_bool", "_store_file_sync_secret"},
+        {
+            "get_settings": lambda: {
+                "enable_key_vault_secret_storage": True,
+                "key_vault_name": "vault",
+            },
+            "store_secret_in_key_vault": lambda **kwargs: "vault-secret-reference",
+            "_keyvault_scope": lambda scope_type: scope_type,
+        },
+    )
+    key_vault_secret = enabled_functions["_store_file_sync_secret"](
+        "personal", "user-1", "source-1", "secret", "sas-secret"
+    )
+    assert key_vault_secret == "vault-secret-reference"
 
 
 def test_azure_blob_list_browse_and_stage_behavior():
@@ -1016,10 +1100,11 @@ def run_tests():
         test_azure_blob_new_credentials_are_validated_before_secret_storage,
         test_azure_blob_identity_and_read_fallback_guards_are_wired,
         test_azure_blob_failure_diagnostics_are_non_secret_and_actionable,
+        test_azure_blob_connection_test_uses_only_list_and_read_operations,
         test_azure_blob_sas_metadata_is_non_secret_and_frontend_visible,
         test_file_sync_routes_do_not_disclose_exception_details,
         test_file_sync_run_and_item_errors_are_client_safe,
-        test_azure_blob_secret_credentials_require_key_vault_references,
+        test_azure_blob_secret_credentials_support_optional_key_vault_storage,
         test_azure_blob_list_browse_and_stage_behavior,
         test_workspace_identity_catalog_supports_azure_blob,
         test_frontend_source_workflow_supports_azure_blob,
