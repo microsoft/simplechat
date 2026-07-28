@@ -1,8 +1,9 @@
 # test_workflow_stepped_builder.py
 """
 Functional test for the stepped workflow builder.
-Version: 0.250.064
+Version: 0.250.065
 Implemented in: 0.250.064
+Enhanced in: 0.250.065
 
 This test ensures personal and group workflow modals use the same five-step
 builder and submit ordered tasks and error handling through existing routes.
@@ -12,7 +13,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_VERSION = "0.250.064"
+EXPECTED_VERSION = "0.250.065"
 
 
 def read_text(relative_path: str) -> str:
@@ -34,6 +35,13 @@ def test_personal_and_group_templates_share_five_step_builder() -> None:
             "workflow-task-list",
             "workflow-add-task-btn",
             "workflow-task-name",
+            "workflow-task-runner-type",
+            "workflow-task-model-fields",
+            "workflow-task-model-source",
+            "workflow-task-model-endpoint",
+            "workflow-task-model",
+            "workflow-task-agent-fields",
+            "workflow-task-agent",
             "workflow-error-strategy-halt",
             "workflow-error-strategy-continue",
             "workflow-task-retry-count",
@@ -43,6 +51,8 @@ def test_personal_and_group_templates_share_five_step_builder() -> None:
         ):
             assert f'id="{element_id}"' in content
         assert "modal-dialog modal-xl modal-dialog-scrollable" in content
+        assert '<label for="workflow-runner-type" class="form-label">Default Runner</label>' in content
+        assert '<option value="inherit">Workflow default</option>' in content
         assert "cdn.tailwindcss.com" not in content
         assert "fonts.googleapis.com" not in content
 
@@ -60,6 +70,10 @@ def test_shared_browser_behavior_builds_safe_ordered_task_payload() -> None:
         "moveWorkflowTask",
         "removeWorkflowTask",
         "initializeWorkflowTasks",
+        "normalizeWorkflowTaskRunner",
+        "serializeWorkflowTaskRunner",
+        "getWorkflowTaskRunnerSummary",
+        "updateWorkflowTaskRunnerFields",
         "renderWorkflowReview",
         "validateWorkflowStep",
         "showWorkflowStep",
@@ -67,9 +81,13 @@ def test_shared_browser_behavior_builds_safe_ordered_task_payload() -> None:
     ):
         assert f"function {function_name}(" in content
     assert "workflowTasks.map((task, index) => ({" in content
+    assert "runner: serializeWorkflowTaskRunner(task.runner)," in content
     assert "error_handling:" in content
     assert "workflow-review-summary__item" in content
     assert 'name.textContent = task.name || `Task ${index + 1}`;' in content
+    assert "runner.textContent = getWorkflowTaskRunnerSummary(task);" in content
+    assert 'addWorkflowReviewItem("Default Runner"' in content
+    assert "workflowTaskAgentSelect.innerHTML" not in content
     assert "item.innerHTML" not in content
 
     print("PASS: stepped workflow browser behavior contract")
@@ -92,6 +110,7 @@ def test_existing_routes_persist_tasks_without_new_endpoints() -> None:
     assert "save_group_workflow(" in routes
     assert "/api/user/workflows/<workflow_id>/run" in routes
     assert "/api/group/workflows/<workflow_id>/run" in routes
+    assert "/task-runners" not in routes
 
     print("PASS: stepped workflow route and persistence contract")
 

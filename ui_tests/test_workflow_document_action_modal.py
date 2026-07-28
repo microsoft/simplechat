@@ -1,9 +1,9 @@
 # test_workflow_document_action_modal.py
 """
 UI test for workflow document action modal.
-Version: 0.250.064
+Version: 0.250.065
 Implemented in: 0.250.063
-Enhanced in: 0.250.064
+Enhanced in: 0.250.065
 
 This test ensures the workflow modal supports generic no-document automation,
 uses Source/Target wording for comparison, and submits version-aware comparison
@@ -74,10 +74,14 @@ def _route_workflow_api(page, workflow_state):
     page.route("**/api/user/workflows**", handler)
 
 
-def _route_agent_api(page):
+def _route_agent_api(page, agents=None):
     page.route(
         "**/api/user/agents",
-        lambda route: route.fulfill(status=200, content_type="application/json", body=json.dumps([])),
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(list(agents or [])),
+        ),
     )
 
 
@@ -364,6 +368,150 @@ def test_workflow_document_action_modal_per_document_analysis():
             assert saved_payload["document_action"]["analysis_mode"] == "per_document"
             assert saved_payload["analyze"]["enabled"] is True
             assert saved_payload["analyze"]["analysis_mode"] == "per_document"
+        finally:
+            context.close()
+            browser.close()
+
+
+@pytest.mark.ui
+def test_workflow_task_runner_controls_safe_summaries_and_mobile_layout():
+    """Validate task runner overrides, safe labels, review output, payloads, and responsive layout."""
+    _require_ui_env()
+    playwright_sync = _require_playwright()
+
+    with playwright_sync.sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        context = browser.new_context(
+            storage_state=STORAGE_STATE,
+            viewport={"width": 1440, "height": 900},
+        )
+        page = context.new_page()
+        workflow_state = {"items": [], "saved_payloads": []}
+        malicious_agent_name = '<img id="task-runner-xss" src=x onerror="window.taskRunnerXss=true">'
+        malicious_endpoint_name = '<svg id="task-runner-endpoint-xss" onload="window.taskRunnerXss=true"></svg>'
+
+        _route_workflow_api(page, workflow_state)
+        _route_agent_api(page, [
+            {
+                "id": "research-agent",
+                "name": "server_research",
+                "display_name": malicious_agent_name,
+                "is_global": False,
+                "is_group": False,
+            }
+        ])
+        _route_document_apis(page)
+
+        try:
+            response = page.goto(f"{BASE_URL}/workspace", wait_until="networkidle")
+            assert response is not None and response.ok, "Expected /workspace to load successfully."
+            page.evaluate(
+                """
+                ([endpointName]) => {
+                    window.taskRunnerXss = false;
+                    window.globalModelEndpoints = [{
+                        id: "global-fast",
+                        name: endpointName,
+                        provider: "aoai",
+                        enabled: true,
+                        models: [{ id: "fast-model", displayName: "Fast model", enabled: true }],
+                    }];
+                    window.workspaceModelEndpoints = [{
+                        id: "personal-reasoning",
+                        name: "Reasoning endpoint",
+                        provider: "openai",
+                        enabled: true,
+                        models: [{ id: "reasoning-model", displayName: "Reasoning model", enabled: true }],
+                    }];
+                }
+                """,
+                [malicious_endpoint_name],
+            )
+
+            _open_workflows_tab(page)
+            page.get_by_role("button", name="New Workflow").click()
+            expect(page.locator("#workflowModal")).to_be_visible()
+            expect(page.get_by_label("Default Runner")).to_have_value("model")
+
+            _advance_workflow_builder_to_tasks(
+                page,
+                "Multi-agent publication",
+                "Extract the source facts.",
+            )
+            expect(page.locator("#workflow-task-runner-type")).to_have_value("inherit")
+            expect(page.locator("#workflow-task-model-fields")).to_be_hidden()
+            expect(page.locator("#workflow-task-agent-fields")).to_be_hidden()
+
+            page.fill("#workflow-task-name", "Extract facts")
+            page.select_option("#workflow-task-runner-type", "model")
+            expect(page.locator("#workflow-task-model-fields")).to_be_visible()
+            expect(page.locator("#workflow-task-agent-fields")).to_be_hidden()
+            page.select_option("#workflow-task-model-source", "global")
+            page.select_option("#workflow-task-model-endpoint", "global-fast")
+            page.select_option("#workflow-task-model", "fast-model")
+
+            page.click("#workflow-add-task-btn")
+            page.fill("#workflow-task-name", "Research facts")
+            page.fill("#workflow-task-prompt", "Enrich the facts with authorized tools.")
+            page.select_option("#workflow-task-runner-type", "agent")
+            expect(page.locator("#workflow-task-agent-fields")).to_be_visible()
+            expect(page.locator("#workflow-task-model-fields")).to_be_hidden()
+            page.select_option("#workflow-task-agent", "personal:research-agent")
+
+            page.click("#workflow-add-task-btn")
+            page.fill("#workflow-task-name", "Publish")
+            page.fill("#workflow-task-prompt", "Create the final artifact.")
+            expect(page.locator("#workflow-task-runner-type")).to_have_value("inherit")
+            expect(page.locator("#workflow-task-list .workflow-task-item")).to_have_count(3)
+
+            page.get_by_role("button", name="Move Research facts up").click()
+            task_names = page.locator("#workflow-task-list .workflow-task-item__name").all_text_contents()
+            assert task_names == ["Research facts", "Extract facts", "Publish"]
+            expect(page.locator("#workflow-task-list")).to_contain_text("Workflow default: Direct Model")
+            expect(page.locator("#workflow-task-list")).to_contain_text(malicious_agent_name)
+            expect(page.locator("#workflow-task-list #task-runner-xss")).to_have_count(0)
+            expect(page.locator("#workflow-task-list #task-runner-endpoint-xss")).to_have_count(0)
+            assert page.evaluate("window.taskRunnerXss") is False
+
+            _advance_workflow_builder_to_review(page)
+            review_summary = page.locator("#workflow-review-summary")
+            expect(review_summary).to_contain_text("Default Runner")
+            expect(review_summary).to_contain_text("Research facts - Agent")
+            expect(review_summary).to_contain_text("Extract facts - Direct Model")
+            expect(review_summary).to_contain_text("Publish - Workflow default")
+
+            page.set_viewport_size({"width": 390, "height": 844})
+            page.locator('[data-workflow-step-target="tasks"]').click()
+            page.get_by_role("button", name="Edit Extract facts").click()
+            expect(page.locator("#workflow-task-model-fields")).to_be_visible()
+            source_box = page.locator("#workflow-task-model-source").bounding_box()
+            endpoint_box = page.locator("#workflow-task-model-endpoint").bounding_box()
+            model_box = page.locator("#workflow-task-model").bounding_box()
+            assert source_box and endpoint_box and model_box
+            assert source_box["y"] < endpoint_box["y"] < model_box["y"]
+            for box in (source_box, endpoint_box, model_box):
+                assert box["x"] >= 0
+                assert box["x"] + box["width"] <= 391
+
+            page.locator('[data-workflow-step-target="review"]').click()
+            page.click("#workflow-save-btn")
+            assert workflow_state["saved_payloads"], "Expected the workflow save handler to capture the modal payload."
+            saved_tasks = workflow_state["saved_payloads"][0]["tasks"]
+            assert [task["name"] for task in saved_tasks] == ["Research facts", "Extract facts", "Publish"]
+            assert [task["runner"]["type"] for task in saved_tasks] == ["agent", "model", "inherit"]
+            assert saved_tasks[0]["runner"]["selected_agent"] == {
+                "id": "research-agent",
+                "name": "server_research",
+                "is_global": False,
+                "is_group": False,
+                "group_id": "",
+            }
+            assert saved_tasks[1]["runner"] == {
+                "type": "model",
+                "model_endpoint_id": "global-fast",
+                "model_id": "fast-model",
+            }
+            assert page.evaluate("window.taskRunnerXss") is False
         finally:
             context.close()
             browser.close()

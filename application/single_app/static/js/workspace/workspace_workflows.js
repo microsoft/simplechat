@@ -91,6 +91,14 @@ const workflowTaskBriefInput = document.getElementById("workflow-task-brief");
 const workflowDraftInstructionsBtn = document.getElementById("workflow-draft-instructions-btn");
 const workflowDraftInstructionsStatus = document.getElementById("workflow-draft-instructions-status");
 const workflowTaskPromptInput = document.getElementById("workflow-task-prompt");
+const workflowTaskRunnerTypeSelect = document.getElementById("workflow-task-runner-type");
+const workflowTaskModelFields = document.getElementById("workflow-task-model-fields");
+const workflowTaskModelSourceSelect = document.getElementById("workflow-task-model-source");
+const workflowTaskModelEndpointSelect = document.getElementById("workflow-task-model-endpoint");
+const workflowTaskModelSelect = document.getElementById("workflow-task-model");
+const workflowTaskAgentFields = document.getElementById("workflow-task-agent-fields");
+const workflowTaskAgentSelect = document.getElementById("workflow-task-agent");
+const workflowTaskAgentHelp = document.getElementById("workflow-task-agent-help");
 const workflowUrlAccessEnabledToggle = document.getElementById("workflow-url-access-enabled");
 const workflowRunnerTypeSelect = document.getElementById("workflow-runner-type");
 const workflowAgentFields = document.getElementById("workflow-agent-fields");
@@ -124,7 +132,7 @@ const workflowTaskRetryCountInput = document.getElementById("workflow-task-retry
 const workflowReviewSummary = document.getElementById("workflow-review-summary");
 const WORKFLOW_STEPS = ["general", "trigger", "tasks", "reliability", "review"];
 const WORKFLOW_STEP_DESCRIPTIONS = {
-    general: "Name the workflow and choose its runner.",
+    general: "Name the workflow and choose its default runner.",
     trigger: "Choose when the workflow runs and configure optional inputs.",
     tasks: "Build the ordered instruction sequence.",
     reliability: "Choose retry and failure behavior.",
@@ -353,6 +361,271 @@ function getActiveWorkflowTask() {
     return workflowTasks.find((task) => task.id === activeWorkflowTaskId) || null;
 }
 
+function normalizeWorkflowTaskRunner(runner) {
+    const source = runner && typeof runner === "object" ? runner : {};
+    const runnerType = ["model", "agent"].includes(normalizeText(source.type))
+        ? normalizeText(source.type)
+        : "inherit";
+    if (runnerType === "model") {
+        return {
+            type: "model",
+            model_endpoint_id: normalizeText(source.model_endpoint_id),
+            model_id: normalizeText(source.model_id),
+        };
+    }
+    if (runnerType === "agent") {
+        const selectedAgent = source.selected_agent && typeof source.selected_agent === "object"
+            ? source.selected_agent
+            : {};
+        return {
+            type: "agent",
+            selected_agent: {
+                id: normalizeText(selectedAgent.id),
+                name: normalizeText(selectedAgent.name),
+                display_name: normalizeText(selectedAgent.display_name),
+                is_global: Boolean(selectedAgent.is_global),
+                is_group: Boolean(selectedAgent.is_group),
+                group_id: normalizeText(selectedAgent.group_id),
+            },
+        };
+    }
+    return { type: "inherit" };
+}
+
+function serializeWorkflowTaskRunner(runner) {
+    const normalizedRunner = normalizeWorkflowTaskRunner(runner);
+    if (normalizedRunner.type === "model") {
+        return normalizedRunner;
+    }
+    if (normalizedRunner.type === "agent") {
+        return {
+            type: "agent",
+            selected_agent: {
+                id: normalizedRunner.selected_agent.id,
+                name: normalizedRunner.selected_agent.name,
+                is_global: normalizedRunner.selected_agent.is_global,
+                is_group: normalizedRunner.selected_agent.is_group,
+                group_id: normalizedRunner.selected_agent.group_id,
+            },
+        };
+    }
+    return { type: "inherit" };
+}
+
+function getAgentScopeLabel(agent) {
+    if (agent?.is_global) {
+        return "Global Agent";
+    }
+    if (agent?.is_group) {
+        return "Group Agent";
+    }
+    return "Personal Agent";
+}
+
+function getWorkflowDefaultRunnerSummary() {
+    if (normalizeText(workflowRunnerTypeSelect?.value) === "agent") {
+        const agent = getSelectedAgentOption();
+        const label = normalizeText(agent?.display_name || agent?.name) || "Unavailable agent";
+        return `${label} (${getAgentScopeLabel(agent)})`;
+    }
+    if (normalizeText(workflowModelSourceSelect?.value) === "custom") {
+        const endpoint = getSelectedEndpointOption();
+        const modelId = normalizeText(workflowModelSelect?.value);
+        const model = endpoint?.models?.find((candidate) => normalizeText(candidate.id) === modelId);
+        if (endpoint && model) {
+            return `${getEndpointDisplayName(endpoint)} / ${getModelDisplayName(model)}`;
+        }
+    }
+    return "Direct Model (app default)";
+}
+
+function getWorkflowTaskRunnerSummary(task) {
+    const runner = normalizeWorkflowTaskRunner(task?.runner);
+    if (runner.type === "inherit") {
+        return `Workflow default: ${getWorkflowDefaultRunnerSummary()}`;
+    }
+    if (runner.type === "agent") {
+        const selectedAgent = runner.selected_agent;
+        const authorizedAgent = agentOptions.find(
+            (agent) => getAgentOptionKey(agent) === getAgentOptionKey(selectedAgent)
+        );
+        const agent = authorizedAgent || selectedAgent;
+        const label = normalizeText(agent?.display_name || agent?.name || agent?.id) || "Unavailable agent";
+        return `Agent: ${label} (${getAgentScopeLabel(agent)})${authorizedAgent ? "" : " - unavailable"}`;
+    }
+
+    const endpoint = getCustomEndpointOptions().find(
+        (candidate) => normalizeText(candidate.id) === runner.model_endpoint_id
+    );
+    const model = endpoint?.models?.find((candidate) => normalizeText(candidate.id) === runner.model_id);
+    if (endpoint && model) {
+        return `Direct Model: ${getEndpointDisplayName(endpoint)} / ${getModelDisplayName(model)}`;
+    }
+    const fallback = [runner.model_endpoint_id, runner.model_id].filter(Boolean).join(" / ") || "Not selected";
+    return `Direct Model: ${fallback} - unavailable`;
+}
+
+function getSelectedWorkflowTaskAgentOption() {
+    const selectedKey = normalizeText(workflowTaskAgentSelect?.value);
+    return agentOptions.find((agent) => getAgentOptionKey(agent) === selectedKey) || null;
+}
+
+function populateWorkflowTaskAgentSelect(selectedAgent = null) {
+    if (!workflowTaskAgentSelect) {
+        return;
+    }
+    const selectedKey = selectedAgent ? getAgentOptionKey(selectedAgent) : "";
+    const options = [...agentOptions].sort((left, right) => {
+        const leftLabel = normalizeText(left.display_name || left.name).toLowerCase();
+        const rightLabel = normalizeText(right.display_name || right.name).toLowerCase();
+        return leftLabel.localeCompare(rightLabel);
+    });
+    clearElementChildren(workflowTaskAgentSelect);
+    options.forEach((agent) => {
+        const option = document.createElement("option");
+        option.value = getAgentOptionKey(agent);
+        option.textContent = `${normalizeText(agent.display_name || agent.name) || "Unnamed Agent"} (${getAgentScopeLabel(agent)})`;
+        option.selected = option.value === selectedKey;
+        workflowTaskAgentSelect.appendChild(option);
+    });
+    if (selectedAgent && !options.some((agent) => getAgentOptionKey(agent) === selectedKey)) {
+        const option = document.createElement("option");
+        option.value = selectedKey;
+        option.textContent = `${normalizeText(selectedAgent.display_name || selectedAgent.name || selectedAgent.id) || "Current Agent"} (Unavailable)`;
+        option.selected = true;
+        option.disabled = true;
+        workflowTaskAgentSelect.appendChild(option);
+    }
+    if (!workflowTaskAgentSelect.options.length) {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = "No agents available";
+        workflowTaskAgentSelect.appendChild(option);
+    }
+    workflowTaskAgentSelect.disabled = options.length === 0;
+    if (workflowTaskAgentHelp) {
+        workflowTaskAgentHelp.textContent = options.length
+            ? workflowWorkspaceConfig.scope === "group"
+                ? "Choose an authorized group or merged global agent."
+                : "Choose an authorized personal or merged global agent."
+            : "No authorized agents are currently available.";
+    }
+}
+
+function getWorkflowTaskModelEndpoints(source = "") {
+    const normalizedSource = normalizeText(source) || "global";
+    return getCustomEndpointOptions().filter((endpoint) => (
+        normalizedSource === "global" ? endpoint.scope === "global" : endpoint.scope !== "global"
+    ));
+}
+
+function populateWorkflowTaskModelSourceSelect(selectedEndpointId = "") {
+    if (!workflowTaskModelSourceSelect) {
+        return "global";
+    }
+    const allEndpoints = getCustomEndpointOptions();
+    const selectedEndpoint = allEndpoints.find(
+        (endpoint) => normalizeText(endpoint.id) === normalizeText(selectedEndpointId)
+    );
+    const globalOption = Array.from(workflowTaskModelSourceSelect.options).find((option) => option.value === "global");
+    const workspaceOption = Array.from(workflowTaskModelSourceSelect.options).find((option) => option.value === "workspace");
+    if (workspaceOption) {
+        workspaceOption.textContent = `${normalizeText(workflowWorkspaceConfig.workspaceEndpointLabel) || "Workspace"} endpoints`;
+    }
+    if (globalOption) {
+        globalOption.disabled = !allEndpoints.some((endpoint) => endpoint.scope === "global");
+    }
+    if (workspaceOption) {
+        workspaceOption.disabled = !allEndpoints.some((endpoint) => endpoint.scope !== "global");
+    }
+
+    let source = selectedEndpoint
+        ? selectedEndpoint.scope === "global" ? "global" : "workspace"
+        : normalizeText(workflowTaskModelSourceSelect.value) || "global";
+    if (!getWorkflowTaskModelEndpoints(source).length) {
+        source = getWorkflowTaskModelEndpoints("global").length ? "global" : "workspace";
+    }
+    workflowTaskModelSourceSelect.value = source;
+    return source;
+}
+
+function populateWorkflowTaskModelEndpointSelect(selectedEndpointId = "") {
+    if (!workflowTaskModelEndpointSelect) {
+        return "";
+    }
+    const endpoints = getWorkflowTaskModelEndpoints(workflowTaskModelSourceSelect?.value);
+    clearElementChildren(workflowTaskModelEndpointSelect);
+    endpoints.forEach((endpoint, index) => {
+        const option = document.createElement("option");
+        option.value = normalizeText(endpoint.id);
+        option.textContent = getEndpointDisplayName(endpoint);
+        option.selected = (selectedEndpointId && option.value === selectedEndpointId) || (!selectedEndpointId && index === 0);
+        workflowTaskModelEndpointSelect.appendChild(option);
+    });
+    if (selectedEndpointId && !endpoints.some((endpoint) => normalizeText(endpoint.id) === selectedEndpointId)) {
+        const option = document.createElement("option");
+        option.value = selectedEndpointId;
+        option.textContent = `${selectedEndpointId} (Unavailable)`;
+        option.selected = true;
+        option.disabled = true;
+        workflowTaskModelEndpointSelect.appendChild(option);
+    }
+    if (!workflowTaskModelEndpointSelect.options.length) {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = "No endpoints available";
+        workflowTaskModelEndpointSelect.appendChild(option);
+    }
+    workflowTaskModelEndpointSelect.disabled = endpoints.length === 0;
+    return normalizeText(workflowTaskModelEndpointSelect.value);
+}
+
+function populateWorkflowTaskModelSelect(selectedModelId = "") {
+    if (!workflowTaskModelSelect) {
+        return;
+    }
+    const endpointId = normalizeText(workflowTaskModelEndpointSelect?.value);
+    const endpoint = getCustomEndpointOptions().find((candidate) => normalizeText(candidate.id) === endpointId);
+    const models = Array.isArray(endpoint?.models) ? endpoint.models : [];
+    clearElementChildren(workflowTaskModelSelect);
+    models.forEach((model, index) => {
+        const option = document.createElement("option");
+        option.value = normalizeText(model.id);
+        option.textContent = getModelDisplayName(model);
+        option.selected = (selectedModelId && option.value === selectedModelId) || (!selectedModelId && index === 0);
+        workflowTaskModelSelect.appendChild(option);
+    });
+    if (selectedModelId && !models.some((model) => normalizeText(model.id) === selectedModelId)) {
+        const option = document.createElement("option");
+        option.value = selectedModelId;
+        option.textContent = `${selectedModelId} (Unavailable)`;
+        option.selected = true;
+        option.disabled = true;
+        workflowTaskModelSelect.appendChild(option);
+    }
+    if (!workflowTaskModelSelect.options.length) {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = "No models available";
+        workflowTaskModelSelect.appendChild(option);
+    }
+    workflowTaskModelSelect.disabled = models.length === 0;
+}
+
+function updateWorkflowTaskRunnerFields(runner = null) {
+    const normalizedRunner = normalizeWorkflowTaskRunner(runner || getActiveWorkflowTask()?.runner);
+    const runnerType = normalizeText(workflowTaskRunnerTypeSelect?.value) || normalizedRunner.type;
+    setElementVisibility(workflowTaskModelFields, runnerType === "model");
+    setElementVisibility(workflowTaskAgentFields, runnerType === "agent");
+    if (runnerType === "model") {
+        populateWorkflowTaskModelSourceSelect(normalizedRunner.model_endpoint_id);
+        populateWorkflowTaskModelEndpointSelect(normalizedRunner.model_endpoint_id);
+        populateWorkflowTaskModelSelect(normalizedRunner.model_id);
+    } else if (runnerType === "agent") {
+        populateWorkflowTaskAgentSelect(normalizedRunner.selected_agent);
+    }
+}
+
 function syncActiveWorkflowTaskFromEditor() {
     const activeTask = getActiveWorkflowTask();
     if (!activeTask) {
@@ -360,6 +633,30 @@ function syncActiveWorkflowTaskFromEditor() {
     }
     activeTask.name = normalizeText(workflowTaskNameInput?.value);
     activeTask.instructions = normalizeText(workflowTaskPromptInput?.value);
+    const runnerType = normalizeText(workflowTaskRunnerTypeSelect?.value) || "inherit";
+    if (runnerType === "model") {
+        activeTask.runner = {
+            type: "model",
+            model_endpoint_id: normalizeText(workflowTaskModelEndpointSelect?.value),
+            model_id: normalizeText(workflowTaskModelSelect?.value),
+        };
+    } else if (runnerType === "agent") {
+        const existingRunner = normalizeWorkflowTaskRunner(activeTask.runner);
+        const selectedAgent = getSelectedWorkflowTaskAgentOption() || existingRunner.selected_agent || {};
+        activeTask.runner = {
+            type: "agent",
+            selected_agent: {
+                id: normalizeText(selectedAgent.id),
+                name: normalizeText(selectedAgent.name),
+                display_name: normalizeText(selectedAgent.display_name),
+                is_global: Boolean(selectedAgent.is_global),
+                is_group: Boolean(selectedAgent.is_group),
+                group_id: normalizeText(selectedAgent.group_id),
+            },
+        };
+    } else {
+        activeTask.runner = { type: "inherit" };
+    }
 }
 
 function populateWorkflowTaskEditor() {
@@ -370,6 +667,11 @@ function populateWorkflowTaskEditor() {
     if (workflowTaskPromptInput) {
         workflowTaskPromptInput.value = activeTask?.instructions || "";
     }
+    const runner = normalizeWorkflowTaskRunner(activeTask?.runner);
+    if (workflowTaskRunnerTypeSelect) {
+        workflowTaskRunnerTypeSelect.value = runner.type;
+    }
+    updateWorkflowTaskRunnerFields(runner);
     if (workflowTaskBriefInput) {
         workflowTaskBriefInput.value = "";
     }
@@ -417,7 +719,10 @@ function renderWorkflowTasks() {
         const preview = document.createElement("div");
         preview.className = "workflow-task-item__preview";
         preview.textContent = task.instructions || "Add task instructions";
-        content.append(name, preview);
+        const runner = document.createElement("div");
+        runner.className = "workflow-task-item__runner small text-muted mt-1";
+        runner.textContent = getWorkflowTaskRunnerSummary(task);
+        content.append(name, preview, runner);
 
         const actions = document.createElement("div");
         actions.className = "workflow-task-item__actions";
@@ -455,6 +760,7 @@ function addWorkflowTask() {
         name: `Task ${workflowTasks.length + 1}`,
         instructions: "",
         order: workflowTasks.length + 1,
+        runner: { type: "inherit" },
     };
     workflowTasks.push(task);
     activeWorkflowTaskId = task.id;
@@ -500,6 +806,7 @@ function initializeWorkflowTasks(workflow = null) {
             name: normalizeText(task.name) || `Task ${index + 1}`,
             instructions: normalizeText(task.instructions),
             order: index + 1,
+            runner: normalizeWorkflowTaskRunner(task.runner),
         }))
         : [{
             id: createWorkflowTaskId(),
@@ -507,6 +814,7 @@ function initializeWorkflowTasks(workflow = null) {
             name: "Task 1",
             instructions: normalizeText(workflow?.task_prompt),
             order: 1,
+            runner: { type: "inherit" },
         }];
     activeWorkflowTaskId = workflowTasks[0].id;
     populateWorkflowTaskEditor();
@@ -547,13 +855,19 @@ function renderWorkflowReview() {
     const strategyLabel = getWorkflowErrorStrategy() === "continue" ? "Continue after failure" : "Stop after failure";
 
     addWorkflowReviewItem("Workflow", normalizeText(workflowNameInput?.value) || "Untitled workflow");
-    addWorkflowReviewItem("Runner", normalizeText(runnerLabel));
+    addWorkflowReviewItem("Default Runner", normalizeText(runnerLabel));
     addWorkflowReviewItem("Trigger", normalizeText(triggerLabel));
     addWorkflowReviewItem("Tasks", `${workflowTasks.length} ordered ${workflowTasks.length === 1 ? "task" : "tasks"}`);
     addWorkflowReviewItem("Workspace documents", normalizeText(documentActionLabel));
     addWorkflowReviewItem("File Sync", workflowFileSyncEnabledToggle?.checked ? "Before each run" : "Not used");
     addWorkflowReviewItem("Failure handling", `${strategyLabel}; ${retryCount} ${retryCount === 1 ? "retry" : "retries"}`);
     addWorkflowReviewItem("Completion alert", normalizeText(alertLabel));
+    workflowTasks.forEach((task, index) => {
+        addWorkflowReviewItem(
+            `Task ${index + 1}`,
+            `${normalizeText(task.name) || `Task ${index + 1}`} - ${getWorkflowTaskRunnerSummary(task)}`,
+        );
+    });
 }
 
 function validateWorkflowTasks() {
@@ -566,6 +880,31 @@ function validateWorkflowTasks() {
             renderWorkflowTasks();
             showToast(`Add a name and instructions for task ${index + 1}.`, "warning");
             (normalizeText(task.name) ? workflowTaskPromptInput : workflowTaskNameInput)?.focus();
+            return false;
+        }
+        const runner = normalizeWorkflowTaskRunner(task.runner);
+        if (runner.type === "model") {
+            const endpoint = getCustomEndpointOptions().find(
+                (candidate) => normalizeText(candidate.id) === runner.model_endpoint_id
+            );
+            const model = endpoint?.models?.find((candidate) => normalizeText(candidate.id) === runner.model_id);
+            if (!endpoint || !model) {
+                activeWorkflowTaskId = task.id;
+                populateWorkflowTaskEditor();
+                renderWorkflowTasks();
+                showToast(`Select an available endpoint and model for task ${index + 1}.`, "warning");
+                workflowTaskModelEndpointSelect?.focus();
+                return false;
+            }
+        }
+        if (runner.type === "agent" && !agentOptions.some(
+            (agent) => getAgentOptionKey(agent) === getAgentOptionKey(runner.selected_agent)
+        )) {
+            activeWorkflowTaskId = task.id;
+            populateWorkflowTaskEditor();
+            renderWorkflowTasks();
+            showToast(`Select an available agent for task ${index + 1}.`, "warning");
+            workflowTaskAgentSelect?.focus();
             return false;
         }
     }
@@ -2130,7 +2469,7 @@ function getModelDisplayName(model) {
 }
 
 function getAgentOptionKey(agent) {
-    const scope = agent?.is_global ? "global" : "personal";
+    const scope = agent?.is_global ? "global" : agent?.is_group ? "group" : "personal";
     return `${scope}:${normalizeText(agent?.id || agent?.name)}`;
 }
 
@@ -2904,6 +3243,7 @@ function buildWorkflowPayload() {
         name: normalizeText(task.name),
         instructions: normalizeText(task.instructions),
         order: index + 1,
+        runner: serializeWorkflowTaskRunner(task.runner),
     }));
     const runnerType = normalizeText(workflowRunnerTypeSelect?.value) || "model";
     const triggerType = normalizeText(workflowTriggerTypeSelect?.value) || "manual";
@@ -3698,13 +4038,54 @@ function initializeWorkflowEvents() {
             resumeButton.disabled = false;
         });
     });
-    workflowRunnerTypeSelect?.addEventListener("change", updateRunnerFields);
-    workflowModelSourceSelect?.addEventListener("change", updateRunnerFields);
+    workflowTaskRunnerTypeSelect?.addEventListener("change", () => {
+        const activeTask = getActiveWorkflowTask();
+        if (activeTask) {
+            activeTask.runner = { type: normalizeText(workflowTaskRunnerTypeSelect.value) || "inherit" };
+        }
+        updateWorkflowTaskRunnerFields(activeTask?.runner);
+        syncActiveWorkflowTaskFromEditor();
+        renderWorkflowTasks();
+    });
+    workflowTaskModelSourceSelect?.addEventListener("change", () => {
+        const endpointId = populateWorkflowTaskModelEndpointSelect("");
+        populateWorkflowTaskModelSelect("");
+        if (endpointId) {
+            syncActiveWorkflowTaskFromEditor();
+            renderWorkflowTasks();
+        }
+    });
+    workflowTaskModelEndpointSelect?.addEventListener("change", () => {
+        populateWorkflowTaskModelSelect("");
+        syncActiveWorkflowTaskFromEditor();
+        renderWorkflowTasks();
+    });
+    workflowTaskModelSelect?.addEventListener("change", () => {
+        syncActiveWorkflowTaskFromEditor();
+        renderWorkflowTasks();
+    });
+    workflowTaskAgentSelect?.addEventListener("change", () => {
+        syncActiveWorkflowTaskFromEditor();
+        renderWorkflowTasks();
+    });
+    workflowRunnerTypeSelect?.addEventListener("change", () => {
+        updateRunnerFields();
+        renderWorkflowTasks();
+    });
+    workflowAgentSelect?.addEventListener("change", renderWorkflowTasks);
+    workflowModelSourceSelect?.addEventListener("change", () => {
+        updateRunnerFields();
+        renderWorkflowTasks();
+    });
     workflowModelEndpointSelect?.addEventListener("change", () => {
         populateModelSelect(normalizeText(workflowModelEndpointSelect.value), "");
         updateModelHelpText();
+        renderWorkflowTasks();
     });
-    workflowModelSelect?.addEventListener("change", updateModelHelpText);
+    workflowModelSelect?.addEventListener("change", () => {
+        updateModelHelpText();
+        renderWorkflowTasks();
+    });
     workflowAlertPrioritySelect?.addEventListener("change", renderWorkflowReview);
     workflowTriggerTypeSelect?.addEventListener("change", updateTriggerFields);
     workflowScheduleUnitSelect?.addEventListener("change", updateScheduleConstraints);

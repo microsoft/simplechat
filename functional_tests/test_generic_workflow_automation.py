@@ -1,9 +1,9 @@
 # test_generic_workflow_automation.py
 """
 Functional test for generic workflow automation.
-Version: 0.250.064
+Version: 0.250.065
 Implemented in: 0.250.063
-Enhanced in: 0.250.064
+Enhanced in: 0.250.065
 
 This test ensures a workflow requires instructions and a selected model or
 agent, while workspace document actions remain explicitly optional.
@@ -13,7 +13,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_VERSION = "0.250.064"
+EXPECTED_VERSION = "0.250.065"
 
 
 def read_text(relative_path: str) -> str:

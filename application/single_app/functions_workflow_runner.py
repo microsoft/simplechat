@@ -78,6 +78,7 @@ from functions_group_workflows import (
     get_group_workflow,
     get_group_workflow_run,
     list_group_workflow_run_items,
+    normalize_group_workflow_task_runner,
     save_group_workflow_run,
     save_group_workflow_run_item,
 )
@@ -99,6 +100,7 @@ from functions_personal_workflows import (
     get_personal_workflow,
     get_personal_workflow_run,
     list_personal_workflow_run_items,
+    normalize_personal_workflow_task_runner,
     save_personal_workflow_run,
     save_personal_workflow_run_item,
 )
@@ -5872,6 +5874,8 @@ def _execute_agent_workflow(workflow, settings, conversation_id='', run_id=None,
             requested_name = str(selected_agent.get('name') or '').strip()
             if requested_name:
                 loaded_agent = agent_objs.get(requested_name)
+            if loaded_agent is None and workflow.get('task_runner_override'):
+                raise ValueError('The selected task agent is no longer available for workflow execution.')
             if loaded_agent is None:
                 loaded_agent = next(iter(agent_objs.values()))
 
@@ -6001,6 +6005,117 @@ def _build_workflow_task_execution_workflow(workflow, task, previous_reply='', i
     return prepared_workflow
 
 
+def _get_workflow_task_requested_runner_mode(task):
+    task = task if isinstance(task, dict) else {}
+    runner = task.get('runner') if isinstance(task.get('runner'), dict) else {}
+    return str(runner.get('type') or 'inherit').strip().lower() or 'inherit'
+
+
+def _build_workflow_task_runner_audit(workflow, requested_mode, normalized_runner, execution_result=None):
+    workflow = workflow if isinstance(workflow, dict) else {}
+    normalized_runner = normalized_runner if isinstance(normalized_runner, dict) else {'type': 'inherit'}
+    requested_mode = str(requested_mode or 'inherit').strip().lower() or 'inherit'
+    inherited = normalized_runner.get('type') == 'inherit'
+    resolved_type = str(workflow.get('runner_type') if inherited else normalized_runner.get('type') or '').strip().lower()
+    runner_source = workflow if inherited else normalized_runner
+    audit = {
+        'requested_mode': requested_mode,
+        'resolved_type': resolved_type,
+    }
+
+    if resolved_type == 'model':
+        binding_summary = (
+            runner_source.get('model_binding_summary')
+            if isinstance(runner_source.get('model_binding_summary'), dict)
+            else {}
+        )
+        endpoint_id = str(runner_source.get('model_endpoint_id') or binding_summary.get('endpoint_id') or '').strip()
+        model_id = str(runner_source.get('model_id') or binding_summary.get('model_id') or '').strip()
+        if endpoint_id:
+            audit['model_endpoint_id'] = endpoint_id
+        if model_id:
+            audit['model_id'] = model_id
+    elif resolved_type == 'agent':
+        selected_agent = runner_source.get('selected_agent') if isinstance(runner_source.get('selected_agent'), dict) else {}
+        agent_id = str(selected_agent.get('id') or '').strip()
+        agent_name = str(selected_agent.get('name') or '').strip()
+        if agent_id:
+            audit['agent_id'] = agent_id
+        if agent_name:
+            audit['agent_name'] = agent_name
+        if selected_agent.get('is_global'):
+            audit['agent_scope'] = 'global'
+        elif selected_agent.get('is_group'):
+            audit['agent_scope'] = 'group'
+            agent_group_id = str(selected_agent.get('group_id') or '').strip()
+            if agent_group_id:
+                audit['agent_group_id'] = agent_group_id
+        else:
+            audit['agent_scope'] = 'personal'
+
+    execution_result = execution_result if isinstance(execution_result, dict) else {}
+    model_deployment_name = str(execution_result.get('model_deployment_name') or '').strip()
+    provider = str(execution_result.get('provider') or '').strip().lower()
+    if model_deployment_name:
+        audit['model_deployment_name'] = model_deployment_name
+    if provider:
+        audit['provider'] = provider
+    return audit
+
+
+def _resolve_workflow_task_runner(workflow, task, settings, actor_user_id=None):
+    workflow = workflow if isinstance(workflow, dict) else {}
+    task = task if isinstance(task, dict) else {}
+    requested_runner = task.get('runner') if isinstance(task.get('runner'), dict) else {'type': 'inherit'}
+    requested_mode = _get_workflow_task_requested_runner_mode(task)
+    group_id = _get_workflow_group_id(workflow)
+    if group_id:
+        current_actor_user_id = str(actor_user_id or '').strip()
+        if not current_actor_user_id:
+            raise ValueError('Group workflow task runner resolution requires an actor user id.')
+        normalized_runner = normalize_group_workflow_task_runner(
+            current_actor_user_id,
+            group_id,
+            requested_runner,
+            settings=settings,
+        )
+    else:
+        normalized_runner = normalize_personal_workflow_task_runner(
+            str(workflow.get('user_id') or '').strip(),
+            requested_runner,
+            settings=settings,
+        )
+
+    execution_workflow = dict(workflow)
+    if normalized_runner.get('type') == 'model':
+        execution_workflow.update({
+            'runner_type': 'model',
+            'task_runner_override': True,
+            'selected_agent': {},
+            'model_endpoint_id': normalized_runner.get('model_endpoint_id') or '',
+            'model_id': normalized_runner.get('model_id') or '',
+            'model_provider': normalized_runner.get('model_provider') or '',
+            'model_binding_summary': normalized_runner.get('model_binding_summary') or {},
+        })
+    elif normalized_runner.get('type') == 'agent':
+        execution_workflow.update({
+            'runner_type': 'agent',
+            'task_runner_override': True,
+            'selected_agent': normalized_runner.get('selected_agent') or {},
+            'model_endpoint_id': '',
+            'model_id': '',
+            'model_provider': '',
+            'model_binding_summary': None,
+        })
+
+    runner_audit = _build_workflow_task_runner_audit(
+        workflow,
+        requested_mode,
+        normalized_runner,
+    )
+    return execution_workflow, runner_audit
+
+
 def _workflow_task_run_item_id(run_id, task_id):
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f'workflow-task:{run_id}:{task_id}'))
 
@@ -6014,10 +6129,37 @@ def _save_workflow_task_run_item(
     error='',
     output_summary='',
     created_at=None,
+    runner_audit=None,
+    token_usage=None,
 ):
     task = task if isinstance(task, dict) else {}
     task_id = str(task.get('id') or '').strip()
     now_iso = _utc_now_iso()
+    output_preview = str(output_summary or '')[:4000]
+    allowed_runner_audit_fields = (
+        'requested_mode',
+        'resolved_type',
+        'model_endpoint_id',
+        'model_id',
+        'agent_id',
+        'agent_name',
+        'agent_scope',
+        'agent_group_id',
+        'model_deployment_name',
+        'provider',
+    )
+    runner_audit = runner_audit if isinstance(runner_audit, dict) else {}
+    safe_runner_audit = {
+        field: str(runner_audit.get(field) or '').strip()[:500]
+        for field in allowed_runner_audit_fields
+        if str(runner_audit.get(field) or '').strip()
+    }
+    token_usage = token_usage if isinstance(token_usage, dict) else {}
+    safe_token_usage = {
+        field: int(token_usage.get(field) or 0)
+        for field in ('prompt_tokens', 'completion_tokens', 'total_tokens', 'request_count')
+        if isinstance(token_usage.get(field), (int, float))
+    }
     item = {
         'id': _workflow_task_run_item_id(run_id, task_id),
         'type': 'workflow_run_item',
@@ -6034,12 +6176,15 @@ def _save_workflow_task_run_item(
         'status': status,
         'attempt_count': int(attempt_count or 0),
         'error': str(error or '')[:2000],
-        'output_summary': str(output_summary or '')[:4000],
+        'output_summary': output_preview,
+        'output_preview': output_preview,
+        'runner': safe_runner_audit,
+        'token_usage': safe_token_usage or None,
         'created_at': created_at or now_iso,
         'updated_at': now_iso,
     }
-    if status == 'running':
-        item['started_at'] = now_iso
+    if status in {'running', 'succeeded', 'failed', 'skipped', 'cancelled'}:
+        item['started_at'] = created_at or now_iso
     if status in {'succeeded', 'failed', 'skipped', 'cancelled'}:
         item['completed_at'] = now_iso
     return _save_workflow_run_item_record(workflow, item)
@@ -6169,6 +6314,8 @@ def _merge_workflow_task_execution_results(task_results):
             'attempt_count': int(item.get('attempt_count') or 0),
             'error': str(item.get('error') or ''),
             'response_preview': _build_response_preview((item.get('result') or {}).get('reply')),
+            'runner': dict(item.get('runner') or {}),
+            'token_usage': _merge_token_usage_summaries([item.get('result') or {}]),
         }
         for item in task_results
     ]
@@ -6206,6 +6353,7 @@ def _execute_workflow_task_sequence(
     thought_tracker,
     url_access_context,
     file_sync_result=None,
+    actor_user_id=None,
 ):
     tasks = list(workflow.get('tasks') or [])
     error_handling = workflow.get('error_handling') if isinstance(workflow.get('error_handling'), dict) else {}
@@ -6220,7 +6368,17 @@ def _execute_workflow_task_sequence(
         task_id = str(task.get('id') or f'task-{task_index + 1}').strip()
         task['id'] = task_id
         created_at = _utc_now_iso()
-        _save_workflow_task_run_item(workflow, run_id, task, 'queued', created_at=created_at)
+        runner_audit = {
+            'requested_mode': _get_workflow_task_requested_runner_mode(task),
+        }
+        _save_workflow_task_run_item(
+            workflow,
+            run_id,
+            task,
+            'queued',
+            created_at=created_at,
+            runner_audit=runner_audit,
+        )
         if thought_tracker and run_id:
             _add_workflow_activity_thought(
                 thought_tracker,
@@ -6246,17 +6404,24 @@ def _execute_workflow_task_sequence(
         attempt_count = 0
         for attempt_index in range(retry_count + 1):
             attempt_count = attempt_index + 1
-            _save_workflow_task_run_item(
-                workflow,
-                run_id,
-                task,
-                'running',
-                attempt_count=attempt_count,
-                created_at=created_at,
-            )
             try:
-                task_result = _execute_workflow_dispatch(
+                attempt_workflow, runner_audit = _resolve_workflow_task_runner(
                     prepared_workflow,
+                    task,
+                    settings,
+                    actor_user_id=actor_user_id,
+                )
+                _save_workflow_task_run_item(
+                    workflow,
+                    run_id,
+                    task,
+                    'running',
+                    attempt_count=attempt_count,
+                    created_at=created_at,
+                    runner_audit=runner_audit,
+                )
+                task_result = _execute_workflow_dispatch(
+                    attempt_workflow,
                     settings,
                     conversation_id,
                     run_id,
@@ -6265,6 +6430,13 @@ def _execute_workflow_task_sequence(
                     file_sync_result=file_sync_result,
                 )
                 task_error = ''
+                runner_audit = dict(runner_audit)
+                model_deployment_name = str(task_result.get('model_deployment_name') or '').strip()
+                provider = str(task_result.get('provider') or '').strip().lower()
+                if model_deployment_name:
+                    runner_audit['model_deployment_name'] = model_deployment_name
+                if provider:
+                    runner_audit['provider'] = provider
                 break
             except Exception as exc:
                 task_error = str(exc)
@@ -6293,6 +6465,8 @@ def _execute_workflow_task_sequence(
                 attempt_count=attempt_count,
                 output_summary=_build_response_preview(task_result.get('reply'), max_length=4000),
                 created_at=created_at,
+                runner_audit=runner_audit,
+                token_usage=_merge_token_usage_summaries([task_result]),
             )
             task_results.append({
                 'task': task,
@@ -6300,6 +6474,7 @@ def _execute_workflow_task_sequence(
                 'attempt_count': attempt_count,
                 'result': task_result,
                 'error': '',
+                'runner': runner_audit,
             })
             if thought_tracker and run_id:
                 _add_workflow_activity_thought(
@@ -6325,6 +6500,7 @@ def _execute_workflow_task_sequence(
             attempt_count=attempt_count,
             error=task_error,
             created_at=created_at,
+            runner_audit=runner_audit,
         )
         task_results.append({
             'task': task,
@@ -6332,6 +6508,7 @@ def _execute_workflow_task_sequence(
             'attempt_count': attempt_count,
             'result': {},
             'error': task_error,
+            'runner': runner_audit,
         })
         if thought_tracker and run_id:
             _add_workflow_activity_thought(
@@ -6592,6 +6769,7 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
                 thought_tracker,
                 url_access_context,
                 file_sync_result=file_sync_result,
+                actor_user_id=actor_user_id or user_id,
             )
         else:
             execution_result = _execute_workflow_dispatch(

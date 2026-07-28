@@ -2042,7 +2042,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
       <div class="modal-header">
         <div>
           <h5 class="modal-title" id="workflowModalLabel">Create Group Workflow</h5>
-          <div class="text-muted small mt-1" id="workflow-step-description">Name the workflow and choose its runner.</div>
+          <div class="text-muted small mt-1" id="workflow-step-description">Name the workflow and choose its default runner.</div>
         </div>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
@@ -2061,7 +2061,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
             <input type="text" class="form-control" id="workflow-name" maxlength="120" required />
           </div>
           <div class="col-md-5">
-            <label for="workflow-runner-type" class="form-label">Runner</label>
+            <label for="workflow-runner-type" class="form-label">Default Runner</label>
             <select class="form-select" id="workflow-runner-type">
               <option value="model">Direct Model</option>
               <option value="agent">Agent</option>
@@ -2076,7 +2076,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
           <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
             <div>
               <h6 class="mb-1">Task sequence</h6>
-              <div class="form-text mt-0">Tasks run from top to bottom with the selected runner.</div>
+              <div class="form-text mt-0">Tasks run from top to bottom with the workflow default or a task override.</div>
             </div>
             <button type="button" class="btn btn-outline-primary btn-sm" id="workflow-add-task-btn">
               <i class="bi bi-plus-circle me-1" aria-hidden="true"></i>Add Task
@@ -2086,6 +2086,36 @@ app_settings.app_title }} {% endblock %} {% block head %}
           <div class="workflow-task-editor border rounded-2 p-3 mb-3" id="workflow-task-editor">
             <label for="workflow-task-name" class="form-label">Task Name</label>
             <input type="text" class="form-control" id="workflow-task-name" maxlength="120" placeholder="e.g., Summarize findings" />
+            <div class="mt-3">
+              <label for="workflow-task-runner-type" class="form-label">Runner</label>
+              <select class="form-select" id="workflow-task-runner-type">
+                <option value="inherit">Workflow default</option>
+                <option value="model">Direct Model</option>
+                <option value="agent">Agent</option>
+              </select>
+            </div>
+            <div class="row g-3 mt-1 d-none" id="workflow-task-model-fields">
+              <div class="col-12 col-md-4">
+                <label for="workflow-task-model-source" class="form-label">Model Source</label>
+                <select class="form-select" id="workflow-task-model-source">
+                  <option value="global">Global endpoints</option>
+                  <option value="workspace">Group endpoints</option>
+                </select>
+              </div>
+              <div class="col-12 col-md-4">
+                <label for="workflow-task-model-endpoint" class="form-label">Endpoint</label>
+                <select class="form-select" id="workflow-task-model-endpoint"></select>
+              </div>
+              <div class="col-12 col-md-4">
+                <label for="workflow-task-model" class="form-label">Model</label>
+                <select class="form-select" id="workflow-task-model"></select>
+              </div>
+            </div>
+            <div class="mt-3 d-none" id="workflow-task-agent-fields">
+              <label for="workflow-task-agent" class="form-label">Agent</label>
+              <select class="form-select" id="workflow-task-agent"></select>
+              <div class="form-text" id="workflow-task-agent-help">Choose an authorized group or merged global agent.</div>
+            </div>
           </div>
         </div>
         <div class="mb-3 workflow-step-block" data-workflow-step="tasks">

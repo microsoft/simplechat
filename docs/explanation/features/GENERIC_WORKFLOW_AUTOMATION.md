@@ -1,14 +1,17 @@
 # Generic Workflow Automation
 
 Implemented in version: **0.250.063**
-Enhanced in version: **0.250.064**
+Enhanced in version: **0.250.065**
+Task-level runner selection implemented in version: **0.250.065**
 
-Related issue: #1082
+Related issues: #1082, #1084
 
 ## Overview
 
 Workflows are repeatable AI automations. Their required configuration is a
-workflow instruction and one runner: either a Direct Model or an Agent.
+workflow instruction and a default runner: either a Direct Model or an Agent.
+Each ordered task can inherit that default or select an authorized model or
+agent override.
 Workspace documents, document actions, File Sync, URL access, alerts, and
 scheduling are optional capabilities that can be added when they are relevant
 to the task.
@@ -16,7 +19,7 @@ to the task.
 Fixed/Implemented in version: **0.250.063**
 
 Related version update:
-- `application/single_app/config.py` reports version `0.250.064`.
+- `application/single_app/config.py` reports version `0.250.065`.
 
 Dependencies:
 - `application/single_app/functions_personal_workflows.py`
@@ -41,11 +44,14 @@ Dependencies:
   without requiring document analysis.
 - Each run records its messages and result in the workflow conversation and
   retains the normal workflow run history.
-- A workflow can contain up to 20 ordered instruction tasks. Every task uses the
-   selected workflow runner and receives a bounded copy of the previous task's
-   response as context.
+- A workflow can contain up to 20 ordered instruction tasks. A task runner can
+   inherit the workflow default, use an authorized Direct Model override, or use
+   an authorized Agent override. Every task receives a bounded copy of the
+   previous task's response as context.
 - Global task error handling supports 0-5 retries and either stops the workflow
    after the final failed attempt or records the failure and continues.
+- Tasks without a `runner` field behave as `inherit`, and workflows without a
+   `tasks` array retain the legacy single-dispatch path.
 
 New workflow definitions set `chat_capabilities_enabled` to `true`. Existing
 saved Direct Model workflows remain on their prior raw-completion behavior when
@@ -70,6 +76,32 @@ When `chat_capabilities_enabled` is enabled, a Direct Model workflow:
 The workflow runner establishes a scoped user, conversation, workflow, and
 group authorization context before loading tools. Group workflows retain their
 active group scope while core tools execute.
+
+### Task runner authorization and dispatch
+
+Task runner configuration is validated when a workflow is saved and again
+immediately before each task attempt executes:
+
+- Personal workflows resolve agents from the owning user's personal agents and
+   currently permitted merged global agents. Group workflows resolve agents from
+   the selected group and currently permitted merged global agents.
+- Group execution revalidates the current actor's group membership and role at
+   the task boundary.
+- Model overrides resolve only enabled endpoint and model IDs from current
+   global, personal, or group endpoint options. Stored summaries contain no
+   endpoint credentials or secrets.
+- Agent names, labels, group IDs, and scope flags supplied by the browser are not
+   trusted. The saved task receives a normalized identity from the server-side
+   authorized option.
+- Deleted, disabled, stale, cross-user, and cross-group runners fail the task.
+   The workflow's retry count and stop-or-continue strategy handle that failure.
+
+Execution creates a temporary workflow binding for model and agent overrides,
+then passes it through the existing document/model/agent dispatch path. The
+stored workflow default remains unchanged. Task run items record requested and
+resolved runner modes, non-secret model or agent identifiers, execution model
+deployment/provider, attempts, status, errors, timestamps, output preview, and
+per-task token counts when available.
 
 ### Document actions and File Sync
 
@@ -99,12 +131,15 @@ enabled plugins.
 ## Usage Instructions
 
 1. Open the Personal Workspace or a Group Workspace and select Workflows.
-2. In `General`, provide a name and choose Direct Model or Agent.
+2. In `General`, provide a name and choose the Default Runner: Direct Model or
+   Agent.
 3. In `Trigger`, choose Manual, Interval, or File Sync behavior and configure
    optional URL or File Sync inputs.
-4. In `Tasks`, add, edit, remove, or reorder instruction tasks. Leave
-   `Workspace documents` set to `No document action` for prompt-only or
-   agent-only automation, or choose Search, Analyze, or Compare for task one.
+4. In `Tasks`, add, edit, remove, or reorder instruction tasks. For each task,
+   choose Workflow default, Direct Model, or Agent. Model and agent options are
+   limited to the current workspace's authorized choices. Leave `Workspace
+   documents` set to `No document action` for prompt-only or agent-only
+   automation, or choose Search, Analyze, or Compare for task one.
 5. In `Reliability`, choose the task retry count and whether execution stops or
    continues after a failed task.
 6. In `Review`, confirm the workflow and choose its completion alert priority.
@@ -119,17 +154,19 @@ Functional coverage:
 - `functional_tests/test_workflow_model_core_capabilities.py` verifies saved
   model binding, kernel-based core capability invocation, default-model binding,
   and legacy Direct Model compatibility.
-- `functional_tests/test_workflow_task_sequence.py` verifies ordered execution,
-   bounded result chaining, retries, continue-on-error behavior, and legacy
-   dispatch compatibility.
+- `functional_tests/test_workflow_task_sequence.py` verifies task runner
+  normalization, personal/group authorization, disabled and deleted runner
+  revalidation, alternating model-agent-model execution, audit/token metadata,
+  retries, continue-on-error behavior, bounded chaining, and legacy dispatch.
 - `functional_tests/test_workflow_stepped_builder.py` verifies the shared
-   five-step modal, browser payload, safe task rendering, and existing route
-   reuse.
+  five-step modal, conditional runner controls, inherited runner payloads, safe
+  task summaries, and existing route reuse.
 
 UI coverage:
-- `ui_tests/test_workflow_document_action_modal.py` verifies that a new
-   workflow navigates all five steps, builds an ordered task sequence, configures
-   error handling and alert priority, and preserves document action workflows.
+- `ui_tests/test_workflow_document_action_modal.py` verifies conditional task
+   model/agent controls, task row and Review summaries, safe rendering of
+   untrusted labels, reorder persistence, desktop/mobile layout, and preserved
+   document action workflows.
 
 Validation should include the focused functional tests, JavaScript syntax
 validation, and the UI test against an authenticated `SIMPLECHAT_UI_BASE_URL`
