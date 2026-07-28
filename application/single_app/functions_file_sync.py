@@ -743,7 +743,7 @@ def _azure_blob_endpoint_suffix_for_hostname(hostname: Any) -> Tuple[str, str]:
         if not normalized_hostname.endswith(blob_hostname_suffix):
             continue
         account_name = normalized_hostname[:-len(blob_hostname_suffix)]
-        if re.fullmatch(r"[a-z0-9]{3,24}", account_name):
+        if 3 <= len(account_name) <= 24 and account_name.isascii() and account_name.isalnum():
             return account_name, endpoint_suffix
     raise ValueError("Azure Blob Storage endpoint must use a supported Azure Blob service hostname")
 
@@ -812,7 +812,7 @@ def _validate_azure_blob_connection_string(connection_string: Any) -> None:
 
     account_name = fields.get("accountname", "").lower()
     endpoint_suffix = fields.get("endpointsuffix", "").lower()
-    if not re.fullmatch(r"[a-z0-9]{3,24}", account_name):
+    if not (3 <= len(account_name) <= 24 and account_name.isascii() and account_name.isalnum()):
         raise ValueError("Azure Blob Storage connection string account name is invalid")
     if endpoint_suffix not in AZURE_STORAGE_ENDPOINT_SUFFIXES:
         raise ValueError("Azure Blob Storage connection string endpoint is not allowed")

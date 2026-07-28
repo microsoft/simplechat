@@ -214,6 +214,7 @@ def test_azure_blob_endpoints_block_server_side_request_forgery():
         "https://localhost",
         "https://internal.example.com",
         "https://contosodata.blob.core.windows.net.evil.example",
+        "https://contoso-data.blob.core.windows.net",
         "https://user:password@contosodata.blob.core.windows.net",
         "https://contosodata.blob.core.windows.net:444",
         "https://contosodata.blob.core.windows.net?sig=secret",
