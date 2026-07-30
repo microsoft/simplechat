@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.075)**
+
+#### New Features
+
+*   **Admin Feedback and Safety Record Lifecycle**
+    *   Added archive, unarchive, and permanently delete actions to the Feedback Review and Safety Violations admin pages, with active/archived filtering across lists, cards, statistics, pagination, and CSV exports.
+    *   Archived records are hidden from user profile history, destructive deletion requires confirmation, and safety violations with pending remediation approvals cannot be deleted.
+    *   Archive, unarchive, and delete actions create non-sensitive admin activity audit records, while audit persistence failures are surfaced without undoing successful lifecycle changes.
+    *   (Ref: microsoft/simplechat#991, `functions_review_lifecycle.py`, `route_backend_feedback.py`, `route_backend_safety.py`, `ADMIN_REVIEW_RECORD_LIFECYCLE.md`)
+
 ### **(v0.250.074)**
 
 #### New Features
