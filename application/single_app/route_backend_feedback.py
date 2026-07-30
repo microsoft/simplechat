@@ -73,11 +73,11 @@ def _parse_feedback_filters(include_archive_state=False):
     elif filter_ack_str == 'false':
         filter_ack_bool = False
 
+    archive_state = None
     if include_archive_state:
         archive_state = normalize_archive_state(request.args.get('archive', None, type=str))
-        return filter_type, filter_ack_bool, archive_state
 
-    return filter_type, filter_ack_bool
+    return filter_type, filter_ack_bool, archive_state
 
 
 def _serialize_feedback_item(item):
