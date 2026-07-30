@@ -11,6 +11,14 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Cues play once for newly completed personal-chat responses outside the active visible conversation, with server-authoritative gating, cross-tab preference synchronization, and historical/duplicate suppression.
     *   (Ref: Closes #1062, `completion-audio-cues.js`, notification polling, Profile and Admin Settings, `AI_RESPONSE_COMPLETION_AUDIO_CUES.md`)
 
+#### Bug Fixes
+
+*   **Custom Databricks-Prefixed Action Discovery**
+    *   Fixed action type discovery so custom plugin types such as `databricks_table_dscmo` no longer inherit the built-in Databricks discovery defaults.
+    *   Custom Databricks-prefixed plugin types now stay on the standard plugin configuration path and visual treatment unless their type is exactly `databricks` or `databricks_table`.
+    *   Added a regression test that scaffolds a temporary fake custom Databricks-prefixed plugin, schema, and definition file to validate discovery and settings merge behavior.
+    *   (Ref: microsoft/simplechat#1124, `functions_databricks_operations.py`, `route_backend_plugins.py`, `view-utils.js`, `test_plugin_type_discovery_custom_databricks.py`)
+
 ### **(v0.250.102)**
 
 #### New Features
