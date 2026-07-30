@@ -33,6 +33,7 @@ def _get_storage_state_path():
         "Set SIMPLECHAT_UI_STORAGE_STATE or SIMPLECHAT_UI_ADMIN_STORAGE_STATE "
         "to a valid authenticated Playwright storage state file."
     )
+    return None
 
 
 def _get_user_settings(page):
