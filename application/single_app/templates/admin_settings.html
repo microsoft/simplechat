@@ -2861,6 +2861,51 @@
                     </div>
                 </div>
 
+                <div class="card p-3 mb-3" id="ai-notice-section">
+                    <h5>
+                        <i class="bi bi-robot me-2"></i>Chat AI Notice
+                    </h5>
+                    <p class="text-muted small">
+                        Display an administrator-provided reminder directly below the chat input, such as guidance that responses are AI-generated and should be reviewed.
+                    </p>
+                    <div class="form-check form-switch mb-3">
+                        <input
+                            class="form-check-input"
+                            type="checkbox"
+                            id="enable_ai_notice"
+                            name="enable_ai_notice"
+                            {% if settings.enable_ai_notice %}checked{% endif %}
+                        >
+                        <label class="form-check-label ms-2" for="enable_ai_notice">
+                            Show a custom AI notice below the chat input
+                        </label>
+                    </div>
+                    <div id="ai_notice_settings" class="{% if not settings.enable_ai_notice %}d-none{% endif %}">
+                        <div class="mb-3">
+                            <label for="ai_notice_message" class="form-label">Notice Text</label>
+                            <textarea
+                                class="form-control"
+                                id="ai_notice_message"
+                                name="ai_notice_message"
+                                rows="3"
+                                maxlength="1000"
+                                placeholder="AI-generated responses may contain errors. Review important information before relying on it."
+                            >{{ settings.ai_notice_message or '' }}</textarea>
+                            <div class="form-text">Plain text only. Line breaks are preserved.</div>
+                        </div>
+                        <div>
+                            <label for="ai_notice_frequency" class="form-label">Display Behavior</label>
+                            <select class="form-select" id="ai_notice_frequency" name="ai_notice_frequency">
+                                <option value="non_dismissible" {% if settings.ai_notice_frequency == 'non_dismissible' %}selected{% endif %}>Always visible; users cannot dismiss it</option>
+                                <option value="every_session" {% if settings.ai_notice_frequency == 'every_session' %}selected{% endif %}>Dismissible once per session</option>
+                                <option value="daily" {% if settings.ai_notice_frequency == 'daily' %}selected{% endif %}>Dismissible once per day</option>
+                                <option value="once" {% if settings.ai_notice_frequency == 'once' %}selected{% endif %}>Dismissible once per message version</option>
+                            </select>
+                            <div class="form-text">Changing the notice text or display behavior creates a new message version and shows it again.</div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="card p-3 mb-3" id="terms-of-use-section">
                     <h5>
                         <i class="bi bi-door-open me-2"></i>Terms of Use
@@ -12592,7 +12637,7 @@
         if (publicWs) scopes.push('public');
 
         if (scopes.length === 0) {
-            alert('Please select at least one workspace type.');
+            showToast('Please select at least one workspace type.', 'warning');
             return;
         }
 
@@ -12730,7 +12775,7 @@
         if (publicWs) scopes.push('public');
 
         if (scopes.length === 0) {
-            alert('Please select at least one workspace scope.');
+            showToast('Please select at least one workspace scope.', 'warning');
             return;
         }
 
@@ -12862,7 +12907,7 @@
             const allowDaily = document.getElementById('enable_user_agreement_daily');
 
             if (!agreementText) {
-                alert('Please enter agreement text before previewing.');
+                showToast('Please enter agreement text before previewing.', 'warning');
                 return;
             }
 

@@ -603,13 +603,13 @@ function updateCuratedListStatus() {
   $("#saveVisibleListBtn").on("click", function() {
     const listName = $("#saveListName").val().trim();
     if (!listName) {
-      alert("Please enter a name for your list.");
+      showToast("Please enter a name for your list.", 'warning');
       return;
     }
     saveCurrentVisibleList(listName);
     refreshVisibleListDropdown();
     $("#saveListName").val("");
-    alert("List saved!");
+    showToast("List saved!", 'success');
     updateCuratedListStatus();
   });
 
@@ -617,7 +617,7 @@ function updateCuratedListStatus() {
   $("#loadVisibleListBtn").on("click", function() {
     const listName = $("#loadVisibleListSelect").val();
     if (!listName) {
-      alert("Please select a list to load.");
+      showToast("Please select a list to load.", 'warning');
       return;
     }
     applyVisibleList(listName);
@@ -646,13 +646,13 @@ function updateCuratedListStatus() {
   $("#deleteVisibleListBtn").on("click", function() {
     const listName = $("#loadVisibleListSelect").val();
     if (!listName) {
-      alert("Please select a list to delete.");
+      showToast("Please select a list to delete.", 'warning');
       return;
     }
     if (confirm(`Delete list "${listName}"? This cannot be undone.`)) {
       deleteVisibleList(listName);
       refreshVisibleListDropdown();
-      alert("List deleted.");
+      showToast("List deleted.", 'success');
       updateCuratedListStatus();
     }
   });

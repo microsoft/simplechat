@@ -369,7 +369,7 @@
     const log = violationLogsOnPage.find(item => item.id == violationId);
     if (!log) {
         console.error("Could not find violation data for ID:", violationId);
-        alert("Error: Could not load violation details.");
+        showToast("Error: Could not load violation details.", 'danger');
         return;
     }
 
@@ -407,14 +407,13 @@
         contentType: "application/json",
         data: JSON.stringify({ user_notes: notes }),
         success: function(data) {
-            // alert(data.message || "Note updated."); // Optional success message
             viewModal.hide(); // Close modal
             fetchMySafetyLogs(); // Refresh the current page of the table
         },
         error: function(jqXHR, textStatus, errorThrown) {
             console.error("Error updating notes:", textStatus, errorThrown);
             const errorMsg = jqXHR.responseJSON?.error || errorThrown || 'Unknown error';
-            alert("Error updating notes: " + escapeHtml(errorMsg));
+            showToast("Error updating notes: " + escapeHtml(errorMsg), 'danger');
         },
         complete: function() {
              saveButton.prop('disabled', false).text('Save Your Notes');

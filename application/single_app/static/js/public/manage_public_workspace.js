@@ -288,18 +288,18 @@ $(document).ready(function () {
             url: `/api/public_workspaces/${workspaceId}`,
             method: "DELETE",
             success: function () {
-              alert("Workspace deleted.");
+              showToast("Workspace deleted.", 'success', { persist: true });
               window.location.href = "/profile?tab=public-workspaces";
             },
             error: function (jq) {
               const err = jq.responseJSON?.error || jq.statusText;
-              alert("Failed to delete workspace: " + err);
+              showToast("Failed to delete workspace: " + err, 'danger');
             }
           });
         }
       })
       .fail(function () {
-        alert("Unable to verify workspace contents.");
+        showToast("Unable to verify workspace contents.", 'danger');
       });
   });
 
@@ -320,14 +320,14 @@ $(document).ready(function () {
         $("#transferOwnershipModal").modal("show");
       })
       .fail(function () {
-        alert("Failed to load members for transfer.");
+        showToast("Failed to load members for transfer.", 'danger');
       });
   });
   $("#transferOwnershipForm").on("submit", function (e) {
     e.preventDefault();
     const newOwnerId = $("#newOwnerSelect").val();
     if (!newOwnerId) {
-      alert("Select a member to transfer ownership to.");
+      showToast("Select a member to transfer ownership to.", 'warning');
       return;
     }
     $.ajax({
@@ -336,12 +336,12 @@ $(document).ready(function () {
       contentType: "application/json",
       data: JSON.stringify({ newOwnerId }),
       success: function () {
-        alert("Ownership transferred.");
+        showToast("Ownership transferred.", 'success', { persist: true });
         location.reload();
       },
       error: function (jq) {
         const err = jq.responseJSON?.error || jq.statusText;
-        alert("Failed to transfer ownership: " + err);
+        showToast("Failed to transfer ownership: " + err, 'danger');
       }
     });
   });
@@ -443,7 +443,7 @@ $(document).ready(function () {
   $("#bulkAssignRoleBtn").on("click", function () {
     const selectedMembers = getSelectedMembers();
     if (selectedMembers.length === 0) {
-      alert("Please select at least one member");
+      showToast("Please select at least one member", 'warning');
       return;
     }
     $("#bulkRoleCount").text(selectedMembers.length);
@@ -458,7 +458,7 @@ $(document).ready(function () {
   $("#bulkRemoveMembersBtn").on("click", function () {
     const selectedMembers = getSelectedMembers();
     if (selectedMembers.length === 0) {
-      alert("Please select at least one member");
+      showToast("Please select at least one member", 'warning');
       return;
     }
     
@@ -551,7 +551,7 @@ function loadWorkspaceInfo(callback) {
       if (callback) callback();
     })
     .fail(function () {
-      alert("Failed to load workspace info.");
+      showToast("Failed to load workspace info.", 'danger');
     });
 }
 
@@ -579,21 +579,21 @@ async function updateWorkspaceInfo() {
     if (logoFile) {
       try {
         await uploadWorkspaceLogo(logoFile);
-        alert('Workspace updated and logo uploaded.');
+        showToast('Workspace updated and logo uploaded.', 'success');
       } catch (error) {
         console.error(error);
         loadWorkspaceInfo();
-        alert(`Workspace details saved, but logo upload failed: ${error.message}`);
+        showToast(`Workspace details saved, but logo upload failed: ${error.message}`, 'danger');
         return;
       }
     } else {
-      alert('Workspace updated.');
+      showToast('Workspace updated.', 'success');
     }
 
     loadWorkspaceInfo();
   } catch (error) {
     console.error(error);
-    alert(error.message || 'Failed to update workspace.');
+    showToast(error.message || 'Failed to update workspace.', 'danger');
   }
 }
 
@@ -707,7 +707,7 @@ function setRole(memberId, newRole) {
       loadMembers();
     },
     error: function () {
-      alert("Failed to update role.");
+      showToast("Failed to update role.", 'danger');
     }
   });
 }
@@ -720,7 +720,7 @@ function removeMember(memberId) {
     method: "DELETE",
     success: loadMembers,
     error: function () {
-      alert("Failed to remove member.");
+      showToast("Failed to remove member.", 'danger');
     }
   });
 }
@@ -751,7 +751,7 @@ function loadPendingRequests() {
       if (jq.status === 403) {
         $("#pendingRequestsSection").hide();
       } else {
-        alert("Failed to load pending requests.");
+        showToast("Failed to load pending requests.", 'danger');
       }
     });
 }
@@ -768,7 +768,7 @@ function approveRequest(requestId) {
       loadPendingRequests();
     },
     error: function () {
-      alert("Failed to approve request.");
+      showToast("Failed to approve request.", 'danger');
     }
   });
 }
@@ -782,7 +782,7 @@ function rejectRequest(requestId) {
     data: JSON.stringify({ action: "reject" }),
     success: loadPendingRequests,
     error: function () {
-      alert("Failed to reject request.");
+      showToast("Failed to reject request.", 'danger');
     }
   });
 }
@@ -791,7 +791,7 @@ function rejectRequest(requestId) {
 function searchUsers() {
   const term = $("#userSearchTerm").val().trim();
   if (!term) {
-    alert("Enter a name or email to search.");
+    showToast("Enter a name or email to search.", 'warning');
     return;
   }
   $("#searchStatus").text("Searching...");
@@ -801,7 +801,7 @@ function searchUsers() {
     .done(renderUserSearchResults)
     .fail(function (jq) {
       const err = jq.responseJSON?.error || jq.statusText;
-      alert("User search failed: " + err);
+      showToast("User search failed: " + err, 'danger');
     })
     .always(function () {
       $("#searchStatus").text("");
@@ -851,7 +851,7 @@ function addMemberDirectly() {
   const name = $("#newUserDisplayName").val().trim();
   const email= $("#newUserEmail").val().trim();
   if (!uid) {
-    alert("Select or enter a valid user.");
+    showToast("Select or enter a valid user.", 'warning');
     return;
   }
 
@@ -865,7 +865,7 @@ function addMemberDirectly() {
       loadMembers();
     },
     error: function () {
-      alert("Failed to add member.");
+      showToast("Failed to add member.", 'danger');
     }
   });
 }
@@ -1325,7 +1325,7 @@ function copyRawActivityToClipboard() {
   const modalBody = document.getElementById('rawActivityModalBody');
   const text = modalBody.textContent;
   navigator.clipboard.writeText(text).then(() => {
-    alert('Activity data copied to clipboard!');
+    showToast('Activity data copied to clipboard!', 'success');
   }).catch(err => {
     console.error('Failed to copy:', err);
   });
@@ -1498,7 +1498,7 @@ function showCsvError(message) {
 
 function startCsvUpload() {
   if (csvParsedData.length === 0) {
-    alert("No valid data to upload");
+    showToast("No valid data to upload", 'info');
     return;
   }
 
@@ -1659,7 +1659,7 @@ async function bulkAssignRole() {
   const newRole = $("#bulkRoleSelect").val();
   
   if (selectedMembers.length === 0) {
-    alert("No members selected");
+    showToast("No members selected", 'warning');
     return;
   }
 
@@ -1702,7 +1702,7 @@ async function bulkAssignRole() {
       message += `\n... and ${failures.length - 5} more`;
     }
   }
-  alert(message);
+  showToast(message, 'info');
 
   // Reload members and clear selection
   loadMembers();
@@ -1712,7 +1712,7 @@ async function bulkRemoveMembers() {
   const selectedMembers = getSelectedMembers();
 
   if (selectedMembers.length === 0) {
-    alert("No members selected");
+    showToast("No members selected", 'warning');
     return;
   }
 
@@ -1753,7 +1753,7 @@ async function bulkRemoveMembers() {
       message += `\n... and ${failures.length - 5} more`;
     }
   }
-  alert(message);
+  showToast(message, 'info');
 
   // Reload members and clear selection
   loadMembers();
@@ -1942,6 +1942,6 @@ async function savePublicRetentionSettings() {
         if (statusSpan) {
             statusSpan.innerHTML = `<span class="text-danger"><i class="bi bi-exclamation-circle-fill"></i> Error: ${error.message}</span>`;
         }
-        alert(`Error saving retention settings: ${error.message}`);
+        showToast(`Error saving retention settings: ${error.message}`, 'danger');
     }
 }

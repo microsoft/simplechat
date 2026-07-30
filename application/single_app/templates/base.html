@@ -289,7 +289,12 @@
   </div>
 
   <!-- Toast container for error/info messages -->
-  <div id="toast-container" class="position-fixed bottom-0 end-0 p-3" style="z-index: 1100;"></div>
+  <div
+    id="toast-container"
+    class="position-fixed bottom-0 end-0 p-3"
+    style="z-index: 1100;"
+    aria-label="Notifications"
+  ></div>
   {% if session.get('user') %}
   <style>
     .workflow-alert-modal-dialog {
@@ -627,6 +632,7 @@
   <!-- Then Bootstrap JS (Bootstrap 5 doesn't require jQuery, 
          but it's okay to load it afterwards) -->
   <script src="/static/js/chat/bootstrap.bundle.min.js"></script>
+  <script src="{{ url_for('static', filename='js/toast.js') }}?v={{ config['VERSION'] }}"></script>
 
 
   <!-- Then DataTables (depends on jQuery) -->

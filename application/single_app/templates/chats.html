@@ -803,6 +803,28 @@
                         </div>
                     </div>
                 </div>
+                {% if ai_notice.enabled and not ai_notice.dismissed %}
+                <section
+                    id="ai-notice"
+                    class="ai-notice d-none"
+                    aria-label="AI notice"
+                    aria-live="polite"
+                    data-notice-frequency="{{ ai_notice.frequency }}"
+                    data-notice-hash="{{ ai_notice.hash }}"
+                >
+                    <i class="bi bi-info-circle ai-notice-icon" aria-hidden="true"></i>
+                    <p class="ai-notice-message mb-0" id="ai-notice-message">{{ ai_notice.message }}</p>
+                    {% if ai_notice.frequency != 'non_dismissible' %}
+                    <button
+                        type="button"
+                        class="btn-close ai-notice-dismiss"
+                        id="ai-notice-dismiss"
+                        aria-label="Dismiss AI notice"
+                        title="Dismiss AI notice"
+                    ></button>
+                    {% endif %}
+                </section>
+                {% endif %}
                 {% if conversation_contents_drawer_enabled %}
                 <aside
                     id="conversation-contents-drawer"
@@ -1588,6 +1610,7 @@
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-prompts.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-input-actions.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-toast.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/chat/chat-ai-notice.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-feedback.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-citations.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/chat/chat-loading-indicator.js') }}"></script>

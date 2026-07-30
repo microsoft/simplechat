@@ -218,7 +218,7 @@ $(document).ready(function () {
       },
       error: function (jq) {
         const err = jq.responseJSON?.error || jq.statusText;
-        alert("Failed to set active workspace: " + escapeHtml(err));
+        showToast("Failed to set active workspace: " + escapeHtml(err), 'danger');
         btn.prop("disabled", false).html(origHtml);
       }
     });
@@ -230,7 +230,7 @@ $(document).ready(function () {
     const name        = $("#publicWorkspaceName").val().trim();
     const description = $("#publicWorkspaceDescription").val().trim();
     if (!name) {
-      alert("Name is required.");
+      showToast("Name is required.", 'warning');
       return;
     }
     const submitBtn = $("#createPublicWorkspaceSubmitBtn");
@@ -251,7 +251,7 @@ $(document).ready(function () {
       },
       error: function (jq) {
         const err = jq.responseJSON?.error || jq.statusText;
-        alert("Error creating workspace: " + escapeHtml(err));
+        showToast("Error creating workspace: " + escapeHtml(err), 'danger');
       },
       complete: function () {
         submitBtn.prop("disabled", false).text(origText);
@@ -301,12 +301,12 @@ $(document).ready(function () {
       url: `/api/public_workspaces/${encodeURIComponent(id)}/requests`,
       method: "POST",
       success: function () {
-        alert("Request sent successfully!");
+        showToast("Request sent successfully!", 'success');
         btn.removeClass("btn-primary").addClass("btn-outline-secondary").text("Requested");
       },
       error: function (jq) {
         const err = jq.responseJSON?.error || jq.statusText;
-        alert("Failed to send request: " + escapeHtml(err));
+        showToast("Failed to send request: " + escapeHtml(err), 'danger');
         btn.prop("disabled", false).text(origText);
       }
     });

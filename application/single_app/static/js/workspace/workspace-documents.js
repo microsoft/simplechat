@@ -1405,7 +1405,7 @@ if (docMetadataForm && docMetadataModalEl) { // Check both exist
             })
             .catch(err => {
                 console.error("Error updating document:", err);
-                alert("Error updating document: " + (err.error || err.message || "Unknown error"));
+                showToast("Error updating document: " + (err.error || err.message || "Unknown error"), 'danger');
             })
             .finally(() => {
                 docSaveBtn.disabled = false;
@@ -1420,7 +1420,7 @@ if (docMetadataForm && docMetadataModalEl) { // Check both exist
 */
 async function uploadWorkspaceFiles(files) {
    if (!files || files.length === 0) {
-       alert("Please select at least one file to upload.");
+       showToast("Please select at least one file to upload.", 'warning');
        return;
    }
 
@@ -1431,7 +1431,7 @@ async function uploadWorkspaceFiles(files) {
    for (const file of files) {
        if (file.size > maxFileSizeBytes) {
            const fileSizeMB = (file.size / (1024 * 1024)).toFixed(1);
-           alert(`File "${file.name}" (${fileSizeMB} MB) exceeds the maximum allowed size of ${maxFileSizeMB} MB. Please select a smaller file.`);
+           showToast(`File "${file.name}" (${fileSizeMB} MB) exceeds the maximum allowed size of ${maxFileSizeMB} MB. Please select a smaller file.`, 'warning');
            return;
        }
    }
@@ -2302,14 +2302,14 @@ function showLegacyUpdatePrompt() {
       if (!res.ok) throw new Error(json.error || res.statusText);
   
       // if your endpoint returns { updated_count, failed_count }, you can use those
-      alert(json.message || 'All done!');
+      showToast(json.message || 'All done!', 'info');
   
       // hide the prompt & reload
       document.getElementById('legacy-update-alert')?.remove();
       fetchUserDocuments();
     } catch (err) {
       console.error('Legacy update failed', err);
-      alert('Failed to upgrade documents: ' + err.message);
+      showToast('Failed to upgrade documents: ' + err.message, 'danger');
       btn.disabled = false;
       btn.textContent = 'Update Now';
     }
@@ -2370,7 +2370,7 @@ window.onEditDocument = function(docId) {
         })
         .catch(err => {
             console.error("Error retrieving document for edit:", err);
-            alert("Error retrieving document details: " + (err.error || err.message || "Unknown error"));
+            showToast("Error retrieving document details: " + (err.error || err.message || "Unknown error"), 'danger');
         });
 }
 
@@ -2378,7 +2378,7 @@ window.onEditDocument = function(docId) {
 window.onExtractMetadata = function (docId, event) {
     // Check window flag - CORRECTED CHECK
     if (!(window.enable_extract_meta_data === true || window.enable_extract_meta_data === "true")) {
-        alert("Metadata extraction is not enabled."); return;
+        showToast("Metadata extraction is not enabled.", 'info'); return;
     }
     if (!confirm("Run metadata extraction for this document? This may overwrite existing metadata.")) return;
 
@@ -2394,7 +2394,6 @@ window.onExtractMetadata = function (docId, event) {
             console.log("Metadata extraction started/completed:", data);
             // Refresh the list after a short delay to allow backend processing
             setTimeout(fetchUserDocuments, 1500);
-            //alert(data.message || "Metadata extraction process initiated.");
             // Optionally close the details view if open
             const detailsRow = document.getElementById(`details-row-${docId}`);
             if (detailsRow && detailsRow.style.display !== "none") {
@@ -2403,7 +2402,7 @@ window.onExtractMetadata = function (docId, event) {
         })
         .catch(err => {
             console.error("Error calling extract metadata:", err);
-            alert("Error extracting metadata: " + (err.error || err.message || "Unknown error"));
+            showToast("Error extracting metadata: " + (err.error || err.message || "Unknown error"), 'danger');
         })
         .finally(() => {
             if (extractBtn) {
@@ -2441,7 +2440,7 @@ window.deleteDocument = async function(documentId, event) {
         fetchUserDocuments();
     } catch (error) {
         console.error("Error deleting document:", error);
-        alert("Error deleting document: " + (error.error || error.message || "Unknown error"));
+        showToast("Error deleting document: " + (error.error || error.message || "Unknown error"), 'danger');
         if (deleteTrigger && document.body.contains(deleteTrigger)) {
             deleteTrigger.classList.remove('disabled');
             deleteTrigger.removeAttribute('aria-disabled');
@@ -2490,7 +2489,7 @@ window.removeSelfFromDocument = function(documentId, event) {
         })
         .catch(error => {
             console.error("Error removing self from document:", error);
-            alert("Error removing yourself from document: " + (error.error || error.message || "Unknown error"));
+            showToast("Error removing yourself from document: " + (error.error || error.message || "Unknown error"), 'danger');
             // Re-enable button only if it still exists
             if (removeBtn && document.body.contains(removeBtn)) {
                 removeBtn.disabled = false;
@@ -2534,11 +2533,7 @@ function showDocumentReprocessResult(data, extractionMode) {
         ? `Queued ${queuedCount} PDF(s) to extract again with ${modeLabel}; ${errorCount} item(s) were skipped.`
         : (data.message || `Queued ${queuedCount} PDF(s) to extract again with ${modeLabel}.`);
 
-    if (window.showToast) {
-        window.showToast(message, errorCount > 0 ? 'warning' : 'success');
-    } else {
-        alert(message);
-    }
+    showToast(message, errorCount > 0 ? 'warning' : 'success');
 }
 
 window.reprocessDocumentExtraction = async function(documentId, extractionMode, event) {
@@ -2555,11 +2550,7 @@ window.reprocessDocumentExtraction = async function(documentId, extractionMode, 
         showDocumentReprocessResult(data, extractionMode);
         fetchUserDocuments();
     } catch (error) {
-        if (window.showToast) {
-            window.showToast(error.message, 'danger');
-        } else {
-            alert(error.message);
-        }
+        showToast(error.message, 'danger');
     }
 };
 
@@ -2580,11 +2571,7 @@ window.reprocessSelectedDocumentExtraction = async function(extractionMode) {
         syncDocumentSelectionModeUI();
         fetchUserDocuments();
     } catch (error) {
-        if (window.showToast) {
-            window.showToast(error.message, 'danger');
-        } else {
-            alert(error.message);
-        }
+        showToast(error.message, 'danger');
     }
 };
 
@@ -2711,7 +2698,7 @@ window.deleteSelectedDocuments = async function() {
     const failed = results.filter((result) => result.status === 'rejected').length;
 
     if (failed > 0) {
-        alert(`Deleted ${completed} document(s), but failed to delete ${failed} document(s).`);
+        showToast(`Deleted ${completed} document(s), but failed to delete ${failed} document(s).`, 'danger');
     }
 
     if (selectionModeActive) {
@@ -2777,9 +2764,9 @@ window.removeSelectedDocuments = function() {
         // Update status when all operations complete
         if (completed + failed === documentIds.length) {
             if (failed > 0) {
-                alert(`Removed yourself from ${completed} document(s), but failed for ${failed} document(s).`);
+                showToast(`Removed yourself from ${completed} document(s), but failed for ${failed} document(s).`, 'danger');
             } else {
-                alert(`Successfully removed yourself from ${completed} document(s).`);
+                showToast(`Successfully removed yourself from ${completed} document(s).`, 'success');
             }
             
             // Refresh the documents list
