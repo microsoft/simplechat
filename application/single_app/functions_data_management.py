@@ -11148,15 +11148,15 @@ def _get_backup_retry_after_seconds(error):
         if value > 0:
             return min(DATA_MANAGEMENT_BACKUP_MAX_RETRY_DELAY_SECONDS, value)
     except (TypeError, ValueError):
-        pass
-    try:
-        parsed = parsedate_to_datetime(str(retry_after))
-    except (TypeError, ValueError, IndexError, OverflowError):
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    delay = (parsed.astimezone(timezone.utc) - _now_utc()).total_seconds()
-    return min(DATA_MANAGEMENT_BACKUP_MAX_RETRY_DELAY_SECONDS, delay) if delay > 0 else None
+        try:
+            parsed = parsedate_to_datetime(str(retry_after))
+        except (TypeError, ValueError, IndexError, OverflowError):
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        delay = (parsed.astimezone(timezone.utc) - _now_utc()).total_seconds()
+        return min(DATA_MANAGEMENT_BACKUP_MAX_RETRY_DELAY_SECONDS, delay) if delay > 0 else None
+    return None
 
 
 def _is_retryable_backup_cosmos_error(error):
