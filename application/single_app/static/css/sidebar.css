@@ -235,59 +235,74 @@ body.sidebar-nav-enabled.has-classification-banner .container-fluid {
   transition: margin-left 0.3s ease-in-out, max-width 0.3s ease-in-out !important;
 }
 
-/* Sidebar Conversations List Styles */
+/* Sidebar scroll and conversations list styles */
+.sidebar-scroll-content {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-color: #dee2e6 #f8f9fa;
+  scrollbar-width: thin;
+}
+
+#sidebar-nav:not(.chat-sidebar-nav) .sidebar-scroll-content {
+  padding-bottom: 80px;
+}
+
 #conversations-section {
   display: flex;
   flex-direction: column;
-  flex: 1;
-  min-height: 0; /* Allow shrinking */
-  max-height: calc(100vh - 350px); /* Constrain height to leave room for other sections */
+  flex: 0 0 auto;
+  min-height: auto;
+  max-height: none;
 }
 
 #conversations-list-container {
-  flex: 1;
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  min-height: 0; /* Allow shrinking */
-  overflow: hidden; /* Prevent container from expanding */
+  min-height: auto;
+  overflow: visible;
 }
 
 #sidebar-conversations-list {
-  flex: 1;
-  overflow-y: auto;
-  min-height: 0; /* Allow shrinking */
-  max-height: none; /* Remove any max-height constraints */
+  flex: 0 0 auto;
+  min-height: auto;
+  overflow: visible;
 }
 
-/* Custom scrollbar styling for sidebar conversations */
-#sidebar-conversations-list::-webkit-scrollbar {
+/* Custom scrollbar styling for the whole sidebar content */
+.sidebar-scroll-content::-webkit-scrollbar {
   width: 8px;
 }
 
-#sidebar-conversations-list::-webkit-scrollbar-track {
+.sidebar-scroll-content::-webkit-scrollbar-track {
   background: #f8f9fa; /* Match sidebar background in light mode */
   border-radius: 4px;
 }
 
-#sidebar-conversations-list::-webkit-scrollbar-thumb {
+.sidebar-scroll-content::-webkit-scrollbar-thumb {
   background: #dee2e6;
   border-radius: 4px;
 }
 
-#sidebar-conversations-list::-webkit-scrollbar-thumb:hover {
+.sidebar-scroll-content::-webkit-scrollbar-thumb:hover {
   background: #adb5bd;
 }
 
 /* Dark mode scrollbar styles */
-[data-bs-theme="dark"] #sidebar-conversations-list::-webkit-scrollbar-track {
+[data-bs-theme="dark"] .sidebar-scroll-content {
+  scrollbar-color: #495057 #343a40;
+}
+
+[data-bs-theme="dark"] .sidebar-scroll-content::-webkit-scrollbar-track {
   background: #343a40; /* Match sidebar background in dark mode */
 }
 
-[data-bs-theme="dark"] #sidebar-conversations-list::-webkit-scrollbar-thumb {
+[data-bs-theme="dark"] .sidebar-scroll-content::-webkit-scrollbar-thumb {
   background: #495057;
 }
 
-[data-bs-theme="dark"] #sidebar-conversations-list::-webkit-scrollbar-thumb:hover {
+[data-bs-theme="dark"] .sidebar-scroll-content::-webkit-scrollbar-thumb:hover {
   background: #6c757d;
 }
 
@@ -674,6 +689,18 @@ body.sidebar-nav-enabled.has-classification-banner .container-fluid {
   font-weight: 500;
   letter-spacing: 0.02em;
   user-select: none;
+}
+
+#conversations-toggle {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background-color: var(--bs-light, #f8f9fa);
+  padding-top: 0.5rem;
+}
+
+[data-bs-theme="dark"] #conversations-toggle {
+  background-color: #343a40;
 }
 
 .sidebar-workflow-list-container {
