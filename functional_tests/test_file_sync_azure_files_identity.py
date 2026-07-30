@@ -2,8 +2,12 @@
 # test_file_sync_azure_files_identity.py
 """
 Functional test for Azure Files File Sync identity support.
-Version: 0.241.178
+Version: 0.250.070
 Implemented in: 0.241.127
+Updated in: 0.250.067
+Updated in: 0.250.068
+Updated in: 0.250.069
+Updated in: 0.250.070
 
 This test ensures Azure Files sync sources are wired to managed identity,
 service principal, and connection string authentication without requiring live
@@ -39,7 +43,7 @@ def test_version_and_dependency_pin():
     config_text = read_text("application/single_app/config.py")
     requirements_text = read_text("application/single_app/requirements.txt")
 
-    assert 'VERSION = "0.241.178"' in config_text
+    assert 'VERSION = "0.250.070"' in config_text
     assert "azure-storage-file-share==12.25.0" in requirements_text
 
 
@@ -75,7 +79,7 @@ def test_workspace_identity_catalog_supports_azure_files():
     """Validate reusable identities can describe Azure Files File Sync support."""
     identity_text = read_text("application/single_app/functions_workspace_identities.py")
 
-    assert '"file_sync": ["smb", "azure_files", "onedrive", "google_drive", "google_shared_drive"]' in identity_text
+    assert '"file_sync": ["smb", "azure_files", "azure_blob", "onedrive", "google_drive", "google_shared_drive"]' in identity_text
     assert '"file_sync": {"anonymous", "client_secret", "connection_string", "managed_identity", "username_password"}' in identity_text
     assert "managed_identity_client_id" in identity_text
     assert "tenant_id" in identity_text
@@ -105,7 +109,7 @@ def test_frontend_source_workflow_supports_azure_files():
         assert marker in file_sync_js
 
     assert "Use this identity for File Sync sources" in identities_js
-    assert "sourceTypes: ['smb', 'azure_files', 'onedrive', 'google_drive', 'google_shared_drive']" in identities_js
+    assert "sourceTypes: ['smb', 'azure_files', 'azure_blob', 'onedrive', 'google_drive', 'google_shared_drive']" in identities_js
     assert "authTypes: ['username_password', 'anonymous', 'managed_identity', 'client_secret', 'connection_string']" in identities_js
     assert "file_sync_visible_source_type_azure_files" in admin_template
     assert "Azure Files" in admin_template
