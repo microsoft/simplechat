@@ -1,15 +1,28 @@
 # route_frontend_admin_settings.py
 
+import os
 import re
 
 from config import *
 from functions_documents import *
 from functions_authentication import *
-from flask import current_app
+from flask import current_app, jsonify, request
 
 from functions_keyvault import keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_save_helper, redact_model_endpoint_secret_values
 from functions_settings import *
 from functions_content_safety import normalize_content_safety_violation_message
+from functions_mcp_server_config import (
+    check_inbound_mcp_easy_auth_exclusions,
+    INBOUND_MCP_SETTINGS_DEFAULTS,
+    ensure_inbound_mcp_default_tenant_entry,
+    inbound_mcp_entry_values,
+    is_mcp_ui_enabled,
+    normalize_inbound_mcp_list,
+    normalize_inbound_mcp_settings,
+    normalize_inbound_mcp_single_value,
+    normalize_inbound_mcp_value_entries,
+)
+from functions_mcp_server_registry import get_inbound_mcp_tool_registry
 from functions_file_sync import FILE_SYNC_DEFAULTS, get_file_sync_config
 from functions_source_review import SOURCE_REVIEW_DEFAULTS, get_source_review_config, get_source_review_runtime_capabilities, normalize_source_review_js_rendering_enabled, parse_source_review_list
 from functions_control_center import (
@@ -65,6 +78,13 @@ AGENTS_PAGE_DEFAULTS = {
     'agents_page_promoted_popular_tag_label': AGENTS_PAGE_PROMOTED_POPULAR_TAG_LABEL_DEFAULT,
 }
 HEX_COLOR_PATTERN = re.compile(r'^#[0-9a-fA-F]{6}$')
+AZURE_SUBSCRIPTION_ID_PATTERN = re.compile(
+    r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+)
+AZURE_CLI_CLOUD_NAMES_BY_ENVIRONMENT = {
+    'public': 'AzureCloud',
+    'usgovernment': 'AzureUSGovernment',
+}
 
 
 def _is_update_version_newer(latest_version, current_version):
@@ -128,8 +148,307 @@ def normalize_agents_page_text(value, fallback, max_length):
         candidate = fallback
     return candidate[:max_length]
 
+def escape_powershell_single_quoted_value(value):
+    """Return a PowerShell single-quoted string literal for non-secret deployment hints."""
+    return f"'{str(value or '').replace(chr(39), chr(39) + chr(39))}'"
+
+
+def escape_powershell_array(values):
+    """Return a PowerShell array literal for non-secret deployment hints."""
+    normalized_values = normalize_inbound_mcp_list(values)
+    if not normalized_values:
+        return '@()'
+    return '@(' + ', '.join(escape_powershell_single_quoted_value(value) for value in normalized_values) + ')'
+
+
+def get_app_service_subscription_hint():
+    """Best-effort subscription id derived from App Service environment metadata."""
+    for env_name in ('WEBSITE_OWNER_NAME', 'AZURE_SUBSCRIPTION_ID', 'SUBSCRIPTION_ID'):
+        candidate = str(os.getenv(env_name) or '')
+        match = AZURE_SUBSCRIPTION_ID_PATTERN.search(candidate)
+        if match:
+            return match.group(0)
+    return ''
+
+
+def get_inbound_mcp_easy_auth_script_context(settings=None):
+    """Build non-secret deployment hints for the inbound MCP Easy Auth script."""
+    settings = settings if isinstance(settings, dict) else {}
+    normalized_azure_environment = str(AZURE_ENVIRONMENT or 'public').strip().lower() or 'public'
+    resource_manager_endpoint = str(resource_manager or CUSTOM_RESOURCE_MANAGER_URL_VALUE or '').strip().rstrip('/')
+    app_name = str(os.getenv('WEBSITE_SITE_NAME') or '').strip()
+    resource_group = str(os.getenv('WEBSITE_RESOURCE_GROUP') or '').strip()
+    tenant_id = str(TENANT_ID or '').strip()
+    subscription_id = get_app_service_subscription_hint()
+    simplechat_api_client_id = str(CLIENT_ID or '').strip()
+    required_delegated_scope = str(
+        settings.get('inbound_mcp_required_scope')
+        or INBOUND_MCP_SETTINGS_DEFAULTS['inbound_mcp_required_scope']
+    ).strip()
+    required_user_role = normalize_inbound_mcp_single_value(
+        settings.get('inbound_mcp_required_user_role') or settings.get('inbound_mcp_required_user_roles'),
+        default_value=INBOUND_MCP_SETTINGS_DEFAULTS['inbound_mcp_required_user_role'],
+        max_length=128,
+    )
+    required_app_role = normalize_inbound_mcp_single_value(
+        settings.get('inbound_mcp_required_app_role') or settings.get('inbound_mcp_required_app_roles'),
+        default_value=INBOUND_MCP_SETTINGS_DEFAULTS['inbound_mcp_required_app_role'],
+        max_length=128,
+    )
+    required_user_roles = [required_user_role] if required_user_role else []
+    required_app_roles = [required_app_role] if required_app_role else []
+    scope_check_missing_values = []
+
+    missing_values = []
+    if not tenant_id:
+        missing_values.append('Tenant ID')
+    if not resource_manager_endpoint:
+        missing_values.append('Resource Manager endpoint')
+    if not resource_group:
+        missing_values.append('Resource group')
+    if not app_name:
+        missing_values.append('App Service name')
+    if not simplechat_api_client_id:
+        scope_check_missing_values.append('SimpleChat API client ID')
+    if not required_delegated_scope:
+        scope_check_missing_values.append('required delegated scope')
+    if not required_user_roles:
+        scope_check_missing_values.append('required delegated user role')
+    if not required_app_roles:
+        scope_check_missing_values.append('required app-only role')
+
+    return {
+        'tenant_id': tenant_id or '<tenant-id>',
+        'azure_environment': normalized_azure_environment,
+        'resource_manager_endpoint': resource_manager_endpoint or '<resource-manager-endpoint>',
+        'preferred_cloud_name': AZURE_CLI_CLOUD_NAMES_BY_ENVIRONMENT.get(normalized_azure_environment, ''),
+        'resource_group': resource_group or '<resource-group-name>',
+        'app_name': app_name or '<app-service-name>',
+        'subscription_id': subscription_id,
+        'simplechat_api_client_id': simplechat_api_client_id or '<simplechat-api-client-id>',
+        'required_delegated_scope': required_delegated_scope or '<required-delegated-scope>',
+        'required_user_role': required_user_role or '<required-user-role>',
+        'required_app_role': required_app_role or '<required-app-role>',
+        'required_user_roles': required_user_roles,
+        'required_app_roles': required_app_roles,
+        'missing_values': missing_values,
+        'scope_check_missing_values': scope_check_missing_values,
+        'uses_custom_cloud_match': normalized_azure_environment not in AZURE_CLI_CLOUD_NAMES_BY_ENVIRONMENT,
+    }
+
+
+def build_inbound_mcp_easy_auth_script(script_context):
+    """Return the cloud-aware PowerShell script shown in the inbound MCP modal."""
+    tenant_id = escape_powershell_single_quoted_value(script_context.get('tenant_id'))
+    resource_group = escape_powershell_single_quoted_value(script_context.get('resource_group'))
+    app_name = escape_powershell_single_quoted_value(script_context.get('app_name'))
+    subscription_id = escape_powershell_single_quoted_value(script_context.get('subscription_id'))
+    resource_manager_endpoint = escape_powershell_single_quoted_value(script_context.get('resource_manager_endpoint'))
+    preferred_cloud_name = escape_powershell_single_quoted_value(script_context.get('preferred_cloud_name'))
+    simplechat_api_client_id = escape_powershell_single_quoted_value(script_context.get('simplechat_api_client_id'))
+    required_delegated_scope = escape_powershell_single_quoted_value(script_context.get('required_delegated_scope'))
+    required_user_roles = escape_powershell_array(script_context.get('required_user_roles'))
+    required_app_roles = escape_powershell_array(script_context.get('required_app_roles'))
+
+    return f"""$tenantId = {tenant_id}
+$resourceGroup = {resource_group}
+$appName = {app_name}
+$subscriptionId = {subscription_id}
+$resourceManagerEndpoint = {resource_manager_endpoint}
+$preferredCloudName = {preferred_cloud_name}
+$simpleChatApiClientId = {simplechat_api_client_id}
+$requiredDelegatedScope = {required_delegated_scope}
+$requiredUserRoles = {required_user_roles}
+$requiredAppRoles = {required_app_roles}
+$requiredPaths = @(
+    "/.well-known/oauth-protected-resource",
+    "/.well-known/oauth-protected-resource/api/mcp",
+    "/.well-known/oauth-protected-resource/mcp",
+    "/.well-known/oauth-authorization-server",
+    "/api/mcp",
+    "/api/mcp/health"
+)
+
+$placeholderValues = @(
+    "<tenant-id>",
+    "<resource-group-name>",
+    "<app-service-name>",
+    "<resource-manager-endpoint>",
+    "<simplechat-api-client-id>",
+    "<required-delegated-scope>",
+    "<required-user-role>",
+    "<required-app-role>"
+)
+
+foreach ($requiredValue in @($tenantId, $resourceGroup, $appName, $resourceManagerEndpoint)) {{
+    if ([string]::IsNullOrWhiteSpace($requiredValue) -or $placeholderValues -contains $requiredValue) {{
+        throw "Update the generated script placeholders before running it."
+    }}
+}}
+
+function Normalize-Endpoint([string] $value) {{
+    if ($null -eq $value) {{
+        return ""
+    }}
+    return $value.Trim().TrimEnd("/")
+}}
+
+$resourceManagerEndpoint = Normalize-Endpoint $resourceManagerEndpoint
+$cloudNameToSet = $preferredCloudName
+
+if ([string]::IsNullOrWhiteSpace($cloudNameToSet)) {{
+    $registeredClouds = az cloud list -o json | ConvertFrom-Json
+    $matchingClouds = @($registeredClouds | Where-Object {{
+        (Normalize-Endpoint $_.endpoints.resourceManager) -ieq $resourceManagerEndpoint
+    }})
+
+    if ($matchingClouds.Count -eq 1) {{
+        $cloudNameToSet = $matchingClouds[0].name
+    }} elseif ($matchingClouds.Count -gt 1) {{
+        $matchingNames = ($matchingClouds | ForEach-Object {{ $_.name }}) -join ", "
+        throw "Multiple Azure CLI clouds match Resource Manager endpoint '$resourceManagerEndpoint': $matchingNames. Set `$preferredCloudName to the intended registered cloud name."
+    }} else {{
+        throw "No registered Azure CLI cloud matches Resource Manager endpoint '$resourceManagerEndpoint'. Register the custom cloud first, then rerun this script."
+    }}
+}}
+
+$activeCloudName = az cloud show --query name -o tsv 2>$null
+if ($LASTEXITCODE -ne 0 -or $activeCloudName -ne $cloudNameToSet) {{
+    az cloud set --name $cloudNameToSet
+    if ($LASTEXITCODE -ne 0) {{
+        throw "Failed to set Azure CLI cloud '$cloudNameToSet'."
+    }}
+}}
+
+$activeResourceManagerEndpoint = Normalize-Endpoint (az cloud show --query endpoints.resourceManager -o tsv)
+if ($activeResourceManagerEndpoint -ine $resourceManagerEndpoint) {{
+    throw "The active Azure CLI cloud Resource Manager endpoint '$activeResourceManagerEndpoint' does not match SimpleChat's endpoint '$resourceManagerEndpoint'."
+}}
+
+$currentTenantId = az account show --query tenantId -o tsv 2>$null
+if ($LASTEXITCODE -ne 0 -or $currentTenantId -ne $tenantId) {{
+    az login --tenant $tenantId
+    if ($LASTEXITCODE -ne 0) {{
+        throw "Azure CLI login failed for tenant '$tenantId'."
+    }}
+}}
+
+if (-not [string]::IsNullOrWhiteSpace($subscriptionId)) {{
+    az account set --subscription $subscriptionId
+    if ($LASTEXITCODE -ne 0) {{
+        throw "Failed to select subscription '$subscriptionId'."
+    }}
+}}
+
+$hasSimpleChatApiClientId = -not [string]::IsNullOrWhiteSpace($simpleChatApiClientId) -and $placeholderValues -notcontains $simpleChatApiClientId
+$hasRequiredDelegatedScope = -not [string]::IsNullOrWhiteSpace($requiredDelegatedScope) -and $placeholderValues -notcontains $requiredDelegatedScope
+$requiredUserRolesToCheck = @($requiredUserRoles | Where-Object {{ -not [string]::IsNullOrWhiteSpace($_) -and $placeholderValues -notcontains $_ }})
+$requiredAppRolesToCheck = @($requiredAppRoles | Where-Object {{ -not [string]::IsNullOrWhiteSpace($_) -and $placeholderValues -notcontains $_ }})
+if ($hasSimpleChatApiClientId -and ($hasRequiredDelegatedScope -or $requiredUserRolesToCheck.Count -gt 0 -or $requiredAppRolesToCheck.Count -gt 0)) {{
+    Write-Host "Checking that the SimpleChat API app registration exposes inbound MCP scope and role requirements..."
+    $apiApplicationJson = az ad app show --id $simpleChatApiClientId -o json 2>$null
+    if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($apiApplicationJson)) {{
+        $apiApplication = $apiApplicationJson | ConvertFrom-Json
+        if ($hasRequiredDelegatedScope) {{
+            $matchingScopes = @($apiApplication.api.oauth2PermissionScopes | Where-Object {{
+                $_.value -eq $requiredDelegatedScope -and ($_.isEnabled -eq $true -or $_.isEnabled -eq "true")
+            }})
+            if ($matchingScopes.Count -eq 0) {{
+                throw "The SimpleChat API app registration '$simpleChatApiClientId' does not expose enabled delegated scope '$requiredDelegatedScope'. Add the scope under Expose an API or update the Inbound MCP required delegated scope setting."
+            }}
+        }}
+        foreach ($requiredUserRole in $requiredUserRolesToCheck) {{
+            $matchingUserRoles = @($apiApplication.appRoles | Where-Object {{
+                $_.value -eq $requiredUserRole -and ($_.isEnabled -eq $true -or $_.isEnabled -eq "true") -and @($_.allowedMemberTypes) -contains "User"
+            }})
+            if ($matchingUserRoles.Count -eq 0) {{
+                throw "The SimpleChat API app registration '$simpleChatApiClientId' does not expose enabled user-assignable app role '$requiredUserRole'. Add the role under App roles or update the Inbound MCP required delegated user roles setting."
+            }}
+        }}
+        foreach ($requiredAppRole in $requiredAppRolesToCheck) {{
+            $matchingAppRoles = @($apiApplication.appRoles | Where-Object {{
+                $_.value -eq $requiredAppRole -and ($_.isEnabled -eq $true -or $_.isEnabled -eq "true") -and @($_.allowedMemberTypes) -contains "Application"
+            }})
+            if ($matchingAppRoles.Count -eq 0) {{
+                throw "The SimpleChat API app registration '$simpleChatApiClientId' does not expose enabled application app role '$requiredAppRole'. Add the role under App roles or update the Inbound MCP required app-only roles setting."
+            }}
+        }}
+    }} else {{
+        Write-Warning "Could not inspect the SimpleChat API app registration for inbound MCP scope and roles. Continue only if you already confirmed they exist and are enabled."
+    }}
+}}
+
+$siteId = az webapp show --resource-group $resourceGroup --name $appName --query id -o tsv
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($siteId)) {{
+    throw "Could not resolve App Service '$appName' in resource group '$resourceGroup'."
+}}
+
+$authSettingsUrl = "$resourceManagerEndpoint$siteId/config/authsettingsV2?api-version=2023-12-01"
+$rawCurrent = az rest --method get --url $authSettingsUrl
+if ($LASTEXITCODE -ne 0) {{
+    throw "Failed to read authsettingsV2."
+}}
+
+$current = $rawCurrent | ConvertFrom-Json
+
+$timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+$backupPath = Join-Path (Get-Location) "simplechat-authsettingsV2-backup-$timestamp.json"
+$current | ConvertTo-Json -Depth 100 | Set-Content -Path $backupPath -Encoding utf8
+Write-Host "Backed up current authsettingsV2 to $backupPath"
+
+if (-not $current.properties.globalValidation) {{
+    $current.properties | Add-Member -NotePropertyName globalValidation -NotePropertyValue ([pscustomobject]@{{}})
+}}
+
+if (-not ($current.properties.globalValidation.PSObject.Properties.Name -contains "excludedPaths")) {{
+    $current.properties.globalValidation | Add-Member -NotePropertyName excludedPaths -NotePropertyValue @()
+}}
+
+$excludedPaths = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+foreach ($path in @($current.properties.globalValidation.excludedPaths)) {{
+    if (-not [string]::IsNullOrWhiteSpace($path)) {{
+        [void]$excludedPaths.Add($path)
+    }}
+}}
+foreach ($path in $requiredPaths) {{
+    [void]$excludedPaths.Add($path)
+}}
+
+$current.properties.globalValidation.excludedPaths = @($excludedPaths)
+$bodyPath = Join-Path ([System.IO.Path]::GetTempPath()) "simplechat-authsettingsV2-$timestamp.json"
+$current | ConvertTo-Json -Depth 100 | Set-Content -Path $bodyPath -Encoding utf8
+az rest --method put --url $authSettingsUrl --headers "Content-Type=application/json" --body "@$bodyPath"
+if ($LASTEXITCODE -ne 0) {{
+    throw "Failed to update authsettingsV2. Backup remains at $backupPath."
+}}
+
+Write-Host "Updated authsettingsV2 excludedPaths for inbound MCP. Backup remains at $backupPath."
+Write-Host ""
+Write-Host "**********************************************************************" -ForegroundColor Green
+Write-Host "IMPORTANT: Restart your web app now so App Service Authentication reloads the excluded paths." -ForegroundColor Green
+Write-Host "**********************************************************************" -ForegroundColor Green
+"""
+
+
+def get_inbound_mcp_easy_auth_check_base_url():
+    """Return the public app base URL to probe for Easy Auth exclusion checks."""
+    website_hostname = str(os.getenv('WEBSITE_HOSTNAME') or '').strip().strip('/')
+    if website_hostname:
+        return f"https://{website_hostname}/"
+    return request.host_url
+
 
 def register_route_frontend_admin_settings(bp):
+    @bp.route('/api/admin/settings/inbound-mcp/easy-auth-check', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def inbound_mcp_easy_auth_check():
+        """Validate that App Service Authentication exclusions allow inbound MCP endpoints."""
+        result = check_inbound_mcp_easy_auth_exclusions(get_inbound_mcp_easy_auth_check_base_url())
+        status_code = 200 if result.get('success') else 409
+        return jsonify(result), status_code
+
     @bp.route('/api/admin/settings/file-processing-logs/cleanup', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -637,6 +956,7 @@ def register_route_frontend_admin_settings(bp):
             user_id = get_current_user_id()
             user_settings = get_user_settings(user_id)
             settings_for_template = dict(settings)
+            normalize_inbound_mcp_settings(settings_for_template)
             settings_for_template['model_endpoints'] = frontend_model_endpoints
             audio_runtime_capabilities = get_audio_runtime_capabilities()
             source_review_runtime_capabilities = get_source_review_runtime_capabilities()
@@ -645,6 +965,7 @@ def register_route_frontend_admin_settings(bp):
                 source_review_runtime_capabilities,
             )
             settings_for_template = redact_admin_settings_secrets_for_form(settings_for_template)
+            inbound_mcp_easy_auth_script_context = get_inbound_mcp_easy_auth_script_context(settings_for_template)
 
             return render_template(
                 'admin_settings.html',
@@ -667,7 +988,13 @@ def register_route_frontend_admin_settings(bp):
                 chunk_size_effective=get_chunk_size_config(settings),
                 audio_runtime_capabilities=audio_runtime_capabilities,
                 source_review_runtime_capabilities=source_review_runtime_capabilities,
+                mcp_ui_enabled=is_mcp_ui_enabled(),
+                inbound_mcp_resource_path=INBOUND_MCP_RESOURCE_PATH,
+                inbound_mcp_prm_path=INBOUND_MCP_PRM_PATH,
+                inbound_mcp_easy_auth_script_context=inbound_mcp_easy_auth_script_context,
+                inbound_mcp_easy_auth_script=build_inbound_mcp_easy_auth_script(inbound_mcp_easy_auth_script_context),
                 is_vision_capable_model=is_vision_capable_model,
+                inbound_mcp_tools=get_inbound_mcp_tool_registry(),
                 # You don't need to pass deployments separately if they are added to settings['..._model']['all']
                 # gpt_deployments=gpt_deployments,
                 # embedding_deployments=embedding_deployments,
@@ -1977,6 +2304,8 @@ def register_route_frontend_admin_settings(bp):
                 'governance_user_actions': form_data.get('governance_user_actions') == 'on' and form_data.get('allow_user_plugins') == 'on',
                 'governance_group_actions': form_data.get('governance_group_actions') == 'on' and form_data.get('allow_group_plugins') == 'on',
                 'governance_global_actions_usage': form_data.get('governance_global_actions_usage') == 'on' and form_data.get('enable_semantic_kernel') == 'on',
+                'enable_mcp_destination_governance': form_data.get('enable_mcp_destination_governance') == 'on',
+                'mcp_block_unsafe_destinations': form_data.get('mcp_block_unsafe_destinations') == 'on',
 
                 # GPT (Direct & APIM)
                 'enable_gpt_apim': form_data.get('enable_gpt_apim') == 'on',
@@ -2351,6 +2680,105 @@ def register_route_frontend_admin_settings(bp):
                 'control_center_auto_refresh_next_run': control_center_auto_refresh_next_run,
             }
             
+            # --- Optional Inbound MCP Settings ---
+            if is_mcp_ui_enabled():
+                inbound_mcp_required_user_role = normalize_inbound_mcp_single_value(
+                    form_data.get('inbound_mcp_required_user_role') or form_data.get('inbound_mcp_required_user_roles'),
+                    default_value=INBOUND_MCP_SETTINGS_DEFAULTS['inbound_mcp_required_user_role'],
+                    max_length=128,
+                )
+                inbound_mcp_required_app_role = normalize_inbound_mcp_single_value(
+                    form_data.get('inbound_mcp_required_app_role') or form_data.get('inbound_mcp_required_app_roles'),
+                    default_value=INBOUND_MCP_SETTINGS_DEFAULTS['inbound_mcp_required_app_role'],
+                    max_length=128,
+                )
+                inbound_mcp_client_app_entries = normalize_inbound_mcp_value_entries(
+                    form_data.get('inbound_mcp_allowed_client_app_entries_json')
+                    or form_data.get('inbound_mcp_allowed_client_app_ids', ''),
+                    lowercase=True,
+                )
+                inbound_mcp_allow_external_tenants = form_data.get('inbound_mcp_allow_external_tenants') == 'on'
+                inbound_mcp_tenant_entries = normalize_inbound_mcp_value_entries(
+                    form_data.get('inbound_mcp_allowed_tenant_entries_json')
+                    or form_data.get('inbound_mcp_allowed_tenant_ids', ''),
+                    lowercase=True,
+                )
+                if inbound_mcp_allow_external_tenants:
+                    inbound_mcp_tenant_entries = ensure_inbound_mcp_default_tenant_entry(inbound_mcp_tenant_entries)
+                    inbound_mcp_allowed_tenant_ids = inbound_mcp_entry_values(inbound_mcp_tenant_entries, lowercase=True)
+                else:
+                    inbound_mcp_allowed_tenant_ids = [str(TENANT_ID or '').strip().lower()] if str(TENANT_ID or '').strip() else []
+
+                inbound_mcp_allow_all_source_ids = form_data.get('inbound_mcp_allow_all_source_ids') == 'on'
+                inbound_mcp_source_entries = normalize_inbound_mcp_value_entries(
+                    form_data.get('inbound_mcp_allowed_source_entries_json')
+                    or form_data.get('inbound_mcp_allowed_source_ids', ''),
+                    default=INBOUND_MCP_SETTINGS_DEFAULTS['inbound_mcp_allowed_source_entries'] if inbound_mcp_allow_all_source_ids else None,
+                )
+                if not inbound_mcp_allow_all_source_ids:
+                    inbound_mcp_source_entries = [
+                        entry for entry in inbound_mcp_source_entries
+                        if entry.get('value') != '*'
+                    ]
+                inbound_mcp_allowed_source_ids = ['*'] if inbound_mcp_allow_all_source_ids else inbound_mcp_entry_values(inbound_mcp_source_entries)
+
+                new_settings.update({
+                    'enable_inbound_mcp_server': form_data.get('enable_inbound_mcp_server') == 'on',
+                    'inbound_mcp_required_user_role': inbound_mcp_required_user_role,
+                    'inbound_mcp_required_app_role': inbound_mcp_required_app_role,
+                    'inbound_mcp_required_user_roles': [inbound_mcp_required_user_role] if inbound_mcp_required_user_role else [],
+                    'inbound_mcp_required_app_roles': [inbound_mcp_required_app_role] if inbound_mcp_required_app_role else [],
+                    'inbound_mcp_required_scope': form_data.get('inbound_mcp_required_scope', '').strip(),
+                    'inbound_mcp_allowed_client_app_entries': inbound_mcp_client_app_entries,
+                    'inbound_mcp_allowed_client_app_ids': inbound_mcp_entry_values(inbound_mcp_client_app_entries, lowercase=True),
+                    'inbound_mcp_allow_external_tenants': inbound_mcp_allow_external_tenants,
+                    'inbound_mcp_allowed_tenant_entries': inbound_mcp_tenant_entries,
+                    'inbound_mcp_allowed_tenant_ids': inbound_mcp_allowed_tenant_ids,
+                    'inbound_mcp_allow_all_source_ids': inbound_mcp_allow_all_source_ids,
+                    'inbound_mcp_allowed_source_entries': inbound_mcp_source_entries,
+                    'inbound_mcp_allowed_source_ids': inbound_mcp_allowed_source_ids,
+                    'inbound_mcp_source_header': form_data.get('inbound_mcp_source_header', '').strip(),
+                    'enable_inbound_mcp_rate_limits': form_data.get('enable_inbound_mcp_rate_limits') == 'on',
+                    'inbound_mcp_rate_limit_window_seconds': form_data.get(
+                        'inbound_mcp_rate_limit_window_seconds',
+                        INBOUND_MCP_SETTINGS_DEFAULTS['inbound_mcp_rate_limit_window_seconds'],
+                    ),
+                    'inbound_mcp_rate_limit_read_per_window': form_data.get(
+                        'inbound_mcp_rate_limit_read_per_window',
+                        INBOUND_MCP_SETTINGS_DEFAULTS['inbound_mcp_rate_limit_read_per_window'],
+                    ),
+                    'inbound_mcp_rate_limit_search_per_window': form_data.get(
+                        'inbound_mcp_rate_limit_search_per_window',
+                        INBOUND_MCP_SETTINGS_DEFAULTS['inbound_mcp_rate_limit_search_per_window'],
+                    ),
+                    'inbound_mcp_rate_limit_write_per_window': form_data.get(
+                        'inbound_mcp_rate_limit_write_per_window',
+                        INBOUND_MCP_SETTINGS_DEFAULTS['inbound_mcp_rate_limit_write_per_window'],
+                    ),
+                    'inbound_mcp_max_request_bytes': form_data.get(
+                        'inbound_mcp_max_request_bytes',
+                        INBOUND_MCP_SETTINGS_DEFAULTS['inbound_mcp_max_request_bytes'],
+                    ),
+                })
+                if (
+                    new_settings.get('enable_inbound_mcp_server')
+                    and not bool(settings.get('enable_inbound_mcp_server', False))
+                ):
+                    easy_auth_check = check_inbound_mcp_easy_auth_exclusions(get_inbound_mcp_easy_auth_check_base_url())
+                    if not easy_auth_check.get('success'):
+                        log_event(
+                            "[InboundMCP] Prevented enabling inbound MCP because Easy Auth exclusions failed.",
+                            extra={
+                                "endpoints": easy_auth_check.get('endpoints', []),
+                            },
+                            level=logging.WARNING,
+                        )
+                        flash(
+                            "Inbound MCP was not enabled. App Service Authentication is still intercepting one or more MCP endpoints. Add the required excluded paths, then try enabling it again.",
+                            "danger",
+                        )
+                        return redirect(url_for('frontend_admin_settings.admin_settings'))
+
             # --- Prevent Legacy Fields from Being Created/Updated ---
             # Remove semantic_kernel_agents and semantic_kernel_plugins if they somehow got added
             if 'semantic_kernel_agents' in new_settings:
@@ -2534,6 +2962,8 @@ def register_route_frontend_admin_settings(bp):
                 'governance_user_actions',
                 'governance_group_actions',
                 'governance_global_actions_usage',
+                'enable_mcp_destination_governance',
+                'mcp_block_unsafe_destinations',
             ]
             governance_toggle_changes = {}
             for toggle_key in governance_toggle_keys:

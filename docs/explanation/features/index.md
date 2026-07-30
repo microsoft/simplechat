@@ -26,6 +26,13 @@ category: Version History
 - [Microsoft Graph Send Mail Action](MSGRAPH_SEND_MAIL_ACTION.md)
 - [Snowflake Action](v0.250.006/SNOWFLAKE_ACTION.md)
 
+## MCP Features
+
+- [MCP Current State And Remaining Roadmap](MCP_PLUGIN_ROBUSTNESS_PLAN.md)
+- [Inbound SimpleChat MCP Server Architecture](INBOUND_MCP_SERVER_ARCHITECTURE.md)
+- [MCP Server Presets](MCP_SERVER_PRESETS.md)
+- [MCP Server Preconfigurations](MCP_SERVER_PRECONFIGURATIONS.md)
+
 ## Chat Upload Features
 
 - [Outlook MSG File Ingestion](v0.242.063/MSG_FILE_INGESTION.md)

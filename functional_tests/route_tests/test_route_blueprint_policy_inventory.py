@@ -85,6 +85,7 @@ REGISTERED_BLUEPRINT_POLICIES = {
     "frontend_safety": ("login_required",),
     "frontend_support": ("login_required", "user_required"),
     "frontend_workspace": ("login_required", "user_required"),
+    "inbound_mcp": ("inbound_mcp_required",),
     "openapi": ("login_required", "user_required"),
 }
 
@@ -101,6 +102,10 @@ EXPECTED_PUBLIC_PATHS = {
     "/ci-auth/session",
     "/robots933456.txt",
     "/favicon.ico",
+    "/.well-known/oauth-protected-resource",
+    "/.well-known/oauth-protected-resource/api/mcp",
+    "/.well-known/oauth-protected-resource/mcp",
+    "/.well-known/oauth-authorization-server",
     "/static/js/<path:filename>",
     "/acceptable_use_policy.html",
     "/external/healthcheck",

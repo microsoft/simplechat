@@ -32,6 +32,7 @@ from functions_documents import *
 from functions_latest_features_nav import should_hide_latest_features_nav
 from functions_search import *
 from functions_settings import *
+from functions_mcp_server_config import is_mcp_ui_enabled
 from functions_appinsights import *
 from functions_activity_logging import *
 
@@ -93,6 +94,7 @@ from route_backend_tts import register_route_backend_tts
 from route_backend_collaboration import register_route_backend_collaboration
 from route_backend_data_management import register_route_backend_data_management
 from route_backend_msgraph_pending_actions import register_route_backend_msgraph_pending_actions
+from route_inbound_mcp import register_route_inbound_mcp
 from route_enhanced_citations import register_enhanced_citations_routes
 from plugin_validation_endpoint import plugin_validation_admin_bp, plugin_validation_bp
 from route_openapi import register_openapi_routes
@@ -101,6 +103,7 @@ from route_plugin_logging import bpl as plugin_logging_bp
 from functions_custom_pages import get_custom_pages_nav
 from functions_debug import debug_print
 from functions_terms_of_use import has_terms_of_use_acceptance
+from functions_mcp_server_auth import inbound_mcp_required_blueprint
 
 from opentelemetry.instrumentation.flask import FlaskInstrumentor
 
@@ -599,7 +602,8 @@ def inject_settings():
         latest_features_nav_hidden_by_development=IS_DEVELOPMENT,
         idle_timeout_enabled=idle_timeout_enabled,
         idle_timeout_minutes=idle_timeout_minutes,
-        idle_warning_minutes=idle_warning_minutes
+        idle_warning_minutes=idle_warning_minutes,
+        mcp_ui_enabled=is_mcp_ui_enabled()
     )
 
 @app.template_filter('to_datetime')
@@ -1293,6 +1297,9 @@ register_route_blueprint('backend_user_agreement', register_route_backend_user_a
 
 # ------------------- API Thoughts Routes ----------------
 register_route_blueprint('backend_thoughts', register_route_backend_thoughts, user_required_blueprint)
+
+# ------------------- Inbound MCP Routes -----------------
+register_route_blueprint('inbound_mcp', register_route_inbound_mcp, inbound_mcp_required_blueprint)
 
 # ------------------- External Health Routes ----------
 register_route_blueprint('external_health', register_route_external_health)

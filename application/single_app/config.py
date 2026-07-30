@@ -34,9 +34,7 @@ import jwt
 import pandas
 from functions_latest_features_nav import is_development_env_enabled
 
-# Add dotenv import
-from dotenv import load_dotenv
-
+from functions_environment import load_simplechat_dotenv
 from flask import (
     Flask, 
     flash, 
@@ -90,14 +88,14 @@ from azure.ai.contentsafety import ContentSafetyClient
 from azure.ai.contentsafety.models import AnalyzeTextOptions, TextCategory
 from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
 
-# Load environment variables from .env file
-load_dotenv()
+# Load environment variables from a selected dotenv profile or the default .env file.
+DOTENV_LOAD_RESULT = load_simplechat_dotenv()
 
 # Flask app configuration constants
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.250.076"
+VERSION = "0.250.100"
 IS_DEVELOPMENT = is_development_env_enabled()
 
 SESSION_COOKIE_SAMESITE = os.getenv('SESSION_COOKIE_SAMESITE', 'Lax')
@@ -130,6 +128,34 @@ def _split_origin_list(raw_value):
         for origin in parsed_values
         if str(origin).strip()
     ]
+
+
+def _split_env_list(raw_value, lowercase=False):
+    """Return trimmed values from comma, space, or JSON-list environment values."""
+    if not raw_value:
+        return []
+
+    value = raw_value.strip()
+    parsed_values = []
+    if value.startswith('['):
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, list):
+                parsed_values = parsed
+        except (TypeError, ValueError):
+            parsed_values = []
+    else:
+        parsed_values = re.split(r'[\s,]+', value)
+
+    normalized_values = []
+    for item in parsed_values:
+        normalized_item = str(item).strip()
+        if not normalized_item:
+            continue
+        if lowercase:
+            normalized_item = normalized_item.lower()
+        normalized_values.append(normalized_item)
+    return normalized_values
 
 
 CSRF_TRUSTED_ORIGINS = _split_origin_list(os.getenv('CSRF_TRUSTED_ORIGINS', ''))
@@ -287,6 +313,26 @@ CI_BEARER_SESSION_ALLOWED_APP_IDS = [
     if app_id.strip()
 ]
 CI_BEARER_SESSION_REQUIRED_ROLE = os.getenv("CI_BEARER_SESSION_REQUIRED_ROLE", "Admin")
+ENABLE_MCP_UI = os.getenv("ENABLE_MCP_UI", os.getenv("enable_mcp_ui", "false")).lower() == "true"
+INBOUND_MCP_RESOURCE_PATH = "/api/mcp"
+INBOUND_MCP_PRM_ROOT_PATH = "/.well-known/oauth-protected-resource"
+INBOUND_MCP_PRM_RESOURCE_PATH = f"{INBOUND_MCP_PRM_ROOT_PATH}{INBOUND_MCP_RESOURCE_PATH}"
+INBOUND_MCP_LEGACY_PRM_PATH = "/.well-known/oauth-protected-resource/mcp"
+INBOUND_MCP_PRM_PATH = INBOUND_MCP_PRM_RESOURCE_PATH
+INBOUND_MCP_PRM_PATHS = (
+    INBOUND_MCP_PRM_ROOT_PATH,
+    INBOUND_MCP_PRM_RESOURCE_PATH,
+    INBOUND_MCP_LEGACY_PRM_PATH,
+)
+INBOUND_MCP_AUTHORIZATION_SERVER_METADATA_PATH = "/.well-known/oauth-authorization-server"
+ENABLE_MCP_DESTINATION_GOVERNANCE = os.getenv("ENABLE_MCP_DESTINATION_GOVERNANCE", "false").lower() == "true"
+MCP_ALLOWED_DESTINATIONS = _split_env_list(os.getenv("MCP_ALLOWED_DESTINATIONS", ""))
+MCP_ALLOWED_PERSONAL_DESTINATIONS = _split_env_list(os.getenv("MCP_ALLOWED_PERSONAL_DESTINATIONS", ""))
+MCP_ALLOWED_GROUP_DESTINATIONS = _split_env_list(os.getenv("MCP_ALLOWED_GROUP_DESTINATIONS", ""))
+MCP_ALLOWED_GLOBAL_DESTINATIONS = _split_env_list(os.getenv("MCP_ALLOWED_GLOBAL_DESTINATIONS", ""))
+MCP_BLOCK_UNSAFE_DESTINATIONS = os.getenv("MCP_BLOCK_UNSAFE_DESTINATIONS", "false").lower() == "true"
+SIMPLECHAT_MCP_PRECONFIGURATION_PATHS = os.getenv("SIMPLECHAT_MCP_PRECONFIGURATION_PATHS", "")
+ENABLE_LOCAL_MCP_PRECONFIGURATION = os.getenv("ENABLE_LOCAL_MCP_PRECONFIGURATION", "false").lower() == "true"
 LOGIN_REDIRECT_URL = os.getenv("LOGIN_REDIRECT_URL")
 HOME_REDIRECT_URL = os.getenv("HOME_REDIRECT_URL")  # Front Door URL for home page
 AZURE_ENVIRONMENT = os.getenv("AZURE_ENVIRONMENT", "public") # public, usgovernment, custom

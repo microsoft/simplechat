@@ -589,6 +589,13 @@
                   <i class="bi bi-plugin me-2" style="font-size: 0.8em;"></i><span class="nav-text">Actions Configuration</span>
                 </a>
               </li>
+              {% if mcp_ui_enabled %}
+              <li class="nav-item">
+                <a class="nav-link d-flex align-items-center admin-nav-section" href="#" data-tab="agents" data-section="inbound-mcp-configuration">
+                  <i class="bi bi-diagram-3 me-2" style="font-size: 0.8em;"></i><span class="nav-text">Inbound MCP</span>
+                </a>
+              </li>
+              {% endif %}
             </ul>
           </li>
           <li class="nav-item">
