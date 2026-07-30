@@ -1193,7 +1193,7 @@ def register_route_backend_conversations(bp):
                 f'[ConversationFork] Validation failed while creating conversation fork: {validation_error}',
                 level=logging.WARNING,
                 exceptionTraceback=True,
-                properties={
+                custom_dimensions={
                     'source_conversation_id': conversation_id,
                     'selected_message_id': selected_message_id,
                     'user_id': user_id,
