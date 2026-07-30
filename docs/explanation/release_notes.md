@@ -2,6 +2,21 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.074)**
+
+#### New Features
+
+*   **Conversation Contents Drawer**
+    *   Added an admin-controlled, default-on conversation contents drawer that indexes persisted user messages and lets users jump directly to earlier prompts in long chats.
+    *   Added a default-on user profile preference so each user can hide the drawer while the global admin feature remains enabled.
+    *   (Ref: microsoft/simplechat#1026, `chat-conversation-contents.js`, `admin_settings.html`, `profile.html`)
+
+#### User Interface Enhancements
+
+*   **Responsive Long-Chat Navigation**
+    *   Added safe plain-text labels, active-location tracking, keyboard focus management, destination highlighting, and persistent desktop or off-canvas mobile layouts.
+    *   (Ref: microsoft/simplechat#1026, `chats.html`, `chats.css`, `test_chat_conversation_contents_drawer.py`)
+
 ### **(v0.250.073)**
 
 #### New Features
