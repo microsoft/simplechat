@@ -1201,7 +1201,16 @@ def register_route_backend_conversations(bp):
             )
             return jsonify({'error': 'Invalid request'}), 400
         except ConversationForkConflictError as conflict_error:
-            return jsonify({'error': str(conflict_error)}), 409
+            log_event(
+                f'[ConversationFork] Conflict while creating conversation fork: {conflict_error}',
+                level=logging.WARNING,
+                properties={
+                    'source_conversation_id': conversation_id,
+                    'selected_message_id': selected_message_id,
+                    'user_id': user_id,
+                },
+            )
+            return jsonify({'error': 'Conversation fork conflict'}), 409
         except Exception as error:
             log_event(
                 f'[ConversationFork] Failed to create conversation fork: {error}',
