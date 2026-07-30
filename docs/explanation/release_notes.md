@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.102)**
+
+#### New Features
+
+*   **Per-Message Audio Export**
+    *   Users can export completed user and assistant chat messages as MP3 audio when text-to-speech is enabled.
+    *   Downloads reuse the active Azure Speech voice and speed, include only visible message text, and remain transient without storing generated audio in SimpleChat.
+    *   (Ref: microsoft/simplechat#628, `chat-tts.js`, `chat-message-export.js`, `chat-messages.js`, `MESSAGE_AUDIO_EXPORT.md`)
+
 ### **(v0.250.101)**
 
 #### New Features
