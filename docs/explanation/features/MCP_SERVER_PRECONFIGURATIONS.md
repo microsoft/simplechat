@@ -1,14 +1,8 @@
 # MCP Server Preconfigurations
 
-Implemented in version: **0.250.064**
+Current documentation version: **0.250.098**
 
-Destination governance UI and delegated policy persistence implemented in version: **0.250.065**
-
-Enterprise preconfiguration tiering implemented in version: **0.250.066**
-
-Implementation-specific preconfiguration schema validation added in version: **0.250.067**
-
-Capability-probe defaults for argument validation and result policy added in version: **0.250.068**
+Related configuration version: `application\single_app\config.py` currently sets `VERSION = "0.250.098"`.
 
 ## Overview
 
@@ -194,20 +188,12 @@ Both templates use example organization-hosted endpoints and require endpoint re
 
 ## Testing and Validation
 
-Coverage added in version **0.250.064**:
+Current coverage:
 
 * `functional_tests/test_mcp_destination_governance_and_preconfigurations.py`
 * `ui_tests/test_workspace_mcp_action_modal.py`
 
-The tests validate catalog loading, custom definition loading, scope filtering, secret-free defaults, destination allowlist decisions, unsafe literal-IP blocking, and modal payload generation.
-
-Expanded coverage in version **0.250.065** validates governance-backed destination patterns, per-group destination overrides, preconfiguration filtering through destination governance, and the admin MCP destination governance UI.
-
-Expanded coverage in version **0.250.066** validates enterprise template metadata, hidden-by-default behavior, explicit `preconfiguration:<id>` policy requirements, and warning text displayed in the MCP action modal.
-
-Expanded coverage in version **0.250.067** validates implementation-specific preconfiguration schemas, provider-specific `additionalSettings`, identity-backed enterprise defaults, direct-submit enterprise policy enforcement, and the endpoint-specific policy required for endpoint-reviewed enterprise templates.
-
-Expanded coverage in version **0.250.068** validates preconfiguration-compatible defaults for opt-in MCP argument validation and large-result policy behavior.
+The tests validate catalog loading, custom definition loading, scope filtering, secret-free defaults, destination allowlist decisions, unsafe literal-IP blocking, modal payload generation, governance-backed destination patterns, per-group destination overrides, destination-governance filtering, the admin MCP destination governance UI, enterprise template metadata, hidden-by-default behavior, explicit `preconfiguration:<id>` policy requirements, implementation-specific schemas, provider-specific `additionalSettings`, identity-backed enterprise defaults, direct-submit enterprise policy enforcement, endpoint-specific policy requirements, opt-in MCP argument validation defaults, and large-result policy behavior.
 
 ## Known Limitations
 

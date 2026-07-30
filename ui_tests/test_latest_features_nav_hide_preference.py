@@ -1,7 +1,7 @@
 # test_latest_features_nav_hide_preference.py
 """
 UI test for Latest Features navigation hide preference.
-Version: 0.250.083
+Version: 0.250.098
 Implemented in: 0.250.059
 
 This test ensures an authenticated user can clear a versioned Latest Features
@@ -17,7 +17,7 @@ import pytest
 BASE_URL = os.getenv("SIMPLECHAT_UI_BASE_URL", "").rstrip("/")
 STORAGE_STATE = os.getenv("SIMPLECHAT_UI_STORAGE_STATE", "")
 ADMIN_STORAGE_STATE = os.getenv("SIMPLECHAT_UI_ADMIN_STORAGE_STATE", "")
-CURRENT_VERSION = "0.250.083"
+CURRENT_VERSION = "0.250.098"
 
 
 def _require_base_url():

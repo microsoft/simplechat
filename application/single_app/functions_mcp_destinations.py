@@ -2,6 +2,7 @@
 """Outbound MCP destination governance helpers."""
 
 import fnmatch
+import hashlib
 import ipaddress
 import json
 import logging
@@ -480,6 +481,37 @@ def describe_mcp_destination(manifest):
     return descriptor
 
 
+def build_mcp_destination_log_context(manifest):
+    """Return low-sensitivity MCP destination metadata for structured logs."""
+    try:
+        descriptor = describe_mcp_destination(manifest)
+    except ValueError as exc:
+        return {
+            "is_mcp": isinstance(manifest, dict) and manifest.get("type") == MCP_PLUGIN_TYPE,
+            "destination_error": str(exc),
+        }
+
+    context = {
+        "is_mcp": descriptor.get("is_mcp"),
+        "is_remote": descriptor.get("is_remote"),
+        "transport": descriptor.get("transport"),
+        "scheme": descriptor.get("scheme"),
+        "host": descriptor.get("host"),
+        "port": descriptor.get("port"),
+        "path": descriptor.get("path"),
+        "server_profile": descriptor.get("server_profile"),
+        "preconfiguration_id": descriptor.get("preconfiguration_id"),
+        "auth_method": descriptor.get("auth_method"),
+    }
+
+    normalized_endpoint = descriptor.get("normalized_endpoint") or ""
+    if normalized_endpoint:
+        context["endpoint_hash"] = hashlib.sha256(normalized_endpoint.encode("utf-8")).hexdigest()[:16]
+        context["has_query"] = bool(urlparse(normalized_endpoint).query)
+
+    return context
+
+
 def _pattern_matches_destination(pattern, descriptor):
     normalized_pattern = str(pattern or "").strip()
     if not normalized_pattern:
@@ -618,6 +650,7 @@ def assert_mcp_destination_allowed(
     policy_config=None,
     operation="mcp",
     user_id="",
+    mcp_operation_id="",
 ):
     """Raise when an outbound MCP destination is denied by policy."""
     decision = evaluate_mcp_destination_policy(
@@ -628,31 +661,48 @@ def assert_mcp_destination_allowed(
         user_id=user_id,
     )
     descriptor = decision.get("descriptor") or {}
+    destination_context = build_mcp_destination_log_context(manifest)
+    if mcp_operation_id:
+        destination_context["mcp_operation_id"] = mcp_operation_id
     if decision.get("allowed"):
+        log_extra = {
+            "operation": operation,
+            "scope_type": decision.get("scope_type"),
+            "matched_pattern": decision.get("matched_pattern"),
+            "transport": destination_context.get("transport") or descriptor.get("transport"),
+            "host": destination_context.get("host") or descriptor.get("host"),
+            "path": destination_context.get("path"),
+            "endpoint_hash": destination_context.get("endpoint_hash"),
+            "preconfiguration_id": destination_context.get("preconfiguration_id"),
+            "server_profile": destination_context.get("server_profile"),
+            "reason": decision.get("reason"),
+        }
+        if destination_context.get("mcp_operation_id"):
+            log_extra["mcp_operation_id"] = destination_context.get("mcp_operation_id")
         log_event(
             "[MCPDestinationPolicy] MCP destination allowed",
-            extra={
-                "operation": operation,
-                "scope_type": decision.get("scope_type"),
-                "matched_pattern": decision.get("matched_pattern"),
-                "transport": descriptor.get("transport"),
-                "host": descriptor.get("host"),
-                "reason": decision.get("reason"),
-            },
+            extra=log_extra,
             level=logging.INFO,
             debug_only=True,
         )
         return decision
 
+    log_extra = {
+        "operation": operation,
+        "scope_type": decision.get("scope_type"),
+        "transport": destination_context.get("transport") or descriptor.get("transport"),
+        "host": destination_context.get("host") or descriptor.get("host"),
+        "path": destination_context.get("path"),
+        "endpoint_hash": destination_context.get("endpoint_hash"),
+        "preconfiguration_id": destination_context.get("preconfiguration_id"),
+        "server_profile": destination_context.get("server_profile"),
+        "reason": decision.get("reason"),
+    }
+    if destination_context.get("mcp_operation_id"):
+        log_extra["mcp_operation_id"] = destination_context.get("mcp_operation_id")
     log_event(
         "[MCPDestinationPolicy] MCP destination denied",
-        extra={
-            "operation": operation,
-            "scope_type": decision.get("scope_type"),
-            "transport": descriptor.get("transport"),
-            "host": descriptor.get("host"),
-            "reason": decision.get("reason"),
-        },
+        extra=log_extra,
         level=logging.WARNING,
     )
     raise McpDestinationPolicyError(str(decision.get("reason") or "MCP destination is not allowed."))

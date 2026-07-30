@@ -22,13 +22,7 @@ const GOVERNANCE_ITEM_ENTITY_LABELS = {
     mcp_personal_destination: 'MCP Personal Destination',
     mcp_group_destination: 'MCP Group Destination',
     mcp_global_destination: 'MCP Global Destination',
-    inbound_mcp_access: 'Inbound MCP Access',
-    inbound_mcp_source: 'Inbound MCP Source (Legacy)',
-    inbound_mcp_client: 'Inbound MCP Client (Legacy)',
-    inbound_mcp_tool: 'Inbound MCP Tool (Legacy)',
-    inbound_mcp_scope: 'Inbound MCP Scope (Legacy)',
-    inbound_mcp_resource_operation: 'Inbound MCP Resource Operation (Legacy)',
-    inbound_mcp_target: 'Inbound MCP Target (Legacy)',
+    inbound_mcp_source: 'Inbound MCP Source',
 };
 
 const GOVERNANCE_ITEM_LOOKUP_HINTS = {
@@ -41,13 +35,7 @@ const GOVERNANCE_ITEM_LOOKUP_HINTS = {
     mcp_personal_destination: 'Enter a personal MCP destination pattern such as preconfiguration:microsoft_learn, *.contoso.com, or *.',
     mcp_group_destination: 'Enter a group MCP destination pattern. Use group:<group-id>::<pattern> for a specific group override.',
     mcp_global_destination: 'Enter a global/admin MCP destination pattern such as preconfiguration:github, https://example.com/mcp*, or *.',
-    inbound_mcp_access: 'Enter inbound_mcp for new inbound MCP access policies.',
-    inbound_mcp_source: 'Legacy policy type. Source filtering now lives in Inbound MCP configuration.',
-    inbound_mcp_client: 'Legacy policy type. Client allowlisting now lives in Inbound MCP configuration.',
-    inbound_mcp_tool: 'Legacy policy type. Tool-level inbound MCP governance is not required for the current personal access model.',
-    inbound_mcp_scope: 'Legacy policy type. Use inbound_mcp_access with item inbound_mcp for new policies.',
-    inbound_mcp_resource_operation: 'Legacy policy type. Operation-level inbound MCP governance is not required for the current personal access model.',
-    inbound_mcp_target: 'Legacy policy type. Inbound MCP access should use item inbound_mcp with the standard user/group allowlist.',
+    inbound_mcp_source: 'Choose * for any accepted source or choose a configured source ID from the Inbound MCP settings.',
 };
 
 const GOVERNANCE_POLICY_HELP_CONTENT = {
@@ -78,14 +66,14 @@ const GOVERNANCE_POLICY_HELP_CONTENT = {
             'Prefer specific preconfiguration, preset, host, or transport patterns before using the broad * wildcard.',
         ],
     },
-    inbound_mcp_access: {
-        title: 'Inbound MCP access policy',
-        purpose: 'Use this to allow specific users or groups to use SimpleChat as an inbound MCP server after Entra role/scope, tenant, client, and source configuration checks succeed.',
+    inbound_mcp_source: {
+        title: 'Inbound MCP source policy',
+        purpose: 'Use this single policy type to decide which delegated users or groups can use SimpleChat as an inbound MCP server and which accepted source IDs they can use.',
         configuration: [
-            'Entity type: inbound_mcp_access.',
-            'Item ID: inbound_mcp.',
-            'Keep "Allow all users" off unless every user with the required Entra role and delegated scope should be able to use approved inbound MCP tools.',
-            'Configure allowed sources in the Inbound MCP runtime settings, for example https://agent.fedorg.gov or a trusted X-SimpleChat-MCP-Source value controlled by your gateway.',
+            'Entity type: inbound_mcp_source.',
+            'Item ID: choose * for any accepted source, or choose a specific source ID configured in Admin Settings > Inbound MCP Server.',
+            'Keep "Allow all users" off unless every user with the required Entra role and delegated scope should be able to use that source.',
+            'The source value comes from the configured source header when present. Treat it as advisory unless a trusted gateway sets or validates it.',
         ],
     },
 };
@@ -97,18 +85,11 @@ const GOVERNANCE_MCP_DESTINATION_ENTITY_TYPES = new Set([
 ]);
 
 const GOVERNANCE_INBOUND_MCP_QUICK_CREATE_ENTITY_TYPES = new Set([
-    'inbound_mcp_access',
+    'inbound_mcp_source',
 ]);
 
 const GOVERNANCE_CUSTOM_ITEM_ID_ENTITY_TYPES = new Set([
     ...GOVERNANCE_MCP_DESTINATION_ENTITY_TYPES,
-    'inbound_mcp_access',
-    'inbound_mcp_source',
-    'inbound_mcp_client',
-    'inbound_mcp_tool',
-    'inbound_mcp_scope',
-    'inbound_mcp_resource_operation',
-    'inbound_mcp_target',
 ]);
 
 const GOVERNANCE_ACTION_TYPE_ALIASES = {
@@ -190,13 +171,7 @@ const governanceItemLookupState = {
     mcp_personal_destination: [],
     mcp_group_destination: [],
     mcp_global_destination: [],
-    inbound_mcp_access: [],
-    inbound_mcp_client: [],
     inbound_mcp_source: [],
-    inbound_mcp_tool: [],
-    inbound_mcp_scope: [],
-    inbound_mcp_resource_operation: [],
-    inbound_mcp_target: [],
 };
 
 const governanceAllowListSelectionViewState = {
@@ -423,6 +398,47 @@ function getAdminEndpointLookupOptionsFromWindow() {
         .filter((endpoint, index, arr) => arr.findIndex((candidate) => candidate.value === endpoint.value) === index);
 }
 
+function getInboundMcpSourceLookupOptionsFromSettings() {
+    const allowAllSources = Boolean(document.getElementById('inbound_mcp_allow_all_source_ids')?.checked);
+    const wildcardOption = {
+        value: '*',
+        label: 'All accepted source IDs (*)',
+        subtitle: 'Wildcard source policy',
+    };
+    if (allowAllSources) {
+        return [wildcardOption];
+    }
+
+    const sourceEntriesInput = document.getElementById('inbound_mcp_allowed_source_entries_json');
+    let sourceEntries = [];
+    try {
+        const parsed = JSON.parse(sourceEntriesInput?.value || '[]');
+        sourceEntries = Array.isArray(parsed) ? parsed : [];
+    } catch (error) {
+        sourceEntries = [];
+    }
+
+    const seenValues = new Set();
+    seenValues.add(wildcardOption.value);
+
+    const configuredOptions = sourceEntries
+        .map((entry) => normalizeGovernanceLookupOption({
+            value: entry?.value,
+            label: entry?.description || entry?.value,
+            subtitle: entry?.description ? entry?.value : '',
+        }, 'Source'))
+        .filter((option) => option !== null)
+        .filter((option) => option.value !== '*')
+        .filter((option) => {
+            if (seenValues.has(option.value)) {
+                return false;
+            }
+            seenValues.add(option.value);
+            return true;
+        });
+    return [wildcardOption, ...configuredOptions];
+}
+
 async function fetchAdminGlobalAgentLookupOptions() {
     const response = await fetch('/api/admin/agents', {
         method: 'GET',
@@ -513,6 +529,11 @@ async function loadGovernanceItemLookup(entityType, forceReload = false) {
     const normalizedEntityType = normalizeGovernanceItemEntityType(entityType);
     if (!normalizedEntityType) {
         return [];
+    }
+
+    if (normalizedEntityType === 'inbound_mcp_source') {
+        governanceItemLookupState.inbound_mcp_source = getInboundMcpSourceLookupOptionsFromSettings();
+        return governanceItemLookupState.inbound_mcp_source;
     }
 
     if (!forceReload && Array.isArray(governanceItemLookupState[normalizedEntityType]) && governanceItemLookupState[normalizedEntityType].length > 0) {
@@ -1058,11 +1079,26 @@ function buildItemPolicyRow(policy) {
     const allowAll = Boolean(policy.allow_all);
     const allowedUsers = Array.isArray(policy.allowed_users) ? policy.allowed_users : [];
     const allowedGroups = Array.isArray(policy.allowed_groups) ? policy.allowed_groups : [];
+    const systemManaged = Boolean(policy.system_managed);
 
     const policyNameEl = document.createElement('div');
     policyNameEl.className = 'fw-semibold';
     policyNameEl.textContent = policyName;
     policyCell.appendChild(policyNameEl);
+    if (systemManaged) {
+        const systemBadge = document.createElement('span');
+        systemBadge.className = 'badge text-bg-secondary mt-1';
+        systemBadge.textContent = 'System-managed';
+        policyCell.appendChild(systemBadge);
+
+        const reason = String(policy.managed_reason || '').trim();
+        if (reason) {
+            const reasonElement = document.createElement('div');
+            reasonElement.className = 'small text-muted mt-1';
+            reasonElement.textContent = reason;
+            policyCell.appendChild(reasonElement);
+        }
+    }
 
     policyCell.title = policyId ? `Policy ID: ${policyId}` : policyName;
 
@@ -1097,6 +1133,10 @@ function buildItemPolicyRow(policy) {
     editButton.dataset.allowAll = allowAll ? 'true' : 'false';
     editButton.dataset.allowedUsers = JSON.stringify(allowedUsers);
     editButton.dataset.allowedGroups = JSON.stringify(allowedGroups);
+    editButton.disabled = systemManaged;
+    if (systemManaged) {
+        editButton.title = 'System-managed policies cannot be edited.';
+    }
     actionsCell.appendChild(editButton);
 
     const deleteButton = document.createElement('button');
@@ -1107,6 +1147,10 @@ function buildItemPolicyRow(policy) {
     deleteButton.dataset.itemId = itemId;
     deleteButton.dataset.policyId = policyId;
     deleteButton.dataset.policyName = policyName;
+    deleteButton.disabled = systemManaged;
+    if (systemManaged) {
+        deleteButton.title = 'System-managed policies cannot be deleted.';
+    }
     actionsCell.appendChild(deleteButton);
 
     row.appendChild(policyCell);
@@ -1522,10 +1566,13 @@ async function openGovernanceMcpDestinationPolicyEditor(entityType) {
 
 async function openGovernanceInboundMcpPolicyEditor(options = {}) {
     const entityType = normalizeGovernanceItemEntityType(options.entityType || options.entity_type || '');
-    const itemId = String(options.itemId || options.item_id || '').trim();
+    let itemId = String(options.itemId || options.item_id || '').trim();
     if (!GOVERNANCE_INBOUND_MCP_QUICK_CREATE_ENTITY_TYPES.has(entityType)) {
         setGovernanceStatus('Unknown inbound MCP governance policy type.', 'warning');
         return;
+    }
+    if (entityType === 'inbound_mcp_source' && !itemId) {
+        itemId = '*';
     }
 
     await openGovernanceItemPolicyEditor({
@@ -1656,15 +1703,7 @@ function ensureGovernanceItemPolicyEditorModal() {
                                         <option value="mcp_personal_destination">MCP Personal Destination</option>
                                         <option value="mcp_group_destination">MCP Group Destination</option>
                                         <option value="mcp_global_destination">MCP Global Destination</option>
-                                        <option value="inbound_mcp_access">Inbound MCP Access</option>
-                                        <optgroup label="Legacy inbound MCP policy types">
-                                            <option value="inbound_mcp_source" disabled>Inbound MCP Source (Legacy)</option>
-                                            <option value="inbound_mcp_client" disabled>Inbound MCP Client (Legacy)</option>
-                                            <option value="inbound_mcp_tool" disabled>Inbound MCP Tool (Legacy)</option>
-                                            <option value="inbound_mcp_scope" disabled>Inbound MCP Scope (Legacy)</option>
-                                            <option value="inbound_mcp_resource_operation" disabled>Inbound MCP Resource Operation (Legacy)</option>
-                                            <option value="inbound_mcp_target" disabled>Inbound MCP Target (Legacy)</option>
-                                        </optgroup>
+                                        <option value="inbound_mcp_source">Inbound MCP Source</option>
                                     </select>
                                 </div>
                                 <div class="col-lg-6 col-md-8">
@@ -2369,7 +2408,8 @@ async function deleteGovernanceItemPolicyFromContext() {
     });
 
     if (!response.ok) {
-        throw new Error('Unable to delete item governance policy.');
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || 'Unable to delete item governance policy.');
     }
 
     governanceItemPolicyDeleteModal?.hide();
@@ -3658,7 +3698,8 @@ async function saveItemPolicy(event) {
     });
 
     if (!response.ok) {
-        throw new Error('Unable to save item governance policy.');
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || 'Unable to save item governance policy.');
     }
 
     await loadItemPolicies();
@@ -3726,9 +3767,14 @@ function wireGovernanceHandlers() {
     document.querySelectorAll('.governance-new-inbound-mcp-policy-btn').forEach((button) => {
         button.addEventListener('click', async () => {
             try {
+                if (button.dataset.governanceOpenTab === 'true' && typeof window.openAdminSettingsTab === 'function') {
+                    window.openAdminSettingsTab('#governance', 'governance-inbound-mcp-section');
+                }
                 await openGovernanceInboundMcpPolicyEditor({
                     entityType: button.dataset.governanceInboundMcpEntity || '',
                     itemId: button.dataset.governanceInboundMcpItem || '',
+                    policyName: button.dataset.governanceInboundMcpPolicyName || '',
+                    resourceLabel: button.dataset.governanceInboundMcpResourceLabel || '',
                 });
             } catch (error) {
                 setGovernanceStatus(error.message || 'Failed to open inbound MCP policy editor.', 'danger');

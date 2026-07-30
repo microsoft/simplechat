@@ -2,6 +2,29 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.098)**
+
+#### New Features
+
+*   **MCP Current-State Platform**
+    *   Added the governed inbound SimpleChat MCP server with a bounded personal tool surface for conversations, documents, prompts, tags, workflow discovery, and workflow execution.
+    *   Hardened outbound MCP actions with presets, server-side preconfiguration catalogs, destination governance, custom headers, result policy controls, and redaction-safe discovery/runtime telemetry.
+    *   (Ref: microsoft/simplechat#1013, microsoft/simplechat#1014, microsoft/simplechat#1015, microsoft/simplechat#1017, microsoft/simplechat#1018, MCP current-state roadmap)
+
+#### User Interface Enhancements
+
+*   **MCP Admin And Observability Surfaces**
+    *   Added Admin Settings controls for inbound MCP runtime settings, source governance guidance, Easy Auth setup verification, request-size and throttle tuning, tool registry visibility, and copyable Application Insights starter queries.
+    *   Added Governance controls for outbound MCP destination policies and inbound MCP source policies using the current source-first access model.
+    *   (Ref: microsoft/simplechat#1020, MCP governance/admin UX, `admin_settings.html`, `admin_settings.js`, `admin_governance.js`)
+
+#### Bug Fixes
+
+*   **MCP Enterprise Hardening**
+    *   Added inbound MCP request correlation, bounded payloads, Cosmos-backed tool throttles, clear JSON-RPC tool error transport, and OAuth/PRM discovery compatibility for MCP clients.
+    *   Added outbound MCP discovery/factory telemetry with safe destination metadata and redaction to make connector failures easier to diagnose.
+    *   (Ref: microsoft/simplechat#1015, microsoft/simplechat#1017, microsoft/simplechat#1020, MCP observability and enterprise readiness)
+
 ### **(v0.250.076)**
 
 #### New Features

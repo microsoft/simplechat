@@ -123,7 +123,7 @@ PLANNED_INBOUND_MCP_TOOLS = (
         "rate_limit_category": "search",
         "audit_event": "InboundMcpSearchPersonalDocuments",
         "enabled_by_default": False,
-        "implemented": False,
+        "implemented": True,
         "input_schema": {
             "type": "object",
             "properties": {
@@ -135,9 +135,30 @@ PLANNED_INBOUND_MCP_TOOLS = (
         },
     },
     {
+        "id": "list_personal_workflows",
+        "display_name": "List personal workflows",
+        "description": "List personal workflow metadata for the delegated user, including generated workflow ids for execution.",
+        "scope": "personal",
+        "resource_family": "workflows",
+        "operation": "list",
+        "identity_type": "delegated",
+        "rate_limit_category": "read",
+        "audit_event": "InboundMcpListPersonalWorkflows",
+        "enabled_by_default": False,
+        "implemented": True,
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                "offset": {"type": "integer", "minimum": 0},
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
         "id": "execute_workflow",
         "display_name": "Execute workflow",
-        "description": "Trigger an explicitly governed personal workflow for the delegated user.",
+        "description": "Trigger an explicitly governed personal workflow by generated workflow id for the delegated user. Use list_personal_workflows to discover ids; workflow display names are not accepted.",
         "scope": "personal",
         "resource_family": "workflows",
         "operation": "execute",
@@ -145,11 +166,16 @@ PLANNED_INBOUND_MCP_TOOLS = (
         "rate_limit_category": "write",
         "audit_event": "InboundMcpExecuteWorkflow",
         "enabled_by_default": False,
-        "implemented": False,
+        "implemented": True,
         "input_schema": {
             "type": "object",
             "properties": {
-                "workflow_id": {"type": "string", "minLength": 1},
+                "workflow_id": {
+                    "type": "string",
+                    "description": "Generated workflow id returned by list_personal_workflows, not the workflow display name.",
+                    "minLength": 1,
+                    "maxLength": 128,
+                },
             },
             "required": ["workflow_id"],
             "additionalProperties": False,

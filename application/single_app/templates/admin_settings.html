@@ -1600,7 +1600,7 @@
                     {% endif %}
                 </div>
                 {% if mcp_ui_enabled %}
-                <div class="card p-3 mb-4" id="inbound-mcp-configuration">
+                <div class="card p-3 mb-4" id="inbound-mcp-configuration" data-default-tenant-id="{{ inbound_mcp_easy_auth_script_context.tenant_id }}">
                     <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-start gap-3 mb-3">
                         <div>
                             <h5 class="card-title mb-1">
@@ -1610,7 +1610,12 @@
                                 Configure the governed SimpleChat MCP endpoint used by external MCP clients. Personal tools use delegated user tokens by default; tool access remains deny-by-default until authentication, source, client, and governance policy all allow the request.
                             </p>
                         </div>
-                        <span class="badge text-bg-warning align-self-start">Preview</span>
+                        <div class="d-flex flex-column gap-2 align-items-lg-end">
+                            <span class="badge text-bg-warning align-self-start align-self-lg-end">Preview</span>
+                            <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#inboundMcpInfoModal">
+                                <i class="bi bi-info-circle me-1"></i>About MCP &amp; Tools
+                            </button>
+                        </div>
                     </div>
 
                     <div class="alert alert-info small" role="alert">
@@ -1632,14 +1637,14 @@
                                     <div class="form-text">Default: <code>DelegatedMcpServerAccess</code>. VS Code and other user clients must present this delegated scope.</div>
                                 </div>
                                 <div class="mb-3">
-                                    <label class="form-label" for="inbound_mcp_required_user_roles">Required delegated user roles</label>
-                                    <textarea class="form-control" id="inbound_mcp_required_user_roles" name="inbound_mcp_required_user_roles" rows="3" autocomplete="off">{{ settings.inbound_mcp_required_user_roles | join('\n') }}</textarea>
-                                    <div class="form-text">Default: <code>InboundMCPUserAccess</code>. Delegated personal tools require at least one listed user-assignable app role in addition to the delegated scope.</div>
+                                    <label class="form-label" for="inbound_mcp_required_user_role">Required delegated user role</label>
+                                    <input class="form-control" type="text" id="inbound_mcp_required_user_role" name="inbound_mcp_required_user_role" value="{{ settings.inbound_mcp_required_user_role }}" autocomplete="off">
+                                    <div class="form-text">Default: <code>InboundMCPUserAccess</code>. Governance determines which users/groups can use tools after this Entra role and delegated scope pass.</div>
                                 </div>
                                 <div class="mb-0">
-                                    <label class="form-label" for="inbound_mcp_required_app_roles">Required app-only roles</label>
-                                    <textarea class="form-control" id="inbound_mcp_required_app_roles" name="inbound_mcp_required_app_roles" rows="2" autocomplete="off">{{ settings.inbound_mcp_required_app_roles | join('\n') }}</textarea>
-                                    <div class="form-text">Default: <code>InboundMCPAppAccess</code>. Reserved for future app-only MCP tools and not sufficient for personal delegated tools.</div>
+                                    <label class="form-label" for="inbound_mcp_required_app_role">Required app-only role</label>
+                                    <input class="form-control" type="text" id="inbound_mcp_required_app_role" name="inbound_mcp_required_app_role" value="{{ settings.inbound_mcp_required_app_role }}" autocomplete="off">
+                                    <div class="form-text">Default: <code>InboundMCPAppAccess</code>. Reserved for future app-only MCP tools and still governed separately.</div>
                                 </div>
                             </div>
                         </div>
@@ -1665,25 +1670,358 @@
                             </div>
                         </div>
 
-                        <div class="col-xl-4">
-                            <label class="form-label" for="inbound_mcp_allowed_client_app_ids">Allowed client app IDs</label>
-                            <textarea class="form-control" id="inbound_mcp_allowed_client_app_ids" name="inbound_mcp_allowed_client_app_ids" rows="5" placeholder="One application client ID per line">{{ settings.inbound_mcp_allowed_client_app_ids | join('\n') }}</textarea>
-                            <div class="form-text">Required allowlist. Empty means no MCP clients can connect.</div>
+                        <div class="col-12">
+                            <div class="border rounded-3 p-3 h-100">
+                                <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-start gap-2 mb-3">
+                                    <div>
+                                        <h6 class="mb-1">Request Size &amp; Throttling</h6>
+                                        <div class="small text-muted">Protect the inbound MCP endpoint from oversized payloads and noisy clients. Rate limits are enforced per caller and tool category across app instances.</div>
+                                    </div>
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" role="switch" id="enable_inbound_mcp_rate_limits" name="enable_inbound_mcp_rate_limits" {% if settings.enable_inbound_mcp_rate_limits %}checked{% endif %}>
+                                        <label class="form-check-label ms-2" for="enable_inbound_mcp_rate_limits">Enable tool throttles</label>
+                                    </div>
+                                </div>
+                                <div class="row g-3">
+                                    <div class="col-md-6 col-xl-3">
+                                        <label class="form-label" for="inbound_mcp_max_request_bytes">Max request bytes</label>
+                                        <input class="form-control" type="number" id="inbound_mcp_max_request_bytes" name="inbound_mcp_max_request_bytes" min="1024" max="1048576" step="1" value="{{ settings.inbound_mcp_max_request_bytes }}">
+                                        <div class="form-text">Default: <code>65536</code>. Range: 1 KB to 1 MB.</div>
+                                    </div>
+                                    <div class="col-md-6 col-xl-3">
+                                        <label class="form-label" for="inbound_mcp_rate_limit_window_seconds">Rate window seconds</label>
+                                        <input class="form-control" type="number" id="inbound_mcp_rate_limit_window_seconds" name="inbound_mcp_rate_limit_window_seconds" min="10" max="3600" step="1" value="{{ settings.inbound_mcp_rate_limit_window_seconds }}">
+                                        <div class="form-text">Default: <code>60</code>. Applies to each throttle category.</div>
+                                    </div>
+                                    <div class="col-md-4 col-xl-2">
+                                        <label class="form-label" for="inbound_mcp_rate_limit_read_per_window">Read limit</label>
+                                        <input class="form-control" type="number" id="inbound_mcp_rate_limit_read_per_window" name="inbound_mcp_rate_limit_read_per_window" min="1" max="10000" step="1" value="{{ settings.inbound_mcp_rate_limit_read_per_window }}">
+                                        <div class="form-text">Default: <code>120</code>.</div>
+                                    </div>
+                                    <div class="col-md-4 col-xl-2">
+                                        <label class="form-label" for="inbound_mcp_rate_limit_search_per_window">Search limit</label>
+                                        <input class="form-control" type="number" id="inbound_mcp_rate_limit_search_per_window" name="inbound_mcp_rate_limit_search_per_window" min="1" max="10000" step="1" value="{{ settings.inbound_mcp_rate_limit_search_per_window }}">
+                                        <div class="form-text">Default: <code>30</code>.</div>
+                                    </div>
+                                    <div class="col-md-4 col-xl-2">
+                                        <label class="form-label" for="inbound_mcp_rate_limit_write_per_window">Write limit</label>
+                                        <input class="form-control" type="number" id="inbound_mcp_rate_limit_write_per_window" name="inbound_mcp_rate_limit_write_per_window" min="1" max="10000" step="1" value="{{ settings.inbound_mcp_rate_limit_write_per_window }}">
+                                        <div class="form-text">Default: <code>10</code>.</div>
+                                    </div>
+                                </div>
+                                <div class="alert alert-light border small mt-3 mb-0" role="alert">
+                                    Application Insights events include <code>mcp_request_id</code>, caller app, delegated user, source, tool, duration, result status, and rate-limit category without recording prompts, document content, bearer tokens, or secrets.
+                                </div>
+                            </div>
                         </div>
-                        <div class="col-xl-4">
-                            <label class="form-label" for="inbound_mcp_allowed_tenant_ids">Allowed tenant IDs</label>
-                            <textarea class="form-control" id="inbound_mcp_allowed_tenant_ids" name="inbound_mcp_allowed_tenant_ids" rows="5" placeholder="One tenant ID per line">{{ settings.inbound_mcp_allowed_tenant_ids | join('\n') }}</textarea>
-                            <div class="form-text">Leave empty to use the configured SimpleChat tenant.</div>
+
+                        <div class="col-12">
+                            <input type="hidden" id="inbound_mcp_allowed_client_app_entries_json" name="inbound_mcp_allowed_client_app_entries_json" value='{{ settings.inbound_mcp_allowed_client_app_entries | default([], true) | tojson }}'>
+                            <input type="hidden" id="inbound_mcp_allowed_tenant_entries_json" name="inbound_mcp_allowed_tenant_entries_json" value='{{ settings.inbound_mcp_allowed_tenant_entries | default([], true) | tojson }}'>
+                            <input type="hidden" id="inbound_mcp_allowed_source_entries_json" name="inbound_mcp_allowed_source_entries_json" value='{{ settings.inbound_mcp_allowed_source_entries | default([], true) | tojson }}'>
                         </div>
-                        <div class="col-xl-4">
-                            <label class="form-label" for="inbound_mcp_allowed_source_ids">Allowed source IDs</label>
-                            <textarea class="form-control" id="inbound_mcp_allowed_source_ids" name="inbound_mcp_allowed_source_ids" rows="5" placeholder="One source, origin, or * per line">{{ settings.inbound_mcp_allowed_source_ids | join('\n') }}</textarea>
-                            <div class="form-text">Default <code>*</code> allows source matching to defer to client and governance policy.</div>
+
+                        <div class="col-12">
+                            <div class="border rounded-3 p-3 h-100">
+                                <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+                                    <div>
+                                        <h6 class="mb-1">Allowed client app IDs</h6>
+                                        <div class="small text-muted">Required allowlist. Empty means no MCP clients can connect.</div>
+                                    </div>
+                                    <button type="button" class="btn btn-sm btn-outline-primary inbound-mcp-entry-add-btn" data-mcp-entry-list="clients">Add</button>
+                                </div>
+                                <div class="table-responsive">
+                                    <table class="table table-sm align-middle mb-2">
+                                        <thead>
+                                            <tr>
+                                                <th>Client app ID</th>
+                                                <th>Description</th>
+                                                <th class="text-end">Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="inbound-mcp-client-app-entries-body"></tbody>
+                                    </table>
+                                </div>
+                                <div class="small text-muted" id="inbound-mcp-client-app-entries-summary"></div>
+                            </div>
                         </div>
-                        <div class="col-xl-6">
-                            <label class="form-label" for="inbound_mcp_source_header">Source header name</label>
-                            <input class="form-control" type="text" id="inbound_mcp_source_header" name="inbound_mcp_source_header" value="{{ settings.inbound_mcp_source_header }}" autocomplete="off">
-                            <div class="form-text">Default: <code>X-SimpleChat-MCP-Source</code>. The header is advisory and still requires governance policy.</div>
+
+                        <div class="col-12">
+                            <div class="border rounded-3 p-3 h-100">
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="inbound_mcp_allow_external_tenants" name="inbound_mcp_allow_external_tenants" {% if settings.inbound_mcp_allow_external_tenants %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="inbound_mcp_allow_external_tenants">Allow additional tenant IDs</label>
+                                </div>
+                                <div class="small text-muted mb-3">
+                                    Off allows only the configured SimpleChat tenant. Turning this on auto-includes the SimpleChat tenant and lets admins add more tenants.
+                                </div>
+                                <div id="inbound-mcp-tenant-list-container" class="{% if not settings.inbound_mcp_allow_external_tenants %}d-none{% endif %}">
+                                    <div class="d-flex justify-content-between align-items-center mb-2">
+                                        <h6 class="mb-0">Allowed tenant IDs</h6>
+                                        <button type="button" class="btn btn-sm btn-outline-primary inbound-mcp-entry-add-btn" data-mcp-entry-list="tenants">Add</button>
+                                    </div>
+                                    <div class="table-responsive">
+                                        <table class="table table-sm align-middle mb-2">
+                                            <thead>
+                                                <tr>
+                                                    <th>Tenant ID</th>
+                                                    <th>Description</th>
+                                                    <th class="text-end">Actions</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="inbound-mcp-tenant-entries-body"></tbody>
+                                        </table>
+                                    </div>
+                                    <div class="small text-muted" id="inbound-mcp-tenant-entries-summary"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="col-12">
+                            <div class="border rounded-3 p-3 h-100">
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="inbound_mcp_allow_all_source_ids" name="inbound_mcp_allow_all_source_ids" {% if settings.inbound_mcp_allow_all_source_ids %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="inbound_mcp_allow_all_source_ids">Allow all source IDs</label>
+                                </div>
+                                <div class="small text-muted mb-3">
+                                    Default on accepts any source signal at the runtime allowlist layer. Turn off to require explicit source values here. In both modes, admins must still create an inbound MCP source governance policy before tools are returned.
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label" for="inbound_mcp_source_header">Source header name</label>
+                                    <input class="form-control" type="text" id="inbound_mcp_source_header" name="inbound_mcp_source_header" value="{{ settings.inbound_mcp_source_header }}" autocomplete="off">
+                                    <div class="form-text">Default: <code>X-SimpleChat-MCP-Source</code>.</div>
+                                </div>
+                                <div class="alert alert-warning py-2 small" role="alert">
+                                    Source IDs are read from the configured header when present. This is a client-provided value and can be spoofed unless a trusted gateway, APIM policy, or similar control sets/enforces it.
+                                </div>
+                                <div id="inbound-mcp-all-source-governance-callout" class="alert alert-info py-2 small {% if not settings.inbound_mcp_allow_all_source_ids %}d-none{% endif %}" role="alert">
+                                    <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-2">
+                                        <div>
+                                            Create an <code>inbound_mcp_source</code> policy for <code>*</code> to choose which users or groups can use inbound MCP from any accepted source.
+                                        </div>
+                                        <button
+                                            type="button"
+                                            class="btn btn-sm btn-outline-primary governance-new-inbound-mcp-policy-btn"
+                                            data-governance-inbound-mcp-entity="inbound_mcp_source"
+                                            data-governance-inbound-mcp-item="*"
+                                            data-governance-inbound-mcp-policy-name="Inbound MCP all source access"
+                                            data-governance-inbound-mcp-resource-label="All accepted source IDs (*)"
+                                            data-governance-open-tab="true"
+                                        >
+                                            Create Wildcard Source Policy
+                                        </button>
+                                    </div>
+                                </div>
+                                <div id="inbound-mcp-controlled-source-governance-callout" class="alert alert-info py-2 small {% if settings.inbound_mcp_allow_all_source_ids %}d-none{% endif %}" role="alert">
+                                    <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-2">
+                                        <div>
+                                            After adding allowed source IDs, create an <code>inbound_mcp_source</code> policy for <code>*</code> or a specific source to choose which users or groups can use inbound MCP.
+                                        </div>
+                                        <button
+                                            type="button"
+                                            class="btn btn-sm btn-outline-primary governance-new-inbound-mcp-policy-btn"
+                                            data-governance-inbound-mcp-entity="inbound_mcp_source"
+                                            data-governance-inbound-mcp-policy-name="Inbound MCP source access"
+                                            data-governance-open-tab="true"
+                                        >
+                                            Create Source Policy
+                                        </button>
+                                    </div>
+                                </div>
+                                <div id="inbound-mcp-source-list-container" class="{% if settings.inbound_mcp_allow_all_source_ids %}d-none{% endif %}">
+                                    <div class="d-flex justify-content-between align-items-center mb-2">
+                                        <h6 class="mb-0">Allowed source IDs</h6>
+                                        <button type="button" class="btn btn-sm btn-outline-primary inbound-mcp-entry-add-btn" data-mcp-entry-list="sources">Add</button>
+                                    </div>
+                                    <div class="table-responsive">
+                                        <table class="table table-sm align-middle mb-2">
+                                            <thead>
+                                                <tr>
+                                                    <th>Source value</th>
+                                                    <th>Description</th>
+                                                    <th class="text-end">Actions</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="inbound-mcp-source-entries-body"></tbody>
+                                        </table>
+                                    </div>
+                                    <div class="small text-muted" id="inbound-mcp-source-entries-summary"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal fade" id="inboundMcpEntryModal" tabindex="-1" aria-labelledby="inboundMcpEntryModalLabel" aria-hidden="true" data-ignore-settings-change="true">
+                    <div class="modal-dialog">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="inboundMcpEntryModalLabel">Add MCP Entry</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <input type="hidden" id="inbound-mcp-entry-list-key">
+                                <input type="hidden" id="inbound-mcp-entry-edit-index">
+                                <div class="mb-3">
+                                    <label class="form-label" for="inbound-mcp-entry-value" id="inbound-mcp-entry-value-label">Value</label>
+                                    <input class="form-control" type="text" id="inbound-mcp-entry-value" autocomplete="off">
+                                    <div class="invalid-feedback" id="inbound-mcp-entry-value-error">Value is required.</div>
+                                </div>
+                                <div class="mb-0">
+                                    <label class="form-label" for="inbound-mcp-entry-description">Description</label>
+                                    <input class="form-control" type="text" id="inbound-mcp-entry-description" autocomplete="off" maxlength="256">
+                                    <div class="form-text">Use descriptions to explain who owns this app, tenant, or source value without making the value easy to guess.</div>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                <button type="button" class="btn btn-primary" id="inbound-mcp-entry-save-btn">Save Entry</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal fade" id="inboundMcpInfoModal" tabindex="-1" aria-labelledby="inboundMcpInfoModalLabel" aria-hidden="true" data-ignore-settings-change="true">
+                    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="inboundMcpInfoModalLabel">Inbound MCP overview</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="alert alert-info small" role="alert">
+                                    SimpleChat exposes a governed Streamable HTTP MCP endpoint for approved external MCP clients. Authentication handles tenant, client, delegated scope, and Entra role checks; governance decides which users/groups and source IDs can use tools.
+                                </div>
+                                <div class="row g-3 mb-3">
+                                    <div class="col-lg-6">
+                                        <h6>Runtime checks</h6>
+                                        <ul class="small mb-0">
+                                            <li>Client app ID must be in the allowed client list.</li>
+                                            <li>Tenant must be the SimpleChat tenant unless additional tenants are enabled.</li>
+                                            <li>Delegated personal tools require the configured scope and user role.</li>
+                                            <li>Governance uses <code>inbound_mcp_source</code> policies to decide which users or groups can use each accepted source.</li>
+                                        </ul>
+                                    </div>
+                                    <div class="col-lg-6">
+                                        <h6>Source header guidance</h6>
+                                        <p class="small mb-0">
+                                            The configured source header is an advisory control-plane signal. Treat it like an APIM subscription-key label, not strong identity. For stronger assurance, set or overwrite it at a trusted gateway and avoid relying on client-provided values alone.
+                                        </p>
+                                    </div>
+                                </div>
+                                <h6>Available MCP tools</h6>
+                                <div class="table-responsive">
+                                    <table class="table table-sm align-middle">
+                                        <thead>
+                                            <tr>
+                                                <th>Tool</th>
+                                                <th>Scope</th>
+                                                <th>Operation</th>
+                                                <th>Description</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for tool in inbound_mcp_tools %}
+                                            <tr>
+                                                <td>
+                                                    <div class="fw-semibold">{{ tool.display_name }}</div>
+                                                    <code>{{ tool.id }}</code>
+                                                </td>
+                                                <td>{{ tool.scope }}</td>
+                                                <td>{{ tool.resource_family }} / {{ tool.operation }}</td>
+                                                <td>{{ tool.description }}</td>
+                                            </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <hr />
+                                <h6>Application Insights starter queries</h6>
+                                <p class="small text-muted">
+                                    Use these KQL queries in Application Insights Logs to validate inbound MCP traffic, denials, and tool latency. They rely on safe structured dimensions emitted by the inbound MCP route and do not require prompt, message, document, token, or secret values.
+                                </p>
+                                <div class="accordion" id="inbound-mcp-observability-accordion">
+                                    <div class="accordion-item">
+                                        <h2 class="accordion-header" id="inbound-mcp-kql-request-trends-heading">
+                                            <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#inbound-mcp-kql-request-trends-collapse" aria-expanded="true" aria-controls="inbound-mcp-kql-request-trends-collapse">
+                                                Request and failure trends
+                                            </button>
+                                        </h2>
+                                        <div id="inbound-mcp-kql-request-trends-collapse" class="accordion-collapse collapse show" aria-labelledby="inbound-mcp-kql-request-trends-heading" data-bs-parent="#inbound-mcp-observability-accordion">
+                                            <div class="accordion-body">
+                                                <button type="button" class="btn btn-sm btn-outline-secondary mb-2 inbound-mcp-kql-copy-btn" data-kql-target="inbound-mcp-kql-request-trends">
+                                                    <i class="bi bi-clipboard me-1"></i>Copy query
+                                                </button>
+                                                <pre class="bg-body-tertiary border rounded p-3 small mb-0"><code id="inbound-mcp-kql-request-trends">traces
+| where timestamp > ago(24h)
+| where message has "[InboundMCP]"
+| summarize requests=count(), failures=countif(tostring(customDimensions.result_status) !in ("", "success", "accepted")) by bin(timestamp, 1h)
+| order by timestamp desc</code></pre>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="accordion-item">
+                                        <h2 class="accordion-header" id="inbound-mcp-kql-error-categories-heading">
+                                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#inbound-mcp-kql-error-categories-collapse" aria-expanded="false" aria-controls="inbound-mcp-kql-error-categories-collapse">
+                                                Error categories by caller and source
+                                            </button>
+                                        </h2>
+                                        <div id="inbound-mcp-kql-error-categories-collapse" class="accordion-collapse collapse" aria-labelledby="inbound-mcp-kql-error-categories-heading" data-bs-parent="#inbound-mcp-observability-accordion">
+                                            <div class="accordion-body">
+                                                <button type="button" class="btn btn-sm btn-outline-secondary mb-2 inbound-mcp-kql-copy-btn" data-kql-target="inbound-mcp-kql-error-categories">
+                                                    <i class="bi bi-clipboard me-1"></i>Copy query
+                                                </button>
+                                                <pre class="bg-body-tertiary border rounded p-3 small mb-0"><code id="inbound-mcp-kql-error-categories">traces
+| where timestamp > ago(24h)
+| where message has "[InboundMCP]"
+| where isnotempty(tostring(customDimensions.error_type))
+| summarize events=count() by tostring(customDimensions.error_type), tostring(customDimensions.caller_app_id), tostring(customDimensions.source_id)
+| order by events desc</code></pre>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="accordion-item">
+                                        <h2 class="accordion-header" id="inbound-mcp-kql-tool-latency-heading">
+                                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#inbound-mcp-kql-tool-latency-collapse" aria-expanded="false" aria-controls="inbound-mcp-kql-tool-latency-collapse">
+                                                Tool latency and result status
+                                            </button>
+                                        </h2>
+                                        <div id="inbound-mcp-kql-tool-latency-collapse" class="accordion-collapse collapse" aria-labelledby="inbound-mcp-kql-tool-latency-heading" data-bs-parent="#inbound-mcp-observability-accordion">
+                                            <div class="accordion-body">
+                                                <button type="button" class="btn btn-sm btn-outline-secondary mb-2 inbound-mcp-kql-copy-btn" data-kql-target="inbound-mcp-kql-tool-latency">
+                                                    <i class="bi bi-clipboard me-1"></i>Copy query
+                                                </button>
+                                                <pre class="bg-body-tertiary border rounded p-3 small mb-0"><code id="inbound-mcp-kql-tool-latency">traces
+| where timestamp > ago(24h)
+| where message has "Inbound MCP tool call"
+| where isnotempty(tostring(customDimensions.tool_id))
+| summarize calls=count(), avg_duration_ms=avg(todouble(customDimensions.duration_ms)), p95_duration_ms=percentile(todouble(customDimensions.duration_ms), 95) by tostring(customDimensions.tool_id), tostring(customDimensions.result_status)
+| order by calls desc</code></pre>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="accordion-item">
+                                        <h2 class="accordion-header" id="inbound-mcp-kql-rate-limits-heading">
+                                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#inbound-mcp-kql-rate-limits-collapse" aria-expanded="false" aria-controls="inbound-mcp-kql-rate-limits-collapse">
+                                                Rate-limit denials
+                                            </button>
+                                        </h2>
+                                        <div id="inbound-mcp-kql-rate-limits-collapse" class="accordion-collapse collapse" aria-labelledby="inbound-mcp-kql-rate-limits-heading" data-bs-parent="#inbound-mcp-observability-accordion">
+                                            <div class="accordion-body">
+                                                <button type="button" class="btn btn-sm btn-outline-secondary mb-2 inbound-mcp-kql-copy-btn" data-kql-target="inbound-mcp-kql-rate-limits">
+                                                    <i class="bi bi-clipboard me-1"></i>Copy query
+                                                </button>
+                                                <pre class="bg-body-tertiary border rounded p-3 small mb-0"><code id="inbound-mcp-kql-rate-limits">traces
+| where timestamp > ago(24h)
+| where message has "Inbound MCP tool call denied by rate limit"
+| summarize denials=count() by tostring(customDimensions.rate_limit_category), tostring(customDimensions.tool_id), tostring(customDimensions.caller_app_id)
+| order by denials desc</code></pre>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1767,7 +2105,10 @@
                                 <div class="alert alert-info small">
                                     The verification checks these public unauthenticated endpoints and expects SimpleChat JSON responses, not Microsoft sign-in HTML:
                                     <ul class="mb-0">
+                                        <li><code>/.well-known/oauth-protected-resource</code></li>
+                                        <li><code>/.well-known/oauth-protected-resource/api/mcp</code></li>
                                         <li><code>/.well-known/oauth-protected-resource/mcp</code></li>
+                                        <li><code>/.well-known/oauth-authorization-server</code></li>
                                         <li><code>/api/mcp</code></li>
                                         <li><code>/api/mcp/health</code></li>
                                     </ul>
@@ -1918,29 +2259,30 @@
 
                 <div class="card p-3 mb-3" id="governance-inbound-mcp-section">
                     <h5>
-                        <i class="bi bi-box-arrow-in-down-right me-2"></i>Inbound MCP Access Governance
+                        <i class="bi bi-box-arrow-in-down-right me-2"></i>Inbound MCP Source Governance
                     </h5>
                     <p class="text-muted mb-2">
-                        Control which delegated users and groups can use SimpleChat as an inbound MCP server. OAuth client, tenant, and source trust are configured in the Inbound MCP settings above; governance decides who can use MCP.
+                        Control which delegated users and groups can use SimpleChat as an inbound MCP server through source-scoped policies.
                     </p>
                     <div class="alert alert-warning py-2 small" role="alert">
                         Quick-create inbound MCP policies open in restricted user/group mode by default. Only use "Allow all users" when every delegated user with the required Entra role and delegated scope should be able to satisfy that policy.
                     </div>
                     <div class="row g-3 align-items-start">
                         <div class="col-lg-7">
-                            <div class="small fw-semibold mb-1">Minimum policy required for inbound MCP</div>
+                            <div class="small fw-semibold mb-1">Policy required for inbound MCP</div>
                             <ul class="small text-muted mb-2">
-                                <li><code>inbound_mcp_access</code> with delegated item <code>inbound_mcp</code>: allows selected users or groups to use approved inbound MCP tools.</li>
+                                <li><code>inbound_mcp_source</code> with delegated item <code>*</code>: allows selected users or groups to use any accepted source ID.</li>
+                                <li><code>inbound_mcp_source</code> with a configured source ID: allows selected users or groups to use only requests with that source value.</li>
                             </ul>
                             <div class="small text-muted">
-                                Source filtering, tenant allowlisting, and client allowlisting remain in Inbound MCP configuration. Tool-specific, resource-operation, target, source, and client item policies are legacy compatibility surfaces.
+                                Client, tenant, delegated scope, and Entra role checks remain in Inbound MCP configuration. The source ID comes from the configured header when present and is advisory unless a trusted gateway sets or validates it.
                             </div>
                         </div>
                         <div class="col-lg-5">
                             <div class="d-grid gap-2 governance-policy-action-list">
                                 <div class="input-group input-group-sm">
-                                    <button type="button" class="btn btn-outline-primary flex-grow-1 governance-new-inbound-mcp-policy-btn" data-governance-inbound-mcp-entity="inbound_mcp_access" data-governance-inbound-mcp-item="inbound_mcp">New Inbound MCP Access Policy</button>
-                                    <button type="button" class="btn btn-outline-info governance-policy-help-btn" data-governance-help-key="inbound_mcp_access" aria-label="About inbound MCP access policies" title="About inbound MCP access policies">
+                                    <button type="button" class="btn btn-outline-primary flex-grow-1 governance-new-inbound-mcp-policy-btn" data-governance-inbound-mcp-entity="inbound_mcp_source">New Inbound MCP Source Access Policy</button>
+                                    <button type="button" class="btn btn-outline-info governance-policy-help-btn" data-governance-help-key="inbound_mcp_source" aria-label="About inbound MCP source policies" title="About inbound MCP source policies">
                                         <i class="bi bi-info-circle" aria-hidden="true"></i>
                                     </button>
                                 </div>
@@ -2001,15 +2343,7 @@
                                 <option value="mcp_personal_destination">MCP Personal Destination</option>
                                 <option value="mcp_group_destination">MCP Group Destination</option>
                                 <option value="mcp_global_destination">MCP Global Destination</option>
-                                <option value="inbound_mcp_access">Inbound MCP Access</option>
-                                <optgroup label="Legacy inbound MCP policy types">
-                                    <option value="inbound_mcp_source">Inbound MCP Source (Legacy)</option>
-                                    <option value="inbound_mcp_client">Inbound MCP Client (Legacy)</option>
-                                    <option value="inbound_mcp_tool">Inbound MCP Tool (Legacy)</option>
-                                    <option value="inbound_mcp_scope">Inbound MCP Scope (Legacy)</option>
-                                    <option value="inbound_mcp_resource_operation">Inbound MCP Resource Operation (Legacy)</option>
-                                    <option value="inbound_mcp_target">Inbound MCP Target (Legacy)</option>
-                                </optgroup>
+                                <option value="inbound_mcp_source">Inbound MCP Source</option>
                             </select>
                         </div>
                         <div class="col-lg-2 col-md-4">

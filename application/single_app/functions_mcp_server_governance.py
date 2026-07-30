@@ -2,21 +2,14 @@
 
 from dataclasses import asdict, dataclass
 
-from functions_governance import get_explicit_item_policies, get_user_governance_group_ids
-
-
-INBOUND_MCP_ACCESS_POLICY_ENTITY = "inbound_mcp_access"
-INBOUND_MCP_ACCESS_ITEM_ID = "inbound_mcp"
-INBOUND_MCP_SCOPE_POLICY_ENTITY = "inbound_mcp_scope"
-INBOUND_MCP_TARGET_POLICY_ENTITY = "inbound_mcp_target"
-LEGACY_INBOUND_MCP_POLICY_ENTITIES = (
-    "inbound_mcp_client",
-    "inbound_mcp_source",
-    "inbound_mcp_tool",
-    INBOUND_MCP_SCOPE_POLICY_ENTITY,
-    "inbound_mcp_resource_operation",
-    INBOUND_MCP_TARGET_POLICY_ENTITY,
+from functions_governance import (
+    INBOUND_MCP_SYSTEM_SOURCE_POLICY_ID,
+    get_explicit_item_policies,
+    get_user_governance_group_ids,
 )
+
+
+INBOUND_MCP_SOURCE_POLICY_ENTITY = "inbound_mcp_source"
 
 
 @dataclass(frozen=True)
@@ -42,13 +35,13 @@ def get_inbound_mcp_governance_baseline():
         "resource_operations_enabled": [],
         "explicit_deny_wins": True,
         "required_policy_entities": [
-            INBOUND_MCP_ACCESS_POLICY_ENTITY,
+            INBOUND_MCP_SOURCE_POLICY_ENTITY,
         ],
         "policy_entities": [
-            INBOUND_MCP_ACCESS_POLICY_ENTITY,
+            INBOUND_MCP_SOURCE_POLICY_ENTITY,
         ],
-        "legacy_policy_entities": list(LEGACY_INBOUND_MCP_POLICY_ENTITIES),
-        "source_filtering_config_key": "inbound_mcp_allowed_source_ids",
+        "legacy_policy_entities": [],
+        "source_filtering": "inbound_mcp_allowed_source_ids plus inbound_mcp_source governance policies",
     }
 
 
@@ -82,7 +75,12 @@ def _policy_matches_principal(policy, user_id, group_ids):
     return bool(set(group_ids or set()).intersection(allowed_groups))
 
 
-def _evaluate_explicit_policy_group(policy_checks, user_id, group_ids, error, reason_prefix):
+def _evaluate_explicit_policy_group(policy_checks, user_id, group_ids, error, reason_prefix, ignored_policy_ids=None):
+    ignored_policy_ids = {
+        str(policy_id or "").strip()
+        for policy_id in (ignored_policy_ids or set())
+        if str(policy_id or "").strip()
+    }
     normalized_item_ids = [
         (
             str(entity_type or "").strip(),
@@ -101,11 +99,13 @@ def _evaluate_explicit_policy_group(policy_checks, user_id, group_ids, error, re
     for entity_type, item_ids in normalized_item_ids:
         for item_id in item_ids:
             policies = get_explicit_item_policies(entity_type, item_id)
-            inspected_policy_count += len(policies)
             for policy in policies:
+                policy_id = str(policy.get("policy_id") or policy.get("id") or "").strip()
+                if policy_id in ignored_policy_ids:
+                    continue
+                inspected_policy_count += 1
                 if not _policy_matches_principal(policy, user_id, group_ids):
                     continue
-                policy_id = str(policy.get("policy_id") or policy.get("id") or "").strip()
                 effect = _normalize_policy_value(policy.get("effect") or "allow")
                 if effect == "deny":
                     return InboundMcpGovernanceDecision(
@@ -135,13 +135,6 @@ def _evaluate_explicit_policy_group(policy_checks, user_id, group_ids, error, re
     )
 
 
-def _first_denial_or_none(decisions):
-    for decision in decisions:
-        if not decision.allowed:
-            return decision
-    return None
-
-
 def evaluate_inbound_mcp_governance(
     auth_context=None,
     tool_id="",
@@ -152,7 +145,6 @@ def evaluate_inbound_mcp_governance(
     identity_type="delegated",
 ):
     """Evaluate explicit inbound MCP governance policies with deny-by-default behavior."""
-    normalized_scope = str(scope or "").strip()
     normalized_identity_type = str(identity_type or "delegated").strip()
 
     if not auth_context:
@@ -178,45 +170,30 @@ def evaluate_inbound_mcp_governance(
             reason="Inbound MCP tool requires a delegated user identity.",
         )
 
-    normalized_target_scope_id = str(target_scope_id or "").strip()
-    if normalized_scope == "personal" and not normalized_target_scope_id:
-        normalized_target_scope_id = delegated_user_id
+    normalized_source_id = str(getattr(auth_context, "source_id", "") or "").strip()
+    source_policy_item_ids = [normalized_source_id] if normalized_source_id else []
+    source_policy_item_ids.append("*")
 
     user_group_ids = get_user_governance_group_ids(delegated_user_id)
-    decisions = [
-        _evaluate_explicit_policy_group(
-            [
-                (
-                    INBOUND_MCP_ACCESS_POLICY_ENTITY,
-                    [INBOUND_MCP_ACCESS_ITEM_ID, normalized_scope],
-                ),
-                (INBOUND_MCP_SCOPE_POLICY_ENTITY, [normalized_scope]),
-                (
-                    INBOUND_MCP_TARGET_POLICY_ENTITY,
-                    [
-                        f"{normalized_scope}:{normalized_target_scope_id}",
-                        f"{normalized_scope}:*",
-                    ],
-                ),
-            ],
-            delegated_user_id,
-            user_group_ids,
-            "mcp_access_not_allowed",
-            "Inbound MCP access",
-        ),
-    ]
-
-    denied_decision = _first_denial_or_none(decisions)
-    if denied_decision:
-        return denied_decision
+    source_decision = _evaluate_explicit_policy_group(
+        [
+            (
+                INBOUND_MCP_SOURCE_POLICY_ENTITY,
+                source_policy_item_ids,
+            ),
+        ],
+        delegated_user_id,
+        user_group_ids,
+        "mcp_source_not_allowed",
+        "Inbound MCP source access",
+        ignored_policy_ids={INBOUND_MCP_SYSTEM_SOURCE_POLICY_ID},
+    )
+    if not source_decision.allowed:
+        return source_decision
 
     return InboundMcpGovernanceDecision(
         allowed=True,
         error="",
-        reason="Inbound MCP request allowed by explicit governance policies.",
-        policy_id=";".join(
-            decision.policy_id
-            for decision in decisions
-            if decision.policy_id
-        ),
+        reason="Inbound MCP request allowed by explicit source governance policy.",
+        policy_id=source_decision.policy_id,
     )

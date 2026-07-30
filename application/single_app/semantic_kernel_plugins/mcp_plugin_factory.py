@@ -3,6 +3,8 @@
 
 import asyncio
 import base64
+import logging
+import time
 from typing import Any, Dict, List, Optional
 
 from semantic_kernel.connectors.mcp import (
@@ -12,6 +14,7 @@ from semantic_kernel.connectors.mcp import (
     MCPWebsocketPlugin,
 )
 
+from functions_appinsights import log_event
 from functions_debug import debug_print
 from functions_mcp_operations import (
     MCP_CUSTOM_HEADERS_FIELD,
@@ -26,13 +29,65 @@ from functions_mcp_operations import (
     normalize_mcp_tool_metadata,
     validate_mcp_endpoint_for_transport,
 )
-from functions_mcp_destinations import assert_mcp_destination_allowed, infer_mcp_destination_scope
+from functions_mcp_destinations import (
+    assert_mcp_destination_allowed,
+    build_mcp_destination_log_context,
+    infer_mcp_destination_scope,
+)
 from functions_mcp_preconfigurations import assert_mcp_preconfiguration_manifest_allowed
 from semantic_kernel_plugins.mcp_plugin import McpPlugin
 
 
 class McpPluginFactory:
     """Factory for MCP plugin instances from stored action manifests."""
+
+    @classmethod
+    def _build_operation_log_context(
+        cls,
+        config: Dict[str, Any],
+        operation: str,
+        attempt: Optional[int] = None,
+        tool_name: str = "",
+    ) -> Dict[str, Any]:
+        """Build low-sensitivity structured telemetry for an outbound MCP operation."""
+        manifest = dict(config or {})
+        additional_fields = normalize_mcp_additional_fields(manifest.get("additionalFields", {}))
+        auth = manifest.get("auth") if isinstance(manifest.get("auth"), dict) else {}
+        context = {
+            "mcp_operation_id": str(manifest.get("mcp_operation_id") or "").strip(),
+            "operation": operation,
+            "action_name": str(manifest.get("name") or "").strip(),
+            "transport": additional_fields.get("transport"),
+            "auth_method": additional_fields.get("auth_method"),
+            "preconfiguration_id": additional_fields.get("preconfiguration_id"),
+            "server_profile": additional_fields.get("server_profile"),
+            "custom_header_count": len(additional_fields.get(MCP_CUSTOM_HEADERS_FIELD) or {}),
+            "has_auth_secret": bool(str(auth.get("key") or "").strip()),
+            "has_identity": bool(str(auth.get("identity") or "").strip()),
+        }
+        context.update({
+            f"destination_{key}": value
+            for key, value in build_mcp_destination_log_context(manifest).items()
+        })
+        if attempt is not None:
+            context["attempt"] = attempt
+        if tool_name:
+            context["tool_name"] = tool_name
+        return context
+
+    @classmethod
+    def _log_connector_event(
+        cls,
+        message: str,
+        config: Dict[str, Any],
+        operation: str,
+        level: int = logging.INFO,
+        debug_only: bool = False,
+        extra: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        context = cls._build_operation_log_context(config, operation)
+        context.update(extra or {})
+        log_event(message, extra=context, level=level, debug_only=debug_only)
 
     @classmethod
     def create_from_config(cls, config: Dict[str, Any]) -> McpPlugin:
@@ -65,8 +120,15 @@ class McpPluginFactory:
         manifest = dict(config or {})
         additional_fields = normalize_mcp_additional_fields(manifest.get("additionalFields", {}))
         connector = cls.create_connector(manifest)
+        started_at = time.perf_counter()
         try:
-            debug_print("[McpPluginFactory] Connecting to MCP server for capability probe.")
+            cls._log_connector_event(
+                "[MCPOutbound] Capability probe connector starting",
+                manifest,
+                "capability_probe",
+                level=logging.INFO,
+                debug_only=True,
+            )
             await connector.connect()
             if not connector.session:
                 raise ValueError("MCP server did not create a session.")
@@ -79,32 +141,77 @@ class McpPluginFactory:
                 "connector_type": connector.__class__.__name__,
                 "session_type": connector.session.__class__.__name__,
             }
-            return {
+            warnings = build_mcp_tool_metadata_warnings(tools, additional_fields)
+            result = {
                 "transport": additional_fields.get("transport"),
                 "auth_method": additional_fields.get("auth_method"),
                 "tool_count": len(tools),
                 "tools": tools,
                 "capabilities": capabilities,
-                "warnings": build_mcp_tool_metadata_warnings(tools, additional_fields),
+                "warnings": warnings,
             }
+            cls._log_connector_event(
+                "[MCPOutbound] Capability probe connector completed",
+                manifest,
+                "capability_probe",
+                level=logging.INFO,
+                debug_only=True,
+                extra={
+                    "duration_ms": round((time.perf_counter() - started_at) * 1000, 2),
+                    "tool_count": len(tools),
+                    "warning_count": len(warnings),
+                    "connector_type": connector.__class__.__name__,
+                },
+            )
+            return result
         finally:
-            debug_print("[McpPluginFactory] Closing MCP probe connector.")
+            cls._log_connector_event(
+                "[MCPOutbound] Capability probe connector closing",
+                manifest,
+                "capability_probe",
+                level=logging.INFO,
+                debug_only=True,
+            )
             await connector.close()
 
     @classmethod
     async def _discover_tools_once(cls, config: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Perform one MCP tool discovery attempt."""
         connector = cls.create_connector(config)
+        started_at = time.perf_counter()
         try:
-            debug_print("[McpPluginFactory] Connecting to MCP server for tool discovery.")
+            cls._log_connector_event(
+                "[MCPOutbound] Tool discovery connector starting",
+                config,
+                "tool_discovery",
+                level=logging.INFO,
+                debug_only=True,
+            )
             await connector.connect()
             if not connector.session:
                 raise ValueError("MCP server did not create a session.")
             normalized_tools = await cls._list_tools_from_session(connector.session)
-            debug_print(f"[McpPluginFactory] MCP tool discovery succeeded tool_count={len(normalized_tools)}.")
+            cls._log_connector_event(
+                "[MCPOutbound] Tool discovery connector completed",
+                config,
+                "tool_discovery",
+                level=logging.INFO,
+                debug_only=True,
+                extra={
+                    "duration_ms": round((time.perf_counter() - started_at) * 1000, 2),
+                    "tool_count": len(normalized_tools),
+                    "connector_type": connector.__class__.__name__,
+                },
+            )
             return normalized_tools
         finally:
-            debug_print("[McpPluginFactory] Closing MCP discovery connector.")
+            cls._log_connector_event(
+                "[MCPOutbound] Tool discovery connector closing",
+                config,
+                "tool_discovery",
+                level=logging.INFO,
+                debug_only=True,
+            )
             await connector.close()
 
     @classmethod
@@ -200,14 +307,29 @@ class McpPluginFactory:
 
                 if error_info["retryable"] and attempt < retry_count:
                     delay = retry_backoff_seconds * (2 ** attempt)
-                    debug_print(
-                        f"[McpPluginFactory] Retrying MCP operation operation={operation} "
-                        f"attempt={attempt + 1} delay_seconds={delay} category={error_info['category']}."
+                    log_event(
+                        "[MCPOutbound] Operation retry scheduled",
+                        extra={
+                            **cls._build_operation_log_context(config, operation, attempt=attempt + 1),
+                            "delay_seconds": delay,
+                            "category": error_info["category"],
+                            "retryable": error_info["retryable"],
+                        },
+                        level=logging.WARNING,
                     )
                     await asyncio.sleep(delay)
                     attempt += 1
                     continue
 
+                log_event(
+                    "[MCPOutbound] Operation failed",
+                    extra={
+                        **cls._build_operation_log_context(config, operation, attempt=attempt + 1),
+                        "category": error_info["category"],
+                        "retryable": error_info["retryable"],
+                    },
+                    level=logging.WARNING,
+                )
                 raise McpRuntimeError(
                     error_info["message"],
                     category=error_info["category"],
@@ -230,12 +352,14 @@ class McpPluginFactory:
         load_prompts = bool(additional_fields.get("load_prompts", False))
 
         inferred_scope_type, inferred_scope_id = infer_mcp_destination_scope(manifest)
+        mcp_operation_id = str(manifest.get("mcp_operation_id") or "").strip()
         assert_mcp_destination_allowed(
             manifest,
             scope_type=inferred_scope_type,
             scope_id=inferred_scope_id,
             operation="mcp_runtime_connector",
             user_id=manifest.get("runtime_user_id") or manifest.get("user_id") or "",
+            mcp_operation_id=mcp_operation_id,
         )
         assert_mcp_preconfiguration_manifest_allowed(
             manifest,
@@ -249,9 +373,15 @@ class McpPluginFactory:
             command = str(additional_fields.get("command") or "").strip()
             if not command:
                 raise ValueError("MCP stdio transport requires a command.")
-            debug_print(
-                f"[McpPluginFactory] Creating MCP stdio connector name={name} "
-                f"command_present={bool(command)} args_count={len(list(additional_fields.get('args') or []))}"
+            log_event(
+                "[MCPOutbound] Creating MCP stdio connector",
+                extra={
+                    **cls._build_operation_log_context(manifest, "create_connector"),
+                    "command_present": bool(command),
+                    "args_count": len(list(additional_fields.get("args") or [])),
+                },
+                level=logging.INFO,
+                debug_only=True,
             )
             return MCPStdioPlugin(
                 name=name,
@@ -278,10 +408,17 @@ class McpPluginFactory:
 
         timeout = float(additional_fields.get("connect_timeout") or 10)
         sse_read_timeout = float(additional_fields.get("sse_read_timeout") or 300)
-        debug_print(
-            f"[McpPluginFactory] Creating MCP connector name={name} transport={transport} "
-            f"endpoint={endpoint} timeout={timeout} sse_read_timeout={sse_read_timeout} "
-            f"request_timeout={request_timeout} headers_present={bool(headers)}"
+        log_event(
+            "[MCPOutbound] Creating MCP remote connector",
+            extra={
+                **cls._build_operation_log_context(manifest, "create_connector"),
+                "connect_timeout": timeout,
+                "sse_read_timeout": sse_read_timeout,
+                "request_timeout": request_timeout,
+                "headers_present": bool(headers),
+            },
+            level=logging.INFO,
+            debug_only=True,
         )
 
         if transport == "sse":

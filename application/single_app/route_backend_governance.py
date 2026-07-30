@@ -143,7 +143,9 @@ def register_route_backend_governance(bp):
                 actor_user_id=actor_user_id,
                 actor_email=actor_email,
             )
-        except Exception:
+        except PermissionError as ex:
+            return jsonify({'error': str(ex)}), 403
+        except ValueError:
             return jsonify({'error': 'Item governance policy not found.'}), 404
 
         return jsonify({'deleted': deleted}), 200
@@ -220,15 +222,18 @@ def register_route_backend_governance(bp):
         actor_user_id = str(get_current_user_id() or '').strip()
         actor_email = _normalize_actor_email()
 
-        updated = upsert_item_policy(
-            entity_type=normalized_entity_type,
-            item_id=normalized_item_id,
-            payload=payload,
-            actor_user_id=actor_user_id,
-            actor_email=actor_email,
-        )
+        try:
+            updated = upsert_item_policy(
+                entity_type=normalized_entity_type,
+                item_id=normalized_item_id,
+                payload=payload,
+                actor_user_id=actor_user_id,
+                actor_email=actor_email,
+            )
+        except PermissionError as ex:
+            return jsonify({'error': str(ex)}), 403
         return jsonify({'policy': updated}), 200
-        return jsonify({'policy': updated}), 200
+
     @bp.route('/api/admin/governance/item-policies', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -242,13 +247,16 @@ def register_route_backend_governance(bp):
 
         actor_user_id = str(get_current_user_id() or '').strip()
         actor_email = _normalize_actor_email()
-        updated = upsert_item_policy(
-            entity_type=normalized_entity_type,
-            item_id=normalized_item_id,
-            payload=payload,
-            actor_user_id=actor_user_id,
-            actor_email=actor_email,
-        )
+        try:
+            updated = upsert_item_policy(
+                entity_type=normalized_entity_type,
+                item_id=normalized_item_id,
+                payload=payload,
+                actor_user_id=actor_user_id,
+                actor_email=actor_email,
+            )
+        except PermissionError as ex:
+            return jsonify({'error': str(ex)}), 403
         return jsonify({'policy': updated}), 200
 
     @bp.route('/api/admin/governance/item-policies/delete', methods=['POST'])

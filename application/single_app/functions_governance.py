@@ -44,9 +44,9 @@ DEFAULT_ITEM_POLICY_ENTITY_TYPES = {
     "mcp_personal_destination",
     "mcp_group_destination",
     "mcp_global_destination",
-    "inbound_mcp_access",
     "inbound_mcp_source",
 }
+INBOUND_MCP_SYSTEM_SOURCE_POLICY_ID = "system-allow-all-sources"
 
 
 ACTION_TYPE_POLICY_ENTITY_TYPES = {
@@ -334,6 +334,9 @@ def _normalize_item_policy_doc(policy: Dict[str, Any]) -> Dict[str, Any]:
     normalized_policy["resource_label"] = normalized_resource_label
     normalized_policy["entity_type"] = normalized_entity_type
     normalized_policy["item_id"] = normalized_item_id
+    normalized_policy["system_managed"] = bool(normalized_policy.get("system_managed", False))
+    normalized_policy["managed_by"] = str(normalized_policy.get("managed_by") or "").strip()
+    normalized_policy["managed_reason"] = str(normalized_policy.get("managed_reason") or "").strip()
     normalized_policy.update(_normalize_policy_state(normalized_policy))
     return normalized_policy
 
@@ -403,6 +406,9 @@ def _default_item_policy_doc(
         "allow_all": True,
         "allowed_users": [],
         "allowed_groups": [],
+        "system_managed": False,
+        "managed_by": "",
+        "managed_reason": "",
         "updated_at": datetime.utcnow().isoformat(),
     }
 
@@ -629,6 +635,11 @@ def upsert_item_policy(
         ),
         _default_item_policy_doc(normalized_entity_type, normalized_item_id, normalized_policy_id),
     )
+    existing_system_managed = bool((before_policy or {}).get("system_managed", False))
+    incoming_system_managed = bool((payload or {}).get("system_managed", False))
+    if existing_system_managed and not incoming_system_managed:
+        raise PermissionError("System-managed item governance policies cannot be edited directly.")
+
     normalized_payload = _normalize_policy_state(payload)
     normalized_resource_label = str((payload or {}).get("resource_label") or "").strip()
     normalized_policy_name = str((payload or {}).get("policy_name") or "").strip() or _default_item_policy_name(
@@ -647,6 +658,9 @@ def upsert_item_policy(
         "allow_all": normalized_payload["allow_all"],
         "allowed_users": normalized_payload["allowed_users"],
         "allowed_groups": normalized_payload["allowed_groups"],
+        "system_managed": incoming_system_managed,
+        "managed_by": str((payload or {}).get("managed_by") or "").strip() if incoming_system_managed else "",
+        "managed_reason": str((payload or {}).get("managed_reason") or "").strip() if incoming_system_managed else "",
         "updated_by": str(actor_user_id or "").strip(),
         "updated_at": datetime.utcnow().isoformat(),
     }
@@ -732,11 +746,14 @@ def delete_item_policy(
     actor_user_id: str,
     actor_email: str,
     policy_id: Optional[str] = None,
+    allow_system_managed: bool = False,
 ) -> Dict[str, Any]:
     normalized_entity_type = _normalize_item_policy_entity_type(entity_type)
     normalized_item_id = str(item_id or "").strip()
     stored_policy, stored_entity_type, document_id = _read_existing_item_policy_for_delete(normalized_entity_type, normalized_item_id, policy_id)
     before_policy = _normalize_item_policy_doc(stored_policy)
+    if bool(before_policy.get("system_managed", False)) and not allow_system_managed:
+        raise PermissionError("System-managed item governance policies cannot be deleted directly.")
 
     cosmos_governance_item_policies_container.delete_item(
         item=document_id,

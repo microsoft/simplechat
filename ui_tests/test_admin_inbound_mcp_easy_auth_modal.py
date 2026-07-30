@@ -2,12 +2,18 @@
 """
 UI test for the inbound MCP Easy Auth verification modal.
 
-Version: 0.250.083
+Version: 0.250.098
 Implemented in: 0.250.072
 Cloud-aware script improvements implemented in: 0.250.073
 Script copy and authsettingsV2 GET fix implemented in: 0.250.074
 Delegated scope default and setup preflight implemented in: 0.250.075
 Inbound MCP user/app role split implemented in: 0.250.078
+OAuth authorization server metadata bridge implemented in: 0.250.085
+Public HTTPS metadata URL normalization implemented in: 0.250.086
+Protected-resource metadata aliases implemented in: 0.250.087
+Easy Auth restart reminder implemented in: 0.250.088
+Personal workflow execution tool implemented in: 0.250.090
+Inbound MCP object-list settings implemented in: 0.250.091
 
 This test ensures enabling inbound MCP from Admin Settings requires the Easy Auth
 exclusion modal, keeps the runtime gate disabled on failed verification, and
@@ -47,7 +53,7 @@ def test_admin_inbound_mcp_easy_auth_modal_blocks_until_verified():
             "message": "One or more inbound MCP endpoints are still intercepted before reaching SimpleChat.",
             "endpoints": [
                 {
-                    "path": "/.well-known/oauth-protected-resource/mcp",
+                    "path": "/.well-known/oauth-protected-resource",
                     "status_code": 302,
                     "success": False,
                     "message": "App Service Authentication redirected this endpoint to sign-in.",
@@ -59,10 +65,28 @@ def test_admin_inbound_mcp_easy_auth_modal_blocks_until_verified():
             "message": "All inbound MCP Easy Auth exclusions are reachable.",
             "endpoints": [
                 {
+                    "path": "/.well-known/oauth-protected-resource",
+                    "status_code": 200,
+                    "success": True,
+                    "message": "Protected resource metadata returned JSON successfully.",
+                },
+                {
+                    "path": "/.well-known/oauth-protected-resource/api/mcp",
+                    "status_code": 200,
+                    "success": True,
+                    "message": "Protected resource metadata returned JSON successfully.",
+                },
+                {
                     "path": "/.well-known/oauth-protected-resource/mcp",
                     "status_code": 200,
                     "success": True,
                     "message": "Protected resource metadata returned JSON successfully.",
+                },
+                {
+                    "path": "/.well-known/oauth-authorization-server",
+                    "status_code": 200,
+                    "success": True,
+                    "message": "OAuth authorization server metadata returned JSON successfully.",
                 },
                 {
                     "path": "/api/mcp",
@@ -129,6 +153,9 @@ def test_admin_inbound_mcp_easy_auth_modal_blocks_until_verified():
         expect(page.locator("#inbound-mcp-copy-script")).to_be_visible()
         expect(page.locator("#inbound-mcp-easy-auth-script-code")).to_contain_text("az rest --method get --url $authSettingsUrl")
         expect(page.locator("#inbound-mcp-easy-auth-script-code")).to_contain_text("az ad app show --id $simpleChatApiClientId")
+        expect(page.locator("#inbound-mcp-easy-auth-script-code")).to_contain_text("/.well-known/oauth-protected-resource/api/mcp")
+        expect(page.locator("#inbound-mcp-easy-auth-script-code")).to_contain_text("/.well-known/oauth-authorization-server")
+        expect(page.locator("#inbound-mcp-easy-auth-script-code")).to_contain_text("Restart your web app now")
         expect(page.locator("#inbound-mcp-easy-auth-script-code")).to_contain_text("InboundMCPUserAccess")
         expect(page.locator("#inbound-mcp-easy-auth-script-code")).to_contain_text("InboundMCPAppAccess")
         expect(enable_toggle).not_to_be_checked()

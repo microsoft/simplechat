@@ -14,9 +14,15 @@ from functions_content_safety import normalize_content_safety_violation_message
 from functions_mcp_server_config import (
     check_inbound_mcp_easy_auth_exclusions,
     INBOUND_MCP_SETTINGS_DEFAULTS,
+    ensure_inbound_mcp_default_tenant_entry,
+    inbound_mcp_entry_values,
     is_mcp_ui_enabled,
     normalize_inbound_mcp_list,
+    normalize_inbound_mcp_settings,
+    normalize_inbound_mcp_single_value,
+    normalize_inbound_mcp_value_entries,
 )
+from functions_mcp_server_registry import get_inbound_mcp_tool_registry
 from functions_file_sync import FILE_SYNC_DEFAULTS, get_file_sync_config
 from functions_source_review import SOURCE_REVIEW_DEFAULTS, get_source_review_config, get_source_review_runtime_capabilities, normalize_source_review_js_rendering_enabled, parse_source_review_list
 from functions_control_center import (
@@ -179,14 +185,18 @@ def get_inbound_mcp_easy_auth_script_context(settings=None):
         settings.get('inbound_mcp_required_scope')
         or INBOUND_MCP_SETTINGS_DEFAULTS['inbound_mcp_required_scope']
     ).strip()
-    required_user_roles = normalize_inbound_mcp_list(
-        settings.get('inbound_mcp_required_user_roles'),
-        default=INBOUND_MCP_SETTINGS_DEFAULTS['inbound_mcp_required_user_roles'],
+    required_user_role = normalize_inbound_mcp_single_value(
+        settings.get('inbound_mcp_required_user_role') or settings.get('inbound_mcp_required_user_roles'),
+        default_value=INBOUND_MCP_SETTINGS_DEFAULTS['inbound_mcp_required_user_role'],
+        max_length=128,
     )
-    required_app_roles = normalize_inbound_mcp_list(
-        settings.get('inbound_mcp_required_app_roles'),
-        default=INBOUND_MCP_SETTINGS_DEFAULTS['inbound_mcp_required_app_roles'],
+    required_app_role = normalize_inbound_mcp_single_value(
+        settings.get('inbound_mcp_required_app_role') or settings.get('inbound_mcp_required_app_roles'),
+        default_value=INBOUND_MCP_SETTINGS_DEFAULTS['inbound_mcp_required_app_role'],
+        max_length=128,
     )
+    required_user_roles = [required_user_role] if required_user_role else []
+    required_app_roles = [required_app_role] if required_app_role else []
     scope_check_missing_values = []
 
     missing_values = []
@@ -217,6 +227,8 @@ def get_inbound_mcp_easy_auth_script_context(settings=None):
         'subscription_id': subscription_id,
         'simplechat_api_client_id': simplechat_api_client_id or '<simplechat-api-client-id>',
         'required_delegated_scope': required_delegated_scope or '<required-delegated-scope>',
+        'required_user_role': required_user_role or '<required-user-role>',
+        'required_app_role': required_app_role or '<required-app-role>',
         'required_user_roles': required_user_roles,
         'required_app_roles': required_app_roles,
         'missing_values': missing_values,
@@ -249,7 +261,10 @@ $requiredDelegatedScope = {required_delegated_scope}
 $requiredUserRoles = {required_user_roles}
 $requiredAppRoles = {required_app_roles}
 $requiredPaths = @(
+    "/.well-known/oauth-protected-resource",
+    "/.well-known/oauth-protected-resource/api/mcp",
     "/.well-known/oauth-protected-resource/mcp",
+    "/.well-known/oauth-authorization-server",
     "/api/mcp",
     "/api/mcp/health"
 )
@@ -408,6 +423,10 @@ if ($LASTEXITCODE -ne 0) {{
 }}
 
 Write-Host "Updated authsettingsV2 excludedPaths for inbound MCP. Backup remains at $backupPath."
+Write-Host ""
+Write-Host "**********************************************************************" -ForegroundColor Green
+Write-Host "IMPORTANT: Restart your web app now so App Service Authentication reloads the excluded paths." -ForegroundColor Green
+Write-Host "**********************************************************************" -ForegroundColor Green
 """
 
 
@@ -937,6 +956,7 @@ def register_route_frontend_admin_settings(bp):
             user_id = get_current_user_id()
             user_settings = get_user_settings(user_id)
             settings_for_template = dict(settings)
+            normalize_inbound_mcp_settings(settings_for_template)
             settings_for_template['model_endpoints'] = frontend_model_endpoints
             audio_runtime_capabilities = get_audio_runtime_capabilities()
             source_review_runtime_capabilities = get_source_review_runtime_capabilities()
@@ -974,6 +994,7 @@ def register_route_frontend_admin_settings(bp):
                 inbound_mcp_easy_auth_script_context=inbound_mcp_easy_auth_script_context,
                 inbound_mcp_easy_auth_script=build_inbound_mcp_easy_auth_script(inbound_mcp_easy_auth_script_context),
                 is_vision_capable_model=is_vision_capable_model,
+                inbound_mcp_tools=get_inbound_mcp_tool_registry(),
                 # You don't need to pass deployments separately if they are added to settings['..._model']['all']
                 # gpt_deployments=gpt_deployments,
                 # embedding_deployments=embedding_deployments,
@@ -2661,29 +2682,83 @@ def register_route_frontend_admin_settings(bp):
             
             # --- Optional Inbound MCP Settings ---
             if is_mcp_ui_enabled():
+                inbound_mcp_required_user_role = normalize_inbound_mcp_single_value(
+                    form_data.get('inbound_mcp_required_user_role') or form_data.get('inbound_mcp_required_user_roles'),
+                    default_value=INBOUND_MCP_SETTINGS_DEFAULTS['inbound_mcp_required_user_role'],
+                    max_length=128,
+                )
+                inbound_mcp_required_app_role = normalize_inbound_mcp_single_value(
+                    form_data.get('inbound_mcp_required_app_role') or form_data.get('inbound_mcp_required_app_roles'),
+                    default_value=INBOUND_MCP_SETTINGS_DEFAULTS['inbound_mcp_required_app_role'],
+                    max_length=128,
+                )
+                inbound_mcp_client_app_entries = normalize_inbound_mcp_value_entries(
+                    form_data.get('inbound_mcp_allowed_client_app_entries_json')
+                    or form_data.get('inbound_mcp_allowed_client_app_ids', ''),
+                    lowercase=True,
+                )
+                inbound_mcp_allow_external_tenants = form_data.get('inbound_mcp_allow_external_tenants') == 'on'
+                inbound_mcp_tenant_entries = normalize_inbound_mcp_value_entries(
+                    form_data.get('inbound_mcp_allowed_tenant_entries_json')
+                    or form_data.get('inbound_mcp_allowed_tenant_ids', ''),
+                    lowercase=True,
+                )
+                if inbound_mcp_allow_external_tenants:
+                    inbound_mcp_tenant_entries = ensure_inbound_mcp_default_tenant_entry(inbound_mcp_tenant_entries)
+                    inbound_mcp_allowed_tenant_ids = inbound_mcp_entry_values(inbound_mcp_tenant_entries, lowercase=True)
+                else:
+                    inbound_mcp_allowed_tenant_ids = [str(TENANT_ID or '').strip().lower()] if str(TENANT_ID or '').strip() else []
+
+                inbound_mcp_allow_all_source_ids = form_data.get('inbound_mcp_allow_all_source_ids') == 'on'
+                inbound_mcp_source_entries = normalize_inbound_mcp_value_entries(
+                    form_data.get('inbound_mcp_allowed_source_entries_json')
+                    or form_data.get('inbound_mcp_allowed_source_ids', ''),
+                    default=INBOUND_MCP_SETTINGS_DEFAULTS['inbound_mcp_allowed_source_entries'] if inbound_mcp_allow_all_source_ids else None,
+                )
+                if not inbound_mcp_allow_all_source_ids:
+                    inbound_mcp_source_entries = [
+                        entry for entry in inbound_mcp_source_entries
+                        if entry.get('value') != '*'
+                    ]
+                inbound_mcp_allowed_source_ids = ['*'] if inbound_mcp_allow_all_source_ids else inbound_mcp_entry_values(inbound_mcp_source_entries)
+
                 new_settings.update({
                     'enable_inbound_mcp_server': form_data.get('enable_inbound_mcp_server') == 'on',
-                    'inbound_mcp_required_user_roles': normalize_inbound_mcp_list(
-                        form_data.get('inbound_mcp_required_user_roles', ''),
-                        default=INBOUND_MCP_SETTINGS_DEFAULTS['inbound_mcp_required_user_roles'],
-                    ),
-                    'inbound_mcp_required_app_roles': normalize_inbound_mcp_list(
-                        form_data.get('inbound_mcp_required_app_roles', ''),
-                        default=INBOUND_MCP_SETTINGS_DEFAULTS['inbound_mcp_required_app_roles'],
-                    ),
+                    'inbound_mcp_required_user_role': inbound_mcp_required_user_role,
+                    'inbound_mcp_required_app_role': inbound_mcp_required_app_role,
+                    'inbound_mcp_required_user_roles': [inbound_mcp_required_user_role] if inbound_mcp_required_user_role else [],
+                    'inbound_mcp_required_app_roles': [inbound_mcp_required_app_role] if inbound_mcp_required_app_role else [],
                     'inbound_mcp_required_scope': form_data.get('inbound_mcp_required_scope', '').strip(),
-                    'inbound_mcp_allowed_client_app_ids': normalize_inbound_mcp_list(
-                        form_data.get('inbound_mcp_allowed_client_app_ids', ''),
-                        lowercase=True,
-                    ),
-                    'inbound_mcp_allowed_tenant_ids': normalize_inbound_mcp_list(
-                        form_data.get('inbound_mcp_allowed_tenant_ids', ''),
-                    ),
-                    'inbound_mcp_allowed_source_ids': normalize_inbound_mcp_list(
-                        form_data.get('inbound_mcp_allowed_source_ids', ''),
-                        default=['*'],
-                    ),
+                    'inbound_mcp_allowed_client_app_entries': inbound_mcp_client_app_entries,
+                    'inbound_mcp_allowed_client_app_ids': inbound_mcp_entry_values(inbound_mcp_client_app_entries, lowercase=True),
+                    'inbound_mcp_allow_external_tenants': inbound_mcp_allow_external_tenants,
+                    'inbound_mcp_allowed_tenant_entries': inbound_mcp_tenant_entries,
+                    'inbound_mcp_allowed_tenant_ids': inbound_mcp_allowed_tenant_ids,
+                    'inbound_mcp_allow_all_source_ids': inbound_mcp_allow_all_source_ids,
+                    'inbound_mcp_allowed_source_entries': inbound_mcp_source_entries,
+                    'inbound_mcp_allowed_source_ids': inbound_mcp_allowed_source_ids,
                     'inbound_mcp_source_header': form_data.get('inbound_mcp_source_header', '').strip(),
+                    'enable_inbound_mcp_rate_limits': form_data.get('enable_inbound_mcp_rate_limits') == 'on',
+                    'inbound_mcp_rate_limit_window_seconds': form_data.get(
+                        'inbound_mcp_rate_limit_window_seconds',
+                        INBOUND_MCP_SETTINGS_DEFAULTS['inbound_mcp_rate_limit_window_seconds'],
+                    ),
+                    'inbound_mcp_rate_limit_read_per_window': form_data.get(
+                        'inbound_mcp_rate_limit_read_per_window',
+                        INBOUND_MCP_SETTINGS_DEFAULTS['inbound_mcp_rate_limit_read_per_window'],
+                    ),
+                    'inbound_mcp_rate_limit_search_per_window': form_data.get(
+                        'inbound_mcp_rate_limit_search_per_window',
+                        INBOUND_MCP_SETTINGS_DEFAULTS['inbound_mcp_rate_limit_search_per_window'],
+                    ),
+                    'inbound_mcp_rate_limit_write_per_window': form_data.get(
+                        'inbound_mcp_rate_limit_write_per_window',
+                        INBOUND_MCP_SETTINGS_DEFAULTS['inbound_mcp_rate_limit_write_per_window'],
+                    ),
+                    'inbound_mcp_max_request_bytes': form_data.get(
+                        'inbound_mcp_max_request_bytes',
+                        INBOUND_MCP_SETTINGS_DEFAULTS['inbound_mcp_max_request_bytes'],
+                    ),
                 })
                 if (
                     new_settings.get('enable_inbound_mcp_server')

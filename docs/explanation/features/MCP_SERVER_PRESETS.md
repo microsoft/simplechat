@@ -1,10 +1,8 @@
 # MCP Server Presets
 
-Implemented in version: **0.250.062**
+Current documentation version: **0.250.098**
 
-Implementation-specific preset schema validation added in version: **0.250.067**
-
-Capability-probe defaults for argument validation and result policy added in version: **0.250.068**
+Related configuration version: `application\single_app\config.py` currently sets `VERSION = "0.250.098"`.
 
 ## Overview
 
@@ -141,7 +139,7 @@ The generic preset keeps broad MCP defaults:
 The Splunk preset is a compatibility preset, not a separate MCP implementation:
 
 - Streamable HTTP.
-- Bearer authentication.
+- Token-based authorization defaults.
 - Tools enabled.
 - Prompts disabled.
 - Custom headers allowed.
@@ -157,6 +155,4 @@ Related validation:
 - `ui_tests\test_workspace_mcp_action_modal.py`
 - Route policy tests under `functional_tests\route_tests\`
 
-Expanded coverage in version **0.250.067** validates implementation-specific preset schemas, secret-like field rejection in `additionalSettings`, and the generic preset's reusable identity option.
-
-Expanded coverage in version **0.250.068** validates preset-compatible defaults for opt-in MCP argument validation and large-result policy behavior.
+Current coverage validates implementation-specific preset schemas, secret-like field rejection in `additionalSettings`, reusable identity defaults, opt-in MCP argument validation defaults, and large-result policy behavior.

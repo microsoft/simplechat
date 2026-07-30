@@ -9,7 +9,7 @@ from flask import g, jsonify, request
 
 from functions_appinsights import log_event
 from functions_authentication import validate_bearer_token
-from functions_mcp_server_config import get_inbound_mcp_runtime_config
+from functions_mcp_server_config import build_inbound_mcp_public_base_url, get_inbound_mcp_runtime_config
 
 
 AUTH_CATEGORY = "InboundMCP"
@@ -141,12 +141,13 @@ def _has_required_app_role(roles, runtime_config):
 
 
 def _correlation_id(flask_request):
-    return (
+    raw_value = (
         flask_request.headers.get("x-ms-client-request-id")
         or flask_request.headers.get("x-correlation-id")
         or flask_request.headers.get("x-request-id")
         or ""
     )
+    return str(raw_value or "").replace("\r", "").replace("\n", "").strip()[:128]
 
 
 def validate_inbound_mcp_request(flask_request, token_validator=None):
@@ -235,19 +236,24 @@ def validate_inbound_mcp_request(flask_request, token_validator=None):
 
 def is_inbound_mcp_metadata_request(flask_request):
     runtime_config = get_inbound_mcp_runtime_config()
+    metadata_paths = {
+        runtime_config.get("inbound_mcp_authorization_server_metadata_path"),
+    }
+    metadata_paths.update(runtime_config.get("inbound_mcp_prm_paths") or ())
     return (
         flask_request.method == "GET"
-        and flask_request.path == runtime_config.get("inbound_mcp_prm_path")
+        and flask_request.path in metadata_paths
     )
+
 
 def _build_resource_metadata_url(flask_request):
     runtime_config = get_inbound_mcp_runtime_config()
     metadata_path = str(runtime_config.get("inbound_mcp_prm_path") or "").strip()
     if not metadata_path.startswith("/"):
-        metadata_path = "/.well-known/oauth-protected-resource/mcp"
+        metadata_path = "/.well-known/oauth-protected-resource/api/mcp"
     if not flask_request:
         return metadata_path
-    base_url = str(flask_request.url_root or "").strip().rstrip("/")
+    base_url = build_inbound_mcp_public_base_url(flask_request)
     if not base_url:
         return metadata_path
     return f"{base_url}{metadata_path}".replace("\r", "").replace("\n", "")
@@ -258,6 +264,9 @@ def build_inbound_mcp_auth_error_response(auth_error, flask_request=None):
         "error": auth_error.public_error,
         "message": auth_error.public_message,
     })
+    correlation_id = _correlation_id(flask_request) if flask_request else ""
+    if correlation_id:
+        response.headers["X-Correlation-ID"] = correlation_id
     if auth_error.status_code == 401:
         metadata_url = _build_resource_metadata_url(flask_request)
         response.headers["WWW-Authenticate"] = f'Bearer resource_metadata="{metadata_url}"'
@@ -286,15 +295,23 @@ def inbound_mcp_required_blueprint():
         if not runtime_config.get("enable_inbound_mcp_server"):
             log_event(
                 "[InboundMCP] Inbound MCP request rejected because the server is disabled.",
-                extra={"path": request.path, "method": request.method},
+                extra={
+                    "path": request.path,
+                    "method": request.method,
+                    "mcp_request_id": _correlation_id(request),
+                    "error_type": "server_disabled",
+                },
                 level=logging.INFO,
-                debug_only=True,
                 category=AUTH_CATEGORY,
             )
-            return jsonify({
+            response = jsonify({
                 "error": "inbound_mcp_disabled",
                 "message": "Inbound MCP server is disabled.",
-            }), 404
+            })
+            correlation_id = _correlation_id(request)
+            if correlation_id:
+                response.headers["X-Correlation-ID"] = correlation_id
+            return response, 404
 
         try:
             g.inbound_mcp_auth_context = validate_inbound_mcp_request(request)
@@ -304,11 +321,11 @@ def inbound_mcp_required_blueprint():
                 extra={
                     "path": request.path,
                     "method": request.method,
-                    "error": auth_error.public_error,
+                    "mcp_request_id": _correlation_id(request),
+                    "error_type": auth_error.public_error,
                     "status_code": auth_error.status_code,
                 },
                 level=logging.WARNING,
-                debug_only=True,
                 category=AUTH_CATEGORY,
             )
             return build_inbound_mcp_auth_error_response(auth_error, request)

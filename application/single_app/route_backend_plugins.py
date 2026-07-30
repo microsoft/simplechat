@@ -4,6 +4,8 @@ import asyncio
 import re
 import builtins
 import json
+import time
+import uuid
 import azure.cosmos as azure_cosmos
 from azure.cosmos.exceptions import CosmosHttpResponseError
 from azure.identity import DefaultAzureCredential
@@ -91,6 +93,7 @@ from functions_mcp_operations import (
 from functions_mcp_destinations import (
     McpDestinationPolicyError,
     assert_mcp_destination_allowed,
+    build_mcp_destination_log_context,
     get_mcp_destination_policy_config,
 )
 from functions_mcp_preconfigurations import (
@@ -594,7 +597,7 @@ def _reject_non_admin_mcp_stdio(plugin_manifest, scope_label="personal"):
     return None
 
 
-def _enforce_mcp_destination_policy(plugin_manifest, scope_type, scope_id, operation, user_id=None):
+def _enforce_mcp_destination_policy(plugin_manifest, scope_type, scope_id, operation, user_id=None, mcp_operation_id=""):
     """Enforce outbound MCP destination policy for save, discovery, and runtime-adjacent routes."""
     if not isinstance(plugin_manifest, dict) or plugin_manifest.get('type') != MCP_PLUGIN_TYPE:
         return None
@@ -608,6 +611,7 @@ def _enforce_mcp_destination_policy(plugin_manifest, scope_type, scope_id, opera
         policy_config=policy_config,
         operation=operation,
         user_id=normalized_user_id,
+        mcp_operation_id=mcp_operation_id,
     )
     assert_mcp_preconfiguration_manifest_allowed(
         plugin_manifest,
@@ -618,6 +622,48 @@ def _enforce_mcp_destination_policy(plugin_manifest, scope_type, scope_id, opera
         user_id=normalized_user_id,
     )
     return decision
+
+
+def _elapsed_mcp_discovery_ms(started_at):
+    """Return a rounded outbound MCP discovery duration in milliseconds."""
+    return round((time.perf_counter() - started_at) * 1000, 2)
+
+
+def _build_mcp_discovery_log_context(
+    mcp_operation_id,
+    user_id,
+    discovery_manifest=None,
+    scope_type="",
+    scope_id="",
+    started_at=None,
+    extra=None,
+):
+    """Build low-sensitivity structured telemetry for outbound MCP discovery."""
+    manifest = discovery_manifest if isinstance(discovery_manifest, dict) else {}
+    additional_fields = manifest.get('additionalFields') if isinstance(manifest.get('additionalFields'), dict) else {}
+    auth = manifest.get('auth') if isinstance(manifest.get('auth'), dict) else {}
+    context = {
+        "mcp_operation_id": mcp_operation_id,
+        "user_id": user_id,
+        "scope_type": scope_type,
+        "scope_id_present": bool(scope_id),
+        "transport": additional_fields.get('transport'),
+        "auth_method": additional_fields.get('auth_method'),
+        "preconfiguration_id": additional_fields.get('preconfiguration_id'),
+        "server_profile": additional_fields.get('server_profile'),
+        "custom_header_count": len(additional_fields.get(MCP_CUSTOM_HEADERS_FIELD) or {}),
+        "has_auth_secret": bool(str(auth.get('key') or '').strip()),
+        "has_identity": bool(str(auth.get('identity') or '').strip()),
+    }
+    if manifest:
+        context.update({
+            f"destination_{key}": value
+            for key, value in build_mcp_destination_log_context(manifest).items()
+        })
+    if started_at is not None:
+        context["duration_ms"] = _elapsed_mcp_discovery_ms(started_at)
+    context.update(extra or {})
+    return context
 
 
 def _hydrate_sql_test_identity(data, existing_plugin, user_id):
@@ -1759,11 +1805,32 @@ def discover_mcp_tools():
     if not isinstance(payload, dict):
         return jsonify({'error': 'Invalid MCP discovery payload.'}), 400
 
+    mcp_operation_id = str(uuid.uuid4())
+    started_at = time.perf_counter()
+    discovery_manifest = {}
+    scope_type = ""
+    scope_id = ""
+    log_event(
+        "[MCP Discovery] Started",
+        extra=_build_mcp_discovery_log_context(
+            mcp_operation_id,
+            user_id,
+            started_at=started_at,
+            extra={
+                "payload_key_count": len(payload.keys()),
+                "plugin_context_present": isinstance(payload.get('plugin_context'), dict),
+            },
+        ),
+        level=logging.INFO,
+    )
+
     try:
         existing_plugin = _load_existing_plugin_for_test(payload.get('plugin_context'), user_id)
         scope_type, scope_id = _resolve_action_identity_context(payload, existing_plugin, user_id)
 
         discovery_manifest = dict(payload)
+        discovery_manifest['mcp_operation_id'] = mcp_operation_id
+        discovery_manifest['runtime_user_id'] = user_id
         discovery_manifest['type'] = MCP_PLUGIN_TYPE
         discovery_manifest.setdefault('name', 'mcp_discovery')
         discovery_manifest.setdefault('displayName', 'MCP Discovery')
@@ -1772,7 +1839,27 @@ def discover_mcp_tools():
         discovery_manifest.setdefault('additionalFields', {})
         _apply_plugin_runtime_defaults(discovery_manifest)
         if discovery_manifest.get('additionalFields', {}).get('transport') == 'stdio' and scope_type != WORKSPACE_IDENTITY_SCOPE_GLOBAL:
-            return jsonify({'error': 'MCP stdio discovery is only available for admin-managed global actions.'}), 403
+            log_event(
+                "[MCP Discovery] Failed",
+                extra=_build_mcp_discovery_log_context(
+                    mcp_operation_id,
+                    user_id,
+                    discovery_manifest,
+                    scope_type,
+                    scope_id,
+                    started_at,
+                    {
+                        "category": "authorization",
+                        "http_status": 403,
+                        "failure_stage": "transport_scope_validation",
+                    },
+                ),
+                level=logging.WARNING,
+            )
+            return jsonify({
+                'error': 'MCP stdio discovery is only available for admin-managed global actions.',
+                'mcp_operation_id': mcp_operation_id,
+            }), 403
 
         auth = discovery_manifest.get('auth') if isinstance(discovery_manifest.get('auth'), dict) else {}
         existing_auth = existing_plugin.get('auth') if isinstance(existing_plugin, dict) and isinstance(existing_plugin.get('auth'), dict) else {}
@@ -1799,10 +1886,29 @@ def discover_mcp_tools():
 
         is_valid, validation_errors = PluginHealthChecker.validate_plugin_manifest(discovery_manifest, MCP_PLUGIN_TYPE)
         if not is_valid:
+            log_event(
+                "[MCP Discovery] Failed",
+                extra=_build_mcp_discovery_log_context(
+                    mcp_operation_id,
+                    user_id,
+                    discovery_manifest,
+                    scope_type,
+                    scope_id,
+                    started_at,
+                    {
+                        "category": "validation",
+                        "http_status": 400,
+                        "failure_stage": "manifest_validation",
+                        "validation_error_count": len(validation_errors or []),
+                    },
+                ),
+                level=logging.WARNING,
+            )
             return jsonify({
                 'success': False,
                 'error': 'MCP discovery manifest is invalid.',
                 'errors': validation_errors,
+                'mcp_operation_id': mcp_operation_id,
             }), 400
 
         _enforce_mcp_destination_policy(
@@ -1811,22 +1917,32 @@ def discover_mcp_tools():
             scope_id,
             operation='mcp_tool_discovery',
             user_id=user_id,
+            mcp_operation_id=mcp_operation_id,
         )
 
         probe_result = asyncio.run(McpPluginFactory.probe_server_from_config(discovery_manifest))
         tools = probe_result.get('tools', []) if isinstance(probe_result, dict) else []
         log_event(
-            "[MCP Discovery] Discovered MCP tools",
-            extra={
-                "user_id": user_id,
-                "tool_count": len(tools),
-                "transport": discovery_manifest.get('additionalFields', {}).get('transport'),
-                "warning_count": len(probe_result.get('warnings', [])) if isinstance(probe_result, dict) else 0,
-            },
+            "[MCP Discovery] Completed",
+            extra=_build_mcp_discovery_log_context(
+                mcp_operation_id,
+                user_id,
+                discovery_manifest,
+                scope_type,
+                scope_id,
+                started_at,
+                {
+                    "http_status": 200,
+                    "status": "success",
+                    "tool_count": len(tools),
+                    "warning_count": len(probe_result.get('warnings', [])) if isinstance(probe_result, dict) else 0,
+                },
+            ),
             level=logging.INFO,
         )
         return jsonify({
             'success': True,
+            'mcp_operation_id': mcp_operation_id,
             'tool_count': len(tools),
             'tools': tools,
             'capabilities': probe_result.get('capabilities', {}) if isinstance(probe_result, dict) else {},
@@ -1835,33 +1951,93 @@ def discover_mcp_tools():
             'auth_method': probe_result.get('auth_method') if isinstance(probe_result, dict) else None,
         })
     except PermissionError as exc:
-        return jsonify({'error': str(exc)}), 403
-    except (LookupError, ValueError) as exc:
-        return jsonify({'error': str(exc)}), 400
-    except McpRuntimeError as exc:
+        category = "destination_policy" if isinstance(exc, McpDestinationPolicyError) else "authorization"
         log_event(
-            "[MCP Discovery] Classified MCP discovery failure",
-            extra={
-                "user_id": user_id,
-                "category": exc.category,
-                "operation": exc.operation,
-            },
+            "[MCP Discovery] Failed",
+            extra=_build_mcp_discovery_log_context(
+                mcp_operation_id,
+                user_id,
+                discovery_manifest,
+                scope_type,
+                scope_id,
+                started_at,
+                {
+                    "category": category,
+                    "http_status": 403,
+                    "failure_stage": category,
+                },
+            ),
+            level=logging.WARNING,
+        )
+        return jsonify({'error': str(exc), 'mcp_operation_id': mcp_operation_id}), 403
+    except (LookupError, ValueError) as exc:
+        log_event(
+            "[MCP Discovery] Failed",
+            extra=_build_mcp_discovery_log_context(
+                mcp_operation_id,
+                user_id,
+                discovery_manifest,
+                scope_type,
+                scope_id,
+                started_at,
+                {
+                    "category": "validation",
+                    "http_status": 400,
+                    "failure_stage": type(exc).__name__,
+                },
+            ),
+            level=logging.WARNING,
+        )
+        return jsonify({'error': str(exc), 'mcp_operation_id': mcp_operation_id}), 400
+    except McpRuntimeError as exc:
+        http_status = get_mcp_error_http_status(exc.category)
+        log_event(
+            "[MCP Discovery] Failed",
+            extra=_build_mcp_discovery_log_context(
+                mcp_operation_id,
+                user_id,
+                discovery_manifest,
+                scope_type,
+                scope_id,
+                started_at,
+                {
+                    "category": exc.category,
+                    "operation": exc.operation,
+                    "retryable": exc.retryable,
+                    "http_status": http_status,
+                    "failure_stage": "mcp_runtime",
+                },
+            ),
             level=logging.WARNING,
         )
         return jsonify({
             'success': False,
+            'mcp_operation_id': mcp_operation_id,
             'error': str(exc),
             'error_type': exc.category,
             'operation': exc.operation,
             'details': exc.detail,
-        }), get_mcp_error_http_status(exc.category)
+        }), http_status
     except Exception as exc:
         log_event(
-            f"[MCP Discovery] Failed to discover MCP tools: {exc}",
+            f"[MCP Discovery] Failed unexpectedly: {exc}",
+            extra=_build_mcp_discovery_log_context(
+                mcp_operation_id,
+                user_id,
+                discovery_manifest,
+                scope_type,
+                scope_id,
+                started_at,
+                {
+                    "category": "unexpected",
+                    "http_status": 500,
+                    "failure_stage": type(exc).__name__,
+                },
+            ),
             level=logging.ERROR,
             exceptionTraceback=True,
         )
-        return jsonify({'error': 'Failed to discover MCP tools.'}), 500
+        return jsonify({'error': 'Failed to discover MCP tools.', 'mcp_operation_id': mcp_operation_id}), 500
 
 ##########################################################################################################
 # Dynamic Plugin Metadata Endpoint

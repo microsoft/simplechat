@@ -1,15 +1,19 @@
 # functions_mcp_server_tools.py
 
 import json
+import logging
+from datetime import datetime, timezone
 
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
+from background_tasks import acquire_distributed_task_lock, release_distributed_task_lock
 from collaboration_models import MEMBERSHIP_STATUS_ACCEPTED
 from config import (
     cosmos_conversations_container,
     cosmos_messages_container,
     cosmos_user_prompts_container,
 )
+from functions_appinsights import log_event
 from functions_collaboration import (
     assert_user_can_view_collaboration_conversation,
     get_collaboration_conversation,
@@ -27,6 +31,16 @@ from functions_documents import (
     sort_documents,
 )
 from functions_message_artifacts import filter_assistant_artifact_items
+from functions_personal_workflows import (
+    compute_next_run_at,
+    get_personal_workflow,
+    get_personal_workflows,
+    save_personal_workflow_run,
+    update_personal_workflow_runtime_fields,
+)
+from functions_search_service import search_documents as run_document_search
+from functions_settings import get_settings, is_user_workflows_enabled_for_user
+from functions_workflow_runner import run_personal_workflow
 
 
 INBOUND_MCP_TOOL_RESULT_LIMIT_DEFAULT = 100
@@ -38,8 +52,21 @@ INBOUND_MCP_DOCUMENT_LIMIT_MAX = 100
 INBOUND_MCP_MESSAGE_LIMIT_DEFAULT = 50
 INBOUND_MCP_PROMPT_LIMIT_DEFAULT = 50
 INBOUND_MCP_PROMPT_LIMIT_MAX = 100
+INBOUND_MCP_SEARCH_TOP_N_DEFAULT = 5
+INBOUND_MCP_SEARCH_TOP_N_MAX = 20
+INBOUND_MCP_SEARCH_SNIPPET_MAX_CHARS = 1000
+INBOUND_MCP_SEARCH_SUMMARY_MAX_CHARS = 500
 INBOUND_MCP_OFFSET_MAX = 10000
 INBOUND_MCP_MESSAGE_CONTENT_MAX_CHARS = 4000
+INBOUND_MCP_WORKFLOW_LIMIT_DEFAULT = 50
+INBOUND_MCP_WORKFLOW_LIMIT_MAX = 100
+INBOUND_MCP_WORKFLOW_DESCRIPTION_MAX_CHARS = 500
+INBOUND_MCP_WORKFLOW_RUN_LOCK_SECONDS = 900
+INBOUND_MCP_WORKFLOW_ERROR_MAX_CHARS = 500
+
+
+class InboundMcpToolConflict(Exception):
+    """Raised when a governed inbound MCP tool cannot proceed due to state conflict."""
 
 
 def _coerce_limit(
@@ -290,6 +317,12 @@ def _stringify_message_content(value):
     return json.dumps(value, ensure_ascii=True, default=str)
 
 
+def _truncate_text(value, max_chars):
+    normalized_value = _stringify_message_content(value).strip()
+    truncated_value = normalized_value[:max_chars]
+    return truncated_value, len(normalized_value) > len(truncated_value)
+
+
 def _serialize_message(message_item):
     message_item = message_item if isinstance(message_item, dict) else {}
     raw_content = _stringify_message_content(message_item.get("content"))
@@ -501,6 +534,74 @@ def list_personal_prompts(auth_context, arguments=None):
     }
 
 
+def _coerce_search_query(arguments):
+    query = str((arguments or {}).get("query") or "").strip()
+    if not query:
+        raise ValueError("query is required.")
+    if len(query) > 1000:
+        raise ValueError("query must be 1000 characters or fewer.")
+    return query
+
+
+def _serialize_search_result(search_result):
+    search_result = search_result if isinstance(search_result, dict) else {}
+    snippet, snippet_truncated = _truncate_text(
+        search_result.get("chunk_text"),
+        INBOUND_MCP_SEARCH_SNIPPET_MAX_CHARS,
+    )
+    chunk_summary, chunk_summary_truncated = _truncate_text(
+        search_result.get("chunk_summary"),
+        INBOUND_MCP_SEARCH_SUMMARY_MAX_CHARS,
+    )
+    return {
+        "document_id": str(search_result.get("document_id") or "").strip(),
+        "chunk_id": str(search_result.get("chunk_id") or "").strip(),
+        "file_name": str(search_result.get("file_name") or "").strip(),
+        "title": str(search_result.get("title") or search_result.get("file_name") or "").strip(),
+        "score": search_result.get("score"),
+        "page_number": search_result.get("page_number"),
+        "chunk_sequence": search_result.get("chunk_sequence"),
+        "version": search_result.get("version"),
+        "upload_date": str(search_result.get("upload_date") or "").strip(),
+        "document_classification": str(search_result.get("document_classification") or "").strip(),
+        "document_tags": _normalize_list(search_result.get("document_tags")),
+        "author": str(search_result.get("author") or "").strip(),
+        "chunk_keywords": _normalize_list(search_result.get("chunk_keywords")),
+        "snippet": snippet,
+        "snippet_truncated": snippet_truncated,
+        "chunk_summary": chunk_summary,
+        "chunk_summary_truncated": chunk_summary_truncated,
+    }
+
+
+def search_personal_documents(auth_context, arguments=None):
+    """Search personal workspace documents visible to the delegated user."""
+    delegated_user_id = _require_delegated_user_id(auth_context)
+    arguments = arguments if isinstance(arguments, dict) else {}
+    query = _coerce_search_query(arguments)
+    top_n = _coerce_limit(
+        arguments.get("top_n"),
+        default_value=INBOUND_MCP_SEARCH_TOP_N_DEFAULT,
+        max_value=INBOUND_MCP_SEARCH_TOP_N_MAX,
+    )
+    search_payload = run_document_search(
+        query=query,
+        user_id=delegated_user_id,
+        top_n=top_n,
+        doc_scope="personal",
+        enable_file_sharing=True,
+    )
+    raw_results = _normalize_list((search_payload or {}).get("results"))
+    return {
+        "scope": "personal",
+        "query": query,
+        "top_n": top_n,
+        "result_count": len(raw_results),
+        "document_count": _coerce_nonnegative_int((search_payload or {}).get("document_count")),
+        "results": [_serialize_search_result(result) for result in raw_results[:top_n]],
+    }
+
+
 def list_personal_tags(auth_context, arguments=None):
     """List personal workspace tags for the delegated user."""
     delegated_user_id = _require_delegated_user_id(auth_context)
@@ -526,6 +627,238 @@ def list_personal_tags(auth_context, arguments=None):
     }
 
 
+def _require_personal_workflow_execution_enabled(auth_context):
+    roles = tuple(getattr(auth_context, "roles", ()) or ())
+    if is_user_workflows_enabled_for_user(get_settings(), user_roles=roles):
+        return
+
+    raise PermissionError("Personal workflow execution is not available to this delegated user.")
+
+
+def _serialize_personal_workflow_summary(workflow):
+    workflow = workflow if isinstance(workflow, dict) else {}
+    description, description_truncated = _truncate_text(
+        workflow.get("description"),
+        INBOUND_MCP_WORKFLOW_DESCRIPTION_MAX_CHARS,
+    )
+    return {
+        "id": str(workflow.get("id") or "").strip(),
+        "name": str(workflow.get("name") or "").strip(),
+        "description": description,
+        "description_truncated": description_truncated,
+        "runner_type": str(workflow.get("runner_type") or "").strip(),
+        "trigger_type": str(workflow.get("trigger_type") or "").strip(),
+        "is_enabled": bool(workflow.get("is_enabled", False)),
+        "status": str(workflow.get("status") or "").strip(),
+        "created_at": str(workflow.get("created_at") or "").strip(),
+        "updated_at": str(workflow.get("updated_at") or "").strip(),
+        "modified_at": str(workflow.get("modified_at") or "").strip(),
+        "next_run_at": str(workflow.get("next_run_at") or "").strip(),
+        "last_run_at": str(workflow.get("last_run_at") or "").strip(),
+        "last_run_status": str(workflow.get("last_run_status") or "").strip(),
+        "last_run_trigger_source": str(workflow.get("last_run_trigger_source") or "").strip(),
+        "run_count": _coerce_nonnegative_int(workflow.get("run_count")),
+        "conversation_id": str(workflow.get("conversation_id") or "").strip(),
+    }
+
+
+def list_personal_workflows(auth_context, arguments=None):
+    """List personal workflow metadata for the delegated user."""
+    delegated_user_id = _require_delegated_user_id(auth_context)
+    _require_personal_workflow_execution_enabled(auth_context)
+    arguments = arguments if isinstance(arguments, dict) else {}
+    limit = _coerce_limit(
+        arguments.get("limit"),
+        default_value=INBOUND_MCP_WORKFLOW_LIMIT_DEFAULT,
+        max_value=INBOUND_MCP_WORKFLOW_LIMIT_MAX,
+    )
+    offset = _coerce_offset(arguments.get("offset"))
+    workflow_items = get_personal_workflows(delegated_user_id)
+    page = workflow_items[offset:offset + limit]
+    has_more = offset + len(page) < len(workflow_items)
+    return {
+        "scope": "personal",
+        "workflows": [_serialize_personal_workflow_summary(workflow) for workflow in page],
+        "count": len(page),
+        "total_count": len(workflow_items),
+        "limit": limit,
+        "offset": offset,
+        "has_more": has_more,
+        "next_offset": offset + len(page) if has_more else None,
+    }
+
+
+def _coerce_workflow_id(arguments):
+    workflow_id = str((arguments or {}).get("workflow_id") or "").strip()
+    if not workflow_id:
+        raise ValueError("workflow_id is required.")
+    if len(workflow_id) > 128:
+        raise ValueError("workflow_id must be 128 characters or fewer.")
+    return workflow_id
+
+
+def _build_mcp_workflow_invocation_metadata(auth_context):
+    return {
+        "source": "inbound_mcp",
+        "caller_app_id": str(getattr(auth_context, "caller_app_id", "") or "").strip(),
+        "source_id": str(getattr(auth_context, "source_id", "") or "").strip(),
+        "source_signal_type": str(getattr(auth_context, "source_signal_type", "") or "").strip(),
+        "source_trust_level": str(getattr(auth_context, "source_trust_level", "") or "").strip(),
+        "correlation_id": str(getattr(auth_context, "correlation_id", "") or "").strip(),
+        "invoked_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _truncate_workflow_error(error_text):
+    error_text = str(error_text or "").strip()
+    if len(error_text) <= INBOUND_MCP_WORKFLOW_ERROR_MAX_CHARS:
+        return error_text
+    return f"{error_text[:INBOUND_MCP_WORKFLOW_ERROR_MAX_CHARS].rstrip()}..."
+
+
+def _persist_mcp_workflow_run_metadata(delegated_user_id, run_record, auth_context):
+    run_record = dict(run_record or {})
+    if not run_record.get("id"):
+        return run_record
+
+    run_record["mcp_invocation"] = _build_mcp_workflow_invocation_metadata(auth_context)
+    save_personal_workflow_run(delegated_user_id, run_record)
+    return run_record
+
+
+def _serialize_workflow_execution_result(workflow, run_record, success):
+    workflow = workflow if isinstance(workflow, dict) else {}
+    run_record = run_record if isinstance(run_record, dict) else {}
+    error_text = _truncate_workflow_error(run_record.get("error"))
+    return {
+        "scope": "personal",
+        "workflow": {
+            "id": str(workflow.get("id") or "").strip(),
+            "name": str(workflow.get("name") or "").strip(),
+            "runner_type": str(workflow.get("runner_type") or "").strip(),
+            "trigger_type": str(workflow.get("trigger_type") or "").strip(),
+        },
+        "run": {
+            "id": str(run_record.get("id") or "").strip(),
+            "status": str(run_record.get("status") or "").strip(),
+            "success": bool(success),
+            "trigger_source": str(run_record.get("trigger_source") or "").strip(),
+            "started_at": str(run_record.get("started_at") or "").strip(),
+            "completed_at": str(run_record.get("completed_at") or "").strip(),
+            "conversation_id": str(run_record.get("conversation_id") or "").strip(),
+            "user_message_id": str(run_record.get("user_message_id") or "").strip(),
+            "assistant_message_id": str(run_record.get("assistant_message_id") or "").strip(),
+            "response_preview_available": bool(str(run_record.get("response_preview") or "").strip()),
+            "error": error_text,
+            "error_truncated": bool(error_text and error_text != str(run_record.get("error") or "").strip()),
+        },
+    }
+
+
+def execute_workflow(auth_context, arguments=None):
+    """Execute a personal workflow owned by the delegated user."""
+    delegated_user_id = _require_delegated_user_id(auth_context)
+    _require_personal_workflow_execution_enabled(auth_context)
+    arguments = arguments if isinstance(arguments, dict) else {}
+    workflow_id = _coerce_workflow_id(arguments)
+    workflow = get_personal_workflow(delegated_user_id, workflow_id)
+    if not workflow:
+        raise LookupError(
+            "Workflow not found. Use list_personal_workflows to find the generated workflow id; "
+            "workflow display names are not accepted."
+        )
+
+    lock_document = acquire_distributed_task_lock(
+        f"workflow_run_{workflow_id}",
+        lease_seconds=INBOUND_MCP_WORKFLOW_RUN_LOCK_SECONDS,
+    )
+    if not lock_document:
+        raise InboundMcpToolConflict("This workflow is already running.")
+
+    try:
+        started_at = datetime.now(timezone.utc).isoformat()
+        update_personal_workflow_runtime_fields(
+            delegated_user_id,
+            workflow_id,
+            {
+                "status": "running",
+                "last_run_started_at": started_at,
+                "last_run_trigger_source": "inbound_mcp",
+                "last_run_error": "",
+            },
+        )
+
+        result = run_personal_workflow(
+            workflow,
+            trigger_source="inbound_mcp",
+            user_roles=tuple(getattr(auth_context, "roles", ()) or ()),
+            actor_user_id=delegated_user_id,
+        )
+        run_record = _persist_mcp_workflow_run_metadata(
+            delegated_user_id,
+            result.get("run"),
+            auth_context,
+        )
+        update_fields = dict(result.get("workflow_updates") or {})
+        update_fields["status"] = "idle"
+        if (
+            workflow.get("trigger_type") in {"interval", "file_sync"}
+            and workflow.get("is_enabled", False)
+            and not workflow.get("next_run_at")
+        ):
+            update_fields["next_run_at"] = compute_next_run_at(
+                workflow,
+                from_time=datetime.now(timezone.utc),
+            )
+        update_personal_workflow_runtime_fields(delegated_user_id, workflow_id, update_fields)
+
+        log_event(
+            "[InboundMCP] Personal workflow executed through inbound MCP.",
+            extra={
+                "workflow_id": workflow_id,
+                "run_id": str(run_record.get("id") or "").strip(),
+                "success": bool(result.get("success")),
+                "caller_app_id": str(getattr(auth_context, "caller_app_id", "") or "").strip(),
+                "source_id": str(getattr(auth_context, "source_id", "") or "").strip(),
+                "delegated_user_id": delegated_user_id,
+            },
+            level=logging.INFO,
+            debug_only=True,
+            category="InboundMCP",
+        )
+        return _serialize_workflow_execution_result(workflow, run_record, result.get("success"))
+    except Exception as exc:
+        failed_at = datetime.now(timezone.utc).isoformat()
+        try:
+            update_personal_workflow_runtime_fields(
+                delegated_user_id,
+                workflow_id,
+                {
+                    "status": "idle",
+                    "last_run_status": "failed",
+                    "last_run_error": str(exc),
+                    "last_run_at": failed_at,
+                    "last_run_trigger_source": "inbound_mcp",
+                },
+            )
+        except Exception as update_exc:
+            log_event(
+                "[InboundMCP] Failed to reset workflow status after inbound MCP execution error.",
+                extra={
+                    "workflow_id": workflow_id,
+                    "delegated_user_id": delegated_user_id,
+                    "error": str(update_exc),
+                },
+                level=logging.ERROR,
+                debug_only=True,
+                category="InboundMCP",
+                exceptionTraceback=True,
+            )
+        raise
+    finally:
+        release_distributed_task_lock(lock_document)
+
+
 def execute_inbound_mcp_tool(tool_id, auth_context, arguments=None):
     """Dispatch an implemented inbound MCP tool."""
     normalized_tool_id = str(tool_id or "").strip()
@@ -539,4 +872,10 @@ def execute_inbound_mcp_tool(tool_id, auth_context, arguments=None):
         return list_personal_prompts(auth_context, arguments)
     if normalized_tool_id == "list_personal_tags":
         return list_personal_tags(auth_context, arguments)
+    if normalized_tool_id == "search_personal_documents":
+        return search_personal_documents(auth_context, arguments)
+    if normalized_tool_id == "list_personal_workflows":
+        return list_personal_workflows(auth_context, arguments)
+    if normalized_tool_id == "execute_workflow":
+        return execute_workflow(auth_context, arguments)
     raise LookupError(f"Inbound MCP tool '{normalized_tool_id}' is not implemented.")

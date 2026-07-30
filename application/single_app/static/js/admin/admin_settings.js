@@ -489,6 +489,47 @@ function setButtonBusy(button, isBusy, busyText) {
     }
 }
 
+async function copyTextToClipboard(text) {
+    if (!text) {
+        throw new Error('No text was available to copy.');
+    }
+
+    if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return;
+    }
+
+    const fallbackTextarea = document.createElement('textarea');
+    fallbackTextarea.value = text;
+    fallbackTextarea.setAttribute('readonly', 'readonly');
+    fallbackTextarea.classList.add('visually-hidden');
+    document.body.append(fallbackTextarea);
+    try {
+        fallbackTextarea.focus();
+        fallbackTextarea.select();
+        if (!document.execCommand('copy')) {
+            throw new Error('Clipboard copy command was not available.');
+        }
+    } finally {
+        fallbackTextarea.remove();
+    }
+}
+
+function setupInboundMcpObservabilityCopyButtons() {
+    document.querySelectorAll('.inbound-mcp-kql-copy-btn').forEach(button => {
+        button.addEventListener('click', async () => {
+            const targetId = button.dataset.kqlTarget || '';
+            const queryText = document.getElementById(targetId)?.textContent || '';
+            try {
+                await copyTextToClipboard(queryText.trim());
+                showToast('Application Insights query copied to clipboard.', 'success');
+            } catch (error) {
+                showToast(error.message || 'Could not copy the Application Insights query.', 'danger');
+            }
+        });
+    });
+}
+
 function setupInboundMcpEasyAuthGuard() {
     const enableToggle = document.getElementById('enable_inbound_mcp_server');
     const modalElement = document.getElementById('inboundMcpEasyAuthModal');
@@ -562,24 +603,7 @@ function setupInboundMcpEasyAuthGuard() {
         }
 
         try {
-            if (navigator.clipboard?.writeText) {
-                await navigator.clipboard.writeText(scriptText);
-            } else {
-                const fallbackTextarea = document.createElement('textarea');
-                fallbackTextarea.value = scriptText;
-                fallbackTextarea.setAttribute('readonly', 'readonly');
-                fallbackTextarea.classList.add('visually-hidden');
-                document.body.append(fallbackTextarea);
-                try {
-                    fallbackTextarea.focus();
-                    fallbackTextarea.select();
-                    if (!document.execCommand('copy')) {
-                        throw new Error('Clipboard copy command was not available.');
-                    }
-                } finally {
-                    fallbackTextarea.remove();
-                }
-            }
+            await copyTextToClipboard(scriptText);
             showToast('PowerShell script copied to clipboard.', 'success');
         } catch (error) {
             showToast(error.message || 'Could not copy the PowerShell script.', 'danger');
@@ -651,6 +675,349 @@ function setupInboundMcpEasyAuthGuard() {
         modal.show();
         showToast('Verify the inbound MCP Easy Auth exclusions before saving.', 'warning');
     });
+}
+
+const inboundMcpEntryListConfigs = {
+    clients: {
+        hiddenId: 'inbound_mcp_allowed_client_app_entries_json',
+        bodyId: 'inbound-mcp-client-app-entries-body',
+        summaryId: 'inbound-mcp-client-app-entries-summary',
+        modalTitle: 'Client app ID',
+        valueLabel: 'Client app ID',
+        emptyMessage: 'No client app IDs are allowed.',
+        valueHeader: 'Client app ID',
+        requireGuid: true,
+        lowercase: true,
+    },
+    tenants: {
+        hiddenId: 'inbound_mcp_allowed_tenant_entries_json',
+        bodyId: 'inbound-mcp-tenant-entries-body',
+        summaryId: 'inbound-mcp-tenant-entries-summary',
+        modalTitle: 'Tenant ID',
+        valueLabel: 'Tenant ID',
+        emptyMessage: 'Only the configured SimpleChat tenant is allowed.',
+        valueHeader: 'Tenant ID',
+        requireGuid: true,
+        lowercase: true,
+    },
+    sources: {
+        hiddenId: 'inbound_mcp_allowed_source_entries_json',
+        bodyId: 'inbound-mcp-source-entries-body',
+        summaryId: 'inbound-mcp-source-entries-summary',
+        modalTitle: 'Source ID',
+        valueLabel: 'Source value',
+        emptyMessage: 'No explicit source IDs are configured.',
+        valueHeader: 'Source value',
+        requireGuid: false,
+        lowercase: false,
+        disallowWildcard: true,
+    },
+};
+const inboundMcpEntriesByList = {
+    clients: [],
+    tenants: [],
+    sources: [],
+};
+
+function normalizeInboundMcpEntry(candidate, config) {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+        return null;
+    }
+    let value = normalizeAdminText(candidate.value || candidate.id || candidate.guid || candidate.client_id || candidate.tenant_id || candidate.source_id);
+    if (config.lowercase) {
+        value = value.toLowerCase();
+    }
+    if (!value) {
+        return null;
+    }
+    return {
+        value,
+        description: normalizeAdminText(candidate.description || candidate.label || candidate.name),
+    };
+}
+
+function parseInboundMcpEntries(hiddenField, config) {
+    let parsedEntries = [];
+    try {
+        const parsedValue = JSON.parse(hiddenField?.value || '[]');
+        parsedEntries = Array.isArray(parsedValue) ? parsedValue : [];
+    } catch (error) {
+        parsedEntries = [];
+    }
+
+    const seenValues = new Set();
+    return parsedEntries
+        .map(candidate => normalizeInboundMcpEntry(candidate, config))
+        .filter(Boolean)
+        .filter(entry => {
+            const key = config.lowercase ? entry.value.toLowerCase() : entry.value;
+            if (seenValues.has(key)) {
+                return false;
+            }
+            seenValues.add(key);
+            return true;
+        });
+}
+
+function syncInboundMcpEntryInput(listKey, markModified = true) {
+    const config = inboundMcpEntryListConfigs[listKey];
+    const hiddenField = document.getElementById(config?.hiddenId || '');
+    if (!config || !hiddenField) {
+        return;
+    }
+    hiddenField.value = JSON.stringify(inboundMcpEntriesByList[listKey] || []);
+    if (markModified) {
+        markFormAsModified();
+    }
+}
+
+function createInboundMcpEntryActionButton(iconClass, label, buttonClass, handler) {
+    const button = createIconButton(iconClass, label, buttonClass);
+    button.addEventListener('click', handler);
+    return button;
+}
+
+function renderInboundMcpEntries(listKey) {
+    const config = inboundMcpEntryListConfigs[listKey];
+    const body = document.getElementById(config?.bodyId || '');
+    const summary = document.getElementById(config?.summaryId || '');
+    if (!config || !body) {
+        return;
+    }
+
+    syncInboundMcpEntryInput(listKey, false);
+    body.replaceChildren();
+    const entries = inboundMcpEntriesByList[listKey] || [];
+    if (summary) {
+        summary.textContent = entries.length === 0
+            ? config.emptyMessage
+            : `${entries.length} entr${entries.length === 1 ? 'y' : 'ies'} configured.`;
+    }
+
+    if (entries.length === 0) {
+        const row = document.createElement('tr');
+        const cell = document.createElement('td');
+        cell.colSpan = 3;
+        cell.className = 'text-center text-muted';
+        cell.textContent = config.emptyMessage;
+        row.appendChild(cell);
+        body.appendChild(row);
+        return;
+    }
+
+    entries.forEach((entry, index) => {
+        const row = document.createElement('tr');
+
+        const valueCell = document.createElement('td');
+        const valueCode = document.createElement('code');
+        valueCode.textContent = entry.value;
+        valueCell.appendChild(valueCode);
+
+        const descriptionCell = document.createElement('td');
+        descriptionCell.textContent = entry.description || 'No description';
+        if (!entry.description) {
+            descriptionCell.className = 'text-muted';
+        }
+
+        const actionCell = document.createElement('td');
+        actionCell.className = 'text-end text-nowrap';
+        actionCell.appendChild(createInboundMcpEntryActionButton('bi bi-pencil', `Edit ${config.valueHeader}`, 'btn-outline-secondary', () => {
+            openInboundMcpEntryModal(listKey, index);
+        }));
+        actionCell.appendChild(document.createTextNode(' '));
+        actionCell.appendChild(createInboundMcpEntryActionButton('bi bi-trash', `Remove ${config.valueHeader}`, 'btn-outline-danger', () => {
+            inboundMcpEntriesByList[listKey].splice(index, 1);
+            renderInboundMcpEntries(listKey);
+            syncInboundMcpEntryInput(listKey);
+        }));
+
+        row.appendChild(valueCell);
+        row.appendChild(descriptionCell);
+        row.appendChild(actionCell);
+        body.appendChild(row);
+    });
+}
+
+function openInboundMcpEntryModal(listKey, editIndex = -1) {
+    const config = inboundMcpEntryListConfigs[listKey];
+    const modalElement = document.getElementById('inboundMcpEntryModal');
+    if (!config || !modalElement) {
+        return;
+    }
+
+    const modal = bootstrap.Modal.getOrCreateInstance(modalElement);
+    const title = document.getElementById('inboundMcpEntryModalLabel');
+    const listInput = document.getElementById('inbound-mcp-entry-list-key');
+    const editIndexInput = document.getElementById('inbound-mcp-entry-edit-index');
+    const valueInput = document.getElementById('inbound-mcp-entry-value');
+    const descriptionInput = document.getElementById('inbound-mcp-entry-description');
+    const valueLabel = document.getElementById('inbound-mcp-entry-value-label');
+
+    const existingEntry = editIndex >= 0 ? inboundMcpEntriesByList[listKey]?.[editIndex] : null;
+    if (title) {
+        title.textContent = `${existingEntry ? 'Edit' : 'Add'} ${config.modalTitle}`;
+    }
+    if (valueLabel) {
+        valueLabel.textContent = config.valueLabel;
+    }
+    if (listInput) {
+        listInput.value = listKey;
+    }
+    if (editIndexInput) {
+        editIndexInput.value = String(editIndex);
+    }
+    if (valueInput) {
+        valueInput.value = existingEntry?.value || '';
+        valueInput.classList.remove('is-invalid');
+    }
+    if (descriptionInput) {
+        descriptionInput.value = existingEntry?.description || '';
+    }
+    modal.show();
+    valueInput?.focus();
+}
+
+function saveInboundMcpEntryFromModal() {
+    const listKey = normalizeAdminText(document.getElementById('inbound-mcp-entry-list-key')?.value);
+    const config = inboundMcpEntryListConfigs[listKey];
+    const editIndex = Number(document.getElementById('inbound-mcp-entry-edit-index')?.value || '-1');
+    const valueInput = document.getElementById('inbound-mcp-entry-value');
+    const descriptionInput = document.getElementById('inbound-mcp-entry-description');
+    const valueError = document.getElementById('inbound-mcp-entry-value-error');
+    if (!config || !valueInput) {
+        return;
+    }
+
+    let value = normalizeAdminText(valueInput.value);
+    if (config.lowercase) {
+        value = value.toLowerCase();
+    }
+    let errorMessage = '';
+    if (!value) {
+        errorMessage = 'Value is required.';
+    } else if (config.requireGuid && !isGuidLike(value)) {
+        errorMessage = `${config.valueLabel} must be a GUID.`;
+    } else if (config.disallowWildcard && value === '*') {
+        errorMessage = 'Use wildcard source access in Governance policies; keep this list to explicit source values.';
+    }
+
+    if (errorMessage) {
+        valueInput.classList.add('is-invalid');
+        if (valueError) {
+            valueError.textContent = errorMessage;
+        }
+        return;
+    }
+    valueInput.classList.remove('is-invalid');
+
+    const duplicateIndex = (inboundMcpEntriesByList[listKey] || []).findIndex((entry, index) => {
+        if (index === editIndex) {
+            return false;
+        }
+        const left = config.lowercase ? entry.value.toLowerCase() : entry.value;
+        const right = config.lowercase ? value.toLowerCase() : value;
+        return left === right;
+    });
+    if (duplicateIndex >= 0) {
+        valueInput.classList.add('is-invalid');
+        if (valueError) {
+            valueError.textContent = 'That value is already configured.';
+        }
+        return;
+    }
+
+    const nextEntry = {
+        value,
+        description: normalizeAdminText(descriptionInput?.value),
+    };
+    if (editIndex >= 0 && inboundMcpEntriesByList[listKey]?.[editIndex]) {
+        inboundMcpEntriesByList[listKey][editIndex] = nextEntry;
+    } else {
+        inboundMcpEntriesByList[listKey].push(nextEntry);
+    }
+    renderInboundMcpEntries(listKey);
+    syncInboundMcpEntryInput(listKey);
+    bootstrap.Modal.getInstance(document.getElementById('inboundMcpEntryModal'))?.hide();
+}
+
+function ensureDefaultInboundMcpTenantEntry() {
+    const container = document.getElementById('inbound-mcp-configuration');
+    const defaultTenantId = normalizeAdminText(container?.dataset.defaultTenantId).toLowerCase();
+    if (!defaultTenantId || defaultTenantId.startsWith('<')) {
+        return;
+    }
+    const tenantEntries = inboundMcpEntriesByList.tenants || [];
+    if (tenantEntries.some(entry => entry.value.toLowerCase() === defaultTenantId)) {
+        return;
+    }
+    tenantEntries.unshift({
+        value: defaultTenantId,
+        description: 'SimpleChat tenant',
+    });
+}
+
+function setupInboundMcpEntryEditors() {
+    const configurationSection = document.getElementById('inbound-mcp-configuration');
+    if (!configurationSection) {
+        return;
+    }
+
+    Object.entries(inboundMcpEntryListConfigs).forEach(([listKey, config]) => {
+        const hiddenField = document.getElementById(config.hiddenId);
+        inboundMcpEntriesByList[listKey] = parseInboundMcpEntries(hiddenField, config);
+        renderInboundMcpEntries(listKey);
+    });
+
+    document.querySelectorAll('.inbound-mcp-entry-add-btn').forEach(button => {
+        button.addEventListener('click', () => {
+            openInboundMcpEntryModal(button.dataset.mcpEntryList);
+        });
+    });
+
+    document.getElementById('inbound-mcp-entry-save-btn')?.addEventListener('click', saveInboundMcpEntryFromModal);
+
+    const tenantToggle = document.getElementById('inbound_mcp_allow_external_tenants');
+    const tenantContainer = document.getElementById('inbound-mcp-tenant-list-container');
+    tenantToggle?.addEventListener('change', () => {
+        if (tenantToggle.checked) {
+            ensureDefaultInboundMcpTenantEntry();
+            renderInboundMcpEntries('tenants');
+            syncInboundMcpEntryInput('tenants');
+        }
+        tenantContainer?.classList.toggle('d-none', !tenantToggle.checked);
+    });
+
+    const sourceToggle = document.getElementById('inbound_mcp_allow_all_source_ids');
+    const sourceContainer = document.getElementById('inbound-mcp-source-list-container');
+    const allSourceGovernanceCallout = document.getElementById('inbound-mcp-all-source-governance-callout');
+    const controlledSourceGovernanceCallout = document.getElementById('inbound-mcp-controlled-source-governance-callout');
+    const syncSourceGovernanceCallouts = () => {
+        const allowAllSources = Boolean(sourceToggle?.checked);
+        allSourceGovernanceCallout?.classList.toggle('d-none', !allowAllSources);
+        controlledSourceGovernanceCallout?.classList.toggle('d-none', allowAllSources);
+    };
+    if (sourceToggle && !sourceToggle.checked) {
+        inboundMcpEntriesByList.sources = (inboundMcpEntriesByList.sources || []).filter(entry => entry.value !== '*');
+        renderInboundMcpEntries('sources');
+        syncInboundMcpEntryInput('sources', false);
+    }
+    sourceToggle?.addEventListener('change', () => {
+        if (!sourceToggle.checked) {
+            inboundMcpEntriesByList.sources = (inboundMcpEntriesByList.sources || []).filter(entry => entry.value !== '*');
+            renderInboundMcpEntries('sources');
+            syncInboundMcpEntryInput('sources');
+        }
+        sourceContainer?.classList.toggle('d-none', sourceToggle.checked);
+        syncSourceGovernanceCallouts();
+        markFormAsModified();
+    });
+    syncSourceGovernanceCallouts();
+
+    if (tenantToggle?.checked) {
+        ensureDefaultInboundMcpTenantEntry();
+        renderInboundMcpEntries('tenants');
+        syncInboundMcpEntryInput('tenants', false);
+    }
 }
 
 function setElementText(elementId, value) {
@@ -4622,6 +4989,8 @@ document.addEventListener('DOMContentLoaded', () => {
     setupDocumentAccessIndexControls();
     setupCosmosThroughputControls();
     setupFileProcessingLogCleanup();
+    setupInboundMcpEntryEditors();
+    setupInboundMcpObservabilityCopyButtons();
     setupInboundMcpEasyAuthGuard();
     
     // --- Setup form change tracking ---
