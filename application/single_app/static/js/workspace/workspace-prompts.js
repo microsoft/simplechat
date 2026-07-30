@@ -568,7 +568,7 @@ if (promptForm && promptSaveBtn && promptModalEl) {
             })
             .catch(err => {
                 console.error(`Error ${method === 'POST' ? 'creating' : 'updating'} prompt:`, err);
-                alert(`Error ${method === 'POST' ? 'creating' : 'updating'} prompt: ` + (err.error || err.message || "Unknown error"));
+                showToast(`Error ${method === 'POST' ? 'creating' : 'updating'} prompt: ` + (err.error || err.message || "Unknown error"), 'danger');
             })
             .finally(() => {
                 promptSaveBtn.disabled = false;
@@ -661,7 +661,7 @@ window.onEditPrompt = function (promptId) {
         })
         .catch(err => {
             console.error("Error retrieving prompt for edit:", err);
-            alert("Error retrieving prompt: " + (err.error || err.message || "Unknown error"));
+            showToast("Error retrieving prompt: " + (err.error || err.message || "Unknown error"), 'danger');
         });
 };
 
@@ -675,7 +675,7 @@ window.onViewPrompt = function (promptId) {
         })
         .catch(err => {
             console.error("Error retrieving prompt for view:", err);
-            alert("Error retrieving prompt: " + (err.error || err.message || "Unknown error"));
+            showToast("Error retrieving prompt: " + (err.error || err.message || "Unknown error"), 'danger');
         });
 };
 
@@ -697,7 +697,7 @@ window.onDeletePrompt = function (promptId, event) {
         })
         .catch(err => {
             console.error("Error deleting prompt:", err);
-            alert("Error deleting prompt: " + (err.error || err.message || "Unknown error"));
+            showToast("Error deleting prompt: " + (err.error || err.message || "Unknown error"), 'danger');
             if (deleteBtn) {
                     deleteBtn.disabled = false;
                 deleteBtn.innerHTML = '<i class="bi bi-trash"></i>';

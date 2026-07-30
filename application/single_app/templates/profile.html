@@ -979,6 +979,52 @@
         <div id="tutorial-preference-status" class="preference-status small mt-3 text-muted"></div>
     </div>
 
+    {% if app_settings.enable_desktop_notifications %}
+    <div class="section-card" id="desktop-notification-preferences">
+        <div class="d-flex flex-column flex-lg-row align-items-lg-start justify-content-between gap-3">
+            <div class="d-flex gap-3 align-items-start">
+                <span class="preference-card-icon" aria-hidden="true">
+                    <i class="bi bi-bell"></i>
+                </span>
+                <div>
+                    <h5 class="mb-2">Desktop Conversation Notifications</h5>
+                    <p class="text-muted mb-2">Receive an operating system notification when an AI response finishes while SimpleChat is open in a hidden or unfocused tab.</p>
+                    <p class="small text-muted mb-0">Notifications include the application and conversation titles. They stop when the SimpleChat tab is closed.</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="row g-3 align-items-center mt-1">
+            <div class="col-lg-8">
+                <div class="form-check form-switch mt-3">
+                    <input
+                        class="form-check-input"
+                        type="checkbox"
+                        id="desktop-notifications-toggle"
+                        {% if user_settings.get('settings', {}).get('desktopNotificationsEnabled', True) %}checked{% endif %}
+                    />
+                    <label class="form-check-label fw-semibold" for="desktop-notifications-toggle">
+                        Notify me when an AI response is ready
+                    </label>
+                    <small class="d-block text-muted mt-1">Your browser controls the final permission. If access is blocked, allow notifications in this site's browser settings.</small>
+                </div>
+            </div>
+            <div class="col-lg-4 text-lg-end">
+                <button type="button" class="btn btn-primary" id="save-desktop-notifications-btn">
+                    <i class="bi bi-save me-1"></i>Save Notification Preference
+                </button>
+            </div>
+        </div>
+
+        <div
+            id="desktop-notification-preference-status"
+            class="preference-status small mt-3 text-muted"
+            role="status"
+            aria-live="polite"
+        ></div>
+    </div>
+    {% endif %}
+
     {% if app_settings.enable_conversation_contents_drawer %}
     <div class="section-card" id="conversation-contents-preferences">
         <div class="d-flex flex-column flex-lg-row align-items-lg-start justify-content-between gap-3">
@@ -2485,6 +2531,7 @@ document.addEventListener('DOMContentLoaded', function() {
     initializeFontSizePreferences();
     loadNavigationPreferences();
     loadTutorialPreferences();
+    loadDesktopNotificationPreference();
     loadConversationContentsPreference();
     initializeProfileStatsWindowControls();
     initializeFactMemoryModalInstances();
@@ -2543,6 +2590,11 @@ document.addEventListener('DOMContentLoaded', function() {
     const saveConversationContentsPreferenceButton = document.getElementById('save-conversation-contents-preference-btn');
     if (saveConversationContentsPreferenceButton) {
         saveConversationContentsPreferenceButton.addEventListener('click', saveConversationContentsPreference);
+    }
+
+    const saveDesktopNotificationsButton = document.getElementById('save-desktop-notifications-btn');
+    if (saveDesktopNotificationsButton) {
+        saveDesktopNotificationsButton.addEventListener('click', saveDesktopNotificationPreference);
     }
 
     // Initialize TTS settings if enabled
@@ -2802,6 +2854,23 @@ function saveNavigationPreferences() {
 
 function updateTutorialPreferenceStatus(message, type = 'muted') {
     const statusElement = document.getElementById('tutorial-preference-status');
+    if (!statusElement) {
+        return;
+    }
+
+    const classMap = {
+        muted: 'text-muted',
+        info: 'text-info',
+        success: 'text-success',
+        danger: 'text-danger'
+    };
+
+    statusElement.textContent = message || '';
+    statusElement.className = `preference-status small mt-3 ${classMap[type] || classMap.muted}`;
+}
+
+function updateDesktopNotificationPreferenceStatus(message, type = 'muted') {
+    const statusElement = document.getElementById('desktop-notification-preference-status');
     if (!statusElement) {
         return;
     }
@@ -3453,6 +3522,113 @@ function saveTutorialPreferences() {
         });
 }
 
+function getDesktopNotificationPermissionStatus() {
+    if (!('Notification' in window)) {
+        return {
+            permission: 'unsupported',
+            message: 'This browser does not support desktop notifications.',
+            type: 'danger'
+        };
+    }
+
+    if (Notification.permission === 'granted') {
+        return {
+            permission: 'granted',
+            message: 'Browser permission is granted. Notifications appear when SimpleChat is hidden or unfocused.',
+            type: 'success'
+        };
+    }
+
+    if (Notification.permission === 'denied') {
+        return {
+            permission: 'denied',
+            message: 'Browser permission is blocked. Allow notifications for this site in your browser settings to use this preference.',
+            type: 'danger'
+        };
+    }
+
+    return {
+        permission: 'default',
+        message: 'Browser permission has not been decided. Saving this preference will ask for permission.',
+        type: 'info'
+    };
+}
+
+function loadDesktopNotificationPreference() {
+    const toggle = document.getElementById('desktop-notifications-toggle');
+    if (!toggle) {
+        return;
+    }
+
+    fetch('/api/user/settings')
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Failed to load desktop notification preference');
+            }
+            return response.json();
+        })
+        .then(data => {
+            toggle.checked = data.settings?.desktopNotificationsEnabled !== false;
+            const permissionStatus = getDesktopNotificationPermissionStatus();
+            updateDesktopNotificationPreferenceStatus(permissionStatus.message, permissionStatus.type);
+        })
+        .catch(error => {
+            console.error('Error loading desktop notification preference:', error);
+            updateDesktopNotificationPreferenceStatus('Unable to refresh the desktop notification preference. Please reload the page and try again.', 'danger');
+        });
+}
+
+async function saveDesktopNotificationPreference() {
+    const toggle = document.getElementById('desktop-notifications-toggle');
+    const button = document.getElementById('save-desktop-notifications-btn');
+    if (!toggle || !button) {
+        return;
+    }
+
+    const originalContents = Array.from(button.childNodes, node => node.cloneNode(true));
+    button.disabled = true;
+    button.textContent = 'Saving...';
+    updateDesktopNotificationPreferenceStatus('Saving your desktop notification preference...', 'info');
+
+    try {
+        if ('Notification' in window) {
+            if (toggle.checked && Notification.permission === 'default') {
+                await Notification.requestPermission();
+            }
+        }
+
+        const response = await fetch('/api/user/settings', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                settings: {
+                    desktopNotificationsEnabled: toggle.checked
+                }
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to save desktop notification preference');
+        }
+
+        const permissionStatus = getDesktopNotificationPermissionStatus();
+        if (!toggle.checked) {
+            updateDesktopNotificationPreferenceStatus('Desktop conversation notifications are disabled for your account.', 'success');
+        } else {
+            updateDesktopNotificationPreferenceStatus(permissionStatus.message, permissionStatus.type);
+        }
+        showToastMessage('Desktop notification preference saved successfully', 'success');
+    } catch (error) {
+        console.error('Error saving desktop notification preference:', error);
+        updateDesktopNotificationPreferenceStatus('Failed to save the desktop notification preference. Please try again.', 'danger');
+    } finally {
+        button.disabled = false;
+        button.replaceChildren(...originalContents);
+    }
+}
+
 function loadConversationContentsPreference() {
     const toggle = document.getElementById('conversation-contents-drawer-toggle');
     if (!toggle) {
@@ -4015,7 +4191,7 @@ function updateMicrophoneStatusBadge(status) {
 async function requestMicrophonePermission() {
     // Request microphone permission - this will trigger the browser's permission dialog if possible
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        alert('Your browser does not support microphone access.');
+        showToast('Your browser does not support microphone access.', 'info');
         return;
     }
 
@@ -4041,11 +4217,11 @@ async function requestMicrophonePermission() {
             modal.show();
         } else if (error.name === 'NotFoundError') {
             // No microphone found
-            alert('No microphone device was found on your system. Please connect a microphone and try again.');
+            showToast('No microphone device was found on your system. Please connect a microphone and try again.', 'warning');
         } else {
             // Other error
             console.error('Microphone permission error:', error);
-            alert('Error accessing microphone: ' + error.message);
+            showToast('Error accessing microphone: ' + error.message, 'danger');
         }
     }
 }
@@ -4129,7 +4305,7 @@ function refreshProfileImage() {
             })
             .catch(error => {
                 console.error('Error refreshing profile image:', error);
-                alert('Error refreshing profile image: ' + error.message);
+                showToast('Error refreshing profile image: ' + error.message, 'danger');
             })
             .finally(() => {
                 // Restore button state
@@ -4151,12 +4327,12 @@ function refreshProfileImage() {
                 showSuccessToast(data.message);
             } else {
                 console.error('Error refreshing profile image:', data.error);
-                alert('Error refreshing profile image: ' + data.error);
+                showToast('Error refreshing profile image: ' + data.error, 'danger');
             }
         })
         .catch(error => {
             console.error('Error refreshing profile image:', error);
-            alert('Error refreshing profile image: ' + error.message);
+            showToast('Error refreshing profile image: ' + error.message, 'danger');
         })
         .finally(() => {
             // Restore button state

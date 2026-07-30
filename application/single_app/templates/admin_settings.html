@@ -2861,6 +2861,51 @@
                     </div>
                 </div>
 
+                <div class="card p-3 mb-3" id="ai-notice-section">
+                    <h5>
+                        <i class="bi bi-robot me-2"></i>Chat AI Notice
+                    </h5>
+                    <p class="text-muted small">
+                        Display an administrator-provided reminder directly below the chat input, such as guidance that responses are AI-generated and should be reviewed.
+                    </p>
+                    <div class="form-check form-switch mb-3">
+                        <input
+                            class="form-check-input"
+                            type="checkbox"
+                            id="enable_ai_notice"
+                            name="enable_ai_notice"
+                            {% if settings.enable_ai_notice %}checked{% endif %}
+                        >
+                        <label class="form-check-label ms-2" for="enable_ai_notice">
+                            Show a custom AI notice below the chat input
+                        </label>
+                    </div>
+                    <div id="ai_notice_settings" class="{% if not settings.enable_ai_notice %}d-none{% endif %}">
+                        <div class="mb-3">
+                            <label for="ai_notice_message" class="form-label">Notice Text</label>
+                            <textarea
+                                class="form-control"
+                                id="ai_notice_message"
+                                name="ai_notice_message"
+                                rows="3"
+                                maxlength="1000"
+                                placeholder="AI-generated responses may contain errors. Review important information before relying on it."
+                            >{{ settings.ai_notice_message or '' }}</textarea>
+                            <div class="form-text">Plain text only. Line breaks are preserved.</div>
+                        </div>
+                        <div>
+                            <label for="ai_notice_frequency" class="form-label">Display Behavior</label>
+                            <select class="form-select" id="ai_notice_frequency" name="ai_notice_frequency">
+                                <option value="non_dismissible" {% if settings.ai_notice_frequency == 'non_dismissible' %}selected{% endif %}>Always visible; users cannot dismiss it</option>
+                                <option value="every_session" {% if settings.ai_notice_frequency == 'every_session' %}selected{% endif %}>Dismissible once per session</option>
+                                <option value="daily" {% if settings.ai_notice_frequency == 'daily' %}selected{% endif %}>Dismissible once per day</option>
+                                <option value="once" {% if settings.ai_notice_frequency == 'once' %}selected{% endif %}>Dismissible once per message version</option>
+                            </select>
+                            <div class="form-text">Changing the notice text or display behavior creates a new message version and shows it again.</div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="card p-3 mb-3" id="terms-of-use-section">
                     <h5>
                         <i class="bi bi-door-open me-2"></i>Terms of Use
@@ -5324,7 +5369,7 @@
                                 <h4 class="mb-1">
                                     <i class="bi bi-calendar-check me-2"></i>Automatic Data Refresh
                                 </h4>
-                                <p class="text-muted mb-0 small">Run the Control Center metrics refresh on a daily UTC schedule</p>
+                                <p class="text-muted mb-0 small">Run the Control Center metrics refresh overnight on a daily timezone-aware schedule</p>
                             </div>
                         </div>
                     </div>
@@ -5341,25 +5386,40 @@
                         <label class="form-check-label ms-2 fw-bold" for="control_center_auto_refresh_enabled">
                             Enable Daily Control Center Refresh
                         </label>
-                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Automatically refresh Control Center user, group, and public workspace metrics once per day in UTC."></i>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Automatically refresh cached Control Center metrics once per day. Execution timestamps are stored in UTC."></i>
                     </div>
 
                     <div id="control-center-auto-refresh-inputs" class="row g-3 {% if not settings.control_center_auto_refresh_enabled %}d-none{% endif %}">
                         <div class="col-md-4">
-                            <label for="control_center_auto_refresh_time" class="form-label">Refresh Time (UTC)</label>
+                            <label for="control_center_auto_refresh_time" class="form-label">
+                                Refresh Time ({{ settings.control_center_auto_refresh_timezone or 'America/New_York' }})
+                            </label>
                             <input
                                 type="time"
                                 class="form-control"
                                 id="control_center_auto_refresh_time"
                                 name="control_center_auto_refresh_time"
-                                value="{{ settings.control_center_auto_refresh_time or '06:00' }}"
+                                value="{{ settings.control_center_auto_refresh_time or '02:00' }}"
                             />
+                            <input
+                                type="hidden"
+                                id="control_center_auto_refresh_timezone"
+                                name="control_center_auto_refresh_timezone"
+                                value="{{ settings.control_center_auto_refresh_timezone or 'America/New_York' }}"
+                            />
+                            <div class="form-text">
+                                Your browser timezone is <span id="control-center-auto-refresh-viewer-timezone">local time</span>.
+                            </div>
                         </div>
                         <div class="col-md-8">
                             <label class="form-label">Next scheduled refresh:</label>
-                            <div id="control-center-auto-refresh-next-run" class="form-control-plaintext text-info fw-bold">
+                            <div
+                                id="control-center-auto-refresh-next-run"
+                                class="form-control-plaintext text-info fw-bold"
+                                data-next-run-utc="{{ settings.control_center_auto_refresh_next_run or '' }}"
+                            >
                                 {% if settings.control_center_auto_refresh_next_run %}
-                                    {{ settings.control_center_auto_refresh_next_run }}
+                                    Loading local time...
                                 {% else %}
                                     Will be calculated when saved
                                 {% endif %}
@@ -9944,6 +10004,30 @@
                     </div>
                 </div>
 
+                <div class="card p-3 mb-3" id="desktop-notifications-section">
+                    <h5>
+                        <i class="bi bi-bell me-2"></i>Desktop Conversation Notifications
+                    </h5>
+                    <p class="text-muted">
+                        Allow users to receive an operating system notification when an AI response finishes while SimpleChat is open in a hidden or unfocused browser tab.
+                    </p>
+                    <div class="form-group form-check form-switch mb-2">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_desktop_notifications"
+                            name="enable_desktop_notifications"
+                            {% if settings.enable_desktop_notifications %}checked{% endif %}
+                        >
+                        <label class="form-check-label ms-2" for="enable_desktop_notifications">
+                            Enable Desktop Conversation Notifications
+                        </label>
+                    </div>
+                    <p class="form-text text-muted mb-0">
+                        Users can turn notifications off from Profile. Browser permission is required, and notifications stop when the SimpleChat tab is closed.
+                    </p>
+                </div>
+
 
                 <div class="card p-3 mb-3" id="permissions-section">
                     <h5>
@@ -12520,6 +12604,7 @@
             controlCenterAutoRefreshToggle.addEventListener('change', toggleControlCenterAutoRefreshInputs);
             toggleControlCenterAutoRefreshInputs();
         }
+        displayControlCenterAutoRefreshLocalTime();
     });
 
     function toggleControlCenterAutoRefreshInputs() {
@@ -12529,6 +12614,35 @@
         if (autoRefreshToggle && autoRefreshInputs) {
             autoRefreshInputs.classList.toggle('d-none', !autoRefreshToggle.checked);
         }
+    }
+
+    function displayControlCenterAutoRefreshLocalTime() {
+        const viewerTimezoneElement = document.getElementById('control-center-auto-refresh-viewer-timezone');
+        const nextRunElement = document.getElementById('control-center-auto-refresh-next-run');
+        const resolvedViewerTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const viewerTimezone = resolvedViewerTimezone || 'local time';
+
+        if (viewerTimezoneElement) {
+            viewerTimezoneElement.textContent = viewerTimezone;
+        }
+        if (!nextRunElement || !nextRunElement.dataset.nextRunUtc) {
+            return;
+        }
+
+        const nextRun = new Date(nextRunElement.dataset.nextRunUtc);
+        if (Number.isNaN(nextRun.getTime())) {
+            nextRunElement.textContent = 'Unavailable';
+            return;
+        }
+
+        const formatOptions = {
+            dateStyle: 'medium',
+            timeStyle: 'short',
+        };
+        if (resolvedViewerTimezone) {
+            formatOptions.timeZone = resolvedViewerTimezone;
+        }
+        nextRunElement.textContent = `${nextRun.toLocaleString([], formatOptions)} (${viewerTimezone})`;
     }
 
     // Retention Policy Functions
@@ -12590,7 +12704,7 @@
         if (publicWs) scopes.push('public');
 
         if (scopes.length === 0) {
-            alert('Please select at least one workspace type.');
+            showToast('Please select at least one workspace type.', 'warning');
             return;
         }
 
@@ -12728,7 +12842,7 @@
         if (publicWs) scopes.push('public');
 
         if (scopes.length === 0) {
-            alert('Please select at least one workspace scope.');
+            showToast('Please select at least one workspace scope.', 'warning');
             return;
         }
 
@@ -12860,7 +12974,7 @@
             const allowDaily = document.getElementById('enable_user_agreement_daily');
 
             if (!agreementText) {
-                alert('Please enter agreement text before previewing.');
+                showToast('Please enter agreement text before previewing.', 'warning');
                 return;
             }
 
