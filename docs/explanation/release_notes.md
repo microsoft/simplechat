@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.102)**
+
+#### New Features
+
+*   **Configurable Chat AI Notice**
+    *   Administrators can display custom plain-text AI guidance directly below the chat composer.
+    *   Supports non-dismissible, per-session, daily, and once-per-message-version behavior with validated dismissal persistence and automatic redisplay when the configured notice changes.
+    *   (Ref: microsoft/simplechat#715, `functions_ai_notice.py`, `admin_settings.html`, `chats.html`, `chat-ai-notice.js`)
+
 ### **(v0.250.101)**
 
 #### New Features

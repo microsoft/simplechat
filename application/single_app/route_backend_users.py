@@ -567,8 +567,8 @@ def register_route_backend_users(bp):
                                 settings_to_update[AI_NOTICE_USER_SETTINGS_KEY]
                             )
                         )
-                    except ValueError as exc:
-                        return jsonify({"error": str(exc)}), 400
+                    except ValueError:
+                        return jsonify({"error": "Invalid AI notice dismissal"}), 400
 
                 if "sidebarMenuState" in settings_to_update:
                     sidebar_menu_state = settings_to_update.get("sidebarMenuState")
