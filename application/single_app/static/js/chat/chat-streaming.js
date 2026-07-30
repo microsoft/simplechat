@@ -8,6 +8,7 @@ import { beginStreamingThoughtSession, clearStreamingThoughtSession, handleStrea
 import { destroyInlineCharts, hydrateInlineCharts } from './chat-inline-charts.js';
 import { hydrateInlineImageProposals } from './chat-inline-image-proposals.js';
 import { escapeHtml } from './chat-utils.js';
+import { requestDesktopNotificationPermissionIfNeeded, showDesktopConversationNotification } from './chat-desktop-notifications.js';
 
 let currentStreamController = null;
 let currentStreamContext = null;
@@ -667,6 +668,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                     data,
                     fallbackAgentInfo
                 );
+                showDesktopConversationNotification(data);
 
                 if (typeof onDone === 'function') {
                     onDone(data);
@@ -913,6 +915,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
 
 export function sendMessageWithStreaming(messageData, tempUserMessageId, currentConversationId, options = {}) {
     const { endpoint = '/api/chat/stream' } = options;
+    void requestDesktopNotificationPermissionIfNeeded();
     const tempAiMessageId = createStreamingPlaceholder();
     const recoveryConversationId = currentConversationId || messageData?.conversation_id || window.currentConversationId || null;
 
