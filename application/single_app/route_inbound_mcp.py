@@ -4,7 +4,7 @@ import json
 import logging
 import time
 
-from flask import g, jsonify, request
+from flask import Response, g, jsonify, request
 
 from config import (
     AUTHORITY,
@@ -99,7 +99,8 @@ def _jsonrpc_response(request_id, result, status_code=200, mcp_request_id=""):
         "id": request_id,
         "result": result,
     })
-    return _attach_inbound_mcp_headers(response, mcp_request_id), status_code
+    response.status_code = status_code
+    return _attach_inbound_mcp_headers(response, mcp_request_id)
 
 
 def _jsonrpc_error(request_id, code, message, data=None, status_code=400, mcp_request_id=""):
@@ -132,7 +133,8 @@ def _jsonrpc_error(request_id, code, message, data=None, status_code=400, mcp_re
         "id": request_id,
         "error": error,
     })
-    return _attach_inbound_mcp_headers(response, mcp_request_id), 200
+    response.status_code = 200
+    return _attach_inbound_mcp_headers(response, mcp_request_id)
 
 
 def _json_text_content(value):
@@ -344,7 +346,7 @@ def _call_tool(auth_context, request_id, params, mcp_request_id, runtime_config)
             level=logging.ERROR,
             tool_id=tool.get("id", ""),
             error_type="rate_limit_store_error",
-            error=str(exc),
+            error_type_detail=type(exc).__name__,
             duration_ms=_duration_ms(tool_started_at),
         )
         return _jsonrpc_error(
@@ -402,7 +404,7 @@ def _call_tool(auth_context, request_id, params, mcp_request_id, runtime_config)
         return _jsonrpc_error(
             request_id,
             -32602,
-            str(exc),
+            "Inbound MCP tool parameters are invalid.",
             status_code=400,
             mcp_request_id=mcp_request_id,
         )
@@ -419,7 +421,7 @@ def _call_tool(auth_context, request_id, params, mcp_request_id, runtime_config)
         return _jsonrpc_error(
             request_id,
             -32009,
-            str(exc),
+            "Inbound MCP tool execution conflict.",
             status_code=409,
             mcp_request_id=mcp_request_id,
         )
@@ -453,7 +455,7 @@ def _call_tool(auth_context, request_id, params, mcp_request_id, runtime_config)
         return _jsonrpc_error(
             request_id,
             -32004,
-            str(exc) or "Inbound MCP resource not found.",
+            "Inbound MCP resource not found.",
             status_code=404,
             mcp_request_id=mcp_request_id,
         )
@@ -624,7 +626,8 @@ def register_route_inbound_mcp(bp):
                 result_status="accepted",
                 jsonrpc_id_present=False,
             )
-            return "", 202, {"X-Correlation-ID": mcp_request_id}
+            response = Response("", status=202)
+            return _attach_inbound_mcp_headers(response, mcp_request_id)
 
         if method == "initialize":
             initialize_result = _build_initialize_result(params)

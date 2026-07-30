@@ -92,7 +92,7 @@ export function showToast(message, variant = "danger") {
   const bodyEl = document.createElement("div");
   bodyEl.className = "toast-body";
   if (message instanceof Node) {
-    bodyEl.appendChild(message);
+    bodyEl.textContent = message.textContent || "";
   } else {
     bodyEl.textContent = String(message ?? "");
   }

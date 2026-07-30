@@ -890,8 +890,8 @@ def set_user_plugins():
                 WORKSPACE_IDENTITY_SCOPE_PERSONAL,
                 user_id,
             )
-        except (ValueError, LookupError, PermissionError) as exc:
-            return jsonify({'error': str(exc)}), 400
+        except (ValueError, LookupError, PermissionError):
+            return jsonify({'error': 'Action identity configuration is invalid.'}), 400
         
         # Ensure auth has default structure
         if 'auth' not in plugin_to_save:
@@ -924,10 +924,10 @@ def set_user_plugins():
                 operation='personal_action_save',
                 user_id=user_id,
             )
-        except McpDestinationPolicyError as exc:
-            return jsonify({'error': str(exc)}), 403
-        except ValueError as exc:
-            return jsonify({'error': str(exc)}), 400
+        except McpDestinationPolicyError:
+            return jsonify({'error': 'MCP destination is not allowed by governance policy.'}), 403
+        except ValueError:
+            return jsonify({'error': 'MCP destination configuration is invalid.'}), 400
         
         filtered_plugins.append(plugin_to_save)
         new_plugin_names.add(plugin_to_save['name'])
@@ -990,8 +990,8 @@ def delete_user_plugin(plugin_name):
     # Try to delete from personal_actions container
     try:
         deleted = delete_personal_action(user_id, plugin_name)
-    except PermissionError as exc:
-        return jsonify({'error': str(exc)}), 403
+    except PermissionError:
+        return jsonify({'error': 'You are not authorized to delete this action.'}), 403
     
     if not deleted:
         return jsonify({'error': 'Plugin not found.'}), 404
@@ -1017,12 +1017,12 @@ def get_group_actions_route():
             active_group,
             allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
         )
-    except ValueError as exc:
-        return jsonify({'error': str(exc)}), 400
-    except LookupError as exc:
-        return jsonify({'error': str(exc)}), 404
-    except PermissionError as exc:
-        return jsonify({'error': str(exc)}), 403
+    except ValueError:
+        return jsonify({'error': 'Group action scope is invalid.'}), 400
+    except LookupError:
+        return jsonify({'error': 'The selected group context was not found.'}), 404
+    except PermissionError:
+        return jsonify({'error': 'You are not authorized to list group actions.'}), 403
 
     actions = get_governed_group_actions(active_group, user_id, return_type=SecretReturnType.TRIGGER)
 
@@ -1056,12 +1056,12 @@ def get_group_action_route(action_id):
             active_group,
             allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
         )
-    except ValueError as exc:
-        return jsonify({'error': str(exc)}), 400
-    except LookupError as exc:
-        return jsonify({'error': str(exc)}), 404
-    except PermissionError as exc:
-        return jsonify({'error': str(exc)}), 403
+    except ValueError:
+        return jsonify({'error': 'Group action scope is invalid.'}), 400
+    except LookupError:
+        return jsonify({'error': 'The selected group context was not found.'}), 404
+    except PermissionError:
+        return jsonify({'error': 'You are not authorized to view this group action.'}), 403
 
     action = get_group_action(active_group, action_id, return_type=SecretReturnType.TRIGGER)
     if not action:
@@ -1085,12 +1085,12 @@ def create_group_action_route():
         app_settings = get_settings()
         allowed_roles = ("Owner",) if app_settings.get('require_owner_for_group_agent_management') else ("Owner", "Admin")
         assert_group_role(user_id, active_group, allowed_roles=allowed_roles)
-    except ValueError as exc:
-        return jsonify({'error': str(exc)}), 400
-    except LookupError as exc:
-        return jsonify({'error': str(exc)}), 404
-    except PermissionError as exc:
-        return jsonify({'error': str(exc)}), 403
+    except ValueError:
+        return jsonify({'error': 'Group action scope is invalid.'}), 400
+    except LookupError:
+        return jsonify({'error': 'The selected group context was not found.'}), 404
+    except PermissionError:
+        return jsonify({'error': 'You are not authorized to create this group action.'}), 403
 
     payload = request.get_json(silent=True) or {}
     try:
@@ -1121,8 +1121,8 @@ def create_group_action_route():
             WORKSPACE_IDENTITY_SCOPE_GROUP,
             active_group,
         )
-    except (ValueError, LookupError, PermissionError) as exc:
-        return jsonify({'error': str(exc)}), 400
+    except (ValueError, LookupError, PermissionError):
+        return jsonify({'error': 'Group action identity configuration is invalid.'}), 400
 
     is_valid, validation_errors = PluginHealthChecker.validate_plugin_manifest(payload, payload.get('type'))
     if not is_valid:
@@ -1136,10 +1136,10 @@ def create_group_action_route():
             operation='group_action_create',
             user_id=user_id,
         )
-    except McpDestinationPolicyError as exc:
-        return jsonify({'error': str(exc)}), 403
-    except ValueError as exc:
-        return jsonify({'error': str(exc)}), 400
+    except McpDestinationPolicyError:
+        return jsonify({'error': 'MCP destination is not allowed by governance policy.'}), 403
+    except ValueError:
+        return jsonify({'error': 'MCP destination configuration is invalid.'}), 400
 
     try:
         saved = save_group_action(active_group, payload, user_id=user_id)
@@ -1216,8 +1216,8 @@ def update_group_action_route(action_id):
             WORKSPACE_IDENTITY_SCOPE_GROUP,
             active_group,
         )
-    except (ValueError, LookupError, PermissionError) as exc:
-        return jsonify({'error': str(exc)}), 400
+    except (ValueError, LookupError, PermissionError):
+        return jsonify({'error': 'Group action identity configuration is invalid.'}), 400
 
     is_valid, validation_errors = PluginHealthChecker.validate_plugin_manifest(merged, merged.get('type'))
     if not is_valid:
@@ -1231,10 +1231,10 @@ def update_group_action_route(action_id):
             operation='group_action_update',
             user_id=user_id,
         )
-    except McpDestinationPolicyError as exc:
-        return jsonify({'error': str(exc)}), 403
-    except ValueError as exc:
-        return jsonify({'error': str(exc)}), 400
+    except McpDestinationPolicyError:
+        return jsonify({'error': 'MCP destination is not allowed by governance policy.'}), 403
+    except ValueError:
+        return jsonify({'error': 'MCP destination configuration is invalid.'}), 400
 
     try:
         saved = save_group_action(active_group, merged, user_id=user_id)
@@ -1260,12 +1260,12 @@ def delete_group_action_route(action_id):
         app_settings = get_settings()
         allowed_roles = ("Owner",) if app_settings.get('require_owner_for_group_agent_management') else ("Owner", "Admin")
         assert_group_role(user_id, active_group, allowed_roles=allowed_roles)
-    except ValueError as exc:
-        return jsonify({'error': str(exc)}), 400
-    except LookupError as exc:
-        return jsonify({'error': str(exc)}), 404
-    except PermissionError as exc:
-        return jsonify({'error': str(exc)}), 403
+    except ValueError:
+        return jsonify({'error': 'Group action scope is invalid.'}), 400
+    except LookupError:
+        return jsonify({'error': 'The selected group context was not found.'}), 404
+    except PermissionError:
+        return jsonify({'error': 'You are not authorized to delete this group action.'}), 403
 
     try:
         existing = get_group_action(active_group, action_id, return_type=SecretReturnType.NAME)
@@ -1311,12 +1311,12 @@ def get_group_plugin_types():
         app_settings = get_settings()
         allowed_roles = ("Owner",) if app_settings.get('require_owner_for_group_agent_management') else ("Owner", "Admin")
         assert_group_role(user_id, active_group, allowed_roles=allowed_roles)
-    except ValueError as exc:
-        return jsonify({'error': str(exc)}), 400
-    except LookupError as exc:
-        return jsonify({'error': str(exc)}), 404
-    except PermissionError as exc:
-        return jsonify({'error': str(exc)}), 403
+    except ValueError:
+        return jsonify({'error': 'Group action scope is invalid.'}), 400
+    except LookupError:
+        return jsonify({'error': 'The selected group context was not found.'}), 404
+    except PermissionError:
+        return jsonify({'error': 'You are not authorized to list group action types.'}), 403
 
     return get_plugin_types(
         allowed_type_filter=lambda action_type: is_action_type_access_allowed(
@@ -1499,10 +1499,10 @@ def add_plugin():
                 operation='global_action_add',
                 user_id=str(get_current_user_id() or ''),
             )
-        except McpDestinationPolicyError as exc:
-            return jsonify({'error': str(exc)}), 403
-        except ValueError as exc:
-            return jsonify({'error': str(exc)}), 400
+        except McpDestinationPolicyError:
+            return jsonify({'error': 'MCP destination is not allowed by governance policy.'}), 403
+        except ValueError:
+            return jsonify({'error': 'MCP destination configuration is invalid.'}), 400
         
         # Merge with schema to ensure all required fields are present
         schema_dir = os.path.join(current_app.root_path, 'static', 'json', 'schemas')
@@ -1588,10 +1588,10 @@ def edit_plugin(plugin_name):
                 operation='global_action_edit',
                 user_id=str(get_current_user_id() or ''),
             )
-        except McpDestinationPolicyError as exc:
-            return jsonify({'error': str(exc)}), 403
-        except ValueError as exc:
-            return jsonify({'error': str(exc)}), 400
+        except McpDestinationPolicyError:
+            return jsonify({'error': 'MCP destination is not allowed by governance policy.'}), 403
+        except ValueError:
+            return jsonify({'error': 'MCP destination configuration is invalid.'}), 400
         
         # Merge with schema to ensure all required fields are present
         schema_dir = os.path.join(current_app.root_path, 'static', 'json', 'schemas')
@@ -1781,10 +1781,10 @@ def get_mcp_server_preconfigurations():
     user_id = str(get_current_user_id() or '').strip()
     try:
         scope_type, scope_id = _resolve_action_identity_context({'action_scope': action_scope}, None, user_id)
-    except PermissionError as exc:
-        return jsonify({'error': str(exc)}), 403
-    except (ValueError, LookupError) as exc:
-        return jsonify({'error': str(exc)}), 400
+    except PermissionError:
+        return jsonify({'error': 'You are not authorized to list MCP server preconfigurations.'}), 403
+    except (ValueError, LookupError):
+        return jsonify({'error': 'MCP preconfiguration scope is invalid.'}), 400
 
     return jsonify(build_mcp_server_preconfigurations_response(
         action_scope=scope_type,
@@ -1969,7 +1969,10 @@ def discover_mcp_tools():
             ),
             level=logging.WARNING,
         )
-        return jsonify({'error': str(exc), 'mcp_operation_id': mcp_operation_id}), 403
+        return jsonify({
+            'error': 'MCP destination is not allowed by governance policy.',
+            'mcp_operation_id': mcp_operation_id,
+        }), 403
     except (LookupError, ValueError) as exc:
         log_event(
             "[MCP Discovery] Failed",
@@ -1988,7 +1991,10 @@ def discover_mcp_tools():
             ),
             level=logging.WARNING,
         )
-        return jsonify({'error': str(exc), 'mcp_operation_id': mcp_operation_id}), 400
+        return jsonify({
+            'error': 'MCP discovery request is invalid.',
+            'mcp_operation_id': mcp_operation_id,
+        }), 400
     except McpRuntimeError as exc:
         http_status = get_mcp_error_http_status(exc.category)
         log_event(
@@ -2013,10 +2019,9 @@ def discover_mcp_tools():
         return jsonify({
             'success': False,
             'mcp_operation_id': mcp_operation_id,
-            'error': str(exc),
+            'error': 'MCP discovery failed.',
             'error_type': exc.category,
             'operation': exc.operation,
-            'details': exc.detail,
         }), http_status
     except Exception as exc:
         log_event(

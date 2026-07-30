@@ -7,15 +7,9 @@ from urllib.parse import urlparse
 from jsonschema import Draft7Validator
 from jsonschema.exceptions import SchemaError
 
-from functions_mcp_presets import (
-    MCP_DEFAULT_SERVER_PRESET_ID,
-    mcp_server_preset_exists,
-    normalize_mcp_preset_id,
-)
-
 
 MCP_PLUGIN_TYPE = "mcp"
-MCP_DEFAULT_SERVER_PROFILE = MCP_DEFAULT_SERVER_PRESET_ID
+MCP_DEFAULT_SERVER_PROFILE = "generic"
 MCP_DEFAULT_TRANSPORT = "streamable_http"
 MCP_DEFAULT_REQUEST_TIMEOUT_SECONDS = 30
 MCP_DEFAULT_CONNECT_TIMEOUT_SECONDS = 10
@@ -110,8 +104,13 @@ def normalize_mcp_transport(value):
 
 def normalize_mcp_server_profile(value):
     """Normalize a server preset/profile value using the validated preset catalog."""
-    normalized_value = normalize_mcp_preset_id(value)
-    if mcp_server_preset_exists(normalized_value):
+    # Import lazily to keep the low-level MCP operation helpers independent of the preset catalog at module load.
+    presets_module = __import__(
+        "functions_mcp_presets",
+        fromlist=["mcp_server_preset_exists", "normalize_mcp_preset_id"],
+    )
+    normalized_value = presets_module.normalize_mcp_preset_id(value)
+    if presets_module.mcp_server_preset_exists(normalized_value):
         return normalized_value
     return MCP_DEFAULT_SERVER_PROFILE
 

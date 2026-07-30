@@ -2608,7 +2608,6 @@ export class PluginModalStepper {
   }
 
   applyMcpPresetDefaults(preset) {
-    const defaults = preset?.defaults || {};
     const setValue = (id, fieldName, fallbackValue) => {
       const element = document.getElementById(id);
       if (element) {

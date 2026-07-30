@@ -7,7 +7,6 @@ import logging
 import os
 import re
 from functools import lru_cache
-from json import JSONDecodeError
 
 from jsonschema import Draft7Validator
 from jsonschema.exceptions import ValidationError
@@ -195,7 +194,7 @@ def load_mcp_server_presets():
             _validate_mcp_preset(definition, file_path)
         except (
             OSError,
-            JSONDecodeError,
+            json.JSONDecodeError,
             ValidationError,
             McpImplementationValidationError,
             McpPresetValidationError,

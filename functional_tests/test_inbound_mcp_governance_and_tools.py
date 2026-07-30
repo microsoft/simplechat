@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for inbound MCP governance and first tool contracts.
-Version: 0.250.098
+Version: 0.250.099
 Implemented in: 0.250.070
 Simplified personal access/source governance implemented in: 0.250.080
 Single inbound MCP access policy implemented in: 0.250.081
@@ -110,7 +110,7 @@ def test_json_rpc_tool_dispatch_contract():
     assert '"2025-03-26"' in source
     assert "if requested_protocol_version in INBOUND_MCP_SUPPORTED_PROTOCOL_VERSIONS:" in source
     assert '"protocolVersion": protocol_version' in source
-    assert 'return "", 202' in source
+    assert 'Response("", status=202)' in source
     assert '"2024-11-05"' not in source
     assert "_log_initialize_request(auth_context, params, initialize_result[\"protocolVersion\"], mcp_request_id)" in source
     assert "build_mcp_tool_descriptor(tool)" in source
@@ -129,13 +129,13 @@ def test_json_rpc_tool_dispatch_contract():
     assert "-32009" in source
     assert "error_data.setdefault(\"http_status\", status_code)" in source
     assert "error_data.setdefault(\"mcp_request_id\", mcp_request_id)" in source
-    assert "str(exc) or \"Inbound MCP resource not found.\"" in source
     assert "Inbound MCP resource not found." in source
     assert "def _is_tool_result_error(tool_id, result):" in source
     assert 'str(tool_id or "").strip() != "execute_workflow"' in source
     assert 'return run.get("success") is False' in source
     assert '"isError": is_error_result' in source
-    assert "return _attach_inbound_mcp_headers(response, mcp_request_id), 200" in source
+    assert "response.status_code = 200" in source
+    assert "return _attach_inbound_mcp_headers(response, mcp_request_id)" in source
     assert "Unsupported inbound MCP method." in source
 
 

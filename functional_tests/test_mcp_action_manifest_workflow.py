@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Functional test for MCP action manifest workflow.
-Version: 0.250.059
+Version: 0.250.099
 Implemented in: 0.241.103
 
 This test ensures that MCP action configuration defaults, validation, and
@@ -9,7 +9,6 @@ plugin metadata creation produce the manifest shape used by the shared action
 modal.
 """
 
-import os
 import sys
 import asyncio
 import types
@@ -20,15 +19,19 @@ APP_DIR = Path(__file__).resolve().parents[1] / "application" / "single_app"
 sys.path.insert(0, str(APP_DIR))
 
 
+def _noop(*_args, **_kwargs):
+    return None
+
+
 class _NoopLogger:
     def __getattr__(self, _name):
-        return lambda *args, **kwargs: None
+        return _noop
 
 
 sys.modules.setdefault(
     "functions_appinsights",
     types.SimpleNamespace(
-        log_event=lambda *args, **kwargs: None,
+        log_event=_noop,
         get_appinsights_logger=lambda: _NoopLogger(),
     ),
 )

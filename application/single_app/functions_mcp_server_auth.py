@@ -10,6 +10,7 @@ from flask import g, jsonify, request
 from functions_appinsights import log_event
 from functions_authentication import validate_bearer_token
 from functions_mcp_server_config import build_inbound_mcp_public_base_url, get_inbound_mcp_runtime_config
+from functions_mcp_server_enterprise import normalize_inbound_mcp_correlation_id
 
 
 AUTH_CATEGORY = "InboundMCP"
@@ -47,13 +48,16 @@ class InboundMcpAuthError(Exception):
 
 
 def _normalize_claim_values(value):
-    if value is None:
-        return ()
+    items = []
     if isinstance(value, str):
-        return tuple(item for item in re.split(r"[\s,]+", value.strip()) if item)
-    if isinstance(value, (list, tuple, set)):
-        return tuple(str(item).strip() for item in value if str(item).strip())
-    return (str(value).strip(),) if str(value).strip() else ()
+        items = [item for item in re.split(r"[\s,]+", value.strip()) if item]
+    elif isinstance(value, (list, tuple, set)):
+        items = [str(item).strip() for item in value if str(item).strip()]
+    elif value is not None:
+        item = str(value).strip()
+        if item:
+            items = [item]
+    return tuple(items)
 
 
 def _extract_bearer_token(flask_request):
@@ -119,10 +123,14 @@ def _client_is_allowed(caller_app_id, runtime_config):
 
 def _runtime_list(runtime_config, key):
     values = runtime_config.get(key)
+    items = []
     if isinstance(values, (list, tuple, set)):
-        return tuple(str(value or "").strip() for value in values if str(value or "").strip())
-    value = str(values or "").strip()
-    return (value,) if value else ()
+        items = [str(value or "").strip() for value in values if str(value or "").strip()]
+    else:
+        value = str(values or "").strip()
+        if value:
+            items = [value]
+    return tuple(items)
 
 
 def _has_required_delegated_scope(scopes, runtime_config):
@@ -147,7 +155,7 @@ def _correlation_id(flask_request):
         or flask_request.headers.get("x-request-id")
         or ""
     )
-    return str(raw_value or "").replace("\r", "").replace("\n", "").strip()[:128]
+    return normalize_inbound_mcp_correlation_id(raw_value)
 
 
 def validate_inbound_mcp_request(flask_request, token_validator=None):

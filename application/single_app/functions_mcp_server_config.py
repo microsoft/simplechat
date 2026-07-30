@@ -1,9 +1,12 @@
 # functions_mcp_server_config.py
 
 import json
+import logging
 import os
 import re
+from urllib.parse import urlparse
 
+import app_settings_cache
 import requests
 
 from config import (
@@ -395,9 +398,8 @@ def normalize_inbound_mcp_settings(settings):
 def get_inbound_mcp_runtime_config(settings=None):
     """Return normalized runtime config backed by the Cosmos app_settings document."""
     if settings is None:
-        from functions_settings import get_settings
-
-        settings = get_settings() or {}
+        settings_getter = getattr(app_settings_cache, "get_settings_cache", None)
+        settings = settings_getter() if callable(settings_getter) else {}
 
     config = dict(settings or {})
     normalize_inbound_mcp_settings(config)
@@ -450,10 +452,21 @@ def build_inbound_mcp_public_base_url(flask_request):
 
 
 def _response_has_easy_auth_redirect(response):
-    location = str(response.headers.get("Location") or "").lower()
     if response.is_redirect:
         return True
-    return "/.auth/login" in location or "login.microsoftonline.com" in location
+
+    location = str(response.headers.get("Location") or "").strip()
+    if not location:
+        return False
+
+    parsed_location = urlparse(location)
+    location_path = str(parsed_location.path or "").lower()
+    location_host = str(parsed_location.hostname or "").lower()
+    return (
+        location_path.startswith("/.auth/login")
+        or location_host == "login.microsoftonline.com"
+        or location_host.endswith(".login.microsoftonline.com")
+    )
 
 
 def _response_looks_like_sign_in_html(response):
@@ -554,12 +567,20 @@ def check_inbound_mcp_easy_auth_exclusions(base_url, timeout_seconds=8):
             )
             endpoint_results.append(_evaluate_probe_response(path, response))
         except requests.RequestException as request_error:
+            log_event(
+                "[InboundMCP] Easy Auth exclusion probe request failed.",
+                extra={
+                    "path": path,
+                    "error_type": type(request_error).__name__,
+                },
+                level=logging.WARNING,
+            )
             endpoint_results.append({
                 "path": path,
                 "status_code": None,
                 "content_type": "",
                 "success": False,
-                "message": f"Endpoint probe failed: {request_error}",
+                "message": "Endpoint probe failed before reaching SimpleChat.",
             })
 
     success = all(result.get("success") for result in endpoint_results)

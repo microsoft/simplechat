@@ -143,8 +143,8 @@ def register_route_backend_governance(bp):
                 actor_user_id=actor_user_id,
                 actor_email=actor_email,
             )
-        except PermissionError as ex:
-            return jsonify({'error': str(ex)}), 403
+        except PermissionError:
+            return jsonify({'error': 'You are not authorized to delete this governance policy.'}), 403
         except ValueError:
             return jsonify({'error': 'Item governance policy not found.'}), 404
 
@@ -230,8 +230,8 @@ def register_route_backend_governance(bp):
                 actor_user_id=actor_user_id,
                 actor_email=actor_email,
             )
-        except PermissionError as ex:
-            return jsonify({'error': str(ex)}), 403
+        except PermissionError:
+            return jsonify({'error': 'You are not authorized to update this governance policy.'}), 403
         return jsonify({'policy': updated}), 200
 
     @bp.route('/api/admin/governance/item-policies', methods=['POST'])
@@ -255,8 +255,8 @@ def register_route_backend_governance(bp):
                 actor_user_id=actor_user_id,
                 actor_email=actor_email,
             )
-        except PermissionError as ex:
-            return jsonify({'error': str(ex)}), 403
+        except PermissionError:
+            return jsonify({'error': 'You are not authorized to update this governance policy.'}), 403
         return jsonify({'policy': updated}), 200
 
     @bp.route('/api/admin/governance/item-policies/delete', methods=['POST'])

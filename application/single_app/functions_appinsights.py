@@ -36,6 +36,7 @@ SECRET_ASSIGNMENT_RE = re.compile(
     r"(?i)\b(api[-_]?key|access[-_]?token|client[-_]?secret|connection[-_]?string|password|secret|subscription[-_]?key|token|sig|signature)=([^&\s,;]+)"
 )
 AUTHORIZATION_VALUE_RE = re.compile(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+")
+LOG_CONTROL_CHAR_RE = re.compile(r"[\r\n\t]+")
 
 
 def _format_message(message: Any, message_args: Optional[Tuple[Any, ...]] = None) -> str:
@@ -73,6 +74,7 @@ def sanitize_log_message(message: Any) -> str:
         lambda match: f"{match.group(1)} {REDACTED_LOG_VALUE}",
         message_text,
     )
+    message_text = LOG_CONTROL_CHAR_RE.sub(" ", message_text)
     if len(message_text) > MAX_LOG_STRING_LENGTH:
         return f"{message_text[:MAX_LOG_STRING_LENGTH]}... [truncated]"
     return message_text
@@ -116,18 +118,6 @@ def _load_logging_settings() -> Dict[str, Any]:
             return cache
     except Exception:
         pass
-
-    try:
-        from functions_settings import get_settings
-
-        _logging_settings_load_state.active = True
-        settings = get_settings()
-        if isinstance(settings, dict):
-            return settings
-    except Exception:
-        pass
-    finally:
-        _logging_settings_load_state.active = False
 
     return {}
 
@@ -188,9 +178,9 @@ def _emit_appinsights_debug_trace(
         # Use a child logger so DEBUG traces can flow to App Insights even when the
         # parent logger stays at INFO to avoid broad third-party debug noise.
         if trace_properties:
-            debug_logger.debug(trace_message, extra=trace_properties, stacklevel=3)
+            debug_logger.debug("%s", trace_message, extra=trace_properties, stacklevel=3)
         else:
-            debug_logger.debug(trace_message, stacklevel=3)
+            debug_logger.debug("%s", trace_message, stacklevel=3)
     except Exception:
         pass
 
@@ -284,7 +274,14 @@ def log_event(
                 if cache and cache.get('enable_debug_logging', False):
                     print(f"[DEBUG][ERROR][Log] {formatted_message} -- {safe_extra if safe_extra else 'No Extra Dimensions'}")
                 # Use logger.exception() for better exception capture in Application Insights
-                logger.exception(formatted_message, extra=safe_extra, stacklevel=stacklevel, stack_info=includeStack, exc_info=True)
+                logger.exception(
+                    "%s",
+                    formatted_message,
+                    extra=safe_extra,
+                    stacklevel=stacklevel,
+                    stack_info=includeStack,
+                    exc_info=True,
+                )
                 return
             else:
                 # Fallback to standard logging with exc_info
@@ -297,6 +294,7 @@ def log_event(
             # For modern Azure Monitor, extra properties are automatically captured
             logger.log(
                 level,
+                "%s",
                 formatted_message,
                 extra=safe_extra,
                 stacklevel=stacklevel,
@@ -306,6 +304,7 @@ def log_event(
         else:
             logger.log(
                 level,
+                "%s",
                 formatted_message,
                 stacklevel=stacklevel,
                 stack_info=includeStack,
@@ -325,11 +324,11 @@ def log_event(
                 fallback_logger.addHandler(logging.StreamHandler())
                 fallback_logger.setLevel(logging.INFO)
 
-            fallback_message = f"{formatted_message} | Original error: {str(e)}"
+            fallback_message = f"{formatted_message} | Original error: {sanitize_log_message(e)}"
             if safe_extra:
                 fallback_message += f" | Extra: {safe_extra}"
 
-            fallback_logger.log(level, fallback_message)
+            fallback_logger.log(level, "%s", fallback_message)
         except Exception:
             # If even basic logging fails, print to console
             print(f"[LOG] {formatted_message}")

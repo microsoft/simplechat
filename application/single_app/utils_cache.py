@@ -74,11 +74,11 @@ def _debug_print(message: str, context: str = "CACHE", **kwargs):
     # Build extra info string from kwargs
     extra_info = ""
     if kwargs:
-        extra_parts = [f"{k}={v}" for k, v in kwargs.items()]
+        extra_parts = [f"{k}={str(v).replace(chr(10), ' ').replace(chr(13), ' ')}" for k, v in kwargs.items()]
         extra_info = " | " + ", ".join(extra_parts)
     
     debug_message = f"[{timestamp}] [{context}] {message}{extra_info}"
-    logger.info(debug_message)
+    logger.info("%s", debug_message)
     print(debug_message, flush=True)  # Also print to stdout for visibility
 
 
@@ -414,7 +414,8 @@ def generate_search_cache_key(
         fingerprint_count=len(fingerprints)
     )
     
-    logger.debug(f"Generated cache key for query '{query[:50]}...': {cache_key}")
+    query_hash = hashlib.sha256(str(query or "").encode("utf-8")).hexdigest()[:12] if query else ""
+    logger.debug("Generated cache key for query hash %s: %s", query_hash, cache_key)
     return cache_key
 
 

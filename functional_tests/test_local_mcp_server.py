@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for the SimpleChat local MCP development server.
-Version: 0.250.059
+Version: 0.250.099
 Implemented in: 0.250.059
 
 This test ensures that the reusable local MCP server supports SimpleChat MCP
@@ -11,7 +11,6 @@ discovery, custom header validation, and auth-header precedence.
 
 import asyncio
 import json
-import os
 import socket
 import subprocess
 import sys
@@ -28,15 +27,19 @@ LOCAL_MCP_SERVER = REPO_ROOT / "application" / "development" / "local_mcp" / "se
 sys.path.insert(0, str(APP_DIR))
 
 
+def _noop(*_args, **_kwargs):
+    return None
+
+
 class _NoopLogger:
     def __getattr__(self, _name):
-        return lambda *args, **kwargs: None
+        return _noop
 
 
 sys.modules.setdefault(
     "functions_appinsights",
     types.SimpleNamespace(
-        log_event=lambda *args, **kwargs: None,
+        log_event=_noop,
         get_appinsights_logger=lambda: _NoopLogger(),
     ),
 )

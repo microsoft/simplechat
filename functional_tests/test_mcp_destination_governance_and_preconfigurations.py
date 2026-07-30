@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for outbound MCP destination governance and preconfigurations.
-Version: 0.250.068
+Version: 0.250.099
 Implemented in: 0.250.064
 
 This test ensures MCP destination allowlisting and server preconfiguration catalog
@@ -22,14 +22,6 @@ PRECONFIGURATION_DIR = APP_DIR / "mcp_preconfigurations" / "definitions"
 sys.path.insert(0, str(APP_DIR))
 
 import functions_mcp_destinations as mcp_destinations  # noqa: E402
-from functions_mcp_destinations import (  # noqa: E402
-    MCP_DESTINATION_SCOPE_GLOBAL,
-    MCP_DESTINATION_SCOPE_GROUP,
-    MCP_DESTINATION_SCOPE_PERSONAL,
-    McpDestinationPolicyError,
-    assert_mcp_destination_allowed,
-    evaluate_mcp_destination_policy,
-)
 from functions_mcp_preconfigurations import (  # noqa: E402
     ENABLE_LOCAL_MCP_PRECONFIGURATION_ENV,
     MCP_PRECONFIGURATION_PATHS_ENV,
@@ -38,6 +30,11 @@ from functions_mcp_preconfigurations import (  # noqa: E402
     evaluate_mcp_preconfiguration_manifest_policy,
     load_mcp_server_preconfigurations,
 )
+
+
+MCP_DESTINATION_SCOPE_GLOBAL = mcp_destinations.MCP_DESTINATION_SCOPE_GLOBAL
+MCP_DESTINATION_SCOPE_GROUP = mcp_destinations.MCP_DESTINATION_SCOPE_GROUP
+MCP_DESTINATION_SCOPE_PERSONAL = mcp_destinations.MCP_DESTINATION_SCOPE_PERSONAL
 
 
 def _mcp_manifest(endpoint, preconfiguration_id="", server_profile="generic"):
@@ -84,7 +81,7 @@ def test_outbound_mcp_destination_policy_matching():
     github_manifest = _mcp_manifest("https://api.githubcopilot.com/mcp/", "github")
 
     preconfiguration_policy = _policy(common_patterns=["preconfiguration:microsoft_learn"])
-    decision = evaluate_mcp_destination_policy(
+    decision = mcp_destinations.evaluate_mcp_destination_policy(
         learn_manifest,
         scope_type=MCP_DESTINATION_SCOPE_PERSONAL,
         scope_id="user-1",
@@ -94,13 +91,13 @@ def test_outbound_mcp_destination_policy_matching():
     assert decision["matched_pattern"] == "preconfiguration:microsoft_learn"
 
     wildcard_policy = _policy(personal_patterns=["https://learn.microsoft.com/api/*"])
-    assert evaluate_mcp_destination_policy(
+    assert mcp_destinations.evaluate_mcp_destination_policy(
         learn_manifest,
         scope_type=MCP_DESTINATION_SCOPE_PERSONAL,
         scope_id="user-1",
         policy_config=wildcard_policy,
     )["allowed"] is True
-    assert evaluate_mcp_destination_policy(
+    assert mcp_destinations.evaluate_mcp_destination_policy(
         github_manifest,
         scope_type=MCP_DESTINATION_SCOPE_PERSONAL,
         scope_id="user-1",
@@ -108,7 +105,7 @@ def test_outbound_mcp_destination_policy_matching():
     )["allowed"] is False
 
     host_wildcard_policy = _policy(group_patterns=["*.githubcopilot.com"])
-    assert_mcp_destination_allowed(
+    mcp_destinations.assert_mcp_destination_allowed(
         github_manifest,
         scope_type=MCP_DESTINATION_SCOPE_GROUP,
         scope_id="group-1",
@@ -116,7 +113,7 @@ def test_outbound_mcp_destination_policy_matching():
     )
 
     unsafe_manifest = _mcp_manifest("http://127.0.0.1:9000/mcp")
-    unsafe_decision = evaluate_mcp_destination_policy(
+    unsafe_decision = mcp_destinations.evaluate_mcp_destination_policy(
         unsafe_manifest,
         scope_type=MCP_DESTINATION_SCOPE_PERSONAL,
         scope_id="user-1",
@@ -126,14 +123,14 @@ def test_outbound_mcp_destination_policy_matching():
     assert "loopback" in unsafe_decision["reason"]
 
     try:
-        assert_mcp_destination_allowed(
+        mcp_destinations.assert_mcp_destination_allowed(
             github_manifest,
             scope_type=MCP_DESTINATION_SCOPE_PERSONAL,
             scope_id="user-1",
             policy_config=wildcard_policy,
         )
         raise AssertionError("Expected destination policy denial for unlisted GitHub endpoint.")
-    except McpDestinationPolicyError:
+    except mcp_destinations.McpDestinationPolicyError:
         pass
 
 
@@ -242,7 +239,7 @@ def test_governance_item_policy_backed_destination_patterns():
             user_id="user-1",
         )
 
-        github_decision = evaluate_mcp_destination_policy(
+        github_decision = mcp_destinations.evaluate_mcp_destination_policy(
             _mcp_manifest("https://api.githubcopilot.com/mcp/", "github"),
             scope_type=MCP_DESTINATION_SCOPE_PERSONAL,
             scope_id="user-1",
@@ -252,7 +249,7 @@ def test_governance_item_policy_backed_destination_patterns():
         assert github_decision["allowed"] is True
         assert github_decision["matched_pattern"] == "preconfiguration:github"
 
-        learn_group_decision = evaluate_mcp_destination_policy(
+        learn_group_decision = mcp_destinations.evaluate_mcp_destination_policy(
             _mcp_manifest("https://learn.microsoft.com/api/mcp", "microsoft_learn"),
             scope_type=MCP_DESTINATION_SCOPE_GROUP,
             scope_id="group-1",
@@ -261,7 +258,7 @@ def test_governance_item_policy_backed_destination_patterns():
         )
         assert learn_group_decision["allowed"] is True
 
-        learn_other_group_decision = evaluate_mcp_destination_policy(
+        learn_other_group_decision = mcp_destinations.evaluate_mcp_destination_policy(
             _mcp_manifest("https://learn.microsoft.com/api/mcp", "microsoft_learn"),
             scope_type=MCP_DESTINATION_SCOPE_GROUP,
             scope_id="group-2",
@@ -274,7 +271,7 @@ def test_governance_item_policy_backed_destination_patterns():
             {"enable_mcp_destination_governance": True},
             user_id="user-2",
         )
-        denied_decision = evaluate_mcp_destination_policy(
+        denied_decision = mcp_destinations.evaluate_mcp_destination_policy(
             _mcp_manifest("https://api.githubcopilot.com/mcp/", "github"),
             scope_type=MCP_DESTINATION_SCOPE_PERSONAL,
             scope_id="user-2",

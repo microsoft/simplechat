@@ -2,6 +2,7 @@
 
 import hashlib
 import logging
+import re
 import time
 import uuid
 from dataclasses import dataclass
@@ -18,6 +19,7 @@ MCP_ENTERPRISE_CATEGORY = "InboundMCP"
 RATE_LIMIT_COUNTER_PREFIX = "inbound_mcp_rate_limit"
 RATE_LIMIT_RETRY_ATTEMPTS = 4
 MAX_CORRELATION_ID_LENGTH = 128
+SAFE_CORRELATION_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 
 
 @dataclass(frozen=True)
@@ -46,20 +48,25 @@ class InboundMcpRateLimitStoreError(Exception):
 
 def resolve_inbound_mcp_request_id(auth_context=None, flask_request=None):
     """Resolve or create an audit-safe correlation id for an inbound MCP request."""
-    context_id = _normalize_correlation_id(getattr(auth_context, "correlation_id", ""))
+    context_id = normalize_inbound_mcp_correlation_id(getattr(auth_context, "correlation_id", ""))
     if context_id:
         return context_id
     if flask_request is not None:
         for header_name in ("x-ms-client-request-id", "x-correlation-id", "x-request-id"):
-            header_value = _normalize_correlation_id(flask_request.headers.get(header_name, ""))
+            header_value = normalize_inbound_mcp_correlation_id(flask_request.headers.get(header_name, ""))
             if header_value:
                 return header_value
     return str(uuid.uuid4())
 
 
-def _normalize_correlation_id(value):
+def normalize_inbound_mcp_correlation_id(value):
     normalized_value = str(value or "").replace("\r", "").replace("\n", "").strip()
-    return normalized_value[:MAX_CORRELATION_ID_LENGTH]
+    if not normalized_value:
+        return ""
+    bounded_value = normalized_value[:MAX_CORRELATION_ID_LENGTH]
+    if SAFE_CORRELATION_ID_RE.fullmatch(bounded_value):
+        return bounded_value
+    return hashlib.sha256(normalized_value.encode("utf-8")).hexdigest()[:32]
 
 
 def build_inbound_mcp_log_context(auth_context=None, mcp_request_id="", **extra):

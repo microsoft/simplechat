@@ -7,7 +7,6 @@ import logging
 import os
 import re
 from functools import lru_cache
-from json import JSONDecodeError
 
 try:
     from flask import current_app
@@ -319,7 +318,7 @@ def load_mcp_server_preconfigurations():
             _validate_mcp_preconfiguration(definition, file_path)
         except (
             OSError,
-            JSONDecodeError,
+            json.JSONDecodeError,
             ValidationError,
             McpImplementationValidationError,
             McpPreconfigurationValidationError,
