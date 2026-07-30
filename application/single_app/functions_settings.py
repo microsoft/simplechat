@@ -35,6 +35,7 @@ USER_UI_SETTINGS_KEYS = (
     "navLayout",
     "darkModeEnabled",
     "showTutorialButtons",
+    "desktopNotificationsEnabled",
     "chatLayout",
     "streamingEnabled",
     "notifications_per_page",
@@ -1099,6 +1100,7 @@ def get_settings(use_cosmos=False, include_source=False):
 
         # User Feedback / Conversation Archiving
         'enable_user_feedback': True,
+        'enable_desktop_notifications': False,
         'require_member_of_feedback_admin': False,
         'enable_conversation_archiving': False,
 
@@ -2078,6 +2080,9 @@ def get_user_settings(user_id, allow_cross_user=False):
         if 'showTutorialButtons' not in doc['settings']:
             doc['settings']['showTutorialButtons'] = True
             updated = True
+        if 'desktopNotificationsEnabled' not in doc['settings']:
+            doc['settings']['desktopNotificationsEnabled'] = True
+            updated = True
         
         if should_sync_session_profile:
             # Try to update email/display_name if missing and available in session
@@ -2121,6 +2126,7 @@ def get_user_settings(user_id, allow_cross_user=False):
         doc = {"id": user_id, "settings": {}}
         doc["settings"]["personal_model_endpoints"] = []
         doc["settings"]["showTutorialButtons"] = True
+        doc["settings"]["desktopNotificationsEnabled"] = True
         if should_sync_session_profile:
             user = session.get("user", {})
             email = user.get("preferred_username") or user.get("email")

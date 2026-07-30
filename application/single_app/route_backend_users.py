@@ -515,6 +515,8 @@ def register_route_backend_users(bp):
                     'ttsEnabled', 'ttsVoice', 'ttsSpeed', 'ttsAutoplay',
                     # Tutorial visibility settings
                     'showTutorialButtons',
+                    # Desktop conversation notification settings
+                    'desktopNotificationsEnabled',
                     'recentCollaborators',
                     # Personal workspace settings managed by other backend/frontend flows
                     'personal_model_endpoints', 'tag_definitions',
@@ -554,6 +556,10 @@ def register_route_backend_users(bp):
                 if "conversationContentsDrawerEnabled" in settings_to_update:
                     if not isinstance(settings_to_update["conversationContentsDrawerEnabled"], bool):
                         return jsonify({"error": "Invalid conversation contents drawer preference"}), 400
+
+                if "desktopNotificationsEnabled" in settings_to_update:
+                    if not isinstance(settings_to_update["desktopNotificationsEnabled"], bool):
+                        return jsonify({"error": "Invalid desktop notification preference"}), 400
 
                 if "sidebarMenuState" in settings_to_update:
                     sidebar_menu_state = settings_to_update.get("sidebarMenuState")

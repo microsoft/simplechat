@@ -571,6 +571,8 @@ def register_route_frontend_admin_settings(bp):
             settings['require_member_of_create_public_workspace'] = False
         if 'enable_chat_file_uploads' not in settings:
             settings['enable_chat_file_uploads'] = True
+        if 'enable_desktop_notifications' not in settings:
+            settings['enable_desktop_notifications'] = False
         if 'enable_conversation_contents_drawer' not in settings:
             settings['enable_conversation_contents_drawer'] = True
         if 'require_member_of_chat_file_upload_user' not in settings:
@@ -2527,6 +2529,7 @@ def register_route_frontend_admin_settings(bp):
 
                 # Feedback, Archiving & Thoughts
                 'enable_user_feedback': form_data.get('enable_user_feedback') == 'on',
+                'enable_desktop_notifications': form_data.get('enable_desktop_notifications') == 'on',
                 'enable_conversation_archiving': form_data.get('enable_conversation_archiving') == 'on',
                 'enable_thoughts': form_data.get('enable_thoughts') == 'on',
 

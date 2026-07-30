@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.102)**
+
+#### New Features
+
+*   **Desktop Conversation Notifications**
+    *   Administrators can enable operating system notifications for completed AI responses, and users can manage their own preference from Profile.
+    *   Notifications appear only while SimpleChat is open in a hidden or unfocused tab, show the application and conversation titles without response content, and focus the existing tab when selected.
+    *   (Ref: Fixes #866, `chat-desktop-notifications.js`, `chat-streaming.js`, Profile and Admin Settings)
+
 ### **(v0.250.101)**
 
 #### New Features
