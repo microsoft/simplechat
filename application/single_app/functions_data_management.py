@@ -3,10 +3,12 @@
 
 import copy
 import base64
+from email.utils import parsedate_to_datetime
 import hashlib
 import json
 import logging
 import os
+import random
 import re
 import socket
 import time
@@ -167,6 +169,18 @@ DATA_MANAGEMENT_MIGRATION_MANIFEST_BATCH_SIZE = 100
 DATA_MANAGEMENT_BACKUP_MANIFEST_BATCH_SIZE = 100
 DATA_MANAGEMENT_BACKUP_MAX_PUBLIC_ITEM_SUMMARIES = 50
 DATA_MANAGEMENT_BACKUP_MAX_RECENT_CHECKPOINTS = 20
+DATA_MANAGEMENT_BACKUP_DEFAULT_PARALLEL_OPERATIONS = 4
+DATA_MANAGEMENT_BACKUP_MAX_PARALLEL_OPERATIONS = 16
+DATA_MANAGEMENT_BACKUP_DEFAULT_RETRY_COUNT = 5
+DATA_MANAGEMENT_BACKUP_MAX_RETRY_COUNT = 10
+DATA_MANAGEMENT_BACKUP_DEFAULT_SOURCE_RU = 10000
+DATA_MANAGEMENT_BACKUP_MAX_SOURCE_RU = 10000
+DATA_MANAGEMENT_BACKUP_CAPACITY_FAILURE_POLICY_FAIL = "fail"
+DATA_MANAGEMENT_BACKUP_CAPACITY_FAILURE_POLICY_CONTINUE = "continue_without_boost"
+DATA_MANAGEMENT_BACKUP_CAPACITY_FAILURE_POLICIES = {
+    DATA_MANAGEMENT_BACKUP_CAPACITY_FAILURE_POLICY_FAIL,
+    DATA_MANAGEMENT_BACKUP_CAPACITY_FAILURE_POLICY_CONTINUE,
+}
 DATA_MANAGEMENT_SEARCH_KEYSET_PAGE_SIZE = 1000
 DATA_MANAGEMENT_SEARCH_SCOPE_FILTER_BATCH_SIZE = 100
 DATA_MANAGEMENT_BLOB_SERVICE_TIMEOUT_SECONDS = 120
@@ -174,6 +188,8 @@ DATA_MANAGEMENT_MIGRATION_REMOTE_REQUEST_TIMEOUT_SECONDS = 30
 DATA_MANAGEMENT_MIGRATION_HEARTBEAT_INTERVAL_SECONDS = 2.0
 DATA_MANAGEMENT_MIGRATION_HEARTBEAT_POLL_SECONDS = 1.0
 DATA_MANAGEMENT_BACKUP_HEARTBEAT_INTERVAL_SECONDS = 30.0
+DATA_MANAGEMENT_BACKUP_HEARTBEAT_POLL_SECONDS = 1.0
+DATA_MANAGEMENT_BACKUP_MAX_RETRY_DELAY_SECONDS = 60.0
 DATA_MANAGEMENT_MIGRATION_LOCK_RECOVERY_GRACE_SECONDS = 120
 DATA_MANAGEMENT_MIGRATION_MODE_NEW_ONLY = "new_only"
 DATA_MANAGEMENT_MIGRATION_MODE_DELTA_UPSERT = "delta_upsert"
@@ -236,6 +252,11 @@ DATA_MANAGEMENT_DEFAULT_SETTINGS = {
     "include_source_blobs": True,
     "low_impact_mode": True,
     "max_parallel_operations": 1,
+    "backup_max_parallel_operations": DATA_MANAGEMENT_BACKUP_DEFAULT_PARALLEL_OPERATIONS,
+    "backup_retry_count": DATA_MANAGEMENT_BACKUP_DEFAULT_RETRY_COUNT,
+    "backup_temporary_source_ru_enabled": False,
+    "backup_temporary_source_ru": DATA_MANAGEMENT_BACKUP_DEFAULT_SOURCE_RU,
+    "backup_capacity_failure_policy": DATA_MANAGEMENT_BACKUP_CAPACITY_FAILURE_POLICY_CONTINUE,
     "migration_max_parallel_operations": DATA_MANAGEMENT_MIGRATION_DEFAULT_PARALLEL_OPERATIONS,
     "migration_retry_count": DATA_MANAGEMENT_MIGRATION_DEFAULT_RETRY_COUNT,
     "migration_skip_recent_within_hours": DATA_MANAGEMENT_MIGRATION_DEFAULT_SKIP_WITHIN_HOURS,
@@ -676,6 +697,34 @@ def normalize_data_management_settings(payload=None, existing_settings=None, cur
         source["include_source_blobs"] = False
     source["low_impact_mode"] = _safe_bool(source.get("low_impact_mode"), True)
     source["max_parallel_operations"] = _safe_int(source.get("max_parallel_operations"), default=1, minimum=1, maximum=5)
+    source["backup_max_parallel_operations"] = _safe_int(
+        source.get("backup_max_parallel_operations"),
+        default=DATA_MANAGEMENT_BACKUP_DEFAULT_PARALLEL_OPERATIONS,
+        minimum=1,
+        maximum=DATA_MANAGEMENT_BACKUP_MAX_PARALLEL_OPERATIONS,
+    )
+    source["backup_retry_count"] = _safe_int(
+        source.get("backup_retry_count"),
+        default=DATA_MANAGEMENT_BACKUP_DEFAULT_RETRY_COUNT,
+        minimum=1,
+        maximum=DATA_MANAGEMENT_BACKUP_MAX_RETRY_COUNT,
+    )
+    source["backup_temporary_source_ru_enabled"] = _safe_bool(
+        source.get("backup_temporary_source_ru_enabled"),
+        False,
+    )
+    source["backup_temporary_source_ru"] = _safe_int(
+        source.get("backup_temporary_source_ru"),
+        default=DATA_MANAGEMENT_BACKUP_DEFAULT_SOURCE_RU,
+        minimum=1000,
+        maximum=DATA_MANAGEMENT_BACKUP_MAX_SOURCE_RU,
+    )
+    source["backup_capacity_failure_policy"] = _safe_text(
+        source.get("backup_capacity_failure_policy"),
+        DATA_MANAGEMENT_BACKUP_CAPACITY_FAILURE_POLICY_CONTINUE,
+    )
+    if source["backup_capacity_failure_policy"] not in DATA_MANAGEMENT_BACKUP_CAPACITY_FAILURE_POLICIES:
+        source["backup_capacity_failure_policy"] = DATA_MANAGEMENT_BACKUP_CAPACITY_FAILURE_POLICY_CONTINUE
     source["migration_max_parallel_operations"] = _safe_int(
         source.get("migration_max_parallel_operations"),
         default=DATA_MANAGEMENT_MIGRATION_DEFAULT_PARALLEL_OPERATIONS,
@@ -1196,6 +1245,75 @@ def _get_migration_parallel_operations(settings):
     )
 
 
+def _get_backup_parallel_operations(settings, backup_plan=None):
+    execution = (backup_plan or {}).get("cosmos_execution") if isinstance(backup_plan, dict) else {}
+    configured_value = (
+        (execution or {}).get("max_parallel_operations")
+        if isinstance(execution, dict) and "max_parallel_operations" in execution else
+        (settings or {}).get("backup_max_parallel_operations")
+        if backup_plan is None else
+        DATA_MANAGEMENT_BACKUP_DEFAULT_PARALLEL_OPERATIONS
+    )
+    return _safe_int(
+        configured_value,
+        default=DATA_MANAGEMENT_BACKUP_DEFAULT_PARALLEL_OPERATIONS,
+        minimum=1,
+        maximum=DATA_MANAGEMENT_BACKUP_MAX_PARALLEL_OPERATIONS,
+    )
+
+
+def _get_backup_retry_count(settings, backup_plan=None):
+    execution = (backup_plan or {}).get("cosmos_execution") if isinstance(backup_plan, dict) else {}
+    configured_value = (
+        (execution or {}).get("retry_count")
+        if isinstance(execution, dict) and "retry_count" in execution else
+        (settings or {}).get("backup_retry_count")
+        if backup_plan is None else
+        DATA_MANAGEMENT_BACKUP_DEFAULT_RETRY_COUNT
+    )
+    return _safe_int(
+        configured_value,
+        default=DATA_MANAGEMENT_BACKUP_DEFAULT_RETRY_COUNT,
+        minimum=1,
+        maximum=DATA_MANAGEMENT_BACKUP_MAX_RETRY_COUNT,
+    )
+
+
+def _get_backup_capacity_failure_policy(settings, backup_plan=None):
+    execution = (backup_plan or {}).get("cosmos_execution") if isinstance(backup_plan, dict) else {}
+    configured_value = (
+        (execution or {}).get("capacity_failure_policy")
+        if isinstance(execution, dict) and "capacity_failure_policy" in execution else
+        (settings or {}).get("backup_capacity_failure_policy")
+        if backup_plan is None else
+        DATA_MANAGEMENT_BACKUP_CAPACITY_FAILURE_POLICY_CONTINUE
+    )
+    policy = _safe_text(
+        configured_value,
+        DATA_MANAGEMENT_BACKUP_CAPACITY_FAILURE_POLICY_CONTINUE,
+    )
+    if policy not in DATA_MANAGEMENT_BACKUP_CAPACITY_FAILURE_POLICIES:
+        return DATA_MANAGEMENT_BACKUP_CAPACITY_FAILURE_POLICY_CONTINUE
+    return policy
+
+
+def _get_backup_temporary_source_ru(settings, backup_plan=None):
+    execution = (backup_plan or {}).get("cosmos_execution") if isinstance(backup_plan, dict) else {}
+    configured_value = (
+        (execution or {}).get("temporary_source_ru")
+        if isinstance(execution, dict) and "temporary_source_ru" in execution else
+        (settings or {}).get("backup_temporary_source_ru")
+        if backup_plan is None else
+        DATA_MANAGEMENT_BACKUP_DEFAULT_SOURCE_RU
+    )
+    return _safe_int(
+        configured_value,
+        default=DATA_MANAGEMENT_BACKUP_DEFAULT_SOURCE_RU,
+        minimum=1000,
+        maximum=DATA_MANAGEMENT_BACKUP_MAX_SOURCE_RU,
+    )
+
+
 def _get_migration_retry_count(settings):
     return _safe_int(
         (settings or {}).get("migration_retry_count"),
@@ -1239,6 +1357,26 @@ def _get_target_cosmos_management_settings(settings):
             f"{', '.join(missing_values)}."
         )
     return management_settings
+
+
+def _get_source_cosmos_management_settings():
+    """Resolve local Cosmos ARM routing without exposing it to backup progress APIs."""
+    application_settings = _get_application_settings_for_data_management()
+    return {
+        "cosmos_throughput_subscription_id": _safe_text(
+            application_settings.get("cosmos_throughput_subscription_id")
+        ),
+        "cosmos_throughput_resource_group": _safe_text(
+            application_settings.get("cosmos_throughput_resource_group")
+        ),
+        "cosmos_throughput_account_name": _safe_text(
+            application_settings.get("cosmos_throughput_account_name")
+        ),
+        "cosmos_throughput_database_name": _safe_text(
+            application_settings.get("cosmos_throughput_database_name"),
+            DATA_MANAGEMENT_TARGET_COSMOS_DATABASE_NAME,
+        ),
+    }
 
 
 def _build_migration_configuration_snapshot(settings, migration_plan):
@@ -2027,6 +2165,388 @@ def _get_destination_capacity_current(management_settings, capacity_target):
             capacity_target.get("container_name"),
         )
     return get_database_throughput(management_settings)
+
+
+def _get_backup_source_capacity_current(management_settings, capacity_target):
+    if capacity_target.get("scope") == "container":
+        return get_container_throughput(
+            management_settings,
+            capacity_target.get("container_name"),
+        )
+    return get_database_throughput(management_settings)
+
+
+def _inspect_backup_source_capacity(backup_plan):
+    """Discover whether source throughput is database-shared or container-dedicated."""
+    management_settings = _get_source_cosmos_management_settings()
+    database_throughput = get_database_throughput(management_settings)
+    targets = []
+    if database_throughput.get("is_scalable"):
+        targets.append({
+            "scope": "database",
+            "container_name": "",
+            "mode": database_throughput.get("mode"),
+            "current_ru": database_throughput.get("current_ru"),
+        })
+    else:
+        seen_container_names = set()
+        for artifact in DATA_MANAGEMENT_COSMOS_ARTIFACTS:
+            container_name = _safe_text(
+                getattr(app_config, artifact["container_name_attr"], artifact["name"])
+            )
+            if not container_name or container_name in seen_container_names:
+                continue
+            seen_container_names.add(container_name)
+            container_throughput = get_container_throughput(
+                management_settings,
+                container_name,
+            )
+            if container_throughput.get("is_scalable"):
+                targets.append({
+                    "scope": "container",
+                    "container_name": container_name,
+                    "mode": container_throughput.get("mode"),
+                    "current_ru": container_throughput.get("current_ru"),
+                })
+    if not targets:
+        raise CosmosThroughputError(
+            "Source Cosmos throughput is not scalable at the database or dedicated-container level."
+        )
+    return {
+        "target_ru": _get_backup_temporary_source_ru({}, backup_plan),
+        "management_settings": management_settings,
+        "database_mode": database_throughput.get("mode"),
+        "database_current_ru": database_throughput.get("current_ru"),
+        "targets": targets,
+    }
+
+
+def _apply_temporary_backup_source_capacity(job, backup_state, settings, backup_plan):
+    """Boost only local source capacity that this fenced backup can later restore."""
+    _assert_backup_job_lease(job)
+    execution = backup_plan.get("cosmos_execution") if isinstance(backup_plan, dict) else {}
+    if not _safe_bool((execution or {}).get("temporary_source_ru_enabled"), False):
+        backup_state["source_capacity"] = {
+            "status": "not_requested",
+            "restore_pending": False,
+        }
+        return _persist_backup_state(
+            job,
+            backup_state,
+            settings,
+            "Temporary source Cosmos capacity boost is disabled",
+        )
+
+    capacity = (
+        backup_state.get("source_capacity")
+        if isinstance(backup_state.get("source_capacity"), dict) else {}
+    )
+    if capacity.get("restore_pending") and capacity.get("targets"):
+        return _recover_pending_temporary_backup_source_capacity(
+            job,
+            backup_state,
+            settings,
+        )
+
+    policy = _get_backup_capacity_failure_policy(settings, backup_plan)
+    try:
+        inspection = _inspect_backup_source_capacity(backup_plan)
+    except Exception as exc:
+        log_event(
+            "[DataManagement] Source Cosmos capacity inspection failed.",
+            {"job_id": job.get("id"), "error": str(exc)},
+            level=logging.WARNING,
+        )
+        if policy == DATA_MANAGEMENT_BACKUP_CAPACITY_FAILURE_POLICY_CONTINUE:
+            backup_state["source_capacity"] = {
+                "status": "unavailable_continued",
+                "restore_pending": False,
+                "failure_policy": policy,
+                "warning": "Source Cosmos capacity inspection was unavailable.",
+            }
+            _append_backup_warning(
+                backup_state,
+                "Source Cosmos capacity boost was unavailable; continuing without a boost.",
+            )
+            return _persist_backup_state(
+                job,
+                backup_state,
+                settings,
+                "Source Cosmos capacity boost unavailable; continuing without boost",
+            )
+        raise
+
+    target_ru = inspection["target_ru"]
+    capacity = {
+        "status": "applying",
+        "restore_pending": True,
+        "failure_policy": policy,
+        "target_ru": target_ru,
+        "management_settings": inspection["management_settings"],
+        "topology": {
+            "database_mode": inspection.get("database_mode"),
+            "database_current_ru": inspection.get("database_current_ru"),
+            "scope": "shared_database" if inspection["targets"][0].get("scope") == "database" else "dedicated_containers",
+        },
+        "attempt_id": _safe_text(job.get("backup_attempt_id")),
+        "lease_generation": _safe_int(job.get("lease_generation"), default=0),
+        "targets": [],
+        "started_at": _now_iso(),
+    }
+    backup_state["source_capacity"] = capacity
+    _persist_backup_state(
+        job,
+        backup_state,
+        settings,
+        f"Preparing temporary source Cosmos capacity up to {target_ru} RU/s",
+    )
+    capacity = backup_state.setdefault("source_capacity", capacity)
+
+    for target in inspection["targets"]:
+        _assert_backup_job_lease(job)
+        original_ru = _safe_int(target.get("current_ru"), default=0, minimum=0)
+        target_snapshot = {
+            "scope": target.get("scope"),
+            "container_name": target.get("container_name") or "",
+            "mode": target.get("mode"),
+            "original_ru": original_ru,
+            "target_ru": target_ru,
+            "changed": False,
+            "boost_attempted": False,
+            "restore_status": "not_required",
+        }
+        capacity["targets"].append(target_snapshot)
+        if original_ru and original_ru < target_ru:
+            target_snapshot["boost_attempted"] = True
+            target_snapshot["restore_status"] = "pending"
+            _persist_backup_state(
+                job,
+                backup_state,
+                settings,
+                f"Recorded source Cosmos capacity recovery snapshot for {target_snapshot['scope']}",
+            )
+            capacity = backup_state.setdefault("source_capacity", capacity)
+            target_snapshot = capacity["targets"][-1]
+            _assert_backup_job_lease(job)
+            try:
+                scale_result = set_database_throughput(
+                    inspection["management_settings"],
+                    target_ru,
+                    initiated_by=f"data_management_backup:{job.get('id')}",
+                    reason="temporary_backup_source_capacity_boost",
+                    decision={
+                        "scope": target_snapshot["scope"],
+                        "container_name": target_snapshot["container_name"],
+                        "target_mode": target_snapshot["mode"],
+                    },
+                )
+            except Exception as exc:
+                target_snapshot["boost_error"] = "Source Cosmos capacity boost operation failed."
+                log_event(
+                    "[DataManagement] Source Cosmos capacity boost failed.",
+                    {"job_id": job.get("id"), "scope": target_snapshot["scope"], "error": str(exc)},
+                    level=logging.WARNING,
+                )
+                if policy == DATA_MANAGEMENT_BACKUP_CAPACITY_FAILURE_POLICY_CONTINUE:
+                    _persist_backup_state(
+                        job,
+                        backup_state,
+                        settings,
+                        f"Source Cosmos capacity boost failed for {target_snapshot['scope']}",
+                    )
+                    restore_warnings, _ = _restore_temporary_backup_source_capacity(
+                        job,
+                        backup_state,
+                        settings,
+                    )
+                    capacity = backup_state.setdefault("source_capacity", capacity)
+                    if capacity.get("restore_pending"):
+                        raise DataManagementSettingsValidationError(
+                            "Source Cosmos capacity boost could not be safely rolled back. Retry the backup to restore the recorded capacity snapshot."
+                        ) from exc
+                    capacity.update({
+                        "status": "unavailable_continued",
+                        "completed_at": _now_iso(),
+                        "warning": "Source Cosmos capacity boost could not be applied.",
+                    })
+                    for restore_warning in restore_warnings:
+                        _append_backup_warning(backup_state, restore_warning)
+                    _append_backup_warning(
+                        backup_state,
+                        "Source Cosmos capacity boost failed; continuing without a boost.",
+                    )
+                    return _persist_backup_state(
+                        job,
+                        backup_state,
+                        settings,
+                        "Source Cosmos capacity boost unavailable; continuing without boost",
+                    )
+                _persist_backup_state(
+                    job,
+                    backup_state,
+                    settings,
+                    f"Source Cosmos capacity boost failed for {target_snapshot['scope']}",
+                )
+                raise DataManagementSettingsValidationError(
+                    "Source Cosmos capacity boost could not be applied. Review source topology and managed identity ARM permissions."
+                ) from exc
+            target_snapshot["changed"] = True
+            target_snapshot["boosted_to_ru"] = scale_result.get("to_ru", target_ru)
+            target_snapshot["restore_status"] = "pending"
+        _persist_backup_state(
+            job,
+            backup_state,
+            settings,
+            f"Updated temporary source Cosmos capacity for {target_snapshot['scope']}",
+        )
+        capacity = backup_state.setdefault("source_capacity", capacity)
+
+    capacity["status"] = "boosted"
+    capacity["completed_at"] = _now_iso()
+    return _persist_backup_state(
+        job,
+        backup_state,
+        settings,
+        f"Temporary source Cosmos capacity is ready up to {target_ru} RU/s",
+    )
+
+
+def _recover_pending_temporary_backup_source_capacity(job, backup_state, settings):
+    """Claim and restore a prior fenced attempt's source capacity before more work."""
+    capacity = (
+        backup_state.get("source_capacity")
+        if isinstance(backup_state.get("source_capacity"), dict) else {}
+    )
+    if not (capacity.get("restore_pending") and capacity.get("targets")):
+        return backup_state
+    _assert_backup_job_lease(job)
+    # The new job lease fences the prior worker before recovery transfers
+    # restoration ownership, preventing a stale finally block from acting.
+    capacity.update({
+        "attempt_id": _safe_text(job.get("backup_attempt_id")),
+        "lease_generation": _safe_int(job.get("lease_generation"), default=0),
+        "recovery_attempt_id": _safe_text(job.get("backup_attempt_id")),
+        "recovery_lease_generation": _safe_int(job.get("lease_generation"), default=0),
+        "recovery_started_at": _now_iso(),
+    })
+    backup_state["source_capacity"] = capacity
+    _persist_backup_state(
+        job,
+        backup_state,
+        settings,
+        "Claimed pending source Cosmos capacity restoration for recovery",
+    )
+    _restore_temporary_backup_source_capacity(job, backup_state, settings)
+    capacity = backup_state.get("source_capacity") or {}
+    if capacity.get("restore_pending"):
+        raise DataManagementSettingsValidationError(
+            "Source Cosmos capacity restoration is still pending. Retry the backup after the recorded restore state is resolved."
+        )
+    return _persist_backup_state(
+        job,
+        backup_state,
+        settings,
+        "Recovered pending source Cosmos capacity without reapplying a boost",
+    )
+
+
+def _restore_temporary_backup_source_capacity(
+    job,
+    backup_state,
+    settings,
+    allow_cancel_requested=False,
+):
+    """Restore only capacity still owned by this fenced backup attempt."""
+    _assert_backup_job_lease(
+        job,
+        allow_cancel_requested=allow_cancel_requested,
+    )
+    capacity = (
+        backup_state.get("source_capacity")
+        if isinstance(backup_state.get("source_capacity"), dict) else {}
+    )
+    if not capacity.get("restore_pending"):
+        return [], backup_state
+    if (
+        _safe_text(capacity.get("attempt_id")) != _safe_text(job.get("backup_attempt_id")) or
+        _safe_int(capacity.get("lease_generation"), default=0) !=
+        _safe_int(job.get("lease_generation"), default=0)
+    ):
+        raise DataManagementBackupLeaseLostError(
+            "A stale backup attempt cannot restore source Cosmos capacity."
+        )
+
+    management_settings = capacity.get("management_settings") or {}
+    restore_warnings = []
+    for target in reversed(capacity.get("targets") or []):
+        _assert_backup_job_lease(
+            job,
+            allow_cancel_requested=allow_cancel_requested,
+        )
+        if not (target.get("changed") or target.get("boost_attempted")):
+            continue
+        try:
+            current = _get_backup_source_capacity_current(management_settings, target)
+            current_ru = _safe_int(current.get("current_ru"), default=0, minimum=0)
+            boosted_to_ru = _safe_int(
+                target.get("boosted_to_ru"),
+                default=target.get("target_ru"),
+                minimum=0,
+            )
+            original_ru = _safe_int(target.get("original_ru"), default=0, minimum=0)
+            if current_ru == original_ru:
+                target["restore_status"] = "not_changed"
+                continue
+            if current_ru != boosted_to_ru:
+                target["restore_status"] = "skipped_external_change"
+                restore_warnings.append(
+                    f"Did not restore source {target.get('scope')} capacity because it changed after this backup boost."
+                )
+                continue
+            scale_result = set_database_throughput(
+                management_settings,
+                original_ru,
+                initiated_by=f"data_management_backup:{job.get('id')}",
+                reason="restore_temporary_backup_source_capacity",
+                decision={
+                    "scope": target.get("scope"),
+                    "container_name": target.get("container_name") or "",
+                    "target_mode": target.get("mode"),
+                },
+            )
+            target["restore_status"] = "restored"
+            target["restored_to_ru"] = scale_result.get("to_ru", original_ru)
+        except Exception as exc:
+            target["restore_status"] = "restore_failed"
+            log_event(
+                "[DataManagement] Source Cosmos capacity restoration failed.",
+                {"job_id": job.get("id"), "scope": target.get("scope"), "error": str(exc)},
+                level=logging.WARNING,
+            )
+            restore_warnings.append(
+                f"Failed to restore source {target.get('scope')} capacity."
+            )
+
+    capacity["restore_pending"] = any(
+        target.get("restore_status") in {"pending", "restore_failed"}
+        for target in capacity.get("targets") or []
+    )
+    capacity["restored_at"] = _now_iso()
+    capacity["status"] = (
+        "restore_pending" if capacity["restore_pending"] else
+        "restored_with_warnings" if restore_warnings else
+        "restored"
+    )
+    capacity["restore_warnings"] = restore_warnings
+    backup_state["source_capacity"] = capacity
+    _persist_backup_state(
+        job,
+        backup_state,
+        settings,
+        "Restored temporary source Cosmos capacity",
+        allow_cancel_requested=allow_cancel_requested,
+    )
+    return restore_warnings, backup_state
 
 
 def _apply_temporary_destination_capacity(job, migration_state, settings, migration_plan):
@@ -6934,6 +7454,16 @@ def _normalize_data_management_backup_plan(settings, backup_type, options=None, 
                 _safe_text((settings or {}).get("encryption_key_reference"))
             ),
         ),
+        "cosmos_execution": {
+            "max_parallel_operations": _get_backup_parallel_operations(settings),
+            "retry_count": _get_backup_retry_count(settings),
+            "temporary_source_ru_enabled": _safe_bool(
+                (settings or {}).get("backup_temporary_source_ru_enabled"),
+                False,
+            ),
+            "temporary_source_ru": _get_backup_temporary_source_ru(settings),
+            "capacity_failure_policy": _get_backup_capacity_failure_policy(settings),
+        },
         "resource_contract": ["cosmos", "ai_search", "source_blobs"],
     }
 
@@ -7328,6 +7858,13 @@ def _sanitize_data_management_backup_state_for_admin(state):
     """Expose durable backup progress without source content, locators, or credentials."""
     if not isinstance(state, dict):
         return {}
+
+    def sanitize_metric_number(value):
+        try:
+            return round(max(0.0, float(value)), 3)
+        except (TypeError, ValueError):
+            return 0.0
+
     resources = {}
     for resource_name, resource in (state.get("resources") or {}).items():
         if not isinstance(resource, dict):
@@ -7355,9 +7892,26 @@ def _sanitize_data_management_backup_state_for_admin(state):
                     "failed_count",
                     "bytes",
                     "checkpoint_count",
+                    "retry_attempt_count",
+                    "throttle_count",
+                    "parallel_operations",
+                    "active_parallel_operations",
+                    "source_page_count",
                 )
                 if field_name in progress
             },
+            "telemetry": {
+                field_name: sanitize_metric_number(progress.get(field_name))
+                for field_name in (
+                    "request_units",
+                    "elapsed_seconds",
+                    "records_per_second",
+                    "bytes_per_second",
+                    "request_units_per_second",
+                )
+                if field_name in progress
+            },
+            "current_container": _safe_text(progress.get("current_container")),
             "checkpoint": {
                 "next_batch_number": _safe_int(checkpoint.get("next_batch_number"), default=0, minimum=0),
                 "completed_batch_count": _safe_int(checkpoint.get("completed_batch_count"), default=0, minimum=0),
@@ -7385,6 +7939,44 @@ def _sanitize_data_management_backup_state_for_admin(state):
                 )
         return safe_summary
 
+    source_capacity = (
+        state.get("source_capacity")
+        if isinstance(state.get("source_capacity"), dict) else {}
+    )
+    public_source_capacity = {
+        "status": _safe_text(source_capacity.get("status")),
+        "restore_pending": bool(source_capacity.get("restore_pending")),
+        "failure_policy": _safe_text(source_capacity.get("failure_policy")),
+        "target_ru": _safe_int(source_capacity.get("target_ru"), default=0, minimum=0),
+        "started_at": source_capacity.get("started_at"),
+        "completed_at": source_capacity.get("completed_at"),
+        "restored_at": source_capacity.get("restored_at"),
+        "restore_warnings": [
+            _sanitize_data_management_backup_text(warning)
+            for warning in (source_capacity.get("restore_warnings") or [])
+        ][-DATA_MANAGEMENT_BACKUP_MAX_PUBLIC_ITEM_SUMMARIES:],
+        "topology": _sanitize_activity_value(
+            source_capacity.get("topology")
+            if isinstance(source_capacity.get("topology"), dict) else {}
+        ),
+        "targets": [
+            {
+                "scope": _safe_text(target.get("scope")),
+                "container_name": _safe_text(target.get("container_name")),
+                "mode": _safe_text(target.get("mode")),
+                "original_ru": _safe_int(target.get("original_ru"), default=0, minimum=0),
+                "target_ru": _safe_int(target.get("target_ru"), default=0, minimum=0),
+                "boosted_to_ru": _safe_int(target.get("boosted_to_ru"), default=0, minimum=0),
+                "changed": bool(target.get("changed")),
+                "restore_status": _safe_text(target.get("restore_status")),
+            }
+            for target in (source_capacity.get("targets") or [])
+            if isinstance(target, dict)
+        ],
+    }
+    totals = state.get("totals") if isinstance(state.get("totals"), dict) else {}
+    telemetry = state.get("telemetry") if isinstance(state.get("telemetry"), dict) else {}
+
     return {
         "schema_version": state.get("schema_version"),
         "backup_id": state.get("backup_id"),
@@ -7398,7 +7990,7 @@ def _sanitize_data_management_backup_state_for_admin(state):
         "last_progress_at": state.get("last_progress_at"),
         "resume_count": _safe_int(state.get("resume_count"), default=0, minimum=0),
         "totals": {
-            field_name: _safe_int((state.get("totals") or {}).get(field_name), default=0, minimum=0)
+            field_name: _safe_int(totals.get(field_name), default=0, minimum=0)
             for field_name in (
                 "processed_count",
                 "exported_count",
@@ -7406,8 +7998,31 @@ def _sanitize_data_management_backup_state_for_admin(state):
                 "failed_count",
                 "bytes",
                 "checkpoint_count",
+                "retry_attempt_count",
+                "throttle_count",
+            )
+        } | {
+            field_name: sanitize_metric_number(totals.get(field_name))
+            for field_name in (
+                "request_units",
+                "elapsed_seconds",
+                "records_per_second",
+                "request_units_per_second",
             )
         },
+        "telemetry": {
+            "current_container": _safe_text(telemetry.get("current_container")),
+            "checkpoint_position": _safe_int(telemetry.get("checkpoint_position"), default=0, minimum=0),
+            "records_processed": _safe_int(telemetry.get("records_processed"), default=0, minimum=0),
+            "bytes": _safe_int(telemetry.get("bytes"), default=0, minimum=0),
+            "request_units": sanitize_metric_number(telemetry.get("request_units")),
+            "retries": _safe_int(telemetry.get("retries"), default=0, minimum=0),
+            "throttles": _safe_int(telemetry.get("throttles"), default=0, minimum=0),
+            "elapsed_seconds": sanitize_metric_number(telemetry.get("elapsed_seconds")),
+            "records_per_second": sanitize_metric_number(telemetry.get("records_per_second")),
+            "request_units_per_second": sanitize_metric_number(telemetry.get("request_units_per_second")),
+        },
+        "source_capacity": public_source_capacity,
         "warnings": [
             _sanitize_data_management_backup_text(warning)
             for warning in (state.get("warnings") or [])[-DATA_MANAGEMENT_BACKUP_MAX_PUBLIC_ITEM_SUMMARIES:]
@@ -7943,9 +8558,12 @@ def _summarize_backup_artifact(artifact):
         "bytes_per_second",
         "request_units_per_second",
         "parallel_operations",
+        "active_parallel_operations",
         "batch_size",
         "retry_count",
         "retry_attempt_count",
+        "throttle_count",
+        "source_page_count",
         "prior_failed_count",
         "checkpoint_count",
         "source_read_count",
@@ -10098,11 +10716,13 @@ def _create_backup_manifest_writer(job_id, resource_name):
 def _backup_resource_metrics(resource):
     if not isinstance(resource, dict):
         return {}
-    result = resource.get("result")
-    if isinstance(result, dict) and result:
-        return result
-    progress = resource.get("progress")
-    return progress if isinstance(progress, dict) else {}
+    progress = resource.get("progress") if isinstance(resource.get("progress"), dict) else {}
+    result = resource.get("result") if isinstance(resource.get("result"), dict) else {}
+    if not result:
+        return progress
+    metrics = copy.deepcopy(progress)
+    metrics.update(result)
+    return metrics
 
 
 def _update_backup_state_totals(state):
@@ -10114,7 +10734,12 @@ def _update_backup_state_totals(state):
         "failed_count": 0,
         "bytes": 0,
         "checkpoint_count": 0,
+        "request_units": 0.0,
+        "retry_attempt_count": 0,
+        "throttle_count": 0,
     }
+    current_container = ""
+    started_at_values = []
     for resource in (state.get("resources") or {}).values():
         metrics = _backup_resource_metrics(resource)
         totals["processed_count"] += _safe_int(metrics.get("processed_count"), default=0, minimum=0)
@@ -10127,7 +10752,51 @@ def _update_backup_state_totals(state):
         totals["failed_count"] += _safe_int(metrics.get("failed_count"), default=0, minimum=0)
         totals["bytes"] += _safe_int(metrics.get("bytes"), default=0, minimum=0)
         totals["checkpoint_count"] += _safe_int(metrics.get("checkpoint_count"), default=0, minimum=0)
+        try:
+            totals["request_units"] += max(0.0, float(metrics.get("request_units") or 0.0))
+        except (TypeError, ValueError) as exc:
+            logging.debug(
+                "Ignoring invalid backup request_units metric value %r during totals aggregation: %s",
+                metrics.get("request_units"),
+                exc,
+            )
+        totals["retry_attempt_count"] += _safe_int(
+            metrics.get("retry_attempt_count"),
+            default=0,
+            minimum=0,
+        )
+        totals["throttle_count"] += _safe_int(
+            metrics.get("throttle_count"),
+            default=0,
+            minimum=0,
+        )
+        resource_started_at = _parse_iso_datetime(resource.get("started_at"))
+        if resource_started_at:
+            started_at_values.append(resource_started_at)
+        if resource.get("status") == "in_progress" and metrics.get("current_container"):
+            current_container = _safe_text(metrics.get("current_container"))
+    started_at = min(started_at_values) if started_at_values else None
+    elapsed_seconds = max(
+        0.001,
+        (_now_utc() - started_at).total_seconds() if started_at else 0.001,
+    )
+    totals["request_units"] = round(totals["request_units"], 3)
+    totals["elapsed_seconds"] = round(elapsed_seconds, 3)
+    totals["records_per_second"] = round(totals["processed_count"] / elapsed_seconds, 3)
+    totals["request_units_per_second"] = round(totals["request_units"] / elapsed_seconds, 3)
     state["totals"] = totals
+    state["telemetry"] = {
+        "current_container": current_container,
+        "checkpoint_position": totals["checkpoint_count"],
+        "records_processed": totals["processed_count"],
+        "bytes": totals["bytes"],
+        "request_units": totals["request_units"],
+        "retries": totals["retry_attempt_count"],
+        "throttles": totals["throttle_count"],
+        "elapsed_seconds": totals["elapsed_seconds"],
+        "records_per_second": totals["records_per_second"],
+        "request_units_per_second": totals["request_units_per_second"],
+    }
     return totals
 
 
@@ -10441,21 +11110,111 @@ def _is_backup_value_within_cutoff(value, source_cutoff_at):
     return timestamp.astimezone(timezone.utc) <= cutoff
 
 
-def _iter_backup_cosmos_source_items(container, artifact, backup_plan):
-    """Yield normalized Cosmos backup inputs without mutating their source records."""
+def _get_backup_exception_status_code(error):
+    """Read an Azure SDK status code without retaining provider response content."""
+    status_code = getattr(error, "status_code", None)
+    if status_code is None:
+        status_code = getattr(getattr(error, "response", None), "status_code", None)
+    return _safe_int(status_code, default=0, minimum=0) or None
+
+
+def _get_backup_exception_headers(error):
+    response = getattr(error, "response", None)
+    headers = getattr(response, "headers", None) or getattr(error, "headers", None)
+    return headers if hasattr(headers, "items") else {}
+
+
+def _get_backup_header_value(headers, header_name):
+    for candidate_name, candidate_value in (headers or {}).items():
+        if _safe_text(candidate_name).lower() == header_name.lower():
+            return candidate_value
+    return None
+
+
+def _get_backup_retry_after_seconds(error):
+    """Honor Azure retry guidance while bounding a worker's cooperative delay."""
+    headers = _get_backup_exception_headers(error)
+    for header_name in ("x-ms-retry-after-ms", "retry-after-ms"):
+        try:
+            value = float(_get_backup_header_value(headers, header_name)) / 1000.0
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return min(DATA_MANAGEMENT_BACKUP_MAX_RETRY_DELAY_SECONDS, value)
+
+    retry_after = _get_backup_header_value(headers, "retry-after")
+    try:
+        value = float(retry_after)
+        if value > 0:
+            return min(DATA_MANAGEMENT_BACKUP_MAX_RETRY_DELAY_SECONDS, value)
+    except (TypeError, ValueError):
+        try:
+            parsed = parsedate_to_datetime(str(retry_after))
+        except (TypeError, ValueError, IndexError, OverflowError):
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        delay = (parsed.astimezone(timezone.utc) - _now_utc()).total_seconds()
+        return min(DATA_MANAGEMENT_BACKUP_MAX_RETRY_DELAY_SECONDS, delay) if delay > 0 else None
+    return None
+
+
+def _is_retryable_backup_cosmos_error(error):
+    status_code = _get_backup_exception_status_code(error)
+    return (
+        status_code is None or
+        status_code in {408, 429, 449} or
+        500 <= status_code <= 599
+    )
+
+
+def _get_backup_retry_delay(error, attempt):
+    """Use capped exponential backoff plus jitter, respecting Retry-After floors."""
+    exponential_delay = min(
+        DATA_MANAGEMENT_BACKUP_MAX_RETRY_DELAY_SECONDS,
+        float(2 ** max(0, _safe_int(attempt, default=1, minimum=1) - 1)),
+    )
+    retry_after = _get_backup_retry_after_seconds(error)
+    base_delay = max(exponential_delay, retry_after or 0.0)
+    jitter = random.uniform(0.0, min(1.0, max(0.1, base_delay * 0.2)))
+    return min(DATA_MANAGEMENT_BACKUP_MAX_RETRY_DELAY_SECONDS, base_delay + jitter)
+
+
+def _iter_backup_cosmos_source_items(
+    container,
+    artifact,
+    backup_plan,
+    telemetry_callback=None,
+    cancel_event=None,
+):
+    """Read one deterministic, bounded Cosmos page at a time without source mutation."""
     source_cutoff_epoch = _safe_int(
         (backup_plan or {}).get("cosmos_source_cutoff_epoch"),
         default=0,
         minimum=0,
     )
     container_name = _safe_text(getattr(app_config, artifact["container_name_attr"], artifact["name"]))
-    for raw_item in container.query_items(
-        query="SELECT * FROM c",
-        enable_cross_partition_query=True,
-    ):
+    retry_count = _get_backup_retry_count({}, backup_plan)
+    # Keep the ordered source query compatible with existing default indexes.
+    # The immutable cutoff is still applied per streamed item below.
+    query = "SELECT * FROM c ORDER BY c.id"
+    parameters = []
+
+    def report_telemetry(values):
+        if callable(telemetry_callback):
+            telemetry_callback(values if isinstance(values, dict) else {})
+
+    def response_hook(headers, _response):
+        request_units = _get_cosmos_response_request_units(headers)
+        if request_units:
+            report_telemetry({"request_units": request_units})
+
+    def normalize_item(raw_item):
+        if not isinstance(raw_item, dict):
+            return None
         source_timestamp = _safe_int(raw_item.get("_ts"), default=0, minimum=0)
         if source_cutoff_epoch and source_timestamp > source_cutoff_epoch:
-            continue
+            return None
         record = _strip_cosmos_system_fields(raw_item)
         partition_key = _get_document_path_value(record, artifact["partition_key_path"])
         source_identity = _build_backup_source_identity(
@@ -10469,11 +11228,108 @@ def _iter_backup_cosmos_source_items(container, artifact, backup_plan):
             "ts": raw_item.get("_ts"),
             "record": record,
         })
-        yield {
+        return {
             "payload": record,
             "source_identity": source_identity,
             "source_version": source_version,
         }
+
+    continuation_token = None
+    while True:
+        if cancel_event is not None and cancel_event.is_set():
+            raise DataManagementBackupCanceledError(
+                "Cosmos source export stopped after backup cancellation or lease loss."
+            )
+        page_completed = False
+        for attempt in range(1, retry_count + 1):
+            try:
+                source_iterable = container.query_items(
+                    query=query,
+                    parameters=parameters,
+                    enable_cross_partition_query=True,
+                    max_item_count=DATA_MANAGEMENT_BACKUP_MANIFEST_BATCH_SIZE,
+                    populate_query_metrics=True,
+                    response_hook=response_hook,
+                )
+                if hasattr(source_iterable, "by_page"):
+                    page_iterator = source_iterable.by_page(
+                        continuation_token=continuation_token,
+                    )
+                    try:
+                        source_page = list(next(page_iterator))
+                    except StopIteration:
+                        return
+                    normalized_page = [
+                        item for item in (normalize_item(raw_item) for raw_item in source_page)
+                        if item is not None
+                    ]
+                    normalized_page.sort(
+                        key=lambda item: (item["source_identity"], item["source_version"]),
+                    )
+                    report_telemetry({"source_page_count": 1})
+                    for source_item in normalized_page:
+                        yield source_item
+                    continuation_token = getattr(page_iterator, "continuation_token", None)
+                    page_completed = True
+                    break
+
+                # Lightweight test doubles may not expose Cosmos paging. Keep their
+                # staging bounded even though production uses continuation pages.
+                buffered_items = []
+                for raw_item in source_iterable:
+                    normalized_item = normalize_item(raw_item)
+                    if normalized_item is None:
+                        continue
+                    buffered_items.append(normalized_item)
+                    if len(buffered_items) < DATA_MANAGEMENT_BACKUP_MANIFEST_BATCH_SIZE:
+                        continue
+                    buffered_items.sort(
+                        key=lambda item: (item["source_identity"], item["source_version"]),
+                    )
+                    report_telemetry({"source_page_count": 1})
+                    for source_item in buffered_items:
+                        yield source_item
+                    buffered_items = []
+                if buffered_items:
+                    buffered_items.sort(
+                        key=lambda item: (item["source_identity"], item["source_version"]),
+                    )
+                    report_telemetry({"source_page_count": 1})
+                    for source_item in buffered_items:
+                        yield source_item
+                return
+            except (DataManagementBackupCanceledError, DataManagementBackupLeaseLostError):
+                raise
+            except Exception as exc:
+                if not _is_retryable_backup_cosmos_error(exc) or attempt >= retry_count:
+                    log_event(
+                        "[DataManagement] Cosmos backup source page read failed.",
+                        {
+                            "container": container_name,
+                            "status_code": _get_backup_exception_status_code(exc),
+                            "error": str(exc),
+                        },
+                        level=logging.WARNING,
+                    )
+                    raise
+                status_code = _get_backup_exception_status_code(exc)
+                retry_delay = _get_backup_retry_delay(exc, attempt)
+                report_telemetry({
+                    "source_retry_attempt_count": 1,
+                    "source_throttle_count": 1 if status_code in {429, 449} else 0,
+                    "last_retry_delay_seconds": round(retry_delay, 3),
+                })
+                if cancel_event is not None:
+                    if cancel_event.wait(retry_delay):
+                        raise DataManagementBackupCanceledError(
+                            "Cosmos source export stopped during retry backoff."
+                        )
+                else:
+                    time.sleep(retry_delay)
+        if not page_completed:
+            return
+        if not continuation_token:
+            return
 
 
 def _iter_backup_search_source_items(search_client, artifact, backup_plan):
@@ -10514,6 +11370,591 @@ def _build_backup_manifest_entry(job, service, resource_name, source_item, statu
         "recorded_at": _now_iso(),
         **details,
     }
+
+
+def _stage_backup_jsonl_batch(
+    container_client,
+    batch_blob_name,
+    source_batch,
+    fernet,
+    retry_count,
+    cancel_event=None,
+):
+    """Stage one bounded JSONL artifact without allowing a worker to mutate job state."""
+    started_at = time.perf_counter()
+    retry_attempt_count = 0
+    throttle_count = 0
+    retry_delay_seconds = 0.0
+    last_error = None
+    for attempt in range(1, retry_count + 1):
+        if cancel_event is not None and cancel_event.is_set():
+            raise DataManagementBackupCanceledError(
+                "Backup batch staging stopped after cancellation or lease loss."
+            )
+        try:
+            upload = _write_jsonl_artifact(
+                container_client,
+                batch_blob_name,
+                (source_item["payload"] for source_item in source_batch),
+                fernet=fernet,
+            )
+            return {
+                "status": "succeeded",
+                "upload": upload,
+                "attempt": attempt,
+                "retry_attempt_count": retry_attempt_count,
+                "throttle_count": throttle_count,
+                "retry_delay_seconds": round(retry_delay_seconds, 3),
+                "elapsed_seconds": round(time.perf_counter() - started_at, 3),
+            }
+        except DataManagementBackupCanceledError:
+            raise
+        except Exception as exc:
+            last_error = exc
+            if not _is_retryable_backup_cosmos_error(exc) or attempt >= retry_count:
+                break
+            retry_attempt_count += 1
+            if _get_backup_exception_status_code(exc) in {429, 449}:
+                throttle_count += 1
+            retry_delay = _get_backup_retry_delay(exc, attempt)
+            retry_delay_seconds += retry_delay
+            if cancel_event is not None:
+                if cancel_event.wait(retry_delay):
+                    raise DataManagementBackupCanceledError(
+                        "Backup batch staging stopped during retry backoff."
+                    )
+            else:
+                time.sleep(retry_delay)
+    return {
+        "status": "failed",
+        "attempt": retry_count,
+        "retry_attempt_count": retry_attempt_count,
+        "throttle_count": throttle_count,
+        "retry_delay_seconds": round(retry_delay_seconds, 3),
+        "elapsed_seconds": round(time.perf_counter() - started_at, 3),
+        "error": "Backup batch artifact upload failed.",
+    }
+
+
+def _build_backup_progress_metrics(
+    resource_started_at,
+    source_read_count,
+    exported_count,
+    skipped_count,
+    failed_count,
+    byte_count,
+    checkpoint_count,
+    request_units,
+    retry_attempt_count,
+    throttle_count,
+    parallel_operations,
+    active_parallel_operations,
+    source_page_count,
+    current_container,
+):
+    """Return bounded per-container telemetry suitable for durable admin progress."""
+    transfer_metrics = build_transfer_metrics(
+        resource_started_at,
+        copied_count=exported_count,
+        skipped_count=skipped_count,
+        failed_count=failed_count,
+        byte_count=byte_count,
+        request_units=request_units,
+    )
+    return {
+        "source_read_count": source_read_count,
+        "processed_count": transfer_metrics["processed_count"],
+        "item_count": exported_count,
+        "skipped_count": skipped_count,
+        "failed_count": failed_count,
+        "bytes": byte_count,
+        "checkpoint_count": checkpoint_count,
+        "request_units": transfer_metrics["request_units"],
+        "elapsed_seconds": transfer_metrics["elapsed_seconds"],
+        "records_per_second": transfer_metrics["items_per_second"],
+        "bytes_per_second": transfer_metrics["bytes_per_second"],
+        "request_units_per_second": transfer_metrics["request_units_per_second"],
+        "retry_attempt_count": retry_attempt_count,
+        "throttle_count": throttle_count,
+        "parallel_operations": parallel_operations,
+        "active_parallel_operations": active_parallel_operations,
+        "source_page_count": source_page_count,
+        "current_container": _safe_text(current_container),
+    }
+
+
+def _execute_parallel_backup_cosmos_resource(
+    job,
+    state,
+    settings,
+    container_client,
+    base_prefix,
+    fernet,
+    resource_name,
+    artifact_metadata,
+    source_container,
+    artifact,
+):
+    """Stage ordered Cosmos JSONL checkpoint batches with bounded parallel workers."""
+    _sync_backup_latest_item_state_from_manifest(job, resource_name)
+    existing_resource = get_backup_resource(state, resource_name)
+    if is_backup_resource_completed(state, resource_name):
+        return copy.deepcopy(existing_resource.get("result") or {})
+
+    backup_plan = job.get("backup_plan") if isinstance(job.get("backup_plan"), dict) else {}
+    parallel_operations = _get_backup_parallel_operations(settings, backup_plan)
+    retry_count = _get_backup_retry_count(settings, backup_plan)
+    resource = start_backup_resource(state, resource_name, "cosmos_export")
+    resource_started_at = resource.get("attempt_started_at") or resource.get("started_at")
+    previous_progress = resource.get("progress") if isinstance(resource.get("progress"), dict) else {}
+    previous_checkpoint = resource.get("checkpoint") if isinstance(resource.get("checkpoint"), dict) else {}
+    exported_count = _safe_int(previous_progress.get("item_count"), default=0, minimum=0)
+    skipped_count = _safe_int(previous_progress.get("skipped_count"), default=0, minimum=0)
+    failed_count = 0
+    source_read_count = _safe_int(previous_progress.get("source_read_count"), default=0, minimum=0)
+    byte_count = _safe_int(previous_progress.get("bytes"), default=0, minimum=0)
+    checkpoint_count = _safe_int(previous_progress.get("checkpoint_count"), default=0, minimum=0)
+    request_units = float(previous_progress.get("request_units") or 0.0)
+    retry_attempt_count = _safe_int(previous_progress.get("retry_attempt_count"), default=0, minimum=0)
+    throttle_count = _safe_int(previous_progress.get("throttle_count"), default=0, minimum=0)
+    source_page_count = _safe_int(previous_progress.get("source_page_count"), default=0, minimum=0)
+    batch_number = _safe_int(previous_checkpoint.get("next_batch_number"), default=1, minimum=1)
+    active_parallel_operations = parallel_operations
+    clean_batch_count = 0
+    append_manifest, flush_manifest, manifest_buffer = _create_backup_manifest_writer(
+        job.get("id"),
+        resource_name,
+    )
+    pending_latest_state_updates = []
+    cancel_event = Event()
+    telemetry_lock = Lock()
+
+    def add_source_telemetry(values):
+        nonlocal request_units, retry_attempt_count, throttle_count, source_page_count
+        nonlocal active_parallel_operations, clean_batch_count
+        with telemetry_lock:
+            request_units += max(0.0, float((values or {}).get("request_units") or 0.0))
+            retry_attempt_count += _safe_int(
+                (values or {}).get("source_retry_attempt_count"),
+                default=0,
+                minimum=0,
+            )
+            received_throttle_count = _safe_int(
+                (values or {}).get("source_throttle_count"),
+                default=0,
+                minimum=0,
+            )
+            throttle_count += received_throttle_count
+            source_page_count += _safe_int(
+                (values or {}).get("source_page_count"),
+                default=0,
+                minimum=0,
+            )
+            if received_throttle_count:
+                active_parallel_operations = max(1, active_parallel_operations - 1)
+                clean_batch_count = 0
+
+    def persist(message, checkpoint=None, allow_cancel_requested=False):
+        nonlocal state
+        _assert_backup_job_lease(
+            job,
+            allow_cancel_requested=allow_cancel_requested,
+        )
+        if manifest_buffer:
+            flush_manifest()
+        progress = _build_backup_progress_metrics(
+            resource_started_at,
+            source_read_count,
+            exported_count,
+            skipped_count,
+            failed_count,
+            byte_count,
+            checkpoint_count,
+            request_units,
+            retry_attempt_count,
+            throttle_count,
+            parallel_operations,
+            active_parallel_operations,
+            source_page_count,
+            artifact_metadata.get("container_name"),
+        )
+        state = _persist_backup_checkpoint(
+            job,
+            state,
+            settings,
+            resource_name,
+            progress,
+            checkpoint if isinstance(checkpoint, dict) else previous_checkpoint,
+            message,
+            allow_cancel_requested=allow_cancel_requested,
+        )
+        _flush_backup_latest_item_state_updates(
+            job,
+            "cosmos",
+            resource_name,
+            pending_latest_state_updates,
+        )
+        return state
+
+    def record_item_outcome(source_item, status, checkpoint_id="", artifact_path="", failure_summary="", skip_summary="", artifact_bytes=0):
+        if status == "failed":
+            _append_backup_state_summary(state, "failed_items", {
+                "service": "cosmos",
+                "resource_name": resource_name,
+                "source_identity": source_item["source_identity"],
+                "failure_summary": _safe_text(failure_summary)[:500],
+            })
+        elif status == "skipped":
+            _append_backup_state_summary(state, "skipped_items", {
+                "service": "cosmos",
+                "resource_name": resource_name,
+                "source_identity": source_item["source_identity"],
+                "skip_summary": _safe_text(skip_summary)[:500],
+            })
+        append_manifest(_build_backup_manifest_entry(
+            job,
+            "cosmos",
+            resource_name,
+            source_item,
+            status,
+            artifact_checkpoint_id=checkpoint_id,
+            artifact_path=artifact_path,
+            bytes=artifact_bytes,
+            failure_summary=_safe_text(failure_summary)[:500],
+            skip_summary=_safe_text(skip_summary)[:500],
+        ))
+        _queue_backup_latest_item_state_update(
+            pending_latest_state_updates,
+            source_item,
+            status,
+            checkpoint_id=checkpoint_id,
+            artifact_path=artifact_path,
+            failure_summary=_safe_text(failure_summary)[:500],
+            skip_summary=_safe_text(skip_summary)[:500],
+        )
+
+    def prepare_batch(sequence_number, source_batch):
+        nonlocal source_read_count
+        export_items = []
+        skipped_items = []
+        failed_items = []
+        for source_item in source_batch:
+            source_read_count += 1
+            latest_state = _read_backup_latest_item_state(
+                _get_backup_source_scope(job),
+                _build_backup_lineage_id(backup_plan),
+                "cosmos",
+                resource_name,
+                source_item["source_identity"],
+            )
+            if not _is_backup_item_due_for_export(
+                backup_plan,
+                latest_state,
+                source_item["source_version"],
+                backup_job_id=job.get("id"),
+            ):
+                skipped_items.append((
+                    source_item,
+                    _safe_text((latest_state or {}).get("artifact_checkpoint_id")),
+                    _safe_text((latest_state or {}).get("artifact_path")),
+                ))
+                continue
+            try:
+                json.dumps(source_item["payload"], default=_json_default, ensure_ascii=False)
+            except (TypeError, ValueError) as exc:
+                failed_items.append((source_item, f"Backup serialization failed: {exc}"))
+                continue
+            export_items.append(source_item)
+        batch_identity = _build_backup_batch_identity(job, resource_name, source_batch)
+        return {
+            "sequence_number": sequence_number,
+            "source_batch": source_batch,
+            "export_items": export_items,
+            "skipped_items": skipped_items,
+            "failed_items": failed_items,
+            "batch_identity": batch_identity,
+            "checkpoint_id": (
+                f"{job.get('id')}:{_safe_job_item_id_part(resource_name)}:{batch_identity}"
+            ),
+            "batch_blob_name": (
+                f"{base_prefix}/cosmos/{_safe_job_item_id_part(resource_name)}/"
+                f"batches/{batch_identity}.jsonl"
+            ),
+        }
+
+    def commit_batch(context, stage_result):
+        nonlocal exported_count, skipped_count, failed_count, byte_count
+        nonlocal checkpoint_count, batch_number, previous_checkpoint
+        nonlocal retry_attempt_count, throttle_count, active_parallel_operations, clean_batch_count
+        _assert_backup_job_lease(job)
+        for source_item, checkpoint_id, artifact_path in context["skipped_items"]:
+            skipped_count += 1
+            record_item_outcome(
+                source_item,
+                "skipped",
+                checkpoint_id=checkpoint_id,
+                artifact_path=artifact_path,
+                skip_summary="Latest successful backup state matches the source version.",
+            )
+        for source_item, failure_summary in context["failed_items"]:
+            failed_count += 1
+            record_item_outcome(
+                source_item,
+                "failed",
+                failure_summary=failure_summary,
+            )
+
+        stage_result = stage_result if isinstance(stage_result, dict) else {}
+        retry_attempt_count += _safe_int(
+            stage_result.get("retry_attempt_count"),
+            default=0,
+            minimum=0,
+        )
+        stage_throttles = _safe_int(stage_result.get("throttle_count"), default=0, minimum=0)
+        throttle_count += stage_throttles
+        if stage_throttles:
+            active_parallel_operations = max(1, active_parallel_operations - 1)
+            clean_batch_count = 0
+        else:
+            clean_batch_count += 1
+            if clean_batch_count >= max(1, active_parallel_operations) and active_parallel_operations < parallel_operations:
+                active_parallel_operations += 1
+                clean_batch_count = 0
+
+        artifact_path = ""
+        if context["export_items"] and stage_result.get("status") == "succeeded":
+            upload = stage_result.get("upload") if isinstance(stage_result.get("upload"), dict) else {}
+            artifact_path = _safe_text(upload.get("path"))
+            exported_count += len(context["export_items"])
+            byte_count += _safe_int(upload.get("bytes"), default=0, minimum=0)
+            for source_item in context["export_items"]:
+                record_item_outcome(
+                    source_item,
+                    "succeeded",
+                    checkpoint_id=context["checkpoint_id"],
+                    artifact_path=artifact_path,
+                    artifact_bytes=_safe_int(upload.get("bytes"), default=0, minimum=0),
+                )
+        elif context["export_items"]:
+            failure_summary = _safe_text(stage_result.get("error")) or "Backup batch artifact upload failed."
+            for source_item in context["export_items"]:
+                failed_count += 1
+                record_item_outcome(
+                    source_item,
+                    "failed",
+                    failure_summary=failure_summary,
+                )
+
+        checkpoint_count += 1
+        previous_checkpoint = _build_backup_checkpoint_summary(
+            previous_checkpoint,
+            batch_number,
+            artifact_path,
+        )
+        batch_number += 1
+        persist(
+            f"Checkpointed Cosmos backup batch for {artifact_metadata.get('container_name')}",
+            previous_checkpoint,
+        )
+
+    def consume_completed_futures(pending_by_future, completed_results, wait_for_result):
+        last_heartbeat = time.monotonic()
+        while pending_by_future and (wait_for_result or completed_results):
+            completed_futures, _pending_futures = wait(
+                set(pending_by_future),
+                timeout=DATA_MANAGEMENT_BACKUP_HEARTBEAT_POLL_SECONDS,
+                return_when=FIRST_COMPLETED,
+            )
+            for future in completed_futures:
+                context = pending_by_future.pop(future)
+                try:
+                    completed_results[context["sequence_number"]] = (
+                        context,
+                        future.result(),
+                    )
+                except DataManagementBackupCanceledError:
+                    cancel_event.set()
+                    for pending_future in pending_by_future:
+                        pending_future.cancel()
+                    _assert_backup_job_lease(job)
+                    raise
+                except Exception as exc:
+                    completed_results[context["sequence_number"]] = (
+                        context,
+                        {
+                            "status": "failed",
+                            "attempt": retry_count,
+                            "error": _sanitize_data_management_backup_text(str(exc)),
+                        },
+                    )
+            now = time.monotonic()
+            if pending_by_future and now - last_heartbeat >= DATA_MANAGEMENT_BACKUP_HEARTBEAT_INTERVAL_SECONDS:
+                persist(
+                    f"Waiting for Cosmos backup staging workers for {artifact_metadata.get('container_name')}",
+                )
+                last_heartbeat = now
+            if completed_futures or not wait_for_result:
+                return
+
+    pending_by_future = {}
+    completed_results = {}
+    next_sequence_number = 1
+    next_commit_sequence = 1
+    source_batch = []
+
+    try:
+        source_items = _iter_backup_cosmos_source_items(
+            source_container,
+            artifact,
+            backup_plan,
+            telemetry_callback=add_source_telemetry,
+            cancel_event=cancel_event,
+        )
+        with ThreadPoolExecutor(max_workers=parallel_operations) as executor:
+            for source_item in source_items:
+                source_batch.append(source_item)
+                if len(source_batch) < DATA_MANAGEMENT_BACKUP_MANIFEST_BATCH_SIZE:
+                    continue
+                context = prepare_batch(next_sequence_number, source_batch)
+                next_sequence_number += 1
+                source_batch = []
+                if context["export_items"]:
+                    while (
+                        len(pending_by_future) + len(completed_results) >=
+                        active_parallel_operations
+                    ):
+                        consume_completed_futures(pending_by_future, completed_results, True)
+                        while next_commit_sequence in completed_results:
+                            commit_context, commit_result = completed_results.pop(next_commit_sequence)
+                            commit_batch(commit_context, commit_result)
+                            next_commit_sequence += 1
+                    pending_by_future[executor.submit(
+                        _stage_backup_jsonl_batch,
+                        container_client,
+                        context["batch_blob_name"],
+                        context["export_items"],
+                        fernet,
+                        retry_count,
+                        cancel_event,
+                    )] = context
+                else:
+                    completed_results[context["sequence_number"]] = (
+                        context,
+                        {"status": "succeeded", "upload": {"path": "", "bytes": 0}},
+                    )
+                while next_commit_sequence in completed_results:
+                    commit_context, commit_result = completed_results.pop(next_commit_sequence)
+                    commit_batch(commit_context, commit_result)
+                    next_commit_sequence += 1
+
+            if source_batch:
+                context = prepare_batch(next_sequence_number, source_batch)
+                next_sequence_number += 1
+                if context["export_items"]:
+                    while (
+                        len(pending_by_future) + len(completed_results) >=
+                        active_parallel_operations
+                    ):
+                        consume_completed_futures(pending_by_future, completed_results, True)
+                        while next_commit_sequence in completed_results:
+                            commit_context, commit_result = completed_results.pop(next_commit_sequence)
+                            commit_batch(commit_context, commit_result)
+                            next_commit_sequence += 1
+                    pending_by_future[executor.submit(
+                        _stage_backup_jsonl_batch,
+                        container_client,
+                        context["batch_blob_name"],
+                        context["export_items"],
+                        fernet,
+                        retry_count,
+                        cancel_event,
+                    )] = context
+                else:
+                    completed_results[context["sequence_number"]] = (
+                        context,
+                        {"status": "succeeded", "upload": {"path": "", "bytes": 0}},
+                    )
+
+            while pending_by_future:
+                consume_completed_futures(pending_by_future, completed_results, True)
+                while next_commit_sequence in completed_results:
+                    commit_context, commit_result = completed_results.pop(next_commit_sequence)
+                    commit_batch(commit_context, commit_result)
+                    next_commit_sequence += 1
+            while next_commit_sequence in completed_results:
+                commit_context, commit_result = completed_results.pop(next_commit_sequence)
+                commit_batch(commit_context, commit_result)
+                next_commit_sequence += 1
+    except (DataManagementBackupCanceledError, DataManagementBackupLeaseLostError):
+        cancel_event.set()
+        raise
+
+    result = {
+        **copy.deepcopy(artifact_metadata if isinstance(artifact_metadata, dict) else {}),
+        "status": "warning" if failed_count else "completed",
+        "processed_count": exported_count + skipped_count + failed_count,
+        "item_count": exported_count,
+        "skipped_count": skipped_count,
+        "failed_count": failed_count,
+        "source_read_count": source_read_count,
+        "bytes": byte_count,
+        "checkpoint_count": checkpoint_count,
+        "request_units": round(request_units, 3),
+        "retry_attempt_count": retry_attempt_count,
+        "throttle_count": throttle_count,
+        "parallel_operations": parallel_operations,
+        "active_parallel_operations": active_parallel_operations,
+        "source_page_count": source_page_count,
+        "elapsed_seconds": _build_backup_progress_metrics(
+            resource_started_at,
+            source_read_count,
+            exported_count,
+            skipped_count,
+            failed_count,
+            byte_count,
+            checkpoint_count,
+            request_units,
+            retry_attempt_count,
+            throttle_count,
+            parallel_operations,
+            active_parallel_operations,
+            source_page_count,
+            artifact_metadata.get("container_name"),
+        )["elapsed_seconds"],
+        "prefix": f"{base_prefix}/cosmos/{_safe_job_item_id_part(resource_name)}/batches/",
+    }
+    result["records_per_second"] = round(
+        result["item_count"] / max(0.001, float(result["elapsed_seconds"])),
+        3,
+    )
+    result["bytes_per_second"] = round(
+        result["bytes"] / max(0.001, float(result["elapsed_seconds"])),
+        3,
+    )
+    result["request_units_per_second"] = round(
+        result["request_units"] / max(0.001, float(result["elapsed_seconds"])),
+        3,
+    )
+    if failed_count:
+        _fail_backup_resource_checkpoint(
+            job,
+            state,
+            settings,
+            resource_name,
+            "One or more backup items failed and remain eligible for focused retry.",
+            f"Completed Cosmos backup resource {artifact_metadata.get('container_name')} with retryable item failures",
+            result=result,
+        )
+    else:
+        _complete_backup_resource_checkpoint(
+            job,
+            state,
+            settings,
+            resource_name,
+            result,
+            f"Completed Cosmos backup resource {artifact_metadata.get('container_name')}",
+        )
+    return result
 
 
 def _execute_backup_jsonl_resource(
@@ -11050,6 +12491,137 @@ def _execute_backup_source_blob_resource(
     return result
 
 
+def _execute_backup_cosmos_resources(
+    job,
+    backup_state,
+    settings,
+    backup_plan,
+    container_client,
+    base_prefix,
+    fernet,
+):
+    """Run source Cosmos exports under one fenced capacity and checkpoint lifecycle."""
+    artifacts = []
+    restore_warnings = []
+    capacity_attempted = False
+    try:
+        if _safe_bool(
+            ((backup_plan.get("cosmos_execution") or {}).get("temporary_source_ru_enabled")),
+            False,
+        ):
+            capacity_attempted = True
+            _apply_temporary_backup_source_capacity(
+                job,
+                backup_state,
+                settings,
+                backup_plan,
+            )
+        for artifact in DATA_MANAGEMENT_COSMOS_ARTIFACTS:
+            resource_name = f"cosmos:{artifact['name']}"
+            if is_backup_resource_completed(backup_state, resource_name):
+                existing_resource = get_backup_resource(backup_state, resource_name)
+                artifacts.append(copy.deepcopy(existing_resource.get("result") or {}))
+                continue
+            source_container = getattr(app_config, artifact["container_attr"], None)
+            if source_container is None:
+                warning = f"Cosmos container '{artifact['name']}' was not initialized."
+                _append_backup_warning(backup_state, warning)
+                _skip_backup_resource_checkpoint(
+                    job,
+                    backup_state,
+                    settings,
+                    resource_name,
+                    warning,
+                    f"Skipped unavailable Cosmos container {artifact['name']}",
+                )
+                artifacts.append({
+                    "name": artifact["name"],
+                    "type": "cosmos_container",
+                    "status": "skipped",
+                    "warning": warning,
+                })
+                continue
+            try:
+                artifacts.append(_execute_parallel_backup_cosmos_resource(
+                    job,
+                    backup_state,
+                    settings,
+                    container_client,
+                    base_prefix,
+                    fernet,
+                    resource_name,
+                    {
+                        "name": artifact["name"],
+                        "type": "cosmos_container",
+                        "category": artifact["category"],
+                        "container_name": getattr(
+                            app_config,
+                            artifact["container_name_attr"],
+                            artifact["name"],
+                        ),
+                        "partition_key_path": artifact["partition_key_path"],
+                        "partial_since_epoch": None,
+                    },
+                    source_container,
+                    artifact,
+                ))
+            except (DataManagementBackupCanceledError, DataManagementBackupLeaseLostError):
+                raise
+            except Exception as exc:
+                log_event(
+                    "[DataManagement] Cosmos backup resource failed.",
+                    {"job_id": job.get("id"), "resource": artifact["name"], "error": str(exc)},
+                    level=logging.WARNING,
+                )
+                warning = f"Cosmos backup resource '{artifact['name']}' failed."
+                _append_backup_warning(backup_state, warning)
+                _fail_backup_resource_checkpoint(
+                    job,
+                    backup_state,
+                    settings,
+                    resource_name,
+                    "Cosmos backup resource failed.",
+                    f"Recorded failed Cosmos backup resource {artifact['name']}",
+                )
+                artifacts.append({
+                    "name": artifact["name"],
+                    "type": "cosmos_container",
+                    "status": "warning",
+                    "warning": warning,
+                })
+    finally:
+        source_capacity = (
+            backup_state.get("source_capacity")
+            if isinstance(backup_state.get("source_capacity"), dict) else {}
+        )
+        if capacity_attempted or source_capacity.get("restore_pending"):
+            try:
+                restore_warnings, _ = _restore_temporary_backup_source_capacity(
+                    job,
+                    backup_state,
+                    settings,
+                    allow_cancel_requested=True,
+                )
+            except DataManagementBackupLeaseLostError:
+                raise
+            except Exception as exc:
+                restore_warnings = [
+                    f"Failed to restore temporary source Cosmos capacity: {str(exc)[:300]}"
+                ]
+            for warning in restore_warnings:
+                _append_backup_warning(backup_state, warning)
+
+    source_capacity = (
+        backup_state.get("source_capacity")
+        if isinstance(backup_state.get("source_capacity"), dict) else {}
+    )
+    if source_capacity.get("restore_pending"):
+        raise RuntimeError(
+            "Source Cosmos capacity restoration remains pending. Retry the backup to restore the recorded capacity snapshot."
+        )
+    return artifacts
+
+
 def execute_backup_job(job, settings):
     backup_plan = job.get("backup_plan") if isinstance(job.get("backup_plan"), dict) else {}
     if not backup_plan:
@@ -11086,6 +12658,11 @@ def execute_backup_job(job, settings):
         settings,
         "Initialized durable backup plan and checkpoint state",
     )
+    _recover_pending_temporary_backup_source_capacity(
+        job,
+        backup_state,
+        settings,
+    )
 
     container_client = _get_backup_container_client(settings)
     fernet = _get_backup_fernet(
@@ -11105,74 +12682,15 @@ def execute_backup_job(job, settings):
     )
 
     if backup_plan.get("include_cosmos"):
-        for artifact in DATA_MANAGEMENT_COSMOS_ARTIFACTS:
-            resource_name = f"cosmos:{artifact['name']}"
-            if is_backup_resource_completed(backup_state, resource_name):
-                existing_resource = get_backup_resource(backup_state, resource_name)
-                artifacts.append(copy.deepcopy(existing_resource.get("result") or {}))
-                continue
-            source_container = getattr(app_config, artifact["container_attr"], None)
-            if source_container is None:
-                warning = f"Cosmos container '{artifact['name']}' was not initialized."
-                _append_backup_warning(backup_state, warning)
-                _skip_backup_resource_checkpoint(
-                    job,
-                    backup_state,
-                    settings,
-                    resource_name,
-                    warning,
-                    f"Skipped unavailable Cosmos container {artifact['name']}",
-                )
-                artifacts.append({
-                    "name": artifact["name"],
-                    "type": "cosmos_container",
-                    "status": "skipped",
-                    "warning": warning,
-                })
-                continue
-            try:
-                artifacts.append(_execute_backup_jsonl_resource(
-                    job,
-                    backup_state,
-                    settings,
-                    container_client,
-                    base_prefix,
-                    fernet,
-                    "cosmos",
-                    resource_name,
-                    {
-                        "name": artifact["name"],
-                        "type": "cosmos_container",
-                        "category": artifact["category"],
-                        "container_name": getattr(
-                            app_config,
-                            artifact["container_name_attr"],
-                            artifact["name"],
-                        ),
-                        "partition_key_path": artifact["partition_key_path"],
-                        "partial_since_epoch": None,
-                    },
-                    _iter_backup_cosmos_source_items(source_container, artifact, backup_plan),
-                ))
-            except (DataManagementBackupCanceledError, DataManagementBackupLeaseLostError):
-                raise
-            except Exception as exc:
-                warning = f"Cosmos backup resource '{artifact['name']}' failed: {str(exc)[:300]}"
-                _append_backup_warning(backup_state, warning)
-                _fail_backup_resource_checkpoint(
-                    job,
-                    backup_state,
-                    settings,
-                    resource_name,
-                    str(exc),
-                    f"Recorded failed Cosmos backup resource {artifact['name']}",
-                )
-                artifacts.append({
-                    "name": artifact["name"],
-                    "type": "cosmos_container",
-                    "status": "warning",
-                    "warning": warning,
-                })
+        artifacts.extend(_execute_backup_cosmos_resources(
+            job,
+            backup_state,
+            settings,
+            backup_plan,
+            container_client,
+            base_prefix,
+            fernet,
+        ))
     else:
         warning = "Cosmos DB export is disabled for this backup."
         _append_backup_warning(backup_state, warning)

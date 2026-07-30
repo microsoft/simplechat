@@ -72,6 +72,12 @@ function bindElements() {
         "data-management-connection-string-status",
         "data_management_path_prefix",
         "data_management_encryption_enabled",
+        "data_management_backup_max_parallel_operations",
+        "data_management_backup_retry_count",
+        "data_management_backup_capacity_failure_policy",
+        "data_management_backup_temporary_source_ru_enabled",
+        "data-management-backup-temporary-ru-field",
+        "data_management_backup_temporary_source_ru",
         "data-management-key-storage",
         "data-management-key-reference",
         "data-management-key-storage-alert",
@@ -263,6 +269,7 @@ function bindEvents() {
     elements.datamanagementcosmoseditorconfirmationphrase?.addEventListener("input", updateCosmosEditorConfirmSaveState);
     elements.dataManagementCosmosEditorConfirmSaveBtn?.addEventListener("click", saveCosmosEditorDocument);
     elements.datamanagementmigrationtemporarydestinationruenabled?.addEventListener("change", updateMigrationCapacityVisibility);
+    elements.datamanagementbackuptemporarysourceruenabled?.addEventListener("change", updateBackupCapacityVisibility);
     [
         elements.datamanagementmigrationmodenewonly,
         elements.datamanagementmigrationmodedeltaupsert,
@@ -279,6 +286,7 @@ function bindEvents() {
     setStorageAuthVisibility();
     setMigrationTargetVisibility();
     updateMigrationCapacityVisibility();
+    updateBackupCapacityVisibility();
     updateMigrationModeVisibility();
     updateMigrationSearchWriteFreezeVisibility();
     updateConnectionStringStatus();
@@ -465,6 +473,11 @@ function populateSettings(settings) {
     setValue(elements.datamanagementconnectionstring, storedBackupConnectionStringAvailable ? redactedValue : "");
     setValue(elements.datamanagementpathprefix, settings.backup_storage_path_prefix || "simplechat-backups");
     setChecked(elements.datamanagementencryptionenabled, settings.encryption_enabled !== false);
+    setValue(elements.datamanagementbackupmaxparalleloperations, settings.backup_max_parallel_operations || 4);
+    setValue(elements.datamanagementbackupretrycount, settings.backup_retry_count || 5);
+    setValue(elements.datamanagementbackupcapacityfailurepolicy, settings.backup_capacity_failure_policy || "continue_without_boost");
+    setChecked(elements.datamanagementbackuptemporarysourceruenabled, Boolean(settings.backup_temporary_source_ru_enabled));
+    setValue(elements.datamanagementbackuptemporarysourceru, settings.backup_temporary_source_ru || 10000);
     setValue(elements.datamanagementtargetcosmosauth, settings.target_cosmos_authentication_type || "managed_identity");
     setValue(elements.datamanagementtargetcosmosendpoint, settings.target_cosmos_endpoint || "");
     setValue(elements.datamanagementtargetcosmosdatabase, targetCosmosDatabaseName);
@@ -494,6 +507,7 @@ function populateSettings(settings) {
     setStorageAuthVisibility();
     setMigrationTargetVisibility();
     updateMigrationCapacityVisibility();
+    updateBackupCapacityVisibility();
     migrationTargetTypes.forEach(updateMigrationPickerVisibility);
     updateConnectionStringStatus();
     resetDataManagementModified();
@@ -595,6 +609,14 @@ function updateMigrationCapacityVisibility() {
     }
 }
 
+function updateBackupCapacityVisibility() {
+    const enabled = Boolean(elements.datamanagementbackuptemporarysourceruenabled?.checked);
+    setElementVisible(elements.dataManagementBackupTemporaryRuField, enabled);
+    if (elements.datamanagementbackuptemporarysourceru) {
+        elements.datamanagementbackuptemporarysourceru.disabled = !enabled;
+    }
+}
+
 function setKeyStorageAlert(variant, iconClass, title, message, linkText) {
     const alertElement = elements.dataManagementKeyStorageAlert;
     const iconElement = elements.dataManagementKeyStorageAlertIcon;
@@ -643,6 +665,11 @@ function collectSettings() {
         backup_storage_connection_string: backupStorageAuthenticationType === backupStorageAuthConnectionString ? getValue(elements.datamanagementconnectionstring) : "",
         backup_storage_path_prefix: getValue(elements.datamanagementpathprefix) || "simplechat-backups",
         encryption_enabled: Boolean(elements.datamanagementencryptionenabled?.checked),
+        backup_max_parallel_operations: getNumberValue(elements.datamanagementbackupmaxparalleloperations, 4),
+        backup_retry_count: getNumberValue(elements.datamanagementbackupretrycount, 5),
+        backup_capacity_failure_policy: getValue(elements.datamanagementbackupcapacityfailurepolicy) || "continue_without_boost",
+        backup_temporary_source_ru_enabled: Boolean(elements.datamanagementbackuptemporarysourceruenabled?.checked),
+        backup_temporary_source_ru: getNumberValue(elements.datamanagementbackuptemporarysourceru, 10000),
         target_cosmos_authentication_type: getValue(elements.datamanagementtargetcosmosauth) || "managed_identity",
         target_cosmos_endpoint: getValue(elements.datamanagementtargetcosmosendpoint),
         target_cosmos_database_name: targetCosmosDatabaseName,
@@ -2240,6 +2267,16 @@ function renderJobDetailProgress(job) {
             });
             body.appendChild(metricGrid);
         }
+    } else if (job.operation === "backup") {
+        const backupMetrics = getBackupLiveMetrics(job);
+        if (backupMetrics.length) {
+            const metricGrid = document.createElement("div");
+            metricGrid.className = "row g-2 small mt-3";
+            backupMetrics.forEach((metric) => {
+                metricGrid.appendChild(createDetailMetric(metric.label, metric.value));
+            });
+            body.appendChild(metricGrid);
+        }
     }
     card.appendChild(body);
     container.replaceChildren(card);
@@ -2294,6 +2331,41 @@ function getMigrationLiveMetrics(job) {
             label: "Liveness",
             value: hasRecentProgress ? "Running - progress active" : "Running - alive, no recent progress",
         });
+    }
+    return metrics;
+}
+
+function getBackupLiveMetrics(job) {
+    const backupState = job?.backup_state;
+    if (!backupState || typeof backupState !== "object") {
+        return [];
+    }
+    const totals = backupState.totals && typeof backupState.totals === "object" ? backupState.totals : {};
+    const telemetry = backupState.telemetry && typeof backupState.telemetry === "object" ? backupState.telemetry : {};
+    const sourceCapacity = backupState.source_capacity && typeof backupState.source_capacity === "object" ? backupState.source_capacity : {};
+    const metrics = [
+        { label: "Current container", value: telemetry.current_container || "Waiting" },
+        { label: "Checkpoint position", value: formatNumber(telemetry.checkpoint_position || totals.checkpoint_count || 0) },
+        { label: "Processed", value: formatNumber(telemetry.records_processed || totals.processed_count || 0) },
+        { label: "Transferred", value: formatBytes(telemetry.bytes || totals.bytes || 0) },
+        { label: "Request units", value: formatNumber(telemetry.request_units || totals.request_units || 0) },
+        { label: "Retries / throttles", value: `${formatNumber(telemetry.retries || totals.retry_attempt_count || 0)} / ${formatNumber(telemetry.throttles || totals.throttle_count || 0)}` },
+        { label: "Skipped / failed", value: `${formatNumber(totals.skipped_count || 0)} / ${formatNumber(totals.failed_count || 0)}` },
+    ];
+    if (telemetry.elapsed_seconds !== undefined || totals.elapsed_seconds !== undefined) {
+        metrics.push({ label: "Elapsed", value: `${formatNumber(telemetry.elapsed_seconds ?? totals.elapsed_seconds ?? 0)}s` });
+    }
+    if (telemetry.records_per_second !== undefined) {
+        metrics.push({ label: "Records per second", value: formatNumber(telemetry.records_per_second) });
+    }
+    if (telemetry.request_units_per_second !== undefined) {
+        metrics.push({ label: "RU per second", value: formatNumber(telemetry.request_units_per_second) });
+    }
+    if (sourceCapacity.status) {
+        metrics.push({ label: "Source capacity", value: formatActivityLabel(sourceCapacity.status) });
+    }
+    if (sourceCapacity.restore_pending) {
+        metrics.push({ label: "Capacity restore", value: "Pending recovery" });
     }
     return metrics;
 }
