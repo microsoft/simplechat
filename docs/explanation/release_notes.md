@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.102)**
+
+#### New Features
+
+*   **High-Throughput Resumable Source Blob Backups**
+    *   Source document backups now stream bounded Azure SDK blocks with configurable file concurrency and chunk size instead of buffering complete blobs or copying files serially.
+    *   Added durable per-file verification and resume, source/target generation fencing, adaptive Retry-After-aware throttling, isolated file failures, authenticated chunked encryption, throughput telemetry, and a reproducible AzCopy/server-copy/SDK benchmark harness.
+    *   (Ref: Closes #1095, `functions_data_management.py`, `test_data_management_blob_backup_transfers.py`, `benchmark_data_management_blob_backup.py`, `DATA_MANAGEMENT_BLOB_BACKUP_THROUGHPUT.md`)
+
 ### **(v0.250.101)**
 
 #### New Features
