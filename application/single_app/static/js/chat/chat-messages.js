@@ -589,6 +589,14 @@ function isWorkspaceDocumentSearchEnabled() {
 }
 
 const INLINE_ASSISTANT_EXPORT_ACTIONS = Object.freeze({
+  audio: {
+    actionName: 'exportMessageAsAudio',
+    buttonClass: 'inline-export-audio-btn',
+    iconClass: 'bi bi-file-earmark-music',
+    label: 'Create Audio File',
+    pendingLabel: 'Creating Audio File...',
+    title: 'Create Audio File',
+  },
   powerpoint: {
     actionName: 'exportMessageAsPowerPoint',
     buttonClass: 'inline-export-ppt-btn',
@@ -4770,6 +4778,10 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
   function attachMessageExportActionListeners(messageDiv, role) {
     const actionMappings = [
       {
+        selectors: ['.dropdown-export-audio-btn', '.inline-export-audio-btn'],
+        actionName: 'exportMessageAsAudio',
+      },
+      {
         selectors: ['.dropdown-export-md-btn', '.inline-export-md-btn'],
         actionName: 'exportMessageAsMarkdown',
       },
@@ -4796,6 +4808,9 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
         messageDiv.querySelectorAll(selector).forEach(button => {
           button.addEventListener('click', (event) => {
             event.preventDefault();
+            if (button.getAttribute('aria-busy') === 'true') {
+              return;
+            }
             void triggerMessageExportAction(messageDiv, role, actionName, button);
           });
         });
@@ -4911,11 +4926,15 @@ export function appendMessage(
         `;
 
     const maskButtonHtml = buildMaskControlsHtml(messageId, maskState);
+    const audioExportMenuItemHtml = window.appSettings?.enable_text_to_speech
+      ? '<li><a class="dropdown-item dropdown-export-audio-btn" href="#" data-default-label="Export to Audio" data-pending-label="Creating Audio File..." data-icon-class="bi bi-file-earmark-music" data-default-title="Export to Audio"><i class="bi bi-file-earmark-music me-2"></i>Export to Audio</a></li>'
+      : '';
     const exportMenuItemsHtml = renderCompletedAssistantActions ? `
             <li><hr class="dropdown-divider"></li>
             <li><a class="dropdown-item dropdown-export-md-btn" href="#" data-message-id="${messageId}"><i class="bi bi-markdown me-2"></i>Export to Markdown</a></li>
             <li><a class="dropdown-item dropdown-export-word-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-word me-2"></i>Export to Word</a></li>
             <li><a class="dropdown-item dropdown-export-ppt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-slides me-2"></i>Export to PowerPoint</a></li>
+            ${audioExportMenuItemHtml}
             <li><a class="dropdown-item dropdown-copy-prompt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-clipboard-plus me-2"></i>Use as Prompt</a></li>
             <li><a class="dropdown-item dropdown-open-email-btn" href="#" data-message-id="${messageId}"><i class="bi bi-envelope me-2"></i>Open in Email</a></li>` : '';
     const forkConversationMenuItemHtml = shouldRenderConversationForkAction(messageId, fullMessageObject)
@@ -5417,6 +5436,9 @@ export function appendMessage(
     if (sender === "You") {
       const metadataContainerId = `metadata-${messageId || Date.now()}`;
       const maskState = getMaskStateFromMetadata(fullMessageObject?.metadata);
+      const audioExportMenuItemHtml = window.appSettings?.enable_text_to_speech
+        ? '<li><a class="dropdown-item dropdown-export-audio-btn" href="#" data-default-label="Export to Audio" data-pending-label="Creating Audio File..." data-icon-class="bi bi-file-earmark-music" data-default-title="Export to Audio"><i class="bi bi-file-earmark-music me-2"></i>Export to Audio</a></li>'
+        : '';
 
       messageFooterHtml = `
         <div class="message-footer d-flex justify-content-between align-items-center mt-2">
@@ -5433,6 +5455,7 @@ export function appendMessage(
                 <li><a class="dropdown-item dropdown-export-md-btn" href="#" data-message-id="${messageId}"><i class="bi bi-markdown me-2"></i>Export to Markdown</a></li>
                 <li><a class="dropdown-item dropdown-export-word-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-word me-2"></i>Export to Word</a></li>
                 <li><a class="dropdown-item dropdown-export-ppt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-slides me-2"></i>Export to PowerPoint</a></li>
+                ${audioExportMenuItemHtml}
                 <li><a class="dropdown-item dropdown-copy-prompt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-clipboard-plus me-2"></i>Use as Prompt</a></li>
                 <li><a class="dropdown-item dropdown-open-email-btn" href="#" data-message-id="${messageId}"><i class="bi bi-envelope me-2"></i>Open in Email</a></li>
               </ul>
