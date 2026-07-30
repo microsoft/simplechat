@@ -37,6 +37,7 @@ category: Version History
 
 ## Versioned Features
 
+- [Data Management Durable Backup Jobs](DATA_MANAGEMENT_BACKUP_MIGRATION.md)
 - [Data Management Migration Resilience](DATA_MANAGEMENT_MIGRATION_RESILIENCE.md)
 - [Migration Provenance](MIGRATION_PROVENANCE.md)
 - [Microsoft Teams App SSO](v0.242.072/TEAMS_APP_SSO.md)

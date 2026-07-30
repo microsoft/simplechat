@@ -1,7 +1,7 @@
 # Data Management Backup and Migration
 
 Implemented in version: **0.241.211**
-Updated in version: **0.250.071**
+Updated in version: **0.250.073**
 
 ## Overview
 
@@ -15,8 +15,30 @@ The Data Management feature adds an admin-only portal section for SimpleChat-own
 - Settings, scheduler logic, encryption-key handling, job leasing, and backup artifact creation live in `functions_data_management.py`.
 - Job records are stored in the `data_management_jobs` Cosmos container with partition key `/id`.
 - Job timeline entries are stored in the `data_management_job_items` Cosmos container with partition key `/job_id`.
+- Latest-only backup item state is stored independently in `data_management_backup_item_states` with partition key `/source_scope`. It never updates a source Cosmos record, source ETag, source `_ts`, or source blob metadata.
 - Data Management job lifecycle events are also written to the shared `activity_logs` container with `activity_type` set to `data_management`, allowing Control Center Activity Logs to filter and search backup job activity by job ID, operation, backup type, and status.
 - Scheduled scans use the existing distributed background task lease pattern with the `data_management_scheduler_scan` lock.
+
+### Durable Backup Jobs
+
+Full and partial backups use the same Cosmos-backed durable job contract as resilient migrations:
+
+- Queueing captures an immutable, normalized, secret-free backup plan, source scope, conservative Cosmos cutoff, storage identity fingerprint, version-pinned Key Vault encryption contract when applicable, and explicit non-destructive deletion policy.
+- Each worker attempt receives a lease generation and attempt ID. Source-scoped backup locks prevent full and partial jobs from overlapping across manual requests, scheduled scans, workers, and App Service instances. Long JSONL staging, artifact upload, source-blob download, and source-blob upload calls renew the fenced lease while in flight.
+- Resource checkpoints retain bounded counters and rolling batch identities. Per-item outcomes are stored in bounded job-manifest batches plus the latest-only sidecar state, so verified units are not replayed after a restart or focused retry.
+- Queued jobs cancel immediately. Running jobs stop cooperatively at a durable boundary; already verified work remains available for Retry or Resume.
+- The scheduler resubmits delayed queued and stale backup jobs through the executor. Scheduled runs defer when another active backup owns the same source scope instead of overlapping it.
+- Backup progress and job timelines expose bounded resource counters, warnings, failed/skipped summaries, attempt history, and checkpoint counts. They do not expose settings, credentials, source content, SAS query strings, signed artifact URLs, or provider error strings containing secrets.
+
+The latest-only sidecar records source identity and version, backup lineage, job/attempt and lease generation, checkpoint/artifact identity, timestamp, terminal outcome, and bounded failure or skip summary for Cosmos records, AI Search documents, and source blobs. Backup lineage is derived from the immutable destination and encryption identity, so a changed destination or key cannot reuse another destination's differential state. Attempts remain historical job-record data; the sidecar stores only the latest outcome for each source item.
+
+### Differential and Restore Semantics
+
+- **Full backup** captures an immutable upper source cutoff and exports a complete source snapshot within that cutoff. Cosmos uses a conservative whole-second boundary (`_ts` strictly before the captured second) because Cosmos `_ts` has second precision.
+- **Partial backup** compares each source identity/version against latest-only state. New, changed, previously failed, and untracked items are eligible; unchanged successful items are recorded as skipped.
+- Partial state does not mutate source objects and does not rely on advancing source metadata. This keeps later restore work compatible with original Cosmos ETags and `_ts` values and Blob Last-Modified values.
+- Deletions are explicit and non-destructive by default. A source item absent from a later backup is not treated as a delete operation, and backup manifests record `deletion_policy: none` for restore workflows.
+- Independent item or resource failures remain visible as warnings and retryable checkpoints. A completed job can finish with warnings while preserving failed resources for focused retry.
 
 ### Backup Artifacts
 
@@ -37,7 +59,7 @@ The Data Management tab shows two complementary historical views:
 
 Full backup details focus on the full snapshot contents: Cosmos containers exported, AI Search schemas/documents exported, optional source blob containers, artifact sizes, item/blob counts, encryption status, manifest location, and warnings.
 
-Partial backup details use the same artifact layout but also expose the partial selection metadata, including Cosmos `_ts` lower-bound epochs and AI Search date filters where available. This makes it possible to understand what changed since the previous full or partial backup window.
+Partial backup details use the same artifact layout but expose immutable cutoff metadata, latest-only differential state, checkpoint counts, bounded failed/skipped summaries, and retry eligibility. This makes it possible to understand what changed without modifying source records or relying on destructive deletion semantics.
 
 ### Migration Workflow
 
@@ -99,7 +121,7 @@ Data Management settings save through their own API and are excluded from the re
 9. Choose the synchronization mode, preview live destination changes, and then Execute Migration to queue the job. Mirror mode requires the exact destructive confirmation phrase.
 10. Open Advanced backup scope only when you need to alter the default Cosmos DB, AI Search index, or source blob backup surfaces.
 11. Use Backup Inventory to see available backups first, filter to full or partial backups, and open View Log for structured backup details.
-12. Use Job History to inspect live progress, completed steps, reconciliation readiness, preview divergence, and artifact contents. Migration detail also provides Retry/Cancel plus full or failure-only JSONL manifest downloads.
+12. Use Job History to inspect live progress, durable backup cutoff/checkpoint state, completed steps, reconciliation readiness, preview divergence, and artifact contents. Backup and migration detail both provide Retry/Resume and Cancel; migration detail also provides full or failure-only JSONL manifest downloads.
 
 Migration is used when moving SimpleChat data into another SimpleChat environment, rehearsing a cutover, or preparing a controlled environment transfer. The target Cosmos account, authentication type, and optional account key are configurable. The target database name is fixed to `SimpleChat` so future migration apply jobs use the standard SimpleChat container layout.
 
@@ -108,15 +130,18 @@ For managed identity target Cosmos migration, assign this App Service identity C
 ## Testing and Validation
 
 - Functional security coverage: `functional_tests/test_data_management_security_patterns.py`.
+- Backup durability coverage: `functional_tests/test_data_management_backup_durability.py`.
 - UI/template coverage: `ui_tests/test_admin_data_management_settings_ui.py`.
+- Scheduler/recovery, cancellation, retry, coordinator, provenance, and write-fence coverage remains in the focused `functional_tests/test_data_management_*` modules.
 - Syntax validation: `python -m py_compile` for modified backend modules and `node --check` for the admin browser module.
 
 ## Limitations
 
-- Backup artifact export is implemented for Cosmos DB and AI Search, with optional source blob copying.
+- Backup artifact export is implemented for Cosmos DB and AI Search, with optional source blob copying. Restore application remains a follow-up workflow and consumes the recorded non-destructive manifest contract.
+- Bicep and Terraform deployments provision `data_management_jobs`, `data_management_job_items`, and `data_management_backup_item_states` so durable job and latest-state storage are available on either IaC path.
 - Restore execution is documented separately. Migration apply supports selected SimpleChat Cosmos, Search, and Enhanced Citations Blob surfaces rather than arbitrary Azure resources.
 
 ## Version References
 
-- Application version updated in `application/single_app/config.py` to `0.250.071`.
+- Application version updated in `application/single_app/config.py` to `0.250.073`.
 - Functional and UI tests include the same implementation version.

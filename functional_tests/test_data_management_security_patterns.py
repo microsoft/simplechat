@@ -2,10 +2,9 @@
 # test_data_management_security_patterns.py
 """
 Functional test for Data Management security patterns.
-Version: 0.250.072
+Version: 0.250.073
 Implemented in: 0.241.211
-Updated in: 0.250.076
-Updated in: 0.250.072
+Updated in: 0.250.073
 
 This test ensures Data Management admin routes require authenticated admin
 access, secrets stay redacted in frontend responses, and the admin browser
@@ -18,8 +17,8 @@ Version 0.250.050 verifies Cosmos editor saves do not pass unsupported
 partition_key kwargs into the Python Cosmos SDK replace_item call.
 Version 0.250.051 keeps version coverage aligned with the Cosmos editor
 results-pane scroll refinement.
-Version 0.250.071 adds resilient Data Management migrations, provenance, checkpoints,
-incremental modes, reconciliation, and target Search writer fencing.
+Version 0.250.073 adds durable backup checkpoints, source fencing, generic
+admin cancellation/retry controls, and latest-only sidecar state sanitization.
 """
 
 import ast
@@ -37,6 +36,7 @@ CONTROL_CENTER_TEMPLATE = APP_ROOT / "templates" / "control_center.html"
 SIDEBAR_TEMPLATE = APP_ROOT / "templates" / "_sidebar_nav.html"
 CONTROL_CENTER_JS = APP_ROOT / "static" / "js" / "control-center.js"
 CONFIG_FILE = APP_ROOT / "config.py"
+TERRAFORM_FILE = REPO_ROOT / "deployers" / "terraform" / "main.tf"
 
 
 def read_text(path):
@@ -69,11 +69,17 @@ def test_version_and_container_registration():
     """Validate the Data Management version and Cosmos job container registrations."""
     config_source = read_text(CONFIG_FILE)
 
-    assert 'VERSION = "0.250.072"' in config_source
+    assert 'VERSION = "0.250.073"' in config_source
     assert 'cosmos_data_management_jobs_container_name = "data_management_jobs"' in config_source
     assert 'partition_key=PartitionKey(path="/id")' in config_source
     assert 'cosmos_data_management_job_items_container_name = "data_management_job_items"' in config_source
     assert 'partition_key=PartitionKey(path="/job_id")' in config_source
+    assert 'cosmos_data_management_backup_item_states_container_name = "data_management_backup_item_states"' in config_source
+    assert 'partition_key=PartitionKey(path="/source_scope")' in config_source
+    terraform_source = read_text(TERRAFORM_FILE)
+    assert re.search(r'data_management_jobs\s+= \{ partition_key_path = "/id", default_ttl = null \}', terraform_source)
+    assert re.search(r'data_management_job_items\s+= \{ partition_key_path = "/job_id", default_ttl = null \}', terraform_source)
+    assert re.search(r'data_management_backup_item_states\s+= \{ partition_key_path = "/source_scope", default_ttl = null \}', terraform_source)
 
 
 def test_admin_routes_require_login_admin_and_swagger_security():
@@ -109,7 +115,8 @@ def test_admin_routes_require_login_admin_and_swagger_security():
     assert '/api/admin/data-management/jobs/<job_id>/migration-manifest/items/<item_ref>' in source
     assert '/api/admin/data-management/jobs/<job_id>/progress' in source
     assert 'retry_data_management_migration_job(job_id)' in source
-    assert 'request_data_management_migration_cancellation(' in source
+    assert 'retry_data_management_backup_job(job_id)' in source
+    assert 'request_data_management_job_cancellation(' in source
 
 
 def test_settings_secrets_are_redacted_for_frontend():
@@ -197,6 +204,20 @@ def test_settings_secrets_are_redacted_for_frontend():
     assert '"order_by": ["id asc"]' in source
     assert '_run_data_management_migration_reconciliation' in source
     assert 'preview_actual_divergence' in source
+    assert 'DATA_MANAGEMENT_BACKUP_LATEST_ITEM_STATE_TYPE' in source
+    assert 'DATA_MANAGEMENT_BACKUP_LOCK_TYPE' in source
+    assert 'DATA_MANAGEMENT_BACKUP_MANIFEST_BATCH_TYPE' in source
+    assert '_acquire_backup_source_lock' in source
+    assert '_assert_backup_job_lease' in source
+    assert '_run_backup_transfer_with_heartbeat' in source
+    assert '_build_backup_lineage_id' in source
+    assert '_resolve_backup_encryption_reference' in source
+    assert '_sanitize_data_management_job_item_details' in source
+    assert 'recover_data_management_jobs' in source
+    assert '_sanitize_data_management_backup_state_for_admin' in source
+    assert 'source_mutation": "none"' in source
+    assert 'deletion_policy": "none"' in source
+    assert 'sig=' in source
 
 
 def test_cosmos_editor_backend_safety_contract():
@@ -312,7 +333,7 @@ def test_admin_javascript_uses_safe_dom_patterns():
         'saveCosmosEditorDocument',
         'confirmation_phrase: cosmosEditorConfirmationPhrase',
         'closest("[data-ignore-data-management-change',
-        'retryMigrationJob',
+            'retryDataManagementJob',
         'getMigrationLiveMetrics',
         'updateMigrationCapacityVisibility',
         'updateMigrationModeVisibility',

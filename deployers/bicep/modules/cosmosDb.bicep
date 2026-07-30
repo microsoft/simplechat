@@ -47,6 +47,11 @@ var cosmosContainers = [
     defaultTtl: null
   }
   {
+    name: 'data_management_backup_item_states'
+    partitionKeyPath: '/source_scope'
+    defaultTtl: null
+  }
+  {
     name: 'personal_workflows'
     partitionKeyPath: '/user_id'
     defaultTtl: null
