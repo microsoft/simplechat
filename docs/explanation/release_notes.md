@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.102)**
+
+#### New Features
+
+*   **Automatic Overnight Control Center Statistics Refresh**
+    *   Added an enabled-by-default daily Control Center metrics refresh at 2:00 AM Eastern, with an administrator toggle and configurable time under Admin Settings > Control Center.
+    *   The recurring schedule follows Eastern daylight-saving changes, stores concrete execution timestamps in UTC, and shows last-run and next-run values in each administrator's browser timezone.
+    *   (Ref: Closes #706, `functions_control_center.py`, `background_tasks.py`, `admin_settings.html`, `control-center.js`)
+
 ### **(v0.250.101)**
 
 #### New Features
