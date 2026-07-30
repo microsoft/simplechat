@@ -602,7 +602,7 @@ def _cleanup_failed_fork(
             log_event(
                 f"[ConversationFork] Failed to clean up fork message: {cleanup_error}",
                 level=logging.ERROR,
-                properties={
+                extra={
                     "fork_conversation_id": fork_conversation_id,
                     "message_id": message_id,
                 },
@@ -620,7 +620,7 @@ def _cleanup_failed_fork(
             log_event(
                 f"[ConversationFork] Failed to clean up fork blob: {cleanup_error}",
                 level=logging.ERROR,
-                properties={
+                extra={
                     "fork_conversation_id": fork_conversation_id,
                     "blob_container": blob_container,
                     "blob_path": blob_path,
@@ -635,13 +635,13 @@ def _cleanup_failed_fork(
         log_event(
             "[ConversationFork] Fork conversation already absent during cleanup",
             level=logging.INFO,
-            properties={"fork_conversation_id": fork_conversation_id},
+            extra={"fork_conversation_id": fork_conversation_id},
         )
     except Exception as cleanup_error:
         log_event(
             f"[ConversationFork] Failed to clean up fork conversation: {cleanup_error}",
             level=logging.ERROR,
-            properties={"fork_conversation_id": fork_conversation_id},
+            extra={"fork_conversation_id": fork_conversation_id},
         )
 
 
@@ -746,7 +746,7 @@ def fork_personal_conversation_for_user(
         log_event(
             f"[ConversationFork] Fork created but activity logging failed: {log_error}",
             level=logging.WARNING,
-            properties={"fork_conversation_id": fork_conversation_id},
+            extra={"fork_conversation_id": fork_conversation_id},
         )
 
     return {
