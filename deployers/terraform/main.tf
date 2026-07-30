@@ -354,6 +354,12 @@ locals {
   existing_openai_subscription_id       = var.param_existing_azure_openai_subscription_id != "" ? var.param_existing_azure_openai_subscription_id : var.param_subscription_id
   use_existing_openai_resource_metadata = var.param_use_existing_openai_instance && var.param_existing_azure_openai_resource_name != "" && var.param_existing_azure_openai_resource_group_name != ""
   enable_openai_rbac_assignments        = !var.param_use_existing_openai_instance || local.use_existing_openai_resource_metadata
+  data_management_history_composite_indexes = [
+    [
+      { path = "/created_at", order = "Descending" },
+      { path = "/id", order = "Descending" }
+    ]
+  ]
   cosmos_containers = {
     conversations                      = { partition_key_path = "/id", default_ttl = null }
     messages                           = { partition_key_path = "/conversation_id", default_ttl = null }
@@ -906,6 +912,34 @@ resource "azurerm_cosmosdb_sql_container" "simplechat" {
   database_name       = azurerm_cosmosdb_sql_database.simplechat.name
   partition_key_paths = [each.value.partition_key_path]
   default_ttl         = each.value.default_ttl
+
+  dynamic "indexing_policy" {
+    for_each = each.key == "data_management_jobs" ? [local.data_management_history_composite_indexes] : []
+    content {
+      indexing_mode = "Consistent"
+
+      included_path {
+        path = "/*"
+      }
+
+      excluded_path {
+        path = "/\"_etag\"/?"
+      }
+
+      dynamic "composite_index" {
+        for_each = indexing_policy.value
+        content {
+          dynamic "index" {
+            for_each = composite_index.value
+            content {
+              path  = index.value.path
+              order = index.value.order
+            }
+          }
+        }
+      }
+    }
+  }
 
   dynamic "autoscale_settings" {
     for_each = lower(var.param_cosmos_capacity_mode) == "provisioned" ? [1] : []

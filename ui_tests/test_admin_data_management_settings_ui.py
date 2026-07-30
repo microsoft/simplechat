@@ -1,10 +1,11 @@
 # test_admin_data_management_settings_ui.py
 """
 UI test for Admin Settings Data Management controls.
-Version: 0.250.102
+Version: 0.250.103
 Implemented in: 0.241.211
 Updated in: 0.241.221
 Updated in: 0.250.102
+Updated in: 0.250.103
 
 This test ensures admins can discover the Data Management tab, see the
 operational-business-hours warning, and access the backup, encryption,
@@ -18,9 +19,11 @@ Version 0.250.076 adds bounded parallel backup and source capacity controls.
 Version 0.250.102 adds independently bounded source-blob transfer controls.
 """
 
+import json
 import os
 import re
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
@@ -170,7 +173,24 @@ def test_admin_data_management_controls_render_from_template():
         "data-management-partial-backup-count",
         "data-management-available-backup-count",
         "data-management-backups-tbody",
+        "data_management_backup_status_filter",
+        "data_management_backup_scheduled_filter",
+        "data_management_backup_created_from",
+        "data_management_backup_created_to",
+        "data_management_backup_page_size",
+        "data-management-backup-pagination-status",
+        "data-management-backup-previous-page-btn",
+        "data-management-backup-next-page-btn",
         "data-management-jobs-tbody",
+        "data_management_job_operation_filter",
+        "data_management_job_status_filter",
+        "data_management_job_scheduled_filter",
+        "data_management_job_created_from",
+        "data_management_job_created_to",
+        "data_management_job_page_size",
+        "data-management-job-pagination-status",
+        "data-management-job-previous-page-btn",
+        "data-management-job-next-page-btn",
         "data-management-job-detail-modal",
         "data-management-job-detail-refresh-state",
         "data-management-job-detail-progress",
@@ -382,6 +402,161 @@ def test_admin_data_management_tab_browser_workflow():
         expect(page.locator("#data-management-jobs-tbody")).to_be_visible()
         expect(page.locator("#data-management-job-detail-modal")).to_be_attached()
         expect(page.locator("#data-management-migration-cancel-modal")).to_be_attached()
+    finally:
+        context.close()
+        browser.close()
+        playwright_context.stop()
+
+
+@pytest.mark.ui
+def test_admin_data_management_history_pagination_browser_workflow():
+    """Validate authenticated filters and opaque previous/next navigation."""
+    if not BASE_URL:
+        pytest.skip("Set SIMPLECHAT_UI_BASE_URL to run this UI test.")
+    if not STORAGE_STATE or not Path(STORAGE_STATE).exists():
+        pytest.skip("Set SIMPLECHAT_UI_ADMIN_STORAGE_STATE to a valid admin Playwright storage state file.")
+    if expect is None or sync_playwright is None:
+        pytest.skip("Install playwright to run this UI test.")
+
+    captured_queries = {"jobs": [], "backups": []}
+    playwright_context = sync_playwright().start()
+    browser = playwright_context.chromium.launch()
+    context = browser.new_context(storage_state=STORAGE_STATE, viewport={"width": 1440, "height": 900})
+    page = context.new_page()
+
+    def parse_query(url):
+        return parse_qs(urlparse(url).query)
+
+    def build_job(job_id, created_at, operation="backup"):
+        return {
+            "id": job_id,
+            "created_at": created_at,
+            "operation": operation,
+            "backup_type": "full" if operation == "backup" else None,
+            "status": "completed",
+            "scheduled": False,
+            "progress": {"percent_complete": 100},
+            "last_message": "Completed",
+        }
+
+    def build_backup(backup_id, created_at, backup_type="full"):
+        return {
+            "id": backup_id,
+            "created_at": created_at,
+            "completed_at": created_at,
+            "backup_type": backup_type,
+            "status": "completed",
+            "scheduled": False,
+            "artifact_count": 1,
+            "bytes": 100,
+            "record_count": 1,
+            "blob_count": 0,
+            "warning_count": 0,
+            "encrypted": True,
+        }
+
+    def handle_jobs(route):
+        query = parse_query(route.request.url)
+        captured_queries["jobs"].append(query)
+        is_second_page = query.get("continuation_token") == ["jobs-page-2"]
+        jobs = (
+            [build_job("job-3", "2026-07-28T12:00:00+00:00", "migration")]
+            if is_second_page
+            else [
+                build_job("job-1", "2026-07-30T12:00:00+00:00"),
+                build_job("job-2", "2026-07-29T12:00:00+00:00"),
+            ]
+        )
+        route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps({
+                "success": True,
+                "jobs": jobs,
+                "pagination": {
+                    "page_size": int(query.get("page_size", ["25"])[0]),
+                    "returned_count": len(jobs),
+                    "has_more": not is_second_page,
+                    "next_token": None if is_second_page else "jobs-page-2",
+                },
+            }),
+        )
+
+    def handle_backups(route):
+        query = parse_query(route.request.url)
+        captured_queries["backups"].append(query)
+        is_second_page = query.get("continuation_token") == ["backups-page-2"]
+        backups = (
+            [build_backup("backup-2", "2026-07-29T12:00:00+00:00", "partial")]
+            if is_second_page
+            else [build_backup("backup-1", "2026-07-30T12:00:00+00:00")]
+        )
+        route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps({
+                "success": True,
+                "backups": backups,
+                "summary": {
+                    "full": 5,
+                    "partial": 4,
+                    "available": 9,
+                    "total": 12,
+                },
+                "pagination": {
+                    "page_size": int(query.get("page_size", ["25"])[0]),
+                    "returned_count": len(backups),
+                    "has_more": not is_second_page,
+                    "next_token": None if is_second_page else "backups-page-2",
+                },
+            }),
+        )
+
+    try:
+        page.route("**/api/admin/data-management/jobs?*", handle_jobs)
+        page.route("**/api/admin/data-management/backups?*", handle_backups)
+        response = page.goto(f"{BASE_URL}/admin/settings#data-management", wait_until="networkidle")
+        if response and response.status >= 400:
+            pytest.skip("Admin settings are not accessible with the configured storage state.")
+        if page.locator("#data-management-tab").count() == 0:
+            pytest.skip("Admin settings are not accessible with the configured storage state.")
+
+        page.locator("#data-management-tab").click()
+        expect(page.locator("#data-management-job-pagination-status")).to_contain_text("Page 1 - 2 records")
+        expect(page.locator("#data-management-job-next-page-btn")).to_be_enabled()
+        page.locator("#data-management-job-next-page-btn").click()
+        expect(page.locator("#data-management-job-pagination-status")).to_contain_text("Page 2 - 1 record - final page")
+        assert captured_queries["jobs"][-1].get("continuation_token") == ["jobs-page-2"]
+        expect(page.locator("#data-management-job-previous-page-btn")).to_be_enabled()
+
+        page.locator("#data-management-refresh-jobs-btn").click()
+        expect(page.locator("#data-management-job-pagination-status")).to_contain_text("Page 2 - 1 record")
+        assert captured_queries["jobs"][-1].get("continuation_token") == ["jobs-page-2"]
+
+        page.locator("#data_management_job_operation_filter").select_option("migration")
+        expect(page.locator("#data-management-job-pagination-status")).to_contain_text("Page 1")
+        assert captured_queries["jobs"][-1].get("operation") == ["migration"]
+        assert "continuation_token" not in captured_queries["jobs"][-1]
+
+        expect(page.locator("#data-management-backup-pagination-status")).to_contain_text("Page 1 - 1 record")
+        page.locator("#data-management-backup-next-page-btn").click()
+        expect(page.locator("#data-management-backup-pagination-status")).to_contain_text("Page 2 - 1 record - final page")
+        assert captured_queries["backups"][-1].get("continuation_token") == ["backups-page-2"]
+
+        page.locator("#data-management-view-full-backups-btn").click()
+        expect(page.locator("#data-management-backup-pagination-status")).to_contain_text("Page 1")
+        assert captured_queries["backups"][-1].get("backup_type") == ["full"]
+        assert captured_queries["backups"][-1].get("status") == ["available"]
+        assert "continuation_token" not in captured_queries["backups"][-1]
+        expect(page.locator("#data-management-available-backup-count")).to_have_text("9")
+
+        page.locator("#data_management_backup_page_size").select_option("50")
+        assert captured_queries["backups"][-1].get("page_size") == ["50"]
+        expect(page.locator("#data-management-backup-previous-page-btn")).to_be_disabled()
+
+        page.set_viewport_size({"width": 390, "height": 844})
+        expect(page.locator("#data-management-backup-next-page-btn")).to_be_visible()
+        expect(page.locator("#data-management-job-next-page-btn")).to_be_visible()
     finally:
         context.close()
         browser.close()

@@ -14,6 +14,7 @@ from functions_data_management import (
     DATA_MANAGEMENT_OPERATION_MIGRATION,
     DATA_MANAGEMENT_OPERATION_RESTORE,
     DataManagementCosmosEditorError,
+    DataManagementHistoryPaginationError,
     DataManagementSettingsValidationError,
     export_data_management_migration_manifest,
     generate_data_management_encryption_key,
@@ -22,7 +23,7 @@ from functions_data_management import (
     get_data_management_backup_summary,
     get_data_management_job_detail,
     get_data_management_job_progress,
-    get_data_management_jobs,
+    get_data_management_jobs_page,
     get_data_management_migration_catalog,
     get_data_management_settings,
     log_data_management_cosmos_editor_activity,
@@ -74,6 +75,20 @@ def _log_data_management_admin_action(action, description, additional_context=No
 def _get_cosmos_editor_payload():
     payload = request.get_json(silent=True) or {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _get_history_filters(list_kind):
+    filters = {
+        "status": request.args.get("status"),
+        "scheduled": request.args.get("scheduled"),
+        "created_from": request.args.get("created_from"),
+        "created_to": request.args.get("created_to"),
+    }
+    if list_kind == "jobs":
+        filters["operation"] = request.args.get("operation")
+    else:
+        filters["backup_type"] = request.args.get("backup_type")
+    return filters
 
 
 def _cosmos_editor_error_status(exc, default_status=400):
@@ -403,9 +418,21 @@ def register_route_backend_data_management(bp):
     @login_required
     @admin_required
     def list_admin_data_management_jobs():
-        limit = request.args.get("limit", 25)
-        jobs = [sanitize_data_management_job_for_admin(job) for job in get_data_management_jobs(limit=limit)]
-        return jsonify({"success": True, "jobs": jobs}), 200
+        page_size = request.args.get("page_size", request.args.get("limit", 25))
+        try:
+            page = get_data_management_jobs_page(
+                page_size=page_size,
+                continuation_token=request.args.get("continuation_token"),
+                filters=_get_history_filters("jobs"),
+            )
+        except DataManagementHistoryPaginationError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
+        return jsonify({
+            "success": True,
+            "jobs": page["items"],
+            "pagination": page["pagination"],
+            "filters": page["filters"],
+        }), 200
 
     @bp.route("/api/admin/data-management/jobs/<job_id>", methods=["GET"])
     @swagger_route(security=get_auth_security())
@@ -541,8 +568,15 @@ def register_route_backend_data_management(bp):
     @login_required
     @admin_required
     def list_admin_data_management_backups():
-        limit = request.args.get("limit", 100)
-        backup_summary = get_data_management_backup_summary(limit=limit)
+        page_size = request.args.get("page_size", request.args.get("limit", 25))
+        try:
+            backup_summary = get_data_management_backup_summary(
+                limit=page_size,
+                continuation_token=request.args.get("continuation_token"),
+                filters=_get_history_filters("backups"),
+            )
+        except DataManagementHistoryPaginationError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
         return jsonify({"success": True, **backup_summary}), 200
 
     @bp.route("/api/admin/data-management/migration/catalog/<target_type>", methods=["GET"])

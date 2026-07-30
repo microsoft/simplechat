@@ -2,10 +2,11 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 3A indexing policy maintenance.
-Version: 0.250.047
+Version: 0.250.103
 Implemented in: 0.250.008
 Maintenance cleanup integration updated in: 0.250.038
 Manual admin apply override updated in: 0.250.039
+Data Management history pagination index updated in: 0.250.103
 
 This test ensures expected Cosmos indexing policies can be compared, safely
 merged, and invoked through the app maintenance framework without live Azure
@@ -146,6 +147,7 @@ def _build_fake_environment():
     containers = {
         "conversations": FakeCosmosContainer("conversations"),
         "messages": FakeCosmosContainer("messages"),
+        "data_management_jobs": FakeCosmosContainer("data_management_jobs"),
         "collaboration_messages": FakeCosmosContainer("collaboration_messages"),
         "document_access_index": FakeCosmosContainer("document_access_index"),
         "documents": FakeCosmosContainer(
@@ -204,6 +206,8 @@ def _load_wave3_modules():
     fake_config.cosmos_conversations_container_name = "conversations"
     fake_config.cosmos_messages_container = containers["messages"]
     fake_config.cosmos_messages_container_name = "messages"
+    fake_config.cosmos_data_management_jobs_container = containers["data_management_jobs"]
+    fake_config.cosmos_data_management_jobs_container_name = "data_management_jobs"
     fake_config.cosmos_collaboration_messages_container = containers["collaboration_messages"]
     fake_config.cosmos_collaboration_messages_container_name = "collaboration_messages"
     fake_config.cosmos_user_documents_container = containers["documents"]
@@ -256,6 +260,16 @@ def test_indexing_policy_report_is_read_only():
     assert report["containers_missing_expected_indexes"] > 0
     assert report["updated_container_count"] == 0
     assert database.replace_calls == []
+    data_management_definition = next(
+        definition
+        for definition in indexing.COSMOS_INDEXING_POLICY_DEFINITIONS
+        if definition["container_name"] == "data_management_jobs"
+    )
+    assert indexing.COSMOS_INDEXING_POLICY_DEFINITION_VERSION == 2
+    assert data_management_definition["expected_policy"]["compositeIndexes"] == [[
+        {"path": "/created_at", "order": "descending"},
+        {"path": "/id", "order": "descending"},
+    ]]
 
 
 def test_indexing_policy_apply_merges_without_removing_existing_paths():
