@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.101)**
+
+#### New Features
+
+*   **Conversation Context Grounding**
+    *   Models and agents now receive bounded, credential-sanitized metadata for every user turn, including the active model, SimpleChat version, workspace scope, selected documents, agent, and capability state.
+    *   Each assistant response exposes the identical snapshot as a visible Conversation Context citation across streaming, non-streaming, retry, fallback, collaboration, and document-action paths.
+    *   (Ref: microsoft/simplechat#508, `functions_conversation_context.py`, `route_backend_chats.py`, `functions_workflow_runner.py`)
+
 ### **(v0.250.100)**
 
 #### Bug Fixes
