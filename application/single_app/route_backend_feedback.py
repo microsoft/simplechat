@@ -463,10 +463,12 @@ def register_route_backend_feedback(bp):
                 archive_state=archive_state,
             )
             return jsonify(_build_feedback_stats(items))
-        except ValueError as e:
-            return jsonify({"error": str(e)}), 400
-        except Exception as e:
-            return jsonify({"error": f"Failed to retrieve feedback stats: {str(e)}"}), 500
+        except ValueError:
+            logging.exception("Invalid request parameters for feedback review stats")
+            return jsonify({"error": "Invalid request parameters."}), 400
+        except Exception:
+            logging.exception("Failed to retrieve feedback stats")
+            return jsonify({"error": "Failed to retrieve feedback stats."}), 500
 
     @bp.route("/feedback/review/export", methods=["GET"])
     @swagger_route(security=get_auth_security())
