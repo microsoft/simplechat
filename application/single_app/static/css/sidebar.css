@@ -57,8 +57,8 @@ body.sidebar-nav-enabled .container-fluid {
 
 /* Classification banner adjustments for sidebar layout */
 body.has-classification-banner #sidebar-nav {
-  top: 40px !important; /* Start below the classification banner */
-  height: calc(100dvh - 40px) !important; /* Adjust height to account for banner */
+  top: var(--classification-banner-height) !important;
+  height: calc(100dvh - var(--classification-banner-height)) !important;
 }
 
 /* Chats top-nav layout: align the fixed sidebar just below the navbar */
@@ -156,7 +156,7 @@ body.chat-top-nav-shell #sidebar-nav.chat-sidebar-nav .chat-sidebar-mobile-secti
 
 /* Floating expand button positioning when classification banner is present */
 body.has-classification-banner #floating-expand-btn {
-  top: calc(0.5rem + 40px) !important; /* Start below the classification banner */
+  top: calc(0.5rem + var(--classification-banner-height)) !important;
 }
 
 #floating-expand-btn {
@@ -246,7 +246,7 @@ body.sidebar-nav-enabled.has-classification-banner .container-fluid {
 }
 
 #sidebar-nav:not(.chat-sidebar-nav) .sidebar-scroll-content {
-  padding-bottom: 80px;
+  padding-bottom: max(80px, 4rem);
 }
 
 #conversations-section {

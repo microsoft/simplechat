@@ -1,8 +1,8 @@
 /* Top Navigation Styles */
 
 :root {
-  --top-nav-height: 66px;
-  --classification-banner-height: 40px;
+  --top-nav-height: 4.125rem;
+  --classification-banner-height: max(40px, 2.5rem);
 }
 
 /* Base body padding for top navigation */
@@ -337,7 +337,7 @@ body {
 
 @media (max-width: 991.98px) {
   :root {
-    --top-nav-height: 64px;
+    --top-nav-height: 4rem;
   }
 
   .top-nav-shell {

@@ -94,6 +94,20 @@ def test_font_size_api_and_render_contract():
         "css",
         "styles.css",
     )
+    navigation_source = _read_repo_file(
+        "application",
+        "single_app",
+        "static",
+        "css",
+        "navigation.css",
+    )
+    sidebar_source = _read_repo_file(
+        "application",
+        "single_app",
+        "static",
+        "css",
+        "sidebar.css",
+    )
 
     assert "'fontSizePreference'" in route_source
     assert "font_size_preference not in FONT_SIZE_PREFERENCES" in route_source
@@ -101,6 +115,13 @@ def test_font_size_api_and_render_contract():
     assert 'data-font-size="{{ saved_font_size_preference' in base_template
     assert 'name="font-size-preference"' in profile_template
     assert "saveFontSizePreference" in profile_template
+    assert "--top-nav-height: 4.125rem;" in navigation_source
+    assert (
+        "--classification-banner-height: max(40px, 2.5rem);"
+        in navigation_source
+    )
+    assert "height: var(--classification-banner-height);" in base_template
+    assert "padding-bottom: max(80px, 4rem);" in sidebar_source
 
     expected_mappings = {
         "xs": "75%",

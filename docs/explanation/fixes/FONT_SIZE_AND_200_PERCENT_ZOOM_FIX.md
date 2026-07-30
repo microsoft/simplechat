@@ -49,11 +49,14 @@ lacked an account-level text-size preference.
   renders, preventing a default-size flash and arbitrary style injection.
 - Replaced duplicated chat viewport offsets with shared navigation-aware values
   and dynamic viewport units.
+- Made top-navigation and classification-banner offsets font-relative so large
+  preferences reserve enough space without overlapping page content.
 - Preserved a minimum-size flex message region, reduced nonessential spacing in
   short viewports, and reused the mobile tools drawer at the 200 percent
   zoom-equivalent breakpoint.
 - Preserved Development's whole-sidebar scroll-boundary behavior while updating
-  the sidebar shell to use dynamic viewport sizing.
+  the sidebar shell to use dynamic viewport sizing and font-relative footer
+  clearance.
 
 ## Testing Approach
 
