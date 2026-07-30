@@ -69,6 +69,7 @@ def initialize_backup_state(
         state.setdefault("warnings", [])
         state.setdefault("failed_items", [])
         state.setdefault("skipped_items", [])
+        state.setdefault("source_capacity", {})
         return state
 
     return {
@@ -90,6 +91,7 @@ def initialize_backup_state(
         "warnings": [],
         "failed_items": [],
         "skipped_items": [],
+        "source_capacity": {},
     }
 
 

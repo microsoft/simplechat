@@ -5044,6 +5044,45 @@
                         </div>
                     </div>
 
+                    <div class="card p-3 mt-3 border-success-subtle" id="data-management-backup-performance-section">
+                        <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+                            <div>
+                                <h5 class="mb-1">Cosmos Backup Performance</h5>
+                                <p class="text-muted mb-0 small">Backups stream deterministic checkpoint batches and commit only verified work. Higher concurrency can increase source Cosmos cost and pressure.</p>
+                            </div>
+                        </div>
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label class="form-label" for="data_management_backup_max_parallel_operations">Concurrent batch staging</label>
+                                <input class="form-control" type="number" id="data_management_backup_max_parallel_operations" min="1" max="16" value="4">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label" for="data_management_backup_retry_count">Retry attempts</label>
+                                <input class="form-control" type="number" id="data_management_backup_retry_count" min="1" max="10" value="5">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label" for="data_management_backup_capacity_failure_policy">If source boost is unavailable</label>
+                                <select class="form-select" id="data_management_backup_capacity_failure_policy">
+                                    <option value="continue_without_boost">Continue without boost</option>
+                                    <option value="fail">Fail before export</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-check form-switch mt-3">
+                            <input class="form-check-input" type="checkbox" role="switch" id="data_management_backup_temporary_source_ru_enabled">
+                            <label class="form-check-label" for="data_management_backup_temporary_source_ru_enabled">Temporarily increase local source Cosmos capacity for this backup</label>
+                        </div>
+                        <div class="row g-3 mt-1" id="data-management-backup-temporary-ru-field">
+                            <div class="col-md-4">
+                                <label class="form-label" for="data_management_backup_temporary_source_ru">Temporary source max RU/s</label>
+                                <input class="form-control" type="number" id="data_management_backup_temporary_source_ru" min="1000" max="10000" step="1000" value="10000">
+                            </div>
+                            <div class="col-md-8 d-flex align-items-end">
+                                <div class="form-text mb-2">The backup snapshots shared-database or dedicated-container capacity, boosts only eligible source targets up to 10,000 RU/s, and restores the original setting after completion, cancellation, failure, or recovery. This can increase Cosmos charges and requires source ARM read/write permission.</div>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="card p-3 mt-3 border-success-subtle" id="data-management-backup-operations-section">
                         <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
                             <div>

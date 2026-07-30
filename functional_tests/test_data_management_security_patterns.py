@@ -2,9 +2,9 @@
 # test_data_management_security_patterns.py
 """
 Functional test for Data Management security patterns.
-Version: 0.250.073
+Version: 0.250.076
 Implemented in: 0.241.211
-Updated in: 0.250.073
+Updated in: 0.250.076
 
 This test ensures Data Management admin routes require authenticated admin
 access, secrets stay redacted in frontend responses, and the admin browser
@@ -17,7 +17,7 @@ Version 0.250.050 verifies Cosmos editor saves do not pass unsupported
 partition_key kwargs into the Python Cosmos SDK replace_item call.
 Version 0.250.051 keeps version coverage aligned with the Cosmos editor
 results-pane scroll refinement.
-Version 0.250.073 adds durable backup checkpoints, source fencing, generic
+Version 0.250.076 adds bounded parallel backup checkpoints, source capacity recovery, generic
 admin cancellation/retry controls, and latest-only sidecar state sanitization.
 """
 
@@ -69,7 +69,7 @@ def test_version_and_container_registration():
     """Validate the Data Management version and Cosmos job container registrations."""
     config_source = read_text(CONFIG_FILE)
 
-    assert 'VERSION = "0.250.073"' in config_source
+    assert 'VERSION = "0.250.076"' in config_source
     assert 'cosmos_data_management_jobs_container_name = "data_management_jobs"' in config_source
     assert 'partition_key=PartitionKey(path="/id")' in config_source
     assert 'cosmos_data_management_job_items_container_name = "data_management_job_items"' in config_source
@@ -80,6 +80,10 @@ def test_version_and_container_registration():
     assert re.search(r'data_management_jobs\s+= \{ partition_key_path = "/id", default_ttl = null \}', terraform_source)
     assert re.search(r'data_management_job_items\s+= \{ partition_key_path = "/job_id", default_ttl = null \}', terraform_source)
     assert re.search(r'data_management_backup_item_states\s+= \{ partition_key_path = "/source_scope", default_ttl = null \}', terraform_source)
+    assert 'resource "azurerm_role_definition" "simplechat_cosmos_throughput_operator"' in terraform_source
+    assert 'managed_identity_cosmos_throughput_operator' in terraform_source
+    assert 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/throughputSettings/write' in terraform_source
+    assert 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/throughputSettings/write' in terraform_source
 
 
 def test_admin_routes_require_login_admin_and_swagger_security():
@@ -184,6 +188,14 @@ def test_settings_secrets_are_redacted_for_frontend():
     assert 'add_search_migration_provenance' in source
     assert 'merge_blob_migration_metadata' in source
     assert 'migration_max_parallel_operations' in source
+    assert 'backup_max_parallel_operations' in source
+    assert 'backup_temporary_source_ru_enabled' in source
+    assert 'backup_capacity_failure_policy' in source
+    assert '_execute_parallel_backup_cosmos_resource' in source
+    assert '_apply_temporary_backup_source_capacity' in source
+    assert '_restore_temporary_backup_source_capacity' in source
+    assert '_sanitize_data_management_backup_state_for_admin' in source
+    assert '"source_capacity": public_source_capacity' in source
     assert 'migration_temporary_destination_ru_enabled' in source
     assert 'DATA_MANAGEMENT_MIGRATION_MAX_DESTINATION_RU = 10000' in source
     assert 'DATA_MANAGEMENT_MIGRATION_MODE_DELTA_UPSERT = "delta_upsert"' in source
@@ -335,6 +347,10 @@ def test_admin_javascript_uses_safe_dom_patterns():
         'closest("[data-ignore-data-management-change',
             'retryDataManagementJob',
         'getMigrationLiveMetrics',
+        'getBackupLiveMetrics',
+        'updateBackupCapacityVisibility',
+        'backup_max_parallel_operations',
+        'backup_temporary_source_ru_enabled',
         'updateMigrationCapacityVisibility',
         'updateMigrationModeVisibility',
         'updateMigrationSearchWriteFreezeVisibility',
@@ -394,6 +410,12 @@ def test_admin_ui_exposes_data_management_without_external_assets():
         'id="data-management-test-migration-access-btn"',
         'Validate Cosmos Migration Access',
         'id="data_management_migration_max_parallel_operations"',
+        'id="data_management_backup_max_parallel_operations"',
+        'id="data_management_backup_retry_count"',
+        'id="data_management_backup_capacity_failure_policy"',
+        'id="data_management_backup_temporary_source_ru_enabled"',
+        'id="data_management_backup_temporary_source_ru"',
+        'id="data-management-backup-temporary-ru-field"',
         'id="data_management_migration_retry_count"',
         'id="data_management_migration_skip_recent_within_hours"',
         'id="data_management_migration_temporary_destination_ru_enabled"',

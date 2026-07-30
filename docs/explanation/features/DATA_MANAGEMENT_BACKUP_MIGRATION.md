@@ -1,7 +1,7 @@
 # Data Management Backup and Migration
 
 Implemented in version: **0.241.211**
-Updated in version: **0.250.073**
+Updated in version: **0.250.076**
 
 ## Overview
 
@@ -26,9 +26,24 @@ Full and partial backups use the same Cosmos-backed durable job contract as resi
 - Queueing captures an immutable, normalized, secret-free backup plan, source scope, conservative Cosmos cutoff, storage identity fingerprint, version-pinned Key Vault encryption contract when applicable, and explicit non-destructive deletion policy.
 - Each worker attempt receives a lease generation and attempt ID. Source-scoped backup locks prevent full and partial jobs from overlapping across manual requests, scheduled scans, workers, and App Service instances. Long JSONL staging, artifact upload, source-blob download, and source-blob upload calls renew the fenced lease while in flight.
 - Resource checkpoints retain bounded counters and rolling batch identities. Per-item outcomes are stored in bounded job-manifest batches plus the latest-only sidecar state, so verified units are not replayed after a restart or focused retry.
+- Cosmos exports read deterministic `c.id`-ordered source pages and stream checkpoint-sized JSONL batches. A bounded worker pool stages no more than the configured concurrent batch count while the lease-owning coordinator commits manifests, latest-item state, and checkpoints strictly in source sequence. This avoids materializing whole containers in memory and preserves deterministic retry/resume output.
+- Cosmos page reads and batch staging retry `408`, `429`, `449`, and `5xx` responses with bounded exponential backoff, jitter, and `Retry-After` guidance where supplied. Throttle events reduce active staging concurrency; clean completed batches gradually restore it up to the configured limit. Permanent serialization/upload failures are checkpointed as retryable item outcomes rather than silently omitted.
 - Queued jobs cancel immediately. Running jobs stop cooperatively at a durable boundary; already verified work remains available for Retry or Resume.
-- The scheduler resubmits delayed queued and stale backup jobs through the executor. Scheduled runs defer when another active backup owns the same source scope instead of overlapping it.
-- Backup progress and job timelines expose bounded resource counters, warnings, failed/skipped summaries, attempt history, and checkpoint counts. They do not expose settings, credentials, source content, SAS query strings, signed artifact URLs, or provider error strings containing secrets.
+- The scheduler resubmits delayed queued and stale backup jobs through the executor. Scheduled runs defer when another active backup owns the same source scope instead of overlapping it. Pending source-capacity restoration is claimed only by the newly fenced recovery attempt and runs before storage or encryption initialization.
+- Backup progress and job timelines expose bounded resource counters, warnings, failed/skipped summaries, attempt history, checkpoint counts, source page position, request units, retries/throttles, elapsed time, records/sec, and RU/sec. They do not expose settings, credentials, source content, ARM routing, SAS query strings, signed artifact URLs, or provider error strings containing secrets.
+
+### Cosmos Backup Performance and Source Capacity
+
+The Backup card provides opt-in controls for Cosmos batch staging concurrency (1-16), retry attempts (1-10), a source capacity failure policy, and a temporary local/source Cosmos throughput boost capped at **10,000 RU/s**.
+
+- Each queued backup records its concurrency, retry, boost, target RU, and failure policy in its immutable plan. Retrying the job uses that recorded plan rather than current settings.
+- Before a source boost, the job discovers whether the source has shared database throughput or dedicated container throughput and persists the exact original mode/value for every target before any mutation.
+- A boost applies only to eligible manual or autoscale database/container throughput at or below 10,000 RU/s. Serverless, shared/dedicated layouts without an eligible throughput resource, and capacity values already above the SimpleChat cap cannot be managed by the job.
+- The `continue_without_boost` policy records a warning and runs the backup at current capacity when ARM capacity discovery or mutation is denied or unsupported. The `fail` policy stops before export so administrators can correct capacity permissions or topology first.
+- Every applied boost records `restore_pending` before mutation. Completion, cancellation, worker failure, stale-worker recovery, and scheduler recovery attempt restoration in a fenced `finally` path. Restore writes only when the live capacity still equals this job's boosted value; an external post-boost change is preserved and reported instead of overwritten.
+- A stale worker cannot restore capacity from a newer attempt because restore ownership includes the current backup attempt ID and lease generation. Unresolved restoration remains durable and retryable until a new fenced attempt restores or explicitly reports the current external capacity.
+
+Temporary capacity can increase Cosmos DB charges and can affect workload behavior. Use it only during an approved maintenance window, start with the default bounded concurrency, and inspect retry/throttle telemetry before increasing parallelism.
 
 The latest-only sidecar records source identity and version, backup lineage, job/attempt and lease generation, checkpoint/artifact identity, timestamp, terminal outcome, and bounded failure or skip summary for Cosmos records, AI Search documents, and source blobs. Backup lineage is derived from the immutable destination and encryption identity, so a changed destination or key cannot reuse another destination's differential state. Attempts remain historical job-record data; the sidecar stores only the latest outcome for each source item.
 
@@ -98,6 +113,8 @@ For durable provenance, destination access probes, collision protection, checkpo
 - Backup storage must use a dedicated Azure Storage account. Data Management rejects backup settings or storage tests that match the Enhanced Citations storage connection string or normalized Blob endpoint.
 - Source document blob backup is available only when Enhanced Citations is enabled. It defaults on when available and is disabled when Enhanced Citations is off.
 - Backup encryption keys can be stored in Key Vault when Key Vault secret storage is enabled. If Key Vault is unavailable, generated keys fall back to the Data Management settings document and the admin UI recommends enabling Key Vault.
+- Cosmos backup performance: bounded concurrent JSONL batch staging (default 4, maximum 16), retry attempts (default 5, maximum 10), and `continue_without_boost` or `fail` behavior when optional source capacity management cannot proceed.
+- Temporary local/source Cosmos capacity boost: disabled by default; capped at 10,000 RU/s and restored from a durable source capacity snapshot.
 - Target Cosmos authentication: managed identity or account key.
 - Target Cosmos database name: always `SimpleChat`.
 - Target Search authentication: managed identity or admin key.
@@ -115,22 +132,26 @@ Data Management settings save through their own API and are excluded from the re
 3. Use Test Storage to validate and create the backup container if needed.
 4. Generate an encryption key or let the first encrypted backup generate one automatically.
 5. Configure the full backup cadence and scheduled UTC time.
-6. Queue a full or partial backup, or use the restore/migration dry-run buttons to create durable orchestration records.
-7. Configure and test Target Cosmos, Target Search, and Target Enhanced Citation Storage before running an actual migration.
-8. Use the Migration Workflow to choose users, groups, and public workspaces, then decide whether documents, AI Search entries, and source blobs should be included.
-9. Choose the synchronization mode, preview live destination changes, and then Execute Migration to queue the job. Mirror mode requires the exact destructive confirmation phrase.
-10. Open Advanced backup scope only when you need to alter the default Cosmos DB, AI Search index, or source blob backup surfaces.
-11. Use Backup Inventory to see available backups first, filter to full or partial backups, and open View Log for structured backup details.
-12. Use Job History to inspect live progress, durable backup cutoff/checkpoint state, completed steps, reconciliation readiness, preview divergence, and artifact contents. Backup and migration detail both provide Retry/Resume and Cancel; migration detail also provides full or failure-only JSONL manifest downloads.
+6. Configure Cosmos Backup Performance when needed. Keep the default bounded concurrency for normal workloads; enable the source boost only when the cost, topology, and ARM permissions have been reviewed.
+7. Queue a full or partial backup, or use the restore/migration dry-run buttons to create durable orchestration records.
+8. Configure and test Target Cosmos, Target Search, and Target Enhanced Citation Storage before running an actual migration.
+9. Use the Migration Workflow to choose users, groups, and public workspaces, then decide whether documents, AI Search entries, and source blobs should be included.
+10. Choose the synchronization mode, preview live destination changes, and then Execute Migration to queue the job. Mirror mode requires the exact destructive confirmation phrase.
+11. Open Advanced backup scope only when you need to alter the default Cosmos DB, AI Search index, or source blob backup surfaces.
+12. Use Backup Inventory to see available backups first, filter to full or partial backups, and open View Log for structured backup details.
+13. Use Job History to inspect active container, checkpoint position, records, bytes, RU, retries/throttles, rates, capacity restoration state, durable backup cutoff/checkpoint state, completed steps, reconciliation readiness, preview divergence, and artifact contents. Backup and migration detail both provide Retry/Resume and Cancel; migration detail also provides full or failure-only JSONL manifest downloads.
 
 Migration is used when moving SimpleChat data into another SimpleChat environment, rehearsing a cutover, or preparing a controlled environment transfer. The target Cosmos account, authentication type, and optional account key are configurable. The target database name is fixed to `SimpleChat` so future migration apply jobs use the standard SimpleChat container layout.
 
 For managed identity target Cosmos migration, assign this App Service identity Cosmos DB Data Contributor on the target Cosmos account and ensure network access from the application environment.
 
+For optional local/source Cosmos backup capacity management, assign the App Service managed identity only the management-plane actions needed to read Cosmos account/database/container throughput settings, read/write database/container `throughputSettings`, read throughput operation results, run `migrateToAutoscale` when applicable, and read Cosmos metrics. Bicep and Terraform provision the `SimpleChat Cosmos Throughput Operator` custom role with these actions. This role is distinct from Cosmos DB data-plane access and does not grant access to source record content.
+
 ## Testing and Validation
 
 - Functional security coverage: `functional_tests/test_data_management_security_patterns.py`.
 - Backup durability coverage: `functional_tests/test_data_management_backup_durability.py`.
+- Parallel Cosmos backup, retry/adaptive pressure, source capacity restoration/recovery, fencing, resume, and sanitized telemetry coverage: `functional_tests/test_data_management_backup_parallelism.py`.
 - UI/template coverage: `ui_tests/test_admin_data_management_settings_ui.py`.
 - Scheduler/recovery, cancellation, retry, coordinator, provenance, and write-fence coverage remains in the focused `functional_tests/test_data_management_*` modules.
 - Syntax validation: `python -m py_compile` for modified backend modules and `node --check` for the admin browser module.
@@ -139,9 +160,11 @@ For managed identity target Cosmos migration, assign this App Service identity C
 
 - Backup artifact export is implemented for Cosmos DB and AI Search, with optional source blob copying. Restore application remains a follow-up workflow and consumes the recorded non-destructive manifest contract.
 - Bicep and Terraform deployments provision `data_management_jobs`, `data_management_job_items`, and `data_management_backup_item_states` so durable job and latest-state storage are available on either IaC path.
+- Source capacity boosts are not available for serverless Cosmos, non-scalable shared/dedicated topology, or targets above 10,000 RU/s. Existing source capacity above the cap remains portal-managed and is never reduced by SimpleChat.
+- Capacity operations can take time to apply and may be denied by network/RBAC policy. The documented failure policy determines whether the backup continues at existing capacity or fails before export; unresolved `restore_pending` state must be retried before another boost is applied.
 - Restore execution is documented separately. Migration apply supports selected SimpleChat Cosmos, Search, and Enhanced Citations Blob surfaces rather than arbitrary Azure resources.
 
 ## Version References
 
-- Application version updated in `application/single_app/config.py` to `0.250.073`.
+- Application version updated in `application/single_app/config.py` to `0.250.076`.
 - Functional and UI tests include the same implementation version.
