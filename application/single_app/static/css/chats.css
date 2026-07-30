@@ -4352,3 +4352,36 @@ mark.search-highlight {
 [data-bs-theme="dark"] .thoughts-container {
     border-top-color: #495057 !important;
 }
+
+.ai-notice {
+    align-items: flex-start;
+    gap: 0.5rem;
+    padding: 0.5rem 0.25rem 0.125rem;
+    color: var(--bs-secondary-color);
+    font-size: 0.78rem;
+    line-height: 1.4;
+}
+
+.ai-notice:not(.d-none) {
+    display: flex;
+}
+
+.ai-notice-icon {
+    flex: 0 0 auto;
+    margin-top: 0.1rem;
+    color: var(--bs-primary);
+}
+
+.ai-notice-message {
+    flex: 1 1 auto;
+    min-width: 0;
+    white-space: pre-line;
+}
+
+.ai-notice-dismiss {
+    flex: 0 0 auto;
+    width: 0.7rem;
+    height: 0.7rem;
+    margin-top: 0.15rem;
+    font-size: 0.6rem;
+}

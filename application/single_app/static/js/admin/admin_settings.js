@@ -6793,6 +6793,16 @@ function setupToggles() {
         });
     }
 
+    const enableAiNotice = document.getElementById('enable_ai_notice');
+    const aiNoticeSettings = document.getElementById('ai_notice_settings');
+    if (enableAiNotice && aiNoticeSettings) {
+        toggleVisibility(aiNoticeSettings, enableAiNotice.checked);
+        enableAiNotice.addEventListener('change', function() {
+            toggleVisibility(aiNoticeSettings, this.checked);
+            markFormAsModified();
+        });
+    }
+
     const enableUrlAccess = document.getElementById('enable_url_access');
     const urlAccessSettings = document.getElementById('url_access_settings');
     const applyUrlAccessDefaults = () => {

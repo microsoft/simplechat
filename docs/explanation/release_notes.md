@@ -6,6 +6,11 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 #### New Features
 
+*   **Configurable Chat AI Notice**
+    *   Administrators can display custom plain-text AI guidance directly below the chat composer.
+    *   Supports non-dismissible, per-session, daily, and once-per-message-version behavior with validated dismissal persistence and automatic redisplay when the configured notice changes.
+    *   (Ref: microsoft/simplechat#715, `functions_ai_notice.py`, `admin_settings.html`, `chats.html`, `chat-ai-notice.js`)
+
 *   **Per-Message Audio Export**
     *   Users can export completed user and assistant chat messages as MP3 audio when text-to-speech is enabled.
     *   Downloads reuse the active Azure Speech voice and speed, include only visible message text, and remain transient without storing generated audio in SimpleChat.
