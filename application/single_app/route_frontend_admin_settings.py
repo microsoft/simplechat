@@ -158,9 +158,13 @@ def register_route_frontend_admin_settings(bp):
                 unit=unit,
             )
         except ValueError as exc:
+            current_app.logger.warning(
+                'Invalid file processing log cleanup request.',
+                exc_info=True,
+            )
             return jsonify({
                 'success': False,
-                'error': str(exc),
+                'error': 'Invalid file processing log cleanup request.',
             }), 400
         except FileProcessingLogDeletionError as exc:
             return jsonify({
