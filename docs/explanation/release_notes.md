@@ -11,6 +11,12 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Added a default-on user profile preference so each user can hide the drawer while the global admin feature remains enabled.
     *   (Ref: microsoft/simplechat#1026, `chat-conversation-contents.js`, `admin_settings.html`, `profile.html`)
 
+*   **Fork Personal Conversations from Assistant Responses**
+    *   Added a Fork conversation action for persisted assistant messages, creating an independent personal conversation containing the active history through the selected response while leaving the source unchanged.
+    *   Forks remap conversation, message, thread, reply, and artifact identifiers; copy blob-backed attachments to independent paths; reject unauthorized or changed sources; and clean up failed copies before they become visible.
+    *   Added confirmation, duplicate-click prevention, failure feedback, immediate fork navigation, backend regression coverage, and browser workflow coverage.
+    *   (Ref: microsoft/simplechat#1025, `functions_simplechat_operations.py`, `route_backend_conversations.py`, `chat-messages.js`, `FORK_CONVERSATION.md`)
+
 #### User Interface Enhancements
 
 *   **Responsive Long-Chat Navigation**
@@ -25,6 +31,11 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Added persisted XS, S, M, L, and XL font-size choices to the user profile, ranging from 75% to 200% with medium as the default.
     *   Font-size selections preview immediately and apply across SimpleChat after the user saves the preference.
     *   (Ref: microsoft/simplechat#1099, `profile.html`, `functions_settings.py`, `FONT_SIZE_AND_200_PERCENT_ZOOM_FIX.md`)
+
+*   **Durable Data Management Backup Jobs**
+    *   Full and partial backups now persist immutable plans and source cutoffs, fenced attempts, resource/batch checkpoints, and latest-only Cosmos, AI Search, and Blob item state without mutating source records or metadata.
+    *   Added source-scoped overlap protection, authenticated cancellation and focused retry/resume controls, stale/queued worker recovery, bounded sanitized progress, and explicit non-destructive differential/deletion semantics in backup manifests.
+    *   (Ref: Closes #1092, `functions_data_management.py`, `functions_data_management_backup_state.py`, `DATA_MANAGEMENT_BACKUP_MIGRATION.md`)
 
 #### User Interface Enhancements
 
@@ -132,6 +143,13 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   (Ref: microsoft/simplechat#1082, `workspace.html`, `group_workspaces.html`, `workspace_workflows.js`, `workspace-responsive.css`)
 
 ### **(v0.250.062)**
+
+#### Bug Fixes
+
+*   **Cosmos Container Startup Conflict Recovery**
+    *   Fixed a local Docker startup failure where multiple gunicorn workers could race while creating first-run Cosmos containers, causing a `NotFound` followed by a `Conflict` during app import.
+    *   Container initialization now re-reads and returns the existing container when another worker creates it first, preserving normal startup behavior for already-provisioned environments.
+    *   (Ref: `config.py`, `test_cosmos_container_conflict_recovery.py`, `COSMOS_CONTAINER_STARTUP_CONFLICT_FIX.md`)
 
 #### New Features
 
