@@ -29,7 +29,8 @@ from functions_data_management import (
     preview_data_management_migration_plan,
     queue_data_management_job,
     query_data_management_cosmos_editor_documents,
-    request_data_management_migration_cancellation,
+    request_data_management_job_cancellation,
+    retry_data_management_backup_job,
     resolve_data_management_migration_manifest_item,
     retry_data_management_migration_job,
     sanitize_data_management_job_for_admin,
@@ -472,23 +473,32 @@ def register_route_backend_data_management(bp):
     @admin_required
     def retry_admin_data_management_migration_job(job_id):
         try:
-            job = retry_data_management_migration_job(job_id)
+            existing_job = get_data_management_job_detail(job_id)
+            operation = (
+                (existing_job.get("job") or {}).get("operation")
+                if isinstance(existing_job, dict) else
+                ""
+            )
+            if operation == DATA_MANAGEMENT_OPERATION_BACKUP:
+                job = retry_data_management_backup_job(job_id)
+            else:
+                job = retry_data_management_migration_job(job_id)
             submitted = submit_data_management_job(current_app._get_current_object(), job.get("id"))
         except DataManagementSettingsValidationError as exc:
             return jsonify({"success": False, "error": str(exc)}), 400
         except Exception as exc:
             log_event(
-                "[DataManagement] Failed to retry migration job.",
+                "[DataManagement] Failed to retry durable job.",
                 {"job_id": job_id, "error": str(exc)},
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
-            return jsonify({"success": False, "error": "Migration retry could not be queued."}), 400
+            return jsonify({"success": False, "error": "Data Management job retry could not be queued."}), 400
 
         _log_data_management_admin_action(
-            "data_management_migration_retry_queued",
-            "Queued a Data Management migration retry from durable checkpoints.",
-            {"job_id": job.get("id"), "submitted": submitted},
+            "data_management_job_retry_queued",
+            "Queued a Data Management job retry from durable checkpoints.",
+            {"job_id": job.get("id"), "operation": job.get("operation"), "submitted": submitted},
         )
         public_job = sanitize_data_management_job_for_admin(job)
         public_job["submitted_to_executor"] = submitted
@@ -502,7 +512,7 @@ def register_route_backend_data_management(bp):
         payload = request.get_json(silent=True) or {}
         admin_user_id, admin_email = _get_admin_context()
         try:
-            job = request_data_management_migration_cancellation(
+            job = request_data_management_job_cancellation(
                 job_id,
                 requested_by=admin_user_id,
                 requested_by_email=admin_email,
@@ -512,17 +522,17 @@ def register_route_backend_data_management(bp):
             return jsonify({"success": False, "error": str(exc)}), 400
         except Exception as exc:
             log_event(
-                "[DataManagement] Failed to request migration cancellation.",
+                "[DataManagement] Failed to request Data Management job cancellation.",
                 {"job_id": job_id, "error": str(exc)},
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
-            return jsonify({"success": False, "error": "Migration cancellation could not be requested."}), 400
+            return jsonify({"success": False, "error": "Data Management job cancellation could not be requested."}), 400
 
         _log_data_management_admin_action(
-            "data_management_migration_cancel_requested",
-            "Requested cancellation of a Data Management migration.",
-            {"job_id": job.get("id"), "status": job.get("status")},
+            "data_management_job_cancel_requested",
+            "Requested cancellation of a Data Management job.",
+            {"job_id": job.get("id"), "operation": job.get("operation"), "status": job.get("status")},
         )
         return jsonify({"success": True, "job": sanitize_data_management_job_for_admin(job)}), 202
 

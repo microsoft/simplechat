@@ -11,6 +11,11 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Font-size selections preview immediately and apply across SimpleChat after the user saves the preference.
     *   (Ref: microsoft/simplechat#1099, `profile.html`, `functions_settings.py`, `FONT_SIZE_AND_200_PERCENT_ZOOM_FIX.md`)
 
+*   **Durable Data Management Backup Jobs**
+    *   Full and partial backups now persist immutable plans and source cutoffs, fenced attempts, resource/batch checkpoints, and latest-only Cosmos, AI Search, and Blob item state without mutating source records or metadata.
+    *   Added source-scoped overlap protection, authenticated cancellation and focused retry/resume controls, stale/queued worker recovery, bounded sanitized progress, and explicit non-destructive differential/deletion semantics in backup manifests.
+    *   (Ref: Closes #1092, `functions_data_management.py`, `functions_data_management_backup_state.py`, `DATA_MANAGEMENT_BACKUP_MIGRATION.md`)
+
 #### User Interface Enhancements
 
 *   **200% Zoom and Large-Text Layout Support**

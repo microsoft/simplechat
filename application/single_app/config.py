@@ -462,6 +462,12 @@ cosmos_data_management_job_items_container = cosmos_database.create_container_if
     partition_key=PartitionKey(path="/job_id")
 )
 
+cosmos_data_management_backup_item_states_container_name = "data_management_backup_item_states"
+cosmos_data_management_backup_item_states_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_data_management_backup_item_states_container_name,
+    partition_key=PartitionKey(path="/source_scope")
+)
+
 cosmos_personal_workflows_container_name = "personal_workflows"
 cosmos_personal_workflows_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_personal_workflows_container_name,

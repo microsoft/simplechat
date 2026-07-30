@@ -23,7 +23,7 @@ let cosmosEditorContinuationToken = null;
 let cosmosEditorResultCount = 0;
 let cosmosEditorSelectedDocument = null;
 let cosmosEditorPendingDocument = null;
-let pendingMigrationCancellationJobId = null;
+let pendingDataManagementCancellationJob = null;
 
 const jobDetailRefreshIntervalMs = 2000;
 const activeJobStatuses = new Set(["queued", "running"]);
@@ -247,9 +247,9 @@ function bindEvents() {
     elements.dataManagementRefreshJobsBtn?.addEventListener("click", loadDataManagementJobs);
     elements.dataManagementJobDetailModal?.addEventListener("hidden.bs.modal", () => stopJobDetailAutoRefresh({ clearJob: true }));
     elements.dataManagementMigrationCancelModal?.addEventListener("hidden.bs.modal", () => {
-        pendingMigrationCancellationJobId = null;
+        pendingDataManagementCancellationJob = null;
     });
-    elements.dataManagementConfirmMigrationCancelBtn?.addEventListener("click", requestMigrationCancellation);
+    elements.dataManagementConfirmMigrationCancelBtn?.addEventListener("click", requestDataManagementCancellation);
     elements.dataManagementKeyVaultLink?.addEventListener("click", openKeyVaultSettings);
     elements.dataManagementCosmosEditorOpenDangerBtn?.addEventListener("click", showCosmosEditorDangerModal);
     elements.datamanagementcosmoseditordangeraccept?.addEventListener("change", updateCosmosEditorDangerAcceptState);
@@ -1917,18 +1917,19 @@ function createJobActionCell(jobId, job = {}) {
     button.appendChild(document.createTextNode("View Log"));
     button.addEventListener("click", () => loadDataManagementJobDetail(jobId));
     cell.appendChild(button);
-    if (job.operation === "migration" && job.can_retry === true) {
+    if ((job.operation === "migration" || job.operation === "backup") && job.can_retry === true) {
         const retryButton = document.createElement("button");
         retryButton.type = "button";
         retryButton.className = "btn btn-outline-warning btn-sm ms-1";
         retryButton.disabled = !jobId;
         const retryIcon = document.createElement("i");
         retryIcon.className = "bi bi-arrow-repeat me-1";
-        retryButton.append(retryIcon, document.createTextNode(job.status === "running" ? "Resume" : "Retry"));
-        retryButton.addEventListener("click", () => retryMigrationJob(jobId, retryButton));
+        const retryLabel = job.status === "running" ? "Resume" : job.operation === "backup" ? "Retry failures" : "Retry";
+        retryButton.append(retryIcon, document.createTextNode(retryLabel));
+        retryButton.addEventListener("click", () => retryDataManagementJob(job, retryButton));
         cell.appendChild(retryButton);
     }
-    if (job.operation === "migration" && job.can_cancel === true) {
+    if ((job.operation === "migration" || job.operation === "backup") && job.can_cancel === true) {
         const cancelButton = document.createElement("button");
         cancelButton.type = "button";
         cancelButton.className = "btn btn-outline-danger btn-sm ms-1";
@@ -1936,26 +1937,30 @@ function createJobActionCell(jobId, job = {}) {
         const cancelIcon = document.createElement("i");
         cancelIcon.className = "bi bi-stop-circle me-1";
         cancelButton.append(cancelIcon, document.createTextNode("Cancel"));
-        cancelButton.addEventListener("click", () => openMigrationCancellationModal(job));
+        cancelButton.addEventListener("click", () => openDataManagementCancellationModal(job));
         cell.appendChild(cancelButton);
     }
     return cell;
 }
 
-function openMigrationCancellationModal(job) {
+function openDataManagementCancellationModal(job) {
     if (!job?.id || !elements.dataManagementMigrationCancelModal || !window.bootstrap?.Modal) {
         return;
     }
-    pendingMigrationCancellationJobId = job.id;
+    pendingDataManagementCancellationJob = {
+        id: job.id,
+        operation: job.operation || "job",
+    };
     setText(
         elements.dataManagementMigrationCancelMessage,
-        `Request cancellation for migration ${job.id}?`
+        `Request cancellation for ${formatOperation(job.operation || "job", job.backup_type || "")} ${job.id}?`
     );
     window.bootstrap.Modal.getOrCreateInstance(elements.dataManagementMigrationCancelModal).show();
 }
 
-async function requestMigrationCancellation() {
-    const jobId = pendingMigrationCancellationJobId;
+async function requestDataManagementCancellation() {
+    const pendingJob = pendingDataManagementCancellationJob;
+    const jobId = pendingJob?.id;
     if (!jobId) {
         return;
     }
@@ -1966,14 +1971,15 @@ async function requestMigrationCancellation() {
             { method: "POST", body: JSON.stringify({}) }
         );
         const canceledImmediately = data.job?.status === "canceled";
+        const operationLabel = formatOperation(data.job?.operation || pendingJob.operation || "job", data.job?.backup_type || "");
         setStatus(
             canceledImmediately
-                ? "Queued migration canceled before execution started."
-                : "Migration cancellation requested. The worker will stop at its next durable checkpoint.",
+                ? `Queued ${operationLabel} canceled before execution started.`
+                : `${formatActivityLabel(data.job?.operation || pendingJob.operation || "job")} cancellation requested. The worker will stop at its next durable checkpoint.`,
             "success"
         );
         showToast(
-            canceledImmediately ? "Migration canceled." : "Migration cancellation requested.",
+            canceledImmediately ? `${formatActivityLabel(data.job?.operation || pendingJob.operation || "job")} canceled.` : `${formatActivityLabel(data.job?.operation || pendingJob.operation || "job")} cancellation requested.`,
             "success"
         );
         window.bootstrap.Modal.getOrCreateInstance(elements.dataManagementMigrationCancelModal).hide();
@@ -1983,27 +1989,32 @@ async function requestMigrationCancellation() {
             loadDataManagementJobDetail(jobId, { showModal: false, liveRefresh: true });
         }
     } catch (error) {
-        setStatus(error.message || "Migration cancellation could not be requested.", "danger");
-        showToast(error.message || "Migration cancellation could not be requested.", "danger");
+        setStatus(error.message || "Data Management job cancellation could not be requested.", "danger");
+        showToast(error.message || "Data Management job cancellation could not be requested.", "danger");
     } finally {
         setBusy(elements.dataManagementConfirmMigrationCancelBtn, false);
     }
 }
 
-async function retryMigrationJob(jobId, button) {
+async function retryDataManagementJob(job, button) {
+    const jobId = job?.id;
+    if (!jobId) {
+        return;
+    }
     setBusy(button, true, "Retrying...");
     try {
         const data = await requestJson(`/api/admin/data-management/jobs/${encodeURIComponent(jobId)}/retry`, {
             method: "POST",
         });
-        setStatus("Migration retry queued from durable checkpoints.", "success");
-        showToast("Migration retry queued.", "success");
+        const operationLabel = formatActivityLabel(data.job?.operation || job.operation || "job");
+        setStatus(`${operationLabel} retry queued from durable checkpoints.`, "success");
+        showToast(`${operationLabel} retry queued.`, "success");
         renderJobs([data.job]);
         loadDataManagementJobs();
         loadDataManagementJobDetail(jobId, { showModal: false, liveRefresh: true });
     } catch (error) {
-        setStatus(error.message || "Migration retry could not be queued.", "danger");
-        showToast(error.message || "Migration retry could not be queued.", "danger");
+        setStatus(error.message || "Data Management job retry could not be queued.", "danger");
+        showToast(error.message || "Data Management job retry could not be queued.", "danger");
     } finally {
         setBusy(button, false);
     }
@@ -2065,34 +2076,33 @@ function renderJobDetailActions(job) {
         return;
     }
     container.replaceChildren();
-    if (job.operation !== "migration") {
-        container.classList.add("d-none");
-        return;
+    if (job.operation === "migration") {
+        const fullManifestLink = createMigrationManifestDownloadLink(
+            job.id,
+            "Download manifest",
+            "",
+            "btn-outline-primary"
+        );
+        const failuresLink = createMigrationManifestDownloadLink(
+            job.id,
+            "Download failures",
+            "failed,missing,collision",
+            "btn-outline-danger"
+        );
+        container.append(fullManifestLink, failuresLink);
     }
-    const fullManifestLink = createMigrationManifestDownloadLink(
-        job.id,
-        "Download manifest",
-        "",
-        "btn-outline-primary"
-    );
-    const failuresLink = createMigrationManifestDownloadLink(
-        job.id,
-        "Download failures",
-        "failed,missing,collision",
-        "btn-outline-danger"
-    );
-    container.append(fullManifestLink, failuresLink);
     if (job.can_retry === true) {
         const retryButton = document.createElement("button");
         retryButton.type = "button";
         retryButton.className = "btn btn-outline-warning btn-sm";
         const retryIcon = document.createElement("i");
         retryIcon.className = "bi bi-arrow-repeat me-1";
+        const retryLabel = job.status === "running" ? "Resume" : job.operation === "backup" ? "Retry failures" : "Retry";
         retryButton.append(
             retryIcon,
-            document.createTextNode(job.status === "running" ? "Resume" : "Retry")
+            document.createTextNode(retryLabel)
         );
-        retryButton.addEventListener("click", () => retryMigrationJob(job.id, retryButton));
+        retryButton.addEventListener("click", () => retryDataManagementJob(job, retryButton));
         container.appendChild(retryButton);
     }
     if (job.can_cancel === true) {
@@ -2102,7 +2112,7 @@ function renderJobDetailActions(job) {
         const cancelIcon = document.createElement("i");
         cancelIcon.className = "bi bi-stop-circle me-1";
         cancelButton.append(cancelIcon, document.createTextNode("Cancel"));
-        cancelButton.addEventListener("click", () => openMigrationCancellationModal(job));
+        cancelButton.addEventListener("click", () => openDataManagementCancellationModal(job));
         container.appendChild(cancelButton);
     }
     container.classList.toggle("d-none", container.childElementCount === 0);

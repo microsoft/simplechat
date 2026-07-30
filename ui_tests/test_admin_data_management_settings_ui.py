@@ -1,9 +1,10 @@
 # test_admin_data_management_settings_ui.py
 """
 UI test for Admin Settings Data Management controls.
-Version: 0.250.071
+Version: 0.250.073
 Implemented in: 0.241.211
 Updated in: 0.241.221
+Updated in: 0.250.073
 
 This test ensures admins can discover the Data Management tab, see the
 operational-business-hours warning, and access the backup, encryption,
@@ -13,6 +14,7 @@ Version 0.250.050 keeps this coverage aligned with the Cosmos editor save-path f
 Version 0.250.051 verifies the Cosmos editor results list scrolls independently.
 Version 0.250.071 adds resilient migration provenance, incremental modes, cutover
 reconciliation, and the external target Search writer freeze acknowledgement.
+Version 0.250.073 adds shared backup and migration retry/cancellation controls.
 """
 
 import os
@@ -237,9 +239,9 @@ def test_admin_data_management_controls_render_from_template():
     assert 'closest("[data-ignore-data-management-change' in js_source
     assert 'testTargetCosmos' in js_source
     assert 'testMigrationAccess' in js_source
-    assert 'retryMigrationJob' in js_source
-    assert 'openMigrationCancellationModal' in js_source
-    assert 'requestMigrationCancellation' in js_source
+    assert 'retryDataManagementJob' in js_source
+    assert 'openDataManagementCancellationModal' in js_source
+    assert 'requestDataManagementCancellation' in js_source
     assert 'getMigrationLiveMetrics' in js_source
     assert 'jobDetailRefreshIntervalMs = 2000' in js_source
     assert '/progress`' in js_source
@@ -254,7 +256,8 @@ def test_admin_data_management_controls_render_from_template():
     assert 'Stage ${formatNumber(displayedStage)} of ${formatNumber(totalSteps)}' in js_source
     assert 'Active stage' in js_source
     assert 'Migration stage is active; measured throughput is shown below.' in js_source
-    assert 'Migration cancellation requested. The worker will stop at its next durable checkpoint.' in js_source
+    assert 'cancellation requested. The worker will stop at its next durable checkpoint.' in js_source
+    assert 'Retry failures' in js_source
     assert 'testTargetSearch' in js_source
     assert 'testTargetEnhancedCitationStorage' in js_source
     assert 'Migration preview refreshed.' in js_source
