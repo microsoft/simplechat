@@ -2,6 +2,23 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.071)**
+
+#### New Features
+
+*   **Resilient Data Management Migrations**
+    *   Added durable migration provenance, per-resource checkpoints, bounded concurrent transfers, retry/resume controls, and long-running Cosmos, Search, Blob, inventory, and reconciliation heartbeats.
+    *   Added New only, Delta / upsert, and explicitly confirmed Mirror with deletions modes with durable baseline watermarks, migration-owned update/delete protection, and server-owned live previews.
+    *   Added post-copy Cosmos, AI Search, and Blob reconciliation with cutover readiness, actual outcome totals, and preview-versus-actual divergence reporting.
+    *   Replaced deep AI Search pagination with persisted `id` keyset cursors, including selected-scope filter batching and coverage beyond 100,000 documents.
+    *   Added memory-bounded reconciliation, two-phase mirror deletion with current-source/ETag revalidation, target-side coordination across independent SimpleChat sources, and retryable `not_ready` cutover failures.
+    *   Preserved Blob content settings, metadata, tags, tier, type, and available content verification while adding mid-stream lease heartbeats, cooperative cancellation, source ETag stability, and pending-to-succeeded provenance.
+    *   Added durable privacy-safe per-item outcome batches plus admin JSONL manifest and failure-list downloads.
+    *   Made unresolved temporary Cosmos capacity restoration a retryable terminal state; retry restores the saved snapshot without reapplying the boost.
+    *   Added a durable target AI Search write fence that drains normal SimpleChat indexing before transfer or mirror deletion, bounds Search requests, rejects self-targeting migrations, and requires explicit external-writer freeze acknowledgement before Search writes begin.
+    *   Added target-side coordinator fencing across independent SimpleChat source deployments and retained uncertain target Search write slots through their full quarantine window. Authorization-reducing unshare requests now defer safely while target Search ACL writes are frozen.
+    *   (Ref: microsoft/simplechat#1043, `functions_data_management.py`, `functions_migration_provenance.py`, `admin_data_management.js`, `DATA_MANAGEMENT_MIGRATION_RESILIENCE.md`)
+
 ### **(v0.250.070)**
 
 #### Bug Fixes
@@ -30,7 +47,6 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Added Azure Blob Storage as an admin-controlled File Sync source for personal, group, and public workspaces, with account, container, prefix, selected-path, filter, tag, schedule, and remote-delete controls.
     *   Added managed identity, Key Vault-backed service principal and connection string authentication, connection testing, virtual-folder browsing, ETag change detection, and streamed ingestion through the existing document pipeline.
     *   (Ref: microsoft/simplechat#1027, `functions_file_sync.py`, `workspace-file-sync.js`, `AZURE_BLOB_STORAGE_FILE_SYNC.md`)
-
 ### **(v0.250.066)**
 
 #### Bug Fixes

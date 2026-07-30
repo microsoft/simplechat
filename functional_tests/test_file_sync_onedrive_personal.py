@@ -43,7 +43,7 @@ def test_version_and_source_defaults():
     settings_text = read_text("application/single_app/functions_settings.py")
     file_sync_text = read_text("application/single_app/functions_file_sync.py")
 
-    assert 'VERSION = "0.250.070"' in config_text
+    assert 'VERSION = "0.250.071"' in config_text
     assert "FILE_SYNC_SOURCE_TYPE_ONEDRIVE = \"onedrive\"" in file_sync_text
     assert "FILE_SYNC_SOURCE_TYPE_ONEDRIVE" in file_sync_text
     assert "FILE_SYNC_SOURCE_TYPE_ONEDRIVE: {\"client_secret\"}" in file_sync_text

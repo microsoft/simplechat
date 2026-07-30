@@ -43,7 +43,7 @@ def test_version_and_dependency_pin():
     config_text = read_text("application/single_app/config.py")
     requirements_text = read_text("application/single_app/requirements.txt")
 
-    assert 'VERSION = "0.250.070"' in config_text
+    assert 'VERSION = "0.250.071"' in config_text
     assert "azure-storage-file-share==12.25.0" in requirements_text
 
 

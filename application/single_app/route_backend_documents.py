@@ -2052,6 +2052,10 @@ def register_route_backend_documents(bp):
                 return jsonify({'message': 'Document unshared successfully'}), 200
             else:
                 return jsonify({'error': 'Failed to unshare document'}), 500
+        except DocumentSearchAclProjectionDeferredError as exc:
+            response = jsonify({'error': str(exc)})
+            response.headers['Retry-After'] = '150'
+            return response, 503
         except exceptions.CosmosResourceNotFoundError:
             return jsonify({'error': 'Document not found or access denied'}), 404
         except Exception as e:
