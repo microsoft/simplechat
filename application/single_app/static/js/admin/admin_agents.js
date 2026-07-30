@@ -140,7 +140,7 @@ function handleAddAgentClick() {
 async function openAgentModal(agent = null) {
 
     const modalEl = document.getElementById('agentModal');
-    if (!modalEl) return alert('Agent modal not found.');
+    if (!modalEl) return showToast('Agent modal not found.', 'danger');
     const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
 
     // Only call showModal; instance is created once globally

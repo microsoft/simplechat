@@ -5404,7 +5404,6 @@ window.selectEmbeddingModel = (deploymentName, modelName) => {
     renderEmbeddingModels();
     updateEmbeddingHiddenInput();
     markFormAsModified();    // mark form as modified
-    //alert(`Selected embedding model: ${deploymentName}`);
 };
 
 function updateEmbeddingHiddenInput() {
@@ -5452,7 +5451,6 @@ window.selectImageModel = (deploymentName, modelName) => {
     renderImageModels();
     updateImageHiddenInput();
     markFormAsModified();    // mark form as modified
-    // alert(`Selected image model: ${deploymentName}`);
 };
 
 function updateImageHiddenInput() {
@@ -5679,7 +5677,7 @@ function handleSaveClassification(row, indexAttr, isNew) {
 
     // Basic validation
     if (!newLabel) {
-        alert('Label cannot be empty.');
+        showToast('Label cannot be empty.', 'warning');
         labelInput?.focus();
         return;
     }
@@ -6060,13 +6058,13 @@ function handleSaveExternalLink(row, indexAttr, isNew) {
 
     // Validation
     if (!label) {
-        alert('Please enter a label for the link.');
+        showToast('Please enter a label for the link.', 'warning');
         labelInput.focus();
         return;
     }
 
     if (!url) {
-        alert('Please enter a URL for the link.');
+        showToast('Please enter a URL for the link.', 'warning');
         urlInput.focus();
         return;
     }
@@ -6075,7 +6073,7 @@ function handleSaveExternalLink(row, indexAttr, isNew) {
     try {
         new URL(url);
     } catch (e) {
-        alert('Please enter a valid URL (e.g., https://example.com).');
+        showToast('Please enter a valid URL (e.g., https://example.com).', 'warning');
         urlInput.focus();
         return;
     }
@@ -9249,16 +9247,20 @@ document.addEventListener('DOMContentLoaded', () => {
                 })
                 .then(resp => {
                     if (resp.status === 'success') {
-                        alert(resp.message || `Successfully ${action === 'create' ? 'created' : 'fixed'} ${type} index!`);
+                        showToast(
+                            resp.message || `Successfully ${action === 'create' ? 'created' : 'fixed'} ${type} index!`,
+                            'success',
+                            { persist: true }
+                        );
                         window.location.reload();
                     } else {
-                        alert(`Failed to ${action} ${type} index: ${resp.error}`);
+                        showToast(`Failed to ${action} ${type} index: ${resp.error}`, 'danger');
                         fixBtn.disabled = false;
                         fixBtn.textContent = `${action === 'create' ? 'Create' : 'Fix'} ${type} Index`;
                     }
                 })
                 .catch(err => {
-                    alert(`Error ${action === 'create' ? 'creating' : 'fixing'} ${type} index: ${err.message || err}`);
+                    showToast(`Error ${action === 'create' ? 'creating' : 'fixing'} ${type} index: ${err.message || err}`, 'danger');
                     fixBtn.disabled = false;
                     fixBtn.textContent = `${action === 'create' ? 'Create' : 'Fix'} ${type} Index`;
                 });

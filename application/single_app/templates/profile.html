@@ -4015,7 +4015,7 @@ function updateMicrophoneStatusBadge(status) {
 async function requestMicrophonePermission() {
     // Request microphone permission - this will trigger the browser's permission dialog if possible
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        alert('Your browser does not support microphone access.');
+        showToast('Your browser does not support microphone access.', 'info');
         return;
     }
 
@@ -4041,11 +4041,11 @@ async function requestMicrophonePermission() {
             modal.show();
         } else if (error.name === 'NotFoundError') {
             // No microphone found
-            alert('No microphone device was found on your system. Please connect a microphone and try again.');
+            showToast('No microphone device was found on your system. Please connect a microphone and try again.', 'warning');
         } else {
             // Other error
             console.error('Microphone permission error:', error);
-            alert('Error accessing microphone: ' + error.message);
+            showToast('Error accessing microphone: ' + error.message, 'danger');
         }
     }
 }
@@ -4129,7 +4129,7 @@ function refreshProfileImage() {
             })
             .catch(error => {
                 console.error('Error refreshing profile image:', error);
-                alert('Error refreshing profile image: ' + error.message);
+                showToast('Error refreshing profile image: ' + error.message, 'danger');
             })
             .finally(() => {
                 // Restore button state
@@ -4151,12 +4151,12 @@ function refreshProfileImage() {
                 showSuccessToast(data.message);
             } else {
                 console.error('Error refreshing profile image:', data.error);
-                alert('Error refreshing profile image: ' + data.error);
+                showToast('Error refreshing profile image: ' + data.error, 'danger');
             }
         })
         .catch(error => {
             console.error('Error refreshing profile image:', error);
-            alert('Error refreshing profile image: ' + error.message);
+            showToast('Error refreshing profile image: ' + error.message, 'danger');
         })
         .finally(() => {
             // Restore button state

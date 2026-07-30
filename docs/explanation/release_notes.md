@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.102)**
+
+#### User Interface Enhancements
+
+*   **Application-Wide Non-Blocking Toast Notifications**
+    *   Replaced native browser alerts across admin, group, public, personal workspace, profile, feedback, safety, and control-center workflows with consistent Bootstrap toast notifications.
+    *   Added a shared, accessible toast utility that safely renders dynamic messages as text and preserves specialized chat toast positioning.
+    *   (Ref: Closes #739, `toast.js`, `chat-toast.js`, first-party templates and workspace scripts)
+
 ### **(v0.250.101)**
 
 #### New Features

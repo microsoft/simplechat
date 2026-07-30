@@ -12568,7 +12568,7 @@
         if (publicWs) scopes.push('public');
 
         if (scopes.length === 0) {
-            alert('Please select at least one workspace type.');
+            showToast('Please select at least one workspace type.', 'warning');
             return;
         }
 
@@ -12706,7 +12706,7 @@
         if (publicWs) scopes.push('public');
 
         if (scopes.length === 0) {
-            alert('Please select at least one workspace scope.');
+            showToast('Please select at least one workspace scope.', 'warning');
             return;
         }
 
@@ -12838,7 +12838,7 @@
             const allowDaily = document.getElementById('enable_user_agreement_daily');
 
             if (!agreementText) {
-                alert('Please enter agreement text before previewing.');
+                showToast('Please enter agreement text before previewing.', 'warning');
                 return;
             }
 
