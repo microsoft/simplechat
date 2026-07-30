@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.072)**
+
+#### Bug Fixes
+
+*   **Selected Public Workspace Prompt Migration**
+    *   Selected public-workspace Data Management migrations now copy current prompts owned through `public_id` while retaining compatibility with legacy `public_workspace_id` records.
+    *   Prompts outside the selected workspaces remain excluded, transitional records migrate once, and copied prompt artifact counts are accurate. All-workspaces migration behavior is unchanged.
+    *   (Ref: microsoft/simplechat#1033, `functions_data_management.py`, `test_data_management_public_prompt_migration.py`)
+
 ### **(v0.250.071)**
 
 #### New Features
