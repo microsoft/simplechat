@@ -632,7 +632,11 @@ def _cleanup_failed_fork(
             partition_key=fork_conversation_id,
         )
     except CosmosResourceNotFoundError:
-        pass
+        log_event(
+            "[ConversationFork] Fork conversation already absent during cleanup",
+            level=logging.INFO,
+            properties={"fork_conversation_id": fork_conversation_id},
+        )
     except Exception as cleanup_error:
         log_event(
             f"[ConversationFork] Failed to clean up fork conversation: {cleanup_error}",
