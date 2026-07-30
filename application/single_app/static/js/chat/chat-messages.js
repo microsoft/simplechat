@@ -4694,6 +4694,10 @@ export function appendMessage(
   messageDiv.classList.add("mb-2", "message");
   messageDiv.setAttribute("data-message-id", messageId || `msg-${Date.now()}`);
   messageDiv.dataset.conversationId = resolveMessageConversationId(fullMessageObject);
+  messageDiv.dataset.conversationContentsRole =
+    sender === "You" || sender === "Collaborator" ? "user" : "other";
+  messageDiv.conversationContentsText =
+    sender === "You" || sender === "Collaborator" ? String(messageContent || "") : "";
 
   let avatarImg = "";
   let avatarAltText = "";
