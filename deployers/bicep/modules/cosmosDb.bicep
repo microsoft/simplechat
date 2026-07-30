@@ -37,6 +37,16 @@ var cosmosContainers = [
     defaultTtl: null
   }
   {
+    name: 'data_management_jobs'
+    partitionKeyPath: '/id'
+    defaultTtl: null
+  }
+  {
+    name: 'data_management_job_items'
+    partitionKeyPath: '/job_id'
+    defaultTtl: null
+  }
+  {
     name: 'personal_workflows'
     partitionKeyPath: '/user_id'
     defaultTtl: null
@@ -93,6 +103,11 @@ var cosmosContainers = [
   }
   {
     name: 'settings'
+    partitionKeyPath: '/id'
+    defaultTtl: null
+  }
+  {
+    name: 'custom_pages'
     partitionKeyPath: '/id'
     defaultTtl: null
   }
@@ -258,6 +273,16 @@ var cosmosContainers = [
   }
   {
     name: 'global_actions'
+    partitionKeyPath: '/id'
+    defaultTtl: null
+  }
+  {
+    name: 'governance_policies'
+    partitionKeyPath: '/id'
+    defaultTtl: null
+  }
+  {
+    name: 'governance_item_policies'
     partitionKeyPath: '/id'
     defaultTtl: null
   }

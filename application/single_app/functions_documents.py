@@ -2,12 +2,27 @@
 
 import re
 import shutil
+import subprocess
 import traceback
 import zipfile
 from io import BytesIO
 from flask import make_response
 from config import *
 from functions_appinsights import log_event
+from functions_document_access_index import (
+    DOCUMENT_ACCESS_SCOPE_GROUP,
+    DOCUMENT_ACCESS_SCOPE_PERSONAL,
+    DOCUMENT_ACCESS_SCOPE_PUBLIC,
+    delete_document_access_index_for_document_fail_open,
+    is_document_access_shadow_validation_enabled,
+    query_items_with_cosmos_diagnostics,
+    sync_document_access_index_for_document_fail_open,
+    validate_document_access_index_shadow,
+)
+from functions_data_management_search_write_fence import (
+    DataManagementSearchWritesFrozenError,
+    hold_data_management_search_write_slot,
+)
 from functions_visio import build_visio_page_markdown, parse_vsdx_pages
 from functions_content import *
 from functions_settings import *
@@ -18,6 +33,41 @@ from functions_debug import *
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
 from functions_model_endpoint_runtime import MODEL_ENDPOINT_PROVIDER_ALLOWLIST, build_model_endpoint_sync_chat_client
 import azure.cognitiveservices.speech as speechsdk
+
+_AUDIO_RUNTIME_CAPABILITIES_CACHE = None
+
+
+class DocumentSearchAclProjectionDeferredError(RuntimeError):
+    """Raised when an authorization-reducing Search ACL update must be retried safely."""
+
+
+def _search_indexing_results_succeeded(results):
+    """Return whether Azure AI Search acknowledged every requested document mutation."""
+    normalized_results = list(results or [])
+    return bool(normalized_results) and all(
+        bool(
+            result.get("succeeded", result.get("status", False))
+            if isinstance(result, dict) else
+            getattr(result, "succeeded", getattr(result, "status", False))
+        )
+        for result in normalized_results
+    )
+
+
+def _execute_document_search_write(search_client, operation_name, *args, **kwargs):
+    """Serialize bounded target Search writes with an active Data Management migration fence."""
+    kwargs.update({
+        "connection_timeout": 30,
+        "read_timeout": 30,
+        "retry_total": 0,
+    })
+    with hold_data_management_search_write_slot(cosmos_data_management_jobs_container):
+        results = getattr(search_client, operation_name)(*args, **kwargs)
+    if not _search_indexing_results_succeeded(results):
+        raise RuntimeError(
+            f"Azure AI Search did not acknowledge every {operation_name} document mutation."
+        )
+    return results
 
 def allowed_file(filename, allowed_extensions=None):
     if not allowed_extensions:
@@ -675,7 +725,7 @@ def sort_documents(documents, sort_by="_ts", sort_order="DESC"):
     return sorted(documents or [], key=sort_key, reverse=reverse)
 
 
-def _query_accessible_documents(user_id, group_id=None, public_workspace_id=None):
+def _query_accessible_documents(user_id, group_id=None, public_workspace_id=None, collect_diagnostics=False):
     cosmos_container = _get_documents_container(group_id=group_id, public_workspace_id=public_workspace_id)
 
     if public_workspace_id is not None:
@@ -712,13 +762,26 @@ def _query_accessible_documents(user_id, group_id=None, public_workspace_id=None
             {"name": "@user_id_prefix", "value": f"{user_id},"}
         ]
 
-    return list(
-        cosmos_container.query_items(
-            query=query,
-            parameters=parameters,
-            enable_cross_partition_query=True,
-        )
+    documents, diagnostics = query_items_with_cosmos_diagnostics(
+        cosmos_container,
+        diagnostics_label='source_documents',
+        collect_diagnostics=collect_diagnostics,
+        query=query,
+        parameters=parameters,
+        enable_cross_partition_query=True,
     )
+    if collect_diagnostics:
+        return documents, diagnostics
+    return documents
+
+
+def _upsert_document_and_sync_access_index(cosmos_container, document_item, operation):
+    persisted_document = cosmos_container.upsert_item(document_item)
+    sync_document_access_index_for_document_fail_open(
+        persisted_document if isinstance(persisted_document, dict) else document_item,
+        operation=operation,
+    )
+    return persisted_document if isinstance(persisted_document, dict) else document_item
 
 
 def _build_archived_scope_value(scope_value):
@@ -760,7 +823,11 @@ def set_document_chunk_visibility(document_item, active=True):
 
         documents_to_update.append(chunk_item)
 
-    search_client.upload_documents(documents=documents_to_update)
+    _execute_document_search_write(
+        search_client,
+        "upload_documents",
+        documents=documents_to_update,
+    )
     return len(documents_to_update)
 
 
@@ -812,7 +879,11 @@ def normalize_document_revision_families(user_id, group_id=None, public_workspac
                     update_occurred = True
 
             if update_occurred:
-                cosmos_container.upsert_item(document_item)
+                _upsert_document_and_sync_access_index(
+                    cosmos_container,
+                    document_item,
+                    operation='document_revision_normalized',
+                )
                 changes_made = True
 
     return changes_made
@@ -982,7 +1053,11 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
                 update_existing_document = True
 
             if update_existing_document:
-                cosmos_container.upsert_item(existing_document)
+                _upsert_document_and_sync_access_index(
+                    cosmos_container,
+                    existing_document,
+                    operation='document_revision_archived',
+                )
 
         if is_public_workspace:
             document_metadata = {
@@ -1083,7 +1158,11 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
                 "tags": carried_forward.get("tags", [])
             }
 
-        cosmos_container.upsert_item(document_metadata)
+        _upsert_document_and_sync_access_index(
+            cosmos_container,
+            document_metadata,
+            operation='document_created',
+        )
 
         add_file_task_to_file_processing_log(
             document_id,
@@ -1295,7 +1374,11 @@ def save_video_chunk(
         # 3) upload to search index
         try:
             debug_print(f"[VIDEO CHUNK] Uploading chunk to search index")
-            client.upload_documents(documents=[chunk])
+            _execute_document_search_write(
+                client,
+                "upload_documents",
+                documents=[chunk],
+            )
             debug_print(f"[VIDEO CHUNK] Upload successful for chunk: {chunk_id}")
             print(f"[VideoChunk] UPLOAD OK for {chunk_id}", flush=True)
         except Exception as e:
@@ -2411,7 +2494,11 @@ def update_document(**kwargs):
 
         # 5. Upsert the document if changes were made
         if update_occurred:
-            cosmos_container.upsert_item(existing_document)
+            _upsert_document_and_sync_access_index(
+                cosmos_container,
+                existing_document,
+                operation='document_updated',
+            )
 
     except CosmosResourceNotFoundError as e:
         # Error already logged where it was first detected
@@ -2633,7 +2720,11 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
         else:
             search_client = CLIENTS["search_client_user"]
         # Upload as a single-document list
-        search_client.upload_documents(documents=[chunk_document])
+        _execute_document_search_write(
+            search_client,
+            "upload_documents",
+            documents=[chunk_document],
+        )
 
     except Exception as e:
         print(f"Error uploading chunk document for document {document_id}: {e}")
@@ -2819,7 +2910,11 @@ def save_chunks_batch(chunks_data, user_id, document_id, group_id=None, public_w
         upload_batch_size = 32
         for i in range(0, len(chunk_documents), upload_batch_size):
             sub_batch = chunk_documents[i:i + upload_batch_size]
-            search_client.upload_documents(documents=sub_batch)
+            _execute_document_search_write(
+                search_client,
+                "upload_documents",
+                documents=sub_batch,
+            )
 
     except Exception as e:
         log_event(f"[save_chunks_batch] Error uploading batch to AI Search for document {document_id}: {e}", level=logging.ERROR)
@@ -2988,7 +3083,11 @@ def update_chunk_metadata(chunk_id, user_id, group_id=None, public_workspace_id=
                 else:
                     chunk_item[field] = kwargs[field]
 
-        search_client.upload_documents(documents=[chunk_item])
+        _execute_document_search_write(
+            search_client,
+            "upload_documents",
+            documents=[chunk_item],
+        )
 
     except Exception as e:
         print(f"Error updating chunk metadata for chunk {chunk_id}: {e}")
@@ -3173,12 +3272,38 @@ def get_ordered_document_chunks(document_id, user_id, group_id=None, public_work
 
 def get_documents(user_id, group_id=None, public_workspace_id=None):
     try:
-        documents = _query_accessible_documents(
-            user_id=user_id,
-            group_id=group_id,
-            public_workspace_id=public_workspace_id,
-        )
+        collect_shadow_metrics = is_document_access_shadow_validation_enabled()
+        if collect_shadow_metrics:
+            documents, source_query_metrics = _query_accessible_documents(
+                user_id=user_id,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+                collect_diagnostics=True,
+            )
+        else:
+            documents = _query_accessible_documents(
+                user_id=user_id,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+            )
+            source_query_metrics = None
         current_documents = sort_documents(select_current_documents(documents))
+        source_scope = DOCUMENT_ACCESS_SCOPE_PERSONAL
+        shadow_group_ids = None
+        if public_workspace_id is not None:
+            source_scope = DOCUMENT_ACCESS_SCOPE_PUBLIC
+        elif group_id is not None:
+            source_scope = DOCUMENT_ACCESS_SCOPE_GROUP
+            shadow_group_ids = [group_id]
+        validate_document_access_index_shadow(
+            current_documents,
+            source_scope=source_scope,
+            user_id=user_id,
+            group_ids=shadow_group_ids,
+            public_workspace_id=public_workspace_id,
+            source_query_metrics=source_query_metrics,
+            context='functions_documents.get_documents',
+        )
         return jsonify({"documents": current_documents}), 200
     except Exception as e:
         return jsonify({'error': f'Error retrieving documents: {str(e)}'}), 500
@@ -3408,6 +3533,10 @@ def delete_document(user_id, document_id, group_id=None, public_workspace_id=Non
             item=document_id,
             partition_key=document_id
         )
+        delete_document_access_index_for_document_fail_open(
+            document_item,
+            operation='document_deleted',
+        )
 
     except CosmosResourceNotFoundError:
         raise Exception("Document not found")
@@ -3480,7 +3609,11 @@ def delete_document_revision(user_id, document_id, delete_mode="all_versions", g
                 public_workspace_id=public_workspace_id,
             )
             set_document_chunk_visibility(promoted_document, active=True)
-            cosmos_container.upsert_item(promoted_document)
+            _upsert_document_and_sync_access_index(
+                cosmos_container,
+                promoted_document,
+                operation='document_revision_promoted',
+            )
             promoted_document_id = promoted_document.get('id')
 
     return {
@@ -3719,11 +3852,15 @@ def sync_chat_upload_workspace_document_sharing_for_collaboration(conversation_d
             continue
 
         document_item['last_updated'] = current_time
-        cosmos_user_documents_container.upsert_item(document_item)
+        persisted_document = _upsert_document_and_sync_access_index(
+            cosmos_user_documents_container,
+            document_item,
+            operation='chat_upload_collaboration_share_synced',
+        )
         try:
             set_document_chunk_visibility(
-                document_item,
-                active=str(document_item.get('search_visibility_state') or 'active').strip().lower() != 'archived',
+                persisted_document,
+                active=str(persisted_document.get('search_visibility_state') or 'active').strip().lower() != 'archived',
             )
         except Exception as chunk_sync_error:
             log_event(
@@ -3864,7 +4001,11 @@ def delete_document_chunks(document_id, group_id=None, public_workspace_id=None)
         documents_to_delete = [{"id": doc_id} for doc_id in ids_to_delete]
         batch = IndexDocumentsBatch()
         batch.add_delete_actions(documents_to_delete)
-        result = search_client.index_documents(batch)
+        result = _execute_document_search_write(
+            search_client,
+            "index_documents",
+            batch,
+        )
     except Exception as e:
         raise
 
@@ -3875,7 +4016,9 @@ def delete_document_version_chunks(document_id, version, group_id=None, public_w
 
     search_client = CLIENTS["search_client_public"] if is_public_workspace else CLIENTS["search_client_group"] if is_group else CLIENTS["search_client_user"]
 
-    search_client.delete_documents(
+    _execute_document_search_write(
+        search_client,
+        "delete_documents",
         actions=[
             {"@search.action": "delete", "id": chunk['id']} for chunk in
             search_client.search(
@@ -4895,7 +5038,11 @@ def upload_to_blob(temp_file_path, user_id, document_id, blob_filename, update_c
                 public_workspace_id=public_workspace_id,
             )
             if archived_blob_path:
-                cosmos_container.upsert_item(previous_document)
+                _upsert_document_and_sync_access_index(
+                    cosmos_container,
+                    previous_document,
+                    operation='document_blob_archived',
+                )
 
         blob_service_client = _get_blob_service_client()
 
@@ -4925,7 +5072,11 @@ def upload_to_blob(temp_file_path, user_id, document_id, blob_filename, update_c
         current_document["enhanced_citations"] = bool(mark_enhanced_citations)
         if current_document.get("archived_blob_path") is None:
             current_document["archived_blob_path"] = None
-        cosmos_container.upsert_item(current_document)
+        _upsert_document_and_sync_access_index(
+            cosmos_container,
+            current_document,
+            operation='document_blob_uploaded',
+        )
 
         print(f"Successfully uploaded {blob_filename} to blob storage at {blob_path}")
         return blob_path
@@ -7345,12 +7496,89 @@ def process_document_reprocess_extraction_background(document_id, user_id, targe
 def _get_content_type(path: str) -> str:
     ext = os.path.splitext(path)[1].lower()
     mapping = {
-        '.wav': 'audio/wav',
-        '.mp3': 'audio/mpeg',
+        '.3ga': 'audio/3gpp',
+        '.aac': 'audio/aac',
+        '.ac3': 'audio/ac3',
+        '.aif': 'audio/aiff',
+        '.aifc': 'audio/aiff',
+        '.aiff': 'audio/aiff',
+        '.amr': 'audio/amr',
+        '.ape': 'audio/x-ape',
+        '.au': 'audio/basic',
+        '.caf': 'audio/x-caf',
+        '.dts': 'audio/vnd.dts',
+        '.f4a': 'audio/mp4',
+        '.flac': 'audio/flac',
         '.m4a': 'audio/mp4',
-        '.mp4': 'audio/mp4'
+        '.m4b': 'audio/mp4',
+        '.m4r': 'audio/mp4',
+        '.mka': 'audio/x-matroska',
+        '.mp2': 'audio/mpeg',
+        '.mp3': 'audio/mpeg',
+        '.mpa': 'audio/mpeg',
+        '.mp4': 'audio/mp4',
+        '.oga': 'audio/ogg',
+        '.ogg': 'audio/ogg',
+        '.opus': 'audio/opus',
+        '.spx': 'audio/ogg',
+        '.wav': 'audio/wav',
+        '.weba': 'audio/webm',
+        '.wma': 'audio/x-ms-wma',
+        '.wv': 'audio/x-wavpack'
     }
     return mapping.get(ext, 'application/octet-stream')
+
+
+def get_audio_runtime_capabilities(force_refresh: bool = False):
+    """Return cached runtime support details for audio upload transcoding."""
+    global _AUDIO_RUNTIME_CAPABILITIES_CACHE
+    if _AUDIO_RUNTIME_CAPABILITIES_CACHE is not None and not force_refresh:
+        return dict(_AUDIO_RUNTIME_CAPABILITIES_CACHE)
+
+    supported_extensions = sorted(f'.{extension}' for extension in AUDIO_EXTENSIONS)
+    source_extensions = sorted(
+        f'.{extension}'
+        for extension in AUDIO_FAST_TRANSCRIPTION_SOURCE_EXTENSIONS
+        if extension in AUDIO_EXTENSIONS
+    )
+    ffmpeg_path = shutil.which('ffmpeg') or ''
+    ffprobe_path = shutil.which('ffprobe') or ''
+
+    capabilities = {
+        'ffmpeg_available': False,
+        'ffprobe_available': bool(ffprobe_path),
+        'broad_transcoding_available': False,
+        'ffmpeg_path': ffmpeg_path,
+        'ffprobe_path': ffprobe_path,
+        'ffmpeg_version': '',
+        'supported_extensions': supported_extensions,
+        'direct_transcription_extensions': source_extensions,
+        'recommended_container_packages': ['ffmpeg', 'ffprobe'],
+        'message': 'FFmpeg was not found in this app runtime; audio uploads use Azure Speech source-file fallback only.',
+    }
+
+    if ffmpeg_path:
+        capabilities['ffmpeg_available'] = True
+        try:
+            ffmpeg_result = subprocess.run(
+                [ffmpeg_path, '-hide_banner', '-version'],
+                capture_output=True,
+                check=True,
+                text=True,
+                timeout=5,
+            )
+            version_line = (ffmpeg_result.stdout or '').splitlines()[0] if ffmpeg_result.stdout else ''
+            capabilities.update({
+                'broad_transcoding_available': True,
+                'ffmpeg_version': version_line,
+                'message': 'FFmpeg runtime detected; broad audio transcoding is available before Azure Speech transcription.',
+            })
+        except Exception as runtime_error:
+            capabilities['message'] = f"FFmpeg was found, but runtime validation failed: {str(runtime_error)[:220]}"
+
+    _AUDIO_RUNTIME_CAPABILITIES_CACHE = capabilities
+    return dict(capabilities)
+
 
 def _split_audio_file(input_path: str, chunk_seconds: int = 540) -> List[str]:
     """
@@ -7373,7 +7601,8 @@ def _split_audio_file(input_path: str, chunk_seconds: int = 540) -> List[str]:
                 f='segment',
                 segment_time=chunk_seconds,
                 reset_timestamps=1,
-                map='0'
+                map='0:a:0',
+                ac='1'
             )
             .run(quiet=True, overwrite_output=True)
         )
@@ -7387,6 +7616,45 @@ def _split_audio_file(input_path: str, chunk_seconds: int = 540) -> List[str]:
         raise RuntimeError(f"No chunks produced by ffmpeg for file '{input_path}'")
     print(f"Produced {len(chunks)} WAV chunks: {chunks}")
     return chunks
+
+
+def _is_missing_ffmpeg_error(error) -> bool:
+    error_text = str(error or '').lower()
+    missing_binary_markers = (
+        'no such file or directory',
+        'the system cannot find the file specified',
+        'cannot find the file specified',
+        'not recognized as an internal or external command',
+    )
+    return 'ffmpeg' in error_text and any(marker in error_text for marker in missing_binary_markers)
+
+
+def _transcribe_audio_with_fast_api(audio_path, upload_filename, content_type, settings, endpoint, locale):
+    url = f"{endpoint}/speechtotext/transcriptions:transcribe?api-version=2024-11-15"
+    with open(audio_path, 'rb') as audio_f:
+        files = {
+            'audio': (upload_filename, audio_f, content_type),
+            'definition': (None, json.dumps({'locales': [locale]}), 'application/json')
+        }
+        if settings.get("speech_service_authentication_type") == "managed_identity":
+            credential = DefaultAzureCredential()
+            token = credential.get_token(cognitive_services_scope)
+            headers = {'Authorization': f'Bearer {token.token}'}
+        else:
+            key = settings.get("speech_service_key", "")
+            headers = {'Ocp-Apim-Subscription-Key': key}
+
+        resp = requests.post(url, headers=headers, files=files)
+    try:
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"[Error] HTTP error for {audio_path}: {e}")
+        raise
+
+    result = resp.json()
+    phrases = result.get('combinedPhrases', [])
+    print(f"[Debug] Received {len(phrases)} phrases")
+    return [p.get('text', '').strip() for p in phrases if p.get('text')]
 
 # Azure Speech SDK helper to get speech config with fresh token
 def _get_speech_config(settings, endpoint: str, locale: str):
@@ -7467,15 +7735,27 @@ def process_audio_document(
     if file_size > 300 * 1024 * 1024:
         raise ValueError("Audio exceeds 300 MB limit.")
 
-    # 2) split to WAV chunks
-    update_callback(status="Preparing audio for transcription…")
-    chunk_paths = _split_audio_file(temp_file_path, chunk_seconds=540)
-
-    # 3) transcribe each WAV chunk
+    # 2) prepare speech configuration
     settings = get_settings()
     endpoint = settings.get("speech_service_endpoint", "").rstrip('/')
     locale = settings.get("speech_service_locale", "en-US")
 
+    # 3) split to WAV chunks unless fast transcription can use the source file directly
+    update_callback(status="Preparing audio for transcription…")
+    chunk_paths = []
+    use_source_audio_for_fast_api = False
+    try:
+        chunk_paths = _split_audio_file(temp_file_path, chunk_seconds=540)
+    except RuntimeError as split_error:
+        if AZURE_ENVIRONMENT not in ("usgovernment", "custom") and _is_missing_ffmpeg_error(split_error):
+            use_source_audio_for_fast_api = True
+            print(
+                "[Warning] FFmpeg executable unavailable; using source audio with Azure Speech fast transcription API."
+            )
+        else:
+            raise
+
+    # 4) transcribe audio
     all_phrases: List[str] = []
 
     # Fast Transcription API not yet available in sovereign clouds, so use SDK
@@ -7619,37 +7899,31 @@ def process_audio_document(
 
     else:
         # Use the fast-transcription API if not in sovereign or custom cloud
-        url = f"{endpoint}/speechtotext/transcriptions:transcribe?api-version=2024-11-15"
-        for idx, chunk_path in enumerate(chunk_paths, start=1):
-            update_callback(current_file_chunk=idx, status=f"Transcribing chunk {idx}/{len(chunk_paths)}…")
-            print(f"[Debug] Transcribing WAV chunk: {chunk_path}")
+        if use_source_audio_for_fast_api:
+            update_callback(current_file_chunk=1, status="Transcribing audio with Azure Speech…")
+            print(f"[Debug] Transcribing source audio: {temp_file_path}")
+            all_phrases += _transcribe_audio_with_fast_api(
+                temp_file_path,
+                original_filename,
+                _get_content_type(original_filename or temp_file_path),
+                settings,
+                endpoint,
+                locale
+            )
+        else:
+            for idx, chunk_path in enumerate(chunk_paths, start=1):
+                update_callback(current_file_chunk=idx, status=f"Transcribing chunk {idx}/{len(chunk_paths)}…")
+                print(f"[Debug] Transcribing WAV chunk: {chunk_path}")
+                all_phrases += _transcribe_audio_with_fast_api(
+                    chunk_path,
+                    os.path.basename(chunk_path),
+                    'audio/wav',
+                    settings,
+                    endpoint,
+                    locale
+                )
 
-            with open(chunk_path, 'rb') as audio_f:
-                files = {
-                    'audio': (os.path.basename(chunk_path), audio_f, 'audio/wav'),
-                    'definition': (None, json.dumps({'locales':[locale]}), 'application/json')
-                }
-                if settings.get("speech_service_authentication_type") == "managed_identity":
-                    credential = DefaultAzureCredential()
-                    token = credential.get_token(cognitive_services_scope)
-                    headers = {'Authorization': f'Bearer {token.token}'}
-                else:
-                    key = settings.get("speech_service_key", "")
-                    headers = {'Ocp-Apim-Subscription-Key': key}
-
-                resp = requests.post(url, headers=headers, files=files)
-            try:
-                resp.raise_for_status()
-            except Exception as e:
-                print(f"[Error] HTTP error for {chunk_path}: {e}")
-                raise
-
-            result = resp.json()
-            phrases = result.get('combinedPhrases', [])
-            print(f"[Debug] Received {len(phrases)} phrases")
-            all_phrases += [p.get('text','').strip() for p in phrases if p.get('text')]
-
-    # 4) cleanup WAV chunks
+    # 5) cleanup WAV chunks
     for p in chunk_paths:
         try:
             os.remove(p)
@@ -7657,7 +7931,7 @@ def process_audio_document(
         except Exception as e:
             print(f"[Warning] Could not remove chunk {p}: {e}")
 
-    # 5) stitch and save transcript chunks
+    # 6) stitch and save transcript chunks
     full_text = ' '.join(all_phrases).strip()
     words = full_text.split()
     chunk_settings = get_chunk_size_config(settings)
@@ -8013,6 +8287,13 @@ def queue_personal_workspace_upload_from_temp_file(
                     item=workspace_document_id,
                     partition_key=workspace_document_id,
                 )
+                delete_document_access_index_for_document_fail_open(
+                    {
+                        'id': workspace_document_id,
+                        'user_id': user_id,
+                    },
+                    operation='queued_personal_document_cleanup',
+                )
             except Exception as cleanup_error:
                 debug_print(f"Failed to clean up queued workspace document metadata: {cleanup_error}")
         if workspace_temp_file_path and os.path.exists(workspace_temp_file_path) and not temp_file_queued:
@@ -8162,6 +8443,13 @@ def queue_group_workspace_upload_from_temp_file(
                 cosmos_group_documents_container.delete_item(
                     item=workspace_document_id,
                     partition_key=workspace_document_id,
+                )
+                delete_document_access_index_for_document_fail_open(
+                    {
+                        'id': workspace_document_id,
+                        'group_id': group_id,
+                    },
+                    operation='queued_group_document_cleanup',
                 )
             except Exception as cleanup_error:
                 debug_print(f"Failed to clean up queued group workspace document metadata: {cleanup_error}")
@@ -8820,7 +9108,11 @@ def share_document_with_user(document_id, owner_user_id, target_user_id):
             document_item['last_updated'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
             # Update the document
-            cosmos_user_documents_container.upsert_item(document_item)
+            _upsert_document_and_sync_access_index(
+                cosmos_user_documents_container,
+                document_item,
+                operation='document_shared_with_user',
+            )
 
             # Update all chunks with the new shared_user_ids
             try:
@@ -8881,37 +9173,41 @@ def unshare_document_from_user(document_id, owner_user_id, target_user_id):
         # Remove all entries for the target user (by oid prefix)
         new_shared_user_ids = [entry for entry in shared_user_ids if not entry.startswith(f"{target_user_id},")]
         if len(new_shared_user_ids) != len(shared_user_ids):
-            document_item['shared_user_ids'] = new_shared_user_ids
-            document_item['last_updated'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-            # Update the document
-            cosmos_user_documents_container.upsert_item(document_item)
-
-            # Update all chunks with the new shared_user_ids
+            # A revoked user must never retain search access after the API reports success.
+            # Update every chunk projection before committing the authoritative Cosmos ACL.
+            chunks = get_all_chunks(document_id, actual_owner_id)
             try:
-                chunks = get_all_chunks(document_id, actual_owner_id)
                 for chunk in chunks:
                     chunk_id = chunk.get('id')
-                    if chunk_id:
-                        try:
-                            update_chunk_metadata(
-                                chunk_id=chunk_id,
-                                user_id=actual_owner_id,
-                                group_id=None,
-                                public_workspace_id=None,
-                                document_id=document_id,
-                                shared_user_ids=new_shared_user_ids
-                            )
-                        except Exception as chunk_e:
-                            print(f"Warning: Failed to update chunk {chunk_id}: {chunk_e}")
-                            # Continue with other chunks
-            except Exception as e:
-                print(f"Warning: Failed to update chunks for document {document_id}: {e}")
-                # Don't fail the whole operation if chunk update fails
+                    if not chunk_id:
+                        continue
+                    update_chunk_metadata(
+                        chunk_id=chunk_id,
+                        user_id=actual_owner_id,
+                        group_id=None,
+                        public_workspace_id=None,
+                        document_id=document_id,
+                        shared_user_ids=new_shared_user_ids
+                    )
+            except DataManagementSearchWritesFrozenError as exc:
+                raise DocumentSearchAclProjectionDeferredError(
+                    "Document access was not changed because target Search writes are temporarily frozen. Retry after the migration finishes."
+                ) from exc
+
+            document_item['shared_user_ids'] = new_shared_user_ids
+            document_item['last_updated'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+            _upsert_document_and_sync_access_index(
+                cosmos_user_documents_container,
+                document_item,
+                operation='document_unshared_from_user',
+            )
 
         return True
 
     except CosmosResourceNotFoundError:
         return False
+    except DocumentSearchAclProjectionDeferredError:
+        raise
     except Exception as e:
         print(f"Error unsharing document {document_id}: {e}")
         return False
@@ -9047,7 +9343,11 @@ def share_document_with_group(document_id, owner_group_id, target_group_id):
             document_item['last_updated'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
             # Update the document
-            cosmos_group_documents_container.upsert_item(document_item)
+            _upsert_document_and_sync_access_index(
+                cosmos_group_documents_container,
+                document_item,
+                operation='document_shared_with_group',
+            )
             return True
 
         return True  # Already shared
@@ -9086,7 +9386,11 @@ def unshare_document_from_group(document_id, owner_group_id, target_group_id):
             document_item['last_updated'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
             # Update the document
-            cosmos_group_documents_container.upsert_item(document_item)
+            _upsert_document_and_sync_access_index(
+                cosmos_group_documents_container,
+                document_item,
+                operation='document_unshared_from_group',
+            )
 
         return True
 
@@ -9337,13 +9641,81 @@ def validate_tag_color(color, tag_name):
     return True, None, normalized_color
 
 
+def get_workspace_tag_definitions(user_id, group_id=None, public_workspace_id=None):
+    """Return tag definition metadata for a personal, group, or public workspace."""
+    # Local imports avoid circular initialization with workspace/settings helpers.
+    if public_workspace_id is not None:
+        from functions_public_workspaces import find_public_workspace_by_id
+        ws_doc = find_public_workspace_by_id(public_workspace_id)
+        workspace_tag_defs = (ws_doc or {}).get('tag_definitions', {})
+    elif group_id is not None:
+        from functions_group import find_group_by_id
+        group_doc = find_group_by_id(group_id)
+        workspace_tag_defs = (group_doc or {}).get('tag_definitions', {})
+    else:
+        from functions_settings import get_user_settings
+        user_settings = get_user_settings(user_id)
+        settings_dict = user_settings.get('settings', {})
+        tag_definitions = settings_dict.get('tag_definitions', {})
+        workspace_tag_defs = tag_definitions.get('personal', {})
+
+    return workspace_tag_defs if isinstance(workspace_tag_defs, dict) else {}
+
+
+def build_workspace_tags_from_counts(tag_counts, user_id, group_id=None, public_workspace_id=None):
+    """
+    Merge normalized tag counts with workspace tag definitions and safe colors.
+    Returns: [{'name': 'tag1', 'count': 5, 'color': '#3b82f6'}, ...]
+    """
+    normalized_counts = {}
+    for tag_name, count in (tag_counts or {}).items():
+        normalized_tag = normalize_tag(tag_name)
+        if not normalized_tag:
+            continue
+        try:
+            normalized_count = int(count or 0)
+        except (TypeError, ValueError):
+            normalized_count = 0
+        normalized_counts[normalized_tag] = normalized_counts.get(normalized_tag, 0) + normalized_count
+
+    workspace_tag_defs = get_workspace_tag_definitions(
+        user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+
+    results = []
+    for tag_name, count in normalized_counts.items():
+        tag_def = workspace_tag_defs.get(tag_name, {})
+        if not isinstance(tag_def, dict):
+            tag_def = {}
+        results.append({
+            'name': tag_name,
+            'count': count,
+            'color': get_safe_tag_color(tag_def.get('color'), tag_name)
+        })
+
+    for tag_name, tag_def in workspace_tag_defs.items():
+        normalized_tag = normalize_tag(tag_name)
+        if not normalized_tag or normalized_tag in normalized_counts:
+            continue
+        if not isinstance(tag_def, dict):
+            tag_def = {}
+        results.append({
+            'name': normalized_tag,
+            'count': 0,
+            'color': get_safe_tag_color(tag_def.get('color'), tag_name)
+        })
+
+    results.sort(key=lambda x: (-x['count'], x['name']))
+    return results
+
+
 def get_workspace_tags(user_id, group_id=None, public_workspace_id=None):
     """
     Get all unique tags used in a workspace with document counts.
     Returns: [{'name': 'tag1', 'count': 5, 'color': '#3b82f6'}, ...]
     """
-    from functions_settings import get_user_settings
-
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
 
@@ -9408,47 +9780,12 @@ def get_workspace_tags(user_id, group_id=None, public_workspace_id=None):
                 if normalized_tag:
                     tag_counts[normalized_tag] = tag_counts.get(normalized_tag, 0) + 1
 
-        # Get tag definitions (colors) from the appropriate source
-        if is_public_workspace:
-            # Read from public workspace record (shared across all users)
-            from functions_public_workspaces import find_public_workspace_by_id
-            ws_doc = find_public_workspace_by_id(public_workspace_id)
-            workspace_tag_defs = (ws_doc or {}).get('tag_definitions', {})
-        elif is_group:
-            # Read from group record (shared across all group members)
-            from functions_group import find_group_by_id
-            group_doc = find_group_by_id(group_id)
-            workspace_tag_defs = (group_doc or {}).get('tag_definitions', {})
-        else:
-            # Personal: read from user settings
-            user_settings = get_user_settings(user_id)
-            settings_dict = user_settings.get('settings', {})
-            tag_definitions = settings_dict.get('tag_definitions', {})
-            workspace_tag_defs = tag_definitions.get('personal', {})
-
-        # Build result with colors from used tags
-        results = []
-        for tag_name, count in tag_counts.items():
-            tag_def = workspace_tag_defs.get(tag_name, {})
-            results.append({
-                'name': tag_name,
-                'count': count,
-                'color': get_safe_tag_color(tag_def.get('color'), tag_name)
-            })
-
-        # Add defined tags that haven't been used yet (count = 0)
-        for tag_name, tag_def in workspace_tag_defs.items():
-            if tag_name not in tag_counts:
-                results.append({
-                    'name': tag_name,
-                    'count': 0,
-                    'color': get_safe_tag_color(tag_def.get('color'), tag_name)
-                })
-
-        # Sort by count descending, then name ascending
-        results.sort(key=lambda x: (-x['count'], x['name']))
-
-        return results
+        return build_workspace_tags_from_counts(
+            tag_counts,
+            user_id,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+        )
 
     except Exception as e:
         print(f"Error getting workspace tags: {e}")

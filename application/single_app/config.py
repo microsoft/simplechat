@@ -32,6 +32,7 @@ import ffmpeg as ffmpeg_py
 import glob
 import jwt
 import pandas
+from functions_latest_features_nav import is_development_env_enabled
 
 # Add dotenv import
 from dotenv import load_dotenv
@@ -71,7 +72,8 @@ from PIL import Image
 from io import BytesIO
 from typing import List
 
-from azure.cosmos import CosmosClient, PartitionKey, exceptions
+import azure.cosmos as azure_cosmos
+from azure.cosmos import PartitionKey, exceptions
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from azure.core.credentials import AzureKeyCredential
 from azure.ai.documentintelligence import DocumentIntelligenceClient
@@ -95,7 +97,8 @@ load_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.250.002"
+VERSION = "0.250.072"
+IS_DEVELOPMENT = is_development_env_enabled()
 
 SESSION_COOKIE_SAMESITE = os.getenv('SESSION_COOKIE_SAMESITE', 'Lax')
 SESSION_COOKIE_HTTPONLY = os.getenv('SESSION_COOKIE_HTTPONLY', 'true').lower() != 'false'
@@ -104,6 +107,7 @@ CSRF_ENFORCE_ORIGIN_FOR_UNSAFE_METHODS = os.getenv(
     'CSRF_ENFORCE_ORIGIN_FOR_UNSAFE_METHODS',
     'true'
 ).lower() != 'false'
+
 def _split_origin_list(raw_value):
     """Return trimmed origins from comma, space, or JSON-list environment values."""
     if not raw_value:
@@ -155,7 +159,12 @@ VIDEO_EXTENSIONS = {
     'mpg', 'wmv', 'asf', 'm4v', 'isma', 'ismv', 'dvr-ms', 'webm', 'mpeg'
 }
 
-AUDIO_EXTENSIONS = {'mp3', 'wav', 'ogg', 'aac', 'flac', 'm4a'}
+AUDIO_EXTENSIONS = {
+    '3ga', 'aac', 'ac3', 'aif', 'aifc', 'aiff', 'amr', 'ape', 'au', 'caf',
+    'dts', 'f4a', 'flac', 'm4a', 'm4b', 'm4r', 'mka', 'mp2', 'mp3', 'mpa',
+    'oga', 'ogg', 'opus', 'spx', 'wav', 'weba', 'wma', 'wv'
+}
+AUDIO_FAST_TRANSCRIPTION_SOURCE_EXTENSIONS = {'aac', 'flac', 'm4a', 'mp3', 'ogg', 'wav'}
 
 def get_allowed_extensions(enable_video=False, enable_audio=False):
     """
@@ -182,6 +191,49 @@ def get_allowed_extensions(enable_video=False, enable_audio=False):
 
     return extensions
 
+def get_allowed_extension_categories(enable_video=False, enable_audio=False):
+    """
+    Get allowed file extensions grouped for display in workspace upload dialogs.
+    """
+    categories = [
+        {
+            'name': 'Documents and presentations',
+            'extensions': BASE_ALLOWED_EXTENSIONS | DOCUMENT_EXTENSIONS,
+        },
+        {
+            'name': 'Tables and data',
+            'extensions': TABULAR_EXTENSIONS,
+        },
+        {
+            'name': 'Images',
+            'extensions': IMAGE_EXTENSIONS,
+        },
+        {
+            'name': 'Email and diagrams',
+            'extensions': EMAIL_EXTENSIONS | VISIO_EXTENSIONS,
+        },
+    ]
+
+    if enable_audio:
+        categories.append({
+            'name': 'Audio',
+            'extensions': AUDIO_EXTENSIONS,
+        })
+
+    if enable_video:
+        categories.append({
+            'name': 'Video',
+            'extensions': VIDEO_EXTENSIONS,
+        })
+
+    return [
+        {
+            'name': category['name'],
+            'extensions': sorted(category['extensions']),
+        }
+        for category in categories
+    ]
+
 ALLOWED_EXTENSIONS = get_allowed_extensions(enable_video=True, enable_audio=True)
 
 # Admin UI specific extensions (for logo/favicon uploads)
@@ -205,6 +257,9 @@ IDLE_TIMEOUT_EXEMPT_PATHS = {
     '/login',
     '/logout',
     '/logout/local',
+    '/terms-of-use',
+    '/terms-of-use/accept',
+    '/terms-of-use/decline',
     '/getAToken',
     '/getATokenApi',
     '/ci-auth/session',
@@ -313,6 +368,7 @@ FRAME_ANCESTORS_DIRECTIVE = "frame-ancestors 'self'"
 if TEAMS_FRAME_ANCESTORS:
     FRAME_ANCESTORS_DIRECTIVE = f"{FRAME_ANCESTORS_DIRECTIVE} {' '.join(TEAMS_FRAME_ANCESTORS)}"
 
+
 # Security Headers Configuration
 SECURITY_HEADERS = {
     'X-Content-Type-Options': 'nosniff',
@@ -369,9 +425,9 @@ cosmos_key = os.getenv("AZURE_COSMOS_KEY")
 cosmos_authentication_type = os.getenv("AZURE_COSMOS_AUTHENTICATION_TYPE", "key") #key or managed_identity
 
 if cosmos_authentication_type == "managed_identity":
-    cosmos_client = CosmosClient(cosmos_endpoint, credential=DefaultAzureCredential(), consistency_level="Session")
+    cosmos_client = azure_cosmos.CosmosClient(cosmos_endpoint, credential=DefaultAzureCredential(), consistency_level="Session")
 else:
-    cosmos_client = CosmosClient(cosmos_endpoint, cosmos_key, consistency_level="Session")
+    cosmos_client = azure_cosmos.CosmosClient(cosmos_endpoint, cosmos_key, consistency_level="Session")
 
 cosmos_database_name = "SimpleChat"
 cosmos_database = cosmos_client.create_database_if_not_exists(cosmos_database_name)
@@ -512,6 +568,12 @@ cosmos_public_documents_container_name = "public_documents"
 cosmos_public_documents_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_public_documents_container_name,
     partition_key=PartitionKey(path="/id")
+)
+
+cosmos_document_access_index_container_name = "document_access_index"
+cosmos_document_access_index_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_document_access_index_container_name,
+    partition_key=PartitionKey(path="/scope_key")
 )
 
 cosmos_personal_file_sync_sources_container_name = "personal_file_sync_sources"

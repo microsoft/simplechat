@@ -2,14 +2,24 @@
 # test_data_management_security_patterns.py
 """
 Functional test for Data Management security patterns.
-Version: 0.241.231
+Version: 0.250.072
 Implemented in: 0.241.211
-Updated in: 0.241.231
+Updated in: 0.250.076
+Updated in: 0.250.072
 
 This test ensures Data Management admin routes require authenticated admin
 access, secrets stay redacted in frontend responses, and the admin browser
 controller avoids XSS-prone rendering sinks. It also verifies the migration
-target database name is fixed to SimpleChat.
+target database name is fixed to SimpleChat and the Cosmos DB JSON editor
+uses SELECT-only, paged, ETag-protected writes with Activity Log audit records.
+Version 0.250.049 adds selected page-size enforcement for empty browse mode
+and moves results/editing into a scrollable modal.
+Version 0.250.050 verifies Cosmos editor saves do not pass unsupported
+partition_key kwargs into the Python Cosmos SDK replace_item call.
+Version 0.250.051 keeps version coverage aligned with the Cosmos editor
+results-pane scroll refinement.
+Version 0.250.071 adds resilient Data Management migrations, provenance, checkpoints,
+incremental modes, reconciliation, and target Search writer fencing.
 """
 
 import ast
@@ -59,7 +69,7 @@ def test_version_and_container_registration():
     """Validate the Data Management version and Cosmos job container registrations."""
     config_source = read_text(CONFIG_FILE)
 
-    assert 'VERSION = "0.241.231"' in config_source
+    assert 'VERSION = "0.250.072"' in config_source
     assert 'cosmos_data_management_jobs_container_name = "data_management_jobs"' in config_source
     assert 'partition_key=PartitionKey(path="/id")' in config_source
     assert 'cosmos_data_management_job_items_container_name = "data_management_job_items"' in config_source
@@ -69,7 +79,7 @@ def test_version_and_container_registration():
 def test_admin_routes_require_login_admin_and_swagger_security():
     """Validate every Data Management route has the required admin security stack."""
     routes = route_functions_with_decorators()
-    assert len(routes) == 13
+    assert len(routes) == 23
 
     for function_name, decorators in routes:
         assert "swagger_route" in decorators, f"{function_name} missing swagger_route"
@@ -87,7 +97,19 @@ def test_admin_routes_require_login_admin_and_swagger_security():
     assert '/api/admin/data-management/target/cosmos/test' in source
     assert '/api/admin/data-management/target/search/test' in source
     assert '/api/admin/data-management/target/enhanced-citation-storage/test' in source
+    assert '/api/admin/data-management/cosmos-editor/containers' in source
+    assert '/api/admin/data-management/cosmos-editor/danger-acknowledgement' in source
+    assert '/api/admin/data-management/cosmos-editor/query' in source
+    assert '/api/admin/data-management/cosmos-editor/document' in source
+    assert 'save_data_management_cosmos_editor_document(' in source
     assert 'current_app._get_current_object()' in source
+    assert '/api/admin/data-management/jobs/<job_id>/retry' in source
+    assert '/api/admin/data-management/jobs/<job_id>/cancel' in source
+    assert '/api/admin/data-management/jobs/<job_id>/migration-manifest' in source
+    assert '/api/admin/data-management/jobs/<job_id>/migration-manifest/items/<item_ref>' in source
+    assert '/api/admin/data-management/jobs/<job_id>/progress' in source
+    assert 'retry_data_management_migration_job(job_id)' in source
+    assert 'request_data_management_migration_cancellation(' in source
 
 
 def test_settings_secrets_are_redacted_for_frontend():
@@ -123,6 +145,7 @@ def test_settings_secrets_are_redacted_for_frontend():
     assert '_copy_source_blobs_to_target' in source
     assert 'get_data_management_migration_catalog' in source
     assert 'summarize_data_management_migration_plan' in source
+    assert 'preview_data_management_migration_plan' in source
     assert 'test_target_cosmos_connection' in source
     assert 'test_target_search_connection' in source
     assert 'test_target_enhanced_citation_storage_connection' in source
@@ -135,6 +158,96 @@ def test_settings_secrets_are_redacted_for_frontend():
     assert 'summarize_backup_artifacts(artifacts)' in source
     assert 'sanitized[field_name] = DATA_MANAGEMENT_REDACTED_VALUE' in source
     assert 'if payload.get(secret_field) == DATA_MANAGEMENT_REDACTED_VALUE:' in source
+    assert '_run_data_management_migration_preflight' in source
+    assert '_apply_temporary_destination_capacity' in source
+    assert '_restore_temporary_destination_capacity' in source
+    assert '_preflight_target_cosmos_migration_access' in source
+    assert '_preflight_target_ai_search_migration_access' in source
+    assert '_preflight_target_blob_migration_access' in source
+    assert '_acquire_migration_destination_lock' in source
+    assert '_assert_migration_job_lease' in source
+    assert '_validate_target_cosmos_container_partition_key' in source
+    assert 'recover_data_management_migration_jobs' in source
+    assert 'DataManagementMigrationCanceledError' in source
+    assert 'contains an unowned record that conflicts' in source
+    assert 'contains an unowned document that conflicts' in source
+    assert 'Destination blob exists without successful migration provenance' in source
+    assert 'create_migration_provenance_context' in source
+    assert 'add_cosmos_migration_provenance' in source
+    assert 'add_search_migration_provenance' in source
+    assert 'merge_blob_migration_metadata' in source
+    assert 'migration_max_parallel_operations' in source
+    assert 'migration_temporary_destination_ru_enabled' in source
+    assert 'DATA_MANAGEMENT_MIGRATION_MAX_DESTINATION_RU = 10000' in source
+    assert 'DATA_MANAGEMENT_MIGRATION_MODE_DELTA_UPSERT = "delta_upsert"' in source
+    assert 'DATA_MANAGEMENT_MIGRATION_MODE_MIRROR = "mirror_with_deletions"' in source
+    assert 'DATA_MANAGEMENT_MIRROR_CONFIRMATION = "MIRROR WITH DELETIONS"' in source
+    assert 'DATA_MANAGEMENT_SEARCH_WRITE_FREEZE_CONFIRMATION_ERROR' in source
+    assert '_validate_target_ai_search_migration_write_safety' in source
+    assert '_get_target_data_management_search_write_gate_container' in source
+    assert 'acquire_data_management_search_write_fence' in source
+    assert 'renew_data_management_search_write_fence' in source
+    assert 'release_data_management_search_write_fence' in source
+    assert 'acquire_data_management_target_migration_coordinator' in source
+    assert 'renew_data_management_target_migration_coordinator' in source
+    assert 'release_data_management_target_migration_coordinator' in source
+    assert '_acquire_target_migration_coordinator' in source
+    assert '_iter_search_document_pages' in source
+    assert 'order_by=["id asc"]' not in source
+    assert '"order_by": ["id asc"]' in source
+    assert '_run_data_management_migration_reconciliation' in source
+    assert 'preview_actual_divergence' in source
+
+
+def test_cosmos_editor_backend_safety_contract():
+    """Validate the Cosmos DB JSON editor backend uses read paging, guarded saves, and audit logs."""
+    source = read_text(FUNCTIONS_FILE)
+    route_source = read_text(ROUTE_FILE)
+
+    for marker in [
+        'DATA_MANAGEMENT_COSMOS_EDITOR_EMPTY_QUERY = "SELECT * FROM c"',
+        'DATA_MANAGEMENT_COSMOS_EDITOR_EMPTY_QUERY_LIMIT = 100',
+        'DATA_MANAGEMENT_COSMOS_EDITOR_MAX_PAGE_SIZE = 100',
+        'DATA_MANAGEMENT_COSMOS_EDITOR_CONFIRMATION_PHRASE = "I understand this can damage system data"',
+        'DATA_MANAGEMENT_COSMOS_EDITOR_CONTAINER_DEFINITIONS',
+        'def get_data_management_cosmos_editor_containers',
+        'def query_data_management_cosmos_editor_documents',
+        'def get_data_management_cosmos_editor_document',
+        'def save_data_management_cosmos_editor_document',
+        'def log_data_management_cosmos_editor_activity',
+        'if not re.match(r"^\\s*SELECT\\b", query, re.IGNORECASE):',
+        'safe_page_size = _safe_int(',
+        'safe_continuation_token = None if is_empty_query else _safe_text(continuation_token) or None',
+        'page_iterator = query_iterable.by_page(continuation_token=safe_continuation_token)',
+        '"empty_query_limit_applied": is_empty_query',
+        '"selectable": document_id is not None and partition_key_value is not None',
+        'Document id cannot be changed in the Cosmos DB editor.',
+        'Document partition key value cannot be changed in the Cosmos DB editor.',
+        'replace_target = safe_document_id',
+        'if isinstance(original_document, dict) and original_document.get("_self"):',
+        'replace_target = original_document',
+        'item=replace_target,',
+        'match_condition=MatchConditions.IfNotModified',
+        '"cosmos_editor_document_saved"',
+        '"changed_paths": change_summary["changed_paths"]',
+        '"activity_type": "data_management"',
+    ]:
+        assert marker in source
+    replace_call = re.search(
+        r"saved_document = container\.replace_item\((?P<args>.*?)\n    \)",
+        source,
+        flags=re.DOTALL,
+    )
+    assert replace_call
+    assert "partition_key=" not in replace_call.group("args")
+
+    for marker in [
+        'cosmos_editor_danger_acknowledged',
+        'cosmos_editor_query_rejected',
+        'cosmos_editor_save_rejected',
+        'Cosmos DB document changed after it was opened. Refresh before saving again.',
+    ]:
+        assert marker in route_source
 
 
 def test_admin_javascript_uses_safe_dom_patterns():
@@ -161,8 +274,9 @@ def test_admin_javascript_uses_safe_dom_patterns():
         'buildMigrationPlan()',
         'queueMigration(false)',
         'loadMigrationCatalog(targetType)',
-        'renderMigrationSummary(data.summary || {})',
+        'renderMigrationSummary(data.summary || {}, data.preview || null)',
         'testTargetCosmos',
+        'testMigrationAccess',
         'testTargetSearch',
         'testTargetEnhancedCitationStorage',
         'Migration preview refreshed.',
@@ -189,6 +303,24 @@ def test_admin_javascript_uses_safe_dom_patterns():
         'Stored connection string saved. You can test storage without re-entering it.',
         'backup_storage_blob_endpoint: backupStorageAuthenticationType === backupStorageAuthManagedIdentity ? getValue(elements.datamanagementblobendpoint) : "",',
         'backup_storage_connection_string: backupStorageAuthenticationType === backupStorageAuthConnectionString ? getValue(elements.datamanagementconnectionstring) : "",',
+        'loadCosmosEditorContainers',
+        'queryCosmosEditorDocuments(false)',
+        'cosmosEditorContinuationToken',
+        'showCosmosEditorResultsModal',
+        'dataManagementCosmosEditorResultsModal',
+        'openCosmosEditorSaveModal',
+        'saveCosmosEditorDocument',
+        'confirmation_phrase: cosmosEditorConfirmationPhrase',
+        'closest("[data-ignore-data-management-change',
+        'retryMigrationJob',
+        'getMigrationLiveMetrics',
+        'updateMigrationCapacityVisibility',
+        'updateMigrationModeVisibility',
+        'updateMigrationSearchWriteFreezeVisibility',
+        'createMigrationPreviewOutcomes',
+        'migrationMirrorConfirmationPhrase',
+        'target_ai_search_writes_frozen',
+        'Collisions',
     ]:
         assert required_snippet in source
 
@@ -221,14 +353,51 @@ def test_admin_ui_exposes_data_management_without_external_assets():
         'id="data_management_target_cosmos_endpoint"',
         'id="data_management_target_cosmos_database" value="SimpleChat" readonly aria-readonly="true"',
         'id="data-management-target-cosmos-key-field"',
+        'id="data_management_target_cosmos_subscription_id"',
+        'id="data_management_target_cosmos_resource_group"',
+        'id="data-management-migration-mode-section"',
+        'id="data_management_migration_mode_new_only"',
+        'id="data_management_migration_mode_delta_upsert"',
+        'id="data_management_migration_mode_mirror_with_deletions"',
+        'id="data_management_migration_baseline_job_id"',
+        'id="data_management_migration_mirror_confirmation_phrase"',
+        'id="data-management-migration-search-write-freeze"',
+        'id="data_management_migration_target_search_writes_frozen"',
+        'I confirm external destination AI Search writers are frozen for this migration',
         'id="data-management-test-target-cosmos-btn"',
         'id="data-management-target-ai-search-section"',
         'id="data-management-test-target-search-btn"',
         'id="data-management-target-enhanced-citations-section"',
         'id="data-management-test-target-ec-storage-btn"',
         'id="data-management-migration-workflow-section"',
+        'id="data-management-test-migration-access-btn"',
+        'Validate Cosmos Migration Access',
+        'id="data_management_migration_max_parallel_operations"',
+        'id="data_management_migration_retry_count"',
+        'id="data_management_migration_skip_recent_within_hours"',
+        'id="data_management_migration_temporary_destination_ru_enabled"',
+        'id="data_management_migration_temporary_destination_ru"',
+        'max="10000"',
         'id="data-management-migration-summary"',
         'id="data-management-execute-migration-btn"',
+        'id="data-management-cosmos-editor-section"',
+        'id="data-management-cosmos-editor-open-danger-btn"',
+        'id="data-management-cosmos-editor-locked-message"',
+        'id="data-management-cosmos-editor-workspace"',
+        'id="data_management_cosmos_editor_container"',
+        'id="data_management_cosmos_editor_query"',
+        'id="data-management-cosmos-editor-run-query-btn"',
+        'id="data-management-cosmos-editor-results-modal"',
+        'id="data-management-cosmos-editor-modal-status"',
+        'id="data-management-cosmos-editor-next-page-btn"',
+        'id="data_management_cosmos_editor_document_json"',
+        'id="data-management-cosmos-editor-danger-modal"',
+        'id="data_management_cosmos_editor_danger_accept"',
+        'id="data-management-cosmos-editor-save-modal"',
+        'id="data_management_cosmos_editor_confirmation_phrase"',
+        'Cosmos DB JSON Editor',
+        'I understand this editor can damage overall system health.',
+        'I understand this can damage system data',
         'id="data-management-advanced-scope-drawer"',
         'Advanced backup scope',
         'Modify them at your own risk',
@@ -280,6 +449,7 @@ def test_admin_ui_exposes_data_management_without_external_assets():
     assert 'cdn.jsdelivr.net' not in read_text(ADMIN_JS)
     assert 'data-tab="data-management"' in sidebar
     assert 'data-section="data-management-backup-section"' in sidebar
+    assert 'data-section="data-management-cosmos-editor-section"' in sidebar
     assert 'data-section="data-management-backup-inventory-section"' in sidebar
     assert 'data-section="data-management-migration-section"' in sidebar
 
@@ -288,6 +458,7 @@ if __name__ == "__main__":
     test_version_and_container_registration()
     test_admin_routes_require_login_admin_and_swagger_security()
     test_settings_secrets_are_redacted_for_frontend()
+    test_cosmos_editor_backend_safety_contract()
     test_admin_javascript_uses_safe_dom_patterns()
     test_admin_ui_exposes_data_management_without_external_assets()
     print("Data Management security pattern tests passed")

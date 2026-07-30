@@ -48,6 +48,7 @@ from functions_personal_workflows import (
     list_personal_workflow_run_items,
     list_personal_workflow_runs,
     save_personal_workflow,
+    save_personal_workflow_run,
     update_personal_workflow_runtime_fields,
 )
 from functions_group import assert_group_role
@@ -62,6 +63,7 @@ from functions_group_workflows import (
     list_group_workflow_run_items,
     list_group_workflow_runs,
     save_group_workflow,
+    save_group_workflow_run,
     update_group_workflow_runtime_fields,
 )
 from functions_settings import (
@@ -80,7 +82,7 @@ from functions_source_review import (
     is_url_access_enabled_for_user,
     validate_url_access_request,
 )
-from functions_workflow_runner import run_group_workflow, run_personal_workflow
+from functions_workflow_runner import create_workflow_run_id, run_group_workflow, run_personal_workflow
 from route_backend_agents import (
     _build_agent_instruction_api_params,
     _create_agent_instruction_client,
@@ -90,6 +92,10 @@ from swagger_wrapper import swagger_route, get_auth_security
 
 
 WORKFLOW_INSTRUCTION_FIELD_LIMIT = 6000
+
+
+class WorkflowCancellationConflictError(RuntimeError):
+    """Raised when a workflow run cannot transition into cancellation."""
 
 
 def _normalize_identifier(value):
@@ -102,6 +108,62 @@ def _normalize_bool(value):
     if isinstance(value, str):
         return value.strip().lower() in {'1', 'true', 'yes', 'on'}
     return bool(value)
+
+
+def _request_workflow_run_cancellation(
+    workflow,
+    run_id,
+    requested_by,
+    get_run,
+    save_run,
+    update_runtime_fields,
+):
+    workflow = workflow if isinstance(workflow, dict) else {}
+    workflow_id = _normalize_identifier(workflow.get('id'))
+    active_run_id = _normalize_identifier(workflow.get('active_run_id'))
+    target_run_id = _normalize_identifier(run_id) or active_run_id
+    if not target_run_id:
+        raise WorkflowCancellationConflictError('No active workflow run is available to cancel.')
+    if active_run_id and active_run_id != target_run_id:
+        raise WorkflowCancellationConflictError('A different workflow run is currently active.')
+
+    run_record = get_run(target_run_id)
+    if run_record and _normalize_identifier(run_record.get('workflow_id')) != workflow_id:
+        raise LookupError('Workflow run not found.')
+    if not run_record and target_run_id != active_run_id:
+        raise LookupError('Workflow run not found.')
+
+    run_status = _normalize_identifier((run_record or {}).get('status')).lower()
+    if run_status in {'completed', 'failed', 'skipped', 'cancelled', 'canceled'}:
+        raise WorkflowCancellationConflictError('This workflow run has already finished.')
+
+    requested_at = datetime.now(timezone.utc).isoformat()
+    if run_record:
+        run_record = dict(run_record)
+        run_record.update({
+            'status': 'cancelling',
+            'cancellation_requested_at': run_record.get('cancellation_requested_at') or requested_at,
+            'cancellation_requested_by': run_record.get('cancellation_requested_by') or requested_by,
+        })
+        run_record = save_run(run_record)
+    else:
+        run_record = {
+            'id': target_run_id,
+            'workflow_id': workflow_id,
+            'status': 'cancelling',
+            'cancellation_requested_at': requested_at,
+            'cancellation_requested_by': requested_by,
+        }
+        run_record = save_run(run_record)
+
+    updated_workflow = update_runtime_fields({
+        'status': 'cancelling',
+        'last_run_status': 'cancelling',
+        'active_run_id': target_run_id,
+        'cancellation_requested_at': run_record.get('cancellation_requested_at') or requested_at,
+        'cancellation_requested_by': run_record.get('cancellation_requested_by') or requested_by,
+    })
+    return updated_workflow, run_record
 
 
 def _normalize_workflow_instruction_draft_input(value, max_length=WORKFLOW_INSTRUCTION_FIELD_LIMIT):
@@ -551,7 +613,7 @@ def _stream_workflow_activity(user_id, conversation_id='', workflow_id='', run_i
             yield ': keep-alive\n\n'
 
         run_status = str(((snapshot.get('run') or {}).get('status') or '')).strip().lower()
-        if run_status and run_status != 'running':
+        if run_status and run_status not in {'running', 'cancelling'}:
             terminal_snapshots_seen += 1
             if terminal_snapshots_seen >= 2:
                 break
@@ -584,7 +646,7 @@ def _stream_group_workflow_activity(user_id, group_id, conversation_id='', workf
             yield ': keep-alive\n\n'
 
         run_status = str(((snapshot.get('run') or {}).get('status') or '')).strip().lower()
-        if run_status and run_status != 'running':
+        if run_status and run_status not in {'running', 'cancelling'}:
             terminal_snapshots_seen += 1
             if terminal_snapshots_seen >= 2:
                 break
@@ -594,8 +656,8 @@ def _stream_group_workflow_activity(user_id, group_id, conversation_id='', workf
         time.sleep(0.5)
 
 
-def register_route_backend_workflows(app):
-    @app.route('/api/workflows/draft-instructions', methods=['POST'])
+def register_route_backend_workflows(bp):
+    @bp.route('/api/workflows/draft-instructions', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -660,8 +722,7 @@ def register_route_backend_workflows(app):
             )
             return jsonify({'error': 'Failed to draft workflow instructions.'}), 500
 
-
-    @app.route('/api/user/workflows', methods=['GET'])
+    @bp.route('/api/user/workflows', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -672,7 +733,7 @@ def register_route_backend_workflows(app):
         return jsonify({'workflows': get_personal_workflows(user_id)})
 
 
-    @app.route('/api/user/workflows/file-sync-sources', methods=['GET'])
+    @bp.route('/api/user/workflows/file-sync-sources', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -692,7 +753,7 @@ def register_route_backend_workflows(app):
             return jsonify({'error': 'Unable to load File Sync sources right now.'}), 500
 
 
-    @app.route('/api/user/workflows', methods=['POST'])
+    @bp.route('/api/user/workflows', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -739,7 +800,7 @@ def register_route_backend_workflows(app):
         return jsonify({'success': True, 'workflow': workflow}), 201 if is_create else 200
 
 
-    @app.route('/api/user/workflows/<workflow_id>', methods=['DELETE'])
+    @bp.route('/api/user/workflows/<workflow_id>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -763,7 +824,7 @@ def register_route_backend_workflows(app):
         return jsonify({'success': True})
 
 
-    @app.route('/api/user/workflows/<workflow_id>/runs', methods=['GET'])
+    @bp.route('/api/user/workflows/<workflow_id>/runs', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -781,7 +842,79 @@ def register_route_backend_workflows(app):
         })
 
 
-    @app.route('/api/user/workflows/<workflow_id>/runs/<run_id>/items', methods=['GET'])
+    @bp.route('/api/user/workflows/<workflow_id>/cancel', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('allow_user_workflows')
+    @workflow_user_required
+    def cancel_active_user_workflow_run(workflow_id):
+        user_id = get_current_user_id()
+        workflow = get_personal_workflow(user_id, workflow_id)
+        if not workflow:
+            return jsonify({'error': 'Workflow not found.'}), 404
+
+        try:
+            updated_workflow, run_record = _request_workflow_run_cancellation(
+                workflow,
+                run_id='',
+                requested_by=user_id,
+                get_run=lambda requested_run_id: get_personal_workflow_run(user_id, requested_run_id),
+                save_run=lambda requested_run: save_personal_workflow_run(user_id, requested_run),
+                update_runtime_fields=lambda updates: update_personal_workflow_runtime_fields(user_id, workflow_id, updates),
+            )
+        except LookupError as exc:
+            logging.exception("LookupError while cancelling active user workflow run.")
+            return jsonify({'error': 'Workflow run not found.'}), 404
+        except WorkflowCancellationConflictError as exc:
+            logging.exception("Workflow cancellation conflict while cancelling active user workflow run.")
+            return jsonify({'error': 'Workflow run cannot be cancelled in its current state.'}), 409
+
+        return jsonify({'success': True, 'workflow': updated_workflow, 'run': run_record}), 202
+
+
+    @bp.route('/api/user/workflows/<workflow_id>/runs/<run_id>/cancel', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('allow_user_workflows')
+    @workflow_user_required
+    def cancel_user_workflow_run(workflow_id, run_id):
+        user_id = get_current_user_id()
+        workflow = get_personal_workflow(user_id, workflow_id)
+        if not workflow:
+            return jsonify({'error': 'Workflow not found.'}), 404
+
+        try:
+            updated_workflow, run_record = _request_workflow_run_cancellation(
+                workflow,
+                run_id=run_id,
+                requested_by=user_id,
+                get_run=lambda requested_run_id: get_personal_workflow_run(user_id, requested_run_id),
+                save_run=lambda requested_run: save_personal_workflow_run(user_id, requested_run),
+                update_runtime_fields=lambda updates: update_personal_workflow_runtime_fields(user_id, workflow_id, updates),
+            )
+        except LookupError:
+            logging.exception(
+                "LookupError while cancelling personal workflow run. workflow_id=%s run_id=%s user_id=%s",
+                workflow_id,
+                run_id,
+                user_id,
+            )
+            return jsonify({'error': 'Workflow run not found.'}), 404
+        except WorkflowCancellationConflictError:
+            logging.exception(
+                "WorkflowCancellationConflictError while cancelling personal workflow run. workflow_id=%s run_id=%s user_id=%s",
+                workflow_id,
+                run_id,
+                user_id,
+            )
+            return jsonify({'error': 'Workflow run cancellation conflict.'}), 409
+
+        return jsonify({'success': True, 'workflow': updated_workflow, 'run': run_record}), 202
+
+
+    @bp.route('/api/user/workflows/<workflow_id>/runs/<run_id>/items', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -804,7 +937,7 @@ def register_route_backend_workflows(app):
         })
 
 
-    @app.route('/api/user/workflows/<workflow_id>/runs/<run_id>/resume-failed', methods=['POST'])
+    @bp.route('/api/user/workflows/<workflow_id>/runs/<run_id>/resume-failed', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -838,11 +971,15 @@ def register_route_backend_workflows(app):
 
         try:
             started_at = datetime.now(timezone.utc).isoformat()
+            active_run_id = create_workflow_run_id()
             update_personal_workflow_runtime_fields(
                 user_id,
                 workflow_id,
                 {
                     'status': 'running',
+                    'active_run_id': active_run_id,
+                    'cancellation_requested_at': None,
+                    'cancellation_requested_by': '',
                     'last_run_started_at': started_at,
                     'last_run_trigger_source': 'resume_failed',
                     'last_run_error': '',
@@ -853,10 +990,14 @@ def register_route_backend_workflows(app):
                 resume_workflow,
                 trigger_source='resume_failed',
                 user_roles=(session.get('user') or {}).get('roles', []),
+                run_id=active_run_id,
             )
             update_fields = dict(result.get('workflow_updates') or {})
             update_fields['status'] = 'idle'
-            if workflow.get('trigger_type') in {'interval', 'file_sync'} and workflow.get('is_enabled', False) and not workflow.get('next_run_at'):
+            run_status = _normalize_identifier((result.get('run') or {}).get('status')).lower()
+            if workflow.get('trigger_type') in {'interval', 'file_sync'} and workflow.get('is_enabled', False) and (
+                not workflow.get('next_run_at') or run_status in {'cancelled', 'canceled'}
+            ):
                 update_fields['next_run_at'] = compute_next_run_at(workflow, from_time=datetime.now(timezone.utc))
 
             updated_workflow = update_personal_workflow_runtime_fields(user_id, workflow_id, update_fields)
@@ -873,7 +1014,7 @@ def register_route_backend_workflows(app):
             release_distributed_task_lock(lock_document)
 
 
-    @app.route('/api/group/workflows', methods=['GET'])
+    @bp.route('/api/group/workflows', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -892,7 +1033,7 @@ def register_route_backend_workflows(app):
             return jsonify({'error': str(exc)}), 403
 
 
-    @app.route('/api/group/workflows/file-sync-sources', methods=['GET'])
+    @bp.route('/api/group/workflows/file-sync-sources', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -920,7 +1061,7 @@ def register_route_backend_workflows(app):
             return jsonify({'error': 'Unable to load File Sync sources right now.'}), 500
 
 
-    @app.route('/api/group/workflows/agents', methods=['GET'])
+    @bp.route('/api/group/workflows/agents', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -947,7 +1088,7 @@ def register_route_backend_workflows(app):
             return jsonify({'error': 'Unable to load group workflow agents right now.'}), 500
 
 
-    @app.route('/api/group/workflows', methods=['POST'])
+    @bp.route('/api/group/workflows', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1006,7 +1147,7 @@ def register_route_backend_workflows(app):
         return jsonify({'success': True, 'workflow': workflow}), 201 if is_create else 200
 
 
-    @app.route('/api/group/workflows/<workflow_id>', methods=['DELETE'])
+    @bp.route('/api/group/workflows/<workflow_id>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1041,7 +1182,7 @@ def register_route_backend_workflows(app):
         return jsonify({'success': True})
 
 
-    @app.route('/api/group/workflows/<workflow_id>/runs', methods=['GET'])
+    @bp.route('/api/group/workflows/<workflow_id>/runs', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1068,7 +1209,104 @@ def register_route_backend_workflows(app):
         })
 
 
-    @app.route('/api/group/workflows/<workflow_id>/runs/<run_id>/items', methods=['GET'])
+    @bp.route('/api/group/workflows/<workflow_id>/cancel', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('enable_group_workspaces')
+    @enabled_required('allow_group_workflows')
+    def cancel_active_group_workflow_run(workflow_id):
+        user_id = get_current_user_id()
+        try:
+            group_id, _ = _resolve_group_workflow_request_group(user_id)
+        except ValueError as exc:
+            logging.exception(
+                "Invalid group workflow request during cancellation. user_id=%s workflow_id=%s",
+                user_id,
+                workflow_id,
+            )
+            return jsonify({'error': 'Invalid group workflow request.'}), 400
+        except LookupError as exc:
+            logging.exception(
+                "Group workspace lookup failed during workflow cancellation. user_id=%s workflow_id=%s",
+                user_id,
+                workflow_id,
+            )
+            return jsonify({'error': 'Group workspace not found.'}), 404
+        except PermissionError as exc:
+            logging.exception(
+                "Unauthorized group workflow cancellation attempt. user_id=%s workflow_id=%s",
+                user_id,
+                workflow_id,
+            )
+            return jsonify({'error': 'Not authorized to access this group workspace.'}), 403
+
+        workflow = get_group_workflow(group_id, workflow_id)
+        if not workflow:
+            return jsonify({'error': 'Workflow not found.'}), 404
+
+        try:
+            updated_workflow, run_record = _request_workflow_run_cancellation(
+                workflow,
+                run_id='',
+                requested_by=user_id,
+                get_run=lambda requested_run_id: get_group_workflow_run(group_id, requested_run_id),
+                save_run=lambda requested_run: save_group_workflow_run(group_id, requested_run),
+                update_runtime_fields=lambda updates: update_group_workflow_runtime_fields(group_id, workflow_id, updates),
+            )
+        except LookupError as exc:
+            logging.exception('Group workflow run cancellation failed: run not found.', exc_info=exc)
+            return jsonify({'error': 'Workflow run not found.'}), 404
+        except WorkflowCancellationConflictError as exc:
+            return jsonify({'error': str(exc)}), 409
+
+        return jsonify({'success': True, 'workflow': updated_workflow, 'run': run_record}), 202
+
+
+    @bp.route('/api/group/workflows/<workflow_id>/runs/<run_id>/cancel', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('enable_group_workspaces')
+    @enabled_required('allow_group_workflows')
+    def cancel_group_workflow_run(workflow_id, run_id):
+        user_id = get_current_user_id()
+        try:
+            group_id, _ = _resolve_group_workflow_request_group(user_id)
+        except ValueError:
+            logging.exception('Invalid group workflow cancellation request.')
+            return jsonify({'error': 'Invalid request.'}), 400
+        except LookupError:
+            logging.exception('Group not found while cancelling workflow run.')
+            return jsonify({'error': 'Group not found.'}), 404
+        except PermissionError:
+            logging.exception('Permission denied while cancelling workflow run.')
+            return jsonify({'error': 'Forbidden.'}), 403
+
+        workflow = get_group_workflow(group_id, workflow_id)
+        if not workflow:
+            return jsonify({'error': 'Workflow not found.'}), 404
+
+        try:
+            updated_workflow, run_record = _request_workflow_run_cancellation(
+                workflow,
+                run_id=run_id,
+                requested_by=user_id,
+                get_run=lambda requested_run_id: get_group_workflow_run(group_id, requested_run_id),
+                save_run=lambda requested_run: save_group_workflow_run(group_id, requested_run),
+                update_runtime_fields=lambda updates: update_group_workflow_runtime_fields(group_id, workflow_id, updates),
+            )
+        except LookupError as exc:
+            logging.exception('Group workflow run cancellation failed due to missing resource.')
+            return jsonify({'error': 'Run not found.'}), 404
+        except WorkflowCancellationConflictError as exc:
+            logging.exception('Group workflow run cancellation conflict.')
+            return jsonify({'error': 'Unable to cancel run in its current state.'}), 409
+
+        return jsonify({'success': True, 'workflow': updated_workflow, 'run': run_record}), 202
+
+
+    @bp.route('/api/group/workflows/<workflow_id>/runs/<run_id>/items', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1100,7 +1338,7 @@ def register_route_backend_workflows(app):
         })
 
 
-    @app.route('/api/group/workflows/<workflow_id>/runs/<run_id>/resume-failed', methods=['POST'])
+    @bp.route('/api/group/workflows/<workflow_id>/runs/<run_id>/resume-failed', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1150,11 +1388,15 @@ def register_route_backend_workflows(app):
 
         try:
             started_at = datetime.now(timezone.utc).isoformat()
+            active_run_id = create_workflow_run_id()
             update_group_workflow_runtime_fields(
                 group_id,
                 workflow_id,
                 {
                     'status': 'running',
+                    'active_run_id': active_run_id,
+                    'cancellation_requested_at': None,
+                    'cancellation_requested_by': '',
                     'last_run_started_at': started_at,
                     'last_run_trigger_source': 'resume_failed',
                     'last_run_error': '',
@@ -1166,10 +1408,14 @@ def register_route_backend_workflows(app):
                 trigger_source='resume_failed',
                 user_roles=(session.get('user') or {}).get('roles', []),
                 actor_user_id=user_id,
+                run_id=active_run_id,
             )
             update_fields = dict(result.get('workflow_updates') or {})
             update_fields['status'] = 'idle'
-            if workflow.get('trigger_type') in {'interval', 'file_sync'} and workflow.get('is_enabled', False) and not workflow.get('next_run_at'):
+            run_status = _normalize_identifier((result.get('run') or {}).get('status')).lower()
+            if workflow.get('trigger_type') in {'interval', 'file_sync'} and workflow.get('is_enabled', False) and (
+                not workflow.get('next_run_at') or run_status in {'cancelled', 'canceled'}
+            ):
                 update_fields['next_run_at'] = compute_next_run_at(workflow, from_time=datetime.now(timezone.utc))
 
             updated_workflow = update_group_workflow_runtime_fields(group_id, workflow_id, update_fields)
@@ -1186,7 +1432,7 @@ def register_route_backend_workflows(app):
             release_distributed_task_lock(lock_document)
 
 
-    @app.route('/api/group/workflows/activity', methods=['GET'])
+    @bp.route('/api/group/workflows/activity', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1229,7 +1475,7 @@ def register_route_backend_workflows(app):
             return jsonify({'error': 'Unable to load workflow activity right now.'}), 500
 
 
-    @app.route('/api/group/workflows/activity/stream', methods=['GET'])
+    @bp.route('/api/group/workflows/activity/stream', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1288,7 +1534,7 @@ def register_route_backend_workflows(app):
         )
 
 
-    @app.route('/api/group/workflows/<workflow_id>/run', methods=['POST'])
+    @bp.route('/api/group/workflows/<workflow_id>/run', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1315,11 +1561,15 @@ def register_route_backend_workflows(app):
 
         try:
             started_at = datetime.now(timezone.utc).isoformat()
+            active_run_id = create_workflow_run_id()
             update_group_workflow_runtime_fields(
                 group_id,
                 workflow_id,
                 {
                     'status': 'running',
+                    'active_run_id': active_run_id,
+                    'cancellation_requested_at': None,
+                    'cancellation_requested_by': '',
                     'last_run_started_at': started_at,
                     'last_run_trigger_source': 'manual',
                     'last_run_error': '',
@@ -1331,10 +1581,14 @@ def register_route_backend_workflows(app):
                 trigger_source='manual',
                 user_roles=(session.get('user') or {}).get('roles', []),
                 actor_user_id=user_id,
+                run_id=active_run_id,
             )
             update_fields = dict(result.get('workflow_updates') or {})
             update_fields['status'] = 'idle'
-            if workflow.get('trigger_type') in {'interval', 'file_sync'} and workflow.get('is_enabled', False) and not workflow.get('next_run_at'):
+            run_status = _normalize_identifier((result.get('run') or {}).get('status')).lower()
+            if workflow.get('trigger_type') in {'interval', 'file_sync'} and workflow.get('is_enabled', False) and (
+                not workflow.get('next_run_at') or run_status in {'cancelled', 'canceled'}
+            ):
                 update_fields['next_run_at'] = compute_next_run_at(workflow, from_time=datetime.now(timezone.utc))
 
             updated_workflow = update_group_workflow_runtime_fields(group_id, workflow_id, update_fields)
@@ -1350,7 +1604,7 @@ def register_route_backend_workflows(app):
             release_distributed_task_lock(lock_document)
 
 
-    @app.route('/api/user/workflows/activity', methods=['GET'])
+    @bp.route('/api/user/workflows/activity', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1389,7 +1643,7 @@ def register_route_backend_workflows(app):
             return jsonify({'error': 'Unable to load workflow activity right now.'}), 500
 
 
-    @app.route('/api/user/workflows/activity/stream', methods=['GET'])
+    @bp.route('/api/user/workflows/activity/stream', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1443,7 +1697,7 @@ def register_route_backend_workflows(app):
         )
 
 
-    @app.route('/api/user/workflows/<workflow_id>/run', methods=['POST'])
+    @bp.route('/api/user/workflows/<workflow_id>/run', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1461,11 +1715,15 @@ def register_route_backend_workflows(app):
 
         try:
             started_at = datetime.now(timezone.utc).isoformat()
+            active_run_id = create_workflow_run_id()
             update_personal_workflow_runtime_fields(
                 user_id,
                 workflow_id,
                 {
                     'status': 'running',
+                    'active_run_id': active_run_id,
+                    'cancellation_requested_at': None,
+                    'cancellation_requested_by': '',
                     'last_run_started_at': started_at,
                     'last_run_trigger_source': 'manual',
                     'last_run_error': '',
@@ -1476,10 +1734,14 @@ def register_route_backend_workflows(app):
                 workflow,
                 trigger_source='manual',
                 user_roles=(session.get('user') or {}).get('roles', []),
+                run_id=active_run_id,
             )
             update_fields = dict(result.get('workflow_updates') or {})
             update_fields['status'] = 'idle'
-            if workflow.get('trigger_type') in {'interval', 'file_sync'} and workflow.get('is_enabled', False) and not workflow.get('next_run_at'):
+            run_status = _normalize_identifier((result.get('run') or {}).get('status')).lower()
+            if workflow.get('trigger_type') in {'interval', 'file_sync'} and workflow.get('is_enabled', False) and (
+                not workflow.get('next_run_at') or run_status in {'cancelled', 'canceled'}
+            ):
                 update_fields['next_run_at'] = compute_next_run_at(workflow, from_time=datetime.now(timezone.utc))
 
             updated_workflow = update_personal_workflow_runtime_fields(user_id, workflow_id, update_fields)

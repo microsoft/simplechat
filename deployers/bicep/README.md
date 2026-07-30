@@ -28,6 +28,7 @@ The following variables will be used within this document:
 - *\<environment\>* - This will be used as part of the object names as well as with the AZD environments.  **Example:** *dev/qa/prod*.
 - *\<cloudEnvironment\>* - Options will be *AzureCloud | AzureUSGovernment | custom*
 - *\<openAIDeploymentType\>* - Azure OpenAI deployment type for default model deployments.  **Options:** *Standard | DatazoneStandard | GlobalStandard* for Azure Commercial. Use *Standard* for Azure Government.
+- *\<redisAuthenticationType\>* - Azure Cache for Redis authentication type. Defaults to the app authentication type, but can be set to *key* when Redis managed identity authentication is unavailable in the target cloud.
 - *\<imageName\>* - Should be presented in the form *imageName:label* **Default:** *simplechat:latest*
 
 ---
@@ -276,6 +277,7 @@ During `azd up`, the predeploy hook now builds the application image in Azure Co
 - Enter a value for the 'allowedIpAddresses' infrastructure parameter: *\<optional deployment-runner public egress IP or CIDR\>*
 - Enter a value for the 'appName' infrastructure parameter: *\<appName\>*
 - Enter a value for the 'authenticationType' infrastructure parameter: *\<key | managed_identity>*
+- Enter a value for the 'redisAuthenticationType' infrastructure parameter: *\<key | managed_identity>*; use *key* for MAG/Azure Government deployments where Redis managed identity authentication is unavailable.
 - Enter a vaule for the 'cloudEnvironment' infrastructure parameter: *\<AzureCloud | AzureUSGovernment\>*
 - Enter a value for the 'openAIDeploymentType' infrastructure parameter: *\<Standard | DatazoneStandard | GlobalStandard\>*
 - Enter a value for the 'configureApplicationPermissions' infrastructure parameter: \<true | false\>*
@@ -301,6 +303,8 @@ During `azd up`, the predeploy hook now builds the application image in Azure Co
 `imageName` defaults to `simplechat:latest`. Most deployments can accept that default without entering a custom value.
 
 When `authenticationType` is `managed_identity`, the AZD preprovision hook validates that the current Azure identity can create the role assignments and custom role definitions needed by the deployment. If the identity does not have Owner, Role Based Access Control Administrator, or an equivalent custom role at the target scopes, deployment stops before provisioning continues. You can rerun with an identity that has the required permissions, ask an Azure administrator to complete the RBAC setup, or switch the AZD environment to key-based authentication with `azd env set AUTHENTICATION_TYPE key` if that security model is acceptable.
+
+`redisAuthenticationType` can be managed independently from `authenticationType`. For example, MAG/Azure Government environments can keep `AUTHENTICATION_TYPE managed_identity` for Cosmos DB, Storage, Search, OpenAI, and Cognitive Services while setting `REDIS_AUTHENTICATION_TYPE key` so Redis uses access keys.
 
 `openAIDeploymentType` controls the default Azure OpenAI model deployment type used when this deployment creates the GPT and embedding model deployments for you. In Azure Commercial, choose `Standard`, `DatazoneStandard`, or `GlobalStandard` based on your quota and regional availability. In Azure Government, choose `Standard`.
 
@@ -594,5 +598,4 @@ View application logs:
 ```bash
 az webapp log tail --name <appName>-<environment>-app --resource-group <appName>-<environment>-rg
 ```
-
 

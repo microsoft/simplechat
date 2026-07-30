@@ -504,7 +504,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
     // Click on area triggers file input
     uploadArea.addEventListener('click', (e) => {
       // Only trigger if not clicking the hidden input itself
-      if (e.target !== fileInput) {
+      if (e.target !== fileInput && !e.target.closest('.workspace-upload-supported-types-trigger')) {
         fileInput.click();
       }
     });
@@ -1075,6 +1075,7 @@ function getPublicDocumentSyncTypeConfig(doc) {
   const sourceTypeMap = {
     smb: { label: 'SMB', className: 'bg-primary text-white', title: 'Managed by File Sync from an SMB source.' },
     azure_files: { label: 'Azure Files', className: 'bg-info text-dark', title: 'Managed by File Sync from Azure Files.' },
+    azure_blob: { label: 'Azure Blob', className: 'bg-info text-dark', title: 'Managed by File Sync from Azure Blob Storage.' },
     m365sp: { label: 'M365SP', className: 'bg-info text-dark', title: 'Managed by File Sync from Microsoft 365 SharePoint.' },
     m365_sp: { label: 'M365SP', className: 'bg-info text-dark', title: 'Managed by File Sync from Microsoft 365 SharePoint.' },
     m365_sharepoint: { label: 'M365SP', className: 'bg-info text-dark', title: 'Managed by File Sync from Microsoft 365 SharePoint.' },

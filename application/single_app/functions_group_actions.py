@@ -23,6 +23,7 @@ from functions_workspace_identities import (
     validate_action_identity_reference,
 )
 from functions_governance import ensure_action_type_access, filter_actions_by_action_type_access
+from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
 
 
 _NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -163,6 +164,7 @@ def save_group_action(group_id: str, action_data: Dict[str, Any], user_id: Optio
 
     try:
         stored = cosmos_group_actions_container.upsert_item(body=payload)
+        bump_chat_bootstrap_global_cache_version(reason="group_action_saved")
         return _clean_action(stored, group_id, SecretReturnType.TRIGGER)
     except Exception as exc:
         debug_print(
@@ -187,6 +189,7 @@ def delete_group_action(group_id: str, action_id: str) -> bool:
             item=action_id,
             partition_key=group_id,
         )
+        bump_chat_bootstrap_global_cache_version(reason="group_action_deleted")
         return True
     except Exception as exc:
         debug_print(

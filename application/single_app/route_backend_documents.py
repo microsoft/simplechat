@@ -12,6 +12,14 @@ from functions_file_sync import (
     build_synced_document_delete_guard,
 )
 from functions_notifications import create_notification, delete_notifications_by_metadata
+from functions_document_access_index import (
+    DOCUMENT_ACCESS_SCOPE_PERSONAL,
+    is_document_access_shadow_validation_enabled,
+    query_items_with_cosmos_diagnostics,
+    query_document_access_index_documents,
+    query_document_access_index_legacy_count,
+    query_document_access_index_tag_counts,
+)
 from utils_cache import invalidate_personal_search_cache
 from functions_debug import *
 from functions_activity_logging import log_document_upload, log_document_metadata_update_transaction
@@ -346,8 +354,8 @@ def _find_accessible_citation_document(user_id, document_id, scope_name):
 
     return None
 
-def register_route_backend_documents(app):
-    @app.route('/api/get_file_content', methods=['POST'])
+def register_route_backend_documents(bp):
+    @bp.route('/api/get_file_content', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -510,7 +518,7 @@ def register_route_backend_documents(app):
             add_file_task_to_file_processing_log(document_id=file_id, user_id=user_id, content="Error retrieving file content: " + str(e))
             return jsonify({'error': f'Error retrieving file content: {str(e)}'}), 500
     
-    @app.route('/api/documents/upload', methods=['POST'])
+    @bp.route('/api/documents/upload', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -651,7 +659,7 @@ def register_route_backend_documents(app):
         }), response_status
 
 
-    @app.route('/api/documents', methods=['GET'])
+    @bp.route('/api/documents', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -694,6 +702,7 @@ def register_route_backend_documents(app):
         # Add user_id prefix for shared_user_ids with status
         user_id_prefix = f"{user_id},"
         query_params.append({"name": "@user_id_prefix", "value": user_id_prefix})
+        shadow_tags_filter = []
 
         # Replace the main ownership/shared condition
         query_conditions[0] = (
@@ -753,6 +762,7 @@ def register_route_backend_documents(app):
             tags_list = sanitize_tags_for_filter(tags_filter)
 
             if tags_list:
+                shadow_tags_filter = tags_list
                 # Each tag must exist in the document's tags array
                 for idx, tag in enumerate(tags_list):
                     param_name = f"@tag_{param_count}_{idx}"
@@ -762,6 +772,17 @@ def register_route_backend_documents(app):
 
         # Combine conditions into the WHERE clause
         where_clause = " AND ".join(query_conditions)
+        shadow_filters = {
+            'search': search_term,
+            'classification': classification_filter,
+            'classification_none_matches_literal': True,
+            'author': author_filter,
+            'keywords': keywords_filter,
+            'abstract': abstract_filter,
+            'tags': shadow_tags_filter,
+            'array_match_mode': 'contains',
+        }
+        used_document_access_index = False
 
         # --- 3) Query matching documents, then collapse to current revisions before paginating ---
         try:
@@ -771,17 +792,71 @@ def register_route_backend_documents(app):
                 FROM c
                 WHERE {where_clause}
             """
-            matching_docs = list(cosmos_user_documents_container.query_items(
-                query=data_query_str,
-                parameters=query_params,
-                enable_cross_partition_query=True
-            ))
-
-            current_docs = sort_documents(
-                select_current_documents(matching_docs),
-                sort_by=sort_by,
-                sort_order=sort_order,
+            index_read_result = query_document_access_index_documents(
+                source_scope=DOCUMENT_ACCESS_SCOPE_PERSONAL,
+                user_id=user_id,
+                filters=shadow_filters,
             )
+
+            if index_read_result.get('success'):
+                used_document_access_index = True
+                current_docs = sort_documents(
+                    index_read_result.get('documents', []),
+                    sort_by=sort_by,
+                    sort_order=sort_order,
+                )
+                if is_document_access_shadow_validation_enabled():
+                    try:
+                        matching_docs, source_query_metrics = query_items_with_cosmos_diagnostics(
+                            cosmos_user_documents_container,
+                            diagnostics_label='source_documents',
+                            query=data_query_str,
+                            parameters=query_params,
+                            enable_cross_partition_query=True
+                        )
+                        source_current_docs = sort_documents(
+                            select_current_documents(matching_docs),
+                            sort_by=sort_by,
+                            sort_order=sort_order,
+                        )
+                        validate_document_access_index_shadow(
+                            source_current_docs,
+                            source_scope=DOCUMENT_ACCESS_SCOPE_PERSONAL,
+                            user_id=user_id,
+                            filters=shadow_filters,
+                            source_query_metrics=source_query_metrics,
+                            context='api_get_user_documents',
+                        )
+                    except Exception as shadow_error:
+                        log_event(
+                            '[DocumentAccessIndex] Shadow validation source query failed after DAI read succeeded.',
+                            extra={'source_scope': DOCUMENT_ACCESS_SCOPE_PERSONAL, 'error': str(shadow_error)},
+                            level=logging.WARNING,
+                            exceptionTraceback=True,
+                        )
+            else:
+                matching_docs, source_query_metrics = query_items_with_cosmos_diagnostics(
+                    cosmos_user_documents_container,
+                    diagnostics_label='source_documents',
+                    collect_diagnostics=is_document_access_shadow_validation_enabled(),
+                    query=data_query_str,
+                    parameters=query_params,
+                    enable_cross_partition_query=True
+                )
+
+                current_docs = sort_documents(
+                    select_current_documents(matching_docs),
+                    sort_by=sort_by,
+                    sort_order=sort_order,
+                )
+                validate_document_access_index_shadow(
+                    current_docs,
+                    source_scope=DOCUMENT_ACCESS_SCOPE_PERSONAL,
+                    user_id=user_id,
+                    filters=shadow_filters,
+                    source_query_metrics=source_query_metrics,
+                    context='api_get_user_documents',
+                )
             total_count = len(current_docs)
             docs = current_docs[offset:offset + page_size]
 
@@ -803,23 +878,32 @@ def register_route_backend_documents(app):
 
         
         # --- new: do we have any legacy documents? ---
-        try:
-            legacy_q = """
-                SELECT VALUE COUNT(1)
-                FROM c
-                WHERE c.user_id = @user_id
-                    AND NOT IS_DEFINED(c.percentage_complete)
-            """
-            legacy_docs = list(
-                cosmos_user_documents_container.query_items(
-                    query=legacy_q,
-                    parameters=[{"name":"@user_id","value":user_id}],
-                    enable_cross_partition_query=True
-                )
+        legacy_count = 0
+        if used_document_access_index:
+            legacy_count_result = query_document_access_index_legacy_count(
+                source_scope=DOCUMENT_ACCESS_SCOPE_PERSONAL,
+                user_id=user_id,
             )
-            legacy_count = legacy_docs[0] if legacy_docs else 0
-        except Exception as e:
-            debug_print(f"Error executing legacy query: {e}")
+            if legacy_count_result.get('success'):
+                legacy_count = legacy_count_result.get('legacy_count', 0)
+        else:
+            try:
+                legacy_q = """
+                    SELECT VALUE COUNT(1)
+                    FROM c
+                    WHERE c.user_id = @user_id
+                        AND NOT IS_DEFINED(c.percentage_complete)
+                """
+                legacy_docs = list(
+                    cosmos_user_documents_container.query_items(
+                        query=legacy_q,
+                        parameters=[{"name":"@user_id","value":user_id}],
+                        enable_cross_partition_query=True
+                    )
+                )
+                legacy_count = legacy_docs[0] if legacy_docs else 0
+            except Exception as e:
+                debug_print(f"Error executing legacy query: {e}")
 
         # --- 5) Return results ---
         file_downloads_enabled = is_personal_workspace_file_download_enabled(get_settings())
@@ -832,7 +916,7 @@ def register_route_backend_documents(app):
             "needs_legacy_update_check": legacy_count > 0
         }), 200
 
-    @app.route('/api/documents/<document_id>', methods=['GET'])
+    @bp.route('/api/documents/<document_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -844,7 +928,7 @@ def register_route_backend_documents(app):
         
         return get_document(user_id, document_id)
 
-    @app.route('/api/documents/<document_id>/versions', methods=['GET'])
+    @bp.route('/api/documents/<document_id>/versions', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -864,7 +948,7 @@ def register_route_backend_documents(app):
             'versions': versions,
         }), 200
 
-    @app.route('/api/documents/<document_id>/download', methods=['GET'])
+    @bp.route('/api/documents/<document_id>/download', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -892,7 +976,7 @@ def register_route_backend_documents(app):
             )
             return jsonify({'error': 'Unable to download document'}), 500
 
-    @app.route('/api/documents/download', methods=['POST'])
+    @bp.route('/api/documents/download', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -945,7 +1029,7 @@ def register_route_backend_documents(app):
             )
             return jsonify({'error': 'Unable to download selected documents'}), 500
 
-    @app.route('/api/documents/<document_id>', methods=['PATCH'])
+    @bp.route('/api/documents/<document_id>', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1091,7 +1175,7 @@ def register_route_backend_documents(app):
         except Exception as e:
             return jsonify({'error': str(e)}), 500
 
-    @app.route('/api/documents/<document_id>', methods=['DELETE'])
+    @bp.route('/api/documents/<document_id>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1162,7 +1246,7 @@ def register_route_backend_documents(app):
         except Exception as e:
             return jsonify({'error': f'Error deleting document: {str(e)}'}), 500
 
-    @app.route('/api/documents/<document_id>/extract_metadata', methods=['POST'])
+    @bp.route('/api/documents/<document_id>/extract_metadata', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1195,7 +1279,7 @@ def register_route_backend_documents(app):
             'document_id': document_id
         }), 200
 
-    @app.route('/api/documents/reprocess_extraction', methods=['POST'])
+    @bp.route('/api/documents/reprocess_extraction', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1258,7 +1342,7 @@ def register_route_backend_documents(app):
             'errors': errors,
         }), status_code
 
-    @app.route("/api/get_citation", methods=["POST"])
+    @bp.route("/api/get_citation", methods=["POST"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1323,7 +1407,7 @@ def register_route_backend_documents(app):
 
         return jsonify({"error": "Citation not found in user, group, or public docs"}), 404
         
-    @app.route('/api/documents/upgrade_legacy', methods=['POST'])
+    @bp.route('/api/documents/upgrade_legacy', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1338,7 +1422,7 @@ def register_route_backend_documents(app):
 
     # ============= TAG MANAGEMENT API ENDPOINTS =============
     
-    @app.route('/api/documents/tags', methods=['GET'])
+    @bp.route('/api/documents/tags', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1349,15 +1433,25 @@ def register_route_backend_documents(app):
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
         
-        from functions_documents import get_workspace_tags
+        from functions_documents import build_workspace_tags_from_counts, get_workspace_tags
         
         try:
-            tags = get_workspace_tags(user_id)
+            index_tag_result = query_document_access_index_tag_counts(
+                DOCUMENT_ACCESS_SCOPE_PERSONAL,
+                user_id=user_id,
+            )
+            if index_tag_result.get('success'):
+                tags = build_workspace_tags_from_counts(
+                    index_tag_result.get('tag_counts', {}),
+                    user_id,
+                )
+            else:
+                tags = get_workspace_tags(user_id)
             return jsonify({'tags': tags}), 200
         except Exception as e:
             return jsonify({'error': str(e)}), 500
     
-    @app.route('/api/documents/tags', methods=['POST'])
+    @bp.route('/api/documents/tags', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1442,7 +1536,7 @@ def register_route_backend_documents(app):
         except Exception as e:
             return jsonify({'error': str(e)}), 500
     
-    @app.route('/api/documents/bulk-tag', methods=['POST'])
+    @bp.route('/api/documents/bulk-tag', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1589,7 +1683,7 @@ def register_route_backend_documents(app):
         except Exception as e:
             return jsonify({'error': str(e)}), 500
     
-    @app.route('/api/documents/tags/<tag_name>', methods=['PATCH'])
+    @bp.route('/api/documents/tags/<tag_name>', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1775,7 +1869,7 @@ def register_route_backend_documents(app):
             traceback.print_exc()
             return jsonify({'error': str(e)}), 500
     
-    @app.route('/api/documents/tags/<tag_name>', methods=['DELETE'])
+    @bp.route('/api/documents/tags/<tag_name>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1869,7 +1963,7 @@ def register_route_backend_documents(app):
             return jsonify({'error': str(e)}), 500
 
     # ============= DOCUMENT SHARING API ENDPOINTS =============
-    @app.route('/api/documents/<document_id>/share', methods=['POST'])
+    @bp.route('/api/documents/<document_id>/share', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1923,7 +2017,7 @@ def register_route_backend_documents(app):
         except Exception as e:
             return jsonify({'error': f'Error sharing document: {str(e)}'}), 500
 
-    @app.route('/api/documents/<document_id>/unshare', methods=['DELETE'])
+    @bp.route('/api/documents/<document_id>/unshare', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1958,12 +2052,16 @@ def register_route_backend_documents(app):
                 return jsonify({'message': 'Document unshared successfully'}), 200
             else:
                 return jsonify({'error': 'Failed to unshare document'}), 500
+        except DocumentSearchAclProjectionDeferredError as exc:
+            response = jsonify({'error': str(exc)})
+            response.headers['Retry-After'] = '150'
+            return response, 503
         except exceptions.CosmosResourceNotFoundError:
             return jsonify({'error': 'Document not found or access denied'}), 404
         except Exception as e:
             return jsonify({'error': f'Error unsharing document: {str(e)}'}), 500
 
-    @app.route('/api/documents/<document_id>/shared-users', methods=['GET'])
+    @bp.route('/api/documents/<document_id>/shared-users', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -2032,7 +2130,7 @@ def register_route_backend_documents(app):
         except Exception as e:
             return jsonify({'error': f'Error getting shared users: {str(e)}'}), 500
 
-    @app.route('/api/documents/<document_id>/remove-self', methods=['DELETE'])
+    @bp.route('/api/documents/<document_id>/remove-self', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -2083,7 +2181,7 @@ def register_route_backend_documents(app):
             debug_print(f"[ERROR] /api/documents/{document_id}/remove-self: {e}", flush=True)
             return jsonify({'error': f'Error removing from shared document: {str(e)}'}), 500
 
-    @app.route('/api/documents/<document_id>/approve-share', methods=['POST'])
+    @bp.route('/api/documents/<document_id>/approve-share', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -2115,17 +2213,22 @@ def register_route_backend_documents(app):
             if updated:
                 document_item['shared_user_ids'] = new_shared_user_ids
                 document_item['last_updated'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-                cosmos_user_documents_container.upsert_item(document_item)
+                persisted_document = cosmos_user_documents_container.upsert_item(document_item)
+                document_for_sync = persisted_document if isinstance(persisted_document, dict) else document_item
+                sync_document_access_index_for_document_fail_open(
+                    document_for_sync,
+                    operation='document_share_approved',
+                )
                 # Update all chunks with the new shared_user_ids
                 try:
-                    chunks = get_all_chunks(document_id, document_item.get('user_id'))
+                    chunks = get_all_chunks(document_id, document_for_sync.get('user_id'))
                     for chunk in chunks:
                         chunk_id = chunk.get('id')
                         if chunk_id:
                             try:
                                 update_chunk_metadata(
                                     chunk_id=chunk_id,
-                                    user_id=document_item.get('user_id'),
+                                    user_id=document_for_sync.get('user_id'),
                                     group_id=None,
                                     public_workspace_id=None,
                                     document_id=document_id,

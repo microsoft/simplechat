@@ -252,7 +252,7 @@
 
 {% set nav_layout = user_settings.get('settings', {}).get('navLayout') %}
 {% set is_sidebar_layout = nav_layout == 'sidebar' or (not nav_layout and app_settings.enable_left_nav_default) %}
-{% set is_chat_page = request.endpoint == 'chats' %}
+{% set is_chat_page = request.endpoint == 'frontend_chats.chats' %}
 <body class="d-flex flex-column min-vh-100{% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %} has-classification-banner{% endif %}{% if is_chat_page %} chat-shell-page{% endif %}{% if is_chat_page and not is_sidebar_layout %} chat-top-nav-shell{% endif %}">
   {% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %}
     <div id="classification-banner"
@@ -650,6 +650,11 @@
     const appSettings = {{ app_settings|tojson }};
     window.appSettings = appSettings;
     window.simplechatUserSettings = {{ user_settings.get('settings', {}) | tojson }};
+    window.simplechatLatestFeaturesNav = {{ {
+      'currentVersion': latest_features_current_version | default(config['VERSION']),
+      'hiddenByDevelopment': latest_features_nav_hidden_by_development | default(false),
+      'settingKey': 'latestFeaturesHiddenVersion'
+    } | tojson }};
   </script>
 
   <!-- Prism.js syntax highlighting script -->
@@ -698,10 +703,13 @@
   <script src="{{ url_for('static', filename='js/navigation.js') }}"></script>
   <script src="{{ url_for('static', filename='js/sidebar.js') }}"></script>
   <script src="{{ url_for('static', filename='js/sidebar-resize.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/latest-features-nav.js') }}?v={{ config['VERSION'] }}"></script>
   <!-- Profile Image JavaScript -->
   <script src="{{ url_for('static', filename='js/profile-image.js') }}"></script>
-  <!-- Notifications JavaScript (for badge polling on all pages) -->
+  {% if session.get('user') %}
+  <!-- Notifications JavaScript (for badge polling on authenticated pages) -->
   <script src="{{ url_for('static', filename='js/notifications.js') }}"></script>
+  {% endif %}
   {% if session.get('user') and app_settings.enable_speech_to_text_input %}
   <script src="{{ url_for('static', filename='js/form-voice-input.js') }}?v={{ config['VERSION'] }}"></script>
   {% endif %}
@@ -711,9 +719,9 @@
       'enabled': idle_timeout_enabled | default(false),
       'timeoutMinutes': idle_timeout_minutes | default(30) | int,
       'warningMinutes': idle_warning_minutes | default(28) | int,
-      'heartbeatUrl': url_for('session_heartbeat'),
-      'localLogoutUrl': url_for('local_logout'),
-      'fullSsoLogoutUrl': url_for('logout')
+      'heartbeatUrl': url_for('session_api.session_heartbeat'),
+      'localLogoutUrl': url_for('frontend_authentication.local_logout'),
+      'fullSsoLogoutUrl': url_for('frontend_authentication.logout')
     } | tojson }};
   </script>
   <script src="{{ url_for('static', filename='js/idle-logout-warning.js') }}"></script>

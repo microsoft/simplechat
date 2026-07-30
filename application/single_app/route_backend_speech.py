@@ -18,10 +18,10 @@ except ImportError:
     PYDUB_AVAILABLE = False
     print("Warning: pydub not available. Audio conversion may fail for non-WAV formats.")
 
-def register_route_backend_speech(app):
+def register_route_backend_speech(bp):
     """Register speech-to-text routes"""
     
-    @app.route('/api/speech/transcribe-chat', methods=['POST'])
+    @bp.route('/api/speech/transcribe-chat', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required

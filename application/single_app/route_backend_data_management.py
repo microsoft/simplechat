@@ -3,7 +3,7 @@
 
 import logging
 
-from flask import current_app, jsonify, request, session
+from flask import Response, current_app, jsonify, request, session
 
 from functions_activity_logging import log_general_admin_action
 from functions_appinsights import log_event
@@ -13,16 +13,28 @@ from functions_data_management import (
     DATA_MANAGEMENT_OPERATION_DRY_RUN,
     DATA_MANAGEMENT_OPERATION_MIGRATION,
     DATA_MANAGEMENT_OPERATION_RESTORE,
+    DataManagementCosmosEditorError,
     DataManagementSettingsValidationError,
+    export_data_management_migration_manifest,
     generate_data_management_encryption_key,
+    get_data_management_cosmos_editor_containers,
+    get_data_management_cosmos_editor_document,
     get_data_management_backup_summary,
     get_data_management_job_detail,
+    get_data_management_job_progress,
     get_data_management_jobs,
     get_data_management_migration_catalog,
     get_data_management_settings,
+    log_data_management_cosmos_editor_activity,
+    preview_data_management_migration_plan,
     queue_data_management_job,
+    query_data_management_cosmos_editor_documents,
+    request_data_management_migration_cancellation,
+    resolve_data_management_migration_manifest_item,
+    retry_data_management_migration_job,
     sanitize_data_management_job_for_admin,
     sanitize_data_management_settings_for_admin,
+    save_data_management_cosmos_editor_document,
     summarize_data_management_migration_plan,
     submit_data_management_job,
     test_backup_storage_connection,
@@ -58,8 +70,34 @@ def _log_data_management_admin_action(action, description, additional_context=No
         )
 
 
-def register_route_backend_data_management(app):
-    @app.route("/api/admin/data-management/settings", methods=["GET"])
+def _get_cosmos_editor_payload():
+    payload = request.get_json(silent=True) or {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _cosmos_editor_error_status(exc, default_status=400):
+    status_code = getattr(exc, "status_code", None)
+    if status_code == 404:
+        return 404
+    if status_code == 412:
+        return 409
+    return default_status
+
+
+def _log_cosmos_editor_failure(action, message, details=None):
+    admin_user_id, admin_email = _get_admin_context()
+    log_data_management_cosmos_editor_activity(
+        admin_user_id,
+        admin_email,
+        action,
+        "failed",
+        message,
+        details=details or {},
+    )
+
+
+def register_route_backend_data_management(bp):
+    @bp.route("/api/admin/data-management/settings", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -70,7 +108,7 @@ def register_route_backend_data_management(app):
             "settings": sanitize_data_management_settings_for_admin(settings),
         }), 200
 
-    @app.route("/api/admin/data-management/settings", methods=["PUT"])
+    @bp.route("/api/admin/data-management/settings", methods=["PUT"])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -99,7 +137,7 @@ def register_route_backend_data_management(app):
             "settings": sanitize_data_management_settings_for_admin(settings),
         }), 200
 
-    @app.route("/api/admin/data-management/encryption-key", methods=["POST"])
+    @bp.route("/api/admin/data-management/encryption-key", methods=["POST"])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -122,7 +160,7 @@ def register_route_backend_data_management(app):
         )
         return jsonify({"success": True, "settings": settings}), 200
 
-    @app.route("/api/admin/data-management/storage/test", methods=["POST"])
+    @bp.route("/api/admin/data-management/storage/test", methods=["POST"])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -143,15 +181,19 @@ def register_route_backend_data_management(app):
             return jsonify({"success": False, "error": "Backup storage connection test failed."}), 400
         return jsonify(result), 200
 
-    @app.route("/api/admin/data-management/target/cosmos/test", methods=["POST"])
+    @bp.route("/api/admin/data-management/target/cosmos/test", methods=["POST"])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
     def test_admin_data_management_target_cosmos():
         payload = request.get_json(silent=True) or {}
         settings_payload = payload.get("settings") if isinstance(payload.get("settings"), dict) else None
+        migration_plan = payload.get("migration_plan") if isinstance(payload.get("migration_plan"), dict) else None
         try:
-            result = test_target_cosmos_connection(settings=settings_payload)
+            result = test_target_cosmos_connection(
+                settings=settings_payload,
+                migration_plan=migration_plan,
+            )
         except Exception as exc:
             log_event(
                 "[DataManagement] Target Cosmos connection test failed.",
@@ -161,7 +203,7 @@ def register_route_backend_data_management(app):
             return jsonify({"success": False, "error": "Target Cosmos connection test failed."}), 400
         return jsonify(result), 200
 
-    @app.route("/api/admin/data-management/target/search/test", methods=["POST"])
+    @bp.route("/api/admin/data-management/target/search/test", methods=["POST"])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -179,7 +221,7 @@ def register_route_backend_data_management(app):
             return jsonify({"success": False, "error": "Target Search connection test failed."}), 400
         return jsonify(result), 200
 
-    @app.route("/api/admin/data-management/target/enhanced-citation-storage/test", methods=["POST"])
+    @bp.route("/api/admin/data-management/target/enhanced-citation-storage/test", methods=["POST"])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -201,7 +243,161 @@ def register_route_backend_data_management(app):
             return jsonify({"success": False, "error": "Target Enhanced Citation Storage connection test failed."}), 400
         return jsonify(result), 200
 
-    @app.route("/api/admin/data-management/jobs", methods=["GET"])
+    @bp.route("/api/admin/data-management/cosmos-editor/containers", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def list_admin_data_management_cosmos_editor_containers():
+        return jsonify({
+            "success": True,
+            "containers": get_data_management_cosmos_editor_containers(),
+        }), 200
+
+    @bp.route("/api/admin/data-management/cosmos-editor/danger-acknowledgement", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def acknowledge_admin_data_management_cosmos_editor_danger():
+        admin_user_id, admin_email = _get_admin_context()
+        log_data_management_cosmos_editor_activity(
+            admin_user_id,
+            admin_email,
+            "cosmos_editor_danger_acknowledged",
+            "success",
+            "Acknowledged the Cosmos DB editor danger prompt.",
+            {"prompt": "interface_entry"},
+        )
+        return jsonify({"success": True}), 200
+
+    @bp.route("/api/admin/data-management/cosmos-editor/query", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def query_admin_data_management_cosmos_editor_documents():
+        payload = _get_cosmos_editor_payload()
+        admin_user_id, admin_email = _get_admin_context()
+        try:
+            result = query_data_management_cosmos_editor_documents(
+                payload.get("container"),
+                query_text=payload.get("query"),
+                page_size=payload.get("page_size"),
+                continuation_token=payload.get("continuation_token"),
+                admin_user_id=admin_user_id,
+                admin_email=admin_email,
+            )
+        except DataManagementCosmosEditorError as exc:
+            _log_cosmos_editor_failure(
+                "cosmos_editor_query_rejected",
+                "Rejected a Cosmos DB editor query.",
+                {"container": payload.get("container"), "error": str(exc)},
+            )
+            return jsonify({"success": False, "error": "Cosmos DB editor query was rejected."}), 400
+        except Exception as exc:
+            log_event(
+                "[DataManagement] Cosmos editor query failed.",
+                {"container": payload.get("container"), "error": str(exc)},
+                level=logging.WARNING,
+            )
+            _log_cosmos_editor_failure(
+                "cosmos_editor_query_failed",
+                "Cosmos DB editor query failed.",
+                {"container": payload.get("container"), "status_code": getattr(exc, "status_code", None), "error": str(exc)},
+            )
+            return jsonify({"success": False, "error": "Cosmos DB editor query failed."}), _cosmos_editor_error_status(exc)
+        return jsonify({"success": True, **result}), 200
+
+    @bp.route("/api/admin/data-management/cosmos-editor/document", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def get_admin_data_management_cosmos_editor_document():
+        payload = _get_cosmos_editor_payload()
+        admin_user_id, admin_email = _get_admin_context()
+        try:
+            result = get_data_management_cosmos_editor_document(
+                payload.get("container"),
+                payload.get("id"),
+                payload.get("partition_key"),
+                admin_user_id=admin_user_id,
+                admin_email=admin_email,
+            )
+        except DataManagementCosmosEditorError as exc:
+            log_event(
+                "[DataManagement] Cosmos editor document open rejected.",
+                {"container": payload.get("container"), "document_id": payload.get("id"), "error": str(exc)},
+                level=logging.WARNING,
+            )
+            _log_cosmos_editor_failure(
+                "cosmos_editor_document_rejected",
+                "Rejected a Cosmos DB editor document open request.",
+                {"container": payload.get("container"), "document_id": payload.get("id"), "error": str(exc)},
+            )
+            return jsonify({"success": False, "error": "Cosmos DB document request was invalid."}), 400
+        except Exception as exc:
+            status_code = _cosmos_editor_error_status(exc, default_status=400)
+            log_event(
+                "[DataManagement] Cosmos editor document open failed.",
+                {"container": payload.get("container"), "document_id": payload.get("id"), "error": str(exc)},
+                level=logging.WARNING,
+            )
+            _log_cosmos_editor_failure(
+                "cosmos_editor_document_failed",
+                "Cosmos DB editor document open failed.",
+                {"container": payload.get("container"), "document_id": payload.get("id"), "status_code": getattr(exc, "status_code", None), "error": str(exc)},
+            )
+            error_message = "Cosmos DB document was not found." if status_code == 404 else "Cosmos DB document could not be opened."
+            return jsonify({"success": False, "error": error_message}), status_code
+        return jsonify({"success": True, **result}), 200
+
+    @bp.route("/api/admin/data-management/cosmos-editor/document", methods=["PUT"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def save_admin_data_management_cosmos_editor_document():
+        payload = _get_cosmos_editor_payload()
+        admin_user_id, admin_email = _get_admin_context()
+        try:
+            result = save_data_management_cosmos_editor_document(
+                payload.get("container"),
+                payload.get("id"),
+                payload.get("partition_key"),
+                payload.get("etag"),
+                payload.get("document"),
+                confirmation_accepted=payload.get("confirmation_accepted") is True,
+                confirmation_phrase=payload.get("confirmation_phrase"),
+                admin_user_id=admin_user_id,
+                admin_email=admin_email,
+            )
+        except DataManagementCosmosEditorError as exc:
+            _log_cosmos_editor_failure(
+                "cosmos_editor_save_rejected",
+                "Rejected a Cosmos DB editor save request.",
+                {"container": payload.get("container"), "document_id": payload.get("id"), "error": str(exc)},
+            )
+            return jsonify({"success": False, "error": "Cosmos DB document save request was rejected."}), 400
+        except Exception as exc:
+            status_code = _cosmos_editor_error_status(exc, default_status=400)
+            log_event(
+                "[DataManagement] Cosmos editor save failed.",
+                {"container": payload.get("container"), "document_id": payload.get("id"), "error": str(exc)},
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
+            _log_cosmos_editor_failure(
+                "cosmos_editor_save_failed",
+                "Cosmos DB editor save failed.",
+                {"container": payload.get("container"), "document_id": payload.get("id"), "status_code": getattr(exc, "status_code", None), "error": str(exc)},
+            )
+            if status_code == 409:
+                error_message = "Cosmos DB document changed after it was opened. Refresh before saving again."
+            elif status_code == 404:
+                error_message = "Cosmos DB document was not found."
+            else:
+                error_message = "Cosmos DB document could not be saved."
+            return jsonify({"success": False, "error": error_message}), status_code
+        return jsonify({"success": True, **result}), 200
+
+    @bp.route("/api/admin/data-management/jobs", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -210,7 +406,7 @@ def register_route_backend_data_management(app):
         jobs = [sanitize_data_management_job_for_admin(job) for job in get_data_management_jobs(limit=limit)]
         return jsonify({"success": True, "jobs": jobs}), 200
 
-    @app.route("/api/admin/data-management/jobs/<job_id>", methods=["GET"])
+    @bp.route("/api/admin/data-management/jobs/<job_id>", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -220,7 +416,117 @@ def register_route_backend_data_management(app):
             return jsonify({"success": False, "error": "Data Management job was not found."}), 404
         return jsonify({"success": True, **detail}), 200
 
-    @app.route("/api/admin/data-management/backups", methods=["GET"])
+    @bp.route("/api/admin/data-management/jobs/<job_id>/progress", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def get_admin_data_management_job_progress(job_id):
+        progress = get_data_management_job_progress(job_id)
+        if not progress:
+            return jsonify({"success": False, "error": "Data Management job was not found."}), 404
+        return jsonify({"success": True, "job": progress}), 200
+
+    @bp.route("/api/admin/data-management/jobs/<job_id>/migration-manifest", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def download_admin_data_management_migration_manifest(job_id):
+        statuses = {
+            status.strip().lower()
+            for status in str(request.args.get("statuses") or "").split(",")
+            if status.strip()
+        }
+        try:
+            export = export_data_management_migration_manifest(job_id, statuses=statuses)
+        except DataManagementSettingsValidationError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 404
+        response = Response(
+            export["content"],
+            status=200,
+            content_type="application/x-ndjson; charset=utf-8",
+        )
+        suffix = "-failures" if statuses else ""
+        response.headers["Content-Disposition"] = (
+            f'attachment; filename="migration-{job_id}{suffix}.jsonl"'
+        )
+        response.headers["X-Migration-Manifest-Entries"] = str(export["entry_count"])
+        return response
+
+    @bp.route(
+        "/api/admin/data-management/jobs/<job_id>/migration-manifest/items/<item_ref>",
+        methods=["GET"],
+    )
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def resolve_admin_data_management_migration_manifest_item(job_id, item_ref):
+        try:
+            item = resolve_data_management_migration_manifest_item(job_id, item_ref)
+        except DataManagementSettingsValidationError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 404
+        return jsonify({"success": True, "item": item}), 200
+
+    @bp.route("/api/admin/data-management/jobs/<job_id>/retry", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def retry_admin_data_management_migration_job(job_id):
+        try:
+            job = retry_data_management_migration_job(job_id)
+            submitted = submit_data_management_job(current_app._get_current_object(), job.get("id"))
+        except DataManagementSettingsValidationError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
+        except Exception as exc:
+            log_event(
+                "[DataManagement] Failed to retry migration job.",
+                {"job_id": job_id, "error": str(exc)},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"success": False, "error": "Migration retry could not be queued."}), 400
+
+        _log_data_management_admin_action(
+            "data_management_migration_retry_queued",
+            "Queued a Data Management migration retry from durable checkpoints.",
+            {"job_id": job.get("id"), "submitted": submitted},
+        )
+        public_job = sanitize_data_management_job_for_admin(job)
+        public_job["submitted_to_executor"] = submitted
+        return jsonify({"success": True, "job": public_job}), 202
+
+    @bp.route("/api/admin/data-management/jobs/<job_id>/cancel", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def cancel_admin_data_management_migration_job(job_id):
+        payload = request.get_json(silent=True) or {}
+        admin_user_id, admin_email = _get_admin_context()
+        try:
+            job = request_data_management_migration_cancellation(
+                job_id,
+                requested_by=admin_user_id,
+                requested_by_email=admin_email,
+                reason=payload.get("reason"),
+            )
+        except DataManagementSettingsValidationError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
+        except Exception as exc:
+            log_event(
+                "[DataManagement] Failed to request migration cancellation.",
+                {"job_id": job_id, "error": str(exc)},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"success": False, "error": "Migration cancellation could not be requested."}), 400
+
+        _log_data_management_admin_action(
+            "data_management_migration_cancel_requested",
+            "Requested cancellation of a Data Management migration.",
+            {"job_id": job.get("id"), "status": job.get("status")},
+        )
+        return jsonify({"success": True, "job": sanitize_data_management_job_for_admin(job)}), 202
+
+    @bp.route("/api/admin/data-management/backups", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -229,7 +535,7 @@ def register_route_backend_data_management(app):
         backup_summary = get_data_management_backup_summary(limit=limit)
         return jsonify({"success": True, **backup_summary}), 200
 
-    @app.route("/api/admin/data-management/migration/catalog/<target_type>", methods=["GET"])
+    @bp.route("/api/admin/data-management/migration/catalog/<target_type>", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -242,7 +548,7 @@ def register_route_backend_data_management(app):
             return jsonify({"success": False, "error": str(exc)}), 400
         return jsonify({"success": True, **catalog}), 200
 
-    @app.route("/api/admin/data-management/migration/summary", methods=["POST"])
+    @bp.route("/api/admin/data-management/migration/summary", methods=["POST"])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -250,11 +556,28 @@ def register_route_backend_data_management(app):
         payload = request.get_json(silent=True) or {}
         try:
             summary = summarize_data_management_migration_plan(payload)
+            preview = None
+            if payload.get("include_inventory") is True:
+                preview = preview_data_management_migration_plan(
+                    get_data_management_settings(),
+                    payload,
+                )
         except DataManagementSettingsValidationError as exc:
             return jsonify({"success": False, "error": str(exc)}), 400
-        return jsonify({"success": True, "summary": summary}), 200
+        except Exception as exc:
+            log_event(
+                "[DataManagement] Migration inventory preview failed.",
+                {"error": str(exc)},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({
+                "success": False,
+                "error": "Migration inventory preview could not be completed.",
+            }), 400
+        return jsonify({"success": True, "summary": summary, "preview": preview}), 200
 
-    @app.route("/api/admin/data-management/jobs", methods=["POST"])
+    @bp.route("/api/admin/data-management/jobs", methods=["POST"])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -272,12 +595,17 @@ def register_route_backend_data_management(app):
 
         admin_user_id, admin_email = _get_admin_context()
         try:
+            job_options = (
+                dict(payload.get("options"))
+                if isinstance(payload.get("options"), dict)
+                else {}
+            )
             job = queue_data_management_job(
                 operation,
                 backup_type=backup_type,
                 requested_by=admin_user_id,
                 requested_by_email=admin_email,
-                options=payload.get("options") if isinstance(payload.get("options"), dict) else {},
+                options=job_options,
             )
             submitted = submit_data_management_job(current_app._get_current_object(), job.get("id"))
         except Exception as exc:

@@ -53,7 +53,7 @@ def _authorize_frontend_personal_conversation_access(user_id, conversation_id):
 
     return conversation_item
 
-def register_route_frontend_conversations(app):
+def register_route_frontend_conversations(bp):
     def _disable_response_caching(response):
         response.headers['Cache-Control'] = 'no-store, max-age=0'
         response.headers['Pragma'] = 'no-cache'
@@ -79,14 +79,14 @@ def register_route_frontend_conversations(app):
 
         return refreshed_messages
 
-    @app.route('/conversations')
+    @bp.route('/conversations')
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def conversations():
         user_id = get_current_user_id()
         if not user_id:
-            return redirect(url_for('login'))
+            return redirect(url_for('frontend_authentication.login'))
         
         query = f"""
             SELECT *
@@ -100,14 +100,14 @@ def register_route_frontend_conversations(app):
         ))
         return render_template('conversations.html', conversations=items)
 
-    @app.route('/conversation/<conversation_id>', methods=['GET'])
+    @bp.route('/conversation/<conversation_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def view_conversation(conversation_id):
         user_id = get_current_user_id()
         if not user_id:
-            return redirect(url_for('login'))
+            return redirect(url_for('frontend_authentication.login'))
         try:
             _authorize_frontend_personal_conversation_access(user_id, conversation_id)
         except LookupError:
@@ -130,7 +130,7 @@ def register_route_frontend_conversations(app):
         messages = _refresh_azure_maps_message_payloads(messages)
         return render_template('chat.html', conversation_id=conversation_id, messages=messages)
     
-    @app.route('/conversation/<conversation_id>/messages', methods=['GET'])
+    @bp.route('/conversation/<conversation_id>/messages', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -214,7 +214,7 @@ def register_route_frontend_conversations(app):
         response = jsonify({'messages': messages})
         return _disable_response_caching(response)
 
-    @app.route('/api/conversation/<conversation_id>/agent-citation/<artifact_id>', methods=['GET'])
+    @bp.route('/api/conversation/<conversation_id>/agent-citation/<artifact_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -276,7 +276,7 @@ def register_route_frontend_conversations(app):
         response = jsonify({'citation': refresh_azure_maps_citation_payload(citation)})
         return _disable_response_caching(response)
 
-    @app.route('/api/azure-maps/tile', methods=['GET'])
+    @bp.route('/api/azure-maps/tile', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -349,7 +349,7 @@ def register_route_frontend_conversations(app):
         proxy_response.headers['X-Content-Type-Options'] = 'nosniff'
         return proxy_response
 
-    @app.route('/api/message/<message_id>/metadata', methods=['GET'])
+    @bp.route('/api/message/<message_id>/metadata', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required

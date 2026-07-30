@@ -271,8 +271,8 @@ def _build_safety_export_response(logs, filename_prefix, include_user_id=False):
     )
     return response
 
-def register_route_backend_safety(app):
-    @app.route('/api/safety/logs', methods=['GET'])
+def register_route_backend_safety(bp):
+    @bp.route('/api/safety/logs', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @safety_violation_admin_required
@@ -308,7 +308,7 @@ def register_route_backend_safety(app):
             # Consider using Flask's logging mechanism
             return jsonify({"error": f"An error occurred while fetching safety logs: {str(e)}"}), 500
 
-    @app.route('/api/safety/logs/stats', methods=['GET'])
+    @bp.route('/api/safety/logs/stats', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @safety_violation_admin_required
@@ -325,7 +325,7 @@ def register_route_backend_safety(app):
         except Exception as e:
             return jsonify({"error": f"Failed to retrieve safety stats: {str(e)}"}), 500
 
-    @app.route('/api/safety/logs/export', methods=['GET'])
+    @bp.route('/api/safety/logs/export', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @safety_violation_admin_required
@@ -342,7 +342,7 @@ def register_route_backend_safety(app):
         except Exception as e:
             return jsonify({"error": f"Failed to export safety logs: {str(e)}"}), 500
 
-    @app.route('/api/safety/logs/<string:log_id>', methods=['PATCH'])
+    @bp.route('/api/safety/logs/<string:log_id>', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
     @login_required
     @safety_violation_admin_required
@@ -490,7 +490,7 @@ def register_route_backend_safety(app):
             }, level=logging.ERROR)
             return jsonify({'error': f'Failed to update safety log: {str(e)}'}), 500
         
-    @app.route('/api/safety/logs/my', methods=['GET'])
+    @bp.route('/api/safety/logs/my', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -530,7 +530,7 @@ def register_route_backend_safety(app):
             print(f"Error in get_my_safety_logs: {str(e)}")
             return jsonify({"error": f"An error occurred while fetching your safety logs: {str(e)}"}), 500
 
-    @app.route('/api/safety/logs/my/stats', methods=['GET'])
+    @bp.route('/api/safety/logs/my/stats', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -552,7 +552,7 @@ def register_route_backend_safety(app):
         except Exception as e:
             return jsonify({"error": f"Failed to retrieve safety stats: {str(e)}"}), 500
 
-    @app.route('/api/safety/logs/my/export', methods=['GET'])
+    @bp.route('/api/safety/logs/my/export', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -574,7 +574,7 @@ def register_route_backend_safety(app):
         except Exception as e:
             return jsonify({"error": f"Failed to export safety logs: {str(e)}"}), 500
 
-    @app.route('/api/safety/logs/my/<string:log_id>', methods=['PATCH'])
+    @bp.route('/api/safety/logs/my/<string:log_id>', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required

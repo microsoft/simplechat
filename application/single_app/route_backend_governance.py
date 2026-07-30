@@ -84,8 +84,8 @@ def _build_item_policy_search_haystack(policy):
     ]).lower()
 
 
-def register_route_backend_governance(app):
-    @app.route('/api/admin/governance/policies', methods=['GET'])
+def register_route_backend_governance(bp):
+    @bp.route('/api/admin/governance/policies', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -96,7 +96,7 @@ def register_route_backend_governance(app):
             'feature_keys': list(DEFAULT_FEATURE_POLICIES.keys()),
         }), 200
 
-    @app.route('/api/admin/governance/policies/<feature_key>', methods=['PUT'])
+    @bp.route('/api/admin/governance/policies/<feature_key>', methods=['PUT'])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -139,21 +139,21 @@ def register_route_backend_governance(app):
 
         return jsonify({'deleted': deleted}), 200
 
-    @app.route('/api/admin/governance/item-policies/<entity_type>/<item_id>', methods=['DELETE'])
+    @bp.route('/api/admin/governance/item-policies/<entity_type>/<item_id>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
     def delete_governance_item_policy_route(entity_type, item_id):
         return _delete_governance_item_policy(entity_type, item_id)
 
-    @app.route('/api/admin/governance/item-policies/<entity_type>/<item_id>/<policy_id>', methods=['DELETE'])
+    @bp.route('/api/admin/governance/item-policies/<entity_type>/<item_id>/<policy_id>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
     def delete_governance_named_item_policy_route(entity_type, item_id, policy_id):
         return _delete_governance_item_policy(entity_type, item_id, policy_id)
 
-    @app.route('/api/admin/governance/item-policies', methods=['GET'])
+    @bp.route('/api/admin/governance/item-policies', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -161,7 +161,7 @@ def register_route_backend_governance(app):
         entity_type = str(request.args.get('entity_type') or '').strip() or None
         return jsonify({'item_policies': list_item_policies(entity_type=entity_type)}), 200
 
-    @app.route('/api/admin/governance/item-policies/review', methods=['GET'])
+    @bp.route('/api/admin/governance/item-policies/review', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -197,7 +197,7 @@ def register_route_backend_governance(app):
             'entity_type': entity_type,
         }), 200
 
-    @app.route('/api/admin/governance/item-policies/<entity_type>/<item_id>', methods=['PUT'])
+    @bp.route('/api/admin/governance/item-policies/<entity_type>/<item_id>', methods=['PUT'])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required

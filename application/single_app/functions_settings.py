@@ -6,9 +6,13 @@ from flask import g, has_request_context, jsonify, request, session
 
 from config import *
 from functions_appinsights import log_event
+from functions_content_safety import (
+    CONTENT_SAFETY_VIOLATION_MESSAGE_DEFAULT,
+)
 from functions_cosmos_throughput import get_default_cosmos_throughput_settings
 from functions_document_actions import get_default_document_action_capabilities
 from functions_icon_utils import normalize_icon_payload
+from functions_latest_features_nav import LATEST_FEATURES_HIDDEN_VERSION_SETTING
 from functions_service_health import get_default_service_health
 import app_settings_cache
 import inspect
@@ -33,6 +37,7 @@ USER_UI_SETTINGS_KEYS = (
     "notifications_per_page",
     "sidebarToggleStyle",
     "sidebarMenuState",
+    LATEST_FEATURES_HIDDEN_VERSION_SETTING,
 )
 ADMIN_SETTINGS_SECRET_REDACTED_VALUE = "***REDACTED***"
 ADMIN_SETTINGS_FORM_SECRET_FIELDS = (
@@ -88,6 +93,25 @@ def resolve_admin_settings_secret_value(field_name, submitted_value, existing_se
     if not is_admin_settings_redacted_secret(submitted_text):
         return submitted_text
     return str(_get_nested_setting_value(existing_settings, field_name) or '').strip()
+
+
+def normalize_document_access_index_required_settings(settings):
+    """Force DAI operational settings that are required for the default read path."""
+    if not isinstance(settings, dict):
+        return False
+
+    changed = False
+    required_flags = {
+        'enable_document_access_index_container': True,
+        'enable_document_access_index_write_through': True,
+        'enable_document_access_index_reads': True,
+        'enable_startup_document_access_index_backfill': True,
+    }
+    for key, required_value in required_flags.items():
+        if settings.get(key) != required_value:
+            settings[key] = required_value
+            changed = True
+    return changed
 
 
 def redact_admin_settings_secrets_for_form(settings):
@@ -715,44 +739,6 @@ def _refresh_app_settings_cache_after_write(settings_payload, context="app_setti
     _update_cache("after_version_bump")
 
 
-def _refresh_app_settings_cache_after_write(settings_payload, context="app_settings_write"):
-    """Update shared/local settings cache around a version bump."""
-    cache_updater = getattr(app_settings_cache, "update_settings_cache", None)
-    version_bumper = getattr(app_settings_cache, "bump_app_settings_cache_version", None)
-
-    def _update_cache(stage):
-        if not callable(cache_updater):
-            return
-        try:
-            cache_updater(copy.deepcopy(settings_payload))
-        except Exception as cache_error:
-            log_event(
-                "App settings cache update failed after settings write.",
-                extra={
-                    "context": context,
-                    "stage": stage,
-                    "error": str(cache_error)
-                },
-                level=logging.WARNING
-            )
-
-    _update_cache("before_version_bump")
-
-    if callable(version_bumper):
-        try:
-            version_bumper()
-        except Exception as version_error:
-            log_event(
-                "App settings cache version bump failed after settings write.",
-                extra={
-                    "context": context,
-                    "error": str(version_error)
-                },
-                level=logging.WARNING
-            )
-
-    _update_cache("after_version_bump")
-
 def get_settings(use_cosmos=False, include_source=False):
     import secrets
     default_settings = {
@@ -851,6 +837,13 @@ def get_settings(use_cosmos=False, include_source=False):
         'logo_dark_version': 1,
         'custom_favicon_base64': '',
         'favicon_version': 1,
+        'enable_terms_of_use': False,
+        'terms_of_use_title': 'Terms of Use',
+        'terms_of_use_message': '',
+        'terms_of_use_frequency': 'once',
+        'terms_of_use_decline_redirect_url': '/',
+        'terms_of_use_accept_button_text': 'Accept and continue',
+        'terms_of_use_decline_button_text': 'Cancel',
         'enable_dark_mode_default': False,
         'enable_left_nav_default': True,
         'release_notifications_registered': False,
@@ -930,6 +923,28 @@ def get_settings(use_cosmos=False, include_source=False):
         'redis_url': '',
         'redis_key': '',
         'redis_auth_type': '',
+
+        # App Maintenance Settings
+        'enable_app_maintenance': True,
+        'enable_startup_app_maintenance': True,
+        'app_maintenance_check_interval_seconds': 3600,
+        'app_maintenance_job_lease_seconds': 300,
+        'app_maintenance_apply_cosmos_indexing_policies': False,
+        'enable_document_access_index_container': True,
+        'enable_document_access_index_write_through': True,
+        'enable_document_access_index_reads': True,
+        'enable_dai_debug': False,
+        'enable_document_access_index_shadow_validation': False,
+        'enable_startup_document_access_index_backfill': True,
+        'document_access_index_backfill_batch_size': 200,
+        'document_access_index_repair_batch_size': 100,
+        'document_access_index_active_maintenance_interval_seconds': 30,
+        'enable_document_access_index_cache': True,
+        'document_access_index_cache_ttl_seconds': 900,
+        'custom_pages_nav_cache_ttl_seconds': 60,
+        'chat_bootstrap_cache_ttl_seconds': 300,
+        'enable_conversation_cache': True,
+        'conversation_cache_ttl_seconds': 120,
 
         # Cosmos DB Throughput Scale Settings
         **get_default_cosmos_throughput_settings(),
@@ -1051,6 +1066,8 @@ def get_settings(use_cosmos=False, include_source=False):
 
         # Safety (Content Safety) Settings
         'enable_content_safety': False,
+        'content_safety_violation_message': CONTENT_SAFETY_VIOLATION_MESSAGE_DEFAULT,
+        'content_safety_include_trigger_information': True,
         'require_member_of_safety_violation_admin': False,
         'require_member_of_control_center_admin': False,
         'require_member_of_control_center_dashboard_reader': False,
@@ -1343,11 +1360,18 @@ def get_settings(use_cosmos=False, include_source=False):
         migration_updated = apply_custom_endpoint_setting_migration(merged)
         assignment_settings_updated = normalize_group_workflow_assignment_settings(merged)
         promoted_popular_settings_updated = normalize_agents_page_promoted_popular_settings(merged)
+        document_access_index_settings_updated = normalize_document_access_index_required_settings(merged)
 
         merged['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(merged)
 
         # If merging added anything new, upsert back to Cosmos so future reads remain up to date
-        if merge_changed or migration_updated or assignment_settings_updated or promoted_popular_settings_updated:
+        if (
+            merge_changed
+            or migration_updated
+            or assignment_settings_updated
+            or promoted_popular_settings_updated
+            or document_access_index_settings_updated
+        ):
             cosmos_settings_container.upsert_item(merged)
             _refresh_app_settings_cache_after_write(merged, context="merge_upsert")
 
@@ -1396,6 +1420,7 @@ def update_settings(new_settings):
         settings_item.update(new_settings)
         normalize_group_workflow_assignment_settings(settings_item)
         normalize_agents_page_promoted_popular_settings(settings_item)
+        normalize_document_access_index_required_settings(settings_item)
         settings_item['enable_multi_model_endpoints'] = coerce_multi_model_endpoint_enablement(
             existing_multi_endpoint_enabled,
             settings_item.get('enable_multi_model_endpoints', False),
@@ -1704,6 +1729,116 @@ def apply_custom_endpoint_setting_migration(settings_item):
 
     return updated
 
+
+def normalize_model_endpoint_management_cloud(value):
+    """Return the canonical management cloud value for model endpoint auth."""
+    normalized_value = str(value or "").strip().lower()
+    if normalized_value in {"government", "usgovernment", "usgov", "gov", "gcc"}:
+        return "government"
+    if normalized_value == "custom":
+        return "custom"
+    return "public"
+
+
+def get_model_endpoint_management_cloud_for_environment(environment=None):
+    """Resolve the app environment into the model endpoint management cloud."""
+    environment_value = AZURE_ENVIRONMENT if environment is None else environment
+    return normalize_model_endpoint_management_cloud(environment_value)
+
+
+def is_model_endpoint_management_cloud_user_editable(endpoint_provider, endpoint_auth_type):
+    """Return True when the UI intentionally lets users choose endpoint cloud."""
+    provider = str(endpoint_provider or "").strip().lower()
+    auth_type = str(endpoint_auth_type or "").strip().lower()
+    return provider in {"aifoundry", "new_foundry"} and auth_type == "service_principal"
+
+
+def get_model_endpoint_default_custom_authority():
+    """Return the app-level authority used when model endpoints inherit custom cloud."""
+    if get_model_endpoint_management_cloud_for_environment() != "custom":
+        return ""
+    return str(authority or "").strip()
+
+
+def get_model_endpoint_default_foundry_scope():
+    """Return the app-level Foundry token scope for endpoint auth defaults."""
+    management_cloud = get_model_endpoint_management_cloud_for_environment()
+    if management_cloud == "government":
+        return "https://ai.azure.us/.default"
+    if management_cloud == "custom":
+        return str(cognitive_services_scope or "").strip()
+    return "https://ai.azure.com/.default"
+
+
+def resolve_model_endpoint_foundry_scope(auth_settings, endpoint=None):
+    """Resolve the Foundry token scope for a saved model endpoint auth payload."""
+    auth_settings = auth_settings or {}
+    custom_scope = str(auth_settings.get("foundry_scope") or "").strip()
+    if custom_scope:
+        return custom_scope
+
+    management_cloud = normalize_model_endpoint_management_cloud(auth_settings.get("management_cloud"))
+    if management_cloud == "government":
+        return "https://ai.azure.us/.default"
+    if management_cloud == "custom":
+        default_scope = get_model_endpoint_default_foundry_scope()
+        if default_scope:
+            return default_scope
+        raise ValueError("Foundry scope is required for custom cloud model endpoint authentication.")
+
+    endpoint_value = str(endpoint or "").lower()
+    if "azure.us" in endpoint_value:
+        return "https://ai.azure.us/.default"
+    if "azure.cn" in endpoint_value:
+        return "https://ai.azure.cn/.default"
+    if "azure.de" in endpoint_value:
+        return "https://ai.azure.de/.default"
+
+    return "https://ai.azure.com/.default"
+
+
+def normalize_model_endpoint_auth_for_environment(endpoint_copy):
+    """Normalize endpoint auth cloud fields that are owned by app environment."""
+    if not isinstance(endpoint_copy, dict):
+        return False
+
+    changed = False
+    auth = endpoint_copy.get("auth")
+    if not isinstance(auth, dict):
+        auth = {}
+        endpoint_copy["auth"] = auth
+        changed = True
+
+    provider = str(endpoint_copy.get("provider") or "").strip().lower()
+    auth_type = str(auth.get("type") or "").strip().lower()
+    current_cloud = normalize_model_endpoint_management_cloud(auth.get("management_cloud"))
+    default_cloud = get_model_endpoint_management_cloud_for_environment()
+    cloud_user_editable = is_model_endpoint_management_cloud_user_editable(provider, auth_type)
+
+    if not cloud_user_editable or not auth.get("management_cloud"):
+        if auth.get("management_cloud") != default_cloud:
+            auth["management_cloud"] = default_cloud
+            changed = True
+        current_cloud = default_cloud
+    elif auth.get("management_cloud") != current_cloud:
+        auth["management_cloud"] = current_cloud
+        changed = True
+
+    if current_cloud == "custom" and not cloud_user_editable:
+        custom_authority = get_model_endpoint_default_custom_authority()
+        if custom_authority and auth.get("custom_authority") != custom_authority:
+            auth["custom_authority"] = custom_authority
+            changed = True
+
+        if provider in {"aifoundry", "new_foundry", "anthropic", "claude"}:
+            foundry_scope = get_model_endpoint_default_foundry_scope()
+            if foundry_scope and auth.get("foundry_scope") != foundry_scope:
+                auth["foundry_scope"] = foundry_scope
+                changed = True
+
+    return changed
+
+
 def normalize_model_endpoints(endpoints):
     """Normalize model endpoints with stable IDs and enabled flags."""
     if not isinstance(endpoints, list):
@@ -1728,6 +1863,9 @@ def normalize_model_endpoints(endpoints):
 
         if endpoint_copy.get("enabled") is None:
             endpoint_copy["enabled"] = True
+            changed = True
+
+        if normalize_model_endpoint_auth_for_environment(endpoint_copy):
             changed = True
 
         models = endpoint_copy.get("models") or []

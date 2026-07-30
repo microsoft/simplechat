@@ -4,13 +4,14 @@ API endpoints for accessing plugin invocation logs and statistics.
 """
 
 from flask import Blueprint, jsonify, request
-from functions_authentication import admin_required, login_required, user_required, get_current_user_id
+from functions_authentication import admin_required, get_current_user_id, login_required, login_required_blueprint, user_required
 from functions_appinsights import log_event
 from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
 from swagger_wrapper import swagger_route, get_auth_security
 import logging
 
 bpl = Blueprint('plugin_logging', __name__)
+bpl.before_request(login_required_blueprint())
 
 
 @bpl.route('/api/plugins/invocations', methods=['GET'])

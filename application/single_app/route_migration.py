@@ -5,7 +5,7 @@ Migration endpoints for moving data from user settings to personal containers.
 """
 
 from flask import Blueprint, jsonify, request
-from functions_authentication import login_required, user_required, get_current_user_id
+from functions_authentication import get_current_user_id, login_required, user_required, user_required_blueprint
 from functions_personal_agents import migrate_agents_from_user_settings, get_personal_agents
 from functions_personal_actions import migrate_actions_from_user_settings, get_personal_actions
 from functions_appinsights import log_event
@@ -13,6 +13,7 @@ from swagger_wrapper import swagger_route, get_auth_security
 import logging
 
 bp_migration = Blueprint('migration', __name__)
+bp_migration.before_request(user_required_blueprint())
 
 @bp_migration.route('/api/migrate/agents', methods=['POST'])
 @swagger_route(

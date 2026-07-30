@@ -10,6 +10,7 @@ from flask import make_response
 
 from config import *
 from functions_authentication import *
+from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
 from functions_settings import *
 from functions_logging import *
 from functions_activity_logging import *
@@ -2709,10 +2710,10 @@ def get_raw_activity_trends_data(start_date, end_date, charts, token_filters=Non
         return {}
 
 
-def register_route_backend_control_center(app):
+def register_route_backend_control_center(bp):
     
     # User Management APIs
-    @app.route('/api/admin/control-center/users', methods=['GET'])
+    @bp.route('/api/admin/control-center/users', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -2820,7 +2821,7 @@ def register_route_backend_control_center(app):
             debug_print(f"Error getting users: {e}")
             return jsonify({'error': 'Failed to retrieve users'}), 500
     
-    @app.route('/api/admin/control-center/users/<user_id>/access', methods=['PATCH'])
+    @bp.route('/api/admin/control-center/users/<user_id>/access', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -2876,7 +2877,7 @@ def register_route_backend_control_center(app):
             debug_print(f"Error updating user access: {e}")
             return jsonify({'error': 'Failed to update user access'}), 500
     
-    @app.route('/api/admin/control-center/users/<user_id>/file-uploads', methods=['PATCH'])
+    @bp.route('/api/admin/control-center/users/<user_id>/file-uploads', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -2932,7 +2933,7 @@ def register_route_backend_control_center(app):
             debug_print(f"Error updating user file uploads: {e}")
             return jsonify({'error': 'Failed to update user file upload permissions'}), 500
     
-    @app.route('/api/admin/control-center/users/<user_id>/delete-documents', methods=['POST'])
+    @bp.route('/api/admin/control-center/users/<user_id>/delete-documents', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -3006,7 +3007,7 @@ def register_route_backend_control_center(app):
             })
             return jsonify({'error': str(e)}), 500
     
-    @app.route('/api/admin/control-center/users/bulk-action', methods=['POST'])
+    @bp.route('/api/admin/control-center/users/bulk-action', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -3092,7 +3093,7 @@ def register_route_backend_control_center(app):
             return jsonify({'error': 'Failed to perform bulk action'}), 500
 
     # Group Management APIs
-    @app.route('/api/admin/control-center/groups', methods=['GET'])
+    @bp.route('/api/admin/control-center/groups', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -3205,7 +3206,7 @@ def register_route_backend_control_center(app):
             debug_print(f"Error getting groups: {e}")
             return jsonify({'error': 'Failed to retrieve groups'}), 500
 
-    @app.route('/api/admin/control-center/groups/<group_id>/status', methods=['PUT'])
+    @bp.route('/api/admin/control-center/groups/<group_id>/status', methods=['PUT'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -3265,6 +3266,7 @@ def register_route_backend_control_center(app):
                 
                 # Update in database
                 cosmos_groups_container.upsert_item(group)
+                bump_chat_bootstrap_global_cache_version(reason="group_status_updated")
                 
                 # Log to activity_logs container for audit trail
                 from functions_activity_logging import log_group_status_change
@@ -3304,7 +3306,7 @@ def register_route_backend_control_center(app):
             debug_print(f"Error updating group status: {e}")
             return jsonify({'error': 'Failed to update group status'}), 500
 
-    @app.route('/api/admin/control-center/groups/<group_id>', methods=['GET'])
+    @bp.route('/api/admin/control-center/groups/<group_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -3329,7 +3331,7 @@ def register_route_backend_control_center(app):
             debug_print(f"Error getting group details: {e}")
             return jsonify({'error': 'Failed to retrieve group details'}), 500
 
-    @app.route('/api/admin/control-center/groups/<group_id>', methods=['DELETE'])
+    @bp.route('/api/admin/control-center/groups/<group_id>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -3394,7 +3396,7 @@ def register_route_backend_control_center(app):
             debug_print(f"Error creating group deletion request: {e}")
             return jsonify({'error': str(e)}), 500
 
-    @app.route('/api/admin/control-center/groups/<group_id>/delete-documents', methods=['POST'])
+    @bp.route('/api/admin/control-center/groups/<group_id>/delete-documents', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -3457,7 +3459,7 @@ def register_route_backend_control_center(app):
             debug_print(f"Error creating document deletion request: {e}")
             return jsonify({'error': str(e)}), 500
 
-    @app.route('/api/admin/control-center/groups/<group_id>/members', methods=['GET'])
+    @bp.route('/api/admin/control-center/groups/<group_id>/members', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -3491,7 +3493,7 @@ def register_route_backend_control_center(app):
             debug_print(f"Error getting group members: {e}")
             return jsonify({'error': 'Failed to retrieve group members'}), 500
 
-    @app.route('/api/admin/control-center/groups/<group_id>/take-ownership', methods=['POST'])
+    @bp.route('/api/admin/control-center/groups/<group_id>/take-ownership', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -3559,7 +3561,7 @@ def register_route_backend_control_center(app):
             debug_print(f"Error creating take ownership request: {e}")
             return jsonify({'error': str(e)}), 500
 
-    @app.route('/api/admin/control-center/groups/<group_id>/transfer-ownership', methods=['POST'])
+    @bp.route('/api/admin/control-center/groups/<group_id>/transfer-ownership', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -3642,7 +3644,7 @@ def register_route_backend_control_center(app):
             debug_print(f"Error creating transfer ownership request: {e}")
             return jsonify({'error': str(e)}), 500
 
-    @app.route('/api/admin/control-center/groups/<group_id>/add-member', methods=['POST'])
+    @bp.route('/api/admin/control-center/groups/<group_id>/add-member', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -3708,6 +3710,7 @@ def register_route_backend_control_center(app):
             
             # Save group
             cosmos_groups_container.upsert_item(group)
+            bump_chat_bootstrap_global_cache_version(reason="group_member_added")
             
             # Determine the action source (single add vs bulk CSV)
             source = data.get('source', 'csv')  # Default to 'csv' for backward compatibility
@@ -3749,7 +3752,7 @@ def register_route_backend_control_center(app):
             debug_print(f"Error adding group member: {e}")
             return jsonify({'error': 'Failed to add member'}), 500
 
-    @app.route('/api/admin/control-center/groups/<group_id>/activity', methods=['GET'])
+    @bp.route('/api/admin/control-center/groups/<group_id>/activity', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -3974,7 +3977,7 @@ def register_route_backend_control_center(app):
             return jsonify({'error': f'Failed to fetch group activity: {str(e)}'}), 500
 
     # Public Workspaces API
-    @app.route('/api/admin/control-center/public-workspaces', methods=['GET'])
+    @bp.route('/api/admin/control-center/public-workspaces', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -4079,7 +4082,7 @@ def register_route_backend_control_center(app):
             debug_print(f"Error getting public workspaces for control center: {e}")
             return jsonify({'error': 'Failed to retrieve public workspaces'}), 500
 
-    @app.route('/api/admin/control-center/public-workspaces/<workspace_id>/status', methods=['PUT'])
+    @bp.route('/api/admin/control-center/public-workspaces/<workspace_id>/status', methods=['PUT'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -4139,6 +4142,7 @@ def register_route_backend_control_center(app):
                 
                 # Update in database
                 cosmos_public_workspaces_container.upsert_item(workspace)
+                bump_chat_bootstrap_global_cache_version(reason="public_workspace_status_updated")
                 
                 # Log to activity_logs container for audit trail
                 from functions_activity_logging import log_public_workspace_status_change
@@ -4178,7 +4182,7 @@ def register_route_backend_control_center(app):
             debug_print(f"Error updating public workspace status: {e}")
             return jsonify({'error': 'Failed to update public workspace status'}), 500
 
-    @app.route('/api/admin/control-center/public-workspaces/bulk-action', methods=['POST'])
+    @bp.route('/api/admin/control-center/public-workspaces/bulk-action', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -4297,6 +4301,7 @@ def register_route_backend_control_center(app):
                             })
                             
                             cosmos_public_workspaces_container.upsert_item(workspace)
+                            bump_chat_bootstrap_global_cache_version(reason="public_workspace_bulk_status_updated")
                             
                             # Log activity
                             from functions_activity_logging import log_public_workspace_status_change
@@ -4340,7 +4345,7 @@ def register_route_backend_control_center(app):
             debug_print(f"Error performing bulk public workspace action: {e}")
             return jsonify({'error': 'Failed to perform bulk action'}), 500
 
-    @app.route('/api/admin/control-center/public-workspaces/<workspace_id>', methods=['GET'])
+    @bp.route('/api/admin/control-center/public-workspaces/<workspace_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -4365,7 +4370,7 @@ def register_route_backend_control_center(app):
             return jsonify({'error': 'Failed to retrieve workspace details'}), 500
 
 
-    @app.route('/api/admin/control-center/public-workspaces/<workspace_id>/members', methods=['GET'])
+    @bp.route('/api/admin/control-center/public-workspaces/<workspace_id>/members', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -4459,7 +4464,7 @@ def register_route_backend_control_center(app):
             return jsonify({'error': 'Failed to retrieve workspace members'}), 500
 
 
-    @app.route('/api/admin/control-center/public-workspaces/<workspace_id>/add-member', methods=['POST'])
+    @bp.route('/api/admin/control-center/public-workspaces/<workspace_id>/add-member', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -4527,6 +4532,7 @@ def register_route_backend_control_center(app):
             
             # Save workspace
             cosmos_public_workspaces_container.upsert_item(workspace)
+            bump_chat_bootstrap_global_cache_version(reason="public_workspace_member_added")
             
             # Determine the action source
             source = data.get('source', 'csv')
@@ -4572,7 +4578,7 @@ def register_route_backend_control_center(app):
             return jsonify({'error': 'Failed to add workspace member'}), 500
 
 
-    @app.route('/api/admin/control-center/public-workspaces/<workspace_id>/add-member-single', methods=['POST'])
+    @bp.route('/api/admin/control-center/public-workspaces/<workspace_id>/add-member-single', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -4636,6 +4642,7 @@ def register_route_backend_control_center(app):
             
             # Save workspace
             cosmos_public_workspaces_container.upsert_item(workspace)
+            bump_chat_bootstrap_global_cache_version(reason="public_workspace_member_added")
             
             # Log to activity logs
             activity_record = {
@@ -4677,7 +4684,7 @@ def register_route_backend_control_center(app):
             return jsonify({'error': 'Failed to add workspace member'}), 500
 
 
-    @app.route('/api/admin/control-center/public-workspaces/<workspace_id>/activity', methods=['GET'])
+    @bp.route('/api/admin/control-center/public-workspaces/<workspace_id>/activity', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -4868,7 +4875,7 @@ def register_route_backend_control_center(app):
             return jsonify({'error': 'Failed to retrieve workspace activity'}), 500
 
 
-    @app.route('/api/admin/control-center/public-workspaces/<workspace_id>/take-ownership', methods=['POST'])
+    @bp.route('/api/admin/control-center/public-workspaces/<workspace_id>/take-ownership', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -4949,7 +4956,7 @@ def register_route_backend_control_center(app):
             traceback.print_exc()
             return jsonify({'error': str(e)}), 500
 
-    @app.route('/api/admin/control-center/public-workspaces/<workspace_id>/ownership', methods=['PUT'])
+    @bp.route('/api/admin/control-center/public-workspaces/<workspace_id>/ownership', methods=['PUT'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -5073,7 +5080,7 @@ def register_route_backend_control_center(app):
             return jsonify({'error': 'Failed to create ownership transfer request'}), 500
 
 
-    @app.route('/api/admin/control-center/public-workspaces/<workspace_id>/documents', methods=['DELETE'])
+    @bp.route('/api/admin/control-center/public-workspaces/<workspace_id>/documents', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -5138,7 +5145,7 @@ def register_route_backend_control_center(app):
             return jsonify({'error': str(e)}), 500
 
 
-    @app.route('/api/admin/control-center/public-workspaces/<workspace_id>', methods=['DELETE'])
+    @bp.route('/api/admin/control-center/public-workspaces/<workspace_id>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -5206,7 +5213,7 @@ def register_route_backend_control_center(app):
             return jsonify({'error': str(e)}), 500
 
     # Activity Trends API
-    @app.route('/api/admin/control-center/activity-trends', methods=['GET'])
+    @bp.route('/api/admin/control-center/activity-trends', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('dashboard')
@@ -5259,7 +5266,7 @@ def register_route_backend_control_center(app):
             return jsonify({'error': 'Failed to retrieve activity trends'}), 500
 
 
-    @app.route('/api/admin/control-center/token-filters', methods=['GET'])
+    @bp.route('/api/admin/control-center/token-filters', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('dashboard')
@@ -5357,7 +5364,7 @@ def register_route_backend_control_center(app):
 
 
 
-    @app.route('/api/admin/control-center/activity-trends/export', methods=['POST'])
+    @bp.route('/api/admin/control-center/activity-trends/export', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('dashboard')
@@ -5554,7 +5561,7 @@ def register_route_backend_control_center(app):
             debug_print(f"Error exporting activity trends: {e}")
             return jsonify({'error': 'Failed to export data'}), 500
 
-    @app.route('/api/admin/control-center/activity-trends/chat', methods=['POST'])
+    @bp.route('/api/admin/control-center/activity-trends/chat', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('dashboard')
@@ -5712,7 +5719,7 @@ def register_route_backend_control_center(app):
             return jsonify({'error': 'Failed to create chat conversation'}), 500
     
     # Data Refresh API
-    @app.route('/api/admin/control-center/refresh', methods=['POST'])
+    @bp.route('/api/admin/control-center/refresh', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -5857,7 +5864,7 @@ def register_route_backend_control_center(app):
             return jsonify({'error': 'Failed to refresh data'}), 500
     
     # Get refresh status API
-    @app.route('/api/admin/control-center/refresh-status', methods=['GET'])
+    @bp.route('/api/admin/control-center/refresh-status', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')  
@@ -5881,7 +5888,7 @@ def register_route_backend_control_center(app):
             return jsonify({'error': 'Failed to get refresh status'}), 500
     
     # Activity Log Migration APIs
-    @app.route('/api/admin/control-center/migrate/status', methods=['GET'])
+    @bp.route('/api/admin/control-center/migrate/status', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -5981,7 +5988,7 @@ def register_route_backend_control_center(app):
             debug_print(f"Error getting migration status: {e}")
             return jsonify({'error': 'Failed to get migration status'}), 500
     
-    @app.route('/api/admin/control-center/migrate/all', methods=['POST'])
+    @bp.route('/api/admin/control-center/migrate/all', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -6291,7 +6298,7 @@ def register_route_backend_control_center(app):
             traceback.print_exc()
             return jsonify({'error': f'Migration failed: {str(e)}'}), 500
 
-    @app.route('/api/admin/control-center/activity-logs', methods=['GET'])
+    @bp.route('/api/admin/control-center/activity-logs', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -6416,7 +6423,7 @@ def register_route_backend_control_center(app):
             )
             return jsonify({'error': 'Failed to fetch activity logs'}), 500
 
-    @app.route('/api/admin/control-center/activity-logs/export', methods=['GET'])
+    @bp.route('/api/admin/control-center/activity-logs/export', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -6512,7 +6519,7 @@ def register_route_backend_control_center(app):
     # APPROVAL WORKFLOW ENDPOINTS
     # ============================================================================
 
-    @app.route('/api/admin/control-center/approvals', methods=['GET'])
+    @bp.route('/api/admin/control-center/approvals', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -6603,7 +6610,7 @@ def register_route_backend_control_center(app):
         )
         return approval, user_id, user_roles, user_email, user_name
 
-    @app.route('/api/admin/control-center/approvals/<approval_id>', methods=['GET'])
+    @bp.route('/api/admin/control-center/approvals/<approval_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -6640,7 +6647,7 @@ def register_route_backend_control_center(app):
             debug_print(traceback.format_exc())
             return jsonify({'error': 'Failed to fetch approval', 'details': str(e)}), 500
 
-    @app.route('/api/admin/control-center/approvals/<approval_id>/approve', methods=['POST'])
+    @bp.route('/api/admin/control-center/approvals/<approval_id>/approve', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -6695,7 +6702,7 @@ def register_route_backend_control_center(app):
             debug_print(f"Error approving request: {e}")
             return jsonify({'error': str(e)}), 500
 
-    @app.route('/api/admin/control-center/approvals/<approval_id>/deny', methods=['POST'])
+    @bp.route('/api/admin/control-center/approvals/<approval_id>/deny', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -6751,7 +6758,7 @@ def register_route_backend_control_center(app):
             return jsonify({'error': str(e)}), 500
     
     # New standalone approvals API endpoints (accessible to all users with permissions)
-    @app.route('/api/approvals', methods=['GET'])
+    @bp.route('/api/approvals', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     def api_get_approvals():
@@ -6822,7 +6829,7 @@ def register_route_backend_control_center(app):
             debug_print(traceback.format_exc())
             return jsonify({'error': 'Failed to fetch approvals', 'details': str(e)}), 500
 
-    @app.route('/api/approvals/<approval_id>', methods=['GET'])
+    @bp.route('/api/approvals/<approval_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     def api_get_approval_by_id(approval_id):
@@ -6858,7 +6865,7 @@ def register_route_backend_control_center(app):
             debug_print(traceback.format_exc())
             return jsonify({'error': 'Failed to fetch approval', 'details': str(e)}), 500
 
-    @app.route('/api/approvals/<approval_id>/approve', methods=['POST'])
+    @bp.route('/api/approvals/<approval_id>/approve', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     def api_approve_request(approval_id):
@@ -6912,7 +6919,7 @@ def register_route_backend_control_center(app):
             debug_print(f"Error approving request: {e}")
             return jsonify({'error': str(e)}), 500
 
-    @app.route('/api/approvals/<approval_id>/deny', methods=['POST'])
+    @bp.route('/api/approvals/<approval_id>/deny', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     def api_deny_request(approval_id):
@@ -7147,6 +7154,7 @@ def register_route_backend_control_center(app):
             
             group['modifiedDate'] = datetime.utcnow().isoformat()
             cosmos_groups_container.upsert_item(group)
+            bump_chat_bootstrap_global_cache_version(reason="group_ownership_transferred")
             
             # Log to activity logs
             activity_record = {
@@ -7284,6 +7292,7 @@ def register_route_backend_control_center(app):
             
             workspace['modifiedDate'] = datetime.utcnow().isoformat()
             cosmos_public_workspaces_container.upsert_item(workspace)
+            bump_chat_bootstrap_global_cache_version(reason="public_workspace_ownership_transferred")
             
             # Log to activity logs
             activity_record = {
@@ -7369,6 +7378,7 @@ def register_route_backend_control_center(app):
             
             group['modifiedDate'] = datetime.utcnow().isoformat()
             cosmos_groups_container.upsert_item(group)
+            bump_chat_bootstrap_global_cache_version(reason="group_ownership_transferred")
             
             # Log to activity logs
             activity_record = {
@@ -7509,6 +7519,7 @@ def register_route_backend_control_center(app):
             
             workspace['modifiedDate'] = datetime.utcnow().isoformat()
             cosmos_public_workspaces_container.upsert_item(workspace)
+            bump_chat_bootstrap_global_cache_version(reason="public_workspace_ownership_transferred")
             
             # Log to activity logs
             activity_record = {

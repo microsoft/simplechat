@@ -59,6 +59,7 @@ from functions_activity_logging import (
 from functions_governance import ensure_governance_access, upsert_item_policy
 
 bpa = Blueprint('admin_agents', __name__)
+bpa.before_request(login_required_blueprint())
 
 AGENT_INSTRUCTION_FIELD_LIMIT = 6000
 AGENT_INSTRUCTION_OUTPUT_TOKEN_LIMIT = 1400
@@ -2000,4 +2001,4 @@ def get_global_agent_settings(include_admin_extras=False, user_id=None, group_id
         "enable_multi_model_endpoints": effective_multi_flag,
         "model_endpoints": combined_endpoints,
     })
-    
+

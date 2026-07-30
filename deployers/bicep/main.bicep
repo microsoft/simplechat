@@ -5,6 +5,12 @@ targetScope = 'subscription'
 - Region must align to the target cloud environment''')
 param location string
 
+@minLength(1)
+@description('''Optional Azure region override for Azure Cache for Redis.
+- Defaults to the deployment location.
+- Use only when Redis capacity or SKU availability differs from the primary app region.''')
+param redisLocation string = location
+
 @description('''The target Azure Cloud environment.
 - Accepted values are: AzureCloud, AzureUSGovernment, public, usgovernment, custom
 - Default is based on the ARM cloud name''')
@@ -42,6 +48,16 @@ param azdEnvironmentName string
 @description('''The name of the container image to deploy to the web app.
 - should be in the format <repository>:<tag>''')
 param imageName string = 'simplechat:latest'
+
+@description('''Deploy a secondary native Python App Service alongside the primary container App Service.
+- Default is false; enable only for native App Service comparison/testing.''')
+param deployNativePythonWebApp bool = false
+
+@minLength(2)
+@maxLength(60)
+@description('''Optional name for the secondary native Python Web App.
+- Used only when deployNativePythonWebApp is true.''')
+param nativeWebAppName string = toLower('${appName}-${environment}-native-app')
 
 @description('''Azure AD Application Client ID for enterprise authentication.
 - Should be the client ID of the registered Azure AD application''')
@@ -88,6 +104,15 @@ param teamsAppResource string = ''
   'managed_identity'
 ])
 param authenticationType string
+
+@description('''Authentication type for Azure Cache for Redis.
+- Defaults to the global authenticationType for backward compatibility.
+- Set to key when Redis managed identity authentication is unavailable in the target cloud.''')
+@allowed([
+ 'key'
+ 'managed_identity'
+])
+param redisAuthenticationType string = authenticationType
 
 @description('''Configure permissions (based on authenticationType) for the deployed web application to access required resources.
 ''')
@@ -273,9 +298,9 @@ var resolvedOpenAIDeploymentType = isUsGovernmentCloud ? 'Standard' : openAIDepl
 var defaultGptModels = [
   {
     modelName: 'gpt-4o'
-    modelVersion: isUsGovernmentCloud ? '2024-05-13' : '2024-11-20'
+    modelVersion: '2024-11-20'
     skuName: resolvedOpenAIDeploymentType
-    skuCapacity: 100
+    skuCapacity: isUsGovernmentCloud ? 20 : 100
   }
 ]
 var defaultEmbeddingModels = isUsGovernmentCloud
@@ -332,6 +357,15 @@ resource rg 'Microsoft.Resources/resourceGroups@2022-09-01' = {
   name: rgName
   location: location
   tags: tags
+}
+
+module rgDeleteLock 'modules/resourceGroupLock.bicep' = {
+  scope: rg
+  name: 'resourceGroupDeleteLock'
+  params: {
+    lockName: 'prevent-accidental-delete'
+    lockNotes: 'Prevents accidental deletion of the SimpleChat staging resource group.'
+  }
 }
 
 //=========================================================
@@ -608,6 +642,45 @@ module appService 'modules/appService.bicep' = {
 }
 
 //=========================================================
+// Create Optional App Service (Native Python)
+//=========================================================
+module nativeAppService 'modules/appServiceNativePython.bicep' = if (deployNativePythonWebApp) {
+  name: 'nativeAppService'
+  scope: rg
+  params: {
+    location: location
+    nativeWebAppName: nativeWebAppName
+    tags: tags
+    enableDiagLogging: enableDiagLogging
+    logAnalyticsId: logAnalytics.outputs.logAnalyticsId
+    appServicePlanId: appServicePlan.outputs.appServicePlanId
+    azurePlatform: scCloudEnvironment
+    cosmosDbName: cosmosDB.outputs.cosmosDbName
+    searchServiceName: searchService.outputs.searchServiceName
+    openAiServiceName: openAI.outputs.openAIName
+    openAiEndpoint: openAI.outputs.openAIEndpoint
+    openAiResourceGroupName: openAI.outputs.openAIResourceGroup
+    documentIntelligenceServiceName: docIntel.outputs.documentIntelligenceServiceName
+    appInsightsName: applicationInsights.outputs.appInsightsName
+    enterpriseAppClientId: enterpriseAppClientId
+    enterpriseAppClientSecret: enterpriseAppClientSecret
+    authenticationType: authenticationType
+    keyVaultUri: keyVault.outputs.keyVaultUri
+    enablePrivateNetworking: enablePrivateNetworking
+    appServiceSubnetId: resolvedAppServiceSubnetId
+
+    // --- Custom Azure Environment Parameters (for 'custom' azureEnvironment) ---
+    customBlobStorageSuffix: customBlobStorageSuffix
+    customGraphUrl: customGraphUrl
+    customIdentityUrl: customIdentityUrl
+    customResourceManagerUrl: customResourceManagerUrl
+    customCognitiveServicesScope: customCognitiveServicesScope
+    customSearchResourceUrl: customSearchResourceUrl
+    customVideoIndexerEndpoint: resolvedVideoIndexerEndpoint
+  }
+}
+
+//=========================================================
 // configure optional services
 //=========================================================
 
@@ -636,9 +709,10 @@ module redisCache 'modules/redisCache.bicep' = if (deployRedisCache) {
   name: 'redisCache'
   scope: rg
   params: {
-    location: location
+    location: redisLocation
     appName: appName
     environment: environment
+    redisAuthenticationType: redisAuthenticationType
     tags: tags
     enableDiagLogging: enableDiagLogging
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
@@ -697,6 +771,7 @@ module setPermissions 'modules/setPermissions.bicep' = if (configureApplicationP
 
     webAppName: appService.outputs.name
     authenticationType: authenticationType
+    redisAuthenticationType: redisAuthenticationType
     enterpriseAppServicePrincipalId: enterpriseAppServicePrincipalId
     keyVaultName: keyVault.outputs.keyVaultName
     cosmosDBName: cosmosDB.outputs.cosmosDbName
@@ -718,6 +793,34 @@ module setPermissions 'modules/setPermissions.bicep' = if (configureApplicationP
     videoIndexerName: deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerServiceName : ''
     videoIndexerSupportsOpenAiIntegration: videoIndexerSupportsOpenAiIntegration
   }
+}
+
+module setNativeWebAppPermissions 'modules/setNativeWebAppPermissions.bicep' = if (configureApplicationPermissions && deployNativePythonWebApp) {
+  name: 'setNativeWebAppPermissions'
+  scope: rg
+  params: {
+    #disable-next-line BCP318 // module exists when deployNativePythonWebApp is true
+    nativeWebAppName: nativeAppService.outputs.name
+    authenticationType: authenticationType
+    redisAuthenticationType: redisAuthenticationType
+    keyVaultName: keyVault.outputs.keyVaultName
+    cosmosDBName: cosmosDB.outputs.cosmosDbName
+    openAIName: openAI.outputs.openAIName
+    openAIResourceGroupName: openAI.outputs.openAIResourceGroup
+    openAISubscriptionId: openAI.outputs.openAISubscriptionId
+    docIntelName: docIntel.outputs.documentIntelligenceServiceName
+    storageAccountName: storageAccount.outputs.name
+    searchServiceName: searchService.outputs.searchServiceName
+    #disable-next-line BCP318 // expect one value to be null
+    speechServiceName: deploySpeechService ? speechService.outputs.speechServiceName : ''
+    #disable-next-line BCP318 // expect one value to be null
+    redisCacheName: deployRedisCache ? redisCache.outputs.redisCacheName : ''
+    #disable-next-line BCP318 // expect one value to be null
+    contentSafetyName: deployContentSafety ? contentSafety.outputs.contentSafetyName : ''
+  }
+  dependsOn: [
+    setPermissions
+  ]
 }
 
 //=========================================================
@@ -767,6 +870,7 @@ module privateNetworking 'modules/privateNetworking.bicep' = if (enablePrivateNe
 // output values required for postprovision script in azure.yaml
 output var_acrName string = toLower('${appName}${environment}acr')
 output var_authenticationType string = toLower(authenticationType)
+output var_redisAuthenticationType string = toLower(redisAuthenticationType)
 output var_blobStorageEndpoint string = storageAccount.outputs.endpoint
 output var_configureApplication bool = configureApplicationPermissions
 #disable-next-line BCP318 // expect one value to be null
@@ -805,7 +909,8 @@ output var_imageTag string = contains(imageName, ':')
   : 'latest'
 
 output var_webService string = appService.outputs.name
+#disable-next-line BCP318 // expect one value to be null
+output var_nativeWebService string = deployNativePythonWebApp ? nativeAppService.outputs.name : ''
 
 // output values required for postup script in azure.yaml
 output var_enablePrivateNetworking bool = enablePrivateNetworking
-

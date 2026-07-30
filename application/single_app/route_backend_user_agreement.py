@@ -9,13 +9,13 @@ from swagger_wrapper import swagger_route, get_auth_security
 from functions_debug import debug_print
 
 
-def register_route_backend_user_agreement(app):
+def register_route_backend_user_agreement(bp):
     """
     Register user agreement API endpoints under '/api/user_agreement/...'
     These endpoints handle checking and recording user agreement acceptance.
     """
 
-    @app.route("/api/user_agreement/check", methods=["GET"])
+    @bp.route("/api/user_agreement/check", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -99,7 +99,7 @@ def register_route_backend_user_agreement(app):
             "enableDailyAcceptance": enable_daily_acceptance
         }), 200
 
-    @app.route("/api/user_agreement/accept", methods=["POST"])
+    @bp.route("/api/user_agreement/accept", methods=["POST"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required

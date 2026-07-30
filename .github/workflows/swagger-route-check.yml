@@ -9,6 +9,11 @@ on:
     paths:
       - 'application/single_app/**/*.py'
       - 'scripts/check_swagger_routes.py'
+      - 'functional_tests/route_tests/**/*.py'
+      - '.github/instructions/python-lang.instructions.md'
+      - '.github/instructions/location_of_functional_tests.instructions.md'
+      - '.github/prompts/route-authentication-audit.prompt.md'
+      - '.github/prompts/prepare-for-pull-request.prompt.md'
       - '.github/workflows/swagger-route-check.yml'
 
 jobs:
@@ -34,6 +39,14 @@ jobs:
             route_python:
               - 'application/single_app/**/*.py'
               - 'scripts/check_swagger_routes.py'
+            route_policy:
+              - 'application/single_app/**/*.py'
+              - 'functional_tests/route_tests/**/*.py'
+              - '.github/instructions/python-lang.instructions.md'
+              - '.github/instructions/location_of_functional_tests.instructions.md'
+              - '.github/prompts/route-authentication-audit.prompt.md'
+              - '.github/prompts/prepare-for-pull-request.prompt.md'
+              - '.github/workflows/swagger-route-check.yml'
 
       - name: Run swagger route validation
         env:
@@ -48,3 +61,10 @@ jobs:
           printf '%s\n' "$CHANGED_ROUTE_FILES" | tr ' ' '\n'
 
           python scripts/check_swagger_routes.py $CHANGED_ROUTE_FILES
+
+      - name: Run route policy validation
+        if: steps.changed-files.outputs.route_policy_any_changed == 'true'
+        run: |
+          python functional_tests/route_tests/test_route_blueprint_policy_inventory.py
+          python functional_tests/route_tests/test_route_unauthenticated_policy_contract.py
+          python functional_tests/route_tests/test_route_policy_test_coverage.py

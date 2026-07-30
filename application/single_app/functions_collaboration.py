@@ -36,6 +36,7 @@ from collaboration_models import (
 )
 from functions_activity_logging import log_chat_activity
 from functions_appinsights import log_event
+from functions_conversation_cache import bump_conversation_cache_version, invalidate_conversation_cache_for_item
 from functions_documents import sync_chat_upload_workspace_document_sharing_for_collaboration
 from functions_group import (
     assert_group_role,
@@ -1214,6 +1215,7 @@ def create_personal_collaboration_conversation_record(title, creator_user, invit
         cosmos_collaboration_user_state_container.upsert_item(state_doc)
         user_states.append(state_doc)
 
+    invalidate_conversation_cache_for_item(conversation_doc, reason="collaboration_created")
     log_event(
         '[Collaboration] Created personal collaborative conversation',
         extra={
@@ -1255,6 +1257,7 @@ def create_group_collaboration_conversation_record(title, creator_user, group_do
         )
         user_states.append(state_doc)
 
+    invalidate_conversation_cache_for_item(conversation_doc, reason="collaboration_created")
     log_event(
         '[Collaboration] Created group collaborative conversation',
         extra={
@@ -1539,6 +1542,7 @@ def record_personal_invite_response(conversation_id, user_id, action):
 
     cosmos_collaboration_conversations_container.upsert_item(conversation_doc)
     cosmos_collaboration_user_state_container.upsert_item(user_state)
+    invalidate_conversation_cache_for_item(conversation_doc, reason="collaboration_invite_response")
     if membership_status == MEMBERSHIP_STATUS_ACCEPTED and is_personal_collaboration_conversation(conversation_doc):
         sync_chat_upload_workspace_document_sharing_for_collaboration(conversation_doc)
     return conversation_doc, user_state, participant_record
@@ -1607,6 +1611,7 @@ def invite_personal_collaboration_participants(conversation_id, owner_user_id, p
         cosmos_collaboration_user_state_container.upsert_item(state_doc)
         created_state_docs.append(state_doc)
 
+    invalidate_conversation_cache_for_item(conversation_doc, reason="collaboration_participants_invited")
     return conversation_doc, created_state_docs
 
 
@@ -1667,6 +1672,8 @@ def remove_personal_collaboration_member(conversation_id, owner_user_id, member_
     if is_personal_collaboration_conversation(conversation_doc):
         sync_chat_upload_workspace_document_sharing_for_collaboration(conversation_doc)
 
+    bump_conversation_cache_version(member_user_id, reason="collaboration_member_removed")
+    invalidate_conversation_cache_for_item(conversation_doc, reason="collaboration_member_removed")
     return conversation_doc, removed_participant
 
 
@@ -1745,6 +1752,7 @@ def _save_collaboration_message_doc(conversation_doc, message_doc):
         refresh_personal_participant_indexes(conversation_doc)
 
     cosmos_collaboration_conversations_container.upsert_item(conversation_doc)
+    invalidate_conversation_cache_for_item(conversation_doc, reason="collaboration_message_saved")
 
     if sender_user_id and sender_user_id != 'assistant' and str(message_doc.get('role') or '').strip().lower() == 'user':
         try:
@@ -1807,6 +1815,7 @@ def sync_collaboration_conversation_metadata_from_source(conversation_doc, sourc
 
     if updated:
         cosmos_collaboration_conversations_container.upsert_item(conversation_doc)
+        invalidate_conversation_cache_for_item(conversation_doc, reason="collaboration_metadata_synced")
 
     return conversation_doc, updated
 
@@ -1875,6 +1884,7 @@ def ensure_collaboration_source_conversation(conversation_doc, current_user):
     if source_updated:
         source_conversation_doc['last_updated'] = timestamp
         cosmos_conversations_container.upsert_item(source_conversation_doc)
+        invalidate_conversation_cache_for_item(source_conversation_doc, reason="collaboration_source_synced")
 
     if str((conversation_doc or {}).get('source_conversation_id') or '').strip() != source_conversation_id:
         conversation_doc['source_conversation_id'] = source_conversation_id
@@ -1950,6 +1960,7 @@ def _refresh_collaboration_conversation_message_summary(conversation_doc):
         conversation_doc['updated_at'] = utc_now_iso()
 
     cosmos_collaboration_conversations_container.upsert_item(conversation_doc)
+    invalidate_conversation_cache_for_item(conversation_doc, reason="collaboration_message_summary_refreshed")
     return conversation_doc
 
 
@@ -2015,6 +2026,7 @@ def update_personal_collaboration_title(conversation_id, current_user_id, new_ti
     conversation_doc['title'] = normalized_title
     conversation_doc['updated_at'] = utc_now_iso()
     cosmos_collaboration_conversations_container.upsert_item(conversation_doc)
+    invalidate_conversation_cache_for_item(conversation_doc, reason="collaboration_title_updated")
     return conversation_doc
 
 
@@ -2050,6 +2062,7 @@ def toggle_personal_collaboration_pin(conversation_id, current_user_id):
     user_state['is_pinned'] = not bool(user_state.get('is_pinned', False))
     user_state['updated_at'] = utc_now_iso()
     cosmos_collaboration_user_state_container.upsert_item(user_state)
+    bump_conversation_cache_version(current_user_id, reason="collaboration_pin_toggled")
     return conversation_doc, user_state
 
 
@@ -2085,6 +2098,7 @@ def toggle_personal_collaboration_hide(conversation_id, current_user_id):
     user_state['is_hidden'] = not bool(user_state.get('is_hidden', False))
     user_state['updated_at'] = utc_now_iso()
     cosmos_collaboration_user_state_container.upsert_item(user_state)
+    bump_conversation_cache_version(current_user_id, reason="collaboration_hide_toggled")
     return conversation_doc, user_state
 
 
@@ -2133,6 +2147,7 @@ def update_personal_collaboration_member_role(conversation_id, current_user_id, 
         user_state['updated_at'] = timestamp
         cosmos_collaboration_user_state_container.upsert_item(user_state)
 
+    invalidate_conversation_cache_for_item(conversation_doc, reason="collaboration_member_role_updated")
     return conversation_doc, participant
 
 
@@ -2216,6 +2231,8 @@ def leave_personal_collaboration_conversation(conversation_id, current_user_id, 
     if is_personal_collaboration_conversation(conversation_doc):
         sync_chat_upload_workspace_document_sharing_for_collaboration(conversation_doc)
 
+    bump_conversation_cache_version(current_user_id, reason="collaboration_left")
+    invalidate_conversation_cache_for_item(conversation_doc, reason="collaboration_left")
     return conversation_doc, participant, promoted_participant
 
 
@@ -2348,6 +2365,7 @@ def delete_personal_collaboration_conversation(conversation_id, current_user_id)
         item=conversation_id,
         partition_key=conversation_id,
     )
+    invalidate_conversation_cache_for_item(conversation_doc, reason="collaboration_deleted")
     return conversation_doc
 
 

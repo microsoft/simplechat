@@ -59,6 +59,7 @@ from functions_service_health import (
     SEMANTIC_SEARCH_QUOTA_WARNING_TYPE,
     SemanticSearchQuotaExceededError,
 )
+from functions_content_safety import build_content_safety_violation_message
 from functions_settings import *
 from functions_assigned_knowledge import (
     ASSIGNED_KNOWLEDGE_USER_ACTION_ANALYZE,
@@ -104,6 +105,7 @@ from functions_chart_operations import (
     normalize_chart_kind,
     user_request_supports_proactive_charts,
 )
+from functions_conversation_cache import invalidate_conversation_cache_for_item
 from functions_conversation_metadata import collect_conversation_metadata, update_conversation_with_metadata
 from functions_conversation_unread import mark_conversation_unread
 from functions_image_messages import build_image_message_documents, decode_image_content
@@ -2263,6 +2265,7 @@ def _create_personal_conversation(user_id, conversation_id=None):
 
     conversation_item['added_to_activity_log'] = True
     cosmos_conversations_container.upsert_item(conversation_item)
+    invalidate_conversation_cache_for_item(conversation_item, reason="conversation_created")
     return conversation_item
 
 
@@ -2704,7 +2707,6 @@ def _build_safety_message_doc(
             },
         },
     })
-
 
 def _build_fact_memory_context_lines(
     scope_id,
@@ -10583,28 +10585,7 @@ async def run_tabular_analysis_with_thought_tracking(user_question, tabular_file
 
 def resolve_foundry_scope_for_auth(auth_settings, endpoint=None):
     """Resolve the correct scope for Foundry-backed inference authentication."""
-    auth_settings = auth_settings or {}
-    custom_scope = str(auth_settings.get('foundry_scope') or '').strip()
-    if custom_scope:
-        return custom_scope
-
-    management_cloud = str(auth_settings.get('management_cloud') or 'public').lower()
-    if management_cloud in ('government', 'usgovernment', 'usgov'):
-        return 'https://ai.azure.us/.default'
-    if management_cloud == 'china':
-        return 'https://ai.azure.cn/.default'
-    if management_cloud == 'germany':
-        return 'https://ai.azure.de/.default'
-
-    endpoint_value = str(endpoint or '').lower()
-    if 'azure.us' in endpoint_value:
-        return 'https://ai.azure.us/.default'
-    if 'azure.cn' in endpoint_value:
-        return 'https://ai.azure.cn/.default'
-    if 'azure.de' in endpoint_value:
-        return 'https://ai.azure.de/.default'
-
-    return 'https://ai.azure.com/.default'
+    return resolve_model_endpoint_foundry_scope(auth_settings, endpoint=endpoint)
 
 
 def get_foundry_api_version_candidates(primary_version, settings):
@@ -10947,7 +10928,7 @@ def restore_agent_stream_retry_state(agent, retry_state):
         settings.function_choice_behavior = original_behavior
 
 
-def register_route_backend_chats(app):
+def register_route_backend_chats(bp):
     def build_background_stream_response(event_generator_factory, stream_session=None):
         """Run SSE generation in background execution so it survives disconnects."""
         stream_bridge = BackgroundStreamBridge(stream_session=stream_session)
@@ -11676,6 +11657,7 @@ def register_route_backend_chats(app):
         )
         conversation_item['added_to_activity_log'] = True
         cosmos_conversations_container.upsert_item(conversation_item)
+        invalidate_conversation_cache_for_item(conversation_item, reason="conversation_created")
         return conversation_item
 
     def execute_document_action_chat_request(data=None, publish_background_event=None, forced_action_type=None):
@@ -11933,6 +11915,7 @@ def register_route_backend_chats(app):
         if title_updated:
             conversation_item['last_updated'] = datetime.utcnow().isoformat()
             cosmos_conversations_container.upsert_item(conversation_item)
+            invalidate_conversation_cache_for_item(conversation_item, reason="conversation_title_initialized")
             if callable(publish_background_event):
                 publish_background_event(_build_conversation_metadata_stream_event(conversation_item))
 
@@ -12212,6 +12195,7 @@ def register_route_backend_chats(app):
             debug_print(f'[ChatDocumentAnalysis] Conversation metadata update failed: {exc}')
 
         cosmos_conversations_container.upsert_item(conversation_item)
+        invalidate_conversation_cache_for_item(conversation_item, reason="document_action_chat_completed")
         debug_print(
             '[ChatDocumentAction] Execution completed | '
             f'user_id={user_id} | '
@@ -12259,7 +12243,7 @@ def register_route_backend_chats(app):
             forced_action_type=DOCUMENT_ACTION_TYPE_ANALYZE,
         )
 
-    @app.route('/api/chat/document-action', methods=['POST'])
+    @bp.route('/api/chat/document-action', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -12267,7 +12251,7 @@ def register_route_backend_chats(app):
         payload, status_code = execute_document_action_chat_request()
         return jsonify(payload), status_code
 
-    @app.route('/api/chat/document-action/stream', methods=['POST'])
+    @bp.route('/api/chat/document-action/stream', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -12320,7 +12304,7 @@ def register_route_backend_chats(app):
 
         return build_background_stream_response(generate_document_action_response, stream_session=stream_session)
 
-    @app.route('/api/chat/analyze', methods=['POST'])
+    @bp.route('/api/chat/analyze', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -12328,7 +12312,7 @@ def register_route_backend_chats(app):
         payload, status_code = execute_analyze_chat_request()
         return jsonify(payload), status_code
 
-    @app.route('/api/chat/analyze/stream', methods=['POST'])
+    @bp.route('/api/chat/analyze/stream', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -12381,7 +12365,7 @@ def register_route_backend_chats(app):
 
         return build_background_stream_response(generate_analyze_response, stream_session=stream_session)
 
-    @app.route('/api/chat/image-proposals/generate', methods=['POST'])
+    @bp.route('/api/chat/image-proposals/generate', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -12440,6 +12424,7 @@ def register_route_backend_chats(app):
 
             conversation_item['last_updated'] = datetime.utcnow().isoformat()
             cosmos_conversations_container.upsert_item(conversation_item)
+            invalidate_conversation_cache_for_item(conversation_item, reason="chat_image_proposal_generated")
 
             image_doc = image_result.pop('image_message', {}) or {}
             image_doc_metadata = image_doc.get('metadata') if isinstance(image_doc.get('metadata'), dict) else {}
@@ -12485,7 +12470,7 @@ def register_route_backend_chats(app):
             )
             return jsonify({'error': error_message}), status_code
 
-    @app.route('/api/chat', methods=['POST'])
+    @bp.route('/api/chat', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -13345,6 +13330,7 @@ def register_route_backend_chats(app):
 
                 conversation_item['last_updated'] = datetime.utcnow().isoformat()
                 cosmos_conversations_container.upsert_item(conversation_item) # Update timestamp and potentially title
+                invalidate_conversation_cache_for_item(conversation_item, reason="conversation_title_initialized")
 
             assistant_message_id, thought_tracker, assistant_thread_attempt, response_message_context = _initialize_assistant_response_tracking(
                 conversation_id=conversation_id,
@@ -13424,21 +13410,12 @@ def register_route_backend_chats(app):
                         cosmos_safety_container.upsert_item(safety_item)
 
                         # Instead of 403, we'll add a "safety" message
-                        blocked_msg_content = (
-                            "Your message was blocked by Content Safety.\n\n"
-                            f"**Reason**: {', '.join(block_reasons)}\n"
-                            "Triggered categories:\n"
+                        blocked_msg_content = build_content_safety_violation_message(
+                            settings=settings,
+                            block_reasons=block_reasons,
+                            triggered_categories=triggered_categories,
+                            blocklist_matches=blocklist_matches,
                         )
-                        for cat in triggered_categories:
-                            blocked_msg_content += (
-                                f" - {cat['category']} (severity={cat['severity']})\n"
-                            )
-                        if blocklist_matches:
-                            blocked_msg_content += (
-                                "\nBlocklist Matches:\n" +
-                                "\n".join([f" - {m['blocklistItemText']} (in {m['blocklistName']})"
-                                        for m in blocklist_matches])
-                            )
 
                         # Insert a special "role": "safety" or "blocked"
                         safety_doc = _build_safety_message_doc(
@@ -13453,6 +13430,7 @@ def register_route_backend_chats(app):
                         # Update conversation's last_updated
                         conversation_item['last_updated'] = datetime.utcnow().isoformat()
                         cosmos_conversations_container.upsert_item(conversation_item)
+                        invalidate_conversation_cache_for_item(conversation_item, reason="chat_safety_blocked")
 
                         # Return a normal 200 with a special field: blocked=True
                         return jsonify({
@@ -14268,6 +14246,7 @@ def register_route_backend_chats(app):
 
                     conversation_item['last_updated'] = datetime.utcnow().isoformat()
                     cosmos_conversations_container.upsert_item(conversation_item)
+                    invalidate_conversation_cache_for_item(conversation_item, reason="chat_image_generated")
 
                     return jsonify({
                         'reply': "Image loading...",
@@ -15887,6 +15866,7 @@ def register_route_backend_chats(app):
 
             # Add any other final updates to conversation_item if needed (like classifications if not done earlier)
             cosmos_conversations_container.upsert_item(conversation_item)
+            invalidate_conversation_cache_for_item(conversation_item, reason="chat_completed")
 
             # ---------------------------------------------------------------------
             # 8) Return final success (even if AI generated an error message)
@@ -15942,10 +15922,10 @@ def register_route_backend_chats(app):
             )
             return jsonify({
                 'error': f'Internal server error: {str(e)}',
-                'details': error_traceback if app.debug else None
+                'details': error_traceback if current_app.debug else None
             }), 500
 
-    @app.route('/api/chat/stream', methods=['POST'])
+    @bp.route('/api/chat/stream', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -16908,6 +16888,7 @@ def register_route_backend_chats(app):
 
                 conversation_item['last_updated'] = datetime.utcnow().isoformat()
                 cosmos_conversations_container.upsert_item(conversation_item)
+                invalidate_conversation_cache_for_item(conversation_item, reason="conversation_title_initialized")
                 if title_updated:
                     yield _build_conversation_metadata_stream_event(conversation_item)
 
@@ -17049,21 +17030,12 @@ def register_route_backend_chats(app):
                             cosmos_safety_container.upsert_item(safety_item)
 
                             # Build blocked message
-                            blocked_msg_content = (
-                                "Your message was blocked by Content Safety.\n\n"
-                                f"**Reason**: {', '.join(block_reasons)}\n"
-                                "Triggered categories:\n"
+                            blocked_msg_content = build_content_safety_violation_message(
+                                settings=settings,
+                                block_reasons=block_reasons,
+                                triggered_categories=triggered_categories,
+                                blocklist_matches=blocklist_matches,
                             )
-                            for cat in triggered_categories:
-                                blocked_msg_content += (
-                                    f" - {cat['category']} (severity={cat['severity']})\n"
-                                )
-                            if blocklist_matches:
-                                blocked_msg_content += (
-                                    "\nBlocklist Matches:\n" +
-                                    "\n".join([f" - {m['blocklistItemText']} (in {m['blocklistName']})"
-                                            for m in blocklist_matches])
-                                )
 
                             # Insert safety message
                             safety_doc = _build_safety_message_doc(
@@ -17077,6 +17049,7 @@ def register_route_backend_chats(app):
 
                             conversation_item['last_updated'] = datetime.utcnow().isoformat()
                             cosmos_conversations_container.upsert_item(conversation_item)
+                            invalidate_conversation_cache_for_item(conversation_item, reason="chat_safety_blocked")
 
                             final_data = make_json_serializable({
                                 'content': blocked_msg_content.strip(),
@@ -18281,6 +18254,7 @@ def register_route_backend_chats(app):
                         cosmos_messages_container.upsert_item(assistant_doc)
                         conversation_item['last_updated'] = datetime.utcnow().isoformat()
                         cosmos_conversations_container.upsert_item(conversation_item)
+                        invalidate_conversation_cache_for_item(conversation_item, reason="chat_stream_stopped")
                         message_persisted = True
 
                     log_event(
@@ -18985,6 +18959,7 @@ def register_route_backend_chats(app):
                         )
 
                     cosmos_conversations_container.upsert_item(conversation_item)
+                    invalidate_conversation_cache_for_item(conversation_item, reason="chat_stream_completed")
 
                     # Send final message with metadata
                     final_data = make_json_serializable({
@@ -19090,7 +19065,7 @@ def register_route_backend_chats(app):
 
         return build_background_stream_response(generate, stream_session=stream_session)
 
-    @app.route('/api/chat/stream/cancel/<conversation_id>', methods=['POST'])
+    @bp.route('/api/chat/stream/cancel/<conversation_id>', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -19113,7 +19088,7 @@ def register_route_backend_chats(app):
             **stream_status,
         })
 
-    @app.route('/api/chat/stream/status/<conversation_id>', methods=['GET'])
+    @bp.route('/api/chat/stream/status/<conversation_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -19128,7 +19103,7 @@ def register_route_backend_chats(app):
         stream_status['conversation_id'] = conversation_id
         return jsonify(stream_status)
 
-    @app.route('/api/tabular/generated-output/runs/<run_id>', methods=['GET'])
+    @bp.route('/api/tabular/generated-output/runs/<run_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -19143,7 +19118,7 @@ def register_route_backend_chats(app):
             return jsonify({'error': 'Tabular generated-output run not found'}), 404
         return jsonify({'success': True, 'run': run_status})
 
-    @app.route('/api/tabular/generated-output/runs/<run_id>/resume', methods=['POST'])
+    @bp.route('/api/tabular/generated-output/runs/<run_id>/resume', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -19160,7 +19135,7 @@ def register_route_backend_chats(app):
             return jsonify(resume_result), 409
         return jsonify(resume_result)
 
-    @app.route('/api/chat/stream/reattach/<conversation_id>', methods=['GET'])
+    @bp.route('/api/chat/stream/reattach/<conversation_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -19225,7 +19200,7 @@ def register_route_backend_chats(app):
             }
         )
 
-    @app.route('/api/chat/stream/client-event', methods=['POST'])
+    @bp.route('/api/chat/stream/client-event', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -19271,7 +19246,7 @@ def register_route_backend_chats(app):
 
         return jsonify({'success': True, 'event_type': event_type})
 
-    @app.route('/api/message/<message_id>/mask', methods=['POST'])
+    @bp.route('/api/message/<message_id>/mask', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -19385,7 +19360,7 @@ def register_route_backend_chats(app):
             debug_print(f"[MASK API ERROR] Full traceback:\n{error_traceback}")
             return jsonify({
                 'error': f'Internal server error: {str(e)}',
-                'details': error_traceback if app.debug else None
+                'details': error_traceback if current_app.debug else None
             }), 500
 
 

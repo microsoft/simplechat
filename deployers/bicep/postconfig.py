@@ -214,6 +214,7 @@ def get_storage_account_connection_string(resource_name, resource_group, subscri
 
 def get_core_service_keys(
     authentication_type,
+    redis_authentication_type,
     openai_endpoint,
     openai_resource_group,
     openai_subscription_id,
@@ -225,9 +226,6 @@ def get_core_service_keys(
     redis_cache_host_name,
     speech_service_endpoint,
 ):
-    if authentication_type != "key":
-        return {}
-
     openai_resource_name = extract_resource_name_from_endpoint(openai_endpoint)
     search_resource_name = extract_resource_name_from_endpoint(search_service_endpoint)
     docintel_resource_name = extract_resource_name_from_endpoint(document_intelligence_endpoint)
@@ -236,54 +234,55 @@ def get_core_service_keys(
     speech_resource_name = extract_resource_name_from_endpoint(speech_service_endpoint)
     resolved_openai_subscription_id = openai_subscription_id or subscription_id
 
-    keys = {
-        "azure_ai_search_key": get_search_service_key(
+    keys = {}
+
+    if authentication_type == "key":
+        keys["azure_ai_search_key"] = get_search_service_key(
             search_resource_name,
             resource_group,
             subscription_id,
-        ),
-        "azure_document_intelligence_key": get_cognitive_services_key(
+        )
+        keys["azure_document_intelligence_key"] = get_cognitive_services_key(
             docintel_resource_name,
             resource_group,
             subscription_id,
             "Azure Document Intelligence key",
-        ),
-    }
+        )
 
-    if can_auto_retrieve_openai_key(
-        openai_endpoint,
-        openai_resource_name,
-        openai_resource_group,
-        resolved_openai_subscription_id,
-    ):
-        keys["azure_openai_key"] = get_cognitive_services_key(
+        if can_auto_retrieve_openai_key(
+            openai_endpoint,
             openai_resource_name,
             openai_resource_group,
             resolved_openai_subscription_id,
-            "Azure OpenAI key",
-        )
+        ):
+            keys["azure_openai_key"] = get_cognitive_services_key(
+                openai_resource_name,
+                openai_resource_group,
+                resolved_openai_subscription_id,
+                "Azure OpenAI key",
+            )
 
-    if redis_resource_name:
+        if content_safety_resource_name:
+            keys["content_safety_key"] = get_cognitive_services_key(
+                content_safety_resource_name,
+                resource_group,
+                subscription_id,
+                "Content Safety key",
+            )
+
+        if speech_resource_name:
+            keys["speech_service_key"] = get_cognitive_services_key(
+                speech_resource_name,
+                resource_group,
+                subscription_id,
+                "Speech Service key",
+            )
+
+    if redis_authentication_type == "key" and redis_resource_name:
         keys["redis_key"] = get_redis_cache_key(
             redis_resource_name,
             resource_group,
             subscription_id,
-        )
-
-    if content_safety_resource_name:
-        keys["content_safety_key"] = get_cognitive_services_key(
-            content_safety_resource_name,
-            resource_group,
-            subscription_id,
-            "Content Safety key",
-        )
-
-    if speech_resource_name:
-        keys["speech_service_key"] = get_cognitive_services_key(
-            speech_resource_name,
-            resource_group,
-            subscription_id,
-            "Speech Service key",
         )
 
     return keys
@@ -318,6 +317,7 @@ except CosmosResourceNotFoundError:
 
 # Get values from environment variables
 var_authenticationType = os.getenv("var_authenticationType")
+var_redisAuthenticationType = os.getenv("var_redisAuthenticationType") or var_authenticationType
 
 var_openAIEndpoint = os.getenv("var_openAIEndpoint")
 var_openAISubscriptionId = os.getenv("var_openAISubscriptionId")
@@ -341,6 +341,7 @@ var_speechServiceLocation = os.getenv("var_deploymentLocation")
 
 core_service_keys = get_core_service_keys(
     authentication_type=var_authenticationType,
+    redis_authentication_type=var_redisAuthenticationType,
     openai_endpoint=var_openAIEndpoint,
     openai_resource_group=var_openAIResourceGroup,
     openai_subscription_id=var_openAISubscriptionId,
@@ -451,8 +452,8 @@ if var_authenticationType == "key" and "content_safety_key" in core_service_keys
 if var_redisCacheHostName and var_redisCacheHostName.strip():
     item["enable_redis_cache"] = True
 item["redis_url"] = var_redisCacheHostName
-item["redis_auth_type"] = var_authenticationType
-if var_authenticationType == "key" and "redis_key" in core_service_keys:
+item["redis_auth_type"] = var_redisAuthenticationType
+if var_redisAuthenticationType == "key" and "redis_key" in core_service_keys:
     item["redis_key"] = core_service_keys["redis_key"]
 
 # Safety > Conversation Archiving

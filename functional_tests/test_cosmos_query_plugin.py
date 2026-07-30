@@ -2,8 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test for the Cosmos query plugin.
-Version: 0.241.024
+Version: 0.250.047
 Implemented in: 0.241.024
+CosmosClient module import cleanup updated in: 0.250.047
 
 This test ensures that the Cosmos query plugin enforces read-only query rules,
 normalizes query parameters, supports account-key authentication, exposes
@@ -93,13 +94,64 @@ class FakeCosmosSdkClient:
         return FakeCosmosSdkDatabaseClient()
 
 
+class FakeConfigCosmosContainer:
+    """Minimal Cosmos container stand-in for importing config.py without live I/O."""
+
+    def read_item(self, item, partition_key=None):
+        if item == "app_settings":
+            return {"id": "app_settings", "settings": {}}
+        raise KeyError(item)
+
+    def upsert_item(self, item):
+        return item
+
+    def query_items(self, *args, **kwargs):
+        return []
+
+
+class FakeConfigCosmosDatabase:
+    """Minimal Cosmos database stand-in for config.py import-time container setup."""
+
+    def __init__(self):
+        self.containers = {}
+
+    def create_container_if_not_exists(self, id, **kwargs):
+        self.containers.setdefault(id, FakeConfigCosmosContainer())
+        return self.containers[id]
+
+
+class FakeConfigCosmosClient:
+    """Minimal Cosmos client stand-in for config.py import-time client setup."""
+
+    def __init__(self, *args, **kwargs):
+        self.database = FakeConfigCosmosDatabase()
+
+    def create_database_if_not_exists(self, *args, **kwargs):
+        return self.database
+
+
+def import_app_module_without_live_cosmos(module_name):
+    """Import app modules without letting config.py connect to live Cosmos."""
+    if module_name in sys.modules:
+        return sys.modules[module_name]
+
+    import azure.cosmos as azure_cosmos
+
+    original_cosmos_client = azure_cosmos.CosmosClient
+    azure_cosmos.CosmosClient = FakeConfigCosmosClient
+    try:
+        return importlib.import_module(module_name)
+    finally:
+        azure_cosmos.CosmosClient = original_cosmos_client
+
+
 def get_cosmos_query_plugin_class():
-    module = importlib.import_module("semantic_kernel_plugins.cosmos_query_plugin")
+    module = import_app_module_without_live_cosmos("semantic_kernel_plugins.cosmos_query_plugin")
     return module.CosmosQueryPlugin
 
 
 def get_discover_plugins_function():
-    module = importlib.import_module("semantic_kernel_plugins.plugin_loader")
+    module = import_app_module_without_live_cosmos("semantic_kernel_plugins.plugin_loader")
     return module.discover_plugins
 
 
@@ -177,10 +229,10 @@ def test_cosmos_query_key_auth_uses_account_key_credentials():
     CosmosQueryPlugin = None
 
     try:
-        module = importlib.import_module("semantic_kernel_plugins.cosmos_query_plugin")
+        module = import_app_module_without_live_cosmos("semantic_kernel_plugins.cosmos_query_plugin")
         CosmosQueryPlugin = module.CosmosQueryPlugin
-        original_client = module.CosmosClient
-        module.CosmosClient = FakeCosmosSdkClient
+        original_client = module.azure_cosmos.CosmosClient
+        module.azure_cosmos.CosmosClient = FakeCosmosSdkClient
         FakeCosmosSdkClient.reset()
         CosmosQueryPlugin._client_cache = {}
 
@@ -201,7 +253,7 @@ def test_cosmos_query_key_auth_uses_account_key_credentials():
         return False
     finally:
         if module is not None and original_client is not None:
-            module.CosmosClient = original_client
+            module.azure_cosmos.CosmosClient = original_client
         if CosmosQueryPlugin is not None:
             CosmosQueryPlugin._client_cache = {}
 

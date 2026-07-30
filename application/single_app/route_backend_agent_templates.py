@@ -6,6 +6,7 @@ from swagger_wrapper import swagger_route, get_auth_security
 
 from functions_authentication import (
     admin_required,
+    login_required_blueprint,
     login_required,
     user_required,
     get_current_user_info,
@@ -24,6 +25,7 @@ from functions_agent_templates import (
 from functions_settings import get_settings
 
 bp_agent_templates = Blueprint('agent_templates', __name__)
+bp_agent_templates.before_request(login_required_blueprint())
 
 
 def _feature_flags():

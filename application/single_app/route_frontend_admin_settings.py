@@ -5,8 +5,11 @@ import re
 from config import *
 from functions_documents import *
 from functions_authentication import *
+from flask import current_app
+
 from functions_keyvault import keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_save_helper, redact_model_endpoint_secret_values
 from functions_settings import *
+from functions_content_safety import normalize_content_safety_violation_message
 from functions_file_sync import FILE_SYNC_DEFAULTS, get_file_sync_config
 from functions_source_review import SOURCE_REVIEW_DEFAULTS, get_source_review_config, get_source_review_runtime_capabilities, normalize_source_review_js_rendering_enabled, parse_source_review_list
 from functions_control_center import (
@@ -24,6 +27,16 @@ from functions_activity_logging import log_web_search_consent_acceptance, log_ge
 from functions_notifications import broadcast_system_notification
 from functions_logging import *
 from functions_document_actions import normalize_document_action_capabilities
+from functions_model_capabilities import is_vision_capable_model
+from functions_terms_of_use import (
+    TERMS_OF_USE_DEFAULT_REDIRECT,
+    TERMS_OF_USE_MAX_BUTTON_TEXT_LENGTH,
+    TERMS_OF_USE_MAX_MESSAGE_LENGTH,
+    TERMS_OF_USE_MAX_TITLE_LENGTH,
+    normalize_terms_of_use_frequency,
+    normalize_terms_of_use_redirect_url,
+    normalize_terms_of_use_text,
+)
 from swagger_wrapper import swagger_route, get_auth_security
 from datetime import datetime, timedelta, timezone
 from admin_settings_int_utils import safe_int_with_source
@@ -52,6 +65,12 @@ AGENTS_PAGE_DEFAULTS = {
     'agents_page_promoted_popular_tag_label': AGENTS_PAGE_PROMOTED_POPULAR_TAG_LABEL_DEFAULT,
 }
 HEX_COLOR_PATTERN = re.compile(r'^#[0-9a-fA-F]{6}$')
+
+
+def _is_update_version_newer(latest_version, current_version):
+    """Return True only when the discovered release version is newer than the running version."""
+    return compare_versions(latest_version, current_version) == 1
+
 
 def allowed_file(filename, allowed_extensions):
     return '.' in filename and \
@@ -109,8 +128,9 @@ def normalize_agents_page_text(value, fallback, max_length):
         candidate = fallback
     return candidate[:max_length]
 
-def register_route_frontend_admin_settings(app):
-    @app.route('/admin/settings', methods=['GET', 'POST'])
+
+def register_route_frontend_admin_settings(bp):
+    @bp.route('/admin/settings', methods=['GET', 'POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -416,7 +436,23 @@ def register_route_frontend_admin_settings(app):
             settings['classification_banner_color'] = '#ffc107'  # Bootstrap warning color
         if 'classification_banner_text_color' not in settings:
             settings['classification_banner_text_color'] = '#ffffff'  # White text by default
-        
+
+        # --- Add defaults for terms of use ---
+        if 'enable_terms_of_use' not in settings:
+            settings['enable_terms_of_use'] = False
+        if 'terms_of_use_title' not in settings:
+            settings['terms_of_use_title'] = 'Terms of Use'
+        if 'terms_of_use_message' not in settings:
+            settings['terms_of_use_message'] = ''
+        settings['terms_of_use_frequency'] = normalize_terms_of_use_frequency(
+            settings.get('terms_of_use_frequency')
+        )
+        if 'terms_of_use_decline_redirect_url' not in settings:
+            settings['terms_of_use_decline_redirect_url'] = TERMS_OF_USE_DEFAULT_REDIRECT
+        if 'terms_of_use_accept_button_text' not in settings:
+            settings['terms_of_use_accept_button_text'] = 'Accept and continue'
+        if 'terms_of_use_decline_button_text' not in settings:
+            settings['terms_of_use_decline_button_text'] = 'Cancel'
         # --- Add defaults for user agreement ---
         if 'enable_user_agreement' not in settings:
             settings['enable_user_agreement'] = False
@@ -476,7 +512,7 @@ def register_route_frontend_admin_settings(app):
                  log_event(f"Error retrieving GPT deployments: {e}", level=logging.ERROR)
 
             # Check for application updates
-            current_version = app.config['VERSION']
+            current_version = current_app.config['VERSION']
             update_available = False
             latest_version = None
             download_url = "https://github.com/microsoft/simplechat/releases"
@@ -506,7 +542,7 @@ def register_route_frontend_admin_settings(app):
                         }
                         
                         # Compare with current version
-                        if latest_version and compare_versions(latest_version, current_version) == 1:
+                        if _is_update_version_newer(latest_version, current_version):
                             new_settings['update_available'] = True
                         else:
                             new_settings['update_available'] = False
@@ -519,14 +555,21 @@ def register_route_frontend_admin_settings(app):
                     log_event(f"Error checking for updates: {e}", level=logging.ERROR)
             
             # Get the persisted values for template rendering
-            update_available = settings.get('update_available', False)
             latest_version = settings.get('latest_version_available')
+            update_available = _is_update_version_newer(latest_version, current_version)
+            if settings.get('update_available') != update_available:
+                try:
+                    update_settings({'update_available': update_available})
+                    settings['update_available'] = update_available
+                except Exception as e:
+                    log_event(f"Error normalizing cached update availability: {e}", level=logging.WARNING)
             
             # Get user settings for profile and navigation
             user_id = get_current_user_id()
             user_settings = get_user_settings(user_id)
             settings_for_template = dict(settings)
             settings_for_template['model_endpoints'] = frontend_model_endpoints
+            audio_runtime_capabilities = get_audio_runtime_capabilities()
             source_review_runtime_capabilities = get_source_review_runtime_capabilities()
             settings_for_template['source_review_allow_js_rendering'] = normalize_source_review_js_rendering_enabled(
                 settings_for_template.get('source_review_allow_js_rendering'),
@@ -553,7 +596,9 @@ def register_route_frontend_admin_settings(app):
                 chunk_size_settings=settings.get('chunk_size', {}),
                 chunk_size_cap=get_chunk_size_cap(settings),
                 chunk_size_effective=get_chunk_size_config(settings),
-                source_review_runtime_capabilities=source_review_runtime_capabilities
+                audio_runtime_capabilities=audio_runtime_capabilities,
+                source_review_runtime_capabilities=source_review_runtime_capabilities,
+                is_vision_capable_model=is_vision_capable_model,
                 # You don't need to pass deployments separately if they are added to settings['..._model']['all']
                 # gpt_deployments=gpt_deployments,
                 # embedding_deployments=embedding_deployments,
@@ -679,6 +724,12 @@ def register_route_frontend_admin_settings(app):
             file_download_allowed_public_workspace_ids = normalize_file_download_allowed_public_workspace_ids(
                 form_data.get('file_download_allowed_public_workspace_ids', '')
             )
+            content_safety_violation_message = normalize_content_safety_violation_message(
+                form_data.get('content_safety_violation_message')
+            )
+            content_safety_include_trigger_information = form_data.get(
+                'content_safety_include_trigger_information'
+            ) == 'on'
             require_member_of_safety_violation_admin = form_data.get('require_member_of_safety_violation_admin') == 'on'
             require_member_of_control_center_admin = form_data.get('require_member_of_control_center_admin') == 'on'
             require_member_of_control_center_dashboard_reader = form_data.get('require_member_of_control_center_dashboard_reader') == 'on'
@@ -1589,6 +1640,47 @@ def register_route_frontend_admin_settings(app):
                 if word_count > 200:
                     flash('User Agreement text exceeds 200 word limit. Please shorten the text.', 'warning')
 
+            # --- Terms of Use Settings ---
+            enable_terms_of_use = form_data.get('enable_terms_of_use') == 'on'
+            terms_of_use_title = normalize_terms_of_use_text(
+                form_data.get('terms_of_use_title'),
+                fallback='Terms of Use',
+                max_length=TERMS_OF_USE_MAX_TITLE_LENGTH,
+            )
+            terms_of_use_message = normalize_terms_of_use_text(
+                form_data.get('terms_of_use_message'),
+                max_length=TERMS_OF_USE_MAX_MESSAGE_LENGTH,
+            )
+            terms_of_use_frequency = normalize_terms_of_use_frequency(
+                form_data.get('terms_of_use_frequency')
+            )
+            terms_of_use_accept_button_text = normalize_terms_of_use_text(
+                form_data.get('terms_of_use_accept_button_text'),
+                fallback='Accept and continue',
+                max_length=TERMS_OF_USE_MAX_BUTTON_TEXT_LENGTH,
+            )
+            terms_of_use_decline_button_text = normalize_terms_of_use_text(
+                form_data.get('terms_of_use_decline_button_text'),
+                fallback='Cancel',
+                max_length=TERMS_OF_USE_MAX_BUTTON_TEXT_LENGTH,
+            )
+            raw_terms_of_use_decline_redirect_url = form_data.get(
+                'terms_of_use_decline_redirect_url',
+                TERMS_OF_USE_DEFAULT_REDIRECT,
+            )
+            terms_of_use_decline_redirect_url = normalize_terms_of_use_redirect_url(
+                raw_terms_of_use_decline_redirect_url
+            )
+            if (
+                raw_terms_of_use_decline_redirect_url.strip()
+                and terms_of_use_decline_redirect_url != raw_terms_of_use_decline_redirect_url.strip()
+            ):
+                flash('Terms of Use cancel redirect was invalid and has been reset to the default.', 'warning')
+
+            if enable_terms_of_use and not terms_of_use_message:
+                flash('Terms of Use message is required when the feature is enabled.', 'danger')
+                return redirect(url_for('frontend_admin_settings.admin_settings'))
+
             # --- Authentication & Redirect Settings ---
             enable_front_door = form_data.get('enable_front_door') == 'on'
             front_door_url = form_data.get('front_door_url', '').strip()
@@ -1651,9 +1743,66 @@ def register_route_frontend_admin_settings(app):
             if cosmos_throughput_validation_errors:
                 for validation_error in cosmos_throughput_validation_errors:
                     flash(validation_error, 'danger')
-                return redirect(url_for('admin_settings'))
+                return redirect(url_for('frontend_admin_settings.admin_settings'))
 
             cosmos_throughput_settings = normalize_cosmos_throughput_settings(cosmos_throughput_candidate_settings)
+
+            document_access_index_backfill_batch_size = min(
+                1000,
+                max(
+                    1,
+                    parse_admin_int(
+                        form_data.get('document_access_index_backfill_batch_size'),
+                        settings.get('document_access_index_backfill_batch_size', 200),
+                        'document_access_index_backfill_batch_size',
+                        200,
+                    ),
+                ),
+            )
+            document_access_index_repair_batch_size = min(
+                500,
+                max(
+                    1,
+                    parse_admin_int(
+                        form_data.get('document_access_index_repair_batch_size'),
+                        settings.get('document_access_index_repair_batch_size', 100),
+                        'document_access_index_repair_batch_size',
+                        100,
+                    ),
+                ),
+            )
+            document_access_index_cache_ttl_seconds = min(
+                900,
+                max(
+                    60,
+                    parse_admin_int(
+                        form_data.get('document_access_index_cache_ttl_seconds'),
+                        settings.get('document_access_index_cache_ttl_seconds', 900),
+                        'document_access_index_cache_ttl_seconds',
+                        900,
+                    ),
+                ),
+            )
+            conversation_cache_ttl_seconds = max(
+                0,
+                parse_admin_int(
+                    form_data.get('conversation_cache_ttl_seconds'),
+                    settings.get('conversation_cache_ttl_seconds', 120),
+                    'conversation_cache_ttl_seconds',
+                    120,
+                ),
+            )
+            dai_debug_enabled = bool(settings.get('enable_dai_debug', False))
+            document_access_index_shadow_validation_enabled = (
+                form_data.get('enable_document_access_index_shadow_validation') == 'on'
+                if dai_debug_enabled
+                else bool(settings.get('enable_document_access_index_shadow_validation', False))
+            )
+            document_access_index_cache_enabled = (
+                form_data.get('enable_document_access_index_cache') == 'on'
+                if dai_debug_enabled
+                else bool(settings.get('enable_document_access_index_cache', True))
+            )
 
             # --- Chunk Size Overrides ---
             chunk_size_defaults = get_chunk_size_defaults()
@@ -1813,6 +1962,24 @@ def register_route_frontend_admin_settings(app):
                 'redis_url': form_data.get('redis_url', '').strip(),
                 'redis_key': admin_secret('redis_key'),
                 'redis_auth_type': form_data.get('redis_auth_type', '').strip(),
+                'enable_conversation_cache': form_data.get('enable_conversation_cache') == 'on',
+                'conversation_cache_ttl_seconds': conversation_cache_ttl_seconds,
+
+                # Document Access Index
+                'enable_document_access_index_container': True,
+                'enable_document_access_index_write_through': True,
+                'enable_document_access_index_reads': True,
+                'enable_dai_debug': dai_debug_enabled,
+                'enable_document_access_index_shadow_validation': document_access_index_shadow_validation_enabled,
+                'enable_startup_document_access_index_backfill': True,
+                'document_access_index_backfill_batch_size': document_access_index_backfill_batch_size,
+                'document_access_index_repair_batch_size': document_access_index_repair_batch_size,
+                'document_access_index_active_maintenance_interval_seconds': settings.get(
+                    'document_access_index_active_maintenance_interval_seconds',
+                    30,
+                ),
+                'enable_document_access_index_cache': document_access_index_cache_enabled,
+                'document_access_index_cache_ttl_seconds': document_access_index_cache_ttl_seconds,
 
                 # Workspaces
                 'enable_user_workspace': form_data.get('enable_user_workspace') == 'on',
@@ -1885,6 +2052,15 @@ def register_route_frontend_admin_settings(app):
                 'user_agreement_apply_to': user_agreement_apply_to,
                 'enable_user_agreement_daily': enable_user_agreement_daily,
 
+                # Terms of Use
+                'enable_terms_of_use': enable_terms_of_use,
+                'terms_of_use_title': terms_of_use_title,
+                'terms_of_use_message': terms_of_use_message,
+                'terms_of_use_frequency': terms_of_use_frequency,
+                'terms_of_use_decline_redirect_url': terms_of_use_decline_redirect_url,
+                'terms_of_use_accept_button_text': terms_of_use_accept_button_text,
+                'terms_of_use_decline_button_text': terms_of_use_decline_button_text,
+
                 # Multimedia & Metadata
                 'enable_video_file_support': enable_video_file_support,
                 'enable_audio_file_support': enable_audio_file_support,
@@ -1939,6 +2115,8 @@ def register_route_frontend_admin_settings(app):
 
                 # Safety (Content Safety Direct & APIM)
                 'enable_content_safety': form_data.get('enable_content_safety') == 'on',
+                'content_safety_violation_message': content_safety_violation_message,
+                'content_safety_include_trigger_information': content_safety_include_trigger_information,
                 'content_safety_endpoint': form_data.get('content_safety_endpoint', '').strip(),
                 'content_safety_key': admin_secret('content_safety_key'),
                 'content_safety_authentication_type': form_data.get('content_safety_authentication_type', 'key'),
@@ -2323,8 +2501,8 @@ def register_route_frontend_admin_settings(app):
                 # Pass the *just saved* data (or fetch fresh) to ensure consistency
                 updated_settings_for_file = get_settings() # Fetch fresh to be safe
                 if updated_settings_for_file:
-                    ensure_custom_logo_file_exists(app, updated_settings_for_file)
-                    ensure_custom_favicon_file_exists(app, updated_settings_for_file)
+                    ensure_custom_logo_file_exists(current_app, updated_settings_for_file)
+                    ensure_custom_favicon_file_exists(current_app, updated_settings_for_file)
                     initialize_clients(updated_settings_for_file) # Important - reinitialize clients with new settings
                 else:
                     print("ERROR: Could not fetch settings after update to ensure logo/favicon files.")
@@ -2388,7 +2566,7 @@ def register_route_frontend_admin_settings(app):
 
 
             # Redirect back to settings page
-            return redirect(url_for('admin_settings'))
+            return redirect(url_for('frontend_admin_settings.admin_settings'))
 
         # Fallback if not GET or POST (shouldn't happen with standard routing)
-        return redirect(url_for('admin_settings'))
+        return redirect(url_for('frontend_admin_settings.admin_settings'))

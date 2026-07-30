@@ -5,6 +5,13 @@ from copy import deepcopy
 
 
 _SUPPORT_LATEST_FEATURE_DOCS_SETTING_KEY = 'enable_support_latest_feature_documentation_links'
+_LEGACY_ACTION_ENDPOINTS = {
+    'chats': 'frontend_chats.chats',
+    'workspace': 'frontend_workspace.workspace',
+    'profile': 'frontend_profile.profile',
+    'support_latest_features': 'frontend_support.support_latest_features',
+    'support_send_feedback': 'frontend_support.support_send_feedback',
+}
 
 
 def _latest_feature_card(feature_id, title, icon, summary, details, why, guidance, actions=None, image_label=None, image_title=None, image_caption=None, image_name=None, include_media=True):
@@ -179,12 +186,12 @@ _SUPPORT_LATEST_FEATURE_CATALOG = [
     ),
     _latest_feature_card(
         'release_250_file_sync',
-        'File Sync for SMB and Azure Files',
+        'File Sync for Storage Sources',
         'bi-arrow-repeat',
-        'File Sync can bring SMB share and Azure Files content into workspaces, with reusable identities and workflow triggers for automated refreshes.',
+        'File Sync can bring SMB, Azure Files, and Azure Blob Storage content into workspaces, with reusable identities and workflow triggers for automated refreshes.',
         'Users can configure sync sources where enabled, use identities for credentials, review synced-document badges, and connect sync sources to workflows that run before or after file changes. Additional sync providers are planned for future releases.',
         'This matters because workspace documents can stay closer to authoritative file shares instead of depending on repeated manual uploads.',
-        ['Use Workspace > Sync to configure SMB or Azure Files sources when admins enable File Sync.', 'Use Workspace > Identities to reuse credentials for sync sources and actions.', 'Use workflows with File Sync triggers when analysis should run after synced content changes.'],
+        ['Use Workspace > Sync to configure SMB, Azure Files, or Azure Blob Storage sources when admins enable File Sync.', 'Use Workspace > Identities to reuse credentials for sync sources and actions.', 'Use workflows with File Sync triggers when analysis should run after synced content changes.'],
         actions=[{'label': 'Open Workspace Sync', 'description': 'Review sync sources and run history.', 'href': '/workspace?feature_action=file_sync', 'icon': 'bi-arrow-repeat', 'requires_settings': ['enable_user_workspace']}, {'label': 'Open Workspace Identities', 'description': 'Review reusable identities for sync and actions.', 'href': '/workspace#identities-tab', 'icon': 'bi-person-badge', 'requires_settings': ['enable_user_workspace']}],
         image_label='File Sync',
     ),
@@ -518,10 +525,10 @@ _SUPPORT_ADMIN_LATEST_FEATURE_CURRENT_CATALOG = [
         'admin_release_250_file_sync',
         'File Sync Administration',
         'bi-arrow-repeat',
-        'Admins can enable File Sync, choose SMB and Azure Files source types, configure scope gates, limits, connector identities, and workflow integration.',
-        'File Sync administration controls which workspaces can sync files, which source types are available, whether app roles are required, and how identities are used for SMB and Azure Files credentials.',
+        'Admins can enable File Sync, choose SMB, Azure Files, and Azure Blob Storage source types, configure scope gates, limits, connector identities, and workflow integration.',
+        'File Sync administration controls which workspaces can sync files, which source types are available, whether app roles are required, and how identities are used for storage credentials.',
         'This matters because synced ingestion needs tenant-level rollout controls before users connect shared file sources.',
-        ['Screenshot idea: capture File Sync source-type availability and workspace scope controls.', 'Show SMB and Azure Files controls while noting more providers are planned.', 'Call out workflow triggers that can run when File Sync detects changes.'],
+        ['Screenshot idea: capture File Sync source-type availability and workspace scope controls.', 'Show SMB, Azure Files, and Azure Blob Storage controls while noting more providers are planned.', 'Call out workflow triggers that can run when File Sync detects changes.'],
         actions=[
             {'label': 'Open File Sync', 'description': 'Review File Sync administration.', 'href': '#file-sync', 'admin_tab': '#file-sync', 'icon': 'bi-arrow-repeat'},
             {'label': 'Open Global Identities', 'description': 'Review connector identities used by sync sources.', 'href': '#global-workspace-identities-root', 'admin_tab': '#workspace-identities', 'admin_section': 'global-workspace-identities-root', 'icon': 'bi-person-badge'},
@@ -2160,6 +2167,17 @@ def _action_enabled(action, settings):
     return all(_setting_enabled(settings, setting_key) for setting_key in required_settings)
 
 
+def _normalize_action_endpoint(action):
+    endpoint = action.get('endpoint')
+    if endpoint in _LEGACY_ACTION_ENDPOINTS:
+        action['endpoint'] = _LEGACY_ACTION_ENDPOINTS[endpoint]
+
+
+def _normalize_feature_actions(feature):
+    for action in feature.get('actions', []):
+        _normalize_action_endpoint(action)
+
+
 def _normalize_feature_media(feature):
     """Ensure every visible feature exposes at least one image entry for the template."""
     images = feature.get('images') or []
@@ -2186,12 +2204,19 @@ def _normalize_feature_media(feature):
 
 def get_support_latest_feature_catalog():
     """Return a copy of the support latest-features catalog."""
-    return _flatten_support_feature_groups(_SUPPORT_LATEST_FEATURE_RELEASE_GROUPS)
+    features = _flatten_support_feature_groups(_SUPPORT_LATEST_FEATURE_RELEASE_GROUPS)
+    for feature in features:
+        _normalize_feature_actions(feature)
+    return features
 
 
 def get_support_latest_feature_release_groups():
     """Return grouped latest-feature metadata organized by release."""
-    return deepcopy(_SUPPORT_LATEST_FEATURE_RELEASE_GROUPS)
+    feature_groups = deepcopy(_SUPPORT_LATEST_FEATURE_RELEASE_GROUPS)
+    for feature_group in feature_groups:
+        for feature in feature_group.get('features', []):
+            _normalize_feature_actions(feature)
+    return feature_groups
 
 
 def get_default_support_latest_features_visibility():
@@ -2235,6 +2260,7 @@ def get_visible_support_latest_features(settings):
                 action for action in visible_item.get('actions', [])
                 if _action_enabled(action, settings)
             ]
+            _normalize_feature_actions(visible_item)
             visible_item = _apply_support_application_title(visible_item, app_title)
             _normalize_feature_media(visible_item)
             visible_items.append(visible_item)
@@ -2262,6 +2288,7 @@ def get_visible_support_latest_feature_groups(settings):
                 action for action in visible_feature.get('actions', [])
                 if _action_enabled(action, settings)
             ]
+            _normalize_feature_actions(visible_feature)
             visible_feature = _apply_support_application_title(visible_feature, app_title)
             _normalize_feature_media(visible_feature)
             visible_features.append(visible_feature)
@@ -2286,6 +2313,7 @@ def get_support_latest_feature_release_groups_for_settings(settings):
                 action for action in feature.get('actions', [])
                 if _action_enabled(action, settings)
             ]
+            _normalize_feature_actions(feature)
             feature.update(_apply_support_application_title(feature, app_title))
             _normalize_feature_media(feature)
 
@@ -2305,6 +2333,7 @@ def get_admin_latest_feature_release_groups_for_settings(settings):
                 action for action in feature.get('actions', [])
                 if _action_enabled(action, settings)
             ]
+            _normalize_feature_actions(feature)
             feature.update(_apply_support_application_title(feature, app_title))
             _normalize_feature_media(feature)
 

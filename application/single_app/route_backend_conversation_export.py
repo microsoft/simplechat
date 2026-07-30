@@ -110,10 +110,10 @@ INLINE_IMAGE_PROPOSAL_EXPORT_REGEX = re.compile(
 )
 
 
-def register_route_backend_conversation_export(app):
+def register_route_backend_conversation_export(bp):
     """Register conversation export API routes."""
 
-    @app.route('/api/conversations/export', methods=['POST'])
+    @bp.route('/api/conversations/export', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -229,7 +229,7 @@ def register_route_backend_conversation_export(app):
             log_event(f"Conversation export failed: {exc}", level="WARNING")
             return jsonify({'error': f'Export failed: {str(exc)}'}), 500
 
-    @app.route('/api/message/export-word', methods=['POST'])
+    @bp.route('/api/message/export-word', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -287,7 +287,7 @@ def register_route_backend_conversation_export(app):
             log_event(f"Message export failed: {exc}", level="WARNING")
             return jsonify({'error': 'Export failed due to a server error. Please try again later.'}), 500
 
-    @app.route('/api/message/export-powerpoint', methods=['POST'])
+    @bp.route('/api/message/export-powerpoint', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -360,7 +360,7 @@ def register_route_backend_conversation_export(app):
             log_event(f"Message PowerPoint export failed: {exc}", level="WARNING")
             return jsonify({'error': 'PowerPoint export failed due to a server error. Please try again later.'}), 500
 
-    @app.route('/api/message/export-email-draft', methods=['POST'])
+    @bp.route('/api/message/export-email-draft', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required

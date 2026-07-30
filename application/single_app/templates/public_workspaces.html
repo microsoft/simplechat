@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_supported_file_types_modal.html" import supported_file_types_modal %}
 {% block title %} Public Workspaces - {{ app_settings.app_title }} {% endblock %}
 {% block head %}
 <link rel="stylesheet" href="/static/css/simplemde.min.css" />
@@ -249,10 +250,10 @@
 
   <ul class="nav nav-tabs" id="publicWorkspaceTab" role="tablist">
     <li class="nav-item" role="presentation">
-      <button class="nav-link active" id="public-docs-tab-btn" data-bs-toggle="tab" data-bs-target="#public-docs-tab" type="button" role="tab">Documents</button>
+      <button class="nav-link active" id="public-docs-tab-btn" data-bs-toggle="tab" data-bs-target="#public-docs-tab" title="Browse and manage public workspace files with metadata filters, tags, folder views, extraction changes, and chat grounding when permitted." type="button" role="tab">Documents</button>
     </li>
     <li class="nav-item" role="presentation">
-      <button class="nav-link" id="public-prompts-tab-btn" data-bs-toggle="tab" data-bs-target="#public-prompts-tab" type="button" role="tab">Prompts</button>
+      <button class="nav-link" id="public-prompts-tab-btn" data-bs-toggle="tab" data-bs-target="#public-prompts-tab" title="Manage reusable prompts associated with this public workspace, with list and card views for quick review." type="button" role="tab">Prompts</button>
     </li>
   </ul>
 
@@ -261,14 +262,14 @@
     <div class="tab-pane fade show active" id="public-docs-tab" role="tabpanel">
       <div class="card p-3 my-3">
         <div class="mb-3" id="upload-public-section" style="display:none">
-          <div id="upload-area" class="upload-area text-center p-4 border border-2 border-dashed rounded bg-light" style="cursor:pointer; transition: border-color 0.2s;">
+          <div id="upload-area" class="upload-area workspace-upload-area text-center py-2 px-3 border border-2 border-dashed rounded bg-light" style="cursor:pointer; transition: border-color 0.2s;">
             <input type="file" id="file-input" multiple style="display:none;" />
             <div class="upload-area-content">
-              <i class="bi bi-cloud-arrow-up display-4 text-primary mb-2"></i>
+              <i class="bi bi-cloud-arrow-up text-primary mb-1"></i>
               <div class="fw-bold">Drag & drop files here or <span class="text-primary text-decoration-underline">click to browse</span></div>
-              <div class="small text-muted mt-1">
-                {{ allowed_extensions }}
-              </div>
+              <button type="button" class="btn btn-link btn-sm p-0 mt-1 workspace-upload-supported-types-trigger" data-bs-toggle="modal" data-bs-target="#publicSupportedFileTypesModal">
+                View all supported file types
+              </button>
             </div>
           </div>
           <span id="upload-status" class="ms-2 text-muted small" style="display:none;"></span>
@@ -851,6 +852,7 @@
     </div>
   </div>
 </div>
+{{ supported_file_types_modal('publicSupportedFileTypesModal', 'Supported file types', allowed_extension_categories) }}
 
 {% endblock %}
 {% block scripts %}

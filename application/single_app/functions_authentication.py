@@ -13,6 +13,51 @@ REDIRECT_PATH = getattr(globals(), 'REDIRECT_PATH', '/getAToken')
 REQUESTED_SCOPES_SESSION_KEY = "requested_oauth_scopes"
 #REDIRECT_PATH = getattr(globals(), 'REDIRECT_PATH', '/.auth/login/aad/callback')
 
+
+def apply_blueprint_auth(*decorators):
+    """Return a Blueprint before_request guard composed from existing auth decorators."""
+    decorator_names = tuple(
+        decorator if isinstance(decorator, str) else getattr(decorator, '__name__', str(decorator))
+        for decorator in decorators
+    )
+
+    def guard():
+        def authorized_request():
+            return None
+
+        protected_request = authorized_request
+        resolved_decorators = [
+            globals()[decorator] if isinstance(decorator, str) else decorator
+            for decorator in decorators
+        ]
+        for decorator in reversed(resolved_decorators):
+            protected_request = decorator(protected_request)
+
+        return protected_request()
+
+    guard._simplechat_auth_policy = decorator_names
+    return guard
+
+
+def login_required_blueprint():
+    """Return a Blueprint before_request guard that requires an authenticated session."""
+    return apply_blueprint_auth('login_required')
+
+
+def user_required_blueprint():
+    """Return a Blueprint before_request guard that requires authenticated User/Admin access."""
+    return apply_blueprint_auth('login_required', 'user_required')
+
+
+def admin_required_blueprint():
+    """Return a Blueprint before_request guard that requires authenticated Admin access."""
+    return apply_blueprint_auth('login_required', 'admin_required')
+
+
+def external_api_required_blueprint():
+    """Return a Blueprint before_request guard that requires an ExternalApi bearer token."""
+    return apply_blueprint_auth('accesstoken_required')
+
 def build_front_door_urls(front_door_url):
     """
     Build home and login redirect URLs from a Front Door base URL.
@@ -689,7 +734,7 @@ def login_required(f):
                         # Fall back to environment variable if Front Door is enabled but no URL is set
                         return redirect(LOGIN_REDIRECT_URL)
                 
-                return redirect(url_for('login'))
+                return redirect(url_for('frontend_authentication.login'))
 
         return f(*args, **kwargs)
     return decorated_function

@@ -6,12 +6,14 @@ applyTo: '**'
 
 ## 📍 **Location**
 All functional tests are stored in: `.\simplechat\functional_tests\`
+Check local.instructions.md for any additional instructions on test creation, execution, and maintenance.
 
 ## 📂 **Directory Structure**
 The functional tests directory contains:
 - **Python test files** (`test_*.py`) - Executable test scripts
 - **JavaScript test files** (`test_*.js`) - Client-side/browser test scripts  
 - **Documentation files** (`*.md`) - Test documentation and fix summaries
+- **route_tests/** - Route registration, Blueprint policy, and unauthenticated access contract tests
 - **flask_session/** - Session data for tests requiring authenticated state
 
 ## 🎯 **When to Create Functional Tests**
@@ -24,6 +26,12 @@ The functional tests directory contains:
 ✅ **Database Migration** - Validate data migration and container operations  
 ✅ **UI/UX Changes** - Test display logic, user interactions, data flow  
 ✅ **Authentication/Security** - Verify access controls and data isolation  
+
+### **Always Update Route Tests For:**
+✅ **New Flask Routes** - Add the route to `functional_tests/route_tests/` policy coverage
+✅ **Route Moves or Renames** - Update Blueprint policy and endpoint-name expectations
+✅ **Auth Policy Changes** - Update unauthenticated access expectations and role-policy checks
+✅ **Public or External Routes** - Add explicit public/bearer-token policy entries and justify them in the tests
 
 ### **Test Categories:**
 - **Integration Tests** - End-to-end functionality across multiple components
@@ -184,6 +192,7 @@ test_config = {
 - **Plugin Integration Tests** → `functional_tests/` (follow `test_openapi_*.py` patterns)
 - **Migration Tests** → `functional_tests/` (follow `test_migration.py` pattern)
 - **UI/Display Tests** → `functional_tests/` (follow `test_*_display.py` patterns)
+- **Route Policy Tests** → `functional_tests/route_tests/` for Blueprint registration, route security policy inventory, and unauthenticated access contracts
 
 ### **Documentation Requirements:**
 - **For Bug Fixes**: Create accompanying `.md` file describing the issue and solution
@@ -205,6 +214,11 @@ for test in test_*.py; do python $test; done
 
 # Run specific test pattern  
 python test_openapi_*.py
+
+# Run route policy coverage tests
+python route_tests/test_route_blueprint_policy_inventory.py
+python route_tests/test_route_unauthenticated_policy_contract.py
+python route_tests/test_route_policy_test_coverage.py
 ```
 
 ### **Integration with Development Workflow:**

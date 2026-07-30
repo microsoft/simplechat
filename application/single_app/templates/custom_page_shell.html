@@ -50,7 +50,7 @@
         }
     </style>
     {% for stylesheet in custom_page.css_files %}
-        <link rel="stylesheet" href="{{ url_for('custom_page_asset', slug=custom_page.slug, folder='css', filename=stylesheet) }}" />
+        <link rel="stylesheet" href="{{ url_for('custom_pages.custom_page_asset', slug=custom_page.slug, folder='css', filename=stylesheet) }}" />
     {% endfor %}
 {% endblock %}
 
@@ -71,6 +71,6 @@
 
 {% block scripts %}
     {% for script in custom_page.js_files %}
-        <script type="module" src="{{ url_for('custom_page_asset', slug=custom_page.slug, folder='js', filename=script) }}"></script>
+        <script type="module" src="{{ url_for('custom_pages.custom_page_asset', slug=custom_page.slug, folder='js', filename=script) }}"></script>
     {% endfor %}
 {% endblock %}

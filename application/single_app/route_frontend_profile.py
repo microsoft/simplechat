@@ -16,8 +16,8 @@ from semantic_kernel_fact_memory_store import FactMemoryStore
 from swagger_wrapper import swagger_route, get_auth_security
 import traceback
 
-def register_route_frontend_profile(app):
-    @app.route('/profile')
+def register_route_frontend_profile(bp):
+    @bp.route('/profile')
     @swagger_route(security=get_auth_security())
     @login_required
     def profile():
@@ -80,7 +80,7 @@ def register_route_frontend_profile(app):
             'facts': [serialize_fact_memory_item(fact) for fact in facts],
         }
     
-    @app.route('/api/profile/image/refresh', methods=['POST'])
+    @bp.route('/api/profile/image/refresh', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -126,7 +126,7 @@ def register_route_frontend_profile(app):
             log_event(f"Error refreshing profile image for user {user_id}: {str(e)}", level=logging.ERROR)
             return jsonify({"error": "Internal server error"}), 500
     
-    @app.route('/api/user/activity-trends', methods=['GET'])
+    @bp.route('/api/user/activity-trends', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -387,7 +387,7 @@ def register_route_frontend_profile(app):
             traceback.print_exc()
             return jsonify({"error": "Failed to fetch activity trends"}), 500
     
-    @app.route('/api/user/settings', methods=['GET'])
+    @bp.route('/api/user/settings', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -444,7 +444,7 @@ def register_route_frontend_profile(app):
             traceback.print_exc()
             return jsonify({"error": "Failed to fetch user settings"}), 500
 
-    @app.route('/api/profile/fact-memory', methods=['GET'])
+    @bp.route('/api/profile/fact-memory', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -467,7 +467,7 @@ def register_route_frontend_profile(app):
             )
             return jsonify({'error': 'Failed to fetch fact memory'}), 500
 
-    @app.route('/api/profile/fact-memory', methods=['POST'])
+    @bp.route('/api/profile/fact-memory', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -513,7 +513,7 @@ def register_route_frontend_profile(app):
             )
             return jsonify({'error': 'Failed to create fact memory'}), 500
 
-    @app.route('/api/profile/fact-memory/<fact_id>', methods=['PUT'])
+    @bp.route('/api/profile/fact-memory/<fact_id>', methods=['PUT'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -555,7 +555,7 @@ def register_route_frontend_profile(app):
             )
             return jsonify({'error': 'Failed to update fact memory'}), 500
 
-    @app.route('/api/profile/fact-memory/<fact_id>', methods=['DELETE'])
+    @bp.route('/api/profile/fact-memory/<fact_id>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required

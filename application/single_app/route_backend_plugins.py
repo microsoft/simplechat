@@ -4,7 +4,7 @@ import asyncio
 import re
 import builtins
 import json
-from azure.cosmos import CosmosClient
+import azure.cosmos as azure_cosmos
 from azure.cosmos.exceptions import CosmosHttpResponseError
 from azure.identity import DefaultAzureCredential
 from flask import Blueprint, jsonify, request, current_app, session
@@ -504,6 +504,7 @@ def get_plugin_types(allowed_type_filter=None):
     return jsonify(types)
 
 bpap = Blueprint('admin_plugins', __name__)
+bpap.before_request(login_required_blueprint())
 
 
 def _redact_plugin_for_logging(plugin):
@@ -1625,6 +1626,7 @@ def discover_mcp_tools():
 # Dynamic Plugin Metadata Endpoint
 
 bpdp = Blueprint('dynamic_plugins', __name__)
+bpdp.before_request(admin_required_blueprint())
 
 @bpdp.route('/api/admin/plugins/dynamic', methods=['GET'])
 @swagger_route(security=get_auth_security())
@@ -1939,7 +1941,7 @@ def test_cosmos_connection():
             headers.clear()
             headers.update(response_headers)
 
-        client = CosmosClient(
+        client = azure_cosmos.CosmosClient(
             endpoint,
             credential=DefaultAzureCredential() if auth_type == 'identity' else auth_key,
             timeout=timeout,

@@ -26,7 +26,7 @@ from semantic_kernel_plugins.fact_memory_plugin import FactMemoryPlugin
 from semantic_kernel_plugins.document_search_plugin import DocumentSearchPlugin
 from semantic_kernel_plugins.chart_plugin import ChartPlugin
 from semantic_kernel_plugins.tabular_processing_plugin import TabularProcessingPlugin
-from functions_settings import get_settings, get_user_settings, is_tabular_processing_enabled
+from functions_settings import get_settings, get_user_settings, is_tabular_processing_enabled, resolve_model_endpoint_foundry_scope
 from foundry_agent_runtime import (
     AzureAIFoundryChatCompletionAgent,
     AzureAIFoundryNewChatCompletionAgent,
@@ -466,26 +466,7 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
         return str(cognitive_services_scope or "").strip()
 
     def resolve_foundry_scope(auth_settings, endpoint=None):
-        custom_scope = (auth_settings.get("foundry_scope") or "").strip()
-        if custom_scope:
-            return custom_scope
-
-        management_cloud = (auth_settings.get("management_cloud") or "public").lower()
-        if management_cloud in ("government", "usgovernment", "usgov"):
-            return "https://ai.azure.us/.default"
-        if management_cloud == "china":
-            return "https://ai.azure.cn/.default"
-        if management_cloud == "germany":
-            return "https://ai.azure.de/.default"
-
-        endpoint_value = (endpoint or "").lower()
-        if "azure.us" in endpoint_value:
-            return "https://ai.azure.us/.default"
-        if "azure.cn" in endpoint_value:
-            return "https://ai.azure.cn/.default"
-        if "azure.de" in endpoint_value:
-            return "https://ai.azure.de/.default"
-        return "https://ai.azure.com/.default"
+        return resolve_model_endpoint_foundry_scope(auth_settings, endpoint=endpoint)
 
     def build_token_provider(auth_settings, provider="aoai", endpoint=None):
         auth_type = (auth_settings.get("type") or "managed_identity").lower()

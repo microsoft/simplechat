@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """
 Test script to debug login activity data for Control Center
+Version: 0.250.047
+
+CosmosClient module import cleanup updated in: 0.250.047
 """
 
 import sys
 import os
 from datetime import datetime, timedelta
-from azure.cosmos import CosmosClient
+import azure.cosmos as azure_cosmos
 
 def test_login_activity():
     """Test what login activity data is available"""
@@ -26,7 +29,7 @@ def test_login_activity():
         endpoint = os.getenv('AZURE_COSMOS_ENDPOINT', '')
         key = os.getenv('AZURE_COSMOS_KEY', '')
 
-        client = CosmosClient(endpoint, key, consistency_level="Session")
+        client = azure_cosmos.CosmosClient(endpoint, key, consistency_level="Session")
 
         sample_records = list(client.get_database_client("SimpleChat").get_container_client("activity_logs").query_items(
             query=sample_query,

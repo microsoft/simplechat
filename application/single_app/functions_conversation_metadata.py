@@ -8,6 +8,7 @@ from functions_group import find_group_by_id
 from functions_public_workspaces import find_public_workspace_by_id
 from functions_documents import get_document_metadata
 from functions_collaboration import get_collaboration_conversation
+from functions_conversation_cache import invalidate_conversation_cache_for_item
 from functions_debug import debug_print
 
 def get_user_info_by_id(user_id):
@@ -861,6 +862,7 @@ def update_conversation_with_metadata(conversation_id, metadata_updates):
         else:
             conversation_item['last_updated'] = updated_at
             cosmos_conversations_container.upsert_item(conversation_item)
+        invalidate_conversation_cache_for_item(conversation_item, reason="conversation_metadata_updated")
         
         return True
         

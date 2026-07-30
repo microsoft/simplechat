@@ -2,7 +2,7 @@
 # test_broken_access_control_guardrails_checker.py
 """
 Functional test for Broken Access Control PR guardrail checker.
-Version: 0.242.072
+Version: 0.250.004
 Implemented in: 0.241.022
 
 This test ensures the changed-file BAC checker flags the repo's target
@@ -24,6 +24,8 @@ PROMPT_FILE = ROOT_DIR / '.github' / 'prompts' / 'broken-access-control-audit.pr
 ROUTE_AUTH_PROMPT_FILE = ROOT_DIR / '.github' / 'prompts' / 'route-authentication-audit.prompt.md'
 FEATURE_DOC = ROOT_DIR / 'docs' / 'explanation' / 'features' / 'v0.241.022' / 'BROKEN_ACCESS_CONTROL_PR_GUARDRAILS.md'
 FULL_SCAN_FEATURE_DOC = ROOT_DIR / 'docs' / 'explanation' / 'features' / 'BROKEN_ACCESS_CONTROL_FULL_REPO_AUDIT.md'
+ROUTE_POLICY_FEATURE_DOC = ROOT_DIR / 'docs' / 'explanation' / 'features' / 'ROUTE_BLUEPRINT_SECURITY_POLICIES.md'
+SWAGGER_ROUTE_WORKFLOW_FILE = ROOT_DIR / '.github' / 'workflows' / 'swagger-route-check.yml'
 CONFIG_FILE = ROOT_DIR / 'application' / 'single_app' / 'config.py'
 
 
@@ -221,7 +223,9 @@ def test_checker_assets_and_version_are_wired_into_repo() -> None:
     assert ROUTE_AUTH_PROMPT_FILE.exists(), f'Expected route auth audit prompt at {ROUTE_AUTH_PROMPT_FILE}'
     assert FEATURE_DOC.exists(), f'Expected feature document at {FEATURE_DOC}'
     assert FULL_SCAN_FEATURE_DOC.exists(), f'Expected full-scan feature document at {FULL_SCAN_FEATURE_DOC}'
-    assert read_config_version() == '0.242.072'
+    assert ROUTE_POLICY_FEATURE_DOC.exists(), f'Expected route policy feature document at {ROUTE_POLICY_FEATURE_DOC}'
+    assert SWAGGER_ROUTE_WORKFLOW_FILE.exists(), f'Expected route workflow at {SWAGGER_ROUTE_WORKFLOW_FILE}'
+    assert read_config_version() == '0.250.004'
 
     workflow_source = read_text(WORKFLOW_FILE)
     assert 'scripts/check_broken_access_control.py' in workflow_source
@@ -235,12 +239,24 @@ def test_checker_assets_and_version_are_wired_into_repo() -> None:
     assert '--full-file' in full_scan_workflow_source
     assert 'actions/upload-artifact@v4' in full_scan_workflow_source
 
+    swagger_route_workflow_source = read_text(SWAGGER_ROUTE_WORKFLOW_FILE)
+    assert 'functional_tests/route_tests/test_route_blueprint_policy_inventory.py' in swagger_route_workflow_source
+    assert 'functional_tests/route_tests/test_route_unauthenticated_policy_contract.py' in swagger_route_workflow_source
+    assert 'functional_tests/route_tests/test_route_policy_test_coverage.py' in swagger_route_workflow_source
+
     instruction_source = read_text(INSTRUCTION_FILE)
     assert 'bac-check: ignore' in instruction_source
     assert 'update_active_group_for_user(...)' in instruction_source
     assert '_resolve_authorized_scope_arguments(...)' in instruction_source
     assert '_read_authorized_user_profile_document(...)' in instruction_source
     assert 'broken-access-control-full-scan.yml' in instruction_source
+
+    python_instruction_source = read_text(ROOT_DIR / '.github' / 'instructions' / 'python-lang.instructions.md')
+    assert 'Blueprint' in python_instruction_source
+    assert 'before_request' in python_instruction_source
+    assert 'functional_tests/route_tests/test_route_blueprint_policy_inventory.py' in python_instruction_source
+    assert 'functional_tests/route_tests/test_route_unauthenticated_policy_contract.py' in python_instruction_source
+    assert 'functional_tests/route_tests/test_route_policy_test_coverage.py' in python_instruction_source
 
     prompt_source = read_text(PROMPT_FILE)
     assert 'Broken Access Control Audit' in prompt_source
@@ -251,9 +267,14 @@ def test_checker_assets_and_version_are_wired_into_repo() -> None:
 
     route_auth_prompt_source = read_text(ROUTE_AUTH_PROMPT_FILE)
     assert 'Route Authentication Audit' in route_auth_prompt_source
+    assert 'Blueprint-level runtime authentication' in route_auth_prompt_source
+    assert 'before_request' in route_auth_prompt_source
     assert '@login_required' in route_auth_prompt_source
     assert '@user_required' in route_auth_prompt_source
     assert '@admin_required' in route_auth_prompt_source
+    assert 'functional_tests/route_tests/test_route_blueprint_policy_inventory.py' in route_auth_prompt_source
+    assert 'functional_tests/route_tests/test_route_unauthenticated_policy_contract.py' in route_auth_prompt_source
+    assert 'functional_tests/route_tests/test_route_policy_test_coverage.py' in route_auth_prompt_source
 
     feature_doc_source = read_text(FEATURE_DOC)
     assert 'Fixed/Implemented in version: **0.241.022**' in feature_doc_source
@@ -264,6 +285,11 @@ def test_checker_assets_and_version_are_wired_into_repo() -> None:
     assert 'Fixed/Implemented in version: **0.241.203**' in full_scan_feature_doc_source
     assert '.github/workflows/broken-access-control-full-scan.yml' in full_scan_feature_doc_source
     assert '.github/prompts/broken-access-control-audit.prompt.md' in full_scan_feature_doc_source
+
+    route_policy_feature_doc_source = read_text(ROUTE_POLICY_FEATURE_DOC)
+    assert 'Implemented in version: **0.242.069**' in route_policy_feature_doc_source
+    assert 'functional_tests/route_tests/test_route_blueprint_policy_inventory.py' in route_policy_feature_doc_source
+    assert 'Blueprint' in route_policy_feature_doc_source
 
 
 if __name__ == '__main__':

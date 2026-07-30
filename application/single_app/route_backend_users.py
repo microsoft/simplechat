@@ -18,6 +18,10 @@ from functions_group import (
     get_user_role_in_group,
     update_active_group_for_user,
 )
+from functions_latest_features_nav import (
+    LATEST_FEATURES_HIDDEN_VERSION_SETTING,
+    normalize_latest_features_hidden_version,
+)
 from functions_public_workspaces import update_active_public_workspace_for_user
 from functions_settings import *
 from swagger_wrapper import swagger_route, get_auth_security
@@ -247,13 +251,13 @@ def _user_profile_not_found_response():
     return jsonify({'error': 'User not found or access denied'}), 404
 
 
-def register_route_backend_users(app):
+def register_route_backend_users(bp):
     """
     This route will expose GET /api/userSearch?query=<searchTerm> which calls
     Microsoft Graph to find users by displayName, mail, userPrincipalName, etc.
     """
 
-    @app.route("/api/userSearch", methods=["GET"])
+    @bp.route("/api/userSearch", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -315,7 +319,7 @@ def register_route_backend_users(app):
                 "details": error_details
             }), getattr(e.response, 'status_code', 500) # Use response status code if available
 
-    @app.route("/api/user/info/<user_id>", methods=["GET"])
+    @bp.route("/api/user/info/<user_id>", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -368,7 +372,7 @@ def register_route_backend_users(app):
 
         return _user_profile_not_found_response()
 
-    @app.route('/api/user/collaboration-suggestions', methods=['GET'])
+    @bp.route('/api/user/collaboration-suggestions', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -448,7 +452,7 @@ def register_route_backend_users(app):
 
         return jsonify({'results': suggestions[:limit]}), 200
     
-    @app.route('/api/user/settings', methods=['GET', 'POST'])
+    @bp.route('/api/user/settings', methods=['GET', 'POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required # Assuming this decorator confirms a valid user exists
@@ -503,6 +507,7 @@ def register_route_backend_users(app):
                     'navbar_layout', 'chatLayout', 'showChatTitle', 'chatSplitSizes',
                     'deepResearchDefaultEnabled',
                     'sidebarToggleStyle', 'sidebarMenuState',
+                    LATEST_FEATURES_HIDDEN_VERSION_SETTING,
                     # Microphone permission settings
                     'microphonePermissionPreference', 'microphonePermissionState',
                     # Text-to-speech settings
@@ -556,6 +561,14 @@ def register_route_backend_users(app):
                             normalized_sidebar_menu_state[key] = value.strip().lower() == "true"
 
                     settings_to_update["sidebarMenuState"] = normalized_sidebar_menu_state
+
+                if LATEST_FEATURES_HIDDEN_VERSION_SETTING in settings_to_update:
+                    hidden_version = normalize_latest_features_hidden_version(
+                        settings_to_update.get(LATEST_FEATURES_HIDDEN_VERSION_SETTING)
+                    )
+                    if hidden_version is not None and hidden_version != VERSION:
+                        return jsonify({"error": "Invalid Latest Features hidden version"}), 400
+                    settings_to_update[LATEST_FEATURES_HIDDEN_VERSION_SETTING] = hidden_version
 
                 active_group_updated = False
                 active_public_workspace_updated = False
@@ -618,7 +631,7 @@ def register_route_backend_users(app):
             print(f"Error retrieving settings for user {user_id}: {e}")
             return jsonify({"error": "Failed to retrieve user settings"}), 500
 
-    @app.route('/api/user/profile-image/<user_id>', methods=['GET'])
+    @bp.route('/api/user/profile-image/<user_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required

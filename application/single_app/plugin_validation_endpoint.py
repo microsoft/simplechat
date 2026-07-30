@@ -8,7 +8,7 @@ import logging
 from flask import Blueprint, current_app, jsonify, request
 
 from functions_appinsights import log_event
-from functions_authentication import admin_required, login_required, user_required
+from functions_authentication import admin_required, admin_required_blueprint, login_required, user_required, user_required_blueprint
 from json_schema_validation import apply_plugin_validation_defaults
 from semantic_kernel_plugins.plugin_health_checker import PluginErrorRecovery, PluginHealthChecker
 from semantic_kernel_plugins.plugin_loader import discover_plugins
@@ -16,6 +16,9 @@ from swagger_wrapper import get_auth_security, swagger_route
 
 
 plugin_validation_bp = Blueprint('plugin_validation', __name__)
+plugin_validation_admin_bp = Blueprint('plugin_validation_admin', __name__)
+plugin_validation_bp.before_request(user_required_blueprint())
+plugin_validation_admin_bp.before_request(admin_required_blueprint())
 
 
 def _validate_plugin_manifest_request():
@@ -70,7 +73,7 @@ def validate_plugin_manifest():
         return jsonify({'error': f'Validation failed: {str(e)}'}), 500
 
 
-@plugin_validation_bp.route('/api/admin/plugins/validate', methods=['POST'])
+@plugin_validation_admin_bp.route('/api/admin/plugins/validate', methods=['POST'])
 @swagger_route(
     security=get_auth_security()
 )
@@ -87,7 +90,7 @@ def validate_plugin_manifest_admin():
         return jsonify({'error': f'Validation failed: {str(e)}'}), 500
 
 
-@plugin_validation_bp.route('/api/admin/plugins/test-instantiation', methods=['POST'])
+@plugin_validation_admin_bp.route('/api/admin/plugins/test-instantiation', methods=['POST'])
 @swagger_route(
     security=get_auth_security()
 )
@@ -160,7 +163,7 @@ def test_plugin_instantiation():
         return jsonify({'error': f'Test failed: {str(e)}'}), 500
 
 
-@plugin_validation_bp.route('/api/admin/plugins/health-check/<plugin_name>', methods=['GET'])
+@plugin_validation_admin_bp.route('/api/admin/plugins/health-check/<plugin_name>', methods=['GET'])
 @swagger_route(
     security=get_auth_security()
 )
@@ -238,7 +241,7 @@ def check_plugin_health(plugin_name):
         }), 500
 
 
-@plugin_validation_bp.route('/api/admin/plugins/repair/<plugin_name>', methods=['POST'])
+@plugin_validation_admin_bp.route('/api/admin/plugins/repair/<plugin_name>', methods=['POST'])
 @swagger_route(
     security=get_auth_security()
 )

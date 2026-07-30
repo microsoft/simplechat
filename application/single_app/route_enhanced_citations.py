@@ -206,10 +206,10 @@ def _log_enhanced_citations_error(message, error, **details):
     )
 
 
-def register_enhanced_citations_routes(app):
+def register_enhanced_citations_routes(bp):
     """Register enhanced citations routes"""
 
-    @app.route("/api/enhanced_citations/document_metadata", methods=["GET"])
+    @bp.route("/api/enhanced_citations/document_metadata", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -247,7 +247,7 @@ def register_enhanced_citations_routes(app):
             debug_print(f"Error getting enhanced citation document metadata: {e}")
             return jsonify({"error": str(e)}), 500
     
-    @app.route("/api/enhanced_citations/image", methods=["GET"])
+    @bp.route("/api/enhanced_citations/image", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -285,7 +285,7 @@ def register_enhanced_citations_routes(app):
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
-    @app.route("/api/enhanced_citations/video", methods=["GET"])
+    @bp.route("/api/enhanced_citations/video", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -323,7 +323,7 @@ def register_enhanced_citations_routes(app):
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
-    @app.route("/api/enhanced_citations/audio", methods=["GET"])
+    @bp.route("/api/enhanced_citations/audio", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -361,7 +361,7 @@ def register_enhanced_citations_routes(app):
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
-    @app.route("/api/enhanced_citations/pdf", methods=["GET"])
+    @bp.route("/api/enhanced_citations/pdf", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -423,7 +423,7 @@ def register_enhanced_citations_routes(app):
             )
             return jsonify({"error": str(e)}), 500
 
-    @app.route("/api/enhanced_citations/tabular", methods=["GET"])
+    @bp.route("/api/enhanced_citations/tabular", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -517,7 +517,7 @@ def register_enhanced_citations_routes(app):
             debug_print(f"Error serving tabular citation: {e}")
             return jsonify({"error": str(e)}), 500
 
-    @app.route("/api/enhanced_citations/tabular_workspace", methods=["GET"])
+    @bp.route("/api/enhanced_citations/tabular_workspace", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -553,7 +553,7 @@ def register_enhanced_citations_routes(app):
             debug_print(f"Error serving tabular workspace citation: {e}")
             return jsonify({"error": str(e)}), 500
 
-    @app.route("/api/workspace_documents/download", methods=["GET"])
+    @bp.route("/api/workspace_documents/download", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -578,7 +578,7 @@ def register_enhanced_citations_routes(app):
             debug_print(f"Error serving workspace document download: {e}")
             return jsonify({"error": str(e)}), 500
 
-    @app.route("/api/chat_artifacts/download", methods=["GET"])
+    @bp.route("/api/chat_artifacts/download", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -613,7 +613,7 @@ def register_enhanced_citations_routes(app):
             debug_print(f"Error serving chat artifact download: {e}")
             return jsonify({"error": str(e)}), 500
 
-    @app.route("/api/chat_artifacts/promote", methods=["POST"])
+    @bp.route("/api/chat_artifacts/promote", methods=["POST"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -855,7 +855,7 @@ def register_enhanced_citations_routes(app):
             debug_print(f"Error promoting chat artifact: {e}")
             return jsonify({"error": str(e)}), 500
 
-    @app.route("/api/enhanced_citations/tabular_preview", methods=["GET"])
+    @bp.route("/api/enhanced_citations/tabular_preview", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -993,7 +993,7 @@ def register_enhanced_citations_routes(app):
             debug_print(f"Error generating tabular preview: {e}")
             return jsonify({"error": str(e)}), 500
 
-    @app.route("/api/enhanced_citations/visio", methods=["GET"])
+    @bp.route("/api/enhanced_citations/visio", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required

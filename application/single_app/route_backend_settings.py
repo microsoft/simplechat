@@ -6,6 +6,10 @@ from functions_authentication import *
 from functions_settings import *
 from functions_web_search_test import run_web_search_connection_test
 from functions_url_access_policy_test import run_url_access_policy_test
+from functions_model_endpoint_runtime import (
+    build_model_endpoint_sync_chat_client,
+    resolve_model_endpoint_from_context,
+)
 from functions_activity_logging import (
     log_admin_feedback_email_submission,
     log_general_admin_action,
@@ -23,6 +27,12 @@ from functions_cosmos_throughput import (
     get_cosmos_throughput_status,
     normalize_cosmos_throughput_settings,
     set_database_throughput,
+)
+from functions_app_maintenance import get_app_maintenance_status, run_app_maintenance_once
+from functions_redis_monitoring import (
+    get_redis_explorer_keys,
+    get_redis_explorer_value,
+    get_redis_monitoring_status,
 )
 from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient
@@ -85,6 +95,8 @@ def _resolve_admin_settings_test_secrets(payload):
             'web_search_agent.other_settings.azure_ai_foundry.client_secret',
         )
     elif test_type == 'multimodal_vision':
+        if isinstance(payload.get('multi_endpoint'), dict):
+            return payload
         if payload.get('enable_apim'):
             _resolve_test_payload_secret(payload, ('apim', 'subscription_key'), settings, 'azure_apim_gpt_subscription_key')
         else:
@@ -188,8 +200,85 @@ def auto_fix_index_fields(idx_type: str, user_id: str = 'system', admin_email: s
         return {'error': str(e)}
 
 
-def register_route_backend_settings(app):
-    @app.route('/api/admin/settings/check_index_fields', methods=['POST'])
+def register_route_backend_settings(bp):
+    @bp.route('/api/admin/settings/app-maintenance/status', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def get_app_maintenance_admin_status():
+        """Return the current app maintenance status for admin diagnostics."""
+        try:
+            return jsonify(get_app_maintenance_status(settings=get_settings())), 200
+        except Exception as exc:
+            log_event(
+                '[AppMaintenance] Failed to load admin maintenance status.',
+                extra={'error': str(exc)},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to load app maintenance status.'}), 500
+
+    @bp.route('/api/admin/settings/app-maintenance/run', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def run_app_maintenance_admin():
+        """Run app maintenance tasks immediately from the admin settings area."""
+        user = session.get('user', {})
+        admin_email = user.get('preferred_username', user.get('email', 'unknown'))
+        admin_user_id = get_current_user_id() or 'unknown'
+        try:
+            payload = request.get_json(silent=True) or {}
+            apply_indexing_policies = None
+            if 'apply_cosmos_indexing_policies' in payload:
+                apply_indexing_policies = bool(payload.get('apply_cosmos_indexing_policies'))
+            apply_stale_cache_cleanup = None
+            if 'apply_stale_cache_cleanup' in payload:
+                apply_stale_cache_cleanup = bool(payload.get('apply_stale_cache_cleanup'))
+            result = run_app_maintenance_once(
+                triggered_by='admin_manual',
+                requested_by=admin_email,
+                settings=get_settings(),
+                apply_indexing_policies=apply_indexing_policies,
+                run_document_access_backfill=payload.get('run_document_access_index_backfill'),
+                reset_document_access_backfill=bool(payload.get('reset_document_access_index_backfill', False)),
+                run_stale_cache_cleanup=payload.get('run_stale_cache_cleanup'),
+                apply_stale_cache_cleanup=apply_stale_cache_cleanup,
+            )
+        except Exception as exc:
+            log_event(
+                '[AppMaintenance] Manual admin maintenance trigger failed.',
+                extra={'admin_email': admin_email, 'error': str(exc)},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to run app maintenance.'}), 500
+
+        if result.get('success'):
+            log_general_admin_action(
+                admin_user_id=admin_user_id,
+                admin_email=admin_email,
+                action='app_maintenance_manual_run',
+                description='Manually ran app maintenance foundation tasks.',
+                additional_context={
+                    'run_id': result.get('run_id'),
+                    'status': result.get('state', {}).get('last_status'),
+                },
+            )
+            return jsonify(result), 200
+
+        log_event(
+            '[AppMaintenance] Manual admin maintenance run failed.',
+            extra={
+                'run_id': result.get('run_id'),
+                'admin_email': admin_email,
+                'error': result.get('error'),
+            },
+            level=logging.ERROR,
+        )
+        return jsonify(result), 500
+
+    @bp.route('/api/admin/settings/check_index_fields', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -297,18 +386,18 @@ def register_route_backend_settings(app):
                         'needsCreation': True
                     }), 404
                 else:
-                    app.logger.error(f"Azure AI Search error: {search_error}")
+                    current_app.logger.error(f"Azure AI Search error: {search_error}")
                     return jsonify({
                         'error': f'Failed to connect to Azure AI Search: {str(search_error)}',
                         'needsConfiguration': True
                     }), 500
 
         except Exception as e:
-            app.logger.error(f"Error in check_index_fields: {str(e)}")
+            current_app.logger.error(f"Error in check_index_fields: {str(e)}")
             return jsonify({'error': f'Unexpected error: {str(e)}'}), 500
 
 
-    @app.route('/api/admin/settings/fix_index_fields', methods=['POST'])
+    @bp.route('/api/admin/settings/fix_index_fields', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -388,7 +477,7 @@ def register_route_backend_settings(app):
         except Exception as e:
             return jsonify({ 'error': str(e) }), 500
 
-    @app.route('/api/admin/settings/create_index', methods=['POST'])
+    @bp.route('/api/admin/settings/create_index', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -436,7 +525,7 @@ def register_route_backend_settings(app):
                 pass
             except Exception as e:
                 # Other errors checking if index exists
-                app.logger.error(f"Error checking if index exists: {e}")
+                current_app.logger.error(f"Error checking if index exists: {e}")
                 # Continue with creation attempt anyway
 
             # Create the index using the JSON definition
@@ -454,10 +543,10 @@ def register_route_backend_settings(app):
             }), 200
 
         except Exception as e:
-            app.logger.error(f"Error creating index: {str(e)}")
+            current_app.logger.error(f"Error creating index: {str(e)}")
             return jsonify({'error': f'Failed to create index: {str(e)}'}), 500
     
-    @app.route('/api/admin/settings/test_connection', methods=['POST'])
+    @bp.route('/api/admin/settings/test_connection', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -508,9 +597,6 @@ def register_route_backend_settings(app):
             
             elif test_type == 'key_vault':
                 return _test_key_vault_connection(data)
-            
-            elif test_type == 'multimodal_vision':
-                return _test_multimodal_vision_connection(data)
 
             else:
                 return jsonify({'error': f'Unknown test_type: {test_type}'}), 400
@@ -518,7 +604,161 @@ def register_route_backend_settings(app):
         except Exception as e:
             return jsonify({'error': str(e)}), 500
 
-    @app.route('/api/admin/settings/cosmos-throughput/status', methods=['GET'])
+    @bp.route('/api/admin/settings/redis-monitoring/status', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def get_redis_monitoring_admin_status():
+        """Return sanitized Redis health and capacity metrics for the admin Scale tab."""
+        refresh_id = str(uuid.uuid4())
+        refresh_start = time.perf_counter()
+        try:
+            user = session.get('user', {})
+            admin_email = user.get('preferred_username', user.get('email', 'unknown'))
+            log_event(
+                '[RedisMonitoring] Admin status refresh requested.',
+                extra={'refresh_id': refresh_id, 'admin_email': admin_email},
+                level=logging.INFO,
+            )
+            status = get_redis_monitoring_status(
+                get_settings(),
+                session_redis_client=current_app.config.get('SESSION_REDIS'),
+                session_type=current_app.config.get('SESSION_TYPE'),
+            )
+            log_event(
+                '[RedisMonitoring] Admin status refresh completed.',
+                extra={
+                    'refresh_id': refresh_id,
+                    'status': status.get('health', {}).get('status'),
+                    'monitoring_source': status.get('runtime', {}).get('monitoring_source'),
+                    'elapsed_ms': int((time.perf_counter() - refresh_start) * 1000),
+                },
+                level=logging.INFO,
+            )
+            return jsonify(status), 200
+        except Exception as e:
+            log_event(
+                '[RedisMonitoring] Failed to load admin status.',
+                extra={
+                    'refresh_id': refresh_id,
+                    'error': str(e),
+                    'elapsed_ms': int((time.perf_counter() - refresh_start) * 1000),
+                },
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to load Redis monitoring status.'}), 500
+
+    @bp.route('/api/admin/settings/redis-explorer/keys', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def get_redis_explorer_admin_keys():
+        """Return a cursor-paginated Redis key page for the admin Redis Explorer."""
+        refresh_id = str(uuid.uuid4())
+        refresh_start = time.perf_counter()
+        try:
+            user = session.get('user', {})
+            admin_email = user.get('preferred_username', user.get('email', 'unknown'))
+            log_event(
+                '[RedisExplorer] Admin key page requested.',
+                extra={'refresh_id': refresh_id, 'admin_email': admin_email},
+                level=logging.INFO,
+            )
+            result = get_redis_explorer_keys(
+                get_settings(),
+                cursor=request.args.get('cursor', 0),
+                page_size=request.args.get('page_size', 25),
+                key_filter=request.args.get('filter', ''),
+                session_redis_client=current_app.config.get('SESSION_REDIS'),
+                session_type=current_app.config.get('SESSION_TYPE'),
+            )
+            log_event(
+                '[RedisExplorer] Admin key page completed.',
+                extra={
+                    'refresh_id': refresh_id,
+                    'success': result.get('success'),
+                    'status': result.get('status'),
+                    'key_count': len(result.get('keys') or []),
+                    'has_more': result.get('has_more'),
+                    'elapsed_ms': int((time.perf_counter() - refresh_start) * 1000),
+                },
+                level=logging.INFO,
+            )
+            return jsonify(result), 200 if result.get('success') else 503
+        except Exception as e:
+            log_event(
+                '[RedisExplorer] Failed to load key page.',
+                extra={
+                    'refresh_id': refresh_id,
+                    'error': str(e),
+                    'elapsed_ms': int((time.perf_counter() - refresh_start) * 1000),
+                },
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to load Redis Explorer keys.'}), 500
+
+    @bp.route('/api/admin/settings/redis-explorer/value', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def get_redis_explorer_admin_value():
+        """Return sanitized Redis key metadata and preview content for admins."""
+        refresh_id = str(uuid.uuid4())
+        refresh_start = time.perf_counter()
+        try:
+            payload = request.get_json(silent=True) or {}
+            user = session.get('user', {})
+            admin_email = user.get('preferred_username', user.get('email', 'unknown'))
+            log_event(
+                '[RedisExplorer] Admin key preview requested.',
+                extra={'refresh_id': refresh_id, 'admin_email': admin_email},
+                level=logging.INFO,
+            )
+            result = get_redis_explorer_value(
+                get_settings(),
+                key=payload.get('key'),
+                session_redis_client=current_app.config.get('SESSION_REDIS'),
+                session_type=current_app.config.get('SESSION_TYPE'),
+            )
+            status_code = 200
+            if not result.get('success'):
+                status_code = 404 if result.get('status') == 'not_found' else 503
+            log_event(
+                '[RedisExplorer] Admin key preview completed.',
+                extra={
+                    'refresh_id': refresh_id,
+                    'success': result.get('success'),
+                    'status': result.get('status'),
+                    'type': result.get('type'),
+                    'preview_restricted': result.get('preview_restricted'),
+                    'elapsed_ms': int((time.perf_counter() - refresh_start) * 1000),
+                },
+                level=logging.INFO,
+            )
+            return jsonify(result), status_code
+        except ValueError as e:
+            log_event(
+                '[RedisExplorer] Invalid key preview request.',
+                extra={'refresh_id': refresh_id, 'error': str(e)},
+                level=logging.WARNING,
+            )
+            return jsonify({'error': str(e)}), 400
+        except Exception as e:
+            log_event(
+                '[RedisExplorer] Failed to load key preview.',
+                extra={
+                    'refresh_id': refresh_id,
+                    'error': str(e),
+                    'elapsed_ms': int((time.perf_counter() - refresh_start) * 1000),
+                },
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to load Redis Explorer key preview.'}), 500
+
+    @bp.route('/api/admin/settings/cosmos-throughput/status', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -535,7 +775,6 @@ def register_route_backend_settings(app):
                 level=logging.INFO,
             )
             status = get_cosmos_throughput_status(get_settings(), include_metrics=True, refresh_id=refresh_id)
-            update_settings(build_runtime_update(status=status))
             log_event(
                 '[CosmosThroughput] Admin status refresh completed.',
                 extra={
@@ -560,7 +799,7 @@ def register_route_backend_settings(app):
             )
             return jsonify({'error': 'Failed to load Cosmos throughput status.'}), 500
 
-    @app.route('/api/admin/settings/cosmos-throughput/validate-access', methods=['POST'])
+    @bp.route('/api/admin/settings/cosmos-throughput/validate-access', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -617,7 +856,7 @@ def register_route_backend_settings(app):
             )
             return jsonify({'error': 'Failed to validate Cosmos throughput access.'}), 500
 
-    @app.route('/api/admin/settings/cosmos-throughput/scale', methods=['POST'])
+    @bp.route('/api/admin/settings/cosmos-throughput/scale', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -685,7 +924,7 @@ def register_route_backend_settings(app):
             )
             return jsonify({'error': 'Failed to scale Cosmos throughput.'}), 500
 
-    @app.route('/api/admin/settings/cosmos-throughput/convert-autoscale', methods=['POST'])
+    @bp.route('/api/admin/settings/cosmos-throughput/convert-autoscale', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -765,7 +1004,7 @@ def register_route_backend_settings(app):
             )
             return jsonify({'error': 'Cosmos throughput mode conversion failed.'}), 500
 
-    @app.route('/api/admin/settings/send_feedback_email', methods=['POST'])
+    @bp.route('/api/admin/settings/send_feedback_email', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -828,7 +1067,7 @@ def register_route_backend_settings(app):
             )
             return jsonify({'error': 'Failed to prepare feedback email'}), 500
 
-    @app.route('/api/support/send_feedback_email', methods=['POST'])
+    @bp.route('/api/support/send_feedback_email', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -904,7 +1143,7 @@ def register_route_backend_settings(app):
             )
             return jsonify({'error': 'Failed to prepare feedback email'}), 500
 
-    @app.route('/api/admin/settings/release_notifications_registration', methods=['POST'])
+    @bp.route('/api/admin/settings/release_notifications_registration', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -983,95 +1222,66 @@ def _test_multimodal_vision_connection(payload):
     """Test multi-modal vision analysis with a sample image."""
     enable_apim = payload.get('enable_apim', False)
     vision_model = payload.get('vision_model')
-    
+    vision_model_name = payload.get('model_name') or vision_model
+
     if not vision_model:
         return jsonify({'error': 'No vision model specified'}), 400
-    
+
     # Create a simple test image (1x1 red pixel PNG)
     test_image_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
-    
+
     try:
-        if enable_apim:
-            apim_data = payload.get('apim', {})
-            endpoint = apim_data.get('endpoint')
-            api_version = apim_data.get('api_version')
-            subscription_key = apim_data.get('subscription_key')
-            
-            gpt_client = AzureOpenAI(
-                api_version=api_version,
-                azure_endpoint=endpoint,
-                api_key=subscription_key
+        multi_endpoint_selection = payload.get('multi_endpoint') if isinstance(payload.get('multi_endpoint'), dict) else None
+        if multi_endpoint_selection:
+            settings = get_settings()
+            model_context = {
+                'endpoint_id': str(multi_endpoint_selection.get('endpoint_id') or '').strip(),
+                'model_id': str(multi_endpoint_selection.get('model_id') or '').strip(),
+                'provider': str(multi_endpoint_selection.get('provider') or '').strip(),
+                'model_deployment': str(
+                    multi_endpoint_selection.get('deployment_name')
+                    or vision_model
+                    or ''
+                ).strip(),
+            }
+            resolved_endpoint = resolve_model_endpoint_from_context(settings, model_context)
+            if not resolved_endpoint:
+                return jsonify({'error': 'Selected vision model endpoint could not be resolved from saved settings'}), 400
+
+            resolved_models = resolved_endpoint.get('models', []) or []
+            matched_model = next(
+                (
+                    model for model in resolved_models
+                    if str(model.get('id') or '').strip() == model_context['model_id']
+                ),
+                None,
             )
-        else:
-            direct_data = payload.get('direct', {})
-            endpoint = direct_data.get('endpoint')
-            api_version = direct_data.get('api_version')
-            auth_type = direct_data.get('auth_type', 'key')
-            
-            if auth_type == 'managed_identity':
-                token_provider = get_bearer_token_provider(
-                    DefaultAzureCredential(), 
-                    cognitive_services_scope
+            if not matched_model:
+                matched_model = next(
+                    (
+                        model for model in resolved_models
+                        if str(model.get('deploymentName') or model.get('deployment') or '').strip() == model_context['model_deployment']
+                    ),
+                    None,
                 )
-                gpt_client = AzureOpenAI(
-                    api_version=api_version,
-                    azure_endpoint=endpoint,
-                    azure_ad_token_provider=token_provider
-                )
-            else:
-                api_key = direct_data.get('key')
-                gpt_client = AzureOpenAI(
-                    api_version=api_version,
-                    azure_endpoint=endpoint,
-                    api_key=api_key
-                )
-        
-        # Test vision analysis with simple prompt
-        response = gpt_client.chat.completions.create(
-            model=vision_model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "What color is this image? Just say the color."
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/png;base64,{test_image_base64}"
-                            }
-                        }
-                    ]
-                }
-            ],
-            max_tokens=50
-        )
-        
-        result = response.choices[0].message.content
-        
-        return jsonify({
-            'message': 'Multi-modal vision connection successful',
-            'details': f'Model responded: {result}'
-        }), 200
-        
-    except Exception as e:
-        return jsonify({'error': f'Vision test failed: {str(e)}'}), 500
-    
-def _test_multimodal_vision_connection(payload):
-    """Test multi-modal vision analysis with a sample image."""
-    enable_apim = payload.get('enable_apim', False)
-    vision_model = payload.get('vision_model')
+            if not matched_model:
+                return jsonify({'error': 'Selected vision model could not be resolved from saved settings'}), 400
 
-    if not vision_model:
-        return jsonify({'error': 'No vision model specified'}), 400
-
-    # Create a simple test image (1x1 red pixel PNG)
-    test_image_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
-
-    try:
-        if enable_apim:
+            vision_model = str(
+                matched_model.get('deploymentName')
+                or matched_model.get('deployment')
+                or model_context['model_deployment']
+            ).strip()
+            vision_model_name = str(matched_model.get('modelName') or vision_model).strip()
+            connection = resolved_endpoint.get('connection', {}) or {}
+            gpt_client, _ = build_model_endpoint_sync_chat_client(
+                resolved_endpoint.get('auth', {}) or {},
+                resolved_endpoint.get('provider') or model_context.get('provider') or 'aoai',
+                connection.get('endpoint'),
+                connection.get('openai_api_version') or connection.get('api_version'),
+                deployment_name=vision_model,
+            )
+        elif enable_apim:
             apim_data = payload.get('apim', {})
             endpoint = apim_data.get('endpoint')
             api_version = apim_data.get('api_version')
@@ -1109,6 +1319,7 @@ def _test_multimodal_vision_connection(payload):
         # Determine which token parameter to use based on model type
         # o-series and gpt-5 models require max_completion_tokens instead of max_tokens
         vision_model_lower = vision_model.lower()
+        vision_model_name_lower = vision_model_name.lower()
         api_params = {
             "model": vision_model,
             "messages": [
@@ -1131,7 +1342,14 @@ def _test_multimodal_vision_connection(payload):
         }
         
         # Use max_completion_tokens for o-series and gpt-5 models, max_tokens for others
-        if ('o1' in vision_model_lower or 'o3' in vision_model_lower or 'gpt-5' in vision_model_lower):
+        if (
+            'o1' in vision_model_lower or
+            'o3' in vision_model_lower or
+            'gpt-5' in vision_model_lower or
+            'o1' in vision_model_name_lower or
+            'o3' in vision_model_name_lower or
+            'gpt-5' in vision_model_name_lower
+        ):
             api_params["max_completion_tokens"] = 50
         else:
             api_params["max_tokens"] = 50

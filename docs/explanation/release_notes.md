@@ -2,9 +2,474 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.072)**
+
+#### Bug Fixes
+
+*   **Selected Public Workspace Prompt Migration**
+    *   Selected public-workspace Data Management migrations now copy current prompts owned through `public_id` while retaining compatibility with legacy `public_workspace_id` records.
+    *   Prompts outside the selected workspaces remain excluded, transitional records migrate once, and copied prompt artifact counts are accurate. All-workspaces migration behavior is unchanged.
+    *   (Ref: microsoft/simplechat#1033, `functions_data_management.py`, `test_data_management_public_prompt_migration.py`)
+
+### **(v0.250.071)**
+
+#### New Features
+
+*   **Resilient Data Management Migrations**
+    *   Added durable migration provenance, per-resource checkpoints, bounded concurrent transfers, retry/resume controls, and long-running Cosmos, Search, Blob, inventory, and reconciliation heartbeats.
+    *   Added New only, Delta / upsert, and explicitly confirmed Mirror with deletions modes with durable baseline watermarks, migration-owned update/delete protection, and server-owned live previews.
+    *   Added post-copy Cosmos, AI Search, and Blob reconciliation with cutover readiness, actual outcome totals, and preview-versus-actual divergence reporting.
+    *   Replaced deep AI Search pagination with persisted `id` keyset cursors, including selected-scope filter batching and coverage beyond 100,000 documents.
+    *   Added memory-bounded reconciliation, two-phase mirror deletion with current-source/ETag revalidation, target-side coordination across independent SimpleChat sources, and retryable `not_ready` cutover failures.
+    *   Preserved Blob content settings, metadata, tags, tier, type, and available content verification while adding mid-stream lease heartbeats, cooperative cancellation, source ETag stability, and pending-to-succeeded provenance.
+    *   Added durable privacy-safe per-item outcome batches plus admin JSONL manifest and failure-list downloads.
+    *   Made unresolved temporary Cosmos capacity restoration a retryable terminal state; retry restores the saved snapshot without reapplying the boost.
+    *   Added a durable target AI Search write fence that drains normal SimpleChat indexing before transfer or mirror deletion, bounds Search requests, rejects self-targeting migrations, and requires explicit external-writer freeze acknowledgement before Search writes begin.
+    *   Added target-side coordinator fencing across independent SimpleChat source deployments and retained uncertain target Search write slots through their full quarantine window. Authorization-reducing unshare requests now defer safely while target Search ACL writes are frozen.
+    *   (Ref: microsoft/simplechat#1043, `functions_data_management.py`, `functions_migration_provenance.py`, `admin_data_management.js`, `DATA_MANAGEMENT_MIGRATION_RESILIENCE.md`)
+
+### **(v0.250.070)**
+
+#### Bug Fixes
+
+*   **Azure Blob Container SAS Support and Credential Guidance**
+    *   Added support for storage connection strings, full container SAS URLs, and standalone SAS tokens. Pasted SAS URLs derive the canonical account, selected container, and default source name without persisting the token in connection metadata.
+    *   Validates required Read and List permissions, HTTPS-only protocol, account-SAS Blob resource scope, start time, and expiry. Extra permissions and broader account credentials remain usable but produce least-privilege warnings.
+    *   Shows non-secret SAS scope, named permissions, exact expiry, days remaining, stored-policy status, IP restrictions, and warnings in connection tests and source rows.
+    *   Supports saving Blob credentials with or without Azure Key Vault; Key Vault is used when enabled and existing File Sync credential persistence is used otherwise.
+    *   (Ref: microsoft/simplechat#1027, `functions_file_sync.py`, `workspace-file-sync.js`, `AZURE_BLOB_CONTAINER_SAS_SUPPORT_FIX.md`)
+
+### **(v0.250.068)**
+
+#### Bug Fixes
+
+*   **Azure Blob File Sync Endpoint and Error Hardening**
+    *   Restricted Azure Blob File Sync URLs and connection strings to validated HTTPS Azure Blob endpoints, blocking arbitrary, internal, development-storage, and credential-bearing endpoint forms before SDK requests are created.
+    *   Replaced raw File Sync route, run-history, activity, and item exception text with fixed client-safe messages while retaining detailed sanitized diagnostics in server logs.
+    *   (Ref: microsoft/simplechat#1027, PR #1088 security review, `functions_file_sync.py`, `route_backend_file_sync.py`)
+
+### **(v0.250.067)**
+
+#### New Features
+
+*   **Azure Blob Storage File Sync**
+    *   Added Azure Blob Storage as an admin-controlled File Sync source for personal, group, and public workspaces, with account, container, prefix, selected-path, filter, tag, schedule, and remote-delete controls.
+    *   Added managed identity, Key Vault-backed service principal and connection string authentication, connection testing, virtual-folder browsing, ETag change detection, and streamed ingestion through the existing document pipeline.
+    *   (Ref: microsoft/simplechat#1027, `functions_file_sync.py`, `workspace-file-sync.js`, `AZURE_BLOB_STORAGE_FILE_SYNC.md`)
+### **(v0.250.066)**
+
+#### Bug Fixes
+
+*   **GPT 5.6+ Multi-Modal Vision Model Selection**
+    *   Enabled GPT 5.6 Luna, Sol, Terra, and later supported GPT deployments to appear in the Multi-Modal Vision Analysis selector across Azure OpenAI and Foundry endpoints.
+    *   Model detection now evaluates model, display, and deployment names with normalized separators while preserving disabled-model and unsupported-family filtering.
+    *   (Ref: microsoft/simplechat#1086, `admin_settings.js`, `test_admin_multimodal_vision_model_options.py`)
+
+### **(v0.250.065)**
+
+#### New Features
+
+*   **Task-Level Workflow Model and Agent Selection**
+    *   Each ordered workflow task can now inherit the workflow's Default Runner or select its own authorized Direct Model or Agent.
+    *   Task runners are normalized on save and revalidated before execution, including current personal/group/global agent scope, group membership, and enabled model endpoint/model availability.
+    *   Unavailable runners follow the workflow's retry and stop-or-continue strategy, while task run items record non-secret runner audit details, execution deployment/provider, output preview, and token usage when available.
+    *   Existing tasks without runner configuration inherit the workflow default, and workflows without task sequences retain the legacy execution path.
+    *   (Ref: microsoft/simplechat#1084, `functions_personal_workflows.py`, `functions_group_workflows.py`, `functions_workflow_runner.py`)
+
+#### User Interface Enhancements
+
+*   **Per-Task Runner Controls**
+    *   Renamed the workflow-level Runner field to Default Runner and added Workflow default, Direct Model, and Agent selection to each task editor.
+    *   Task rows and Review now show the resolved runner, with responsive conditional model/agent controls and text-safe rendering for endpoint, model, and agent labels.
+    *   (Ref: microsoft/simplechat#1084, `workspace.html`, `group_workspaces.html`, `workspace_workflows.js`)
+
+### **(v0.250.064)**
+
+#### New Features
+
+*   **Repeatable AI Workflow Task Sequences**
+    *   Personal and group workflows can now run with only instructions and a selected model or agent; workspace documents, File Sync, URL access, schedules, and completion alerts remain optional.
+    *   Workflows support ordered instruction tasks that share the selected runner and receive bounded prior-task output as context.
+    *   Added per-task retries and stop-or-continue error handling, with task outcomes recorded in run history and workflow activity.
+    *   Existing document Search, Analyze, and Compare behavior remains available as optional input for the first task, while existing workflows without task sequences retain their prior execution path.
+    *   (Ref: microsoft/simplechat#1082, `functions_personal_workflows.py`, `functions_group_workflows.py`, `functions_workflow_runner.py`)
+
+#### User Interface Enhancements
+
+*   **Stepped Workflow Builder**
+    *   Replaced the single-pane personal and group workflow form with a five-step General, Trigger, Tasks, Reliability, and Review builder.
+    *   Users can add, edit, remove, and reorder tasks, configure retry and failure behavior, and review runner, trigger, document input, File Sync, and pop-up alert settings before saving.
+    *   (Ref: microsoft/simplechat#1082, `workspace.html`, `group_workspaces.html`, `workspace_workflows.js`, `workspace-responsive.css`)
+
+### **(v0.250.062)**
+
+#### New Features
+
+*   **Workflow Run Cancellation**
+    *   Personal and group workflows can now be cancelled from workspace rows and cards, run history, or the workflow activity view while a run is active.
+    *   Cancellation is persisted for the active run and cooperatively stops further File Sync, document action, model, agent, artifact, notification, and scheduling work after any in-flight external request returns.
+    *   Cancelled scheduled and File Sync workflows return to an idle state and advance to their next scheduled run instead of immediately restarting.
+    *   (Ref: microsoft/simplechat#990, `route_backend_workflows.py`, `functions_workflow_runner.py`, `workspace_workflows.js`)
+
+### **(v0.250.061)**
+
+#### New Features
+
+*   **Configurable Content Safety Violation Messages**
+    *   Administrators can now configure the Markdown message shown when Content Safety blocks a chat request using the standard Markdown editor toolbar.
+    *   A new setting controls whether the block reason, detected categories and severities, and blocklist matches are included beneath the custom message.
+    *   The editor now renders correctly when the hidden Safety tab opens, and Markdown-only edits activate Save Settings before submission.
+    *   (Ref: microsoft/simplechat#989, `functions_content_safety.py`, `admin_settings.html`, `route_backend_chats.py`)
+
+### **(v0.250.059)**
+
+#### New Features
+
+*   **Versioned Latest Features Navigation Hide Preference**
+    *   Users can now hide Latest Features navigation entries for the current SimpleChat version from the ellipsis action and restore them from Profile Settings.
+    *   The hidden state is version-aware, so Latest Features automatically appears again after the app version changes.
+    *   Added a development-only `is_development=true` environment override that hides Latest Features nav entries without affecting production behavior when unset or false.
+    *   (Ref: microsoft/simplechat#987, `latestFeaturesHiddenVersion`, `_sidebar_nav.html`, `_top_nav.html`, `profile.html`, `latest-features-nav.js`)
+
+### **(v0.250.057)**
+
+#### Bug Fixes
+
+*   **Terms of Use Redirect Hardening**
+    *   Replaced wildcard config imports in the Terms of Use route with explicit Flask imports.
+    *   Moved post-acceptance return paths from hidden form values to server-side session storage, keeping user-controlled return targets local-only.
+    *   Restricted admin-configured external decline redirects to HTTPS URLs without embedded credentials while preserving local-path redirects.
+    *   (Ref: microsoft/simplechat#504, `route_frontend_terms_of_use.py`, `functions_terms_of_use.py`, `terms_of_use.html`)
+
+### **(v0.250.056)**
+
+#### New Features
+
+*   **Optional Terms of Use Gate**
+    *   Added an admin-configurable Terms of Use prompt that can require users to accept rules of behavior, terms, or an entry notice before using SimpleChat.
+    *   Supports every-session, once-per-day, and once-per-version recurrence modes, with server-side browser/API enforcement and activity logging for accept/decline events.
+    *   (Ref: microsoft/simplechat#504, `TERMS_OF_USE.md`, `functions_terms_of_use.py`, `route_frontend_terms_of_use.py`, `terms_of_use.html`)
+
+### **(v0.250.052)**
+
+#### Bug Fixes
+
+*   **Control Center Left Nav Endpoint Fix**
+    *   Fixed an issue where admins could open Control Center while the left navigation Control Center section stayed hidden when ControlCenterAdmin enforcement was disabled.
+    *   Updated the sidebar endpoint check to use the blueprint-qualified `frontend_control_center.control_center` route and added regression coverage for the regular Admin fallback.
+    *   (Ref: microsoft/simplechat#1009, `_sidebar_nav.html`, `test_control_center_left_nav_endpoint.py`)
+
+### **(v0.250.051)**
+
+#### User Interface Enhancements
+
+*   **Cosmos Editor Independent Results Scrolling**
+    *   Cosmos editor query results now use a dedicated scroll area inside the results modal, so long result lists do not stretch the rest of the modal.
+    *   Added a smaller results-list cap for narrower screens while keeping the document editor and modal footer accessible.
+    *   (Ref: microsoft/simplechat#1006, `admin_settings.html`, `styles.css`, Cosmos DB JSON Editor)
+
+### **(v0.250.049)**
+
+#### Bug Fixes
+
+*   **Cosmos Editor Page Size Enforcement**
+    *   Empty Cosmos editor browse mode now respects the selected page size up to the 100-document cap instead of always requesting 100 items.
+    *   This keeps small page-size selections useful for compact validation and targeted inspection.
+    *   (Ref: microsoft/simplechat#1006, Cosmos DB JSON Editor, `functions_data_management.py`)
+
+#### User Interface Enhancements
+
+*   **Cosmos Editor Results Modal**
+    *   Moved Cosmos editor query results and the JSON document editor into a large scrollable modal opened by Run Query.
+    *   Kept the Data Management card focused on unlock, container selection, page size, and query setup while the modal provides compact result rows, a scrollable results pane, document refresh, Next Page, and Save JSON controls.
+    *   (Ref: microsoft/simplechat#1006, `admin_settings.html`, `admin_data_management.js`, `COSMOS_DB_JSON_EDITOR.md`)
+
+### **(v0.250.048)**
+
+#### New Features
+
+*   **Admin Cosmos DB JSON Editor**
+    *   Added an admin-only Data Management tool for selecting SimpleChat Cosmos DB containers, running paged SELECT queries, opening individual documents, editing JSON, and saving changes with ETag concurrency protection.
+    *   Empty browse mode is capped at the first 100 documents, while custom SELECT queries page beyond 100 through continuation tokens without returning oversized result sets in one request.
+    *   The interface is protected by danger acknowledgements, blocks `id` and partition key edits, and records editor actions plus save summaries in Activity Logs.
+    *   (Ref: microsoft/simplechat#1006, `COSMOS_DB_JSON_EDITOR.md`, `functions_data_management.py`, `route_backend_data_management.py`, `admin_settings.html`, `admin_data_management.js`)
+
+### **(v0.250.047)**
+
+#### Bug Fixes
+
+*   **CosmosClient Import Binding CodeQL Cleanup**
+    *   Replaced direct `CosmosClient` imports with module-qualified `azure_cosmos.CosmosClient` lookups so tests and diagnostics that patch `azure.cosmos.CosmosClient` are observed consistently.
+    *   Updated the Cosmos query plugin functional test to patch the module-qualified SDK client and avoid live Cosmos connections during app-module imports.
+    *   (Ref: `config.py`, `functions_data_management.py`, `route_backend_plugins.py`, `cosmos_query_plugin.py`, `test_cosmos_query_plugin.py`)
+
+### **(v0.250.046)**
+
+#### Bug Fixes
+
+*   **Conversation Cache Invalidation Authorization**
+    *   Route-level message mutation cache invalidation now loads personal conversations through the existing ownership authorization helper instead of directly reading a request-derived conversation id.
+    *   Updated PR-readiness functional test fixtures to match the current document access index config imports and avoid live Cosmos connections during notification regression tests.
+    *   (Ref: `route_backend_conversations.py`, `test_chat_completion_notifications.py`, DAI functional test fixtures)
+
+### **(v0.250.044)**
+
+#### New Features
+
+*   **Development Requirements Overlay**
+    *   Added a root `requirements-dev.txt` for test and development-only Python dependencies that are not already included in the base app requirements.
+    *   The overlay includes pytest, pytest Playwright integration, and Azure Playwright management support so local validation can be installed without duplicating the production dependency set.
+    *   (Ref: `requirements-dev.txt`, testing dependencies, local development setup)
+
+### **(v0.250.043)**
+
+#### New Features
+
+*   **Redis Explorer SimpleChat Resolution**
+    *   Redis Explorer now resolves `DAI_LIST_CACHE_VERSION:{hash}` keys to safe SimpleChat scope metadata when possible, including user/group/public workspace identity, workspace name/status, DAI row counts, and source/access-role summaries.
+    *   Added DAI cache hygiene counters to Redis Monitoring for payload keys, version markers, no-expiry markers, and the active version-marker TTL policy.
+    *   (Ref: `functions_redis_monitoring.py`, `functions_document_access_index.py`, `admin_settings.html`, `admin_settings.js`, `REDIS_EXPLORER.md`)
+
+#### Bug Fixes
+
+*   **DAI Redis Version Marker TTL Hygiene**
+    *   DAI Redis version marker keys now receive a bounded TTL that outlives DAI payload cache entries instead of remaining in Redis indefinitely.
+    *   Marker TTLs refresh on DAI cache reads, cache invalidations, and app-maintenance hygiene; existing no-expiry markers are repaired in place rather than deleted.
+    *   With the current 900-second DAI payload TTL, version markers are refreshed to 3,600 seconds.
+    *   (Ref: DAI Redis cache version markers, `refresh_document_access_cache_version_marker_ttls`, app maintenance)
+
+### **(v0.250.041)**
+
+#### User Interface Enhancements
+
+*   **Redis Explorer Browse-All Layout**
+    *   Improved Redis Explorer with a fixed-height modal where the key list and sanitized preview pane scroll independently, keeping pagination controls and selected preview context easier to use.
+    *   Added an explicit Browse All action, clearer Apply Filter and Previous Page/Next Page controls, page/scope status text, and guidance for app settings cache key names such as `APP_SETTINGS_CACHE`.
+    *   (Ref: `REDIS_EXPLORER.md`, `admin_settings.html`, `admin_settings.js`, Redis Explorer)
+
+### **(v0.250.040)**
+
+#### New Features
+
+*   **Redis Explorer**
+    *   Added an admin-only Redis Explorer in Admin Settings > Scale > Redis Monitoring for read-only, cursor-paginated Redis key browsing with substring filtering and page-size controls.
+    *   Admins can select a key to view sanitized metadata and bounded preview content; session, token, cookie, credential, password, secret, authorization, and CSRF-like keys return restricted previews.
+    *   JSON previews redact sensitive fields and all browser rendering uses text-safe DOM updates.
+    *   (Ref: `REDIS_EXPLORER.md`, `functions_redis_monitoring.py`, `route_backend_settings.py`, `admin_settings.html`, `admin_settings.js`)
+
+### **(v0.250.039)**
+
+#### New Features
+
+*   **Phase 9 Cosmos Performance Runbooks**
+    *   Added support guidance for rebuilding caches, rebuilding the Document Access Index, cleaning stale operational cache documents, applying expected Cosmos composite indexes, interpreting shadow validation diffs, and interpreting DAI fallback/cache metrics.
+    *   Documented when broad source fallback should remain available while DAI repair, backfill, Redis cache, and production fallback telemetry stabilize.
+    *   (Ref: `COSMOS_PERFORMANCE_OPTIMIZATION_PLAN.md`, Cosmos maintenance, DAI runbooks)
+
+#### User Interface Enhancements
+
+*   **Guarded Cosmos Index Apply Action**
+    *   Added an Admin Settings > Scale > Cosmos Maintenance action for applying missing expected Cosmos composite indexes through the existing app-maintenance endpoint.
+    *   The confirmation modal explains that updates are additive and preserve existing indexing policy paths, but can add write-index overhead and trigger asynchronous Cosmos index transformation.
+    *   (Ref: `admin_settings.html`, `admin_settings.js`, `functions_cosmos_indexing.py`, app maintenance)
+
+### **(v0.250.037)**
+
+#### Bug Fixes
+
+*   **Settings Container RU Write Suppression**
+    *   Reduced idle Cosmos DB `settings` container RU consumption by stopping routine status refreshes, no-op autoscale checks, and generic settings writes from creating unrelated cache/version churn.
+    *   Conversation cache versioning and volatile chat bootstrap/conversation payloads now require Redis; when Redis is unavailable, the app bypasses those caches and falls back to source Cosmos query behavior instead of writing cache artifacts to `settings`.
+    *   Document Access Index status now uses short-lived in-process state caching and skips shadow-validation state reads when shadow validation is disabled.
+    *   Post-deploy validation showed `settings` dropped out of the top normalized RU consumers during idle monitoring.
+    *   (Ref: `functions_settings.py`, `functions_cosmos_throughput.py`, `functions_shared_cache.py`, `functions_conversation_cache.py`, `functions_document_access_index.py`, `SETTINGS_CONTAINER_RU_WRITE_SUPPRESSION_FIX.md`)
+
+### **(v0.250.035)**
+
+#### Bug Fixes
+
+*   **Conversation Cache Mark-Read Invalidation Tuning**
+    *   Normal conversation switching now skips mark-read requests when the client has no unread assistant-response state, reducing unnecessary conversation feed cache invalidations during page reloads and navigation.
+    *   The mark-read API now only upserts the conversation and bumps the user-scoped conversation cache version when unread conversation fields actually changed; notification clearing remains intact.
+    *   (Ref: conversation cache invalidation, mark-read flow, `chat-conversations.js`, `route_backend_conversations.py`, `test_conversations_read_ownership_authorization.py`)
+
+### **(v0.250.034)**
+
+#### New Features
+
+*   **Conversation Cache Metrics Dashboard**
+    *   Added DAI-style rolling metrics for conversation list, feed, and advanced-search cache activity, including 15-minute hit rate, hits/misses, bypasses/errors, writes/invalidations, operation mix, last cache event, and last invalidation.
+    *   Exposed normalized conversation cache settings and metrics through app maintenance status without adding Cosmos reads to the conversation hot path.
+    *   Removed the Phase 4 badge from the Conversation Cache card now that the feature is part of the operational dashboard.
+    *   (Ref: conversation cache metrics, `functions_conversation_cache.py`, `functions_app_maintenance.py`, `admin_settings.html`, `admin_settings.js`)
+
+### **(v0.250.033)**
+
+#### New Features
+
+*   **Phase 4 Conversation Cache Hardening**
+    *   Hardened conversation list, feed, and advanced-search caching behind an explicit `enable_conversation_cache` setting.
+    *   Added Admin Settings > Scale controls for enabling conversation cache and adjusting the conversation cache TTL without requiring direct Cosmos settings edits.
+    *   Redis remains optional: enabled cache paths use the shared Redis-first/Cosmos-fallback helper, while disabled cache paths bypass cache reads and writes and continue using source Cosmos queries.
+    *   Conversation cache entries remain user-scoped and versioned, with collaboration-aware feed/search fingerprints based on the user's group-access state.
+    *   (Ref: conversation cache, optional Redis fallback, `functions_conversation_cache.py`, `route_backend_conversations.py`, `admin_settings.html`)
+
+#### Bug Fixes
+
+*   **Conversation Cache Invalidation Coverage**
+    *   Added cache invalidation after metadata reads normalize and persist legacy/missing `chat_type` values so cached list/search payloads do not remain stale.
+    *   Updated conversation cache and ownership authorization regressions to cover disabled-cache bypass, source fallback, and route wiring.
+    *   (Ref: conversation metadata normalization, cache invalidation, `test_cosmos_wave2b_conversation_cache.py`, `test_conversations_read_ownership_authorization.py`)
+
+### **(v0.250.032)**
+
+#### New Features
+
+*   **Phase 3 Low-Churn Cache Hardening**
+    *   Hardened the shared low-churn cache foundation for custom pages/navigation and chat bootstrap data.
+    *   Added safe shared-cache diagnostics for hit, miss, write, delete, and version-bump activity using hashed cache-key context, and exposed those metrics through app maintenance status.
+    *   Expanded chat bootstrap cache invalidation coverage across group and public workspace metadata, membership, role, ownership, status, model endpoint, Control Center, and SimpleChat operation mutations.
+    *   (Ref: shared cache metrics, chat bootstrap cache, custom pages cache, `functions_shared_cache.py`, `functions_app_maintenance.py`)
+
+#### Bug Fixes
+
+*   **Low-Churn Cache Invalidation Coverage**
+    *   Fixed stale chat bootstrap labels after group rename/update paths by invalidating the global chat bootstrap cache after successful group metadata writes.
+    *   Custom pages/navigation cache now invalidates after app settings writes so menu and feature-setting changes do not wait for TTL expiry.
+    *   (Ref: group metadata updates, custom page settings invalidation, `route_backend_groups.py`, `functions_settings.py`)
+
+*   **Public Workspace Document Manager Approval**
+    *   Fixed document-manager request approval so the manager addition and pending-request cleanup are persisted in a single workspace update instead of risking a stale overwrite.
+    *   The approval and rejection flows now invalidate chat bootstrap cache state for public workspace visibility updates.
+    *   (Ref: public workspace document managers, `functions_public_workspaces.py`, `test_cosmos_wave2a_chat_bootstrap_cache.py`)
+
+### **(v0.250.030)**
+
+#### New Features
+
+*   **Redis Document Access Index Cache**
+    *   Added Redis read-through caching for DAI-backed document list, tag list, and legacy-count reads with scope-version invalidation and bounded TTL controls.
+    *   Admin Settings now shows Redis DAI cache health, hit/miss/bypass/error metrics, invalidations, and the latest cache event alongside DAI read and maintenance status.
+    *   (Ref: DAI Redis cache, `functions_document_access_index.py`, `admin_settings.html`, `admin_settings.js`)
+
+#### Bug Fixes
+
+*   **DAI Cache Invalidation and Repair Safety**
+    *   Hardened DAI cache invalidation so access changes fail closed when Redis invalidation cannot be proven safe, including revoked-share, delete, partial projection failure, and untracked repair-state scenarios.
+    *   Preserved historical revoked scopes through repair and blocked DAI/cache reads while repair safety is unknown.
+    *   (Ref: DAI cache invalidation, projection repair backlog, `test_cosmos_wave6_document_access_cache.py`)
+
+*   **DAI List Parity Improvements**
+    *   DAI document-list reads now include pending shared documents needed by approval UI, preserve generated-artifact requester identity for public workspace actions, collapse legacy revisions like source reads, and match source exact/case-sensitive classification and array filters.
+    *   DAI tag-list reads now project file names for legacy rows so distinct legacy documents without revision-family metadata do not collapse into a single tag-count identity.
+    *   External public DAI lists now use unfiltered DAI legacy counts so legacy-update prompts match source-backed behavior.
+    *   (Ref: DAI list parity, public workspace documents, external public documents)
+
+*   **Maintenance Failure Visibility**
+    *   Manual app maintenance runs now surface failed step status instead of reporting full success, and Admin Settings keeps detailed DAI status visible when a run completes with errors.
+    *   The DAI maintenance status now reports automatic maintenance only when the app-maintenance scheduler gates are enabled and startup maintenance can actually run.
+    *   Optional shadow-validation source queries now fail open after successful DAI reads so diagnostics cannot break served list responses.
+    *   (Ref: app maintenance, DAI shadow validation, `functions_app_maintenance.py`, document list routes)
+
+### **(v0.250.015)**
+
+#### Bug Fixes
+
+*   **Anonymous Notification Polling 401 Log Reduction**
+    *   Stopped loading the notification polling script for unauthenticated sessions, preventing the login screen from repeatedly calling `/api/notifications/count` after idle timeout or before sign-in.
+    *   This reduces expected 401 noise in App Service log streams and Application Insights while preserving notification badge polling for authenticated users.
+    *   (Ref: notification polling, idle timeout, `base.html`, `notifications.js`, `test_notification_polling_redirect_guard.py`)
+
+### **(v0.250.010)**
+
+#### New Features
+
+*   **Audio File Runtime Support**
+    *   Added default-on FFmpeg and FFprobe packaging for container builds so SimpleChat can transcode a much broader set of audio files before Azure Speech transcription.
+    *   Expanded recognized audio upload extensions to include common containers and codecs such as 3GA, AAC, AC3, AIFF, AMR, AU, CAF, FLAC, M4A/M4B/M4R, Matroska audio, MP2/MP3/MPA, OGG/Opus/Speex, WAV, WebM audio, WMA, and WavPack.
+    *   Added Admin Settings runtime guidance showing whether FFmpeg broad transcoding is available in the current app runtime and which audio upload extensions are recognized.
+    *   Added `SIMPLECHAT_INSTALL_FFMPEG` / `INSTALL_AUDIO_FFMPEG` build controls for deployments that need to opt out of bundling FFmpeg.
+    *   (Ref: audio uploads, FFmpeg runtime, `Dockerfile`, `functions_documents.py`, `admin_settings.html`, `AUDIO_FILE_RUNTIME_SUPPORT.md`)
+
+#### Bug Fixes
+
+*   **iPhone M4A Upload FFmpeg Fallback**
+    *   Fixed supported iPhone `.m4a` audio uploads failing before transcription when the app runtime could not resolve a local `ffmpeg` executable.
+    *   Public Azure environments can now fall back to Azure Speech fast transcription using the original supported source audio file and content type when local segmentation fails because FFmpeg is missing.
+    *   FFmpeg segmentation now targets the first audio stream and emits mono 16 kHz PCM WAV chunks for Speech when FFmpeg is available.
+    *   (Ref: microsoft/simplechat#974, `.m4a` upload processing, Azure Speech fast transcription, `IPHONE_M4A_FFMPEG_FALLBACK_FIX.md`)
+
+### **(v0.250.008)**
+
+#### Bug Fixes
+
+*   **Multi-Endpoint Vision Test Connection**
+    *   Fixed the Admin Settings Vision Model test button so multi-endpoint models are tested against their configured endpoint instead of always using the legacy GPT endpoint.
+    *   Vision model options now preserve endpoint and model metadata for the test call while keeping the saved deployment-name value compatible with existing settings.
+    *   Removed duplicate backend Vision test connection logic and preserved GPT-5/o-series token handling for Vision test requests.
+    *   (Ref: Vision Model test, multi-endpoint model endpoints, `admin_settings.js`, `admin_settings.html`, `route_backend_settings.py`, `MULTI_ENDPOINT_VISION_TEST_CONNECTION_FIX.md`)
+
+### **(v0.250.007)**
+
+*   **Malicious PR Security Review Workflow**
+    *   Added a static malicious-change review workflow for pull requests into `Development`, with manual dispatch options for custom review ranges and full-file scans.
+    *   Added a reusable security review prompt and focused functional coverage for dependency pinning policy, hidden Unicode detection, suspicious egress markers, and workflow wiring.
+    *   (Ref: malicious PR security review, `.github/workflows/malicious-pr-security-review.yml`, `scripts/check_malicious_pr_security_review.py`)
+
+### **(v0.250.006)**
+
+#### New Features
+
+*   **Chat Scroll Behavior and 508 Usability**
+    *   Updated chat message rendering so the viewport no longer jumps to the very bottom of long assistant responses when they finish loading while the user is reading near the top.
+    *   Auto-scroll now only occurs when the user is already near the bottom of the conversation, and a floating "scroll to latest message" button appears when new content arrives below the current view.
+    *   This aligns the chat experience more closely with other AI chat tools and reduces unexpected motion for 508 testers and keyboard users.
+    *   (Ref: `chats.html`, `chat-global.js`, `chat-messages.js`)
+
+### **(v0.250.005)**
+
+#### Bug Fixes
+
+*   **Admin Settings Save 500 Fix**
+    *   Fixed an issue where saving Admin Settings returned an HTTP 500 error even though configuration changes were successfully persisted.
+    *   The `/admin/settings` POST handler now uses Flask's `current_app` when regenerating custom logo and favicon files after a successful settings update, eliminating the `NameError: name 'app' is not defined` in the post-save path.
+    *   (Ref: admin settings save, logo/favicon regeneration, `route_frontend_admin_settings.py`, `ADMIN_SETTINGS_SAVE_500_FIX.md`)
+
+### **(v0.250.004)**
+
+#### Bug Fixes
+
+*   **Model Endpoint Management Cloud Normalization**
+    *   Fixed model endpoint saves so managed identity and other non-editable cloud paths derive `management_cloud` from `AZURE_ENVIRONMENT` instead of persisting the hidden UI default of `public`.
+    *   Added custom-cloud handling for inherited model endpoint authority and Foundry scope defaults while preserving explicit Foundry service-principal cross-cloud selections.
+    *   (Ref: model endpoint authentication, `normalize_model_endpoints`, `AZURE_ENVIRONMENT`, `test_model_endpoint_management_cloud_environment.py`)
+
+### **(v0.250.003)**
+
+#### Bug Fixes
+
+*   **Admin Settings Update Banner Version Comparison**
+    *   Fixed stale cached update-check settings so Admin Settings no longer displays an older release such as `v0.250.001` as available when the running app version is newer.
+    *   The render path now recomputes `update_available` from the cached latest version and the current app version before showing the banner.
+    *   (Ref: Admin Settings update banner, `compare_versions`, `test_admin_update_banner_version_comparison.py`)
+
 ### **(v0.250.001)**
 
 #### New Features
+
+*   **Azure Billing Dynamic Charts**
+    *   Updated the Azure Billing action chart path to return SimpleChat `simplechart` Markdown instead of server-rendered matplotlib PNG image payloads.
+    *   Preserved existing `plot_chart` / `plot_custom_chart` inputs while returning `chart_payload`, `chart_markdown`, summary, and renderer metadata for interactive chat display.
+    *   Added regression coverage for stacked and pie Azure Billing chart output.
+    *   (Ref: Azure Billing action, dynamic inline charts, `chart_markdown`, `test_azure_billing_dynamic_charts.py`)
+
+*   **Blueprint Route Security Policies**
+    *   Migrated SimpleChat route registration to Blueprint-backed route groups with explicit `before_request` authentication policies.
+    *   Added reusable Blueprint auth helpers that compose the existing login, user, admin, and external bearer-token decorators.
+    *   Added route policy tests covering Blueprint registration, unauthenticated access expectations, public/external route exceptions, and route-test completeness.
+    *   Updated route-authentication prompts, Python route instructions, PR-prep guidance, and CI route validation workflow so future route work must update and run the route policy tests.
+    *   Preserved Custom Pages as login-required with page metadata role checks layered inside the dispatcher.
+    *   (Ref: Blueprint route policies, route auth guardrails, `functional_tests/route_tests/`, `functions_authentication.py`, `app.py`)
 
 *   **Azure OpenAI Identity Setup Guidance**
     *   Added admin setup guidance explaining which identity is used for legacy Azure OpenAI model discovery and which identity or key is used for runtime GPT, embedding, and image generation calls.
@@ -63,6 +528,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Added a first-class Snowflake action type for querying Snowflake data warehouses through the Snowflake Python Connector, focused on read-only data retrieval for agent analysis, charts, generated documents, and exports.
     *   Added tailored action configuration for account, warehouse, default database/schema, role, password/key-pair/OAuth authentication, reusable workspace identities, and query execution limits.
     *   Added read-only SQL enforcement, automatic result limiting, structured column/row responses, Semantic Kernel loader integration, Key Vault secret handling, governance labels, schemas, feature documentation, and functional coverage.
+    *   Uses `snowflake-connector-python[pandas]==3.18.0` so the local Python 3.13 development environment can install from wheels without requiring native C++ build tooling.
     *   (Ref: `SnowflakePlugin`, `SnowflakePluginFactory`, Snowflake action modal, `SNOWFLAKE_ACTION.md`)
 
 *   **Workflow Per-Document Analysis and Generated Office Exports**

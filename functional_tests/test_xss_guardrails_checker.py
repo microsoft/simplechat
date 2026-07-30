@@ -2,7 +2,7 @@
 # test_xss_guardrails_checker.py
 """
 Functional test for XSS PR guardrail checker.
-Version: 0.242.072
+Version: 0.250.004
 Implemented in: 0.241.021
 
 This test ensures the changed-file XSS checker flags the repo's target sink
@@ -128,7 +128,7 @@ def test_checker_assets_and_version_are_wired_into_repo() -> None:
     assert INSTRUCTION_FILE.exists(), f'Expected instruction file at {INSTRUCTION_FILE}'
     assert FULL_AUDIT_PROMPT_FILE.exists(), f'Expected full-audit prompt at {FULL_AUDIT_PROMPT_FILE}'
     assert FEATURE_DOC.exists(), f'Expected feature document at {FEATURE_DOC}'
-    assert read_config_version() == '0.242.072'
+    assert read_config_version() == '0.250.004'
 
     workflow_source = read_text(WORKFLOW_FILE)
     assert 'scripts/check_xss_sinks.py' in workflow_source

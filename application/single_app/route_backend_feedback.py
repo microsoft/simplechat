@@ -211,9 +211,9 @@ def _build_feedback_export_response(items, filename_prefix, include_user_id=Fals
     )
     return response
 
-def register_route_backend_feedback(app):
+def register_route_backend_feedback(bp):
 
-    @app.route("/feedback/submit", methods=["POST"])
+    @bp.route("/feedback/submit", methods=["POST"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -345,7 +345,7 @@ def register_route_backend_feedback(app):
             return jsonify({"error": "Failed to save feedback"}), 500
     
 
-    @app.route("/feedback/review", methods=["GET"])
+    @bp.route("/feedback/review", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @feedback_admin_required
@@ -380,7 +380,7 @@ def register_route_backend_feedback(app):
              traceback.print_exc()
              return jsonify({"error": f"Failed to retrieve feedback: {str(e)}"}), 500
 
-    @app.route("/feedback/review/stats", methods=["GET"])
+    @bp.route("/feedback/review/stats", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @feedback_admin_required
@@ -397,7 +397,7 @@ def register_route_backend_feedback(app):
         except Exception as e:
             return jsonify({"error": f"Failed to retrieve feedback stats: {str(e)}"}), 500
 
-    @app.route("/feedback/review/export", methods=["GET"])
+    @bp.route("/feedback/review/export", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @feedback_admin_required
@@ -414,7 +414,7 @@ def register_route_backend_feedback(app):
         except Exception as e:
             return jsonify({"error": f"Failed to export feedback: {str(e)}"}), 500
 
-    @app.route("/feedback/review/<feedbackId>", methods=["GET"])
+    @bp.route("/feedback/review/<feedbackId>", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @feedback_admin_required
@@ -450,7 +450,7 @@ def register_route_backend_feedback(app):
              traceback.print_exc()
              return jsonify({"error": f"Failed to retrieve feedback item: {str(e)}"}), 500
         
-    @app.route("/feedback/review/<feedbackId>", methods=["PATCH"])
+    @bp.route("/feedback/review/<feedbackId>", methods=["PATCH"])
     @swagger_route(security=get_auth_security())
     @login_required
     @feedback_admin_required
@@ -495,7 +495,7 @@ def register_route_backend_feedback(app):
              return jsonify({"error": "Failed to save changes"}), 500
 
 
-    @app.route("/feedback/retest/<feedbackId>", methods=["POST"])
+    @bp.route("/feedback/retest/<feedbackId>", methods=["POST"])
     @swagger_route(security=get_auth_security())
     @login_required
     @feedback_admin_required
@@ -516,7 +516,7 @@ def register_route_backend_feedback(app):
         except Exception as e:
             return jsonify({"error": str(e)}), 500
         
-    @app.route("/feedback/my", methods=["GET"])
+    @bp.route("/feedback/my", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -556,7 +556,7 @@ def register_route_backend_feedback(app):
             print(f"Error in feedback_my: {str(e)}")
             return jsonify({"error": f"An error occurred while fetching your feedback: {str(e)}"}), 500
 
-    @app.route("/feedback/my/stats", methods=["GET"])
+    @bp.route("/feedback/my/stats", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -578,7 +578,7 @@ def register_route_backend_feedback(app):
         except Exception as e:
             return jsonify({"error": f"Failed to retrieve feedback stats: {str(e)}"}), 500
 
-    @app.route("/feedback/my/export", methods=["GET"])
+    @bp.route("/feedback/my/export", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required

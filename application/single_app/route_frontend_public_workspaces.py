@@ -7,16 +7,16 @@ from functions_settings import *
 from functions_file_sync import FILE_SYNC_MANAGER_ROLES, assert_public_workspace_role, is_file_sync_enabled_for_public_workspace
 from swagger_wrapper import swagger_route, get_auth_security
 
-def register_route_frontend_public_workspaces(app):
-    @app.route("/my_public_workspaces", methods=["GET"])
+def register_route_frontend_public_workspaces(bp):
+    @bp.route("/my_public_workspaces", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_public_workspaces")
     def my_public_workspaces():
-        return redirect(url_for('profile', tab='public-workspaces'))
+        return redirect(url_for('frontend_profile.profile', tab='public-workspaces'))
 
-    @app.route("/public_workspaces/<workspace_id>", methods=["GET"])
+    @bp.route("/public_workspaces/<workspace_id>", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -39,7 +39,7 @@ def register_route_frontend_public_workspaces(app):
             file_sync_enabled=file_sync_enabled
         )
     
-    @app.route("/public_workspaces", methods=["GET"])
+    @bp.route("/public_workspaces", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -58,12 +58,12 @@ def register_route_frontend_public_workspaces(app):
         enable_video_file_support = settings.get('enable_video_file_support', False)
         enable_audio_file_support = settings.get('enable_audio_file_support', False)
 
-        # Get allowed extensions from central function and build allowed extensions string
-        allowed_extensions = sorted(get_allowed_extensions(
-            enable_video=enable_video_file_support in [True, 'True', 'true'],
-            enable_audio=enable_audio_file_support in [True, 'True', 'true']
-        ))
-        allowed_extensions_str = "Allowed: " + ", ".join(allowed_extensions)
+        enable_video_uploads = enable_video_file_support in [True, 'True', 'true']
+        enable_audio_uploads = enable_audio_file_support in [True, 'True', 'true']
+        allowed_extension_categories = get_allowed_extension_categories(
+            enable_video=enable_video_uploads,
+            enable_audio=enable_audio_uploads
+        )
         
         return render_template(
             'public_workspaces.html',
@@ -73,10 +73,10 @@ def register_route_frontend_public_workspaces(app):
             enable_extract_meta_data=enable_extract_meta_data,
             enable_video_file_support=enable_video_file_support,
             enable_audio_file_support=enable_audio_file_support,
-            allowed_extensions=allowed_extensions_str
+            allowed_extension_categories=allowed_extension_categories
         )
 
-    @app.route("/public_directory", methods=["GET"])
+    @bp.route("/public_directory", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -95,7 +95,7 @@ def register_route_frontend_public_workspaces(app):
             app_settings=public_settings
         )
 
-    @app.route('/set_active_public_workspace', methods=['POST'])
+    @bp.route('/set_active_public_workspace', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -111,4 +111,4 @@ def register_route_frontend_public_workspaces(app):
         except LookupError:
             return "Workspace not found", 404
 
-        return redirect(url_for('public_workspaces'))
+        return redirect(url_for('frontend_public_workspaces.public_workspaces'))

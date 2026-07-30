@@ -297,8 +297,20 @@
                 </div>
             </div>
 
-            <div id="chatbox" class="flex-grow-1 p-3" style="overflow-y: auto;">
-                <!-- Chat messages will be dynamically loaded here -->
+            <div id="chat-messages-container" class="position-relative flex-grow-1" style="overflow-y: auto;">
+                <div id="chatbox" class="flex-grow-1 p-3">
+                    <!-- Chat messages will be dynamically loaded here -->
+                </div>
+                <button
+                    id="scroll-to-bottom-btn"
+                    type="button"
+                    class="btn btn-primary rounded-circle position-sticky d-none"
+                    style="margin-left: auto; bottom: 1rem; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center;"
+                    aria-label="Scroll to latest message"
+                    title="Scroll to latest message"
+                >
+                    <i class="bi bi-arrow-down"></i>
+                </button>
             </div>
 
             <div class="p-3 border-top flex-shrink-0">

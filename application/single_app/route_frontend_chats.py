@@ -35,6 +35,11 @@ from functions_prompts import list_all_prompts_for_scope
 from functions_public_workspaces import find_public_workspace_by_id, get_user_visible_public_workspace_ids_from_settings
 from functions_simplechat_operations import upload_chat_image_bytes_for_user
 from functions_appinsights import log_event
+from functions_chat_bootstrap_cache import (
+    build_chat_bootstrap_cache_key,
+    get_cached_chat_bootstrap_payload,
+    set_cached_chat_bootstrap_payload,
+)
 from swagger_wrapper import swagger_route, get_auth_security
 from functions_debug import debug_print
 from utils_cache import invalidate_group_search_cache, invalidate_personal_search_cache
@@ -647,15 +652,25 @@ def _build_chat_prompt_catalog(*, user_id, settings, user_groups_raw, user_visib
 
     return catalog
 
-def register_route_frontend_chats(app):
-    @app.route('/chats', methods=['GET'])
+
+def _is_valid_chat_bootstrap_payload(payload):
+    return (
+        isinstance(payload, dict)
+        and isinstance(payload.get('chat_agent_options'), list)
+        and isinstance(payload.get('chat_model_options'), list)
+        and isinstance(payload.get('chat_prompt_options'), list)
+    )
+
+
+def register_route_frontend_chats(bp):
+    @bp.route('/chats', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def chats():
         user_id = get_current_user_id()
         if not user_id:
-            return redirect(url_for('login'))
+            return redirect(url_for('frontend_authentication.login'))
 
         settings = get_settings()
         user_settings = get_user_settings(user_id)
@@ -728,7 +743,7 @@ def register_route_frontend_chats(app):
                     })
 
         if not user_id:
-            return redirect(url_for('login'))
+            return redirect(url_for('frontend_authentication.login'))
         
         # Get user display name from user settings
         user_display_name = user_settings.get('display_name', '')
@@ -754,50 +769,83 @@ def register_route_frontend_chats(app):
             logger.warning(f"Failed to load visible public workspaces for chats page: {e}")
 
         chat_agent_options = []
-        try:
-            all_chat_agent_options = build_accessible_agent_catalog(
-                user_id,
-                settings=settings,
-                user_groups=user_groups_raw,
-            )
-            chat_agent_options = [
-                agent for agent in all_chat_agent_options
-                if _is_chat_agent_allowed_by_governance(
-                    user_id,
-                    agent,
-                    str(agent.get('scope_type') or '').strip().lower() or 'personal',
-                )
-            ]
-        except Exception as e:
-            logger.warning(f"Failed to load chat agent options: {e}")
-
         chat_model_options = []
+        chat_prompt_options = []
+        bootstrap_cache_key = None
+        cached_bootstrap_payload = None
         try:
-            chat_model_options = _build_chat_model_catalog(
-                user_id=user_id,
+            bootstrap_cache_key = build_chat_bootstrap_cache_key(
+                user_id,
                 settings=settings,
                 user_settings_dict=user_settings_dict,
                 user_groups_raw=user_groups_raw,
+                user_visible_public_workspaces=user_visible_public_workspaces,
             )
+            cached_bootstrap_payload = get_cached_chat_bootstrap_payload(bootstrap_cache_key)
         except Exception as e:
-            logger.warning(f"Failed to load chat model options: {e}")
+            logger.warning(f"Failed to load chat bootstrap cache: {e}")
+
+        if _is_valid_chat_bootstrap_payload(cached_bootstrap_payload):
+            chat_agent_options = cached_bootstrap_payload.get('chat_agent_options') or []
+            chat_model_options = cached_bootstrap_payload.get('chat_model_options') or []
+            chat_prompt_options = cached_bootstrap_payload.get('chat_prompt_options') or []
+        else:
+            try:
+                all_chat_agent_options = build_accessible_agent_catalog(
+                    user_id,
+                    settings=settings,
+                    user_groups=user_groups_raw,
+                )
+                chat_agent_options = [
+                    agent for agent in all_chat_agent_options
+                    if _is_chat_agent_allowed_by_governance(
+                        user_id,
+                        agent,
+                        str(agent.get('scope_type') or '').strip().lower() or 'personal',
+                    )
+                ]
+            except Exception as e:
+                logger.warning(f"Failed to load chat agent options: {e}")
+
+            try:
+                chat_model_options = _build_chat_model_catalog(
+                    user_id=user_id,
+                    settings=settings,
+                    user_settings_dict=user_settings_dict,
+                    user_groups_raw=user_groups_raw,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to load chat model options: {e}")
+
+            try:
+                chat_prompt_options = _build_chat_prompt_catalog(
+                    user_id=user_id,
+                    settings=settings,
+                    user_groups_raw=user_groups_raw,
+                    user_visible_public_workspaces=user_visible_public_workspaces,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to load chat prompt options: {e}")
+
+            if bootstrap_cache_key:
+                try:
+                    set_cached_chat_bootstrap_payload(
+                        bootstrap_cache_key,
+                        {
+                            'chat_agent_options': chat_agent_options,
+                            'chat_model_options': chat_model_options,
+                            'chat_prompt_options': chat_prompt_options,
+                        },
+                        ttl_seconds=int(settings.get('chat_bootstrap_cache_ttl_seconds') or 300),
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to store chat bootstrap cache: {e}")
 
         initial_chat_model_selection = _build_initial_chat_model_selection(
             chat_model_options=chat_model_options,
             preferred_model_id=user_settings_dict.get('preferredModelId'),
             preferred_model_deployment=user_settings_dict.get('preferredModelDeployment'),
         )
-
-        chat_prompt_options = []
-        try:
-            chat_prompt_options = _build_chat_prompt_catalog(
-                user_id=user_id,
-                settings=settings,
-                user_groups_raw=user_groups_raw,
-                user_visible_public_workspaces=user_visible_public_workspaces,
-            )
-        except Exception as e:
-            logger.warning(f"Failed to load chat prompt options: {e}")
 
         return render_template(
             'chats.html',
@@ -822,14 +870,14 @@ def register_route_frontend_chats(app):
             initial_chat_model_selection=initial_chat_model_selection,
         )
 
-    @app.route('/workflow-activity', methods=['GET'])
+    @bp.route('/workflow-activity', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def workflow_activity():
         user_id = get_current_user_id()
         if not user_id:
-            return redirect(url_for('login'))
+            return redirect(url_for('frontend_authentication.login'))
 
         settings = get_settings()
         try:
@@ -851,7 +899,7 @@ def register_route_frontend_chats(app):
             settings=public_settings,
         )
     
-    @app.route('/upload', methods=['POST'])
+    @bp.route('/upload', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1552,7 +1600,7 @@ def register_route_frontend_chats(app):
         }), 200
     
     # THIS IS THE OLD ROUTE, KEEPING IT FOR REFERENCE, WILL DELETE LATER
-    @app.route("/view_pdf", methods=["GET"])
+    @bp.route("/view_pdf", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1707,7 +1755,7 @@ def register_route_frontend_chats(app):
                 os.remove(temp_pdf_path)
 
     # --- Updated route ---
-    @app.route('/view_document')
+    @bp.route('/view_document')
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required

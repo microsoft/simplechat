@@ -19,6 +19,7 @@ let externalLinksMenuName = window.externalLinksMenuName || 'External Links';
 let agentsPagePromotedPopularAgents = Array.isArray(window.agentsPagePromotedPopularAgents)
     ? window.agentsPagePromotedPopularAgents
     : [];
+let enableSemanticKernel = Boolean(window.enableSemanticKernel);
 let releaseNotificationsRegistration = window.releaseNotificationsRegistration || {
     registered: false,
     name: '',
@@ -36,6 +37,16 @@ let currentCosmosContainers = [];
 let currentCosmosMetricsWindowMinutes = 0;
 let currentCosmosStatusLoaded = false;
 let currentCosmosContainerSort = { field: 'container_name', direction: 'asc' };
+let documentAccessIndexStatusPollId = null;
+let redisExplorerState = {
+    cursor: '0',
+    nextCursor: '0',
+    cursorHistory: [],
+    filter: '',
+    pageSize: 25,
+    loaded: false,
+    selectedKey: ''
+};
 
 const COSMOS_CONTAINER_SORT_FIELDS = new Set([
     'container_name',
@@ -47,6 +58,7 @@ const COSMOS_CONTAINER_SORT_FIELDS = new Set([
 const COSMOS_CONTAINER_TEXT_SORT_FIELDS = new Set(['container_name', 'policy']);
 const COSMOS_THROUGHPUT_SIMPLECHAT_MAX_RU = 10000;
 const COSMOS_THROUGHPUT_PORTAL_MANAGED_MESSAGE = 'Throughput above 10,000 RU/s is monitored only in SimpleChat. Use the Azure portal to change capacity; capacity changes above this level can take 4 to 6 hours.';
+const DOCUMENT_ACCESS_INDEX_STATUS_POLL_INTERVAL_MS = 7500;
 const GROUP_WORKFLOW_ASSIGNMENT_PARSE_DEPTH_LIMIT = 5;
 
 const enableClassificationToggle = document.getElementById('enable_document_classification');
@@ -389,6 +401,19 @@ async function loadPromotedPopularAvailableAgents() {
     if (!promotedPopularAgentsSelect) {
         return;
     }
+    if (!enableSemanticKernel) {
+        agentsPagePromotedAvailableAgents = [];
+        setPromotedPopularLoadError('');
+        promotedPopularAgentsSelect.textContent = '';
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = 'Enable Agents to load available agents';
+        promotedPopularAgentsSelect.appendChild(option);
+        if (promotedPopularAgentsAddButton) {
+            promotedPopularAgentsAddButton.disabled = true;
+        }
+        return;
+    }
     try {
         const response = await fetch('/api/agents/catalog?include_usage=true');
         const payload = await response.json().catch(() => ({}));
@@ -479,6 +504,106 @@ function formatNumber(value) {
         return 'Not available';
     }
     return numericValue.toLocaleString();
+}
+
+function formatRedisStatus(value) {
+    const normalizedValue = String(value || '').trim();
+    if (!normalizedValue) {
+        return 'Not loaded';
+    }
+
+    return normalizedValue
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, character => character.toUpperCase());
+}
+
+function getRedisMonitoringStatusVariant(value) {
+    const normalizedValue = String(value || '').trim().toLowerCase();
+    if (normalizedValue === 'healthy' || normalizedValue === 'active') {
+        return 'success';
+    }
+    if (['degraded', 'not_configured', 'unavailable'].includes(normalizedValue)) {
+        return 'warning';
+    }
+    if (normalizedValue === 'error') {
+        return 'danger';
+    }
+    return 'secondary';
+}
+
+function setRedisMonitoringMessage(message, variant = 'info') {
+    const messageElement = document.getElementById('redis-monitoring-message');
+    if (!messageElement) {
+        return;
+    }
+
+    messageElement.textContent = message || '';
+    messageElement.className = `alert alert-${variant} small mb-3`;
+    messageElement.classList.toggle('d-none', !message);
+}
+
+function setRedisMonitoringBadge(elementId, value, variant = 'secondary') {
+    const badge = document.getElementById(elementId);
+    if (!badge) {
+        return;
+    }
+
+    const safeVariants = new Set(['primary', 'secondary', 'success', 'danger', 'warning', 'info']);
+    badge.textContent = value || 'Not loaded';
+    badge.className = `badge text-bg-${safeVariants.has(variant) ? variant : 'secondary'}`;
+}
+
+function formatRedisMetric(value, unit) {
+    if (value === null || value === undefined || value === '') {
+        return 'Not available';
+    }
+    const numericValue = Number(value);
+    if (Number.isNaN(numericValue)) {
+        return 'Not available';
+    }
+    return `${numericValue.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${unit}`;
+}
+
+function formatRedisPercent(value) {
+    if (value === null || value === undefined || value === '') {
+        return 'Not available';
+    }
+    const numericValue = Number(value);
+    if (Number.isNaN(numericValue)) {
+        return 'Not available';
+    }
+    return `${numericValue.toLocaleString(undefined, { maximumFractionDigits: 2 })}%`;
+}
+
+function formatRedisMemoryUsage(memory) {
+    const usedMemory = memory?.used_memory_human || formatRedisMetric(memory?.used_memory, 'bytes');
+    const maxMemory = memory?.maxmemory_human || formatRedisMetric(memory?.maxmemory, 'bytes');
+    const usagePercent = formatRedisPercent(memory?.usage_percent);
+
+    if (usedMemory === 'Not available') {
+        return 'Not available';
+    }
+    if (maxMemory === 'Not available' || Number(memory?.maxmemory || 0) === 0) {
+        return `${usedMemory} / no maxmemory limit`;
+    }
+    if (usagePercent === 'Not available') {
+        return `${usedMemory} / ${maxMemory}`;
+    }
+    return `${usedMemory} / ${maxMemory} (${usagePercent})`;
+}
+
+function formatRedisRuntime(value) {
+    return value ? 'Active' : 'Inactive';
+}
+
+function setRedisTestResult(resultDiv, message, variant = 'muted') {
+    if (!resultDiv) {
+        return;
+    }
+
+    const safeVariants = new Set(['success', 'danger', 'muted', 'info']);
+    resultDiv.textContent = message || '';
+    resultDiv.className = `mt-2 text-${safeVariants.has(variant) ? variant : 'muted'}`;
 }
 
 function formatRu(value) {
@@ -1550,6 +1675,1293 @@ async function convertCosmosThroughputToAutoscale(containerName = '', triggerBut
             setButtonBusy(triggerButton, false);
         }
     }
+}
+
+function renderRedisMonitoringStatus(statusPayload) {
+    const configuration = statusPayload?.configuration || {};
+    const runtime = statusPayload?.runtime || {};
+    const health = statusPayload?.health || {};
+    const memory = statusPayload?.memory || {};
+    const clients = statusPayload?.clients || {};
+    const stats = statusPayload?.stats || {};
+    const keyspace = statusPayload?.keyspace || {};
+    const server = statusPayload?.server || {};
+    const daiCache = statusPayload?.dai_cache || {};
+
+    let configurationText = 'Disabled';
+    let configurationVariant = 'secondary';
+    if (configuration.enabled && configuration.configured) {
+        configurationText = 'Enabled';
+        configurationVariant = 'success';
+    } else if (configuration.enabled) {
+        configurationText = 'Needs host';
+        configurationVariant = 'warning';
+    }
+
+    setRedisMonitoringBadge('redis-monitoring-config-status', configurationText, configurationVariant);
+    setRedisMonitoringBadge(
+        'redis-monitoring-health-status',
+        formatRedisStatus(health.status),
+        getRedisMonitoringStatusVariant(health.status)
+    );
+    setRedisMonitoringBadge(
+        'redis-monitoring-app-cache-status',
+        formatRedisRuntime(runtime.app_cache_using_redis),
+        runtime.app_cache_using_redis ? 'success' : 'secondary'
+    );
+    setRedisMonitoringBadge(
+        'redis-monitoring-session-status',
+        formatRedisRuntime(runtime.session_using_redis),
+        runtime.session_using_redis ? 'success' : 'secondary'
+    );
+
+    setElementText('redis-monitoring-ping-latency', formatRedisMetric(health.ping_latency_ms, 'ms'));
+    setElementText('redis-monitoring-memory-usage', formatRedisMemoryUsage(memory));
+    setElementText(
+        'redis-monitoring-memory-policy',
+        memory.maxmemory_policy ? `Policy: ${memory.maxmemory_policy}` : 'Policy: Not available'
+    );
+    setElementText('redis-monitoring-connected-clients', formatNumber(clients.connected_clients));
+    setElementText('redis-monitoring-ops-per-sec', formatNumber(stats.instantaneous_ops_per_sec));
+    setElementText('redis-monitoring-hit-rate', formatRedisPercent(stats.keyspace_hit_rate_percent));
+    setElementText('redis-monitoring-key-count', formatNumber(keyspace.total_keys));
+    setElementText('redis-monitoring-dai-version-markers', formatNumber(daiCache.version_marker_count));
+    setElementText(
+        'redis-monitoring-dai-version-marker-expiry',
+        `${formatNumber(daiCache.version_marker_no_expiry_count)} no-expiry marker(s)`
+    );
+    setElementText('redis-monitoring-dai-payload-keys', formatNumber(daiCache.payload_key_count));
+    setElementText(
+        'redis-monitoring-dai-version-ttl-policy',
+        `Version TTL: ${formatRedisExplorerTtl(daiCache.version_marker_ttl_seconds)}`
+    );
+    setElementText('redis-monitoring-expired-keys', formatNumber(stats.expired_keys));
+    setElementText('redis-monitoring-evicted-keys', formatNumber(stats.evicted_keys));
+    setElementText('redis-monitoring-fragmentation', formatNumber(memory.mem_fragmentation_ratio));
+    setElementText('redis-monitoring-errors', formatNumber(stats.total_error_replies));
+    setElementText('redis-monitoring-rejected-connections', formatNumber(stats.rejected_connections));
+    setElementText('redis-monitoring-version', server.redis_version || 'Not available');
+    setElementText('redis-monitoring-source', formatRedisStatus(runtime.monitoring_source));
+    setElementText('redis-monitoring-checked-at', statusPayload?.checked_at || 'Not available');
+    setElementText('redis-monitoring-last-error', health.last_error || 'None');
+}
+
+async function loadRedisMonitoringStatus(event = null, options = {}) {
+    const showLoading = options.showLoading !== false;
+    const triggerButton = event?.currentTarget || (showLoading ? document.getElementById('redis-monitoring-refresh-btn') : null);
+    if (triggerButton) {
+        setButtonBusy(triggerButton, true, 'Loading...');
+    }
+    if (showLoading) {
+        setRedisMonitoringMessage('Loading Redis monitoring status...', 'info');
+    }
+
+    try {
+        const response = await fetch('/api/admin/settings/redis-monitoring/status', {
+            method: 'GET',
+            headers: { 'Accept': 'application/json' },
+            credentials: 'same-origin'
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to load Redis monitoring status.');
+        }
+
+        renderRedisMonitoringStatus(data);
+        if (data.health?.status === 'healthy') {
+            setRedisMonitoringMessage('Redis monitoring status loaded.', 'success');
+        } else if (data.health?.last_error) {
+            setRedisMonitoringMessage(data.health.last_error, data.health.status === 'error' ? 'danger' : 'warning');
+        } else if (showLoading) {
+            setRedisMonitoringMessage('Redis monitoring status loaded.', 'info');
+        }
+    } catch (error) {
+        setRedisMonitoringMessage(error.message || 'Failed to load Redis monitoring status.', 'danger');
+    } finally {
+        if (triggerButton) {
+            setButtonBusy(triggerButton, false);
+        }
+    }
+}
+
+function setRedisExplorerMessage(message, variant = 'info') {
+    const messageElement = document.getElementById('redis-explorer-message');
+    if (!messageElement) {
+        return;
+    }
+
+    messageElement.textContent = message || '';
+    messageElement.className = `alert alert-${variant} small`;
+    messageElement.classList.toggle('d-none', !message);
+}
+
+function formatRedisExplorerTtl(ttlSeconds) {
+    const numericValue = Number(ttlSeconds);
+    if (Number.isNaN(numericValue)) {
+        return 'Not available';
+    }
+    if (numericValue === -2) {
+        return 'Expired or missing';
+    }
+    if (numericValue === -1) {
+        return 'No expiry';
+    }
+    return `${numericValue.toLocaleString()} sec`;
+}
+
+function formatRedisExplorerMemory(bytes) {
+    const numericValue = Number(bytes);
+    if (Number.isNaN(numericValue) || numericValue < 0) {
+        return 'Not available';
+    }
+    if (numericValue >= 1024 * 1024) {
+        return `${(numericValue / (1024 * 1024)).toLocaleString(undefined, { maximumFractionDigits: 2 })} MB`;
+    }
+    if (numericValue >= 1024) {
+        return `${(numericValue / 1024).toLocaleString(undefined, { maximumFractionDigits: 2 })} KB`;
+    }
+    return `${numericValue.toLocaleString()} bytes`;
+}
+
+
+function formatRedisExplorerResolutionLabel(resolution) {
+    if (!resolution) {
+        return '';
+    }
+    if (resolution.resolved && resolution.entity_type) {
+        const entityType = formatRedisStatus(resolution.entity_type);
+        const entityName = resolution.entity_name || resolution.entity_id || 'Unknown';
+        return `${resolution.label || 'SimpleChat entity'}: ${entityType} - ${entityName}`;
+    }
+    return resolution.label || '';
+}
+
+
+function formatRedisExplorerResolutionEntity(resolution) {
+    if (!resolution) {
+        return 'Not resolved';
+    }
+    if (!resolution.resolved) {
+        return formatRedisStatus(resolution.resolution_status || 'unresolved');
+    }
+    const parts = [];
+    if (resolution.entity_type) {
+        parts.push(`Entity: ${formatRedisStatus(resolution.entity_type)}`);
+    }
+    if (resolution.entity_name) {
+        parts.push(`Name: ${resolution.entity_name}`);
+    }
+    if (resolution.entity_status) {
+        parts.push(`Status: ${formatRedisStatus(resolution.entity_status)}`);
+    }
+    if (Number.isFinite(Number(resolution.row_count))) {
+        parts.push(`DAI rows: ${formatNumber(resolution.row_count)}`);
+    }
+    return parts.join(' | ') || 'Resolved';
+}
+
+
+function renderRedisExplorerResolution(resolution) {
+    const resolutionCard = document.getElementById('redis-explorer-resolution-card');
+    if (!resolutionCard) {
+        return;
+    }
+
+    resolutionCard.classList.toggle('d-none', !resolution);
+    if (!resolution) {
+        return;
+    }
+
+    setElementText('redis-explorer-resolution-kind', resolution.label || formatRedisStatus(resolution.kind));
+    setElementText('redis-explorer-resolution-entity', formatRedisExplorerResolutionEntity(resolution));
+    setElementText('redis-explorer-resolution-scope', resolution.scope_key || resolution.cache_hash || resolution.scope_hash || 'No reversible scope key available');
+    setElementText('redis-explorer-resolution-note', resolution.note || 'Resolved from Redis key classification.');
+}
+
+
+function setRedisExplorerPreviewVisible(isVisible) {
+    document.getElementById('redis-explorer-preview-empty')?.classList.toggle('d-none', isVisible);
+    document.getElementById('redis-explorer-preview-panel')?.classList.toggle('d-none', !isVisible);
+}
+
+function resetRedisExplorerPreview() {
+    redisExplorerState.selectedKey = '';
+    setRedisExplorerPreviewVisible(false);
+    setElementText('redis-explorer-preview-key', 'Not loaded');
+    setElementText('redis-explorer-preview-type', 'Not loaded');
+    setElementText('redis-explorer-preview-ttl', 'Not loaded');
+    setElementText('redis-explorer-preview-memory', 'Not loaded');
+    setElementText('redis-explorer-preview-redacted', 'Not loaded');
+    setElementText('redis-explorer-preview-content', 'Not loaded');
+    renderRedisExplorerResolution(null);
+}
+
+function getRedisExplorerScopeLabel() {
+    const filter = (redisExplorerState.filter || '').trim();
+    return filter ? `Filter: "${filter}"` : 'Browsing all keys';
+}
+
+function renderRedisExplorerKeys(payload) {
+    const keyList = document.getElementById('redis-explorer-key-list');
+    if (!keyList) {
+        return;
+    }
+
+    const keys = Array.isArray(payload?.keys) ? payload.keys : [];
+    keyList.replaceChildren();
+    const pageNumber = redisExplorerState.cursorHistory.length + 1;
+    setElementText(
+        'redis-explorer-key-count',
+        `${getRedisExplorerScopeLabel()} | Page ${formatNumber(pageNumber)} | ${formatNumber(keys.length)} key(s)${payload?.has_more ? ' / more available' : ''}`
+    );
+
+    if (keys.length === 0) {
+        const emptyState = document.createElement('div');
+        emptyState.className = 'list-group-item text-muted small';
+        emptyState.textContent = 'No Redis keys matched this page and filter.';
+        keyList.appendChild(emptyState);
+    } else {
+        keys.forEach(item => {
+            const keyButton = document.createElement('button');
+            keyButton.type = 'button';
+            keyButton.className = 'list-group-item list-group-item-action';
+            keyButton.setAttribute('role', 'option');
+
+            const keyName = document.createElement('div');
+            keyName.className = 'fw-semibold text-break';
+            keyName.textContent = item.key || '(empty key)';
+
+            const metadata = document.createElement('div');
+            metadata.className = 'small text-muted';
+            metadata.textContent = [
+                `Type: ${formatRedisStatus(item.type || 'unknown')}`,
+                `TTL: ${formatRedisExplorerTtl(item.ttl_seconds)}`,
+                item.preview_restricted ? 'Preview: restricted' : 'Preview: sanitized'
+            ].join(' | ');
+
+            keyButton.appendChild(keyName);
+            keyButton.appendChild(metadata);
+            const resolutionLabel = formatRedisExplorerResolutionLabel(item.resolution);
+            if (resolutionLabel) {
+                const resolutionMetadata = document.createElement('div');
+                resolutionMetadata.className = 'small text-primary';
+                resolutionMetadata.textContent = resolutionLabel;
+                keyButton.appendChild(resolutionMetadata);
+            }
+            keyButton.addEventListener('click', () => loadRedisExplorerValue(item.key, keyButton));
+            keyList.appendChild(keyButton);
+        });
+    }
+    keyList.scrollTop = 0;
+
+    redisExplorerState.nextCursor = String(payload?.next_cursor || '0');
+    document.getElementById('redis-explorer-prev-btn')?.toggleAttribute(
+        'disabled',
+        redisExplorerState.cursorHistory.length === 0
+    );
+    document.getElementById('redis-explorer-next-btn')?.toggleAttribute(
+        'disabled',
+        !payload?.has_more
+    );
+}
+
+function getRedisExplorerRequestState(options = {}) {
+    const reset = Boolean(options.reset);
+    const filterInput = document.getElementById('redis-explorer-filter');
+    const pageSizeSelect = document.getElementById('redis-explorer-page-size');
+    if (reset) {
+        redisExplorerState.cursor = '0';
+        redisExplorerState.nextCursor = '0';
+        redisExplorerState.cursorHistory = [];
+    }
+    redisExplorerState.filter = filterInput?.value || '';
+    redisExplorerState.pageSize = Number(pageSizeSelect?.value || 25);
+    return {
+        cursor: redisExplorerState.cursor,
+        filter: redisExplorerState.filter,
+        pageSize: redisExplorerState.pageSize
+    };
+}
+
+async function loadRedisExplorerKeys(options = {}) {
+    const triggerButton = options.triggerButton || null;
+    if (triggerButton) {
+        setButtonBusy(triggerButton, true, 'Loading...');
+    }
+    setRedisExplorerMessage('Loading Redis keys...', 'info');
+    resetRedisExplorerPreview();
+
+    try {
+        const requestState = getRedisExplorerRequestState(options);
+        const query = new URLSearchParams({
+            cursor: requestState.cursor,
+            page_size: String(requestState.pageSize),
+            filter: requestState.filter
+        });
+        const response = await fetch(`/api/admin/settings/redis-explorer/keys?${query.toString()}`, {
+            method: 'GET',
+            headers: { 'Accept': 'application/json' },
+            credentials: 'same-origin'
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || data.last_error || 'Failed to load Redis keys.');
+        }
+
+        renderRedisExplorerKeys(data);
+        redisExplorerState.loaded = true;
+        setRedisExplorerMessage(`${getRedisExplorerScopeLabel()} loaded. Select a key to view sanitized preview content.`, 'success');
+    } catch (error) {
+        renderRedisExplorerKeys({ keys: [], has_more: false, next_cursor: '0' });
+        setRedisExplorerMessage(error.message || 'Failed to load Redis keys.', 'danger');
+    } finally {
+        if (triggerButton) {
+            setButtonBusy(triggerButton, false);
+        }
+    }
+}
+
+async function loadRedisExplorerValue(key, triggerButton = null) {
+    if (!key) {
+        return;
+    }
+    if (triggerButton) {
+        setButtonBusy(triggerButton, true, 'Loading...');
+    }
+    setRedisExplorerMessage('Loading sanitized Redis key preview...', 'info');
+
+    try {
+        const response = await fetch('/api/admin/settings/redis-explorer/value', {
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({ key })
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || data.preview || 'Failed to load Redis key preview.');
+        }
+
+        redisExplorerState.selectedKey = key;
+        setRedisExplorerPreviewVisible(true);
+        setElementText('redis-explorer-preview-key', data.key || key);
+        setElementText('redis-explorer-preview-type', formatRedisStatus(data.type || 'unknown'));
+        setElementText('redis-explorer-preview-ttl', formatRedisExplorerTtl(data.ttl_seconds));
+        setElementText('redis-explorer-preview-memory', formatRedisExplorerMemory(data.memory_usage_bytes));
+        setElementText(
+            'redis-explorer-preview-redacted',
+            data.preview_restricted ? 'Restricted' : data.redacted ? 'Redacted' : 'Sanitized'
+        );
+        renderRedisExplorerResolution(data.resolution);
+        setElementText('redis-explorer-preview-content', data.preview || 'No preview available.');
+        const previewContent = document.getElementById('redis-explorer-preview-content');
+        if (previewContent) {
+            previewContent.scrollTop = 0;
+        }
+        setRedisExplorerMessage(
+            data.truncated ? 'Preview loaded and truncated to the safe display limit.' : 'Sanitized preview loaded.',
+            data.preview_restricted || data.redacted || data.truncated ? 'warning' : 'success'
+        );
+    } catch (error) {
+        setRedisExplorerMessage(error.message || 'Failed to load Redis key preview.', 'danger');
+    } finally {
+        if (triggerButton) {
+            setButtonBusy(triggerButton, false);
+        }
+    }
+}
+
+function setupRedisExplorerControls() {
+    const modalElement = document.getElementById('redisExplorerModal');
+    if (!modalElement) {
+        return;
+    }
+
+    modalElement.addEventListener('shown.bs.modal', () => {
+        if (!redisExplorerState.loaded) {
+            loadRedisExplorerKeys({ reset: true });
+        }
+    });
+    document.getElementById('redis-explorer-search-btn')?.addEventListener('click', event => {
+        loadRedisExplorerKeys({ reset: true, triggerButton: event.currentTarget });
+    });
+    document.getElementById('redis-explorer-browse-all-btn')?.addEventListener('click', event => {
+        const filterInput = document.getElementById('redis-explorer-filter');
+        if (filterInput) {
+            filterInput.value = '';
+        }
+        loadRedisExplorerKeys({ reset: true, triggerButton: event.currentTarget });
+    });
+    document.getElementById('redis-explorer-refresh-btn')?.addEventListener('click', event => {
+        loadRedisExplorerKeys({ triggerButton: event.currentTarget });
+    });
+    document.getElementById('redis-explorer-filter')?.addEventListener('keydown', event => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            loadRedisExplorerKeys({ reset: true });
+        }
+    });
+    document.getElementById('redis-explorer-page-size')?.addEventListener('change', () => {
+        loadRedisExplorerKeys({ reset: true });
+    });
+    document.getElementById('redis-explorer-next-btn')?.addEventListener('click', event => {
+        redisExplorerState.cursorHistory.push(redisExplorerState.cursor);
+        redisExplorerState.cursor = redisExplorerState.nextCursor || '0';
+        loadRedisExplorerKeys({ triggerButton: event.currentTarget });
+    });
+    document.getElementById('redis-explorer-prev-btn')?.addEventListener('click', event => {
+        redisExplorerState.cursor = redisExplorerState.cursorHistory.pop() || '0';
+        loadRedisExplorerKeys({ triggerButton: event.currentTarget });
+    });
+}
+
+function setupRedisMonitoringControls() {
+    const section = document.getElementById('redis-monitoring-section');
+    if (!section) {
+        return;
+    }
+
+    document.getElementById('redis-monitoring-refresh-btn')?.addEventListener('click', loadRedisMonitoringStatus);
+    setupRedisExplorerControls();
+    loadRedisMonitoringStatus(null, { showLoading: false });
+}
+
+function setDocumentAccessIndexMessage(message, variant = 'info') {
+    const messageElement = document.getElementById('document-access-index-message');
+    if (!messageElement) {
+        return;
+    }
+
+    messageElement.textContent = message || '';
+    messageElement.className = `alert alert-${variant} small mb-3`;
+    messageElement.classList.toggle('d-none', !message);
+}
+
+function formatDocumentAccessIndexStatus(value) {
+    const normalizedValue = String(value || '').trim();
+    if (!normalizedValue) {
+        return 'Not loaded';
+    }
+
+    return normalizedValue
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, character => character.toUpperCase());
+}
+
+function getDocumentAccessIndexStatusVariant(value) {
+    const normalizedValue = String(value || '').trim().toLowerCase();
+    if (['succeeded', 'skipped_completed', 'completed', 'dry_run_completed', 'reconciled', 'matched', 'aligned'].includes(normalizedValue)) {
+        return 'success';
+    }
+    if (['running', 'in_progress'].includes(normalizedValue)) {
+        return 'primary';
+    }
+    if (['succeeded_with_errors', 'completed_with_errors', 'reconciled_with_errors', 'mismatch', 'missing_expected_indexes'].includes(normalizedValue)) {
+        return 'warning';
+    }
+    if (['failed', 'error'].includes(normalizedValue)) {
+        return 'danger';
+    }
+    return 'secondary';
+}
+
+function setDocumentAccessIndexBadge(elementId, value, variant = 'secondary') {
+    const badge = document.getElementById(elementId);
+    if (!badge) {
+        return;
+    }
+
+    const safeVariants = new Set(['primary', 'secondary', 'success', 'danger', 'warning', 'info']);
+    badge.textContent = value || 'Not loaded';
+    badge.className = `badge text-bg-${safeVariants.has(variant) ? variant : 'secondary'}`;
+}
+
+function formatDocumentAccessIndexBoolean(value, enabledText = 'Enabled', disabledText = 'Disabled') {
+    return value ? enabledText : disabledText;
+}
+
+function formatDocumentAccessIndexList(items) {
+    if (!Array.isArray(items) || items.length === 0) {
+        return 'None';
+    }
+
+    return items.map(item => String(item || '').trim()).filter(Boolean).join(', ') || 'None';
+}
+
+function formatDocumentAccessIndexMetric(value, unit) {
+    if (value === null || value === undefined || value === '') {
+        return 'Not available';
+    }
+    const numericValue = Number(value);
+    if (Number.isNaN(numericValue)) {
+        return 'Not available';
+    }
+    return `${numericValue.toLocaleString(undefined, { maximumFractionDigits: 3 })} ${unit}`;
+}
+
+function formatDocumentAccessIndexPercent(value) {
+    if (value === null || value === undefined || value === '') {
+        return 'Not available';
+    }
+    const numericValue = Number(value);
+    if (Number.isNaN(numericValue)) {
+        return 'Not available';
+    }
+    return `${numericValue.toLocaleString(undefined, { maximumFractionDigits: 2 })}%`;
+}
+
+function formatDocumentAccessIndexMetricPair(sourceValue, projectionValue, unit) {
+    const sourceMetric = formatDocumentAccessIndexMetric(sourceValue, unit);
+    const projectionMetric = formatDocumentAccessIndexMetric(projectionValue, unit);
+    if (sourceMetric === 'Not available' || projectionMetric === 'Not available') {
+        return 'Not available';
+    }
+    return `${sourceMetric} / ${projectionMetric}`;
+}
+
+function formatDocumentAccessIndexSavings(value, unit, positiveLabel, negativeLabel) {
+    if (value === null || value === undefined || value === '') {
+        return 'Not available';
+    }
+    const numericValue = Number(value);
+    if (Number.isNaN(numericValue)) {
+        return 'Not available';
+    }
+    if (Math.abs(numericValue) < 0.001) {
+        return `0 ${unit} difference`;
+    }
+    const label = numericValue > 0 ? positiveLabel : negativeLabel;
+    return `${formatDocumentAccessIndexMetric(Math.abs(numericValue), unit)} ${label}`;
+}
+
+function getDocumentAccessIndexRollingWindow(shadowValidation, windowKey) {
+    const windows = shadowValidation?.rolling_metrics?.windows || {};
+    return windows[windowKey] || {};
+}
+
+function getDocumentAccessIndexReadWindow(readMetrics, windowKey) {
+    const windows = readMetrics?.windows || {};
+    return windows[windowKey] || {};
+}
+
+function getDocumentAccessIndexCacheWindow(cacheMetrics, windowKey) {
+    const windows = cacheMetrics?.windows || {};
+    return windows[windowKey] || {};
+}
+
+function formatConversationCacheOperationCounts(operationCounts) {
+    const entries = Object.entries(operationCounts || {})
+        .filter(([, count]) => Number(count || 0) > 0)
+        .sort(([left], [right]) => left.localeCompare(right));
+    if (entries.length === 0) {
+        return 'No samples';
+    }
+
+    return entries
+        .map(([operation, count]) => `${formatDocumentAccessIndexStatus(operation)}: ${formatNumber(count)}`)
+        .join(', ');
+}
+
+function formatDocumentAccessIndexSampleSummary(windowMetrics) {
+    if (!windowMetrics || Number(windowMetrics.sample_count || 0) === 0) {
+        return 'No samples';
+    }
+
+    const sampleCount = formatNumber(windowMetrics.sample_count || 0);
+    const matchedCount = formatNumber(windowMetrics.matched_count || 0);
+    const mismatchCount = formatNumber(windowMetrics.mismatch_count || 0);
+    const errorCount = formatNumber(windowMetrics.error_count || 0);
+    const comparableCount = formatNumber(windowMetrics.comparable_sample_count || 0);
+    return `${sampleCount} samples (${comparableCount} comparable, ${matchedCount} matched, ${mismatchCount} mismatch, ${errorCount} error)`;
+}
+
+function formatDocumentAccessIndexReadSample(sample) {
+    if (!sample) {
+        return 'No samples';
+    }
+    const status = formatDocumentAccessIndexStatus(sample.status || 'unknown');
+    const operation = formatDocumentAccessIndexStatus(sample.operation || 'read');
+    const scope = sample.source_scope ? ` / ${sample.source_scope}` : '';
+    return `${status} (${operation}${scope})`;
+}
+
+function formatDocumentAccessIndexCacheEvent(sample) {
+    if (!sample) {
+        return 'No cache events';
+    }
+    const eventType = formatDocumentAccessIndexStatus(sample.event_type || 'unknown');
+    const operation = formatDocumentAccessIndexStatus(sample.operation || 'cache');
+    const reason = sample.reason ? ` / ${formatDocumentAccessIndexStatus(sample.reason)}` : '';
+    return `${eventType} (${operation}${reason})`;
+}
+
+function formatDocumentAccessIndexLatencyWindow(windowMetrics) {
+    const averageLatency = formatDocumentAccessIndexMetric(windowMetrics?.elapsed_ms_avg, 'ms');
+    const p95Latency = formatDocumentAccessIndexMetric(windowMetrics?.elapsed_ms_p95, 'ms');
+    if (averageLatency === 'Not available' && p95Latency === 'Not available') {
+        return 'Not available';
+    }
+    return `${averageLatency} / ${p95Latency}`;
+}
+
+function renderConversationCacheStatus(statusPayload) {
+    const conversationCache = statusPayload?.conversation_cache || {};
+    const settings = conversationCache?.settings || {};
+    const metrics = conversationCache?.metrics || {};
+    const cache15m = getDocumentAccessIndexCacheWindow(metrics, '15m');
+    const cacheEnabled = settings.enabled !== false;
+    const ttlSeconds = Number(settings.ttl_seconds ?? 120);
+    const runtimeStatus = cacheEnabled
+        ? (ttlSeconds > 0 ? `Enabled / ${formatDocumentAccessIndexMetric(ttlSeconds, 'sec')}` : 'Enabled / Writes disabled')
+        : 'Disabled';
+
+    setDocumentAccessIndexBadge(
+        'conversation-cache-runtime-status',
+        runtimeStatus,
+        cacheEnabled ? 'success' : 'secondary'
+    );
+    setElementText(
+        'conversation-cache-15m-hit-rate',
+        formatDocumentAccessIndexPercent(cache15m.hit_rate_percent)
+    );
+    setElementText(
+        'conversation-cache-15m-hits-misses',
+        `${formatNumber(cache15m.hit_count || 0)} / ${formatNumber(cache15m.miss_count || 0)}`
+    );
+    setElementText(
+        'conversation-cache-15m-bypasses-errors',
+        `${formatNumber(cache15m.bypass_count || 0)} / ${formatNumber(cache15m.error_count || 0)}`
+    );
+    setElementText(
+        'conversation-cache-15m-writes-invalidations',
+        `${formatNumber(cache15m.write_count || 0)} / ${formatNumber(cache15m.invalidation_count || 0)}`
+    );
+    setElementText(
+        'conversation-cache-15m-operation-counts',
+        formatConversationCacheOperationCounts(cache15m.operation_counts)
+    );
+    setElementText(
+        'conversation-cache-last-event',
+        formatDocumentAccessIndexCacheEvent(metrics.last_event)
+    );
+    setElementText(
+        'conversation-cache-last-invalidation',
+        formatDocumentAccessIndexCacheEvent(metrics.last_invalidation)
+    );
+}
+
+function setCosmosMaintenanceMessage(message, variant = 'info') {
+    const messageElement = document.getElementById('cosmos-maintenance-message');
+    if (!messageElement) {
+        return;
+    }
+
+    messageElement.textContent = message || '';
+    messageElement.className = `alert alert-${variant} small mb-3`;
+    messageElement.classList.toggle('d-none', !message);
+}
+
+function getCosmosIndexingPolicyStatusText(indexingPolicy) {
+    if (!indexingPolicy || Object.keys(indexingPolicy).length === 0) {
+        return 'not_loaded';
+    }
+    if (Number(indexingPolicy.failed_container_count || 0) > 0) {
+        return 'failed';
+    }
+    if (Number(indexingPolicy.containers_missing_expected_indexes || 0) > 0) {
+        return 'missing_expected_indexes';
+    }
+    return 'aligned';
+}
+
+function formatStaleCacheCleanupCategories(categories) {
+    if (!Array.isArray(categories) || categories.length === 0) {
+        return 'No categories';
+    }
+
+    return categories
+        .map(category => {
+            const name = formatDocumentAccessIndexStatus(category.category || 'unknown');
+            const candidates = formatNumber(category.candidate_count || 0);
+            const deleted = formatNumber(category.deleted_count || 0);
+            const failed = formatNumber(category.failed_count || 0);
+            return `${name}: ${candidates} candidates / ${deleted} deleted / ${failed} failed`;
+        })
+        .join('; ');
+}
+
+function renderCosmosMaintenanceStatus(statusPayload) {
+    const indexingPolicy = statusPayload?.cosmos_indexing_policies || {};
+    const cleanup = statusPayload?.stale_cache_cleanup || {};
+    const indexingStatus = getCosmosIndexingPolicyStatusText(indexingPolicy);
+    const cleanupStatus = cleanup.status || 'not_run';
+
+    setDocumentAccessIndexBadge(
+        'cosmos-indexing-policy-status',
+        formatDocumentAccessIndexStatus(indexingStatus),
+        getDocumentAccessIndexStatusVariant(indexingStatus)
+    );
+    setElementText('cosmos-indexing-policy-mode', formatDocumentAccessIndexStatus(indexingPolicy.mode || 'not_loaded'));
+    setElementText('cosmos-indexing-policy-container-count', formatNumber(indexingPolicy.container_count || 0));
+    setElementText(
+        'cosmos-indexing-policy-missing-count',
+        formatNumber(indexingPolicy.containers_missing_expected_indexes || 0)
+    );
+    setElementText('cosmos-indexing-policy-updated-count', formatNumber(indexingPolicy.updated_container_count || 0));
+    setElementText('cosmos-indexing-policy-failed-count', formatNumber(indexingPolicy.failed_container_count || 0));
+    setElementText('cosmos-indexing-policy-last-evaluated', indexingPolicy.evaluated_at || 'Not loaded');
+
+    setDocumentAccessIndexBadge(
+        'stale-cache-cleanup-status',
+        formatDocumentAccessIndexStatus(cleanupStatus),
+        getDocumentAccessIndexStatusVariant(cleanupStatus)
+    );
+    setElementText('stale-cache-cleanup-mode', formatDocumentAccessIndexStatus(cleanup.mode || 'not_run'));
+    setElementText('stale-cache-cleanup-candidates', formatNumber(cleanup.candidate_count || 0));
+    setElementText('stale-cache-cleanup-deleted', formatNumber(cleanup.deleted_count || 0));
+    setElementText('stale-cache-cleanup-failed', formatNumber(cleanup.failed_count || 0));
+    setElementText('stale-cache-cleanup-more-candidates', cleanup.has_more_candidates ? 'Yes' : 'No');
+    setElementText('stale-cache-cleanup-categories', formatStaleCacheCleanupCategories(cleanup.categories));
+    setElementText('stale-cache-cleanup-last-evaluated', cleanup.evaluated_at || 'Not run yet');
+}
+
+function getStaleCacheCleanupStatusFromRunResult(result) {
+    const cleanupStep = Array.isArray(result?.steps)
+        ? result.steps.find(step => step?.name === 'stale_cache_document_cleanup')
+        : null;
+    return cleanupStep?.results || null;
+}
+
+function getCosmosIndexingPolicyStatusFromRunResult(result) {
+    const indexingStep = Array.isArray(result?.steps)
+        ? result.steps.find(step => step?.name === 'cosmos_indexing_policy_maintenance')
+        : null;
+    return indexingStep?.results || null;
+}
+
+function getNormalizedDocumentAccessIndexStatus(status) {
+    return String(status || '').trim().toLowerCase();
+}
+
+function isDocumentAccessIndexBackfillRunning(status) {
+    return getNormalizedDocumentAccessIndexStatus(status) === 'running';
+}
+
+function isDocumentAccessIndexBackfillInProgress(status) {
+    return getNormalizedDocumentAccessIndexStatus(status) === 'in_progress';
+}
+
+function stopDocumentAccessIndexPolling() {
+    if (documentAccessIndexStatusPollId) {
+        window.clearInterval(documentAccessIndexStatusPollId);
+        documentAccessIndexStatusPollId = null;
+    }
+}
+
+function startDocumentAccessIndexPolling() {
+    if (documentAccessIndexStatusPollId) {
+        return;
+    }
+
+    documentAccessIndexStatusPollId = window.setInterval(() => {
+        loadDocumentAccessIndexStatus(null, { showLoading: false });
+    }, DOCUMENT_ACCESS_INDEX_STATUS_POLL_INTERVAL_MS);
+}
+
+function getDocumentAccessIndexBackfillStatusFromRunResult(result) {
+    const backfillStep = Array.isArray(result?.steps)
+        ? result.steps.find(step => step?.name === 'document_access_index_backfill')
+        : null;
+    return backfillStep?.results?.current_status || null;
+}
+
+async function fetchAppMaintenanceStatus(errorMessage = 'Failed to load app maintenance status.') {
+    const response = await fetch('/api/admin/settings/app-maintenance/status', {
+        method: 'GET',
+        headers: { 'Accept': 'application/json' },
+        credentials: 'same-origin'
+    });
+    const data = await response.json();
+    if (!response.ok) {
+        throw new Error(data.error || errorMessage);
+    }
+    return data;
+}
+
+function renderDocumentAccessIndexStatus(statusPayload) {
+    const backfillStatus = statusPayload?.document_access_index_backfill || statusPayload;
+    const state = backfillStatus?.state || {};
+    const settings = backfillStatus?.settings || {};
+    const shadowValidation = backfillStatus?.shadow_validation || {};
+    const maintenance = backfillStatus?.maintenance || {};
+    const readMetrics = backfillStatus?.read_metrics || {};
+    const cacheMetrics = backfillStatus?.cache_metrics || {};
+    const statusText = String(state.status || 'not_started');
+
+    setDocumentAccessIndexBadge(
+        'document-access-index-container-status',
+        formatDocumentAccessIndexBoolean(settings.container_enabled, 'Enabled', 'Disabled'),
+        settings.container_enabled ? 'success' : 'secondary'
+    );
+    setDocumentAccessIndexBadge(
+        'document-access-index-write-through-status',
+        formatDocumentAccessIndexBoolean(settings.write_through_enabled, 'Enabled', 'Disabled'),
+        settings.write_through_enabled ? 'success' : 'secondary'
+    );
+    setDocumentAccessIndexBadge(
+        'document-access-index-read-status',
+        settings.reads_enabled ? 'Enabled' : 'Disabled',
+        settings.reads_enabled ? 'success' : 'secondary'
+    );
+    setDocumentAccessIndexBadge(
+        'document-access-index-cache-status',
+        settings.cache_enabled ? `Enabled / ${formatDocumentAccessIndexMetric(settings.cache_ttl_seconds, 'sec')}` : 'Disabled',
+        settings.cache_enabled ? 'success' : 'secondary'
+    );
+    setDocumentAccessIndexBadge(
+        'document-access-index-shadow-status',
+        settings.shadow_validation_enabled ? 'Enabled' : 'Disabled',
+        settings.shadow_validation_enabled ? 'warning' : 'secondary'
+    );
+    setDocumentAccessIndexBadge(
+        'document-access-index-backfill-status',
+        formatDocumentAccessIndexStatus(statusText),
+        getDocumentAccessIndexStatusVariant(statusText)
+    );
+    setDocumentAccessIndexBadge(
+        'document-access-index-maintenance-mode',
+        maintenance.auto_maintenance_enabled ? 'Automatic' : 'Disabled',
+        maintenance.auto_maintenance_enabled ? 'success' : 'secondary'
+    );
+
+    setElementText('document-access-index-repair-count', formatNumber(backfillStatus?.repair_required_count));
+    setElementText(
+        'document-access-index-maintenance-next-action',
+        formatDocumentAccessIndexStatus(maintenance.next_action || 'monitor')
+    );
+    setElementText(
+        'document-access-index-maintenance-more-work',
+        maintenance.has_more_work ? 'Yes' : 'No'
+    );
+    setElementText(
+        'document-access-index-maintenance-active-interval',
+        formatDocumentAccessIndexMetric(maintenance.active_interval_seconds, 'sec')
+    );
+    const read15m = getDocumentAccessIndexReadWindow(readMetrics, '15m');
+    const cache15m = getDocumentAccessIndexCacheWindow(cacheMetrics, '15m');
+    setElementText('document-access-index-read-15m-attempts', formatNumber(read15m.sample_count || 0));
+    setElementText(
+        'document-access-index-cache-15m-hit-rate',
+        formatDocumentAccessIndexPercent(cache15m.hit_rate_percent)
+    );
+    setElementText(
+        'document-access-index-cache-15m-hits-misses',
+        `${formatNumber(cache15m.hit_count || 0)} / ${formatNumber(cache15m.miss_count || 0)}`
+    );
+    setElementText(
+        'document-access-index-cache-15m-bypasses-errors',
+        `${formatNumber(cache15m.bypass_count || 0)} / ${formatNumber(cache15m.error_count || 0)}`
+    );
+    setElementText(
+        'document-access-index-cache-15m-invalidations',
+        formatNumber(cache15m.invalidation_count || 0)
+    );
+    setElementText('document-access-index-read-15m-served', formatNumber(read15m.served_from_index_count || 0));
+    setElementText('document-access-index-read-15m-fallbacks', formatNumber(read15m.source_fallback_count || 0));
+    setElementText(
+        'document-access-index-read-15m-fallback-rate',
+        formatDocumentAccessIndexPercent(read15m.fallback_rate_percent)
+    );
+    setElementText(
+        'document-access-index-read-15m-ru',
+        formatDocumentAccessIndexMetric(read15m.request_charge, 'RU')
+    );
+    setElementText(
+        'document-access-index-read-15m-latency',
+        formatDocumentAccessIndexLatencyWindow(read15m)
+    );
+    setElementText(
+        'document-access-index-read-last-fallback',
+        formatDocumentAccessIndexReadSample(readMetrics.last_fallback_sample)
+    );
+    setElementText(
+        'document-access-index-read-last-sample',
+        formatDocumentAccessIndexReadSample(readMetrics.last_sample)
+    );
+    setElementText(
+        'document-access-index-cache-last-event',
+        formatDocumentAccessIndexCacheEvent(cacheMetrics.last_event)
+    );
+    setDocumentAccessIndexBadge(
+        'document-access-index-shadow-last-status',
+        formatDocumentAccessIndexStatus(shadowValidation.status || 'not_run'),
+        getDocumentAccessIndexStatusVariant(shadowValidation.status || 'not_run')
+    );
+    setElementText(
+        'document-access-index-shadow-mismatches',
+        `${formatNumber(shadowValidation.missing_count || 0)} missing / ${formatNumber(shadowValidation.extra_count || 0)} extra`
+    );
+    setElementText(
+        'document-access-index-shadow-ru-comparison',
+        formatDocumentAccessIndexMetricPair(shadowValidation.source_query_ru, shadowValidation.validation_index_ru, 'RU')
+    );
+    setElementText(
+        'document-access-index-shadow-validation-ru',
+        formatDocumentAccessIndexMetric(shadowValidation.validation_index_ru, 'RU')
+    );
+    setElementText(
+        'document-access-index-shadow-candidate-ru',
+        formatDocumentAccessIndexMetric(shadowValidation.candidate_read_ru, 'RU')
+    );
+    setElementText(
+        'document-access-index-shadow-wave5-ru-savings',
+        formatDocumentAccessIndexSavings(shadowValidation.estimated_wave5_ru_savings, 'RU', 'less', 'more')
+    );
+    setElementText(
+        'document-access-index-shadow-ms-comparison',
+        formatDocumentAccessIndexMetricPair(shadowValidation.source_query_ms, shadowValidation.candidate_read_ms, 'ms')
+    );
+    setElementText(
+        'document-access-index-shadow-ms-savings',
+        formatDocumentAccessIndexSavings(shadowValidation.estimated_wave5_ms_savings, 'ms', 'faster', 'slower')
+    );
+    const rolling5m = getDocumentAccessIndexRollingWindow(shadowValidation, '5m');
+    const rolling15m = getDocumentAccessIndexRollingWindow(shadowValidation, '15m');
+    setElementText(
+        'document-access-index-rolling-5m-ru-comparison',
+        formatDocumentAccessIndexMetricPair(rolling5m.source_query_ru, rolling5m.candidate_read_ru, 'RU')
+    );
+    setElementText(
+        'document-access-index-rolling-5m-wave5-ru-savings',
+        formatDocumentAccessIndexSavings(rolling5m.estimated_wave5_ru_savings, 'RU', 'less', 'more')
+    );
+    setElementText(
+        'document-access-index-rolling-15m-ru-comparison',
+        formatDocumentAccessIndexMetricPair(rolling15m.source_query_ru, rolling15m.candidate_read_ru, 'RU')
+    );
+    setElementText(
+        'document-access-index-rolling-15m-wave5-ru-savings',
+        formatDocumentAccessIndexSavings(rolling15m.estimated_wave5_ru_savings, 'RU', 'less', 'more')
+    );
+    setElementText(
+        'document-access-index-rolling-15m-validation-overhead',
+        formatDocumentAccessIndexMetric(rolling15m.validation_index_ru, 'RU')
+    );
+    setElementText(
+        'document-access-index-rolling-15m-samples',
+        formatDocumentAccessIndexSampleSummary(rolling15m)
+    );
+    setElementText('document-access-index-current-scope', state.current_source_scope || 'None');
+    setElementText('document-access-index-completed-scopes', formatDocumentAccessIndexList(state.completed_source_scopes));
+    setElementText('document-access-index-total-processed', formatNumber(state.total_documents_processed || 0));
+    setElementText('document-access-index-total-failed', formatNumber(state.total_documents_failed || 0));
+    setElementText('document-access-index-total-upserted', formatNumber(state.total_rows_upserted || 0));
+    setElementText('document-access-index-total-deleted', formatNumber(state.total_rows_deleted || 0));
+    setElementText('document-access-index-last-completed', state.last_completed_at || 'Not completed yet');
+    setElementText('document-access-index-last-error', state.last_error || 'None');
+
+    const runButton = document.getElementById('document-access-index-run-batch-btn');
+    const resetButton = document.getElementById('document-access-index-reset-btn');
+    if (runButton) {
+        runButton.disabled = settings.container_enabled === false;
+    }
+    if (resetButton) {
+        resetButton.disabled = settings.container_enabled === false;
+    }
+
+    if (isDocumentAccessIndexBackfillRunning(statusText)) {
+        startDocumentAccessIndexPolling();
+    } else {
+        stopDocumentAccessIndexPolling();
+    }
+}
+
+async function loadDocumentAccessIndexStatus(event = null, options = {}) {
+    const showLoading = options.showLoading !== false;
+    const triggerButton = event?.currentTarget || (showLoading ? document.getElementById('document-access-index-refresh-btn') : null);
+    const isConversationCacheTrigger = triggerButton?.id === 'conversation-cache-refresh-btn';
+    if (triggerButton) {
+        setButtonBusy(triggerButton, true, 'Loading...');
+    }
+    if (showLoading) {
+        setDocumentAccessIndexMessage(
+            isConversationCacheTrigger ? 'Loading conversation cache metrics...' : 'Loading document access index status...',
+            'info'
+        );
+    }
+
+    try {
+        const data = await fetchAppMaintenanceStatus('Failed to load document access index status.');
+
+        renderDocumentAccessIndexStatus(data);
+        renderConversationCacheStatus(data);
+        renderCosmosMaintenanceStatus(data);
+        if (showLoading) {
+            setDocumentAccessIndexMessage(
+                isConversationCacheTrigger ? 'Conversation cache metrics loaded.' : 'Document access index status loaded.',
+                'success'
+            );
+        }
+    } catch (error) {
+        setDocumentAccessIndexMessage(
+            error.message || (
+                isConversationCacheTrigger
+                    ? 'Failed to load conversation cache metrics.'
+                    : 'Failed to load document access index status.'
+            ),
+            'danger'
+        );
+        stopDocumentAccessIndexPolling();
+    } finally {
+        if (triggerButton) {
+            setButtonBusy(triggerButton, false);
+        }
+    }
+}
+
+async function loadCosmosMaintenanceStatus(event = null, options = {}) {
+    const showLoading = options.showLoading !== false;
+    const triggerButton = event?.currentTarget || (showLoading ? document.getElementById('cosmos-maintenance-refresh-btn') : null);
+    if (triggerButton) {
+        setButtonBusy(triggerButton, true, 'Loading...');
+    }
+    if (showLoading) {
+        setCosmosMaintenanceMessage('Loading Cosmos maintenance status...', 'info');
+    }
+
+    try {
+        const data = await fetchAppMaintenanceStatus('Failed to load Cosmos maintenance status.');
+        renderDocumentAccessIndexStatus(data);
+        renderConversationCacheStatus(data);
+        renderCosmosMaintenanceStatus(data);
+        if (showLoading) {
+            setCosmosMaintenanceMessage('Cosmos maintenance status loaded.', 'success');
+        }
+    } catch (error) {
+        setCosmosMaintenanceMessage(error.message || 'Failed to load Cosmos maintenance status.', 'danger');
+    } finally {
+        if (triggerButton) {
+            setButtonBusy(triggerButton, false);
+        }
+    }
+}
+
+async function runStaleCacheCleanup(options = {}) {
+    const applyChanges = Boolean(options.applyChanges);
+    const triggerButton = options.triggerButton || document.getElementById(
+        applyChanges ? 'stale-cache-cleanup-apply-confirm-btn' : 'stale-cache-cleanup-dry-run-btn'
+    );
+    if (triggerButton) {
+        setButtonBusy(triggerButton, true, applyChanges ? 'Deleting...' : 'Scanning...');
+    }
+    setCosmosMaintenanceMessage(
+        applyChanges ? 'Deleting one bounded batch of stale cache documents...' : 'Scanning for stale cache cleanup candidates...',
+        'info'
+    );
+
+    try {
+        const response = await fetch('/api/admin/settings/app-maintenance/run', {
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+                apply_cosmos_indexing_policies: false,
+                run_document_access_index_backfill: false,
+                run_stale_cache_cleanup: true,
+                apply_stale_cache_cleanup: applyChanges
+            })
+        });
+        const data = await response.json();
+        const cleanupResult = getStaleCacheCleanupStatusFromRunResult(data);
+        if (cleanupResult) {
+            renderCosmosMaintenanceStatus({ stale_cache_cleanup: cleanupResult });
+        }
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Stale cache cleanup failed.');
+        }
+
+        const candidates = formatNumber(cleanupResult?.candidate_count || 0);
+        const deleted = formatNumber(cleanupResult?.deleted_count || 0);
+        const message = applyChanges
+            ? `Stale cache cleanup deleted ${deleted} document(s) from ${candidates} candidate(s).`
+            : `Stale cache cleanup dry run found ${candidates} candidate document(s).`;
+        setCosmosMaintenanceMessage(message, cleanupResult?.has_more_candidates ? 'warning' : 'success');
+        showToast(message, cleanupResult?.has_more_candidates ? 'warning' : 'success');
+
+        const modalElement = document.getElementById('staleCacheCleanupApplyModal');
+        if (applyChanges && modalElement) {
+            bootstrap.Modal.getInstance(modalElement)?.hide();
+        }
+        await loadCosmosMaintenanceStatus(null, { showLoading: false });
+    } catch (error) {
+        setCosmosMaintenanceMessage(error.message || 'Stale cache cleanup failed.', 'danger');
+        showToast(error.message || 'Stale cache cleanup failed.', 'danger');
+    } finally {
+        if (triggerButton) {
+            setButtonBusy(triggerButton, false);
+        }
+    }
+}
+
+async function runCosmosIndexingPolicyApply(options = {}) {
+    const triggerButton = options.triggerButton || document.getElementById('cosmos-indexing-policy-apply-confirm-btn');
+    if (triggerButton) {
+        setButtonBusy(triggerButton, true, 'Applying...');
+    }
+    setCosmosMaintenanceMessage(
+        'Submitting missing Cosmos composite index updates. Index transformation may continue asynchronously in Azure Cosmos DB.',
+        'info'
+    );
+
+    try {
+        const response = await fetch('/api/admin/settings/app-maintenance/run', {
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+                apply_cosmos_indexing_policies: true,
+                run_document_access_index_backfill: false,
+                run_stale_cache_cleanup: false
+            })
+        });
+        const data = await response.json();
+        const indexingResult = getCosmosIndexingPolicyStatusFromRunResult(data);
+        if (indexingResult) {
+            renderCosmosMaintenanceStatus({ cosmos_indexing_policies: indexingResult });
+        }
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Cosmos indexing policy update failed.');
+        }
+
+        const updated = formatNumber(indexingResult?.updated_container_count || 0);
+        const missing = formatNumber(indexingResult?.containers_missing_expected_indexes || 0);
+        const message = Number(indexingResult?.updated_container_count || 0) > 0
+            ? `Cosmos indexing policy update submitted for ${updated} container(s). Refresh later to monitor transformation status.`
+            : `Cosmos indexing policies are already aligned. Missing expected indexes: ${missing}.`;
+        setCosmosMaintenanceMessage(message, 'success');
+        showToast(message, 'success');
+
+        const modalElement = document.getElementById('cosmosIndexingPolicyApplyModal');
+        if (modalElement) {
+            bootstrap.Modal.getInstance(modalElement)?.hide();
+        }
+        await loadCosmosMaintenanceStatus(null, { showLoading: false });
+    } catch (error) {
+        setCosmosMaintenanceMessage(error.message || 'Cosmos indexing policy update failed.', 'danger');
+        showToast(error.message || 'Cosmos indexing policy update failed.', 'danger');
+    } finally {
+        if (triggerButton) {
+            setButtonBusy(triggerButton, false);
+        }
+    }
+}
+
+async function runDocumentAccessIndexBackfillBatch(options = {}) {
+    const reset = Boolean(options.reset);
+    const triggerButton = options.triggerButton || document.getElementById(reset ? 'document-access-index-reset-confirm-btn' : 'document-access-index-run-batch-btn');
+    if (triggerButton) {
+        setButtonBusy(triggerButton, true, reset ? 'Resetting...' : 'Running...');
+    }
+    setDocumentAccessIndexMessage(reset ? 'Resetting backfill checkpoint and running one batch...' : 'Running one document access backfill batch...', 'info');
+
+    try {
+        const response = await fetch('/api/admin/settings/app-maintenance/run', {
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+                apply_cosmos_indexing_policies: false,
+                run_document_access_index_backfill: true,
+                reset_document_access_index_backfill: reset
+            })
+        });
+        const data = await response.json();
+        const currentStatus = getDocumentAccessIndexBackfillStatusFromRunResult(data);
+        if (currentStatus) {
+            renderDocumentAccessIndexStatus(currentStatus);
+        }
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Document access index backfill batch failed.');
+        }
+
+        const status = currentStatus?.state?.status || 'completed';
+        const statusVariant = getDocumentAccessIndexStatusVariant(status);
+        if (isDocumentAccessIndexBackfillRunning(status)) {
+            setDocumentAccessIndexMessage('Backfill batch is still running. Status will refresh automatically.', 'info');
+        } else if (isDocumentAccessIndexBackfillInProgress(status)) {
+            setDocumentAccessIndexMessage('Backfill batch completed and more documents remain. Run another batch or leave scheduled backfill enabled to continue during maintenance.', 'info');
+        } else if (statusVariant === 'danger' || statusVariant === 'warning') {
+            setDocumentAccessIndexMessage('Backfill batch completed with errors. Review the repair backlog and last error details.', 'warning');
+        } else {
+            setDocumentAccessIndexMessage('Document access index backfill batch completed.', 'success');
+        }
+        showToast(
+            statusVariant === 'danger' || statusVariant === 'warning'
+                ? 'Document access index backfill batch completed with errors.'
+                : 'Document access index backfill batch completed.',
+            statusVariant === 'danger' ? 'danger' : statusVariant === 'warning' ? 'warning' : 'success'
+        );
+
+        const modalElement = document.getElementById('documentAccessIndexResetModal');
+        if (reset && modalElement) {
+            bootstrap.Modal.getInstance(modalElement)?.hide();
+        }
+    } catch (error) {
+        setDocumentAccessIndexMessage(error.message || 'Document access index backfill batch failed.', 'danger');
+        showToast(error.message || 'Document access index backfill batch failed.', 'danger');
+        stopDocumentAccessIndexPolling();
+    } finally {
+        if (triggerButton) {
+            setButtonBusy(triggerButton, false);
+        }
+    }
+}
+
+function setupDocumentAccessIndexControls() {
+    const section = document.getElementById('document-access-index-section');
+    if (!section) {
+        return;
+    }
+
+    document.getElementById('document-access-index-refresh-btn')?.addEventListener('click', loadDocumentAccessIndexStatus);
+    document.getElementById('conversation-cache-refresh-btn')?.addEventListener('click', loadDocumentAccessIndexStatus);
+    document.getElementById('document-access-index-run-batch-btn')?.addEventListener('click', event => {
+        runDocumentAccessIndexBackfillBatch({ triggerButton: event.currentTarget });
+    });
+    document.getElementById('document-access-index-reset-confirm-btn')?.addEventListener('click', event => {
+        runDocumentAccessIndexBackfillBatch({ reset: true, triggerButton: event.currentTarget });
+    });
+    loadDocumentAccessIndexStatus(null, { showLoading: false });
+}
+
+function setupCosmosMaintenanceControls() {
+    const section = document.getElementById('cosmos-maintenance-section');
+    if (!section) {
+        return;
+    }
+
+    document.getElementById('cosmos-maintenance-refresh-btn')?.addEventListener('click', loadCosmosMaintenanceStatus);
+    document.getElementById('cosmos-indexing-policy-apply-confirm-btn')?.addEventListener('click', event => {
+        runCosmosIndexingPolicyApply({ triggerButton: event.currentTarget });
+    });
+    document.getElementById('stale-cache-cleanup-dry-run-btn')?.addEventListener('click', event => {
+        runStaleCacheCleanup({ applyChanges: false, triggerButton: event.currentTarget });
+    });
+    document.getElementById('stale-cache-cleanup-apply-confirm-btn')?.addEventListener('click', event => {
+        runStaleCacheCleanup({ applyChanges: true, triggerButton: event.currentTarget });
+    });
 }
 
 function setupCosmosThroughputControls() {
@@ -2929,6 +4341,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- NEW: Chunk size controls ---
     setupChunkSizeControls();
 
+    setupRedisMonitoringControls();
+    setupCosmosMaintenanceControls();
+    setupDocumentAccessIndexControls();
     setupCosmosThroughputControls();
     
     // --- Setup form change tracking ---
@@ -4514,10 +5929,10 @@ function setupToggles() {
     const enableRedisCache = document.getElementById('enable_redis_cache');
     const redisSettingsDiv = document.getElementById('redis_cache_settings');
     if (enableRedisCache && redisSettingsDiv) {
-        // Set initial state
-        redisSettingsDiv.style.display = enableRedisCache.checked ? 'block' : 'none';
+        updateRedisCanonicalCacheVisibility(enableRedisCache.checked);
         enableRedisCache.addEventListener('change', function () {
-            redisSettingsDiv.style.display = this.checked ? 'block' : 'none';
+            updateRedisCanonicalCacheVisibility(this.checked);
+            markFormAsModified();
         });
     }
 
@@ -5744,7 +7159,7 @@ function setupTestButtons() {
     if (testRedisBtn) {
         testRedisBtn.addEventListener('click', async () => {
             const resultDiv = document.getElementById('test_redis_result');
-            resultDiv.innerHTML = 'Testing Redis...';
+            setRedisTestResult(resultDiv, 'Testing Redis...', 'muted');
 
             const payload = {
                 test_type: 'redis',
@@ -5761,12 +7176,13 @@ function setupTestButtons() {
                 });
                 const data = await resp.json();
                 if (resp.ok) {
-                    resultDiv.innerHTML = `<span class="text-success">${data.message}</span>`;
+                    setRedisTestResult(resultDiv, data.message || 'Redis connection successful.', 'success');
+                    loadRedisMonitoringStatus(null, { showLoading: false });
                 } else {
-                    resultDiv.innerHTML = `<span class="text-danger">${data.error || 'Error testing Redis'}</span>`;
+                    setRedisTestResult(resultDiv, data.error || 'Error testing Redis', 'danger');
                 }
             } catch (err) {
-                resultDiv.innerHTML = `<span class="text-danger">Error: ${err.message}</span>`;
+                setRedisTestResult(resultDiv, `Error: ${err.message}`, 'danger');
             }
         });
     }
@@ -6058,12 +7474,23 @@ function setupTestButtons() {
             }
 
             const enableApim = document.getElementById('enable_gpt_apim').checked;
+            const selectedVisionOption = getSelectedVisionModelOption();
 
             const payload = {
                 test_type: 'multimodal_vision',
                 enable_apim: enableApim,
                 vision_model: visionModel
             };
+
+            if (!enableApim && selectedVisionOption?.dataset?.endpointId && selectedVisionOption?.dataset?.modelId) {
+                payload.multi_endpoint = {
+                    endpoint_id: selectedVisionOption.dataset.endpointId,
+                    model_id: selectedVisionOption.dataset.modelId,
+                    provider: selectedVisionOption.dataset.provider || '',
+                    model_name: selectedVisionOption.dataset.modelName || '',
+                    deployment_name: visionModel
+                };
+            }
 
             if (enableApim) {
                 payload.apim = {
@@ -6309,7 +7736,7 @@ function updateRedisCanonicalCacheVisibility(isEnabled) {
     const redisSettingsDiv = document.getElementById('redis_cache_settings');
 
     if (redisSettingsDiv) {
-        redisSettingsDiv.style.display = isEnabled ? 'block' : 'none';
+        redisSettingsDiv.classList.toggle('d-none', !isEnabled);
     }
 }
 
@@ -6937,56 +8364,88 @@ const visionToggle = document.getElementById('enable_multimodal_vision');
 const visionModelDiv = document.getElementById('multimodal_vision_model_settings');
 const visionSelect = document.getElementById('multimodal_vision_model');
 
+function isVisionCapableModelName(...modelNames) {
+    return modelNames.some(modelName => {
+        const normalizedName = String(modelName || '')
+            .trim()
+            .toLowerCase()
+            .replace(/[\s_.]+/g, '-');
+
+        return (
+            normalizedName.includes('vision') ||
+            normalizedName.includes('gpt-4o') ||
+            normalizedName.includes('gpt-4-1') ||
+            normalizedName.includes('gpt-4-5') ||
+            /(?:^|-)gpt-(?:[5-9]|\d{2,})(?:-|$)/.test(normalizedName) ||
+            /(?:^|-)o\d+(?:-|$)/.test(normalizedName)
+        );
+    });
+}
+
+function getSelectedVisionModelOption() {
+    if (!visionSelect) {
+        return null;
+    }
+
+    return visionSelect.options[visionSelect.selectedIndex] || null;
+}
+
 function populateVisionModels() {
     if (!visionSelect) return;
-  
-    // remember previously chosen value
-    const prev = visionSelect.getAttribute('data-prev') || '';
 
-    // clear out old options (except the placeholder)
+    const prev = visionSelect.getAttribute('data-prev') || '';
     visionSelect.innerHTML = '<option value="">Select a vision-capable model...</option>';
 
-    if (document.getElementById('enable_gpt_apim').checked) {
-        // use comma-separated APIM deployments
-        const text = document.getElementById('azure_apim_gpt_deployment').value || '';
-        text.split(',')
-                .map(s => s.trim())
-                .filter(s => s)
-                .forEach(d => {
-                    const opt = new Option(d, d);
-                    visionSelect.add(opt);
-                });
-    } else {
-        // use direct GPT selected deployments - filter for vision-capable models
-        (window.gptSelected || []).forEach(m => {
-            // Only include models with vision capabilities
-            // Vision-enabled models per Azure OpenAI docs:
-            // - o-series reasoning models (o1, o3, etc.)
-            // - GPT-5 series
-            // - GPT-4.1 series
-            // - GPT-4.5
-            // - GPT-4o series (gpt-4o, gpt-4o-mini)
-            // - GPT-4 vision models (gpt-4-vision, gpt-4-turbo-vision)
-            const modelNameLower = (m.modelName || '').toLowerCase();
-            const isVisionCapable =
-                modelNameLower.includes('vision') ||
-                modelNameLower.includes('gpt-4o') ||
-                modelNameLower.includes('gpt-4.1') ||
-                modelNameLower.includes('gpt-4.5') ||
-                modelNameLower.includes('gpt-5') ||
-                modelNameLower.match(/^o\d+/) ||
-                modelNameLower.includes('o1-') ||
-                modelNameLower.includes('o3-');
+    // Prefer multi-endpoint model list when available
+    const multiEnabled = window.enableMultiModelEndpoints === true;
+    const endpoints = Array.isArray(window.modelEndpoints) ? window.modelEndpoints : [];
 
-            if (isVisionCapable) {
+    if (multiEnabled && endpoints.length > 0) {
+        endpoints
+            .filter(ep => ep && ep.enabled)
+            .forEach(ep => {
+                (ep.models || [])
+                    .filter(m => m && m.enabled && isVisionCapableModelName(
+                        m.modelName,
+                        m.displayName,
+                        m.deploymentName,
+                        m.deployment,
+                        m.name
+                    ))
+                    .forEach(m => {
+                        const value = m.deploymentName;
+                        const label = m.modelName
+                            ? `${m.displayName || m.deploymentName} (${m.modelName})`
+                            : (m.displayName || m.deploymentName);
+                        const opt = new Option(label, value);
+                        opt.dataset.endpointId = ep.id || '';
+                        opt.dataset.modelId = m.id || '';
+                        opt.dataset.provider = ep.provider || '';
+                        opt.dataset.modelName = m.modelName || '';
+                        visionSelect.add(opt);
+                    });
+            });
+    } else if (document.getElementById('enable_gpt_apim') && document.getElementById('enable_gpt_apim').checked) {
+        // Legacy APIM-based GPT configuration
+        const text = (document.getElementById('azure_apim_gpt_deployment')?.value || '');
+        text.split(',')
+            .map(s => s.trim())
+            .filter(s => s && isVisionCapableModelName(s))
+            .forEach(d => {
+                const opt = new Option(d, d);
+                visionSelect.add(opt);
+            });
+    } else {
+        // Legacy single-endpoint GPT configuration using window.gptSelected
+        (window.gptSelected || [])
+            .filter(m => isVisionCapableModelName(m.modelName))
+            .forEach(m => {
                 const label = `${m.deploymentName} (${m.modelName})`;
                 const opt = new Option(label, m.deploymentName);
                 visionSelect.add(opt);
-            }
-        });
+            });
     }
 
-    // restore previous
     if (prev) {
         visionSelect.value = prev;
     }
