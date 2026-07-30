@@ -1204,7 +1204,7 @@ def register_route_backend_conversations(bp):
             log_event(
                 f'[ConversationFork] Conflict while creating conversation fork: {conflict_error}',
                 level=logging.WARNING,
-                properties={
+                custom_dimensions={
                     'source_conversation_id': conversation_id,
                     'selected_message_id': selected_message_id,
                     'user_id': user_id,
