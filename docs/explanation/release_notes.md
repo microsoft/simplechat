@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.102)**
+
+#### User Interface Enhancements
+
+*   **External Link Ordering Controls**
+    *   Admins can now move saved external links up or down and save the resulting navigation order without deleting and recreating links.
+    *   The first and last links expose disabled boundary controls, and the visible order stays synchronized with the Admin Settings save payload.
+    *   (Ref: Closes #793, `admin_settings.js`, `test_admin_external_link_ordering.py`, `EXTERNAL_LINK_ORDERING_FIX.md`)
+
 ### **(v0.250.101)**
 
 #### New Features
