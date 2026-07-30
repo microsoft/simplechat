@@ -289,7 +289,7 @@ def start_background_tasks():
             print("Background tasks disabled for this web process.")
             _background_tasks_started = True
             return
-        start_background_task_threads()
+        start_background_task_threads(app=app)
         _background_tasks_started = True
 
 

@@ -2,10 +2,14 @@
 """
 UI test for Admin Settings File Sync management.
 
-Version: 0.241.180
+Version: 0.250.070
 Implemented in: 0.241.073
 Updated in: 0.241.178
 Updated in: 0.241.180
+Updated in: 0.250.067
+Updated in: 0.250.068
+Updated in: 0.250.069
+Updated in: 0.250.070
 
 This test ensures the Admin Settings File Sync tab renders as its own section,
 uses personal app-role and workspace assignment gate controls, stacks scope cards
@@ -143,8 +147,11 @@ def test_admin_file_sync_tab_and_target_manager():
         expect(file_sync_section.get_by_text("Visible Source Types")).to_be_visible()
         expect(page.get_by_label("SMB Share")).to_be_visible()
         expect(page.get_by_label("Azure Files")).to_be_visible()
+        expect(page.get_by_label("Azure Blob Storage")).to_be_visible()
         if not page.get_by_label("Azure Files").is_checked():
             page.get_by_label("Azure Files").check()
+        if page.get_by_label("Azure Blob Storage").is_checked():
+            page.get_by_label("Azure Blob Storage").uncheck()
         expect(page.get_by_label("OneDrive")).to_be_visible()
         expect(page.get_by_label("On-prem SharePoint")).to_be_visible()
         expect(page.get_by_label("Google Workspace")).to_be_visible()

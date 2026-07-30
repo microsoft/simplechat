@@ -55,9 +55,11 @@ from functions_message_artifacts import (
     hydrate_agent_citations_from_artifacts,
 )
 from functions_simplechat_operations import (
+    ConversationForkConflictError,
     create_personal_conversation_for_current_user,
     delete_blob_backed_chat_message_files,
     derive_conversation_title_from_message,
+    fork_personal_conversation_for_user,
 )
 from swagger_wrapper import swagger_route, get_auth_security
 from functions_activity_logging import log_conversation_creation, log_conversation_deletion, log_conversation_archival
@@ -902,6 +904,11 @@ def register_route_backend_conversations(bp):
                 query=message_query,
                 partition_key=conversation_id
             ))
+            all_items.sort(key=lambda item: (
+                str(item.get('timestamp') or ''),
+                int(item.get('fork_sequence')) if str(item.get('fork_sequence') or '').isdigit() else 0,
+                str(item.get('id') or ''),
+            ))
             artifact_payload_map = build_message_artifact_payload_map(all_items)
             all_items = filter_assistant_artifact_items(all_items)
             
@@ -1133,7 +1140,91 @@ def register_route_backend_conversations(bp):
             'conversation_id': conversation_item.get('id'),
             'title': conversation_item.get('title', 'New Conversation')
         }), 200
-    
+
+
+    @bp.route('/api/conversations/<conversation_id>/fork', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def fork_conversation(conversation_id):
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        request_payload = request.get_json(silent=True) or {}
+        selected_message_id = str(request_payload.get('message_id') or '').strip()
+        if not selected_message_id:
+            return jsonify({'error': 'A persisted assistant message is required'}), 400
+
+        try:
+            source_conversation = _authorize_personal_conversation_read(user_id, conversation_id)
+        except PermissionError:
+            return jsonify({'error': 'Forbidden'}), 403
+        except LookupError:
+            return jsonify({'error': 'The source conversation was not found'}), 404
+
+        try:
+            fork_result = fork_personal_conversation_for_user(
+                source_conversation=source_conversation,
+                selected_message_id=selected_message_id,
+                user_id=user_id,
+            )
+            fork_conversation = fork_result['conversation']
+            try:
+                bump_conversation_cache_version(user_id, reason="conversation_forked")
+            except Exception as cache_error:
+                log_event(
+                    f'[ConversationFork] Fork created but cache invalidation failed: {cache_error}',
+                    level=logging.WARNING,
+                    custom_dimensions={
+                        'fork_conversation_id': fork_conversation['id'],
+                        'user_id': user_id,
+                    },
+                )
+            return jsonify({
+                'conversation_id': fork_conversation['id'],
+                'title': fork_conversation['title'],
+                'message_count': fork_result['message_count'],
+            }), 201
+        except LookupError:
+            return jsonify({'error': 'The selected assistant message was not found'}), 404
+        except ValueError as validation_error:
+            log_event(
+                f'[ConversationFork] Validation failed while creating conversation fork: {validation_error}',
+                level=logging.WARNING,
+                exceptionTraceback=True,
+                custom_dimensions={
+                    'source_conversation_id': conversation_id,
+                    'selected_message_id': selected_message_id,
+                    'user_id': user_id,
+                },
+            )
+            return jsonify({'error': 'Invalid request'}), 400
+        except ConversationForkConflictError as conflict_error:
+            log_event(
+                f'[ConversationFork] Conflict while creating conversation fork: {conflict_error}',
+                level=logging.WARNING,
+                custom_dimensions={
+                    'source_conversation_id': conversation_id,
+                    'selected_message_id': selected_message_id,
+                    'user_id': user_id,
+                },
+            )
+            return jsonify({'error': 'Conversation fork conflict'}), 409
+        except Exception as error:
+            log_event(
+                f'[ConversationFork] Failed to create conversation fork: {error}',
+                level=logging.ERROR,
+                exceptionTraceback=True,
+                custom_dimensions={
+                    'source_conversation_id': conversation_id,
+                    'selected_message_id': selected_message_id,
+                    'user_id': user_id,
+                },
+            )
+            return jsonify({'error': 'Failed to fork conversation'}), 500
+
+
     @bp.route('/api/conversations/<conversation_id>', methods=['PUT'])
     @swagger_route(security=get_auth_security())
     @login_required

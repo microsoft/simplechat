@@ -2190,6 +2190,47 @@
                             </div>
                         </div>
                     </div>
+
+                    <hr class="my-4" />
+                    <section aria-labelledby="file-processing-log-cleanup-heading" data-ignore-settings-change="true">
+                        <h6 id="file-processing-log-cleanup-heading">Delete stored logs</h6>
+                        <p class="text-muted small">
+                            Permanently remove file processing logs from Cosmos DB. One month is treated as 30 days.
+                        </p>
+                        <div class="row g-3 align-items-end">
+                            <div class="col-sm-4">
+                                <label for="file-processing-log-cleanup-age" class="form-label">Delete logs older than</label>
+                                <input
+                                    type="number"
+                                    class="form-control"
+                                    id="file-processing-log-cleanup-age"
+                                    min="1"
+                                    step="1"
+                                    value="30"
+                                    aria-describedby="file-processing-log-cleanup-age-feedback"
+                                />
+                                <div id="file-processing-log-cleanup-age-feedback" class="invalid-feedback">
+                                    Enter a whole number greater than zero.
+                                </div>
+                            </div>
+                            <div class="col-sm-3">
+                                <label for="file-processing-log-cleanup-unit" class="form-label">Age unit</label>
+                                <select class="form-select" id="file-processing-log-cleanup-unit">
+                                    <option value="days" selected>Days</option>
+                                    <option value="weeks">Weeks</option>
+                                    <option value="months">Months (30 days)</option>
+                                </select>
+                            </div>
+                            <div class="col-sm-5 d-flex flex-wrap gap-2">
+                                <button type="button" class="btn btn-outline-danger" id="delete-old-file-processing-logs-btn">
+                                    <i class="bi bi-trash me-1" aria-hidden="true"></i>Delete older logs
+                                </button>
+                                <button type="button" class="btn btn-danger" id="delete-all-file-processing-logs-btn">
+                                    <i class="bi bi-trash3 me-1" aria-hidden="true"></i>Delete all logs
+                                </button>
+                            </div>
+                        </div>
+                    </section>
                 </div>
             </div>
 
@@ -5363,6 +5404,16 @@
                             <label class="form-label" for="data_management_target_cosmos_key">Account key</label>
                             <input class="form-control" type="password" id="data_management_target_cosmos_key" autocomplete="off" placeholder="Stored keys stay redacted after save">
                         </div>
+                        <div class="row g-3 mt-1" id="data-management-target-cosmos-management-fields">
+                            <div class="col-md-6">
+                                <label class="form-label" for="data_management_target_cosmos_subscription_id">Subscription ID for capacity management</label>
+                                <input class="form-control" type="text" id="data_management_target_cosmos_subscription_id" autocomplete="off" placeholder="Required only for a temporary RU boost">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label" for="data_management_target_cosmos_resource_group">Resource group for capacity management</label>
+                                <input class="form-control" type="text" id="data_management_target_cosmos_resource_group" autocomplete="off" placeholder="Required only for a temporary RU boost">
+                            </div>
+                        </div>
                     </div>
 
                     <div class="card p-3 border-warning-subtle mt-3" id="data-management-target-ai-search-section">
@@ -5433,6 +5484,32 @@
                                 <i class="bi bi-arrow-clockwise me-1"></i>Refresh Summary
                             </button>
                         </div>
+                        <fieldset class="border-bottom pb-3 mb-3" id="data-management-migration-mode-section">
+                            <legend class="h6 mb-2">Synchronization mode</legend>
+                            <div class="btn-group flex-wrap" role="radiogroup" aria-label="Migration synchronization mode">
+                                <input class="btn-check" type="radio" name="data_management_migration_mode" id="data_management_migration_mode_new_only" value="new_only" checked>
+                                <label class="btn btn-outline-primary" for="data_management_migration_mode_new_only">New only</label>
+                                <input class="btn-check" type="radio" name="data_management_migration_mode" id="data_management_migration_mode_delta_upsert" value="delta_upsert">
+                                <label class="btn btn-outline-primary" for="data_management_migration_mode_delta_upsert">Delta / upsert</label>
+                                <input class="btn-check" type="radio" name="data_management_migration_mode" id="data_management_migration_mode_mirror_with_deletions" value="mirror_with_deletions">
+                                <label class="btn btn-outline-danger" for="data_management_migration_mode_mirror_with_deletions">Mirror with deletions</label>
+                            </div>
+                            <p class="text-muted small mt-2 mb-0" id="data-management-migration-mode-description" aria-live="polite">
+                                Copies source items that are absent from the destination. Existing destination data is never updated or deleted.
+                            </p>
+                            <div class="row g-3 mt-1 d-none" id="data-management-migration-baseline-field">
+                                <div class="col-lg-6">
+                                    <label class="form-label" for="data_management_migration_baseline_job_id">Baseline migration job ID</label>
+                                    <input class="form-control" type="text" id="data_management_migration_baseline_job_id" autocomplete="off" placeholder="Leave blank to use the latest compatible completed migration">
+                                    <div class="form-text">The baseline fixes the prior service watermarks used for this catch-up run.</div>
+                                </div>
+                            </div>
+                            <div class="alert alert-danger mt-3 mb-0 d-none" id="data-management-migration-mirror-confirmation" role="alert">
+                                <strong>Destructive mode.</strong> Only destination items with successful SimpleChat migration ownership are eligible for deletion. Unowned data is retained and reported as a conflict.
+                                <label class="form-label mt-2" for="data_management_migration_mirror_confirmation_phrase">Type <code>MIRROR WITH DELETIONS</code> to continue</label>
+                                <input class="form-control" type="text" id="data_management_migration_mirror_confirmation_phrase" autocomplete="off">
+                            </div>
+                        </fieldset>
                         <div class="row g-3">
                             <div class="col-lg-4">
                                 <div class="border rounded p-3 h-100" data-migration-picker="users">
@@ -5507,11 +5584,54 @@
                                     <input class="form-check-input" type="checkbox" role="switch" id="data_management_migration_include_ai_search" checked>
                                     <label class="form-check-label" for="data_management_migration_include_ai_search">Migrate matching AI Search documents</label>
                                 </div>
+                                <div class="form-check mt-2" id="data-management-migration-search-write-freeze">
+                                    <input class="form-check-input" type="checkbox" id="data_management_migration_target_search_writes_frozen">
+                                    <label class="form-check-label" for="data_management_migration_target_search_writes_frozen">I confirm external destination AI Search writers are frozen for this migration</label>
+                                    <div class="form-text">Azure AI Search does not support conditional document writes. SimpleChat target indexing pauses automatically; freeze all external writers before copying Search documents.</div>
+                                </div>
                             </div>
                             <div class="col-md-6">
                                 <div class="form-check form-switch">
                                     <input class="form-check-input" type="checkbox" role="switch" id="data_management_migration_include_source_blobs">
                                     <label class="form-check-label" for="data_management_migration_include_source_blobs">Migrate selected source document blobs</label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="border rounded p-3 mt-3" id="data-management-migration-performance-section">
+                            <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+                                <div>
+                                    <h6 class="mb-1">Performance And Resume</h6>
+                                    <p class="text-muted small mb-0">Migration uses durable per-resource checkpoints and the same migration ID after a retry.</p>
+                                </div>
+                                <button type="button" class="btn btn-outline-secondary btn-sm" id="data-management-test-migration-access-btn">
+                                    <i class="bi bi-shield-check me-1"></i>Validate Cosmos Migration Access
+                                </button>
+                            </div>
+                            <div class="row g-3">
+                                <div class="col-md-4">
+                                    <label class="form-label" for="data_management_migration_max_parallel_operations">Concurrent operations</label>
+                                    <input class="form-control" type="number" id="data_management_migration_max_parallel_operations" min="1" max="32" value="8">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label" for="data_management_migration_retry_count">Retry attempts</label>
+                                    <input class="form-control" type="number" id="data_management_migration_retry_count" min="1" max="10" value="5">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label" for="data_management_migration_skip_recent_within_hours">Skip successful prior migrations within hours</label>
+                                    <input class="form-control" type="number" id="data_management_migration_skip_recent_within_hours" min="0" max="8760" value="0">
+                                </div>
+                            </div>
+                            <div class="form-check form-switch mt-3">
+                                <input class="form-check-input" type="checkbox" role="switch" id="data_management_migration_temporary_destination_ru_enabled">
+                                <label class="form-check-label" for="data_management_migration_temporary_destination_ru_enabled">Temporarily increase destination Cosmos capacity during this migration</label>
+                            </div>
+                            <div class="row g-3 mt-1" id="data-management-migration-temporary-ru-field">
+                                <div class="col-md-4">
+                                    <label class="form-label" for="data_management_migration_temporary_destination_ru">Temporary destination max RU/s</label>
+                                    <input class="form-control" type="number" id="data_management_migration_temporary_destination_ru" min="1000" max="10000" step="1000" value="10000">
+                                </div>
+                                <div class="col-md-8 d-flex align-items-end">
+                                    <div class="form-text mb-2">The migration records the prior database or dedicated-container capacity, raises only eligible targets up to 10,000 RU/s, and restores it after completion or failure. Capacity changes require destination ARM permission.</div>
                                 </div>
                             </div>
                         </div>
@@ -5813,6 +5933,7 @@
                             </div>
                             <div class="modal-body">
                                 <div class="row g-3 mb-4" id="data-management-job-detail-summary"></div>
+                                <div class="d-flex flex-wrap gap-2 mb-4 d-none" id="data-management-job-detail-actions" aria-label="Migration job actions"></div>
                                 <div id="data-management-job-detail-progress" class="mb-4"></div>
                                 <div class="row g-3">
                                     <div class="col-lg-5">
@@ -5856,6 +5977,25 @@
                                         </div>
                                     </div>
                                 </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal fade" id="data-management-migration-cancel-modal" tabindex="-1" aria-labelledby="data-management-migration-cancel-title" aria-hidden="true">
+                    <div class="modal-dialog modal-dialog-centered">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="data-management-migration-cancel-title">Request Data Management Job Cancellation</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <p class="mb-2" id="data-management-migration-cancel-message"></p>
+                                <p class="text-muted small mb-0">The worker stops at its next durable checkpoint. Completed items remain available for Retry or Resume.</p>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Keep Running</button>
+                                <button type="button" class="btn btn-danger" id="data-management-confirm-migration-cancel-btn">Request Cancellation</button>
                             </div>
                         </div>
                     </div>
@@ -7606,6 +7746,13 @@
                                 </div>
                                 <div class="col-md-4">
                                     <div class="form-check">
+                                        <input type="checkbox" class="form-check-input" id="file_sync_visible_source_type_azure_blob" name="file_sync_visible_source_types" value="azure_blob" {% if 'azure_blob' in file_sync_visible_source_types %}checked{% endif %}>
+                                        <label class="form-check-label" for="file_sync_visible_source_type_azure_blob">Azure Blob Storage</label>
+                                        <div class="form-text">Available now.</div>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="form-check">
                                         <input type="checkbox" class="form-check-input" id="file_sync_visible_source_type_onedrive" value="onedrive" disabled>
                                         <label class="form-check-label" for="file_sync_visible_source_type_onedrive">OneDrive</label>
                                         <div class="form-text">Coming Soon.</div>
@@ -8403,6 +8550,31 @@
                         </label>
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to upload files directly into personal, group, and multi-user chat conversations."></i>
                     </div>
+
+                    <div class="card mb-3 p-3" id="conversation-contents-drawer-section">
+                        <h5>
+                            <i class="bi bi-list-nested me-2"></i>Conversation Contents Drawer
+                        </h5>
+                        <p class="text-muted">
+                            Let users navigate long conversations from a list of their prompts.
+                        </p>
+                        <div class="form-group form-check form-switch mb-2">
+                            <input
+                                type="checkbox"
+                                class="form-check-input"
+                                id="enable_conversation_contents_drawer"
+                                name="enable_conversation_contents_drawer"
+                                {% if settings.enable_conversation_contents_drawer %}checked{% endif %}
+                            />
+                            <label class="form-check-label ms-2" for="enable_conversation_contents_drawer">
+                                Enable Conversation Contents Drawer
+                            </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to open a responsive contents drawer that lists persisted user messages and jumps to them."></i>
+                        </div>
+                        <p class="text-muted small mb-0">
+                            When enabled, users can turn the drawer off for their own account from Profile settings.
+                        </p>
+                    </div>
                     <div class="form-group form-check form-switch mb-2">
                         <input type="checkbox"
                             class="form-check-input"
@@ -8505,19 +8677,7 @@
                                 {# Iterate all enabled endpoints and models, filter to vision-capable #}
                                 {% for endpoint in settings.model_endpoints if endpoint.enabled %}
                                     {% for m in endpoint.models if m.enabled %}
-                                        {% set model_lower = (m.modelName or m.displayName or '').lower() %}
-                                        {% set is_vision =
-                                            'vision' in model_lower or
-                                            'gpt-4o' in model_lower or
-                                            'gpt-4.1' in model_lower or
-                                            'gpt-4.5' in model_lower or
-                                            '-5' in model_lower or
-                                            model_lower.startswith('o1') or
-                                            model_lower.startswith('o3') or
-                                            'o1-' in model_lower or
-                                            'o3-' in model_lower
-                                        %}
-                                        {% if is_vision %}
+                                        {% if is_vision_capable_model is defined and is_vision_capable_model(m) %}
                                             {% set option_value = m.deploymentName %}
                                             <option value="{{ option_value }}"
                                                 data-endpoint-id="{{ endpoint.id or '' }}"
@@ -8525,7 +8685,7 @@
                                                 data-provider="{{ endpoint.provider or '' }}"
                                                 data-model-name="{{ m.modelName or '' }}"
                                                 {% if settings.multimodal_vision_model == option_value %}selected{% endif %}>
-                                                {{ m.displayName or m.deploymentName }} ({{ m.modelName }})
+                                                {{ m.displayName or m.deploymentName }}{% if m.modelName %} ({{ m.modelName }}){% endif %}
                                             </option>
                                         {% endif %}
                                     {% endfor %}
@@ -8534,19 +8694,7 @@
                                 {# Legacy APIM-based GPT configuration #}
                                 {% for d in (settings.azure_apim_gpt_deployment or '').split(',') if d %}
                                     {% set d_trim = d.strip() %}
-                                    {% set model_lower = d_trim.lower() %}
-                                    {% set is_vision =
-                                        'vision' in model_lower or
-                                        'gpt-4o' in model_lower or
-                                        'gpt-4.1' in model_lower or
-                                        'gpt-4.5' in model_lower or
-                                        '-5' in model_lower or
-                                        model_lower.startswith('o1') or
-                                        model_lower.startswith('o3') or
-                                        'o1-' in model_lower or
-                                        'o3-' in model_lower
-                                    %}
-                                    {% if is_vision %}
+                                    {% if is_vision_capable_model is defined and is_vision_capable_model(d_trim) %}
                                         <option value="{{ d_trim }}"
                                             {% if settings.multimodal_vision_model == d_trim %}selected{% endif %}>
                                             {{ d_trim }}
@@ -8556,28 +8704,16 @@
                             {% else %}
                                 {# Legacy single-endpoint GPT configuration #}
                                 {% for m in settings.gpt_model.selected %}
-                                    {% set model_lower = (m.modelName or '').lower() %}
-                                    {% set is_vision =
-                                        'vision' in model_lower or
-                                        'gpt-4o' in model_lower or
-                                        'gpt-4.1' in model_lower or
-                                        'gpt-4.5' in model_lower or
-                                        'gpt-5' in model_lower or
-                                        model_lower.startswith('o1') or
-                                        model_lower.startswith('o3') or
-                                        'o1-' in model_lower or
-                                        'o3-' in model_lower
-                                    %}
-                                    {% if is_vision %}
+                                    {% if is_vision_capable_model is defined and is_vision_capable_model(m) %}
                                         <option value="{{ m.deploymentName }}"
                                             {% if settings.multimodal_vision_model == m.deploymentName %}selected{% endif %}>
-                                            {{ m.deploymentName }} ({{ m.modelName }})
+                                            {{ m.deploymentName }}{% if m.modelName %} ({{ m.modelName }}){% endif %}
                                         </option>
                                     {% endif %}
                                 {% endfor %}
                             {% endif %}
                         </select>
-                        <div class="form-text">Select a GPT model with vision capabilities (e.g., gpt-4o, gpt-4-vision, gpt-5, gpt-5-nano, etc.). Only vision-capable models are shown.</div>
+                        <div class="form-text">Select a GPT model with vision capabilities (for example, gpt-4o or supported GPT 5 and later models). Only vision-capable models are shown.</div>
 
                         <button type="button" class="btn btn-secondary mt-3" id="test_multimodal_vision_button">
                             <i class="bi bi-clipboard-check me-1"></i>Test Vision Analysis
@@ -9353,6 +9489,37 @@
                                 </div>
                             </div>
                         </div>
+
+
+                        <div class="mb-3">
+                            <label for="content_safety_violation_message" class="form-label">
+                                Safety Violation Message <span class="text-muted fw-normal">(Markdown supported)</span>
+                            </label>
+                            <textarea
+                                class="form-control"
+                                id="content_safety_violation_message"
+                                name="content_safety_violation_message"
+                                rows="4"
+                                maxlength="3000"
+                                placeholder="Your message was blocked by Content Safety."
+                            >{{ settings.content_safety_violation_message or '' }}</textarea>
+                            <div class="form-text">Displayed when Content Safety blocks a chat message.</div>
+                        </div>
+
+                        <div class="form-group form-check form-switch mb-2">
+                            <input
+                                type="checkbox"
+                                class="form-check-input"
+                                id="content_safety_include_trigger_information"
+                                name="content_safety_include_trigger_information"
+                                {% if settings.content_safety_include_trigger_information %}checked{% endif %}
+                            >
+                            <label class="form-check-label ms-2" for="content_safety_include_trigger_information">
+                                Include Trigger Information
+                            </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Show the reason, detected categories and severities, and blocklist matches below the safety message."></i>
+                        </div>
+                        <p class="form-text text-muted mb-3">Disable this option to show only the configured message.</p>
 
                         <button type="button" class="btn btn-secondary mt-3" id="test_safety_button">
                             Test Safety Connection
@@ -10913,6 +11080,36 @@
         <!-- End of Admin tab content -->
     </form>
 
+    <div
+        class="modal fade"
+        id="fileProcessingLogCleanupModal"
+        tabindex="-1"
+        aria-labelledby="fileProcessingLogCleanupModalLabel"
+        aria-describedby="file-processing-log-cleanup-confirmation"
+        aria-hidden="true"
+    >
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="fileProcessingLogCleanupModalLabel">Confirm permanent log deletion</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p id="file-processing-log-cleanup-confirmation"></p>
+                    <div class="alert alert-danger mb-0" role="alert">
+                        This action cannot be undone.
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-danger" id="confirm-file-processing-log-cleanup-btn">
+                        Delete logs
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Floating Save Button -->
     <button type="submit" form="admin-settings-form" class="btn btn-secondary floating-save-btn" id="floating-save-btn" disabled>
         <i class="bi bi-floppy"></i> Save Settings
@@ -11421,6 +11618,7 @@
     // Existing SimpleMDE script...
      // We’ll store the SimpleMDE instance globally so we can destroy or read its content
     let simplemde = null;
+    let contentSafetyViolationMessageEditor = null;
 
     // Grab references to the toggle, the editor container, and the preview container
     const toggleLandingPageEditor = document.getElementById("toggleLandingPageEditor");
@@ -11478,6 +11676,56 @@
             showPreview();
         }
     }
+
+    function initializeContentSafetyViolationMessageEditor() {
+        if (contentSafetyViolationMessageEditor || typeof SimpleMDE === "undefined") {
+            return;
+        }
+
+        const contentSafetyViolationMessageInput = document.getElementById(
+            "content_safety_violation_message"
+        );
+        if (!contentSafetyViolationMessageInput) {
+            return;
+        }
+
+        try {
+            contentSafetyViolationMessageEditor = new SimpleMDE({
+                element: contentSafetyViolationMessageInput,
+                spellChecker: false,
+                autoDownloadFontAwesome: false,
+                forceSync: true
+            });
+            contentSafetyViolationMessageEditor.codemirror.on("change", () => {
+                if (typeof window.markFormAsModified === "function") {
+                    window.markFormAsModified();
+                }
+            });
+        } catch (error) {
+            console.error("Failed to initialize SimpleMDE for Content Safety violation messages:", error);
+        }
+    }
+
+    function refreshContentSafetyViolationMessageEditor() {
+        if (!contentSafetyViolationMessageEditor?.codemirror) {
+            return;
+        }
+
+        window.setTimeout(() => {
+            contentSafetyViolationMessageEditor.codemirror.refresh();
+        }, 100);
+    }
+
+    initializeContentSafetyViolationMessageEditor();
+
+    const safetyTab = document.getElementById("safety-tab");
+    if (safetyTab) {
+        safetyTab.addEventListener("shown.bs.tab", refreshContentSafetyViolationMessageEditor);
+    }
+    if (document.getElementById("safety")?.classList.contains("show")) {
+        refreshContentSafetyViolationMessageEditor();
+    }
+    window.addEventListener("load", refreshContentSafetyViolationMessageEditor);
 </script>
 
 <script>

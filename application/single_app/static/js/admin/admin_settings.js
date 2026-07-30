@@ -37,6 +37,7 @@ let currentCosmosContainers = [];
 let currentCosmosMetricsWindowMinutes = 0;
 let currentCosmosStatusLoaded = false;
 let currentCosmosContainerSort = { field: 'container_name', direction: 'asc' };
+let pendingFileProcessingLogCleanup = null;
 let documentAccessIndexStatusPollId = null;
 let redisExplorerState = {
     cursor: '0',
@@ -657,6 +658,117 @@ function setElementText(elementId, value) {
     if (element) {
         element.textContent = value || 'Not loaded';
     }
+}
+
+function getFileProcessingLogCleanupElements() {
+    return {
+        ageInput: document.getElementById('file-processing-log-cleanup-age'),
+        unitSelect: document.getElementById('file-processing-log-cleanup-unit'),
+        deleteOlderButton: document.getElementById('delete-old-file-processing-logs-btn'),
+        deleteAllButton: document.getElementById('delete-all-file-processing-logs-btn'),
+        modalElement: document.getElementById('fileProcessingLogCleanupModal'),
+        confirmationText: document.getElementById('file-processing-log-cleanup-confirmation'),
+        confirmButton: document.getElementById('confirm-file-processing-log-cleanup-btn')
+    };
+}
+
+function setFileProcessingLogCleanupBusy(elements, isBusy) {
+    elements.ageInput.disabled = isBusy;
+    elements.unitSelect.disabled = isBusy;
+    elements.deleteOlderButton.disabled = isBusy;
+    elements.deleteAllButton.disabled = isBusy;
+    setButtonBusy(elements.confirmButton, isBusy, 'Deleting...');
+}
+
+function showFileProcessingLogCleanupConfirmation(elements, requestPayload, message) {
+    pendingFileProcessingLogCleanup = requestPayload;
+    elements.confirmationText.textContent = message;
+    bootstrap.Modal.getOrCreateInstance(elements.modalElement).show();
+}
+
+async function executeFileProcessingLogCleanup(elements) {
+    if (!pendingFileProcessingLogCleanup) {
+        return;
+    }
+
+    setFileProcessingLogCleanupBusy(elements, true);
+    try {
+        const response = await fetch('/api/admin/settings/file-processing-logs/cleanup', {
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+                ...pendingFileProcessingLogCleanup,
+                confirmed: true
+            })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.success) {
+            const partialCount = Number.isInteger(payload.deleted_count) && payload.deleted_count > 0
+                ? ` ${payload.deleted_count} log${payload.deleted_count === 1 ? '' : 's'} were deleted before the operation stopped.`
+                : '';
+            throw new Error(`${payload.error || 'Unable to delete file processing logs.'}${partialCount}`);
+        }
+
+        const deletedCount = Number(payload.deleted_count) || 0;
+        bootstrap.Modal.getInstance(elements.modalElement)?.hide();
+        showToast(
+            `${deletedCount} file processing log${deletedCount === 1 ? '' : 's'} deleted.`,
+            'success'
+        );
+        pendingFileProcessingLogCleanup = null;
+    } catch (error) {
+        showToast(error.message || 'Unable to delete file processing logs.', 'danger');
+    } finally {
+        setFileProcessingLogCleanupBusy(elements, false);
+    }
+}
+
+function setupFileProcessingLogCleanup() {
+    const elements = getFileProcessingLogCleanupElements();
+    if (Object.values(elements).some(element => !element)) {
+        return;
+    }
+
+    elements.ageInput.addEventListener('input', () => {
+        elements.ageInput.classList.remove('is-invalid');
+    });
+    elements.deleteOlderButton.addEventListener('click', () => {
+        const age = Number(elements.ageInput.value);
+        if (!Number.isInteger(age) || age < 1) {
+            elements.ageInput.classList.add('is-invalid');
+            elements.ageInput.focus();
+            showToast('Enter a whole-number log age greater than zero.', 'warning');
+            return;
+        }
+
+        const unit = elements.unitSelect.value;
+        const singularUnit = unit.endsWith('s') ? unit.slice(0, -1) : unit;
+        const ageLabel = `${age} ${age === 1 ? singularUnit : unit}`;
+        showFileProcessingLogCleanupConfirmation(
+            elements,
+            { delete_all: false, age, unit },
+            `Delete every file processing log older than ${ageLabel}?`
+        );
+    });
+    elements.deleteAllButton.addEventListener('click', () => {
+        showFileProcessingLogCleanupConfirmation(
+            elements,
+            { delete_all: true },
+            'Delete every stored file processing log?'
+        );
+    });
+    elements.confirmButton.addEventListener('click', () => {
+        executeFileProcessingLogCleanup(elements);
+    });
+    elements.modalElement.addEventListener('hidden.bs.modal', () => {
+        if (!elements.confirmButton.disabled) {
+            pendingFileProcessingLogCleanup = null;
+        }
+    });
 }
 
 function formatNumber(value) {
@@ -4509,6 +4621,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setupCosmosMaintenanceControls();
     setupDocumentAccessIndexControls();
     setupCosmosThroughputControls();
+    setupFileProcessingLogCleanup();
     setupInboundMcpEasyAuthGuard();
     
     // --- Setup form change tracking ---
@@ -8529,18 +8642,22 @@ const visionToggle = document.getElementById('enable_multimodal_vision');
 const visionModelDiv = document.getElementById('multimodal_vision_model_settings');
 const visionSelect = document.getElementById('multimodal_vision_model');
 
-function isVisionCapableModelName(modelName) {
-    const modelNameLower = (modelName || '').toLowerCase();
-    return (
-        modelNameLower.includes('vision') ||
-        modelNameLower.includes('gpt-4o') ||
-        modelNameLower.includes('gpt-4.1') ||
-        modelNameLower.includes('gpt-4.5') ||
-        modelNameLower.includes('gpt-5') ||
-        /^o\d+/.test(modelNameLower) ||
-        modelNameLower.includes('o1-') ||
-        modelNameLower.includes('o3-')
-    );
+function isVisionCapableModelName(...modelNames) {
+    return modelNames.some(modelName => {
+        const normalizedName = String(modelName || '')
+            .trim()
+            .toLowerCase()
+            .replace(/[\s_.]+/g, '-');
+
+        return (
+            normalizedName.includes('vision') ||
+            normalizedName.includes('gpt-4o') ||
+            normalizedName.includes('gpt-4-1') ||
+            normalizedName.includes('gpt-4-5') ||
+            /(?:^|-)gpt-(?:[5-9]|\d{2,})(?:-|$)/.test(normalizedName) ||
+            /(?:^|-)o\d+(?:-|$)/.test(normalizedName)
+        );
+    });
 }
 
 function getSelectedVisionModelOption() {
@@ -8566,10 +8683,18 @@ function populateVisionModels() {
             .filter(ep => ep && ep.enabled)
             .forEach(ep => {
                 (ep.models || [])
-                    .filter(m => m && m.enabled && isVisionCapableModelName(m.modelName || m.displayName))
+                    .filter(m => m && m.enabled && isVisionCapableModelName(
+                        m.modelName,
+                        m.displayName,
+                        m.deploymentName,
+                        m.deployment,
+                        m.name
+                    ))
                     .forEach(m => {
                         const value = m.deploymentName;
-                        const label = `${m.displayName || m.deploymentName} (${m.modelName})`;
+                        const label = m.modelName
+                            ? `${m.displayName || m.deploymentName} (${m.modelName})`
+                            : (m.displayName || m.deploymentName);
                         const opt = new Option(label, value);
                         opt.dataset.endpointId = ep.id || '';
                         opt.dataset.modelId = m.id || '';

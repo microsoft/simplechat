@@ -2,237 +2,191 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
-### **(v0.250.083)**
-
-#### New Features
-
-*   **Inbound MCP Personal Document And Prompt Listings**
-    *   Added delegated-user-scoped `list_personal_documents` and `list_personal_prompts` tools to the inbound MCP server.
-    *   Document listings reuse SimpleChat's existing personal document visibility boundary, include owned and shared visible document metadata, support bounded pagination, and allow a single safe tag filter.
-    *   Prompt listings return bounded personal prompt metadata only; prompt content stays out of the list response.
-    *   (Ref: microsoft/simplechat#1017, inbound MCP personal tools, `functions_mcp_server_tools.py`, `functions_mcp_server_registry.py`)
-
-### **(v0.250.082)**
-
-#### New Features
-
-*   **Inbound MCP Conversation Read Tools**
-    *   Added delegated-user-scoped `list_conversations` and `get_conversation_messages` tools to the inbound MCP server.
-    *   Conversation reads now use existing SimpleChat personal and personal-collaboration authorization boundaries, bounded pagination, and truncated message content to keep MCP responses safe and predictable.
-    *   Added JSON-RPC error mapping for invalid parameters, object-level authorization denial, and missing resources.
-    *   (Ref: microsoft/simplechat#1017, inbound MCP conversation tools, `functions_mcp_server_tools.py`, `functions_mcp_server_registry.py`, `route_inbound_mcp.py`)
-
-### **(v0.250.081)**
-
-#### User Interface Enhancements
-
-*   **Inbound MCP Single Access Governance**
-    *   Collapsed the current inbound MCP governance setup to one broad `inbound_mcp_access` policy with item `inbound_mcp`, so admins only need to decide which users or groups may use approved inbound MCP tools.
-    *   Moved source control out of user-bound governance setup; tenant, client, and source trust remain in Inbound MCP runtime configuration.
-    *   Preserved legacy source/scope/target policy compatibility for existing data while steering new setup toward the simpler access-policy workflow.
-    *   (Ref: microsoft/simplechat#1017, inbound MCP governance, `functions_mcp_server_governance.py`, `admin_settings.html`, `admin_governance.js`)
-
-### **(v0.250.080)**
-
-#### User Interface Enhancements
-
-*   **Simplified Inbound MCP Governance**
-    *   Reworked Admin Settings > Governance so inbound MCP setup now focuses on two production-facing policies: personal access (`inbound_mcp_access` / `personal`) and source (`inbound_mcp_source` / source value or `*`).
-    *   Removed quick-create buttons for client, tool, resource-operation, and target policies; client trust remains in Inbound MCP runtime configuration, while governance controls authorized users/groups and source signals.
-    *   Preserved legacy scope/target policy compatibility in backend evaluation while steering new setup toward the shared allow-all/users/groups policy experience.
-    *   (Ref: microsoft/simplechat#1017, inbound MCP governance, `functions_mcp_server_governance.py`, `admin_settings.html`, `admin_governance.js`)
-
-### **(v0.250.079)**
-
-#### User Interface Enhancements
-
-*   **MCP Governance Policy Help Modals**
-    *   Added reusable info buttons next to MCP destination and inbound MCP governance quick-create buttons.
-    *   Each help modal explains when to use that policy type and shows proper item ID examples, including sample `fedorg.gov` source/destination values.
-    *   (Ref: microsoft/simplechat#1017, MCP governance help, `admin_settings.html`, `admin_governance.js`)
-
-### **(v0.250.078)**
-
-#### User Interface Enhancements
-
-*   **Inbound MCP User/App Role Split**
-    *   Renamed the default delegated inbound MCP user role to `InboundMCPUserAccess` and added `InboundMCPAppAccess` as the reserved future app-only role default.
-    *   Tightened delegated MCP authentication so personal tools require both `scp=DelegatedMcpServerAccess` and an assigned delegated user role, instead of accepting role-or-scope.
-    *   Updated the Admin Settings inbound MCP panel and Easy Auth setup script preflight to show and validate the required delegated scope, user role, and app-only role.
-    *   Made inbound MCP governance quick-create policies open in restricted user/group mode by default rather than broad allow-all mode.
-    *   (Ref: microsoft/simplechat#1017, inbound MCP auth hardening, `functions_mcp_server_auth.py`, `functions_mcp_server_config.py`, `admin_settings.html`, `admin_governance.js`)
-
-### **(v0.250.077)**
-
-#### User Interface Enhancements
-
-*   **Inbound MCP Governance Policy Editor**
-    *   Added Admin Settings > Governance controls for creating the six inbound MCP delegated item policies required by governed tools: client, source, tool, scope, resource operation, and target.
-    *   Added quick-create buttons for the initial `list_personal_tags` policy set, including `personal`, `personal:tags:list`, and `personal:*` defaults.
-    *   (Ref: microsoft/simplechat#1017, inbound MCP governance, `admin_settings.html`, `admin_governance.js`)
-
 ### **(v0.250.075)**
 
-#### User Interface Enhancements
+#### New Features
 
-*   **Inbound MCP Delegated Scope Setup Preflight**
-    *   Changed the default inbound MCP delegated scope to `DelegatedMcpServerAccess` so it does not collide with the `McpServerAccess` app role.
-    *   Updated the Admin Settings inbound MCP modal to show the derived SimpleChat API client ID and required delegated scope, and to attempt an Entra app-registration check before changing Easy Auth excluded paths.
-    *   Clarified that personal MCP tools use delegated user tokens by default, while app-role/app-only access is reserved for future non-personal service/admin tool designs.
-    *   (Ref: microsoft/simplechat#1017, inbound MCP delegated scope, Easy Auth modal, `functions_mcp_server_config.py`, `route_frontend_admin_settings.py`, `admin_settings.html`)
+*   **Admin Feedback and Safety Record Lifecycle**
+    *   Added archive, unarchive, and permanently delete actions to the Feedback Review and Safety Violations admin pages, with active/archived filtering across lists, cards, statistics, pagination, and CSV exports.
+    *   Archived records are hidden from user profile history, destructive deletion requires confirmation, and safety violations with pending remediation approvals cannot be deleted.
+    *   Archive, unarchive, and delete actions create non-sensitive admin activity audit records, while audit persistence failures are surfaced without undoing successful lifecycle changes.
+    *   (Ref: microsoft/simplechat#991, `functions_review_lifecycle.py`, `route_backend_feedback.py`, `route_backend_safety.py`, `ADMIN_REVIEW_RECORD_LIFECYCLE.md`)
+
+*   **File Processing Log Cleanup**
+    *   Added admin controls to permanently delete file-processing logs older than a chosen number of days, weeks, or fixed 30-day months, or delete every stored log through a separate action.
+    *   Added explicit confirmation, exact and partial deletion counts, admin activity logging, validation, and secured cross-partition Cosmos DB cleanup.
+    *   (Ref: microsoft/simplechat#398, `functions_logging.py`, `route_frontend_admin_settings.py`, `admin_settings.js`, `FILE_PROCESSING_LOG_CLEANUP.md`)
 
 ### **(v0.250.074)**
 
-#### Bug Fixes
+#### New Features
 
-*   **Inbound MCP Easy Auth Script Read Fix**
-    *   Fixed the generated Easy Auth setup script to read App Service `authsettingsV2` with the resource `GET` endpoint instead of the unsupported POST list action before creating a backup.
-    *   This prevents failed reads from producing invalid backup files.
-    *   (Ref: microsoft/simplechat#1017, inbound MCP Easy Auth modal, `authsettingsV2`, `route_frontend_admin_settings.py`)
+*   **Conversation Contents Drawer**
+    *   Added an admin-controlled, default-on conversation contents drawer that indexes persisted user messages and lets users jump directly to earlier prompts in long chats.
+    *   Added a default-on user profile preference so each user can hide the drawer while the global admin feature remains enabled.
+    *   (Ref: microsoft/simplechat#1026, `chat-conversation-contents.js`, `admin_settings.html`, `profile.html`)
+
+*   **Fork Personal Conversations from Assistant Responses**
+    *   Added a Fork conversation action for persisted assistant messages, creating an independent personal conversation containing the active history through the selected response while leaving the source unchanged.
+    *   Forks remap conversation, message, thread, reply, and artifact identifiers; copy blob-backed attachments to independent paths; reject unauthorized or changed sources; and clean up failed copies before they become visible.
+    *   Added confirmation, duplicate-click prevention, failure feedback, immediate fork navigation, backend regression coverage, and browser workflow coverage.
+    *   (Ref: microsoft/simplechat#1025, `functions_simplechat_operations.py`, `route_backend_conversations.py`, `chat-messages.js`, `FORK_CONVERSATION.md`)
 
 #### User Interface Enhancements
 
-*   **Inbound MCP Script Copy Button**
-    *   Added a compact copy-to-clipboard icon button for the generated PowerShell setup script in the inbound MCP Easy Auth modal.
-    *   (Ref: microsoft/simplechat#1017, inbound MCP Easy Auth modal, `admin_settings.html`, `admin_settings.js`)
+*   **Responsive Long-Chat Navigation**
+    *   Added safe plain-text labels, active-location tracking, keyboard focus management, destination highlighting, and persistent desktop or off-canvas mobile layouts.
+    *   (Ref: microsoft/simplechat#1026, `chats.html`, `chats.css`, `test_chat_conversation_contents_drawer.py`)
 
 ### **(v0.250.073)**
 
+#### New Features
+
+*   **User Font Size Preferences**
+    *   Added persisted XS, S, M, L, and XL font-size choices to the user profile, ranging from 75% to 200% with medium as the default.
+    *   Font-size selections preview immediately and apply across SimpleChat after the user saves the preference.
+    *   (Ref: microsoft/simplechat#1099, `profile.html`, `functions_settings.py`, `FONT_SIZE_AND_200_PERCENT_ZOOM_FIX.md`)
+
+*   **Durable Data Management Backup Jobs**
+    *   Full and partial backups now persist immutable plans and source cutoffs, fenced attempts, resource/batch checkpoints, and latest-only Cosmos, AI Search, and Blob item state without mutating source records or metadata.
+    *   Added source-scoped overlap protection, authenticated cancellation and focused retry/resume controls, stale/queued worker recovery, bounded sanitized progress, and explicit non-destructive differential/deletion semantics in backup manifests.
+    *   (Ref: Closes #1092, `functions_data_management.py`, `functions_data_management_backup_state.py`, `DATA_MANAGEMENT_BACKUP_MIGRATION.md`)
+
 #### User Interface Enhancements
 
-*   **Cloud-Aware Inbound MCP Easy Auth Setup Script**
-    *   Updated the inbound MCP enablement modal to generate its PowerShell/az CLI script from SimpleChat deployment hints instead of assuming public Azure.
-    *   Added support for selecting the Azure CLI cloud before tenant login, matching custom clouds by Resource Manager endpoint, and using the SimpleChat-configured Resource Manager endpoint for public, government, MAG, Secret, or other custom environments.
-    *   Added timestamped `authsettingsV2` backup creation before changing App Service Authentication excluded paths.
-    *   (Ref: microsoft/simplechat#1017, inbound MCP Easy Auth modal, App Service Authentication excluded paths, `route_frontend_admin_settings.py`, `admin_settings.html`)
+*   **200% Zoom and Large-Text Layout Support**
+    *   Updated Chat, top navigation, classification banners, and sidebar scrolling to reserve font-relative space and keep messages, navigation, tools, and the composer reachable at 200% browser zoom and large saved font sizes.
+    *   (Ref: microsoft/simplechat#1099, `chats.css`, `navigation.css`, `sidebar.css`)
 
 ### **(v0.250.072)**
 
-#### New Features
+#### Bug Fixes
 
-*   **Inbound MCP Easy Auth Enablement Guard**
-    *   Added an Admin Settings modal that explains the required App Service Authentication excluded paths for inbound MCP and provides Azure Cloud Shell-friendly PowerShell/az CLI setup guidance.
-    *   Verifies the protected resource metadata, MCP endpoint, and MCP health endpoint are reachable without Easy Auth sign-in interception before allowing admins to enable inbound MCP.
-    *   Added server-side enforcement so inbound MCP cannot be enabled by bypassing the browser modal when the exclusion check fails.
-    *   (Ref: microsoft/simplechat#1017, inbound MCP admin UI, Easy Auth excluded paths, `functions_mcp_server_config.py`, `admin_settings.js`)
+*   **Selected Public Workspace Prompt Migration**
+    *   Selected public-workspace Data Management migrations now copy current prompts owned through `public_id` while retaining compatibility with legacy `public_workspace_id` records.
+    *   Prompts outside the selected workspaces remain excluded, transitional records migrate once, and copied prompt artifact counts are accurate. All-workspaces migration behavior is unchanged.
+    *   (Ref: microsoft/simplechat#1033, `functions_data_management.py`, `test_data_management_public_prompt_migration.py`)
 
 ### **(v0.250.071)**
 
 #### New Features
 
-*   **Inbound MCP App Settings And Admin UI**
-    *   Moved mutable inbound MCP runtime configuration from OS environment variables into the Cosmos-backed `app_settings` document.
-    *   Added a minimal Admin Settings > Agents and Actions panel for inbound MCP enablement, required Entra role/scope, allowed client app IDs, allowed tenant IDs, allowed source IDs, and source-header configuration.
-    *   Gated the new admin panel and left-nav entry behind an OS-only MCP UI feature flag that is not saved in SimpleChat settings or exposed as an editable UI control.
-    *   (Ref: microsoft/simplechat#1017, `functions_mcp_server_config.py`, `functions_settings.py`, `functions_mcp_server_auth.py`, `admin_settings.html`, `_sidebar_nav.html`)
+*   **Resilient Data Management Migrations**
+    *   Added durable migration provenance, per-resource checkpoints, bounded concurrent transfers, retry/resume controls, and long-running Cosmos, Search, Blob, inventory, and reconciliation heartbeats.
+    *   Added New only, Delta / upsert, and explicitly confirmed Mirror with deletions modes with durable baseline watermarks, migration-owned update/delete protection, and server-owned live previews.
+    *   Added post-copy Cosmos, AI Search, and Blob reconciliation with cutover readiness, actual outcome totals, and preview-versus-actual divergence reporting.
+    *   Replaced deep AI Search pagination with persisted `id` keyset cursors, including selected-scope filter batching and coverage beyond 100,000 documents.
+    *   Added memory-bounded reconciliation, two-phase mirror deletion with current-source/ETag revalidation, target-side coordination across independent SimpleChat sources, and retryable `not_ready` cutover failures.
+    *   Preserved Blob content settings, metadata, tags, tier, type, and available content verification while adding mid-stream lease heartbeats, cooperative cancellation, source ETag stability, and pending-to-succeeded provenance.
+    *   Added durable privacy-safe per-item outcome batches plus admin JSONL manifest and failure-list downloads.
+    *   Made unresolved temporary Cosmos capacity restoration a retryable terminal state; retry restores the saved snapshot without reapplying the boost.
+    *   Added a durable target AI Search write fence that drains normal SimpleChat indexing before transfer or mirror deletion, bounds Search requests, rejects self-targeting migrations, and requires explicit external-writer freeze acknowledgement before Search writes begin.
+    *   Added target-side coordinator fencing across independent SimpleChat source deployments and retained uncertain target Search write slots through their full quarantine window. Authorization-reducing unshare requests now defer safely while target Search ACL writes are frozen.
+    *   (Ref: microsoft/simplechat#1043, `functions_data_management.py`, `functions_migration_provenance.py`, `admin_data_management.js`, `DATA_MANAGEMENT_MIGRATION_RESILIENCE.md`)
 
 ### **(v0.250.070)**
 
-#### New Features
+#### Bug Fixes
 
-*   **First Governed Inbound MCP Tool**
-    *   Added explicit deny-by-default inbound MCP item-policy evaluation for approved clients, sources, tools, scopes, resource operations, and target scopes.
-    *   Added minimal streamable HTTP JSON-RPC handling for `initialize`, `tools/list`, and `tools/call`.
-    *   Implemented the first delegated-user personal tool, `list_personal_tags`, which only returns bounded tag metadata when every required governance dimension allows the request.
-    *   Kept `execute_workflow` and the other planned personal tools disabled until their service-layer authorization and guardrails are implemented.
-    *   (Ref: microsoft/simplechat#1017, `functions_mcp_server_governance.py`, `functions_mcp_server_registry.py`, `functions_mcp_server_tools.py`, `route_inbound_mcp.py`)
+*   **Azure Blob Container SAS Support and Credential Guidance**
+    *   Added support for storage connection strings, full container SAS URLs, and standalone SAS tokens. Pasted SAS URLs derive the canonical account, selected container, and default source name without persisting the token in connection metadata.
+    *   Validates required Read and List permissions, HTTPS-only protocol, account-SAS Blob resource scope, start time, and expiry. Extra permissions and broader account credentials remain usable but produce least-privilege warnings.
+    *   Shows non-secret SAS scope, named permissions, exact expiry, days remaining, stored-policy status, IP restrictions, and warnings in connection tests and source rows.
+    *   Supports saving Blob credentials with or without Azure Key Vault; Key Vault is used when enabled and existing File Sync credential persistence is used otherwise.
+    *   (Ref: microsoft/simplechat#1027, `functions_file_sync.py`, `workspace-file-sync.js`, `AZURE_BLOB_CONTAINER_SAS_SUPPORT_FIX.md`)
 
 ### **(v0.250.068)**
 
-#### New Features
+#### Bug Fixes
 
-*   **MCP Capability Probe And Tool Metadata Safeguards**
-    *   Upgraded outbound MCP discovery into a compatibility probe that preserves the existing `tools` response while adding capability hints, transport/auth echoes, and warning messages for broad schemas or unsupported prompt loading.
-    *   Expanded cached MCP tool metadata to retain output schemas, annotations, and structured-content hints where available.
-    *   Added opt-in MCP tool argument validation and configurable large-result handling with the existing truncate behavior as the default.
-    *   Updated the MCP action modal to display probe warnings and save validation/result-policy settings.
-    *   (Ref: microsoft/simplechat#1014, `McpPluginFactory.probe_server_from_config`, `functions_mcp_operations.py`, MCP action modal, `test_mcp_phase2_probe_metadata.py`)
+*   **Azure Blob File Sync Endpoint and Error Hardening**
+    *   Restricted Azure Blob File Sync URLs and connection strings to validated HTTPS Azure Blob endpoints, blocking arbitrary, internal, development-storage, and credential-bearing endpoint forms before SDK requests are created.
+    *   Replaced raw File Sync route, run-history, activity, and item exception text with fixed client-safe messages while retaining detailed sanitized diagnostics in server logs.
+    *   (Ref: microsoft/simplechat#1027, PR #1088 security review, `functions_file_sync.py`, `route_backend_file_sync.py`)
 
 ### **(v0.250.067)**
 
 #### New Features
 
-*   **MCP Catalog Implementation Schema Framework**
-    *   Added implementation-specific schema validation for MCP presets and preconfigurations so provider-specific settings live in `additionalSettings` instead of expanding the base catalog schemas.
-    *   Migrated bundled Generic, Splunk, Microsoft Learn, Azure documentation, GitHub, local development, Microsoft Sentinel, and Azure MCP Server entries into the new framework with validated non-secret implementation metadata.
-    *   Hardened enterprise preconfiguration use by enforcing direct-submit/runtime policy checks and requiring endpoint-reviewed enterprise templates to match both explicit `preconfiguration:<id>` policy and a specific governed endpoint policy.
-    *   Updated Sentinel and Azure MCP enterprise templates to default to reusable identity auth rather than manual bearer-token entry.
-    *   (Ref: microsoft/simplechat#1014, `functions_mcp_catalog_implementations.py`, `mcp_presets\implementation_schemas`, `mcp_preconfigurations\implementation_schemas`, MCP action modal)
-
+*   **Azure Blob Storage File Sync**
+    *   Added Azure Blob Storage as an admin-controlled File Sync source for personal, group, and public workspaces, with account, container, prefix, selected-path, filter, tag, schedule, and remote-delete controls.
+    *   Added managed identity, Key Vault-backed service principal and connection string authentication, connection testing, virtual-folder browsing, ETag change detection, and streamed ingestion through the existing document pipeline.
+    *   (Ref: microsoft/simplechat#1027, `functions_file_sync.py`, `workspace-file-sync.js`, `AZURE_BLOB_STORAGE_FILE_SYNC.md`)
 ### **(v0.250.066)**
 
-#### New Features
+#### Bug Fixes
 
-*   **MCP Enterprise Preconfiguration Templates**
-    *   Added enterprise catalog tiering for authenticated MCP server templates, including catalog metadata for auth tier, deployment model, endpoint review, required governance gates, and operator notes.
-    *   Added disabled-by-default Microsoft Sentinel MCP and Azure MCP Server templates that stay hidden unless admins enable MCP destination governance and explicitly allow the matching `preconfiguration:<id>` policy for the intended scope.
-    *   Kept high-risk enterprise template tools disabled by default and surfaced warnings in the MCP action modal when governed templates are available.
-    *   (Ref: microsoft/simplechat#1014, `functions_mcp_preconfigurations.py`, `mcp_preconfigurations\definitions`, MCP action modal, `MCP_SERVER_PRECONFIGURATIONS.md`)
+*   **GPT 5.6+ Multi-Modal Vision Model Selection**
+    *   Enabled GPT 5.6 Luna, Sol, Terra, and later supported GPT deployments to appear in the Multi-Modal Vision Analysis selector across Azure OpenAI and Foundry endpoints.
+    *   Model detection now evaluates model, display, and deployment names with normalized separators while preserving disabled-model and unsupported-family filtering.
+    *   (Ref: microsoft/simplechat#1086, `admin_settings.js`, `test_admin_multimodal_vision_model_options.py`)
 
 ### **(v0.250.065)**
 
 #### New Features
 
-*   **MCP Action Destination Governance UI And Policy Persistence**
-    *   Added Admin Settings > Governance controls for enabling outbound MCP destination allowlist enforcement and unsafe literal-IP destination blocking.
-    *   Extended delegated item policies so admins can allow personal, group, and global MCP destinations with patterns such as `preconfiguration:<id>`, wildcard hosts, URL prefixes, transports, or `*`, including group-specific overrides.
-    *   Filtered the MCP preconfiguration API through destination governance so disallowed preconfigured MCP servers are not returned to the action modal.
-    *   (Ref: microsoft/simplechat#1014, `functions_mcp_destinations.py`, `functions_governance.py`, `admin_governance.js`, `MCP_SERVER_PRECONFIGURATIONS.md`)
+*   **Task-Level Workflow Model and Agent Selection**
+    *   Each ordered workflow task can now inherit the workflow's Default Runner or select its own authorized Direct Model or Agent.
+    *   Task runners are normalized on save and revalidated before execution, including current personal/group/global agent scope, group membership, and enabled model endpoint/model availability.
+    *   Unavailable runners follow the workflow's retry and stop-or-continue strategy, while task run items record non-secret runner audit details, execution deployment/provider, output preview, and token usage when available.
+    *   Existing tasks without runner configuration inherit the workflow default, and workflows without task sequences retain the legacy execution path.
+    *   (Ref: microsoft/simplechat#1084, `functions_personal_workflows.py`, `functions_group_workflows.py`, `functions_workflow_runner.py`)
+
+#### User Interface Enhancements
+
+*   **Per-Task Runner Controls**
+    *   Renamed the workflow-level Runner field to Default Runner and added Workflow default, Direct Model, and Agent selection to each task editor.
+    *   Task rows and Review now show the resolved runner, with responsive conditional model/agent controls and text-safe rendering for endpoint, model, and agent labels.
+    *   (Ref: microsoft/simplechat#1084, `workspace.html`, `group_workspaces.html`, `workspace_workflows.js`)
 
 ### **(v0.250.064)**
 
 #### New Features
 
-*   **Outbound MCP Destination Governance And Preconfigurations**
-    *   Added server-side outbound MCP destination allowlisting hooks for personal, group, and global actions, with enforcement during action save/update, MCP discovery, and runtime connector creation.
-    *   Added a validated server-side MCP preconfiguration catalog with bundled Microsoft Learn, Azure documentation, GitHub, and local development entries.
-    *   Updated the MCP action modal to load preconfigurations through an authenticated API and apply selected definitions without hard-coded provider behavior.
-    *   (Ref: microsoft/simplechat#1014, `functions_mcp_destinations.py`, `functions_mcp_preconfigurations.py`, `MCP_SERVER_PRECONFIGURATIONS.md`, MCP action modal)
+*   **Repeatable AI Workflow Task Sequences**
+    *   Personal and group workflows can now run with only instructions and a selected model or agent; workspace documents, File Sync, URL access, schedules, and completion alerts remain optional.
+    *   Workflows support ordered instruction tasks that share the selected runner and receive bounded prior-task output as context.
+    *   Added per-task retries and stop-or-continue error handling, with task outcomes recorded in run history and workflow activity.
+    *   Existing document Search, Analyze, and Compare behavior remains available as optional input for the first task, while existing workflows without task sequences retain their prior execution path.
+    *   (Ref: microsoft/simplechat#1082, `functions_personal_workflows.py`, `functions_group_workflows.py`, `functions_workflow_runner.py`)
 
-### **(v0.250.063)**
+#### User Interface Enhancements
 
-#### New Features
-
-*   **Disabled Inbound MCP Server Shell**
-    *   Added the first disabled-by-default inbound MCP server shell with safe protected-resource metadata, dedicated bearer-token auth guard, source/client allowlist scaffolding, and deny-by-default governance/registry skeletons.
-    *   No inbound tools are exposed yet; this establishes the secure route, auth, and policy foundation for future governed read-only personal tools.
-    *   (Ref: microsoft/simplechat#1017, `route_inbound_mcp.py`, `functions_mcp_server_auth.py`, `INBOUND_MCP_SERVER_ARCHITECTURE.md`)
+*   **Stepped Workflow Builder**
+    *   Replaced the single-pane personal and group workflow form with a five-step General, Trigger, Tasks, Reliability, and Review builder.
+    *   Users can add, edit, remove, and reorder tasks, configure retry and failure behavior, and review runner, trigger, document input, File Sync, and pop-up alert settings before saving.
+    *   (Ref: microsoft/simplechat#1082, `workspace.html`, `group_workspaces.html`, `workspace_workflows.js`, `workspace-responsive.css`)
 
 ### **(v0.250.062)**
 
+#### Bug Fixes
+
+*   **Cosmos Container Startup Conflict Recovery**
+    *   Fixed a local Docker startup failure where multiple gunicorn workers could race while creating first-run Cosmos containers, causing a `NotFound` followed by a `Conflict` during app import.
+    *   Container initialization now re-reads and returns the existing container when another worker creates it first, preserving normal startup behavior for already-provisioned environments.
+    *   (Ref: `config.py`, `test_cosmos_container_conflict_recovery.py`, `COSMOS_CONTAINER_STARTUP_CONFLICT_FIX.md`)
+
 #### New Features
 
-*   **Declarative MCP Server Presets**
-    *   Replaced hard-coded MCP server preset behavior with validated server-side JSON definitions loaded through an authenticated preset API.
-    *   Added bundled Generic and Splunk MCP presets plus an authoring guide so organizations can create custom preset catalogs without changing browser code.
-    *   (Ref: microsoft/simplechat#1014, `functions_mcp_presets.py`, `mcp_presets\definitions`, `MCP_SERVER_PRESETS.md`, MCP action modal)
+*   **Workflow Run Cancellation**
+    *   Personal and group workflows can now be cancelled from workspace rows and cards, run history, or the workflow activity view while a run is active.
+    *   Cancellation is persisted for the active run and cooperatively stops further File Sync, document action, model, agent, artifact, notification, and scheduling work after any in-flight external request returns.
+    *   Cancelled scheduled and File Sync workflows return to an idle state and advance to their next scheduled run instead of immediately restarting.
+    *   (Ref: microsoft/simplechat#990, `route_backend_workflows.py`, `functions_workflow_runner.py`, `workspace_workflows.js`)
 
 ### **(v0.250.061)**
 
-#### Bug Fixes
-
-*   **Group Action Type Scope Routing**
-    *   Fixed an issue where the shared action modal loaded group action types through the personal action-type endpoint, causing personal action governance to hide group action types.
-    *   Group action creation now uses a group-scoped action-type endpoint and evaluates `governance_group_actions` independently from personal action settings.
-    *   (Ref: microsoft/simplechat#1014, `plugin_modal_stepper.js`, `route_backend_plugins.py`, group action governance)
-
-### **(v0.250.060)**
-
 #### New Features
 
-*   **Selectable Local Environment Files**
-    *   Added `SIMPLECHAT_ENV_FILE` support so developers can run SimpleChat against named local dotenv profiles, such as MAG and commercial demo resources, without editing one shared `.env` file.
-    *   Preserves the existing default `.env` loading behavior when the selector is not set and fails clearly if a selected profile path is missing.
-    *   (Ref: `functions_environment.py`, `config.py`, `.gitignore`, `ENV_FILE_SELECTION.md`)
+*   **Configurable Content Safety Violation Messages**
+    *   Administrators can now configure the Markdown message shown when Content Safety blocks a chat request using the standard Markdown editor toolbar.
+    *   A new setting controls whether the block reason, detected categories and severities, and blocklist matches are included beneath the custom message.
+    *   The editor now renders correctly when the hidden Safety tab opens, and Markdown-only edits activate Save Settings before submission.
+    *   (Ref: microsoft/simplechat#989, `functions_content_safety.py`, `admin_settings.html`, `route_backend_chats.py`)
 
 ### **(v0.250.059)**
 
 #### New Features
-
-*   **Local MCP Validation Server**
-    *   Added a SimpleChat-owned local MCP development server for validating outbound MCP actions without depending on Splunk or third-party public MCP services.
-    *   Supports streamable HTTP discovery, custom header inspection, bearer/API-key/basic auth validation, mock responses, bounded latency, deterministic failures, and ingress header-gate scenarios.
-    *   (Ref: microsoft/simplechat#1014, `application\development\local_mcp`, `functional_tests\test_local_mcp_server.py`, MCP action validation)
 
 *   **Versioned Latest Features Navigation Hide Preference**
     *   Users can now hide Latest Features navigation entries for the current SimpleChat version from the ellipsis action and restore them from Profile Settings.

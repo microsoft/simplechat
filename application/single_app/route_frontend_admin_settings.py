@@ -10,6 +10,7 @@ from flask import current_app, jsonify, request
 
 from functions_keyvault import keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_save_helper, redact_model_endpoint_secret_values
 from functions_settings import *
+from functions_content_safety import normalize_content_safety_violation_message
 from functions_mcp_server_config import (
     check_inbound_mcp_easy_auth_exclusions,
     INBOUND_MCP_SETTINGS_DEFAULTS,
@@ -33,6 +34,7 @@ from functions_activity_logging import log_web_search_consent_acceptance, log_ge
 from functions_notifications import broadcast_system_notification
 from functions_logging import *
 from functions_document_actions import normalize_document_action_capabilities
+from functions_model_capabilities import is_vision_capable_model
 from functions_terms_of_use import (
     TERMS_OF_USE_DEFAULT_REDIRECT,
     TERMS_OF_USE_MAX_BUTTON_TEXT_LENGTH,
@@ -139,7 +141,6 @@ def normalize_agents_page_text(value, fallback, max_length):
     if not candidate:
         candidate = fallback
     return candidate[:max_length]
-
 
 def escape_powershell_single_quoted_value(value):
     """Return a PowerShell single-quoted string literal for non-secret deployment hints."""
@@ -429,6 +430,73 @@ def register_route_frontend_admin_settings(bp):
         status_code = 200 if result.get('success') else 409
         return jsonify(result), status_code
 
+    @bp.route('/api/admin/settings/file-processing-logs/cleanup', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def cleanup_file_processing_logs():
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({
+                'success': False,
+                'error': 'A JSON request body is required.',
+            }), 400
+        if payload.get('confirmed') is not True:
+            return jsonify({
+                'success': False,
+                'error': 'Explicit confirmation is required.',
+            }), 400
+
+        delete_all = payload.get('delete_all', False)
+        age = payload.get('age')
+        unit = payload.get('unit')
+
+        try:
+            result = delete_file_processing_logs(
+                delete_all=delete_all,
+                age=age,
+                unit=unit,
+            )
+        except ValueError as exc:
+            current_app.logger.warning(
+                'Invalid file processing log cleanup request.',
+                exc_info=True,
+            )
+            return jsonify({
+                'success': False,
+                'error': 'Invalid file processing log cleanup request.',
+            }), 400
+        except FileProcessingLogDeletionError as exc:
+            return jsonify({
+                'success': False,
+                'error': 'File processing log cleanup did not complete.',
+                'deleted_count': exc.deleted_count,
+            }), 500
+
+        admin_user = session.get('user', {})
+        admin_email = admin_user.get(
+            'preferred_username',
+            admin_user.get('email', 'unknown'),
+        )
+        log_general_admin_action(
+            admin_user_id=get_current_user_id(),
+            admin_email=admin_email,
+            action='file_processing_logs_deleted',
+            description='Deleted file processing logs.',
+            additional_context={
+                'delete_all': result['delete_all'],
+                'deleted_count': result['deleted_count'],
+                'cutoff': result['cutoff'],
+                'age': age,
+                'unit': unit,
+            },
+        )
+
+        return jsonify({
+            'success': True,
+            **result,
+        })
+
     @bp.route('/admin/settings', methods=['GET', 'POST'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -484,6 +552,8 @@ def register_route_frontend_admin_settings(bp):
             settings['require_member_of_create_public_workspace'] = False
         if 'enable_chat_file_uploads' not in settings:
             settings['enable_chat_file_uploads'] = True
+        if 'enable_conversation_contents_drawer' not in settings:
+            settings['enable_conversation_contents_drawer'] = True
         if 'require_member_of_chat_file_upload_user' not in settings:
             settings['require_member_of_chat_file_upload_user'] = False
         if 'require_member_of_safety_violation_admin' not in settings:
@@ -902,7 +972,8 @@ def register_route_frontend_admin_settings(bp):
                 inbound_mcp_resource_path=INBOUND_MCP_RESOURCE_PATH,
                 inbound_mcp_prm_path=INBOUND_MCP_PRM_PATH,
                 inbound_mcp_easy_auth_script_context=inbound_mcp_easy_auth_script_context,
-                inbound_mcp_easy_auth_script=build_inbound_mcp_easy_auth_script(inbound_mcp_easy_auth_script_context)
+                inbound_mcp_easy_auth_script=build_inbound_mcp_easy_auth_script(inbound_mcp_easy_auth_script_context),
+                is_vision_capable_model=is_vision_capable_model,
                 # You don't need to pass deployments separately if they are added to settings['..._model']['all']
                 # gpt_deployments=gpt_deployments,
                 # embedding_deployments=embedding_deployments,
@@ -1028,6 +1099,12 @@ def register_route_frontend_admin_settings(bp):
             file_download_allowed_public_workspace_ids = normalize_file_download_allowed_public_workspace_ids(
                 form_data.get('file_download_allowed_public_workspace_ids', '')
             )
+            content_safety_violation_message = normalize_content_safety_violation_message(
+                form_data.get('content_safety_violation_message')
+            )
+            content_safety_include_trigger_information = form_data.get(
+                'content_safety_include_trigger_information'
+            ) == 'on'
             require_member_of_safety_violation_admin = form_data.get('require_member_of_safety_violation_admin') == 'on'
             require_member_of_control_center_admin = form_data.get('require_member_of_control_center_admin') == 'on'
             require_member_of_control_center_dashboard_reader = form_data.get('require_member_of_control_center_dashboard_reader') == 'on'
@@ -2289,6 +2366,7 @@ def register_route_frontend_admin_settings(bp):
                 'enable_public_workspaces': form_data.get('enable_public_workspaces') == 'on',
                 'enable_file_sharing': form_data.get('enable_file_sharing') == 'on',
                 'enable_chat_file_uploads': form_data.get('enable_chat_file_uploads') == 'on',
+                'enable_conversation_contents_drawer': form_data.get('enable_conversation_contents_drawer') == 'on',
                 'require_member_of_chat_file_upload_user': require_member_of_chat_file_upload_user,
                 'allow_user_workflows': form_data.get('allow_user_workflows') == 'on',
                 'require_member_of_workflow_user': require_member_of_workflow_user,
@@ -2415,6 +2493,8 @@ def register_route_frontend_admin_settings(bp):
 
                 # Safety (Content Safety Direct & APIM)
                 'enable_content_safety': form_data.get('enable_content_safety') == 'on',
+                'content_safety_violation_message': content_safety_violation_message,
+                'content_safety_include_trigger_information': content_safety_include_trigger_information,
                 'content_safety_endpoint': form_data.get('content_safety_endpoint', '').strip(),
                 'content_safety_key': admin_secret('content_safety_key'),
                 'content_safety_authentication_type': form_data.get('content_safety_authentication_type', 'key'),

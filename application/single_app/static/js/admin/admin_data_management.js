@@ -7,6 +7,7 @@ const backupStorageAuthManagedIdentity = "managed_identity";
 const backupStorageAuthConnectionString = "connection_string";
 const targetCosmosDatabaseName = "SimpleChat";
 const cosmosEditorConfirmationPhrase = "I understand this can damage system data";
+const migrationMirrorConfirmationPhrase = "MIRROR WITH DELETIONS";
 const elements = {};
 let dataManagementModified = false;
 let storedBackupConnectionStringAvailable = false;
@@ -22,8 +23,9 @@ let cosmosEditorContinuationToken = null;
 let cosmosEditorResultCount = 0;
 let cosmosEditorSelectedDocument = null;
 let cosmosEditorPendingDocument = null;
+let pendingDataManagementCancellationJob = null;
 
-const jobDetailRefreshIntervalMs = 4000;
+const jobDetailRefreshIntervalMs = 2000;
 const activeJobStatuses = new Set(["queued", "running"]);
 const migrationTargetTypes = ["users", "groups", "public_workspaces"];
 const migrationSelections = {
@@ -83,6 +85,8 @@ function bindElements() {
         "data_management_target_cosmos_database",
         "data-management-target-cosmos-key-field",
         "data_management_target_cosmos_key",
+        "data_management_target_cosmos_subscription_id",
+        "data_management_target_cosmos_resource_group",
         "data-management-test-target-cosmos-btn",
         "data-management-target-ai-search-section",
         "data_management_target_ai_search_auth",
@@ -98,6 +102,15 @@ function bindElements() {
         "data_management_target_ec_connection_string",
         "data-management-test-target-ec-storage-btn",
         "data-management-refresh-migration-summary-btn",
+        "data-management-migration-mode-section",
+        "data_management_migration_mode_new_only",
+        "data_management_migration_mode_delta_upsert",
+        "data_management_migration_mode_mirror_with_deletions",
+        "data-management-migration-mode-description",
+        "data-management-migration-baseline-field",
+        "data_management_migration_baseline_job_id",
+        "data-management-migration-mirror-confirmation",
+        "data_management_migration_mirror_confirmation_phrase",
         "data_management_migration_users_mode",
         "data_management_migration_users_search",
         "data-management-search-users-btn",
@@ -117,7 +130,16 @@ function bindElements() {
         "data-management-migration-public-workspaces-selected",
         "data_management_migration_public_workspaces_documents",
         "data_management_migration_include_ai_search",
+        "data-management-migration-search-write-freeze",
+        "data_management_migration_target_search_writes_frozen",
         "data_management_migration_include_source_blobs",
+        "data-management-test-migration-access-btn",
+        "data_management_migration_max_parallel_operations",
+        "data_management_migration_retry_count",
+        "data_management_migration_skip_recent_within_hours",
+        "data_management_migration_temporary_destination_ru_enabled",
+        "data-management-migration-temporary-ru-field",
+        "data_management_migration_temporary_destination_ru",
         "data-management-migration-summary",
         "data-management-migration-preview-btn",
         "data-management-execute-migration-btn",
@@ -139,11 +161,15 @@ function bindElements() {
         "data-management-job-detail-subtitle",
         "data-management-job-detail-refresh-state",
         "data-management-job-detail-summary",
+        "data-management-job-detail-actions",
         "data-management-job-detail-progress",
         "data-management-job-items-tbody",
         "data-management-job-artifacts-tbody",
         "data-management-job-manifest-detail",
         "data-management-job-warnings",
+        "data-management-migration-cancel-modal",
+        "data-management-migration-cancel-message",
+        "data-management-confirm-migration-cancel-btn",
         "data-management-cosmos-editor-section",
         "data-management-cosmos-editor-open-danger-btn",
         "data-management-cosmos-editor-locked-message",
@@ -205,6 +231,7 @@ function bindEvents() {
     elements.dataManagementGenerateKeyBtn?.addEventListener("click", generateEncryptionKey);
     elements.dataManagementTestStorageBtn?.addEventListener("click", testBackupStorage);
     elements.dataManagementTestTargetCosmosBtn?.addEventListener("click", testTargetCosmos);
+    elements.dataManagementTestMigrationAccessBtn?.addEventListener("click", testMigrationAccess);
     elements.dataManagementTestTargetSearchBtn?.addEventListener("click", testTargetSearch);
     elements.dataManagementTestTargetEcStorageBtn?.addEventListener("click", testTargetEnhancedCitationStorage);
     elements.dataManagementRunFullBackupBtn?.addEventListener("click", () => queueBackup("full"));
@@ -219,6 +246,10 @@ function bindEvents() {
     elements.dataManagementViewAllBackupsBtn?.addEventListener("click", () => setBackupFilter("all"));
     elements.dataManagementRefreshJobsBtn?.addEventListener("click", loadDataManagementJobs);
     elements.dataManagementJobDetailModal?.addEventListener("hidden.bs.modal", () => stopJobDetailAutoRefresh({ clearJob: true }));
+    elements.dataManagementMigrationCancelModal?.addEventListener("hidden.bs.modal", () => {
+        pendingDataManagementCancellationJob = null;
+    });
+    elements.dataManagementConfirmMigrationCancelBtn?.addEventListener("click", requestDataManagementCancellation);
     elements.dataManagementKeyVaultLink?.addEventListener("click", openKeyVaultSettings);
     elements.dataManagementCosmosEditorOpenDangerBtn?.addEventListener("click", showCosmosEditorDangerModal);
     elements.datamanagementcosmoseditordangeraccept?.addEventListener("change", updateCosmosEditorDangerAcceptState);
@@ -231,9 +262,25 @@ function bindEvents() {
     elements.dataManagementCosmosEditorSaveBtn?.addEventListener("click", openCosmosEditorSaveModal);
     elements.datamanagementcosmoseditorconfirmationphrase?.addEventListener("input", updateCosmosEditorConfirmSaveState);
     elements.dataManagementCosmosEditorConfirmSaveBtn?.addEventListener("click", saveCosmosEditorDocument);
+    elements.datamanagementmigrationtemporarydestinationruenabled?.addEventListener("change", updateMigrationCapacityVisibility);
+    [
+        elements.datamanagementmigrationmodenewonly,
+        elements.datamanagementmigrationmodedeltaupsert,
+        elements.datamanagementmigrationmodemirrorwithdeletions,
+    ].forEach((modeElement) => modeElement?.addEventListener("change", () => {
+        updateMigrationModeVisibility();
+        loadMigrationSummary();
+    }));
+    elements.datamanagementmigrationbaselinejobid?.addEventListener("change", loadMigrationSummary);
+    elements.datamanagementmigrationmirrorconfirmationphrase?.addEventListener("input", () => {
+        elements.datamanagementmigrationmirrorconfirmationphrase?.classList.remove("is-invalid");
+    });
     bindDataManagementChangeTracking();
     setStorageAuthVisibility();
     setMigrationTargetVisibility();
+    updateMigrationCapacityVisibility();
+    updateMigrationModeVisibility();
+    updateMigrationSearchWriteFreezeVisibility();
     updateConnectionStringStatus();
     updateDataManagementSaveButtonState();
 }
@@ -253,7 +300,10 @@ function bindMigrationPickerEvents() {
             }
         });
     });
-    elements.datamanagementmigrationincludeaisearch?.addEventListener("change", loadMigrationSummary);
+    elements.datamanagementmigrationincludeaisearch?.addEventListener("change", () => {
+        updateMigrationSearchWriteFreezeVisibility();
+        loadMigrationSummary();
+    });
     elements.datamanagementmigrationincludesourceblobs?.addEventListener("change", loadMigrationSummary);
 }
 
@@ -419,12 +469,19 @@ function populateSettings(settings) {
     setValue(elements.datamanagementtargetcosmosendpoint, settings.target_cosmos_endpoint || "");
     setValue(elements.datamanagementtargetcosmosdatabase, targetCosmosDatabaseName);
     setValue(elements.datamanagementtargetcosmoskey, settings.target_cosmos_key || "");
+    setValue(elements.datamanagementtargetcosmossubscriptionid, settings.target_cosmos_subscription_id || "");
+    setValue(elements.datamanagementtargetcosmosresourcegroup, settings.target_cosmos_resource_group || "");
     setValue(elements.datamanagementtargetaisearchauth, settings.target_ai_search_authentication_type || "managed_identity");
     setValue(elements.datamanagementtargetaisearchendpoint, settings.target_ai_search_endpoint || "");
     setValue(elements.datamanagementtargetaisearchkey, settings.target_ai_search_key || "");
     setValue(elements.datamanagementtargetecstorageauth, settings.target_enhanced_citations_storage_authentication_type || "managed_identity");
     setValue(elements.datamanagementtargetecblobendpoint, settings.target_enhanced_citations_storage_blob_endpoint || "");
     setValue(elements.datamanagementtargetecconnectionstring, settings.target_enhanced_citations_storage_connection_string || "");
+    setValue(elements.datamanagementmigrationmaxparalleloperations, settings.migration_max_parallel_operations || 8);
+    setValue(elements.datamanagementmigrationretrycount, settings.migration_retry_count || 5);
+    setValue(elements.datamanagementmigrationskiprecentwithinhours, settings.migration_skip_recent_within_hours || 0);
+    setChecked(elements.datamanagementmigrationtemporarydestinationruenabled, Boolean(settings.migration_temporary_destination_ru_enabled));
+    setValue(elements.datamanagementmigrationtemporarydestinationru, settings.migration_temporary_destination_ru || 10000);
 
     if (elements.dataManagementKeyStorage) {
         elements.dataManagementKeyStorage.textContent = formatKeyStorage(settings.encryption_key_storage);
@@ -436,6 +493,7 @@ function populateSettings(settings) {
     updateKeyStorageExperience(settings);
     setStorageAuthVisibility();
     setMigrationTargetVisibility();
+    updateMigrationCapacityVisibility();
     migrationTargetTypes.forEach(updateMigrationPickerVisibility);
     updateConnectionStringStatus();
     resetDataManagementModified();
@@ -529,6 +587,14 @@ function setMigrationTargetVisibility() {
     }
 }
 
+function updateMigrationCapacityVisibility() {
+    const enabled = Boolean(elements.datamanagementmigrationtemporarydestinationruenabled?.checked);
+    setElementVisible(elements.dataManagementMigrationTemporaryRuField, enabled);
+    if (elements.datamanagementmigrationtemporarydestinationru) {
+        elements.datamanagementmigrationtemporarydestinationru.disabled = !enabled;
+    }
+}
+
 function setKeyStorageAlert(variant, iconClass, title, message, linkText) {
     const alertElement = elements.dataManagementKeyStorageAlert;
     const iconElement = elements.dataManagementKeyStorageAlertIcon;
@@ -581,12 +647,19 @@ function collectSettings() {
         target_cosmos_endpoint: getValue(elements.datamanagementtargetcosmosendpoint),
         target_cosmos_database_name: targetCosmosDatabaseName,
         target_cosmos_key: getValue(elements.datamanagementtargetcosmoskey),
+        target_cosmos_subscription_id: getValue(elements.datamanagementtargetcosmossubscriptionid),
+        target_cosmos_resource_group: getValue(elements.datamanagementtargetcosmosresourcegroup),
         target_ai_search_authentication_type: getValue(elements.datamanagementtargetaisearchauth) || "managed_identity",
         target_ai_search_endpoint: getValue(elements.datamanagementtargetaisearchendpoint),
         target_ai_search_key: getValue(elements.datamanagementtargetaisearchkey),
         target_enhanced_citations_storage_authentication_type: getValue(elements.datamanagementtargetecstorageauth) || backupStorageAuthManagedIdentity,
         target_enhanced_citations_storage_blob_endpoint: getValue(elements.datamanagementtargetecstorageauth) === backupStorageAuthManagedIdentity ? getValue(elements.datamanagementtargetecblobendpoint) : "",
         target_enhanced_citations_storage_connection_string: getValue(elements.datamanagementtargetecstorageauth) === backupStorageAuthConnectionString ? getValue(elements.datamanagementtargetecconnectionstring) : "",
+        migration_max_parallel_operations: getNumberValue(elements.datamanagementmigrationmaxparalleloperations, 8),
+        migration_retry_count: getNumberValue(elements.datamanagementmigrationretrycount, 5),
+        migration_skip_recent_within_hours: getNumberValue(elements.datamanagementmigrationskiprecentwithinhours, 0),
+        migration_temporary_destination_ru_enabled: Boolean(elements.datamanagementmigrationtemporarydestinationruenabled?.checked),
+        migration_temporary_destination_ru: getNumberValue(elements.datamanagementmigrationtemporarydestinationru, 10000),
     };
 }
 
@@ -1165,15 +1238,37 @@ async function testTargetCosmos() {
     try {
         const data = await requestJson("/api/admin/data-management/target/cosmos/test", {
             method: "POST",
-            body: JSON.stringify({ settings: collectSettings() }),
+            body: JSON.stringify({ settings: collectSettings(), migration_plan: buildMigrationPlan() }),
         });
-        setStatus(`Target Cosmos connection succeeded. Database: ${data.database_name || targetCosmosDatabaseName}.`, "success");
+        const verifiedCount = Number(data.migration_access?.container_count || 0);
+        const accessText = verifiedCount ? ` Verified ${formatNumber(verifiedCount)} planned container(s).` : "";
+        const capacityText = data.capacity?.target_ru ? ` Temporary capacity can reach ${formatNumber(data.capacity.target_ru)} RU/s.` : "";
+        setStatus(`Target Cosmos connection succeeded. Database: ${data.database_name || targetCosmosDatabaseName}.${accessText}${capacityText}`, "success");
         showToast("Target Cosmos connection succeeded.", "success");
     } catch (error) {
         setStatus(error.message || "Target Cosmos connection test failed.", "danger");
         showToast(error.message || "Target Cosmos connection test failed.", "danger");
     } finally {
         setBusy(elements.dataManagementTestTargetCosmosBtn, false);
+    }
+}
+
+async function testMigrationAccess() {
+    setBusy(elements.dataManagementTestMigrationAccessBtn, true, "Validating...");
+    try {
+        const data = await requestJson("/api/admin/data-management/target/cosmos/test", {
+            method: "POST",
+            body: JSON.stringify({ settings: collectSettings(), migration_plan: buildMigrationPlan() }),
+        });
+        const verifiedCount = Number(data.migration_access?.container_count || 0);
+        const capacityText = data.capacity?.target_ru ? ` Destination capacity management is ready up to ${formatNumber(data.capacity.target_ru)} RU/s.` : "";
+        setStatus(`Cosmos migration access validation succeeded. ${formatNumber(verifiedCount)} planned Cosmos container(s) can be read and written.${capacityText}`, "success");
+        showToast("Cosmos migration access validation succeeded.", "success");
+    } catch (error) {
+        setStatus(error.message || "Cosmos migration access validation failed.", "danger");
+        showToast(error.message || "Cosmos migration access validation failed.", "danger");
+    } finally {
+        setBusy(elements.dataManagementTestMigrationAccessBtn, false);
     }
 }
 
@@ -1247,9 +1342,31 @@ async function queueOperation(operation, backupType = null, options = {}, trigge
 
 function queueMigration(dryRun) {
     const button = elements.dataManagementExecuteMigrationBtn;
+    const migrationPlan = buildMigrationPlan();
+    if (
+        migrationPlan.include_ai_search &&
+        !migrationPlan.target_ai_search_writes_frozen
+    ) {
+        const message = "Confirm that external destination AI Search writers are frozen before migrating Search documents.";
+        elements.datamanagementmigrationtargetsearchwritesfrozen?.focus();
+        setStatus(message, "danger");
+        showToast(message, "danger");
+        return Promise.resolve();
+    }
+    if (
+        migrationPlan.migration_mode === "mirror_with_deletions" &&
+        migrationPlan.mirror_confirmation !== migrationMirrorConfirmationPhrase
+    ) {
+        const message = `Type ${migrationMirrorConfirmationPhrase} before running a mirror migration.`;
+        elements.datamanagementmigrationmirrorconfirmationphrase?.classList.add("is-invalid");
+        elements.datamanagementmigrationmirrorconfirmationphrase?.focus();
+        setStatus(message, "danger");
+        showToast(message, "danger");
+        return Promise.resolve();
+    }
     return queueOperation("migration", null, {
         dry_run: Boolean(dryRun),
-        migration_plan: buildMigrationPlan(),
+        migration_plan: migrationPlan,
     }, button);
 }
 
@@ -1403,13 +1520,46 @@ function createSmallMutedElement(text) {
 }
 
 function buildMigrationPlan() {
+    const migrationMode = getMigrationTransferMode();
     return {
         users: buildMigrationSelection("users"),
         groups: buildMigrationSelection("groups"),
         public_workspaces: buildMigrationSelection("public_workspaces"),
         include_ai_search: Boolean(elements.datamanagementmigrationincludeaisearch?.checked),
+        target_ai_search_writes_frozen: Boolean(elements.datamanagementmigrationtargetsearchwritesfrozen?.checked),
         include_source_blobs: Boolean(elements.datamanagementmigrationincludesourceblobs?.checked),
+        migration_mode: migrationMode,
+        baseline_job_id: migrationMode === "new_only" ? "" : getValue(elements.datamanagementmigrationbaselinejobid),
+        mirror_confirmation: migrationMode === "mirror_with_deletions" ? getValue(elements.datamanagementmigrationmirrorconfirmationphrase) : "",
     };
+}
+
+function updateMigrationSearchWriteFreezeVisibility() {
+    const includesAiSearch = Boolean(elements.datamanagementmigrationincludeaisearch?.checked);
+    setElementVisible(elements.dataManagementMigrationSearchWriteFreeze, includesAiSearch);
+    if (!includesAiSearch && elements.datamanagementmigrationtargetsearchwritesfrozen) {
+        elements.datamanagementmigrationtargetsearchwritesfrozen.checked = false;
+    }
+}
+
+function getMigrationTransferMode() {
+    return document.querySelector("input[name='data_management_migration_mode']:checked")?.value || "new_only";
+}
+
+function updateMigrationModeVisibility() {
+    const migrationMode = getMigrationTransferMode();
+    const usesBaseline = migrationMode !== "new_only";
+    const isMirror = migrationMode === "mirror_with_deletions";
+    elements.dataManagementMigrationBaselineField?.classList.toggle("d-none", !usesBaseline);
+    elements.dataManagementMigrationMirrorConfirmation?.classList.toggle("d-none", !isMirror);
+    const descriptions = {
+        new_only: "Copies source items that are absent from the destination. Existing destination data is never updated or deleted.",
+        delta_upsert: "Copies new items and updates changed migration-owned items since the prior successful watermark. Destination-only data is retained.",
+        mirror_with_deletions: "Runs delta/upsert, then deletes destination-only items that carry successful SimpleChat migration ownership. Unowned data is retained.",
+    };
+    if (elements.dataManagementMigrationModeDescription) {
+        elements.dataManagementMigrationModeDescription.textContent = descriptions[migrationMode] || descriptions.new_only;
+    }
 }
 
 function buildMigrationSelection(targetType) {
@@ -1430,9 +1580,12 @@ async function loadMigrationSummary(triggerButton = null, showSuccess = false) {
     try {
         const data = await requestJson("/api/admin/data-management/migration/summary", {
             method: "POST",
-            body: JSON.stringify({ migration_plan: buildMigrationPlan() }),
+            body: JSON.stringify({
+                migration_plan: buildMigrationPlan(),
+                include_inventory: Boolean(showSuccess),
+            }),
         });
-        renderMigrationSummary(data.summary || {});
+        renderMigrationSummary(data.summary || {}, data.preview || null);
         if (showSuccess) {
             setStatus("Migration preview refreshed.", "success");
             showToast("Migration preview refreshed.", "success");
@@ -1448,7 +1601,7 @@ async function loadMigrationSummary(triggerButton = null, showSuccess = false) {
     }
 }
 
-function renderMigrationSummary(summary) {
+function renderMigrationSummary(summary, preview = null) {
     const summaryElement = elements.dataManagementMigrationSummary;
     if (!summaryElement) {
         return;
@@ -1465,9 +1618,40 @@ function renderMigrationSummary(summary) {
     options.className = "d-flex flex-wrap gap-2";
     options.appendChild(createBadge(summary.include_ai_search ? "AI Search included" : "AI Search skipped", summary.include_ai_search ? "bg-info text-dark" : "bg-secondary"));
     options.appendChild(createBadge(summary.include_source_blobs ? "Source blobs included" : "Source blobs skipped", summary.include_source_blobs ? "bg-info text-dark" : "bg-secondary"));
+    options.appendChild(createBadge(`Mode: ${formatActivityLabel(summary.migration_mode || "new_only")}`, summary.migration_mode === "mirror_with_deletions" ? "bg-danger" : "bg-primary"));
     optionsColumn.appendChild(options);
     container.appendChild(optionsColumn);
+    if (preview?.estimated_outcomes) {
+        container.appendChild(createMigrationPreviewOutcomes(preview));
+    }
     summaryElement.replaceChildren(container);
+}
+
+function createMigrationPreviewOutcomes(preview) {
+    const column = document.createElement("div");
+    column.className = "col-12 border-top pt-3";
+    const heading = document.createElement("div");
+    heading.className = "fw-semibold mb-2";
+    heading.textContent = "Estimated destination changes";
+    const outcomes = document.createElement("div");
+    outcomes.className = "d-flex flex-wrap gap-2";
+    [
+        ["Create", "create_count", "bg-success"],
+        ["Update", "update_count", "bg-primary"],
+        ["Unchanged", "unchanged_count", "bg-secondary"],
+        ["Delete", "delete_count", "bg-danger"],
+        ["Not applicable", "not_applicable_count", "bg-light text-dark border"],
+        ["Missing", "missing_count", "bg-warning text-dark"],
+        ["Conflicts", "conflict_count", "bg-warning text-dark"],
+    ].forEach(([label, fieldName, badgeClass]) => {
+        outcomes.appendChild(createBadge(`${label}: ${formatNumber(preview.estimated_outcomes[fieldName] || 0)}`, badgeClass));
+    });
+    const metadata = document.createElement("div");
+    metadata.className = "small text-muted mt-2";
+    const baselineText = preview.baseline_job_id ? ` Baseline ${preview.baseline_job_id}.` : "";
+    metadata.textContent = `Captured ${formatDate(preview.captured_at)}.${baselineText} Actual completion counts will report any divergence from this snapshot.`;
+    column.append(heading, outcomes, metadata);
+    return column;
 }
 
 function createMigrationSummaryCard(targetType, targetSummary) {
@@ -1707,7 +1891,7 @@ function createJobRow(job) {
     row.appendChild(createStatusCell(job.status || "unknown"));
     row.appendChild(createCell(formatProgress(job.progress)));
     row.appendChild(createCell(job.last_message || job.last_error || ""));
-    row.appendChild(createJobActionCell(job.id));
+    row.appendChild(createJobActionCell(job.id, job));
     return row;
 }
 
@@ -1721,7 +1905,7 @@ function createMessageRow(message, variant, columnSpan) {
     return row;
 }
 
-function createJobActionCell(jobId) {
+function createJobActionCell(jobId, job = {}) {
     const cell = document.createElement("td");
     const button = document.createElement("button");
     button.type = "button";
@@ -1733,7 +1917,107 @@ function createJobActionCell(jobId) {
     button.appendChild(document.createTextNode("View Log"));
     button.addEventListener("click", () => loadDataManagementJobDetail(jobId));
     cell.appendChild(button);
+    if ((job.operation === "migration" || job.operation === "backup") && job.can_retry === true) {
+        const retryButton = document.createElement("button");
+        retryButton.type = "button";
+        retryButton.className = "btn btn-outline-warning btn-sm ms-1";
+        retryButton.disabled = !jobId;
+        const retryIcon = document.createElement("i");
+        retryIcon.className = "bi bi-arrow-repeat me-1";
+        const retryLabel = job.status === "running" ? "Resume" : job.operation === "backup" ? "Retry failures" : "Retry";
+        retryButton.append(retryIcon, document.createTextNode(retryLabel));
+        retryButton.addEventListener("click", () => retryDataManagementJob(job, retryButton));
+        cell.appendChild(retryButton);
+    }
+    if ((job.operation === "migration" || job.operation === "backup") && job.can_cancel === true) {
+        const cancelButton = document.createElement("button");
+        cancelButton.type = "button";
+        cancelButton.className = "btn btn-outline-danger btn-sm ms-1";
+        cancelButton.disabled = !jobId;
+        const cancelIcon = document.createElement("i");
+        cancelIcon.className = "bi bi-stop-circle me-1";
+        cancelButton.append(cancelIcon, document.createTextNode("Cancel"));
+        cancelButton.addEventListener("click", () => openDataManagementCancellationModal(job));
+        cell.appendChild(cancelButton);
+    }
     return cell;
+}
+
+function openDataManagementCancellationModal(job) {
+    if (!job?.id || !elements.dataManagementMigrationCancelModal || !window.bootstrap?.Modal) {
+        return;
+    }
+    pendingDataManagementCancellationJob = {
+        id: job.id,
+        operation: job.operation || "job",
+    };
+    setText(
+        elements.dataManagementMigrationCancelMessage,
+        `Request cancellation for ${formatOperation(job.operation || "job", job.backup_type || "")} ${job.id}?`
+    );
+    window.bootstrap.Modal.getOrCreateInstance(elements.dataManagementMigrationCancelModal).show();
+}
+
+async function requestDataManagementCancellation() {
+    const pendingJob = pendingDataManagementCancellationJob;
+    const jobId = pendingJob?.id;
+    if (!jobId) {
+        return;
+    }
+    setBusy(elements.dataManagementConfirmMigrationCancelBtn, true, "Requesting...");
+    try {
+        const data = await requestJson(
+            `/api/admin/data-management/jobs/${encodeURIComponent(jobId)}/cancel`,
+            { method: "POST", body: JSON.stringify({}) }
+        );
+        const canceledImmediately = data.job?.status === "canceled";
+        const operationLabel = formatOperation(data.job?.operation || pendingJob.operation || "job", data.job?.backup_type || "");
+        setStatus(
+            canceledImmediately
+                ? `Queued ${operationLabel} canceled before execution started.`
+                : `${formatActivityLabel(data.job?.operation || pendingJob.operation || "job")} cancellation requested. The worker will stop at its next durable checkpoint.`,
+            "success"
+        );
+        showToast(
+            canceledImmediately ? `${formatActivityLabel(data.job?.operation || pendingJob.operation || "job")} canceled.` : `${formatActivityLabel(data.job?.operation || pendingJob.operation || "job")} cancellation requested.`,
+            "success"
+        );
+        window.bootstrap.Modal.getOrCreateInstance(elements.dataManagementMigrationCancelModal).hide();
+        renderJobs([data.job]);
+        loadDataManagementJobs();
+        if (currentJobDetailId === jobId) {
+            loadDataManagementJobDetail(jobId, { showModal: false, liveRefresh: true });
+        }
+    } catch (error) {
+        setStatus(error.message || "Data Management job cancellation could not be requested.", "danger");
+        showToast(error.message || "Data Management job cancellation could not be requested.", "danger");
+    } finally {
+        setBusy(elements.dataManagementConfirmMigrationCancelBtn, false);
+    }
+}
+
+async function retryDataManagementJob(job, button) {
+    const jobId = job?.id;
+    if (!jobId) {
+        return;
+    }
+    setBusy(button, true, "Retrying...");
+    try {
+        const data = await requestJson(`/api/admin/data-management/jobs/${encodeURIComponent(jobId)}/retry`, {
+            method: "POST",
+        });
+        const operationLabel = formatActivityLabel(data.job?.operation || job.operation || "job");
+        setStatus(`${operationLabel} retry queued from durable checkpoints.`, "success");
+        showToast(`${operationLabel} retry queued.`, "success");
+        renderJobs([data.job]);
+        loadDataManagementJobs();
+        loadDataManagementJobDetail(jobId, { showModal: false, liveRefresh: true });
+    } catch (error) {
+        setStatus(error.message || "Data Management job retry could not be queued.", "danger");
+        showToast(error.message || "Data Management job retry could not be queued.", "danger");
+    } finally {
+        setBusy(button, false);
+    }
 }
 
 function createCell(text) {
@@ -1777,6 +2061,7 @@ function renderJobDetailModal(job, items) {
     setText(elements.dataManagementJobDetailTitle, formatOperation(job.operation || "job", job.backup_type || ""));
     setText(elements.dataManagementJobDetailSubtitle, job.id ? `Job ID: ${job.id}` : "Job ID not available");
     renderJobDetailSummary(job);
+    renderJobDetailActions(job);
     renderJobDetailProgress(job);
     renderJobItems(items);
     const artifacts = getJobArtifacts(job, items);
@@ -1785,12 +2070,81 @@ function renderJobDetailModal(job, items) {
     renderJobWarnings(job, artifacts);
 }
 
+function renderJobDetailActions(job) {
+    const container = elements.dataManagementJobDetailActions;
+    if (!container) {
+        return;
+    }
+    container.replaceChildren();
+    if (job.operation === "migration") {
+        const fullManifestLink = createMigrationManifestDownloadLink(
+            job.id,
+            "Download manifest",
+            "",
+            "btn-outline-primary"
+        );
+        const failuresLink = createMigrationManifestDownloadLink(
+            job.id,
+            "Download failures",
+            "failed,missing,collision",
+            "btn-outline-danger"
+        );
+        container.append(fullManifestLink, failuresLink);
+    }
+    if (job.can_retry === true) {
+        const retryButton = document.createElement("button");
+        retryButton.type = "button";
+        retryButton.className = "btn btn-outline-warning btn-sm";
+        const retryIcon = document.createElement("i");
+        retryIcon.className = "bi bi-arrow-repeat me-1";
+        const retryLabel = job.status === "running" ? "Resume" : job.operation === "backup" ? "Retry failures" : "Retry";
+        retryButton.append(
+            retryIcon,
+            document.createTextNode(retryLabel)
+        );
+        retryButton.addEventListener("click", () => retryDataManagementJob(job, retryButton));
+        container.appendChild(retryButton);
+    }
+    if (job.can_cancel === true) {
+        const cancelButton = document.createElement("button");
+        cancelButton.type = "button";
+        cancelButton.className = "btn btn-outline-danger btn-sm";
+        const cancelIcon = document.createElement("i");
+        cancelIcon.className = "bi bi-stop-circle me-1";
+        cancelButton.append(cancelIcon, document.createTextNode("Cancel"));
+        cancelButton.addEventListener("click", () => openDataManagementCancellationModal(job));
+        container.appendChild(cancelButton);
+    }
+    container.classList.toggle("d-none", container.childElementCount === 0);
+}
+
+function createMigrationManifestDownloadLink(jobId, label, statuses, buttonClass) {
+    const link = document.createElement("a");
+    link.className = `btn ${buttonClass} btn-sm`;
+    const encodedJobId = encodeURIComponent(jobId || "");
+    const query = statuses ? `?statuses=${encodeURIComponent(statuses)}` : "";
+    link.href = `/api/admin/data-management/jobs/${encodedJobId}/migration-manifest${query}`;
+    link.download = "";
+    const icon = document.createElement("i");
+    icon.className = "bi bi-download me-1";
+    link.append(icon, document.createTextNode(label));
+    return link;
+}
+
 function renderJobDetailSummary(job) {
     const container = elements.dataManagementJobDetailSummary;
     if (!container) {
         return;
     }
     const result = job.result && typeof job.result === "object" ? job.result : {};
+    const migrationState = job.migration_state && typeof job.migration_state === "object" ? job.migration_state : {};
+    const migrationTotals = migrationState.totals && typeof migrationState.totals === "object" ? migrationState.totals : {};
+    const migrationTiles = job.operation === "migration" ? [
+        createSummaryTile("Migration ID", migrationState.migration_id || job.id || "N/A"),
+        createSummaryTile("Processed", formatNumber(migrationTotals.processed_count || 0)),
+        createSummaryTile("Transferred", formatBytes(migrationTotals.bytes || 0)),
+        createSummaryTile("Request units", formatNumber(migrationTotals.request_units || 0)),
+    ] : [];
     container.replaceChildren(
         createSummaryTile("Status", createStatusBadge(job.status || "unknown")),
         createSummaryTile("Progress", formatProgress(job.progress)),
@@ -1800,7 +2154,8 @@ function renderJobDetailSummary(job) {
         createSummaryTile("Created", formatDate(job.created_at)),
         createSummaryTile("Started", formatDate(job.started_at)),
         createSummaryTile("Completed", formatDate(job.completed_at)),
-        createSummaryTile("Artifacts", formatNumber(result.artifact_count || getArtifactTotals(result.artifacts).artifactCount || 0))
+        createSummaryTile("Artifacts", formatNumber(result.artifact_count || getArtifactTotals(result.artifacts).artifactCount || 0)),
+        ...migrationTiles
     );
 }
 
@@ -1830,6 +2185,11 @@ function renderJobDetailProgress(job) {
     const percent = getProgressPercent(progress);
     const completedSteps = Number(progress.completed_steps || 0);
     const totalSteps = Number(progress.total_steps || 0);
+    const isMigration = job.operation === "migration";
+    const isMigrationActive = isMigration && activeJobStatuses.has(job.status);
+    const displayedStage = isMigrationActive
+        ? Math.min(totalSteps, completedSteps + 1)
+        : completedSteps;
     const card = document.createElement("div");
     card.className = "card border-info-subtle";
     const body = document.createElement("div");
@@ -1842,27 +2202,122 @@ function renderJobDetailProgress(job) {
     title.textContent = progress.current_step ? formatActivityLabel(progress.current_step) : "Job progress";
     const stepText = document.createElement("small");
     stepText.className = "text-muted";
-    stepText.textContent = totalSteps > 0 ? `${formatNumber(completedSteps)} of ${formatNumber(totalSteps)} steps complete` : "Waiting for step details";
+    stepText.textContent = isMigration
+        ? totalSteps > 0 ? `Stage ${formatNumber(displayedStage)} of ${formatNumber(totalSteps)}` : "Waiting for stage details"
+        : totalSteps > 0 ? `${formatNumber(completedSteps)} of ${formatNumber(totalSteps)} steps complete` : "Waiting for step details";
     header.append(title, stepText);
 
     const progressWrapper = document.createElement("div");
     progressWrapper.className = "progress";
     progressWrapper.setAttribute("role", "progressbar");
-    progressWrapper.setAttribute("aria-valuenow", String(percent));
     progressWrapper.setAttribute("aria-valuemin", "0");
     progressWrapper.setAttribute("aria-valuemax", "100");
     const progressBar = document.createElement("div");
-    progressBar.className = `progress-bar ${job.status === "failed" ? "bg-danger" : "bg-primary"}`;
-    progressBar.style.width = `${percent}%`;
-    progressBar.textContent = `${percent}%`;
+    if (isMigrationActive) {
+        progressWrapper.setAttribute("aria-valuetext", "Migration stage is active; measured throughput is shown below.");
+        progressBar.className = "progress-bar progress-bar-striped progress-bar-animated bg-primary";
+        progressBar.style.width = "100%";
+        progressBar.textContent = "Active stage";
+    } else {
+        progressWrapper.setAttribute("aria-valuenow", String(percent));
+        progressBar.className = `progress-bar ${job.status === "failed" ? "bg-danger" : "bg-primary"}`;
+        progressBar.style.width = `${percent}%`;
+        progressBar.textContent = `${percent}%`;
+    }
     progressWrapper.appendChild(progressBar);
 
     const message = document.createElement("p");
     message.className = "text-muted small mt-2 mb-0";
     message.textContent = job.last_message || job.last_error || "No job message has been recorded yet.";
     body.append(header, progressWrapper, message);
+    if (isMigration) {
+        const migrationMetrics = getMigrationLiveMetrics(job);
+        if (migrationMetrics.length) {
+            const metricGrid = document.createElement("div");
+            metricGrid.className = "row g-2 small mt-3";
+            migrationMetrics.forEach((metric) => {
+                metricGrid.appendChild(createDetailMetric(metric.label, metric.value));
+            });
+            body.appendChild(metricGrid);
+        }
+    }
     card.appendChild(body);
     container.replaceChildren(card);
+}
+
+function getMigrationLiveMetrics(job) {
+    const migrationState = job?.migration_state;
+    if (!migrationState || typeof migrationState !== "object") {
+        return [];
+    }
+    const totals = migrationState.totals && typeof migrationState.totals === "object" ? migrationState.totals : {};
+    const resources = migrationState.resources && typeof migrationState.resources === "object" ? Object.values(migrationState.resources) : [];
+    const activeResource = resources.find((resource) => resource?.status === "in_progress") || {};
+    const activeMetrics = activeResource.progress && typeof activeResource.progress === "object" ? activeResource.progress : activeResource.result || {};
+    const capacity = migrationState.capacity && typeof migrationState.capacity === "object" ? migrationState.capacity : {};
+    const metrics = [
+        { label: "Processed", value: formatNumber(totals.processed_count || 0) },
+        { label: "Transferred", value: formatBytes(totals.bytes || 0) },
+        { label: "Copied / skipped", value: `${formatNumber(totals.copied_count || 0)} / ${formatNumber(totals.skipped_count || 0)}` },
+        { label: "Failures", value: formatNumber(totals.failed_count || 0) },
+        { label: "Collisions", value: formatNumber(totals.collision_count || 0) },
+    ];
+    if (activeMetrics.observed_bytes !== undefined) {
+        metrics.push({ label: "Observed transferred", value: formatBytes(activeMetrics.observed_bytes || 0) });
+    }
+    if (activeMetrics.items_per_second !== undefined) {
+        metrics.push({ label: "Items per second", value: formatNumber(activeMetrics.items_per_second) });
+    }
+    const observedRate = activeMetrics.observed_bytes_per_second ?? activeMetrics.bytes_per_second;
+    if (observedRate !== undefined) {
+        metrics.push({ label: "Transfer rate", value: `${formatBytes(observedRate || 0)}/s` });
+    }
+    if (activeMetrics.request_units_per_second !== undefined) {
+        metrics.push({ label: "RU per second", value: formatNumber(activeMetrics.request_units_per_second) });
+    }
+    if (capacity.status) {
+        metrics.push({ label: "Destination capacity", value: formatActivityLabel(capacity.status) });
+    }
+    const heartbeatAge = formatTimestampAge(job?.last_heartbeat_at);
+    const progressAge = formatTimestampAge(job?.last_progress_at || migrationState.last_progress_at);
+    if (heartbeatAge) {
+        metrics.push({ label: "Last heartbeat", value: heartbeatAge });
+    }
+    if (progressAge) {
+        metrics.push({ label: "Last progress", value: progressAge });
+    }
+    if (heartbeatAge) {
+        const hasRecentProgress = timestampAgeSeconds(
+            job?.last_progress_at || migrationState.last_progress_at
+        ) <= 10;
+        metrics.push({
+            label: "Liveness",
+            value: hasRecentProgress ? "Running - progress active" : "Running - alive, no recent progress",
+        });
+    }
+    return metrics;
+}
+
+function timestampAgeSeconds(value) {
+    const timestamp = Date.parse(value || "");
+    if (!Number.isFinite(timestamp)) {
+        return Number.POSITIVE_INFINITY;
+    }
+    return Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+}
+
+function formatTimestampAge(value) {
+    const ageSeconds = timestampAgeSeconds(value);
+    if (!Number.isFinite(ageSeconds)) {
+        return "";
+    }
+    if (ageSeconds < 60) {
+        return `${ageSeconds}s ago`;
+    }
+    if (ageSeconds < 3600) {
+        return `${Math.floor(ageSeconds / 60)}m ago`;
+    }
+    return `${Math.floor(ageSeconds / 3600)}h ago`;
 }
 
 function renderJobItems(items) {
@@ -1956,15 +2411,41 @@ function createArtifactCard(artifact) {
 
     const metrics = document.createElement("div");
     metrics.className = "row g-2 small mb-2";
+    const copiedCount = artifact.copied_count ?? artifact.item_count ?? 0;
     metrics.append(
-        createDetailMetric("Records", formatNumber(artifact.item_count || 0)),
+        createDetailMetric("Copied", formatNumber(copiedCount)),
+        createDetailMetric("Created", formatNumber(artifact.created_count || 0)),
+        createDetailMetric("Updated", formatNumber(artifact.updated_count || 0)),
+        createDetailMetric("Unchanged", formatNumber(artifact.unchanged_count || 0)),
+        createDetailMetric("Skipped", formatNumber(artifact.skipped_count || 0)),
+        createDetailMetric("Failed", formatNumber(artifact.failed_count || 0)),
+        createDetailMetric("Collisions", formatNumber(artifact.collision_count || 0)),
         createDetailMetric("Blobs", formatNumber(artifact.blob_count || 0)),
         createDetailMetric("Size", formatBytes(artifact.bytes || 0))
     );
+    if (artifact.type === "migration_reconciliation") {
+        metrics.append(
+            createDetailMetric("Readiness", formatActivityLabel(artifact.readiness || "unknown")),
+            createDetailMetric("Deleted", formatNumber(artifact.deleted_count || 0)),
+            createDetailMetric("Delete candidates", formatNumber(artifact.delete_candidate_count || 0))
+        );
+    }
+    if (artifact.items_per_second !== undefined || artifact.bytes_per_second !== undefined) {
+        metrics.append(
+            createDetailMetric("Items / second", formatNumber(artifact.items_per_second || 0)),
+            createDetailMetric("Transfer rate", `${formatBytes(artifact.bytes_per_second || 0)}/s`)
+        );
+    }
 
     const location = createDetailBlock("Location", artifact.path || artifact.prefix || "Not recorded");
     const notes = createArtifactNoteGroup(artifact);
     body.append(header, metrics, location, notes);
+    if (artifact.preview_actual_divergence && typeof artifact.preview_actual_divergence === "object") {
+        const divergenceTitle = document.createElement("div");
+        divergenceTitle.className = "text-muted small mt-2";
+        divergenceTitle.textContent = "Preview versus actual";
+        body.append(divergenceTitle, createDetailChipGroup(artifact.preview_actual_divergence));
+    }
     card.appendChild(body);
     return card;
 }
@@ -2094,6 +2575,24 @@ function createArtifactNoteGroup(artifact) {
         { label: "Index", value: artifact.index_name },
         { label: "Partial since", value: artifact.partial_since_epoch },
         { label: "Filter", value: artifact.partial_filter },
+        { label: "Request units", value: artifact.request_units },
+        { label: "RU per second", value: artifact.request_units_per_second },
+        { label: "Workers", value: artifact.parallel_operations },
+        { label: "Retries", value: artifact.retry_count },
+        { label: "Retry delays", value: artifact.retry_attempt_count },
+        { label: "Prior failures", value: artifact.prior_failed_count },
+        { label: "Checkpoints", value: artifact.checkpoint_count },
+        { label: "Readiness", value: artifact.readiness, className: artifact.readiness === "ready" ? "bg-success" : "bg-warning text-dark" },
+        { label: "Deletion", value: artifact.deletion_status },
+        { label: "Remaining owned extras", value: artifact.remaining_destination_only_owned_count },
+        { label: "Unowned extras", value: artifact.destination_only_unowned_count },
+        { label: "Unresolved scope", value: artifact.unresolved_scope_count },
+        { label: "Stale", value: artifact.stale_count },
+        { label: "Deletion blockers", value: Array.isArray(artifact.deletion_blockers) ? artifact.deletion_blockers.join("; ") : artifact.deletion_blockers, className: "bg-warning text-dark" },
+        { label: "Prior migration skips", value: artifact.destination_provenance_skip_count },
+        { label: "Missing blobs", value: artifact.missing_count },
+        { label: "No source blob", value: artifact.not_applicable_count },
+        { label: "Collisions", value: artifact.collision_count },
         { label: "Warning", value: artifact.warning, className: "bg-warning text-dark" },
     ].filter((note) => isPresent(note.value));
 
@@ -2184,7 +2683,7 @@ function getArtifactTotals(artifacts) {
         }
         totals.artifactCount += 1;
         totals.bytes += Number(artifact.bytes || 0);
-        totals.recordCount += Number(artifact.item_count || 0);
+        totals.recordCount += Number(artifact.item_count ?? artifact.copied_count ?? 0);
         totals.blobCount += Number(artifact.blob_count || 0);
     });
     return totals;
@@ -2261,7 +2760,23 @@ async function refreshOpenJobDetail() {
     }
     jobDetailRefreshInFlight = true;
     try {
-        await loadDataManagementJobDetail(currentJobDetailId, { showModal: false, liveRefresh: true });
+        const data = await requestJson(
+            `/api/admin/data-management/jobs/${encodeURIComponent(currentJobDetailId)}/progress`,
+            { method: "GET" }
+        );
+        const job = data.job || {};
+        renderJobDetailSummary(job);
+        renderJobDetailActions(job);
+        renderJobDetailProgress(job);
+        updateJobDetailAutoRefresh(job);
+        if (!activeJobStatuses.has(String(job.status || "unknown"))) {
+            await loadDataManagementJobDetail(
+                currentJobDetailId,
+                { showModal: false, liveRefresh: true }
+            );
+        }
+    } catch (error) {
+        stopJobDetailAutoRefresh({ message: "Live refresh paused after a request failure." });
     } finally {
         jobDetailRefreshInFlight = false;
     }

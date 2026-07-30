@@ -2,6 +2,7 @@
 
 import re
 import logging
+from urllib.parse import urlparse
 from functions_appinsights import log_event
 from config import *
 from functions_authentication import *
@@ -535,6 +536,69 @@ def retrieve_secret_from_key_vault_by_full_name(full_secret_name):
     except Exception as e:
         log_event(f"Failed to retrieve secret '{full_secret_name}' from Key Vault: {str(e)}", level=logging.ERROR, exceptionTraceback=True)
         return full_secret_name
+
+
+def resolve_secret_reference_version(full_secret_name):
+    """Resolve a dynamic Key Vault secret name to its immutable versioned reference."""
+    settings = app_settings_cache.get_settings_cache()
+    if not settings.get("enable_key_vault_secret_storage", False):
+        return full_secret_name
+
+    key_vault_name = settings.get("key_vault_name", None)
+    if not key_vault_name or not validate_secret_name_dynamic(full_secret_name):
+        return full_secret_name
+
+    try:
+        key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
+        secret_client = SecretClient(
+            vault_url=key_vault_url,
+            credential=get_keyvault_credential(),
+        )
+        secret = secret_client.get_secret(full_secret_name)
+        return getattr(secret, "id", None) or full_secret_name
+    except Exception as exc:
+        log_event(
+            f"Failed to resolve Key Vault secret version for '{full_secret_name}': {str(exc)}",
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        return full_secret_name
+
+
+def retrieve_secret_from_key_vault_by_reference(secret_reference):
+    """Retrieve a dynamic secret name or a version-pinned Key Vault secret URL."""
+    reference = str(secret_reference or "").strip()
+    parsed_reference = urlparse(reference)
+    if not parsed_reference.scheme or not parsed_reference.netloc:
+        return retrieve_secret_from_key_vault_by_full_name(reference)
+
+    settings = app_settings_cache.get_settings_cache()
+    if not settings.get("enable_key_vault_secret_storage", False):
+        return reference
+    key_vault_name = settings.get("key_vault_name", None)
+    expected_host = f"{key_vault_name}{KEY_VAULT_DOMAIN}".lower() if key_vault_name else ""
+    path_parts = [part for part in parsed_reference.path.split("/") if part]
+    if (
+        parsed_reference.scheme.lower() != "https" or
+        parsed_reference.netloc.lower() != expected_host or
+        len(path_parts) != 3 or
+        path_parts[0].lower() != "secrets"
+    ):
+        raise ValueError("Key Vault secret reference is not a valid versioned secret URL.")
+
+    try:
+        secret_client = SecretClient(
+            vault_url=f"https://{key_vault_name}{KEY_VAULT_DOMAIN}",
+            credential=get_keyvault_credential(),
+        )
+        return secret_client.get_secret(path_parts[1], path_parts[2]).value
+    except Exception as exc:
+        log_event(
+            f"Failed to retrieve version-pinned Key Vault secret '{reference}': {str(exc)}",
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        raise
         
 def retrieve_secret_direct(secret_name, settings=None):
     """

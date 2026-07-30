@@ -6,6 +6,9 @@ from flask import g, has_request_context, jsonify, request, session
 
 from config import *
 from functions_appinsights import log_event
+from functions_content_safety import (
+    CONTENT_SAFETY_VIOLATION_MESSAGE_DEFAULT,
+)
 from functions_cosmos_throughput import get_default_cosmos_throughput_settings
 from functions_document_actions import get_default_document_action_capabilities
 from functions_icon_utils import normalize_icon_payload
@@ -25,6 +28,8 @@ from support_menu_config import (
 
 
 USER_SETTINGS_REQUEST_CACHE_ATTR = "simplechat_user_settings_request_cache"
+FONT_SIZE_PREFERENCES = ("xs", "s", "m", "l", "xl")
+DEFAULT_FONT_SIZE_PREFERENCE = "m"
 USER_UI_SETTINGS_KEYS = (
     "profileImage",
     "navLayout",
@@ -36,6 +41,7 @@ USER_UI_SETTINGS_KEYS = (
     "sidebarToggleStyle",
     "sidebarMenuState",
     LATEST_FEATURES_HIDDEN_VERSION_SETTING,
+    "fontSizePreference",
 )
 ADMIN_SETTINGS_SECRET_REDACTED_VALUE = "***REDACTED***"
 ADMIN_SETTINGS_FORM_SECRET_FIELDS = (
@@ -127,6 +133,13 @@ def _clone_user_settings_doc(doc):
     return copy.deepcopy(doc or {})
 
 
+def normalize_font_size_preference(value):
+    normalized_value = str(value or "").strip().lower()
+    if normalized_value in FONT_SIZE_PREFERENCES:
+        return normalized_value
+    return DEFAULT_FONT_SIZE_PREFERENCE
+
+
 def _get_user_settings_request_cache():
     if not has_request_context():
         return None
@@ -161,11 +174,15 @@ def _extract_user_ui_settings(doc):
     settings = (doc or {}).get('settings', {})
     if not isinstance(settings, dict):
         settings = {}
-    return {
+    ui_settings = {
         key: copy.deepcopy(settings[key])
         for key in USER_UI_SETTINGS_KEYS
         if key in settings
     }
+    ui_settings["fontSizePreference"] = normalize_font_size_preference(
+        settings.get("fontSizePreference")
+    )
+    return ui_settings
 
 
 def _delete_user_ui_settings_cache(user_id):
@@ -968,6 +985,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'require_public_workspace_assignment_for_file_downloads': False,
         'file_download_allowed_public_workspace_ids': [],
         'enable_chat_file_uploads': True,
+        'enable_conversation_contents_drawer': True,
         'require_member_of_chat_file_upload_user': False,
         'enforce_workspace_scope_lock': True,
 
@@ -1067,6 +1085,8 @@ def get_settings(use_cosmos=False, include_source=False):
 
         # Safety (Content Safety) Settings
         'enable_content_safety': False,
+        'content_safety_violation_message': CONTENT_SAFETY_VIOLATION_MESSAGE_DEFAULT,
+        'content_safety_include_trigger_information': True,
         'require_member_of_safety_violation_admin': False,
         'require_member_of_control_center_admin': False,
         'require_member_of_control_center_dashboard_reader': False,

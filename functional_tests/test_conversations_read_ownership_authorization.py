@@ -2,8 +2,8 @@
 # test_conversations_read_ownership_authorization.py
 """
 Functional test for personal conversation read authorization hardening.
-Version: 0.250.036
-Implemented in: 0.241.011; 0.241.022; 0.241.032; 0.250.033; 0.250.035
+Version: 0.250.074
+Implemented in: 0.241.011; 0.241.022; 0.241.032; 0.250.033; 0.250.035; 0.250.074
 
 This test ensures authenticated users can only read messages and images from
 their own personal conversations, and that foreign conversation reads fail with
@@ -237,9 +237,11 @@ def _install_route_import_stubs():
     stub_modules['functions_message_artifacts'] = artifacts_module
 
     simplechat_operations_module = types.ModuleType('functions_simplechat_operations')
+    simplechat_operations_module.ConversationForkConflictError = RuntimeError
     simplechat_operations_module.create_personal_conversation_for_current_user = lambda *args, **kwargs: {}
     simplechat_operations_module.delete_blob_backed_chat_message_files = lambda *args, **kwargs: None
     simplechat_operations_module.derive_conversation_title_from_message = lambda *args, **kwargs: ''
+    simplechat_operations_module.fork_personal_conversation_for_user = lambda *args, **kwargs: {}
     stub_modules['functions_simplechat_operations'] = simplechat_operations_module
 
     swagger_module = types.ModuleType('swagger_wrapper')

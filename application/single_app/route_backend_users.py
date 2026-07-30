@@ -506,7 +506,8 @@ def register_route_backend_users(bp):
                     # Chat UI settings
                     'navbar_layout', 'chatLayout', 'showChatTitle', 'chatSplitSizes',
                     'deepResearchDefaultEnabled',
-                    'sidebarToggleStyle', 'sidebarMenuState',
+                    'sidebarToggleStyle', 'sidebarMenuState', 'fontSizePreference',
+                    'conversationContentsDrawerEnabled',
                     LATEST_FEATURES_HIDDEN_VERSION_SETTING,
                     # Microphone permission settings
                     'microphonePermissionPreference', 'microphonePermissionState',
@@ -541,6 +542,18 @@ def register_route_backend_users(bp):
                     if sidebar_toggle_style not in {"large", "compact"}:
                         return jsonify({"error": "Invalid sidebar toggle style"}), 400
                     settings_to_update["sidebarToggleStyle"] = sidebar_toggle_style
+
+                if "fontSizePreference" in settings_to_update:
+                    font_size_preference = str(
+                        settings_to_update.get("fontSizePreference") or ""
+                    ).strip().lower()
+                    if font_size_preference not in FONT_SIZE_PREFERENCES:
+                        return jsonify({"error": "Invalid font size preference"}), 400
+                    settings_to_update["fontSizePreference"] = font_size_preference
+
+                if "conversationContentsDrawerEnabled" in settings_to_update:
+                    if not isinstance(settings_to_update["conversationContentsDrawerEnabled"], bool):
+                        return jsonify({"error": "Invalid conversation contents drawer preference"}), 400
 
                 if "sidebarMenuState" in settings_to_update:
                     sidebar_menu_state = settings_to_update.get("sidebarMenuState")

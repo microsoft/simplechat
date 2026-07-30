@@ -19,6 +19,10 @@ from functions_document_access_index import (
     sync_document_access_index_for_document_fail_open,
     validate_document_access_index_shadow,
 )
+from functions_data_management_search_write_fence import (
+    DataManagementSearchWritesFrozenError,
+    hold_data_management_search_write_slot,
+)
 from functions_visio import build_visio_page_markdown, parse_vsdx_pages
 from functions_content import *
 from functions_settings import *
@@ -31,6 +35,39 @@ from functions_model_endpoint_runtime import MODEL_ENDPOINT_PROVIDER_ALLOWLIST, 
 import azure.cognitiveservices.speech as speechsdk
 
 _AUDIO_RUNTIME_CAPABILITIES_CACHE = None
+
+
+class DocumentSearchAclProjectionDeferredError(RuntimeError):
+    """Raised when an authorization-reducing Search ACL update must be retried safely."""
+
+
+def _search_indexing_results_succeeded(results):
+    """Return whether Azure AI Search acknowledged every requested document mutation."""
+    normalized_results = list(results or [])
+    return bool(normalized_results) and all(
+        bool(
+            result.get("succeeded", result.get("status", False))
+            if isinstance(result, dict) else
+            getattr(result, "succeeded", getattr(result, "status", False))
+        )
+        for result in normalized_results
+    )
+
+
+def _execute_document_search_write(search_client, operation_name, *args, **kwargs):
+    """Serialize bounded target Search writes with an active Data Management migration fence."""
+    kwargs.update({
+        "connection_timeout": 30,
+        "read_timeout": 30,
+        "retry_total": 0,
+    })
+    with hold_data_management_search_write_slot(cosmos_data_management_jobs_container):
+        results = getattr(search_client, operation_name)(*args, **kwargs)
+    if not _search_indexing_results_succeeded(results):
+        raise RuntimeError(
+            f"Azure AI Search did not acknowledge every {operation_name} document mutation."
+        )
+    return results
 
 def allowed_file(filename, allowed_extensions=None):
     if not allowed_extensions:
@@ -786,7 +823,11 @@ def set_document_chunk_visibility(document_item, active=True):
 
         documents_to_update.append(chunk_item)
 
-    search_client.upload_documents(documents=documents_to_update)
+    _execute_document_search_write(
+        search_client,
+        "upload_documents",
+        documents=documents_to_update,
+    )
     return len(documents_to_update)
 
 
@@ -1333,7 +1374,11 @@ def save_video_chunk(
         # 3) upload to search index
         try:
             debug_print(f"[VIDEO CHUNK] Uploading chunk to search index")
-            client.upload_documents(documents=[chunk])
+            _execute_document_search_write(
+                client,
+                "upload_documents",
+                documents=[chunk],
+            )
             debug_print(f"[VIDEO CHUNK] Upload successful for chunk: {chunk_id}")
             print(f"[VideoChunk] UPLOAD OK for {chunk_id}", flush=True)
         except Exception as e:
@@ -2675,7 +2720,11 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
         else:
             search_client = CLIENTS["search_client_user"]
         # Upload as a single-document list
-        search_client.upload_documents(documents=[chunk_document])
+        _execute_document_search_write(
+            search_client,
+            "upload_documents",
+            documents=[chunk_document],
+        )
 
     except Exception as e:
         print(f"Error uploading chunk document for document {document_id}: {e}")
@@ -2861,7 +2910,11 @@ def save_chunks_batch(chunks_data, user_id, document_id, group_id=None, public_w
         upload_batch_size = 32
         for i in range(0, len(chunk_documents), upload_batch_size):
             sub_batch = chunk_documents[i:i + upload_batch_size]
-            search_client.upload_documents(documents=sub_batch)
+            _execute_document_search_write(
+                search_client,
+                "upload_documents",
+                documents=sub_batch,
+            )
 
     except Exception as e:
         log_event(f"[save_chunks_batch] Error uploading batch to AI Search for document {document_id}: {e}", level=logging.ERROR)
@@ -3030,7 +3083,11 @@ def update_chunk_metadata(chunk_id, user_id, group_id=None, public_workspace_id=
                 else:
                     chunk_item[field] = kwargs[field]
 
-        search_client.upload_documents(documents=[chunk_item])
+        _execute_document_search_write(
+            search_client,
+            "upload_documents",
+            documents=[chunk_item],
+        )
 
     except Exception as e:
         print(f"Error updating chunk metadata for chunk {chunk_id}: {e}")
@@ -3944,7 +4001,11 @@ def delete_document_chunks(document_id, group_id=None, public_workspace_id=None)
         documents_to_delete = [{"id": doc_id} for doc_id in ids_to_delete]
         batch = IndexDocumentsBatch()
         batch.add_delete_actions(documents_to_delete)
-        result = search_client.index_documents(batch)
+        result = _execute_document_search_write(
+            search_client,
+            "index_documents",
+            batch,
+        )
     except Exception as e:
         raise
 
@@ -3955,7 +4016,9 @@ def delete_document_version_chunks(document_id, version, group_id=None, public_w
 
     search_client = CLIENTS["search_client_public"] if is_public_workspace else CLIENTS["search_client_group"] if is_group else CLIENTS["search_client_user"]
 
-    search_client.delete_documents(
+    _execute_document_search_write(
+        search_client,
+        "delete_documents",
         actions=[
             {"@search.action": "delete", "id": chunk['id']} for chunk in
             search_client.search(
@@ -9110,41 +9173,41 @@ def unshare_document_from_user(document_id, owner_user_id, target_user_id):
         # Remove all entries for the target user (by oid prefix)
         new_shared_user_ids = [entry for entry in shared_user_ids if not entry.startswith(f"{target_user_id},")]
         if len(new_shared_user_ids) != len(shared_user_ids):
+            # A revoked user must never retain search access after the API reports success.
+            # Update every chunk projection before committing the authoritative Cosmos ACL.
+            chunks = get_all_chunks(document_id, actual_owner_id)
+            try:
+                for chunk in chunks:
+                    chunk_id = chunk.get('id')
+                    if not chunk_id:
+                        continue
+                    update_chunk_metadata(
+                        chunk_id=chunk_id,
+                        user_id=actual_owner_id,
+                        group_id=None,
+                        public_workspace_id=None,
+                        document_id=document_id,
+                        shared_user_ids=new_shared_user_ids
+                    )
+            except DataManagementSearchWritesFrozenError as exc:
+                raise DocumentSearchAclProjectionDeferredError(
+                    "Document access was not changed because target Search writes are temporarily frozen. Retry after the migration finishes."
+                ) from exc
+
             document_item['shared_user_ids'] = new_shared_user_ids
             document_item['last_updated'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-            # Update the document
             _upsert_document_and_sync_access_index(
                 cosmos_user_documents_container,
                 document_item,
                 operation='document_unshared_from_user',
             )
 
-            # Update all chunks with the new shared_user_ids
-            try:
-                chunks = get_all_chunks(document_id, actual_owner_id)
-                for chunk in chunks:
-                    chunk_id = chunk.get('id')
-                    if chunk_id:
-                        try:
-                            update_chunk_metadata(
-                                chunk_id=chunk_id,
-                                user_id=actual_owner_id,
-                                group_id=None,
-                                public_workspace_id=None,
-                                document_id=document_id,
-                                shared_user_ids=new_shared_user_ids
-                            )
-                        except Exception as chunk_e:
-                            print(f"Warning: Failed to update chunk {chunk_id}: {chunk_e}")
-                            # Continue with other chunks
-            except Exception as e:
-                print(f"Warning: Failed to update chunks for document {document_id}: {e}")
-                # Don't fail the whole operation if chunk update fails
-
         return True
 
     except CosmosResourceNotFoundError:
         return False
+    except DocumentSearchAclProjectionDeferredError:
+        raise
     except Exception as e:
         print(f"Error unsharing document {document_id}: {e}")
         return False

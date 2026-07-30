@@ -3,6 +3,7 @@
 Implemented in version: **0.241.179**
 Enhanced in version: **0.241.193** for configurable workflow agent action limits.
 Enhanced in version: **0.241.194** with admin capacity guidance for high action limits.
+Fixed/Implemented in version: **0.250.062** for active workflow cancellation.
 
 Fixed/Implemented in version: **0.241.193**
 
@@ -10,6 +11,7 @@ Related version updates:
 - `application/single_app/config.py` reported version `0.241.179` when group workflows were implemented.
 - `application/single_app/config.py` reported version `0.241.193` for workflow action limit configuration.
 - `application/single_app/config.py` now reports version `0.241.194` for workflow action limit capacity guidance.
+- `application/single_app/config.py` now reports version `0.250.062` for active workflow cancellation.
 
 ## Overview
 
@@ -42,6 +44,8 @@ API endpoints:
 - `GET /api/group/workflows/file-sync-sources`
 - `GET /api/group/workflows/<workflow_id>/runs`
 - `POST /api/group/workflows/<workflow_id>/run`
+- `POST /api/group/workflows/<workflow_id>/cancel`
+- `POST /api/group/workflows/<workflow_id>/runs/<run_id>/cancel`
 - `POST /api/group/workflows/<workflow_id>/runs/<run_id>/resume-failed`
 - `DELETE /api/group/workflows/<workflow_id>`
 - `GET /api/group/workflows/activity`
@@ -61,6 +65,7 @@ Permission model:
 - Authoring and deletion are allowed for Owners and Admins by default.
 - When owner-only management is enabled, only Owners can create, update, or delete group workflows.
 - All group workflow API routes revalidate group membership and feature assignment before reading or mutating data.
+- Active group runs can be cancelled only after the route resolves the active group and revalidates the caller's current membership. The cancellation request is stored in the group's run partition and is observable by any worker executing that run.
 
 File Sync behavior:
 - Group workflows accept only group-scoped File Sync sources for the active group.
@@ -85,6 +90,7 @@ Group workflow:
 4. Choose `New Group Workflow`.
 5. Enter a name, description, task prompt, runner, document action, alert priority, and trigger.
 6. Save and run the workflow manually, or let the scheduler run interval and File Sync monitor workflows.
+7. Use `Cancel` from the active workflow row or card, run history, or activity page. The runner stops before beginning further work and marks remaining queued or running document items as `cancelled`; an in-flight external request is allowed to return before the terminal state is recorded.
 
 Integration points:
 - Group agents and merged global agents are available in the group workflow agent picker.
@@ -96,9 +102,11 @@ Integration points:
 Functional coverage:
 - `functional_tests/test_group_workflows_feature.py` verifies static contracts for storage, settings, routes, scheduler, runner scope, activity deep links, admin UI settings, and group workspace UI wiring.
 - `functional_tests/test_workflow_auto_invoke_attempt_settings.py` verifies workflow action limit defaults, admin save wiring, Semantic Kernel loader wiring, and workflow runner scoping.
+- `functional_tests/test_workflow_cancellation.py` verifies cancellation persistence, personal/group scope boundaries, unfinished item transitions, and terminal runner state.
 
 UI coverage:
 - `ui_tests/test_admin_workflow_settings_access.py` verifies the Admin Settings workflow section exposes the group workflow enablement, assignment, owner-only management controls, and workflow action limit control.
+- `ui_tests/test_workflow_cancellation_controls.py` validates shared workspace and activity-page cancellation controls against the group-scoped API contract.
 
 Performance and limitations:
 - Group workflow runtime uses the same scheduler polling cadence and runner path as personal workflows.
