@@ -408,7 +408,8 @@ def register_route_backend_safety(bp):
             )
             return _build_safety_export_response(logs, 'admin_safety_violations_export', include_user_id=True)
         except ValueError as e:
-            return jsonify({"error": str(e)}), 400
+            logging.exception("Invalid parameters when exporting safety logs")
+            return jsonify({"error": "Invalid request parameters."}), 400
         except Exception as e:
             return jsonify({"error": f"Failed to export safety logs: {str(e)}"}), 500
 
