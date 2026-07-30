@@ -10754,8 +10754,12 @@ def _update_backup_state_totals(state):
         totals["checkpoint_count"] += _safe_int(metrics.get("checkpoint_count"), default=0, minimum=0)
         try:
             totals["request_units"] += max(0.0, float(metrics.get("request_units") or 0.0))
-        except (TypeError, ValueError):
-            pass
+        except (TypeError, ValueError) as exc:
+            logging.debug(
+                "Ignoring invalid backup request_units metric value %r during totals aggregation: %s",
+                metrics.get("request_units"),
+                exc,
+            )
         totals["retry_attempt_count"] += _safe_int(
             metrics.get("retry_attempt_count"),
             default=0,
