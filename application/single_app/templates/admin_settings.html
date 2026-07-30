@@ -1898,6 +1898,47 @@
                             </div>
                         </div>
                     </div>
+
+                    <hr class="my-4" />
+                    <section aria-labelledby="file-processing-log-cleanup-heading" data-ignore-settings-change="true">
+                        <h6 id="file-processing-log-cleanup-heading">Delete stored logs</h6>
+                        <p class="text-muted small">
+                            Permanently remove file processing logs from Cosmos DB. One month is treated as 30 days.
+                        </p>
+                        <div class="row g-3 align-items-end">
+                            <div class="col-sm-4">
+                                <label for="file-processing-log-cleanup-age" class="form-label">Delete logs older than</label>
+                                <input
+                                    type="number"
+                                    class="form-control"
+                                    id="file-processing-log-cleanup-age"
+                                    min="1"
+                                    step="1"
+                                    value="30"
+                                    aria-describedby="file-processing-log-cleanup-age-feedback"
+                                />
+                                <div id="file-processing-log-cleanup-age-feedback" class="invalid-feedback">
+                                    Enter a whole number greater than zero.
+                                </div>
+                            </div>
+                            <div class="col-sm-3">
+                                <label for="file-processing-log-cleanup-unit" class="form-label">Age unit</label>
+                                <select class="form-select" id="file-processing-log-cleanup-unit">
+                                    <option value="days" selected>Days</option>
+                                    <option value="weeks">Weeks</option>
+                                    <option value="months">Months (30 days)</option>
+                                </select>
+                            </div>
+                            <div class="col-sm-5 d-flex flex-wrap gap-2">
+                                <button type="button" class="btn btn-outline-danger" id="delete-old-file-processing-logs-btn">
+                                    <i class="bi bi-trash me-1" aria-hidden="true"></i>Delete older logs
+                                </button>
+                                <button type="button" class="btn btn-danger" id="delete-all-file-processing-logs-btn">
+                                    <i class="bi bi-trash3 me-1" aria-hidden="true"></i>Delete all logs
+                                </button>
+                            </div>
+                        </div>
+                    </section>
                 </div>
             </div>
 
@@ -10721,6 +10762,36 @@
         </div>
         <!-- End of Admin tab content -->
     </form>
+
+    <div
+        class="modal fade"
+        id="fileProcessingLogCleanupModal"
+        tabindex="-1"
+        aria-labelledby="fileProcessingLogCleanupModalLabel"
+        aria-describedby="file-processing-log-cleanup-confirmation"
+        aria-hidden="true"
+    >
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="fileProcessingLogCleanupModalLabel">Confirm permanent log deletion</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p id="file-processing-log-cleanup-confirmation"></p>
+                    <div class="alert alert-danger mb-0" role="alert">
+                        This action cannot be undone.
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-danger" id="confirm-file-processing-log-cleanup-btn">
+                        Delete logs
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <!-- Floating Save Button -->
     <button type="submit" form="admin-settings-form" class="btn btn-secondary floating-save-btn" id="floating-save-btn" disabled>

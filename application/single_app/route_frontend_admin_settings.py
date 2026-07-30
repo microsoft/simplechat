@@ -130,6 +130,69 @@ def normalize_agents_page_text(value, fallback, max_length):
 
 
 def register_route_frontend_admin_settings(bp):
+    @bp.route('/api/admin/settings/file-processing-logs/cleanup', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def cleanup_file_processing_logs():
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({
+                'success': False,
+                'error': 'A JSON request body is required.',
+            }), 400
+        if payload.get('confirmed') is not True:
+            return jsonify({
+                'success': False,
+                'error': 'Explicit confirmation is required.',
+            }), 400
+
+        delete_all = payload.get('delete_all', False)
+        age = payload.get('age')
+        unit = payload.get('unit')
+
+        try:
+            result = delete_file_processing_logs(
+                delete_all=delete_all,
+                age=age,
+                unit=unit,
+            )
+        except ValueError as exc:
+            return jsonify({
+                'success': False,
+                'error': str(exc),
+            }), 400
+        except FileProcessingLogDeletionError as exc:
+            return jsonify({
+                'success': False,
+                'error': 'File processing log cleanup did not complete.',
+                'deleted_count': exc.deleted_count,
+            }), 500
+
+        admin_user = session.get('user', {})
+        admin_email = admin_user.get(
+            'preferred_username',
+            admin_user.get('email', 'unknown'),
+        )
+        log_general_admin_action(
+            admin_user_id=get_current_user_id(),
+            admin_email=admin_email,
+            action='file_processing_logs_deleted',
+            description='Deleted file processing logs.',
+            additional_context={
+                'delete_all': result['delete_all'],
+                'deleted_count': result['deleted_count'],
+                'cutoff': result['cutoff'],
+                'age': age,
+                'unit': unit,
+            },
+        )
+
+        return jsonify({
+            'success': True,
+            **result,
+        })
+
     @bp.route('/admin/settings', methods=['GET', 'POST'])
     @swagger_route(security=get_auth_security())
     @login_required
