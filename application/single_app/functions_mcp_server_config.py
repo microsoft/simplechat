@@ -6,7 +6,6 @@ import os
 import re
 from urllib.parse import urlparse
 
-import app_settings_cache
 import requests
 
 from config import (
@@ -398,6 +397,9 @@ def normalize_inbound_mcp_settings(settings):
 def get_inbound_mcp_runtime_config(settings=None):
     """Return normalized runtime config backed by the Cosmos app_settings document."""
     if settings is None:
+        # Imported locally to avoid a settings/config cache import cycle during app startup.
+        import app_settings_cache
+
         settings_getter = getattr(app_settings_cache, "get_settings_cache", None)
         settings = settings_getter() if callable(settings_getter) else {}
 

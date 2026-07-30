@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for the SimpleChat local MCP development server.
-Version: 0.250.099
+Version: 0.250.100
 Implemented in: 0.250.059
 
 This test ensures that the reusable local MCP server supports SimpleChat MCP
@@ -36,11 +36,18 @@ class _NoopLogger:
         return _noop
 
 
+_NOOP_LOGGER = _NoopLogger()
+
+
+def _get_noop_logger():
+    return _NOOP_LOGGER
+
+
 sys.modules.setdefault(
     "functions_appinsights",
     types.SimpleNamespace(
         log_event=_noop,
-        get_appinsights_logger=lambda: _NoopLogger(),
+        get_appinsights_logger=_get_noop_logger,
     ),
 )
 sys.modules.setdefault(

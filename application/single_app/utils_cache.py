@@ -27,6 +27,7 @@ from config import (
     cosmos_search_cache_container
 )
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
+from functions_appinsights import sanitize_log_message
 
 logger = logging.getLogger(__name__)
 
@@ -74,11 +75,14 @@ def _debug_print(message: str, context: str = "CACHE", **kwargs):
     # Build extra info string from kwargs
     extra_info = ""
     if kwargs:
-        extra_parts = [f"{k}={str(v).replace(chr(10), ' ').replace(chr(13), ' ')}" for k, v in kwargs.items()]
+        extra_parts = [
+            f"{sanitize_log_message(k)}={sanitize_log_message(v)}"
+            for k, v in kwargs.items()
+        ]
         extra_info = " | " + ", ".join(extra_parts)
     
-    debug_message = f"[{timestamp}] [{context}] {message}{extra_info}"
-    logger.info("%s", debug_message)
+    debug_message = sanitize_log_message(f"[{timestamp}] [{context}] {message}{extra_info}")
+    logger.info("[SearchCacheDebug]")
     print(debug_message, flush=True)  # Also print to stdout for visibility
 
 

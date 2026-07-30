@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for outbound MCP destination governance and preconfigurations.
-Version: 0.250.099
+Version: 0.250.100
 Implemented in: 0.250.064
 
 This test ensures MCP destination allowlisting and server preconfiguration catalog

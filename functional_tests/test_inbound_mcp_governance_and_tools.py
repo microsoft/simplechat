@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for inbound MCP governance and first tool contracts.
-Version: 0.250.099
+Version: 0.250.100
 Implemented in: 0.250.070
 Simplified personal access/source governance implemented in: 0.250.080
 Single inbound MCP access policy implemented in: 0.250.081
