@@ -183,6 +183,9 @@ DATA_MANAGEMENT_BACKUP_CAPACITY_FAILURE_POLICIES = {
 }
 DATA_MANAGEMENT_SEARCH_KEYSET_PAGE_SIZE = 1000
 DATA_MANAGEMENT_SEARCH_SCOPE_FILTER_BATCH_SIZE = 100
+DATA_MANAGEMENT_SEARCH_BACKUP_PAGE_SIZE = 1000
+DATA_MANAGEMENT_SEARCH_BACKUP_CLEAN_PAGE_RECOVERY_COUNT = 3
+DATA_MANAGEMENT_SEARCH_BACKUP_MAX_INDEX_CONCURRENCY = 3
 DATA_MANAGEMENT_BLOB_SERVICE_TIMEOUT_SECONDS = 120
 DATA_MANAGEMENT_MIGRATION_REMOTE_REQUEST_TIMEOUT_SECONDS = 30
 DATA_MANAGEMENT_MIGRATION_HEARTBEAT_INTERVAL_SECONDS = 2.0
@@ -1270,6 +1273,44 @@ def _get_backup_retry_count(settings, backup_plan=None):
         (settings or {}).get("backup_retry_count")
         if backup_plan is None else
         DATA_MANAGEMENT_BACKUP_DEFAULT_RETRY_COUNT
+    )
+    return _safe_int(
+        configured_value,
+        default=DATA_MANAGEMENT_BACKUP_DEFAULT_RETRY_COUNT,
+        minimum=1,
+        maximum=DATA_MANAGEMENT_BACKUP_MAX_RETRY_COUNT,
+    )
+
+
+def _get_backup_search_parallel_operations(settings, backup_plan=None):
+    """Read the immutable Search page scheduler limit without exceeding index count."""
+    execution = (
+        (backup_plan or {}).get("ai_search_execution")
+        if isinstance(backup_plan, dict) else {}
+    )
+    configured_value = (
+        (execution or {}).get("max_parallel_operations")
+        if isinstance(execution, dict) and "max_parallel_operations" in execution else
+        _get_backup_parallel_operations(settings, backup_plan)
+    )
+    return _safe_int(
+        configured_value,
+        default=DATA_MANAGEMENT_BACKUP_DEFAULT_PARALLEL_OPERATIONS,
+        minimum=1,
+        maximum=DATA_MANAGEMENT_SEARCH_BACKUP_MAX_INDEX_CONCURRENCY,
+    )
+
+
+def _get_backup_search_retry_count(settings, backup_plan=None):
+    """Read the immutable Search retry budget, falling back to the backup budget."""
+    execution = (
+        (backup_plan or {}).get("ai_search_execution")
+        if isinstance(backup_plan, dict) else {}
+    )
+    configured_value = (
+        (execution or {}).get("retry_count")
+        if isinstance(execution, dict) and "retry_count" in execution else
+        _get_backup_retry_count(settings, backup_plan)
     )
     return _safe_int(
         configured_value,
@@ -7464,6 +7505,15 @@ def _normalize_data_management_backup_plan(settings, backup_type, options=None, 
             "temporary_source_ru": _get_backup_temporary_source_ru(settings),
             "capacity_failure_policy": _get_backup_capacity_failure_policy(settings),
         },
+        "ai_search_execution": {
+            "max_parallel_operations": min(
+                _get_backup_parallel_operations(settings),
+                DATA_MANAGEMENT_SEARCH_BACKUP_MAX_INDEX_CONCURRENCY,
+            ),
+            "retry_count": _get_backup_retry_count(settings),
+            "page_size": DATA_MANAGEMENT_SEARCH_BACKUP_PAGE_SIZE,
+            "clean_page_recovery_count": DATA_MANAGEMENT_SEARCH_BACKUP_CLEAN_PAGE_RECOVERY_COUNT,
+        },
         "resource_contract": ["cosmos", "ai_search", "source_blobs"],
     }
 
@@ -7897,6 +7947,8 @@ def _sanitize_data_management_backup_state_for_admin(state):
                     "parallel_operations",
                     "active_parallel_operations",
                     "source_page_count",
+                    "page_count",
+                    "current_page",
                 )
                 if field_name in progress
             },
@@ -7908,13 +7960,20 @@ def _sanitize_data_management_backup_state_for_admin(state):
                     "records_per_second",
                     "bytes_per_second",
                     "request_units_per_second",
+                    "throttle_delay_seconds",
                 )
                 if field_name in progress
             },
-            "current_container": _safe_text(progress.get("current_container")),
+            "current_container": _safe_text(
+                progress.get("current_container") or progress.get("current_index")
+            ),
+            "cursor_committed": bool(progress.get("cursor_committed")),
             "checkpoint": {
                 "next_batch_number": _safe_int(checkpoint.get("next_batch_number"), default=0, minimum=0),
                 "completed_batch_count": _safe_int(checkpoint.get("completed_batch_count"), default=0, minimum=0),
+                "next_page_number": _safe_int(checkpoint.get("next_page_number"), default=0, minimum=0),
+                "completed_page_count": _safe_int(checkpoint.get("completed_page_count"), default=0, minimum=0),
+                "upper_id_captured": bool(checkpoint.get("upper_id")),
             },
             "result": _summarize_backup_artifact(result) or {},
         }
@@ -8012,6 +8071,7 @@ def _sanitize_data_management_backup_state_for_admin(state):
         },
         "telemetry": {
             "current_container": _safe_text(telemetry.get("current_container")),
+            "current_page": _safe_int(telemetry.get("current_page"), default=0, minimum=0),
             "checkpoint_position": _safe_int(telemetry.get("checkpoint_position"), default=0, minimum=0),
             "records_processed": _safe_int(telemetry.get("records_processed"), default=0, minimum=0),
             "bytes": _safe_int(telemetry.get("bytes"), default=0, minimum=0),
@@ -8555,6 +8615,7 @@ def _summarize_backup_artifact(artifact):
         "request_units",
         "elapsed_seconds",
         "items_per_second",
+        "records_per_second",
         "bytes_per_second",
         "request_units_per_second",
         "parallel_operations",
@@ -8564,6 +8625,9 @@ def _summarize_backup_artifact(artifact):
         "retry_attempt_count",
         "throttle_count",
         "source_page_count",
+        "page_count",
+        "part_count",
+        "throttle_delay_seconds",
         "prior_failed_count",
         "checkpoint_count",
         "source_read_count",
@@ -8594,6 +8658,11 @@ def _summarize_backup_artifact(artifact):
         "preview_actual_divergence",
         "services",
         "warning",
+        "available",
+        "integrity_status",
+        "schema_fingerprint",
+        "source_window",
+        "concurrent_write_semantics",
     ]
     summary = {
         field_name: _sanitize_activity_value(artifact.get(field_name))
@@ -10193,74 +10262,6 @@ def _get_search_schema(schema_file):
         return json.load(schema_handle)
 
 
-def _search_filter_for_partial(settings, job):
-    since_epoch = _get_partial_since_epoch(settings, job)
-    if not since_epoch:
-        return None
-    since_datetime = datetime.fromtimestamp(since_epoch, tz=timezone.utc)
-    return f"upload_date ge {since_datetime.strftime('%Y-%m-%dT%H:%M:%SZ')}"
-
-
-def _iter_search_documents(search_client, settings, job):
-    search_filter = _search_filter_for_partial(settings, job)
-    results = search_client.search(
-        search_text="*",
-        filter=search_filter,
-        include_total_count=True,
-    )
-    for result in results:
-        document = dict(result)
-        yield {
-            key: value
-            for key, value in document.items()
-            if not key.startswith("@search.")
-        }
-
-
-def _export_search_artifacts(container_client, base_prefix, settings, job, fernet=None):
-    artifacts = []
-    for artifact in DATA_MANAGEMENT_SEARCH_ARTIFACTS:
-        search_client = CLIENTS.get(artifact["client_key"])
-        if not search_client:
-            artifacts.append({
-                "name": artifact["name"],
-                "type": "ai_search_index",
-                "status": "skipped",
-                "warning": "Search client was not initialized.",
-            })
-            continue
-
-        schema_blob_name = f"{base_prefix}/ai_search/{artifact['index_name']}.schema.json"
-        schema_upload = _upload_json_artifact(
-            container_client,
-            schema_blob_name,
-            _get_search_schema(artifact["schema_file"]),
-            fernet=fernet,
-        )
-        schema_upload.update({
-            "name": f"{artifact['name']}_schema",
-            "type": "ai_search_schema",
-            "index_name": artifact["index_name"],
-        })
-        artifacts.append(schema_upload)
-
-        documents_blob_name = f"{base_prefix}/ai_search/{artifact['index_name']}.documents.jsonl"
-        documents_upload = _write_jsonl_artifact(
-            container_client,
-            documents_blob_name,
-            _iter_search_documents(search_client, settings, job),
-            fernet=fernet,
-        )
-        documents_upload.update({
-            "name": artifact["name"],
-            "type": "ai_search_documents",
-            "index_name": artifact["index_name"],
-            "partial_filter": _search_filter_for_partial(settings, job),
-        })
-        artifacts.append(documents_upload)
-    return artifacts
-
-
 def _get_source_blob_service_client():
     source_client = CLIENTS.get("storage_account_office_docs_client")
     if source_client:
@@ -10739,6 +10740,7 @@ def _update_backup_state_totals(state):
         "throttle_count": 0,
     }
     current_container = ""
+    current_page = 0
     started_at_values = []
     for resource in (state.get("resources") or {}).values():
         metrics = _backup_resource_metrics(resource)
@@ -10773,8 +10775,11 @@ def _update_backup_state_totals(state):
         resource_started_at = _parse_iso_datetime(resource.get("started_at"))
         if resource_started_at:
             started_at_values.append(resource_started_at)
-        if resource.get("status") == "in_progress" and metrics.get("current_container"):
-            current_container = _safe_text(metrics.get("current_container"))
+        if resource.get("status") == "in_progress":
+            current_container = _safe_text(
+                metrics.get("current_container") or metrics.get("current_index")
+            )
+            current_page = _safe_int(metrics.get("current_page"), default=0, minimum=0)
     started_at = min(started_at_values) if started_at_values else None
     elapsed_seconds = max(
         0.001,
@@ -10787,6 +10792,7 @@ def _update_backup_state_totals(state):
     state["totals"] = totals
     state["telemetry"] = {
         "current_container": current_container,
+        "current_page": current_page,
         "checkpoint_position": totals["checkpoint_count"],
         "records_processed": totals["processed_count"],
         "bytes": totals["bytes"],
@@ -11332,28 +11338,297 @@ def _iter_backup_cosmos_source_items(
             return
 
 
-def _iter_backup_search_source_items(search_client, artifact, backup_plan):
-    """Yield normalized AI Search documents while respecting the immutable cutoff."""
-    source_cutoff = (backup_plan or {}).get("source_cutoff_at")
-    results = search_client.search(search_text="*", include_total_count=True)
-    for result in results:
-        document = {
-            key: value
-            for key, value in dict(result).items()
-            if not str(key).startswith("@search.")
-        }
-        if not _is_backup_value_within_cutoff(document.get("upload_date"), source_cutoff):
-            continue
-        source_identity = _build_backup_source_identity(
-            "ai_search",
-            artifact["index_name"],
-            document.get("id") or _build_backup_source_version(document),
+def _escape_backup_search_filter_value(value):
+    """Quote an OData string literal without allowing a document key to alter a filter."""
+    return _safe_text(value).replace("'", "''")
+
+
+def _backup_search_filter_timestamp(value):
+    parsed = _parse_iso_datetime(value)
+    if parsed is None:
+        raise DataManagementSettingsValidationError("Backup Search source cutoff is invalid.")
+    return parsed.isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
+def _build_backup_search_window_filter(backup_plan, last_id="", upper_id=""):
+    """Build the immutable upload-date window and id keyset bounds for one page."""
+    plan = backup_plan if isinstance(backup_plan, dict) else {}
+    clauses = [
+        f"upload_date le {_backup_search_filter_timestamp(plan.get('source_cutoff_at'))}",
+    ]
+    lower_bound = _safe_text(plan.get("source_lower_bound_at"))
+    if lower_bound:
+        clauses.append(f"upload_date ge {_backup_search_filter_timestamp(lower_bound)}")
+    if last_id:
+        clauses.append(f"id gt '{_escape_backup_search_filter_value(last_id)}'")
+    if upper_id:
+        clauses.append(f"id le '{_escape_backup_search_filter_value(upper_id)}'")
+    return " and ".join(clauses)
+
+
+def _get_backup_search_page_size(backup_plan):
+    execution = (backup_plan or {}).get("ai_search_execution")
+    return _safe_int(
+        (execution or {}).get("page_size"),
+        default=DATA_MANAGEMENT_SEARCH_BACKUP_PAGE_SIZE,
+        minimum=1,
+        maximum=DATA_MANAGEMENT_SEARCH_BACKUP_PAGE_SIZE,
+    )
+
+
+def _validate_backup_search_schema(artifact):
+    """Validate the captured index contract needed for deterministic backup paging."""
+    schema = _get_search_schema(artifact["schema_file"])
+    fields = schema.get("fields") if isinstance(schema, dict) else None
+    if not isinstance(fields, list):
+        raise DataManagementSettingsValidationError("AI Search schema does not define fields.")
+    field_by_name = {
+        _safe_text(field.get("name")): field
+        for field in fields
+        if isinstance(field, dict)
+    }
+    key_fields = [field for field in fields if isinstance(field, dict) and field.get("key")]
+    id_field = field_by_name.get("id")
+    upload_date_field = field_by_name.get("upload_date")
+    if (
+        len(key_fields) != 1 or key_fields[0] is not id_field or
+        not isinstance(id_field, dict) or
+        _safe_text(id_field.get("type")) != "Edm.String" or
+        not all(id_field.get(property_name) is True for property_name in ("retrievable", "filterable", "sortable"))
+    ):
+        raise DataManagementSettingsValidationError(
+            f"AI Search index '{artifact['index_name']}' must use a retrievable, filterable, sortable string id key."
         )
-        yield {
+    if (
+        not isinstance(upload_date_field, dict) or
+        not all(upload_date_field.get(property_name) is True for property_name in ("retrievable", "filterable", "sortable"))
+    ):
+        raise DataManagementSettingsValidationError(
+            f"AI Search index '{artifact['index_name']}' must expose upload_date for backup paging."
+        )
+    return {
+        "schema": schema,
+        "schema_fingerprint": build_backup_configuration_fingerprint(schema),
+    }
+
+
+def _read_backup_search_page(search_client, backup_plan, last_id, upper_id, page_size, retry_count):
+    """Read one id-keyset page with bounded retry and Azure retry guidance."""
+    retries = 0
+    throttles = 0
+    retry_delay_seconds = 0.0
+    for attempt in range(1, retry_count + 1):
+        try:
+            search_kwargs = {
+                "search_text": "*",
+                "filter": _build_backup_search_window_filter(backup_plan, last_id, upper_id),
+                "order_by": ["id asc"],
+                "top": page_size,
+                "include_total_count": False,
+            }
+            results = search_client.search(**search_kwargs)
+            documents = []
+            previous_id = _safe_text(last_id)
+            for result in results:
+                document = {
+                    key: value
+                    for key, value in dict(result).items()
+                    if not str(key).startswith("@search.")
+                }
+                document_id = document.get("id")
+                if not isinstance(document_id, str) or not document_id or document_id <= previous_id:
+                    raise DataManagementSettingsValidationError(
+                        "AI Search page contains a missing, duplicate, or out-of-order id."
+                    )
+                if upper_id and document_id > upper_id:
+                    raise DataManagementSettingsValidationError(
+                        "AI Search page exceeded its captured upper id bound."
+                    )
+                upload_date = _parse_iso_datetime(document.get("upload_date"))
+                if (
+                    upload_date is None or
+                    not _is_backup_value_within_cutoff(
+                        document.get("upload_date"),
+                        backup_plan.get("source_cutoff_at"),
+                    )
+                ):
+                    raise DataManagementSettingsValidationError(
+                        "AI Search page contains a document outside the immutable source window."
+                    )
+                lower_bound = backup_plan.get("source_lower_bound_at")
+                if lower_bound and (
+                    upload_date < _parse_iso_datetime(lower_bound)
+                ):
+                    raise DataManagementSettingsValidationError(
+                        "AI Search page contains a document before the immutable source window."
+                    )
+                documents.append(document)
+                previous_id = document_id
+                if len(documents) > page_size:
+                    raise DataManagementSettingsValidationError(
+                        "AI Search returned more documents than the requested page size."
+                    )
+            return {
+                "documents": documents,
+                "retry_attempt_count": retries,
+                "throttle_count": throttles,
+                "retry_delay_seconds": round(retry_delay_seconds, 3),
+            }
+        except DataManagementSettingsValidationError:
+            raise
+        except Exception as exc:
+            if not _is_retryable_backup_cosmos_error(exc) or attempt >= retry_count:
+                raise
+            retries += 1
+            status_code = _get_backup_exception_status_code(exc)
+            if status_code in {429, 503}:
+                throttles += 1
+            retry_delay = _get_backup_retry_delay(exc, attempt)
+            retry_delay_seconds += retry_delay
+            time.sleep(retry_delay)
+    raise RuntimeError("AI Search page retry budget was exhausted.")
+
+
+def _capture_backup_search_upper_id(search_client, backup_plan, retry_count):
+    """Capture a stable keyset ceiling inside the immutable upload-date source window."""
+    retries = 0
+    throttles = 0
+    retry_delay_seconds = 0.0
+    for attempt in range(1, retry_count + 1):
+        try:
+            results = search_client.search(
+                search_text="*",
+                filter=_build_backup_search_window_filter(backup_plan),
+                order_by=["id desc"],
+                top=1,
+                select=["id"],
+                include_total_count=False,
+            )
+            result = next(iter(results), None)
+            upper_id = dict(result).get("id") if result is not None else ""
+            if upper_id and (not isinstance(upper_id, str) or not upper_id):
+                raise DataManagementSettingsValidationError(
+                    "AI Search upper key is missing or is not a string."
+                )
+            return {
+                "upper_id": upper_id or "",
+                "retry_attempt_count": retries,
+                "throttle_count": throttles,
+                "retry_delay_seconds": round(retry_delay_seconds, 3),
+            }
+        except DataManagementSettingsValidationError:
+            raise
+        except Exception as exc:
+            if not _is_retryable_backup_cosmos_error(exc) or attempt >= retry_count:
+                raise
+            retries += 1
+            status_code = _get_backup_exception_status_code(exc)
+            if status_code in {429, 503}:
+                throttles += 1
+            retry_delay = _get_backup_retry_delay(exc, attempt)
+            retry_delay_seconds += retry_delay
+            time.sleep(retry_delay)
+    raise RuntimeError("AI Search upper key retry budget was exhausted.")
+
+
+def _stage_backup_search_page(
+    container_client,
+    search_client,
+    source_scope,
+    backup_lineage_id,
+    backup_job_id,
+    resource_name,
+    artifact,
+    backup_plan_snapshot,
+    last_id,
+    upper_id,
+    page_number,
+    base_prefix,
+    fernet,
+    retry_count,
+):
+    """Read and stage one Search page; workers never mutate shared backup state."""
+    page = _read_backup_search_page(
+        search_client,
+        backup_plan_snapshot,
+        last_id,
+        upper_id,
+        _get_backup_search_page_size(backup_plan_snapshot),
+        retry_count,
+    )
+    export_items = []
+    skipped_items = []
+    failed_items = []
+    for document in page["documents"]:
+        source_item = {
             "payload": document,
-            "source_identity": source_identity,
+            "source_identity": _build_backup_source_identity(
+                "ai_search",
+                artifact["index_name"],
+                document["id"],
+            ),
             "source_version": _build_backup_source_version(document),
         }
+        latest_state = _read_backup_latest_item_state(
+            source_scope,
+            backup_lineage_id,
+            "ai_search",
+            resource_name,
+            source_item["source_identity"],
+        )
+        if not _is_backup_item_due_for_export(
+            backup_plan_snapshot,
+            latest_state,
+            source_item["source_version"],
+            backup_job_id=backup_job_id,
+        ):
+            skipped_items.append((source_item, latest_state))
+            continue
+        try:
+            json.dumps(source_item["payload"], default=_json_default, ensure_ascii=False)
+        except (TypeError, ValueError):
+            failed_items.append(source_item)
+            continue
+        export_items.append(source_item)
+
+    staged = {
+        "status": "succeeded",
+        "upload": {"path": "", "bytes": 0},
+        "retry_attempt_count": page["retry_attempt_count"],
+        "throttle_count": page["throttle_count"],
+        "retry_delay_seconds": page["retry_delay_seconds"],
+    }
+    if failed_items:
+        staged["status"] = "integrity_failed"
+        staged["error"] = "AI Search page contains a document that cannot be serialized."
+    elif export_items:
+        batch_blob_name = (
+            f"{base_prefix}/ai_search/{artifact['index_name']}/pages/{int(page_number):06d}.jsonl"
+        )
+        staged = _stage_backup_jsonl_batch(
+            container_client,
+            batch_blob_name,
+            export_items,
+            fernet,
+            retry_count,
+        )
+        staged["retry_attempt_count"] = _safe_int(
+            staged.get("retry_attempt_count"), default=0, minimum=0
+        ) + page["retry_attempt_count"]
+        staged["throttle_count"] = _safe_int(
+            staged.get("throttle_count"), default=0, minimum=0
+        ) + page["throttle_count"]
+        staged["retry_delay_seconds"] = round(
+            float(staged.get("retry_delay_seconds") or 0.0) + page["retry_delay_seconds"],
+            3,
+        )
+    staged.update({
+        "documents": page["documents"],
+        "export_items": export_items,
+        "skipped_items": skipped_items,
+        "failed_items": failed_items,
+    })
+    return staged
 
 
 def _build_backup_manifest_entry(job, service, resource_name, source_item, status, **details):
@@ -11414,7 +11689,7 @@ def _stage_backup_jsonl_batch(
             if not _is_retryable_backup_cosmos_error(exc) or attempt >= retry_count:
                 break
             retry_attempt_count += 1
-            if _get_backup_exception_status_code(exc) in {429, 449}:
+            if _get_backup_exception_status_code(exc) in {429, 449, 503}:
                 throttle_count += 1
             retry_delay = _get_backup_retry_delay(exc, attempt)
             retry_delay_seconds += retry_delay
@@ -12242,6 +12517,475 @@ def _execute_backup_schema_resource(job, state, settings, container_client, base
     return result
 
 
+def _execute_backup_search_resources(
+    job,
+    state,
+    settings,
+    container_client,
+    base_prefix,
+    fernet,
+):
+    """Export Search indexes as independently resumable, keyset-paged artifacts."""
+    backup_plan = job.get("backup_plan") if isinstance(job.get("backup_plan"), dict) else {}
+    worker_backup_plan = copy.deepcopy(backup_plan)
+    worker_source_scope = _get_backup_source_scope(job)
+    worker_backup_lineage_id = _build_backup_lineage_id(worker_backup_plan)
+    worker_backup_job_id = _safe_text(job.get("id"))
+    retry_count = _get_backup_search_retry_count(settings, backup_plan)
+    configured_parallelism = _get_backup_search_parallel_operations(settings, backup_plan)
+    clean_page_recovery_count = _safe_int(
+        ((backup_plan.get("ai_search_execution") or {}).get("clean_page_recovery_count")),
+        default=DATA_MANAGEMENT_SEARCH_BACKUP_CLEAN_PAGE_RECOVERY_COUNT,
+        minimum=1,
+        maximum=100,
+    )
+    active_parallelism = configured_parallelism
+    clean_page_count = 0
+    artifacts = []
+    contexts = []
+
+    def build_result(context, status, unavailable=False):
+        elapsed_seconds = max(0.001, time.perf_counter() - context["started_at"])
+        return {
+            "name": context["artifact"]["name"],
+            "type": "ai_search_documents",
+            "index_name": context["artifact"]["index_name"],
+            "status": status,
+            "available": not unavailable,
+            "integrity_status": "unavailable" if unavailable else "verified",
+            "schema_fingerprint": context["schema_fingerprint"],
+            "source_window": {
+                "lower_bound_at": backup_plan.get("source_lower_bound_at"),
+                "upper_bound_at": backup_plan.get("source_cutoff_at"),
+                "upper_id_captured": bool(context["upper_id"]),
+            },
+            "concurrent_write_semantics": (
+                "The upload_date window and upper id are immutable, but Azure AI Search "
+                "does not provide a transactional snapshot; incompatible page changes fail integrity checks."
+            ),
+            "item_count": context["exported_count"],
+            "skipped_count": context["skipped_count"],
+            "failed_count": context["failed_count"],
+            "source_read_count": context["source_read_count"],
+            "bytes": context["bytes"],
+            "page_count": context["page_count"],
+            "checkpoint_count": context["checkpoint_count"],
+            "retry_attempt_count": context["retry_attempt_count"],
+            "throttle_count": context["throttle_count"],
+            "throttle_delay_seconds": round(context["throttle_delay_seconds"], 3),
+            "parallel_operations": configured_parallelism,
+            "active_parallel_operations": active_parallelism,
+            "elapsed_seconds": round(elapsed_seconds, 3),
+            "records_per_second": round(context["exported_count"] / elapsed_seconds, 3),
+            "bytes_per_second": round(context["bytes"] / elapsed_seconds, 3),
+            "prefix": f"{base_prefix}/ai_search/{context['artifact']['index_name']}/pages/",
+            "part_count": context["page_count"],
+        }
+
+    def fail_context(context, message):
+        context["failed_count"] = max(1, context["failed_count"])
+        _append_backup_warning(
+            state,
+            f"AI Search index {context['artifact']['index_name']} is unavailable: "
+            f"{_sanitize_data_management_backup_text(message)[:300]}",
+        )
+        result = build_result(context, "warning", unavailable=True)
+        _fail_backup_resource_checkpoint(
+            job,
+            state,
+            settings,
+            context["resource_name"],
+            _sanitize_data_management_backup_text(message)[:500],
+            f"Marked incomplete AI Search index {context['artifact']['index_name']} unavailable",
+            result=result,
+        )
+        artifacts.append(result)
+
+    for artifact in DATA_MANAGEMENT_SEARCH_ARTIFACTS:
+        schema_resource_name = f"ai_search_schema:{artifact['index_name']}"
+        resource_name = f"ai_search:{artifact['index_name']}"
+        search_client = CLIENTS.get(artifact["client_key"])
+        if search_client is None:
+            warning = f"AI Search client '{artifact['name']}' was not initialized."
+            _append_backup_warning(state, warning)
+            for skipped_resource_name in (schema_resource_name, resource_name):
+                if not is_backup_resource_completed(state, skipped_resource_name):
+                    _skip_backup_resource_checkpoint(
+                        job,
+                        state,
+                        settings,
+                        skipped_resource_name,
+                        warning,
+                        f"Skipped unavailable AI Search resource {artifact['index_name']}",
+                    )
+            artifacts.append({
+                "name": artifact["name"],
+                "type": "ai_search_documents",
+                "index_name": artifact["index_name"],
+                "status": "skipped",
+                "available": False,
+                "warning": warning,
+            })
+            continue
+        try:
+            schema_metadata = _validate_backup_search_schema(artifact)
+            schema_artifact = _execute_backup_schema_resource(
+                job,
+                state,
+                settings,
+                container_client,
+                base_prefix,
+                fernet,
+                artifact,
+            )
+            schema_artifact["schema_fingerprint"] = schema_metadata["schema_fingerprint"]
+            artifacts.append(schema_artifact)
+        except (DataManagementBackupCanceledError, DataManagementBackupLeaseLostError):
+            raise
+        except Exception as exc:
+            warning = (
+                f"AI Search schema backup resource '{artifact['name']}' failed: "
+                f"{_sanitize_data_management_backup_text(str(exc))[:300]}"
+            )
+            _append_backup_warning(state, warning)
+            _fail_backup_resource_checkpoint(
+                job,
+                state,
+                settings,
+                schema_resource_name,
+                warning,
+                f"Recorded failed AI Search schema backup resource {artifact['index_name']}",
+            )
+            _fail_backup_resource_checkpoint(
+                job,
+                state,
+                settings,
+                resource_name,
+                "AI Search document export is unavailable because schema validation failed.",
+                f"Marked AI Search index {artifact['index_name']} unavailable after schema failure",
+                result={
+                    "name": artifact["name"],
+                    "type": "ai_search_documents",
+                    "index_name": artifact["index_name"],
+                    "status": "warning",
+                    "available": False,
+                    "integrity_status": "unavailable",
+                },
+            )
+            artifacts.append({
+                "name": artifact["name"],
+                "type": "ai_search_documents",
+                "index_name": artifact["index_name"],
+                "status": "warning",
+                "available": False,
+                "warning": warning,
+            })
+            continue
+
+        _sync_backup_latest_item_state_from_manifest(job, resource_name)
+        existing_resource = get_backup_resource(state, resource_name)
+        if is_backup_resource_completed(state, resource_name):
+            artifacts.append(copy.deepcopy(existing_resource.get("result") or {}))
+            continue
+        resource = start_backup_resource(state, resource_name, "ai_search_export")
+        progress = resource.get("progress") if isinstance(resource.get("progress"), dict) else {}
+        checkpoint = resource.get("checkpoint") if isinstance(resource.get("checkpoint"), dict) else {}
+        context = {
+            "artifact": copy.deepcopy(artifact),
+            "search_client": search_client,
+            "resource_name": resource_name,
+            "schema_fingerprint": schema_metadata["schema_fingerprint"],
+            "started_at": time.perf_counter(),
+            "last_id": _safe_text(checkpoint.get("last_committed_id")),
+            "upper_id": _safe_text(checkpoint.get("upper_id")),
+            "next_page_number": _safe_int(checkpoint.get("next_page_number"), default=1, minimum=1),
+            "exported_count": _safe_int(progress.get("item_count"), default=0, minimum=0),
+            "skipped_count": _safe_int(progress.get("skipped_count"), default=0, minimum=0),
+            "failed_count": _safe_int(progress.get("failed_count"), default=0, minimum=0),
+            "source_read_count": _safe_int(progress.get("source_read_count"), default=0, minimum=0),
+            "bytes": _safe_int(progress.get("bytes"), default=0, minimum=0),
+            "page_count": _safe_int(progress.get("page_count"), default=0, minimum=0),
+            "checkpoint_count": _safe_int(progress.get("checkpoint_count"), default=0, minimum=0),
+            "retry_attempt_count": _safe_int(progress.get("retry_attempt_count"), default=0, minimum=0),
+            "throttle_count": _safe_int(progress.get("throttle_count"), default=0, minimum=0),
+            "throttle_delay_seconds": float(progress.get("throttle_delay_seconds") or 0.0),
+            "recent_parts": list(checkpoint.get("recent_parts") or []),
+            "done": False,
+        }
+        if not context["upper_id"]:
+            try:
+                capture = _capture_backup_search_upper_id(search_client, backup_plan, retry_count)
+                context["upper_id"] = _safe_text(capture.get("upper_id"))
+                context["retry_attempt_count"] += _safe_int(
+                    capture.get("retry_attempt_count"), default=0, minimum=0
+                )
+                context["throttle_count"] += _safe_int(
+                    capture.get("throttle_count"), default=0, minimum=0
+                )
+                context["throttle_delay_seconds"] += float(capture.get("retry_delay_seconds") or 0.0)
+                initial_checkpoint = {
+                    "schema_fingerprint": context["schema_fingerprint"],
+                    "source_window": {
+                        "lower_bound_at": backup_plan.get("source_lower_bound_at"),
+                        "upper_bound_at": backup_plan.get("source_cutoff_at"),
+                    },
+                    "upper_id": context["upper_id"],
+                    "last_committed_id": context["last_id"],
+                    "next_page_number": context["next_page_number"],
+                    "completed_page_count": context["page_count"],
+                    "recent_parts": context["recent_parts"][-DATA_MANAGEMENT_BACKUP_MAX_RECENT_CHECKPOINTS:],
+                }
+                initial_progress = {
+                    "item_count": context["exported_count"],
+                    "skipped_count": context["skipped_count"],
+                    "failed_count": context["failed_count"],
+                    "source_read_count": context["source_read_count"],
+                    "bytes": context["bytes"],
+                    "page_count": context["page_count"],
+                    "checkpoint_count": context["checkpoint_count"],
+                    "retry_attempt_count": context["retry_attempt_count"],
+                    "throttle_count": context["throttle_count"],
+                    "throttle_delay_seconds": round(context["throttle_delay_seconds"], 3),
+                    "parallel_operations": configured_parallelism,
+                    "active_parallel_operations": active_parallelism,
+                    "current_index": artifact["index_name"],
+                    "current_page": context["next_page_number"],
+                    "cursor_committed": bool(context["last_id"]),
+                }
+                _persist_backup_checkpoint(
+                    job,
+                    state,
+                    settings,
+                    resource_name,
+                    initial_progress,
+                    initial_checkpoint,
+                    f"Captured immutable AI Search upper key for {artifact['index_name']}",
+                )
+            except (DataManagementBackupCanceledError, DataManagementBackupLeaseLostError):
+                raise
+            except Exception as exc:
+                fail_context(context, f"AI Search upper key capture failed: {str(exc)}")
+                continue
+        if not context["upper_id"]:
+            empty_result = build_result(context, "completed")
+            _complete_backup_resource_checkpoint(
+                job,
+                state,
+                settings,
+                resource_name,
+                empty_result,
+                f"Completed empty AI Search index {artifact['index_name']}",
+            )
+            artifacts.append(empty_result)
+            continue
+        append_manifest, flush_manifest, manifest_buffer = _create_backup_manifest_writer(
+            job.get("id"),
+            resource_name,
+        )
+        context["append_manifest"] = append_manifest
+        context["flush_manifest"] = flush_manifest
+        context["manifest_buffer"] = manifest_buffer
+        context["pending_latest_state_updates"] = []
+        contexts.append(context)
+
+    pending_by_future = {}
+    next_schedule_index = 0
+    with ThreadPoolExecutor(max_workers=configured_parallelism) as executor:
+        while contexts or pending_by_future:
+            while contexts and len(pending_by_future) < active_parallelism:
+                next_schedule_index %= len(contexts)
+                context = None
+                for offset in range(len(contexts)):
+                    candidate_index = (next_schedule_index + offset) % len(contexts)
+                    candidate = contexts[candidate_index]
+                    if not candidate.get("in_flight"):
+                        context = candidate
+                        next_schedule_index = (candidate_index + 1) % len(contexts)
+                        break
+                if context is None:
+                    break
+                context["in_flight"] = True
+                pending_by_future[executor.submit(
+                    _stage_backup_search_page,
+                    container_client,
+                    context["search_client"],
+                    worker_source_scope,
+                    worker_backup_lineage_id,
+                    worker_backup_job_id,
+                    context["resource_name"],
+                    context["artifact"],
+                    worker_backup_plan,
+                    context["last_id"],
+                    context["upper_id"],
+                    context["next_page_number"],
+                    base_prefix,
+                    fernet,
+                    retry_count,
+                )] = context
+            if not pending_by_future:
+                break
+            completed_futures, _pending = wait(
+                set(pending_by_future),
+                return_when=FIRST_COMPLETED,
+            )
+            for future in completed_futures:
+                context = pending_by_future.pop(future)
+                context["in_flight"] = False
+                try:
+                    page_result = future.result()
+                except (DataManagementBackupCanceledError, DataManagementBackupLeaseLostError):
+                    raise
+                except Exception as exc:
+                    status_code = _get_backup_exception_status_code(exc)
+                    if status_code in {429, 503}:
+                        active_parallelism = max(1, active_parallelism - 1)
+                    fail_context(context, f"AI Search page read failed: {str(exc)}")
+                    contexts.remove(context)
+                    continue
+
+                page_throttles = _safe_int(page_result.get("throttle_count"), default=0, minimum=0)
+                context["retry_attempt_count"] += _safe_int(
+                    page_result.get("retry_attempt_count"), default=0, minimum=0
+                )
+                context["throttle_count"] += page_throttles
+                context["throttle_delay_seconds"] += float(page_result.get("retry_delay_seconds") or 0.0)
+                if page_throttles:
+                    active_parallelism = max(1, active_parallelism - 1)
+                    clean_page_count = 0
+                else:
+                    clean_page_count += 1
+                    if (
+                        clean_page_count >= clean_page_recovery_count and
+                        active_parallelism < configured_parallelism
+                    ):
+                        active_parallelism += 1
+                        clean_page_count = 0
+                if page_result.get("status") != "succeeded":
+                    fail_context(
+                        context,
+                        _safe_text(page_result.get("error")) or "AI Search page artifact upload failed.",
+                    )
+                    contexts.remove(context)
+                    continue
+
+                documents = page_result.get("documents") or []
+                context["source_read_count"] += len(documents)
+                if not documents:
+                    result = build_result(context, "completed")
+                    _complete_backup_resource_checkpoint(
+                        job,
+                        state,
+                        settings,
+                        context["resource_name"],
+                        result,
+                        f"Completed AI Search index {context['artifact']['index_name']}",
+                    )
+                    artifacts.append(result)
+                    contexts.remove(context)
+                    continue
+
+                upload = page_result.get("upload") if isinstance(page_result.get("upload"), dict) else {}
+                checkpoint_id = (
+                    f"{job.get('id')}:{_safe_job_item_id_part(context['resource_name'])}:"
+                    f"page-{context['next_page_number']:06d}"
+                )
+                for source_item, latest_state in page_result.get("skipped_items") or []:
+                    context["skipped_count"] += 1
+                    context["append_manifest"](_build_backup_manifest_entry(
+                        job,
+                        "ai_search",
+                        context["resource_name"],
+                        source_item,
+                        "skipped",
+                        artifact_checkpoint_id=_safe_text((latest_state or {}).get("artifact_checkpoint_id")),
+                        artifact_path=_safe_text((latest_state or {}).get("artifact_path")),
+                        skip_summary="Latest successful backup state matches the source version.",
+                    ))
+                    _queue_backup_latest_item_state_update(
+                        context["pending_latest_state_updates"],
+                        source_item,
+                        "skipped",
+                        checkpoint_id=_safe_text((latest_state or {}).get("artifact_checkpoint_id")),
+                        artifact_path=_safe_text((latest_state or {}).get("artifact_path")),
+                        skip_summary="Latest successful backup state matches the source version.",
+                    )
+                for source_item in page_result.get("export_items") or []:
+                    context["append_manifest"](_build_backup_manifest_entry(
+                        job,
+                        "ai_search",
+                        context["resource_name"],
+                        source_item,
+                        "succeeded",
+                        artifact_checkpoint_id=checkpoint_id,
+                        artifact_path=upload.get("path"),
+                        bytes=upload.get("bytes"),
+                    ))
+                    _queue_backup_latest_item_state_update(
+                        context["pending_latest_state_updates"],
+                        source_item,
+                        "succeeded",
+                        checkpoint_id=checkpoint_id,
+                        artifact_path=upload.get("path"),
+                    )
+                context["exported_count"] += len(page_result.get("export_items") or [])
+                context["bytes"] += _safe_int(upload.get("bytes"), default=0, minimum=0)
+                context["page_count"] += 1
+                context["checkpoint_count"] += 1
+                context["last_id"] = documents[-1]["id"]
+                context["recent_parts"].append({
+                    "page_number": context["next_page_number"],
+                    "artifact_path": _safe_text(upload.get("path")),
+                })
+                del context["recent_parts"][:-DATA_MANAGEMENT_BACKUP_MAX_RECENT_CHECKPOINTS]
+                context["next_page_number"] += 1
+                context["flush_manifest"]()
+                checkpoint = {
+                    "schema_fingerprint": context["schema_fingerprint"],
+                    "source_window": {
+                        "lower_bound_at": backup_plan.get("source_lower_bound_at"),
+                        "upper_bound_at": backup_plan.get("source_cutoff_at"),
+                    },
+                    "upper_id": context["upper_id"],
+                    "last_committed_id": context["last_id"],
+                    "next_page_number": context["next_page_number"],
+                    "completed_page_count": context["page_count"],
+                    "recent_parts": context["recent_parts"],
+                }
+                progress = {
+                    "item_count": context["exported_count"],
+                    "skipped_count": context["skipped_count"],
+                    "failed_count": context["failed_count"],
+                    "source_read_count": context["source_read_count"],
+                    "bytes": context["bytes"],
+                    "page_count": context["page_count"],
+                    "checkpoint_count": context["checkpoint_count"],
+                    "retry_attempt_count": context["retry_attempt_count"],
+                    "throttle_count": context["throttle_count"],
+                    "throttle_delay_seconds": round(context["throttle_delay_seconds"], 3),
+                    "parallel_operations": configured_parallelism,
+                    "active_parallel_operations": active_parallelism,
+                    "current_index": context["artifact"]["index_name"],
+                    "current_page": context["next_page_number"] - 1,
+                    "cursor_committed": True,
+                }
+                _persist_backup_checkpoint(
+                    job,
+                    state,
+                    settings,
+                    context["resource_name"],
+                    progress,
+                    checkpoint,
+                    f"Checkpointed AI Search page for {context['artifact']['index_name']}",
+                )
+                _flush_backup_latest_item_state_updates(
+                    job,
+                    "ai_search",
+                    context["resource_name"],
+                    context["pending_latest_state_updates"],
+                )
+    return artifacts
+
+
 def _execute_backup_source_blob_resource(
     job,
     state,
@@ -12705,97 +13449,14 @@ def execute_backup_job(job, settings):
     _set_job_progress(job, "Cosmos DB export step completed", 1, total_steps, current_step="cosmos")
 
     if backup_plan.get("include_ai_search"):
-        for artifact in DATA_MANAGEMENT_SEARCH_ARTIFACTS:
-            schema_resource_name = f"ai_search_schema:{artifact['index_name']}"
-            documents_resource_name = f"ai_search:{artifact['index_name']}"
-            source_client = CLIENTS.get(artifact["client_key"])
-            if source_client is None:
-                warning = f"AI Search client '{artifact['name']}' was not initialized."
-                _append_backup_warning(backup_state, warning)
-                for resource_name in (schema_resource_name, documents_resource_name):
-                    if not is_backup_resource_completed(backup_state, resource_name):
-                        _skip_backup_resource_checkpoint(
-                            job,
-                            backup_state,
-                            settings,
-                            resource_name,
-                            warning,
-                            f"Skipped unavailable AI Search resource {artifact['index_name']}",
-                        )
-                artifacts.append({
-                    "name": artifact["name"],
-                    "type": "ai_search_documents",
-                    "status": "skipped",
-                    "warning": warning,
-                })
-                continue
-            try:
-                artifacts.append(_execute_backup_schema_resource(
-                    job,
-                    backup_state,
-                    settings,
-                    container_client,
-                    base_prefix,
-                    fernet,
-                    artifact,
-                ))
-            except (DataManagementBackupCanceledError, DataManagementBackupLeaseLostError):
-                raise
-            except Exception as exc:
-                warning = f"AI Search schema backup resource '{artifact['name']}' failed: {str(exc)[:300]}"
-                _append_backup_warning(backup_state, warning)
-                _fail_backup_resource_checkpoint(
-                    job,
-                    backup_state,
-                    settings,
-                    schema_resource_name,
-                    str(exc),
-                    f"Recorded failed AI Search schema backup resource {artifact['index_name']}",
-                )
-                artifacts.append({
-                    "name": f"{artifact['name']}_schema",
-                    "type": "ai_search_schema",
-                    "status": "warning",
-                    "warning": warning,
-                })
-                continue
-            try:
-                artifacts.append(_execute_backup_jsonl_resource(
-                    job,
-                    backup_state,
-                    settings,
-                    container_client,
-                    base_prefix,
-                    fernet,
-                    "ai_search",
-                    documents_resource_name,
-                    {
-                        "name": artifact["name"],
-                        "type": "ai_search_documents",
-                        "index_name": artifact["index_name"],
-                        "partial_filter": "latest_item_state",
-                    },
-                    _iter_backup_search_source_items(source_client, artifact, backup_plan),
-                ))
-            except (DataManagementBackupCanceledError, DataManagementBackupLeaseLostError):
-                raise
-            except Exception as exc:
-                warning = f"AI Search backup resource '{artifact['name']}' failed: {str(exc)[:300]}"
-                _append_backup_warning(backup_state, warning)
-                _fail_backup_resource_checkpoint(
-                    job,
-                    backup_state,
-                    settings,
-                    documents_resource_name,
-                    str(exc),
-                    f"Recorded failed AI Search backup resource {artifact['index_name']}",
-                )
-                artifacts.append({
-                    "name": artifact["name"],
-                    "type": "ai_search_documents",
-                    "status": "warning",
-                    "warning": warning,
-                })
+        artifacts.extend(_execute_backup_search_resources(
+            job,
+            backup_state,
+            settings,
+            container_client,
+            base_prefix,
+            fernet,
+        ))
     else:
         warning = "AI Search export is disabled for this backup."
         _append_backup_warning(backup_state, warning)
