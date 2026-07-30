@@ -1579,6 +1579,9 @@
         enable_multi_model_endpoints: {{ enable_multi_model_endpoints|tojson }},
         enable_thoughts: {{ settings.enable_thoughts|tojson }},
         enable_collaborative_conversations: {{ settings.enable_collaborative_conversations|tojson }},
+        enable_desktop_notifications: {{ settings.enable_desktop_notifications|default(false, true)|tojson }},
+        desktop_notifications_enabled: {{ desktop_notifications_enabled|default(false, true)|tojson }},
+        app_title: {{ settings.app_title|default('Simple Chat', true)|tojson }},
         documentActionCapabilities: {{ settings.document_action_capabilities|default({}, true)|tojson|safe }}
     };
 

@@ -722,6 +722,10 @@ def register_route_frontend_chats(bp):
         enable_document_classification = public_settings.get("enable_document_classification", False)
         enable_extract_meta_data = public_settings.get("enable_extract_meta_data", False)
         enable_multi_model_endpoints = public_settings.get("enable_multi_model_endpoints", False)
+        desktop_notifications_enabled = bool(
+            public_settings.get("enable_desktop_notifications", False)
+            and user_settings_dict.get("desktopNotificationsEnabled", True)
+        )
         active_group_id = user_settings_dict.get("activeGroupOid", "")
         active_group_name = ""
         if active_group_id:
@@ -881,6 +885,7 @@ def register_route_frontend_chats(bp):
             chat_model_options=chat_model_options,
             initial_chat_model_selection=initial_chat_model_selection,
             conversation_contents_drawer_enabled=conversation_contents_drawer_enabled,
+            desktop_notifications_enabled=desktop_notifications_enabled,
         )
 
     @bp.route('/workflow-activity', methods=['GET'])
