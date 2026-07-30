@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.074)**
+
+#### New Features
+
+*   **Fork Personal Conversations from Assistant Responses**
+    *   Added a Fork conversation action for persisted assistant messages, creating an independent personal conversation containing the active history through the selected response while leaving the source unchanged.
+    *   Forks remap conversation, message, thread, reply, and artifact identifiers; copy blob-backed attachments to independent paths; reject unauthorized or changed sources; and clean up failed copies before they become visible.
+    *   Added confirmation, duplicate-click prevention, failure feedback, immediate fork navigation, backend regression coverage, and browser workflow coverage.
+    *   (Ref: microsoft/simplechat#1025, `functions_simplechat_operations.py`, `route_backend_conversations.py`, `chat-messages.js`, `FORK_CONVERSATION.md`)
+
 ### **(v0.250.073)**
 
 #### New Features

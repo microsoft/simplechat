@@ -1,6 +1,7 @@
 # functions_simplechat_operations.py
 """Shared SimpleChat-native operations for routes and Semantic Kernel plugins."""
 
+import copy
 import logging
 import mimetypes
 import os
@@ -66,6 +67,21 @@ from utils_cache import invalidate_group_search_cache, invalidate_personal_searc
 
 SIMPLECHAT_PLUGIN_TYPE = "simplechat"
 SIMPLECHAT_DEFAULT_ENDPOINT = "simplechat://internal"
+PERSONAL_FORK_CHAT_TYPES = {"", "new", "personal", "personal_single_user"}
+PERSONAL_FORK_CONVERSATION_FIELDS = (
+    "context",
+    "tags",
+    "strict",
+    "classification",
+    "scope_locked",
+    "locked_contexts",
+    "selected_agent_id",
+    "selected_agent_name",
+    "selected_agent_is_global",
+    "model_endpoint_id",
+    "model_id",
+)
+COSMOS_SYSTEM_FIELDS = {"_rid", "_self", "_etag", "_attachments", "_ts"}
 SIMPLECHAT_CAPABILITY_TO_FUNCTION = {
     "create_group": "create_group",
     "add_group_member": "add_user_to_group",
@@ -222,6 +238,521 @@ def derive_conversation_title_from_message(content: str) -> str:
     if not normalized_content:
         return "New Conversation"
     return f"{normalized_content[:30]}..." if len(normalized_content) > 30 else normalized_content
+
+
+class ConversationForkConflictError(RuntimeError):
+    """Raised when the source changes or cannot be forked safely."""
+
+
+def is_forkable_personal_conversation(conversation_item: Dict[str, Any]) -> bool:
+    """Return whether a legacy personal conversation is eligible for forking."""
+    chat_type = str((conversation_item or {}).get("chat_type") or "").strip().lower()
+    if chat_type not in PERSONAL_FORK_CHAT_TYPES:
+        return False
+
+    for context_item in (conversation_item or {}).get("context") or []:
+        if not isinstance(context_item, dict):
+            continue
+        scope = str(context_item.get("scope") or "").strip().lower()
+        if scope and scope != "personal":
+            return False
+
+    return True
+
+
+def _message_fork_sort_key(message_doc: Dict[str, Any]) -> Tuple[str, int, str]:
+    fork_sequence = message_doc.get("fork_sequence")
+    try:
+        normalized_sequence = int(fork_sequence)
+    except (TypeError, ValueError):
+        normalized_sequence = 0
+    return (
+        str(message_doc.get("timestamp") or ""),
+        normalized_sequence,
+        str(message_doc.get("id") or ""),
+    )
+
+
+def _is_active_fork_timeline_message(message_doc: Dict[str, Any]) -> bool:
+    metadata = message_doc.get("metadata") or {}
+    thread_info = metadata.get("thread_info") or {}
+    active_thread = thread_info.get("active_thread")
+    return active_thread is not False
+
+
+def _is_assistant_artifact_document(message_doc: Dict[str, Any]) -> bool:
+    metadata = message_doc.get("metadata") or {}
+    role = str(message_doc.get("role") or "").strip().lower()
+    return bool(metadata.get("is_generated_chat_artifact")) or role.startswith("assistant_artifact")
+
+
+def _collect_artifact_message_reference_ids(value: Any, key: str = "") -> set:
+    referenced_ids = set()
+    if isinstance(value, dict):
+        for child_key, child_value in value.items():
+            referenced_ids.update(_collect_artifact_message_reference_ids(child_value, child_key))
+    elif isinstance(value, list):
+        for child_value in value:
+            referenced_ids.update(_collect_artifact_message_reference_ids(child_value, key))
+    elif isinstance(value, str) and (key == "artifact_message_id" or key.endswith("_artifact_message_id")):
+        normalized_value = value.strip()
+        if normalized_value:
+            referenced_ids.add(normalized_value)
+    return referenced_ids
+
+
+def _collect_fork_documents(
+    all_documents: List[Dict[str, Any]],
+    selected_message_id: str,
+) -> List[Dict[str, Any]]:
+    ordered_documents = sorted(all_documents, key=_message_fork_sort_key)
+    timeline_documents = [
+        document
+        for document in ordered_documents
+        if not _is_assistant_artifact_document(document)
+        and _is_active_fork_timeline_message(document)
+    ]
+
+    selected_index = next(
+        (
+            index
+            for index, document in enumerate(timeline_documents)
+            if str(document.get("id") or "") == selected_message_id
+        ),
+        None,
+    )
+    if selected_index is None:
+        raise LookupError("Selected assistant message was not found on the active conversation timeline")
+
+    selected_document = timeline_documents[selected_index]
+    if str(selected_document.get("role") or "").strip().lower() != "assistant":
+        raise ValueError("Selected message must be a persisted assistant message")
+
+    included_documents = timeline_documents[:selected_index + 1]
+    included_ids = {
+        str(document.get("id") or "")
+        for document in included_documents
+        if document.get("id")
+    }
+    documents_by_id = {
+        str(document.get("id") or ""): document
+        for document in ordered_documents
+        if document.get("id")
+    }
+    referenced_artifact_ids = _collect_artifact_message_reference_ids(included_documents)
+    missing_artifact_ids = referenced_artifact_ids.difference(documents_by_id)
+    if missing_artifact_ids:
+        raise ConversationForkConflictError(
+            "A generated assistant artifact is no longer available to fork"
+        )
+
+    pending_artifacts = [
+        document
+        for document in ordered_documents
+        if _is_assistant_artifact_document(document)
+    ]
+    while pending_artifacts:
+        added_document = False
+        remaining_artifacts = []
+        for artifact_document in pending_artifacts:
+            artifact_id = str(artifact_document.get("id") or "")
+            parent_message_id = str(artifact_document.get("parent_message_id") or "")
+            if artifact_id in referenced_artifact_ids or (
+                parent_message_id and parent_message_id in included_ids
+            ):
+                included_documents.append(artifact_document)
+                if artifact_id:
+                    included_ids.add(artifact_id)
+                referenced_artifact_ids.update(
+                    _collect_artifact_message_reference_ids(artifact_document)
+                )
+                added_document = True
+            else:
+                remaining_artifacts.append(artifact_document)
+        if not added_document:
+            break
+        pending_artifacts = remaining_artifacts
+
+    return sorted(included_documents, key=_message_fork_sort_key)
+
+
+def _remap_fork_references(
+    value: Any,
+    key: str,
+    source_conversation_id: str,
+    fork_conversation_id: str,
+    message_id_map: Dict[str, str],
+    thread_id_map: Dict[str, str],
+) -> Any:
+    if isinstance(value, dict):
+        return {
+            child_key: _remap_fork_references(
+                child_value,
+                child_key,
+                source_conversation_id,
+                fork_conversation_id,
+                message_id_map,
+                thread_id_map,
+            )
+            for child_key, child_value in value.items()
+        }
+    if isinstance(value, list):
+        return [
+            _remap_fork_references(
+                child_value,
+                key,
+                source_conversation_id,
+                fork_conversation_id,
+                message_id_map,
+                thread_id_map,
+            )
+            for child_value in value
+        ]
+    if isinstance(value, str):
+        if (key == "conversation_id" or key.endswith("_conversation_id")) and value == source_conversation_id:
+            return fork_conversation_id
+        if key == "thread_id" or key.endswith("_thread_id"):
+            if value not in thread_id_map:
+                thread_id_map[value] = str(uuid.uuid4())
+            return thread_id_map[value]
+        if key == "message_id" or key.endswith("_message_id"):
+            return message_id_map.get(value, value)
+        if key == "artifact_id" or key.endswith("_artifact_id"):
+            return message_id_map.get(value, value)
+    return value
+
+
+def _build_fork_message_documents(
+    source_documents: List[Dict[str, Any]],
+    source_conversation_id: str,
+    fork_conversation_id: str,
+) -> List[Dict[str, Any]]:
+    message_id_map = {
+        str(document["id"]): f"{fork_conversation_id}_{index:06d}_{uuid.uuid4().hex}"
+        for index, document in enumerate(source_documents, start=1)
+    }
+    thread_id_map: Dict[str, str] = {}
+    fork_documents = []
+
+    for sequence, source_document in enumerate(source_documents, start=1):
+        source_message_id = str(source_document["id"])
+        fork_document = {
+            key: copy.deepcopy(value)
+            for key, value in source_document.items()
+            if key not in COSMOS_SYSTEM_FIELDS
+        }
+        fork_document["id"] = message_id_map[source_message_id]
+        fork_document["conversation_id"] = fork_conversation_id
+        fork_document["fork_sequence"] = sequence
+        fork_document = _remap_fork_references(
+            fork_document,
+            "",
+            source_conversation_id,
+            fork_conversation_id,
+            message_id_map,
+            thread_id_map,
+        )
+        fork_documents.append(fork_document)
+
+    return fork_documents
+
+
+def _build_fork_conversation_document(
+    source_conversation: Dict[str, Any],
+    selected_message_id: str,
+    fork_conversation_id: str,
+    user_id: str,
+) -> Dict[str, Any]:
+    source_title = str(source_conversation.get("title") or "New Conversation").strip() or "New Conversation"
+    fork_title = f"Fork of {source_title}"
+    timestamp = datetime.now(timezone.utc).isoformat()
+    fork_conversation = {
+        "id": fork_conversation_id,
+        "user_id": user_id,
+        "last_updated": timestamp,
+        "title": fork_title,
+        "context": [],
+        "tags": [],
+        "strict": False,
+        "is_pinned": False,
+        "is_hidden": False,
+        "chat_type": "personal_single_user",
+        "has_unread_assistant_response": False,
+        "last_unread_assistant_message_id": None,
+        "last_unread_assistant_at": None,
+        "added_to_activity_log": True,
+        "forked_from": {
+            "conversation_id": str(source_conversation.get("id") or ""),
+            "message_id": selected_message_id,
+        },
+    }
+    for field_name in PERSONAL_FORK_CONVERSATION_FIELDS:
+        if field_name in source_conversation:
+            fork_conversation[field_name] = copy.deepcopy(source_conversation[field_name])
+    return fork_conversation
+
+
+def _source_record_changed(original_record: Dict[str, Any], current_record: Dict[str, Any]) -> bool:
+    original_etag = original_record.get("_etag")
+    current_etag = current_record.get("_etag")
+    if original_etag or current_etag:
+        return original_etag != current_etag
+    return original_record != current_record
+
+
+def _source_document_set_changed(
+    original_documents: List[Dict[str, Any]],
+    current_documents: List[Dict[str, Any]],
+) -> bool:
+    original_by_id = {
+        str(document.get("id") or ""): document
+        for document in original_documents
+    }
+    current_by_id = {
+        str(document.get("id") or ""): document
+        for document in current_documents
+    }
+    if original_by_id.keys() != current_by_id.keys():
+        return True
+    return any(
+        _source_record_changed(original_document, current_by_id[message_id])
+        for message_id, original_document in original_by_id.items()
+    )
+
+
+def _build_fork_blob_path(
+    source_blob_path: str,
+    source_conversation_id: str,
+    fork_conversation_id: str,
+    source_message_id: str,
+    fork_message_id: str,
+) -> str:
+    normalized_path = str(source_blob_path or "").strip().replace("\\", "/")
+    fork_blob_path = normalized_path.replace(source_message_id, fork_message_id, 1)
+    fork_blob_path = fork_blob_path.replace(source_conversation_id, fork_conversation_id, 1)
+    if fork_blob_path != normalized_path:
+        return fork_blob_path
+
+    parent_path, _, file_name = normalized_path.rpartition("/")
+    normalized_file_name = file_name or "artifact"
+    prefix = f"{parent_path}/" if parent_path else ""
+    return f"{prefix}forks/{fork_conversation_id}/{fork_message_id}/{normalized_file_name}"
+
+
+def _copy_fork_blob_files(
+    source_documents: List[Dict[str, Any]],
+    fork_documents: List[Dict[str, Any]],
+    source_conversation_id: str,
+    fork_conversation_id: str,
+    created_blob_targets: List[Tuple[str, str]],
+) -> None:
+    blob_service_client = CLIENTS.get("storage_account_office_docs_client")
+    for source_document, fork_document in zip(source_documents, fork_documents):
+        blob_container = str(source_document.get("blob_container") or "").strip()
+        source_blob_path = str(source_document.get("blob_path") or "").strip()
+        if not blob_container or not source_blob_path:
+            continue
+        if not blob_service_client:
+            raise RuntimeError("Blob storage client is required to fork attached files")
+
+        fork_blob_path = _build_fork_blob_path(
+            source_blob_path,
+            source_conversation_id,
+            fork_conversation_id,
+            str(source_document.get("id") or ""),
+            str(fork_document.get("id") or ""),
+        )
+        source_blob_client = blob_service_client.get_blob_client(
+            container=blob_container,
+            blob=source_blob_path,
+        )
+        source_blob_properties = source_blob_client.get_blob_properties()
+        source_blob_content = source_blob_client.download_blob().readall()
+        fork_blob_client = blob_service_client.get_blob_client(
+            container=blob_container,
+            blob=fork_blob_path,
+        )
+        source_metadata = dict(getattr(source_blob_properties, "metadata", None) or {})
+        if source_metadata.get("conversation_id") == source_conversation_id:
+            source_metadata["conversation_id"] = fork_conversation_id
+        upload_options = {
+            "overwrite": True,
+            "metadata": source_metadata,
+        }
+        content_settings = getattr(source_blob_properties, "content_settings", None)
+        if content_settings is not None:
+            upload_options["content_settings"] = content_settings
+        fork_blob_client.upload_blob(source_blob_content, **upload_options)
+        created_blob_targets.append((blob_container, fork_blob_path))
+        fork_document["blob_path"] = fork_blob_path
+
+
+def _cleanup_failed_fork(
+    fork_conversation_id: str,
+    written_message_ids: List[str],
+    created_blob_targets: List[Tuple[str, str]],
+) -> None:
+    for message_id in reversed(written_message_ids):
+        try:
+            cosmos_messages_container.delete_item(
+                item=message_id,
+                partition_key=fork_conversation_id,
+            )
+        except Exception as cleanup_error:
+            log_event(
+                f"[ConversationFork] Failed to clean up fork message: {cleanup_error}",
+                level=logging.ERROR,
+                properties={
+                    "fork_conversation_id": fork_conversation_id,
+                    "message_id": message_id,
+                },
+            )
+    blob_service_client = CLIENTS.get("storage_account_office_docs_client")
+    for blob_container, blob_path in reversed(created_blob_targets):
+        try:
+            if not blob_service_client:
+                raise RuntimeError("Blob storage client is unavailable")
+            blob_service_client.get_blob_client(
+                container=blob_container,
+                blob=blob_path,
+            ).delete_blob()
+        except Exception as cleanup_error:
+            log_event(
+                f"[ConversationFork] Failed to clean up fork blob: {cleanup_error}",
+                level=logging.ERROR,
+                properties={
+                    "fork_conversation_id": fork_conversation_id,
+                    "blob_container": blob_container,
+                    "blob_path": blob_path,
+                },
+            )
+    try:
+        cosmos_conversations_container.delete_item(
+            item=fork_conversation_id,
+            partition_key=fork_conversation_id,
+        )
+    except CosmosResourceNotFoundError:
+        pass
+    except Exception as cleanup_error:
+        log_event(
+            f"[ConversationFork] Failed to clean up fork conversation: {cleanup_error}",
+            level=logging.ERROR,
+            properties={"fork_conversation_id": fork_conversation_id},
+        )
+
+
+def fork_personal_conversation_for_user(
+    source_conversation: Dict[str, Any],
+    selected_message_id: str,
+    user_id: str,
+) -> Dict[str, Any]:
+    """Create an independent personal conversation through one assistant message."""
+    source_conversation_id = str(source_conversation.get("id") or "").strip()
+    normalized_message_id = str(selected_message_id or "").strip()
+    normalized_user_id = str(user_id or "").strip()
+    if not source_conversation_id or not normalized_message_id or not normalized_user_id:
+        raise ValueError("Source conversation, assistant message, and user are required")
+    if source_conversation.get("user_id") != normalized_user_id:
+        raise PermissionError("Forbidden")
+    if not is_forkable_personal_conversation(source_conversation):
+        raise ConversationForkConflictError("Only personal conversations can be forked")
+
+    query = (
+        "SELECT * FROM c "
+        "WHERE c.conversation_id = @conversation_id"
+    )
+    all_documents = list(cosmos_messages_container.query_items(
+        query=query,
+        parameters=[{"name": "@conversation_id", "value": source_conversation_id}],
+        partition_key=source_conversation_id,
+    ))
+    source_documents = _collect_fork_documents(all_documents, normalized_message_id)
+    selected_document = next(
+        document
+        for document in source_documents
+        if str(document.get("id") or "") == normalized_message_id
+    )
+
+    try:
+        current_conversation = cosmos_conversations_container.read_item(
+            item=source_conversation_id,
+            partition_key=source_conversation_id,
+        )
+        current_selected_message = cosmos_messages_container.read_item(
+            item=normalized_message_id,
+            partition_key=source_conversation_id,
+        )
+        current_documents = list(cosmos_messages_container.query_items(
+            query=query,
+            parameters=[{"name": "@conversation_id", "value": source_conversation_id}],
+            partition_key=source_conversation_id,
+        ))
+    except CosmosResourceNotFoundError as exc:
+        raise ConversationForkConflictError("The source conversation changed before it could be forked") from exc
+
+    if _source_record_changed(source_conversation, current_conversation) or _source_record_changed(
+        selected_document,
+        current_selected_message,
+    ) or _source_document_set_changed(all_documents, current_documents):
+        raise ConversationForkConflictError("The source conversation changed before it could be forked")
+
+    fork_conversation_id = str(uuid.uuid4())
+    fork_documents = _build_fork_message_documents(
+        source_documents,
+        source_conversation_id,
+        fork_conversation_id,
+    )
+    fork_conversation = _build_fork_conversation_document(
+        source_conversation,
+        normalized_message_id,
+        fork_conversation_id,
+        normalized_user_id,
+    )
+    written_message_ids = []
+    created_blob_targets: List[Tuple[str, str]] = []
+
+    try:
+        _copy_fork_blob_files(
+            source_documents,
+            fork_documents,
+            source_conversation_id,
+            fork_conversation_id,
+            created_blob_targets,
+        )
+        for fork_document in fork_documents:
+            cosmos_messages_container.upsert_item(fork_document)
+            written_message_ids.append(fork_document["id"])
+        cosmos_conversations_container.upsert_item(fork_conversation)
+    except Exception:
+        _cleanup_failed_fork(
+            fork_conversation_id,
+            written_message_ids,
+            created_blob_targets,
+        )
+        raise
+
+    try:
+        log_conversation_creation(
+            user_id=normalized_user_id,
+            conversation_id=fork_conversation_id,
+            title=fork_conversation["title"],
+            workspace_type="personal",
+        )
+    except Exception as log_error:
+        log_event(
+            f"[ConversationFork] Fork created but activity logging failed: {log_error}",
+            level=logging.WARNING,
+            properties={"fork_conversation_id": fork_conversation_id},
+        )
+
+    return {
+        "conversation": fork_conversation,
+        "message_count": len([
+            document
+            for document in fork_documents
+            if not _is_assistant_artifact_document(document)
+        ]),
+    }
 
 
 def create_personal_conversation_for_current_user(

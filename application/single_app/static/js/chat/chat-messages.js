@@ -10,7 +10,8 @@ import { promptSelect } from "./chat-prompts.js";
 import {
   createNewConversation,
   selectConversation,
-  addConversationToList
+  addConversationToList,
+  loadConversations
 } from "./chat-conversations.js";
 import { updateSidebarConversationTitle } from "./chat-sidebar-conversations.js";
 import { getActiveConversationContext, getActiveConversationScope } from "./chat-conversation-scope.js";
@@ -58,6 +59,12 @@ const documentComparisonSelectionList = document.getElementById('document-compar
 const documentComparisonPickerPanel = document.getElementById('document-comparison-picker-panel');
 const documentComparisonPickerControls = document.getElementById('document-comparison-picker-controls');
 const documentComparisonPickerStatus = document.getElementById('document-comparison-picker-status');
+const conversationForkModalEl = document.getElementById('fork-conversation-modal');
+const confirmConversationForkBtn = document.getElementById('confirm-fork-conversation-btn');
+const conversationForkButtonLabel = document.getElementById('fork-conversation-button-label');
+const conversationForkButtonSpinner = document.getElementById('fork-conversation-button-spinner');
+let pendingConversationFork = null;
+let conversationForkRequestPending = false;
 let comparisonVersionLoadToken = 0;
 let comparisonVersionCatalog = [];
 let comparisonChatUploadCatalog = [];
@@ -3146,6 +3153,121 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     return !isStreamingAssistantPlaceholder(messageId, fullMessageObject);
   }
 
+  function getForkablePersonalConversationId(fullMessageObject = null) {
+    const conversationId = resolveMessageConversationId(fullMessageObject);
+    const activeConversationId = String(
+      window.chatConversations?.getCurrentConversationId?.()
+      || window.currentConversationId
+      || ''
+    ).trim();
+    if (!conversationId || conversationId !== activeConversationId) {
+      return '';
+    }
+
+    const conversationItem = document.querySelector(
+      `.conversation-item[data-conversation-id="${CSS.escape(conversationId)}"], `
+      + `.sidebar-conversation-item[data-conversation-id="${CSS.escape(conversationId)}"]`
+    );
+    if (!conversationItem || conversationItem.dataset.conversationKind === 'collaborative') {
+      return '';
+    }
+
+    const chatType = String(conversationItem.dataset.chatType || '').trim().toLowerCase();
+    return ['', 'new', 'personal', 'personal_single_user'].includes(chatType)
+      ? conversationId
+      : '';
+  }
+
+  function shouldRenderConversationForkAction(messageId, fullMessageObject = null) {
+    const normalizedMessageId = String(messageId || '').trim();
+    const persistedMessageId = String(fullMessageObject?.id || '').trim();
+    return Boolean(
+      normalizedMessageId
+      && persistedMessageId === normalizedMessageId
+      && shouldRenderCompletedAssistantActions(messageId, fullMessageObject)
+      && getForkablePersonalConversationId(fullMessageObject)
+    );
+  }
+
+  function setConversationForkPendingState(isPending) {
+    conversationForkRequestPending = isPending;
+    if (confirmConversationForkBtn) {
+      confirmConversationForkBtn.disabled = isPending;
+    }
+    conversationForkButtonLabel?.classList.toggle('d-none', isPending);
+    conversationForkButtonSpinner?.classList.toggle('d-none', !isPending);
+  }
+
+  function openConversationForkModal(messageDiv, fullMessageObject = null) {
+    if (!conversationForkModalEl || !window.bootstrap || conversationForkRequestPending) {
+      return;
+    }
+
+    const messageId = String(messageDiv?.dataset?.messageId || '').trim();
+    const conversationId = getForkablePersonalConversationId(fullMessageObject);
+    if (!messageId || !conversationId) {
+      showToast('This message is not available to fork.', 'warning');
+      return;
+    }
+
+    pendingConversationFork = { conversationId, messageId };
+    setConversationForkPendingState(false);
+    bootstrap.Modal.getOrCreateInstance(conversationForkModalEl).show();
+  }
+
+  async function executeConversationFork() {
+    if (!pendingConversationFork || conversationForkRequestPending) {
+      return;
+    }
+
+    const { conversationId, messageId } = pendingConversationFork;
+    setConversationForkPendingState(true);
+
+    try {
+      const response = await fetch(
+        `/api/conversations/${encodeURIComponent(conversationId)}/fork`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message_id: messageId }),
+        }
+      );
+      const responsePayload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(responsePayload.error || 'Failed to fork conversation');
+      }
+
+      const forkConversationId = String(responsePayload.conversation_id || '').trim();
+      if (!forkConversationId) {
+        throw new Error('The fork response did not include a conversation ID');
+      }
+
+      bootstrap.Modal.getOrCreateInstance(conversationForkModalEl).hide();
+      pendingConversationFork = null;
+      addConversationToList(
+        forkConversationId,
+        String(responsePayload.title || 'Forked Conversation')
+      );
+      await selectConversation(forkConversationId);
+      void loadConversations();
+      showToast('Conversation fork created.', 'success');
+    } catch (error) {
+      console.error('Failed to fork conversation:', error);
+      showToast(error.message || 'Failed to fork conversation', 'danger');
+    } finally {
+      setConversationForkPendingState(false);
+    }
+  }
+
+  confirmConversationForkBtn?.addEventListener('click', () => {
+    void executeConversationFork();
+  });
+  conversationForkModalEl?.addEventListener('hidden.bs.modal', () => {
+    if (!conversationForkRequestPending) {
+      pendingConversationFork = null;
+    }
+  });
+
   function buildInlineAssistantExportActionsHtml(messageId) {
     const previousMessage = getMostRecentRenderedMessage();
     if (!(previousMessage instanceof HTMLElement) || !previousMessage.classList.contains('user-message')) {
@@ -4785,6 +4907,9 @@ export function appendMessage(
             <li><a class="dropdown-item dropdown-export-ppt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-slides me-2"></i>Export to PowerPoint</a></li>
             <li><a class="dropdown-item dropdown-copy-prompt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-clipboard-plus me-2"></i>Use as Prompt</a></li>
             <li><a class="dropdown-item dropdown-open-email-btn" href="#" data-message-id="${messageId}"><i class="bi bi-envelope me-2"></i>Open in Email</a></li>` : '';
+    const forkConversationMenuItemHtml = shouldRenderConversationForkAction(messageId, fullMessageObject)
+      ? '<li><button class="dropdown-item dropdown-fork-conversation-btn" type="button"><i class="bi bi-signpost-split me-2"></i>Fork conversation</button></li>'
+      : '';
     const actionsDropdownHtml = `
             <div class="dropdown">
                 <button class="btn btn-sm btn-link text-muted" type="button" data-bs-toggle="dropdown" data-bs-boundary="viewport" data-bs-reference="parent" aria-expanded="false" title="More actions">
@@ -4793,6 +4918,7 @@ export function appendMessage(
                 <ul class="dropdown-menu dropdown-menu-start">
                     <li><a class="dropdown-item dropdown-delete-btn" href="#" data-message-id="${messageId}"><i class="bi bi-trash me-2"></i>Delete</a></li>
                     <li><a class="dropdown-item dropdown-retry-btn" href="#" data-message-id="${messageId}"><i class="bi bi-arrow-clockwise me-2"></i>Retry</a></li>
+                    ${forkConversationMenuItemHtml}
                     ${feedbackHtml}
             ${exportMenuItemsHtml}
                 </ul>
@@ -5018,6 +5144,11 @@ export function appendMessage(
         handleRetryButtonClick(messageDiv, currentMessageId, 'assistant');
       });
     }
+
+    const dropdownForkConversationBtn = messageDiv.querySelector('.dropdown-fork-conversation-btn');
+    dropdownForkConversationBtn?.addEventListener('click', () => {
+      openConversationForkModal(messageDiv, fullMessageObject);
+    });
 
     // Handle dropdown positioning manually - move to chatbox container
     const dropdownToggle = messageDiv.querySelector(".message-actions .dropdown button[data-bs-toggle='dropdown']");
