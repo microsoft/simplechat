@@ -2,7 +2,7 @@
 # test_startup_scheduler_support.py
 """
 Functional test for startup and scheduler separation support.
-Version: 0.239.129
+Version: 0.250.077
 Implemented in: 0.239.129
 
 This test ensures that the web process uses shared background-task helpers,
@@ -33,7 +33,7 @@ def test_startup_scheduler_support() -> bool:
     print('Testing startup and scheduler support...')
 
     assert_contains(APP_FILE, 'from background_tasks import start_background_task_threads')
-    assert_contains(APP_FILE, 'start_background_task_threads()')
+    assert_contains(APP_FILE, 'start_background_task_threads(app=app)')
     assert_contains(APP_FILE, 'def should_start_background_tasks():')
     assert_contains(BACKGROUND_TASKS_FILE, 'def acquire_distributed_task_lock(task_name, lease_seconds):')
     assert_contains(BACKGROUND_TASKS_FILE, 'def release_distributed_task_lock(lock_document):')

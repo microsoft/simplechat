@@ -684,14 +684,14 @@ def run_tabular_generated_output_scheduler_loop():
         time.sleep(30)
 
 
-def run_data_management_scheduler_loop():
-    """Queue due Data Management backup jobs across scaled-out workers."""
+def run_data_management_scheduler_loop(app=None):
+    """Queue due backup and recoverable migration jobs across scaled-out workers."""
     while True:
         lock_document = None
         try:
             lock_document = acquire_distributed_task_lock('data_management_scheduler_scan', lease_seconds=300)
             if lock_document:
-                check_due_data_management_jobs_once()
+                check_due_data_management_jobs_once(app=app)
         except Exception as exc:
             print(f"Error in Data Management scheduler check: {exc}")
             log_event(f"[DataManagement] Error in scheduler check: {exc}", level=logging.ERROR)
@@ -736,7 +736,7 @@ def run_app_maintenance_loop():
         time.sleep(max(int(sleep_seconds or 3600), 15))
 
 
-def start_background_task_threads():
+def start_background_task_threads(app=None):
     """Start all background task loops for the current process."""
     task_specs = [
         ('Logging timer background task started.', run_logging_timer_loop),
@@ -747,7 +747,7 @@ def start_background_task_threads():
         ('Workflow scheduler background task started.', run_workflow_scheduler_loop),
         ('File Sync scheduler background task started.', run_file_sync_scheduler_loop),
         ('Tabular generated-output scheduler background task started.', run_tabular_generated_output_scheduler_loop),
-        ('Data Management scheduler background task started.', run_data_management_scheduler_loop),
+        ('Data Management scheduler background task started.', lambda: run_data_management_scheduler_loop(app=app)),
         ('App maintenance background task started.', run_app_maintenance_loop),
     ]
 

@@ -22,6 +22,11 @@ param(
 
     [bool]$DifferentialMigration = $true,
 
+    [string]$MigrationId = "",
+
+    [ValidateRange(0, 8760)]
+    [int]$SkipMigratedWithinHours = 24,
+
     [bool]$ShowProgress = $true,
 
     [ValidateRange(1, 168)]
@@ -34,6 +39,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "Migration-State.ps1")
+. (Join-Path $PSScriptRoot "Migration-Provenance.ps1")
 
 function Write-StorageMigrationProgress {
     param(
@@ -125,6 +131,126 @@ function Test-StorageMigrationConfiguration {
     }
 }
 
+function Get-StorageBlobCloudBlob {
+    param(
+        [object]$StorageBlob
+    )
+
+    $cloudBlob = $StorageBlob.PSObject.Properties["ICloudBlob"].Value
+    if ($null -eq $cloudBlob) {
+        throw "Blob '$($StorageBlob.Name)' does not expose an ICloudBlob metadata object."
+    }
+    return $cloudBlob
+}
+
+function Get-StorageBlobMigrationProvenance {
+    param(
+        [object]$StorageBlob
+    )
+
+    $cloudBlob = Get-StorageBlobCloudBlob -StorageBlob $StorageBlob
+    if ($null -ne $cloudBlob.PSObject.Methods["FetchAttributes"]) {
+        $cloudBlob.FetchAttributes()
+    }
+    return Get-StorageMigrationProvenance -Metadata $cloudBlob.Metadata
+}
+
+function Set-StorageBlobMigrationProvenance {
+    param(
+        [object]$StorageBlob,
+        [object]$MigrationProvenanceContext
+    )
+
+    $cloudBlob = Get-StorageBlobCloudBlob -StorageBlob $StorageBlob
+    if ($null -ne $cloudBlob.PSObject.Methods["FetchAttributes"]) {
+        $cloudBlob.FetchAttributes()
+    }
+    if ($null -eq $cloudBlob.Metadata) {
+        throw "Blob '$($StorageBlob.Name)' does not expose mutable metadata."
+    }
+    if ($null -eq $cloudBlob.PSObject.Methods["SetMetadata"]) {
+        throw "Blob '$($StorageBlob.Name)' does not support metadata updates."
+    }
+
+    $mergedMetadata = Merge-StorageMigrationProvenance `
+        -Metadata $cloudBlob.Metadata `
+        -Context $MigrationProvenanceContext
+    $cloudBlob.Metadata.Clear()
+    foreach ($metadataKey in $mergedMetadata.Keys) {
+        $cloudBlob.Metadata[[string]$metadataKey] = [string]$mergedMetadata[$metadataKey]
+    }
+    $cloudBlob.SetMetadata()
+}
+
+function Test-StorageContainerMigrationProvenanceSkip {
+    param(
+        [string]$ContainerName,
+        [object]$SourceContext,
+        [object]$DestinationContext,
+        [object]$MigrationProvenanceContext
+    )
+
+    $sourceBlobCount = 0
+    $allSourceBlobsMarked = $true
+    Get-AzStorageBlob `
+        -Container $ContainerName `
+        -Context $SourceContext | ForEach-Object {
+        $sourceBlob = $_
+        $sourceBlobCount++
+        $destinationBlob = Get-AzStorageBlob `
+            -Container $ContainerName `
+            -Blob $sourceBlob.Name `
+            -Context $DestinationContext `
+            -ErrorAction SilentlyContinue
+        if ($null -eq $destinationBlob) {
+            $allSourceBlobsMarked = $false
+            return
+        }
+
+        $destinationProvenance = Get-StorageBlobMigrationProvenance `
+            -StorageBlob $destinationBlob
+        if (-not (Test-MigrationProvenanceSkip `
+            -Provenance $destinationProvenance `
+            -Context $MigrationProvenanceContext)) {
+            $allSourceBlobsMarked = $false
+        }
+    }
+
+    return [pscustomobject]@{
+        SourceBlobCount = $sourceBlobCount
+        ShouldSkip = ($sourceBlobCount -gt 0 -and $allSourceBlobsMarked)
+    }
+}
+
+function Set-StorageContainerMigrationProvenance {
+    param(
+        [string]$ContainerName,
+        [object]$SourceContext,
+        [object]$DestinationContext,
+        [object]$MigrationProvenanceContext
+    )
+
+    $taggedBlobCount = 0
+    Get-AzStorageBlob `
+        -Container $ContainerName `
+        -Context $SourceContext | ForEach-Object {
+        $sourceBlob = $_
+        $destinationBlob = Get-AzStorageBlob `
+            -Container $ContainerName `
+            -Blob $sourceBlob.Name `
+            -Context $DestinationContext `
+            -ErrorAction SilentlyContinue
+        if ($null -eq $destinationBlob) {
+            throw "Destination blob '$($sourceBlob.Name)' was not found after AzCopy completed."
+        }
+        Set-StorageBlobMigrationProvenance `
+            -StorageBlob $destinationBlob `
+            -MigrationProvenanceContext $MigrationProvenanceContext
+        $taggedBlobCount++
+    }
+    return $taggedBlobCount
+}
+
 $migrationMode = if ($DifferentialMigration) { "differential" } else { "full" }
 if ([string]::IsNullOrWhiteSpace($StateFilePath)) {
     $StateFilePath = Join-Path $PSScriptRoot "Migration-StorageAccount.state.json"
@@ -142,13 +268,20 @@ try {
         destinationSubscriptionId = $DestinationSubscriptionId
         containers = @($Containers)
         mode = $migrationMode
+        skipMigratedWithinHours = $SkipMigratedWithinHours
     }
     $migrationState = Initialize-MigrationState `
         -MigrationType "storage" `
         -StateFilePath $StateFilePath `
         -Configuration $stateConfiguration `
+        -MigrationId $MigrationId `
         -Reset:$ResetState
+    $migrationProvenanceContext = New-MigrationProvenanceContext `
+        -MigrationId ([string]$migrationState.Data["migrationId"]) `
+        -MigratedAtUtc ([string]$migrationState.Data["migrationStartedUtc"]) `
+        -SkipMigratedWithinHours $SkipMigratedWithinHours
     Write-Host "Migration state: $($migrationState.Path)"
+    Write-Host "Migration ID: $($migrationProvenanceContext.MigrationId)"
 
     foreach ($requiredCommand in @(
         "Connect-AzAccount",
@@ -236,6 +369,31 @@ try {
             Write-Host "Created destination container: $container"
         }
 
+        $containerProvenance = Test-StorageContainerMigrationProvenanceSkip `
+            -ContainerName $container `
+            -SourceContext $sourceContext `
+            -DestinationContext $destinationContext `
+            -MigrationProvenanceContext $migrationProvenanceContext
+        if ($containerProvenance.ShouldSkip) {
+            Complete-MigrationResourceCheckpoint `
+                -Context $migrationState `
+                -ResourceName $container `
+                -Result ([ordered]@{
+                    Mode = $migrationMode
+                    SourceBlobCount = $containerProvenance.SourceBlobCount
+                    TaggedBlobCount = 0
+                    SkippedByProvenance = $true
+                })
+            $activeMigrationResource = $null
+            $completedContainerCount++
+            Write-Host "Skipping container '$container' because all $($containerProvenance.SourceBlobCount) blob(s) were recently migrated."
+            Write-StorageMigrationProgress `
+                -CompletedCount $completedContainerCount `
+                -TotalCount $Containers.Count `
+                -CurrentContainer $container
+            continue
+        }
+
         $destinationSasUrl = New-AzStorageContainerSASToken `
             -Name $container `
             -Context $destinationContext `
@@ -273,11 +431,20 @@ try {
             throw "AzCopy failed for container '$container' with exit code $LASTEXITCODE."
         }
 
+        $taggedBlobCount = Set-StorageContainerMigrationProvenance `
+            -ContainerName $container `
+            -SourceContext $sourceContext `
+            -DestinationContext $destinationContext `
+            -MigrationProvenanceContext $migrationProvenanceContext
+
         Complete-MigrationResourceCheckpoint `
             -Context $migrationState `
             -ResourceName $container `
             -Result ([ordered]@{
                 Mode = $migrationMode
+                SourceBlobCount = $containerProvenance.SourceBlobCount
+                TaggedBlobCount = $taggedBlobCount
+                SkippedByProvenance = $false
             })
         $activeMigrationResource = $null
         $completedContainerCount++

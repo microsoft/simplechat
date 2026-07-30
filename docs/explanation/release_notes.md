@@ -2,6 +2,40 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.078)**
+
+#### New Features
+
+*   **Incremental And Reconciled Data Management Migrations**
+    *   Added New only, Delta / upsert, and explicitly confirmed Mirror with deletions modes with durable baseline watermarks, migration-owned update/delete protection, and server-owned live previews.
+    *   Added post-copy Cosmos, AI Search, and Blob reconciliation with cutover readiness, actual outcome totals, and preview-versus-actual divergence reporting.
+    *   Replaced deep AI Search pagination with persisted `id` keyset cursors, including selected-scope filter batching and coverage beyond 100,000 documents.
+    *   Added memory-bounded reconciliation, two-phase mirror deletion with current-source/ETag revalidation, a global migration coordinator, and retryable `not_ready` cutover failures.
+    *   Preserved Blob content settings, metadata, tags, tier, type, and available content verification while adding mid-stream lease heartbeats, cooperative cancellation, source ETag stability, and pending-to-succeeded provenance.
+    *   Added durable privacy-safe per-item outcome batches plus admin JSONL manifest and failure-list downloads.
+    *   Made unresolved temporary Cosmos capacity restoration a retryable terminal state; retry restores the saved snapshot without reapplying the boost.
+    *   Added a durable target AI Search write fence that drains normal SimpleChat indexing before transfer or mirror deletion, bounds Search requests, rejects self-targeting migrations, and requires explicit external-writer freeze acknowledgement before Search writes begin.
+    *   Added target-side coordinator fencing across independent SimpleChat source deployments and retained uncertain target Search write slots through their full quarantine window. Authorization-reducing unshare requests now defer safely while target Search ACL writes are frozen.
+    *   (Ref: microsoft/simplechat#1043, `functions_data_management.py`, `functions_migration_provenance.py`, `admin_data_management.js`, `DATA_MANAGEMENT_MIGRATION_RESILIENCE.md`)
+
+### **(v0.250.076)**
+
+#### New Features
+
+*   **Migration Cancellation And Automatic Recovery**
+    *   Added an admin-confirmed cancellation request for queued and running Data Management migrations. Running workers stop at their next durable checkpoint, restore temporary destination Cosmos capacity, and preserve completed work for Retry or Resume.
+    *   Added automatic executor-backed recovery for delayed queued and stale migration jobs, including standalone scheduler operation, with durable recovery events and no inline long-running scheduler work.
+    *   (Ref: microsoft/simplechat#1043, `functions_data_management.py`, `background_tasks.py`, `route_backend_data_management.py`, `admin_data_management.js`, `DATA_MANAGEMENT_MIGRATION_RESILIENCE.md`)
+
+### **(v0.250.075)**
+
+#### New Features
+
+*   **Resilient Data Management Migrations**
+    *   Added durable migration provenance, per-resource checkpoints, bounded parallel transfers, retry/resume controls, destination collision protection, live throughput metrics, and destination coordinator leases for selected Cosmos DB, Azure AI Search, and Enhanced Citations Blob migrations.
+    *   Added destination data-plane preflight checks, exact Cosmos partition-key validation, and an opt-in temporary destination Cosmos capacity increase capped at 10,000 RU/s with safe recovery-aware restoration.
+    *   (Ref: microsoft/simplechat#1043, `functions_data_management.py`, `functions_migration_provenance.py`, `functions_data_management_migration_state.py`, `DATA_MANAGEMENT_MIGRATION_RESILIENCE.md`)
+
 ### **(v0.250.073)**
 
 #### New Features

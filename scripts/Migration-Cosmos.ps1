@@ -28,6 +28,11 @@ param(
 
     [bool]$DifferentialMigration = $true,
 
+    [string]$MigrationId = "",
+
+    [ValidateRange(0, 8760)]
+    [int]$SkipMigratedWithinHours = 24,
+
     [bool]$ShowProgress = $true,
 
     [ValidateRange(1, 100000)]
@@ -61,6 +66,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "Migration-State.ps1")
+. (Join-Path $PSScriptRoot "Migration-Provenance.ps1")
 $adminSettingsContainerName = "settings"
 $adminSettingsDocumentId = "app_settings"
 $excludedMigrationContainerNames = [string[]]@("file_processing")
@@ -1106,6 +1112,17 @@ function Get-CosmosDocuments {
     } while (-not [string]::IsNullOrWhiteSpace($continuation))
 }
 
+function Test-CosmosDocumentMigrationProvenanceSkip {
+    param(
+        [object]$Document,
+        [object]$MigrationProvenanceContext
+    )
+
+    return Test-MigrationProvenanceSkip `
+        -Provenance (Get-CosmosMigrationProvenance -Document $Document) `
+        -Context $MigrationProvenanceContext
+}
+
 function Get-CosmosPropertyPathValue {
     param(
         [object]$Document,
@@ -1153,9 +1170,105 @@ function Get-CosmosPartitionKeyHeader {
     return ConvertTo-Json -InputObject $partitionKeyValues.ToArray() -Depth 100 -Compress
 }
 
+function Get-CosmosDocumentIdentity {
+    param(
+        [object]$Document,
+        [object]$ContainerDefinition
+    )
+
+    $documentId = [string](Get-MigrationProvenancePropertyValue `
+        -Source $Document `
+        -Name "id")
+    if ([string]::IsNullOrWhiteSpace($documentId)) {
+        return ""
+    }
+
+    $partitionKeyHeader = Get-CosmosPartitionKeyHeader `
+        -Document $Document `
+        -ContainerDefinition $ContainerDefinition
+    $identityText = "$documentId`n$partitionKeyHeader"
+    return [Convert]::ToBase64String(
+        [System.Text.Encoding]::UTF8.GetBytes($identityText)
+    )
+}
+
+function Get-CosmosMigrationProvenanceSkipDocumentIdentities {
+    param(
+        [object]$ContainerDefinition,
+        [string]$DestinationEndpoint,
+        [string]$DestinationKey,
+        [string]$DestinationDatabase,
+        [object]$MigrationProvenanceContext
+    )
+
+    $migrationId = [string]$MigrationProvenanceContext.MigrationId
+    $queryParameters = [System.Collections.Generic.List[object]]::new()
+    $queryParameters.Add([ordered]@{ name = "@status"; value = "succeeded" })
+    $queryParameters.Add([ordered]@{ name = "@migrationId"; value = $migrationId })
+    $provenanceFilter = "c.simplechatMigration.migrationId = @migrationId"
+    if ([int]$MigrationProvenanceContext.SkipMigratedWithinHours -gt 0) {
+        $cutoffUtc = [DateTimeOffset]::UtcNow.AddHours(
+            -[int]$MigrationProvenanceContext.SkipMigratedWithinHours
+        ).ToString("o", [System.Globalization.CultureInfo]::InvariantCulture)
+        $queryParameters.Add([ordered]@{ name = "@cutoffUtc"; value = $cutoffUtc })
+        $provenanceFilter += " OR c.simplechatMigration.migratedAtUtc >= @cutoffUtc"
+    }
+    $query = [ordered]@{
+        query = "SELECT * FROM c WHERE c.simplechatMigration.status = @status AND ($provenanceFilter)"
+        parameters = $queryParameters.ToArray()
+    } | ConvertTo-Json -Depth 20 -Compress
+
+    $containerLink = "dbs/$DestinationDatabase/colls/$($ContainerDefinition.id)"
+    $continuation = ""
+    $documentIdentities = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::Ordinal
+    )
+    do {
+        $headers = @{
+            "Content-Type" = "application/query+json"
+            "x-ms-documentdb-isquery" = "true"
+            "x-ms-documentdb-query-enablecrosspartition" = "true"
+            "x-ms-max-item-count" = [string]$PageSize
+        }
+        if (-not [string]::IsNullOrWhiteSpace($continuation)) {
+            $headers["x-ms-continuation"] = $continuation
+        }
+        $response = Invoke-CosmosRestRequest `
+            -Endpoint $DestinationEndpoint `
+            -PrimaryKey $DestinationKey `
+            -Method "POST" `
+            -ResourcePath "$containerLink/docs" `
+            -ResourceType "docs" `
+            -ResourceLink $containerLink `
+            -Body $query `
+            -AdditionalHeaders $headers `
+            -PreserveJsonPropertyNames
+        foreach ($destinationDocument in @($response.Body.Documents)) {
+            $provenance = Get-CosmosMigrationProvenance -Document $destinationDocument
+            if (Test-MigrationProvenanceSkip `
+                -Provenance $provenance `
+                -Context $MigrationProvenanceContext) {
+                $documentIdentity = Get-CosmosDocumentIdentity `
+                    -Document $destinationDocument `
+                    -ContainerDefinition $ContainerDefinition
+                if (-not [string]::IsNullOrWhiteSpace($documentIdentity)) {
+                    [void]$documentIdentities.Add($documentIdentity)
+                }
+            }
+        }
+        $continuation = Get-CosmosResponseHeaderValue `
+            -Headers $response.Headers `
+            -Name "x-ms-continuation"
+    } while (-not [string]::IsNullOrWhiteSpace($continuation))
+
+    return ,$documentIdentities
+}
+
 function ConvertTo-CosmosWritableDocument {
     param(
-        [object]$Document
+        [object]$Document,
+        [AllowNull()]
+        [object]$MigrationProvenanceContext = $null
     )
 
     $copy = $Document |
@@ -1163,6 +1276,11 @@ function ConvertTo-CosmosWritableDocument {
         ConvertFrom-Json -AsHashtable -Depth 100
     foreach ($propertyName in @("_rid", "_self", "_etag", "_attachments", "_ts")) {
         [void]$copy.Remove($propertyName)
+    }
+    if ($null -ne $MigrationProvenanceContext) {
+        Add-CosmosMigrationProvenance `
+            -Document $copy `
+            -Context $MigrationProvenanceContext
     }
     return $copy
 }
@@ -1173,10 +1291,14 @@ function Send-CosmosDocument {
         [object]$ContainerDefinition,
         [string]$Endpoint,
         [string]$PrimaryKey,
-        [string]$DatabaseName
+        [string]$DatabaseName,
+        [AllowNull()]
+        [object]$MigrationProvenanceContext = $null
     )
 
-    $writableDocument = ConvertTo-CosmosWritableDocument -Document $Document
+    $writableDocument = ConvertTo-CosmosWritableDocument `
+        -Document $Document `
+        -MigrationProvenanceContext $MigrationProvenanceContext
     if ([string]::IsNullOrWhiteSpace([string]$writableDocument.id)) {
         throw "Container '$($ContainerDefinition.id)' contains a document without a valid id."
     }
@@ -1218,10 +1340,14 @@ function New-CosmosDocumentWriteWorkItem {
     param(
         [object]$Document,
         [object]$ContainerDefinition,
-        [long]$Sequence
+        [long]$Sequence,
+        [AllowNull()]
+        [object]$MigrationProvenanceContext = $null
     )
 
-    $writableDocument = ConvertTo-CosmosWritableDocument -Document $Document
+    $writableDocument = ConvertTo-CosmosWritableDocument `
+        -Document $Document `
+        -MigrationProvenanceContext $MigrationProvenanceContext
     if ([string]::IsNullOrWhiteSpace([string]$writableDocument.id)) {
         throw "Container '$($ContainerDefinition.id)' contains a document without a valid id."
     }
@@ -1595,7 +1721,8 @@ function Copy-CosmosContainerDocuments {
         [string]$DestinationDatabase,
         [AllowNull()]
         [object]$MigrationState,
-        [string]$MigrationResourceName
+        [string]$MigrationResourceName,
+        [object]$MigrationProvenanceContext
     )
 
     $excludeAdminSettings = [string]::Equals(
@@ -1618,6 +1745,20 @@ function Copy-CosmosContainerDocuments {
         -DatabaseName $SourceDatabase
     if ($excludeAdminSettings -and $sourceDocumentCount -gt 0) {
         $sourceDocumentCount--
+    }
+    $migrationProvenanceSkipDocumentIdentities = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::Ordinal
+    )
+    if (-not $DifferentialMigration) {
+        $migrationProvenanceSkipDocumentIdentities = Get-CosmosMigrationProvenanceSkipDocumentIdentities `
+            -ContainerDefinition $SourceContainer `
+            -DestinationEndpoint $DestinationEndpoint `
+            -DestinationKey $DestinationKey `
+            -DestinationDatabase $DestinationDatabase `
+            -MigrationProvenanceContext $MigrationProvenanceContext
+        if ($migrationProvenanceSkipDocumentIdentities.Count -gt 0) {
+            Write-Host "Skipping $($migrationProvenanceSkipDocumentIdentities.Count) recently migrated document(s) in container '$($SourceContainer.id)'."
+        }
     }
 
     Update-CosmosDocumentSkipCheckpoint `
@@ -1657,11 +1798,35 @@ function Copy-CosmosContainerDocuments {
                     -CurrentOperation "Copying document $nextDocumentNumber`: '$documentLabel' | Copied: $copiedCount | Skipped: $skippedCount"
             }
 
+            $documentIdentity = Get-CosmosDocumentIdentity `
+                -Document $document `
+                -ContainerDefinition $SourceContainer
+            $sourceProvenanceSkip = Test-CosmosDocumentMigrationProvenanceSkip `
+                -Document $document `
+                -MigrationProvenanceContext $MigrationProvenanceContext
+            $destinationProvenanceSkip = (
+                -not [string]::IsNullOrWhiteSpace($documentIdentity) -and
+                $migrationProvenanceSkipDocumentIdentities.Contains($documentIdentity)
+            )
+            if ($sourceProvenanceSkip -or $destinationProvenanceSkip) {
+                $processedCount++
+                $skippedCount++
+                if ($updateDocumentProgress) {
+                    Write-CosmosDocumentProgress `
+                        -Activity $activity `
+                        -ProcessedCount $processedCount `
+                        -TotalCount $sourceDocumentCount `
+                        -CurrentOperation "Skipped previously migrated document $processedCount`: '$documentLabel' | Copied: $copiedCount | Skipped: $skippedCount"
+                }
+                return
+            }
+
             try {
                 [void](New-CosmosDocumentWriteWorkItem `
                     -Document $document `
                     -ContainerDefinition $SourceContainer `
-                    -Sequence $nextDocumentNumber)
+                    -Sequence $nextDocumentNumber `
+                    -MigrationProvenanceContext $MigrationProvenanceContext)
             }
             catch {
                 $skippedDocument = New-CosmosSkippedDocumentRecord `
@@ -1700,7 +1865,8 @@ function Copy-CosmosContainerDocuments {
                         -ContainerDefinition $SourceContainer `
                         -Endpoint $DestinationEndpoint `
                         -PrimaryKey $DestinationKey `
-                        -DatabaseName $DestinationDatabase
+                        -DatabaseName $DestinationDatabase `
+                        -MigrationProvenanceContext $MigrationProvenanceContext
                 }
                 catch {
                 $errorMessage = $_.Exception.Message
@@ -1788,11 +1954,27 @@ function Copy-CosmosContainerDocuments {
         ForEach-Object {
             $document = $_
             $scheduledCount++
+            $documentIdentity = Get-CosmosDocumentIdentity `
+                -Document $document `
+                -ContainerDefinition $SourceContainer
+            $sourceProvenanceSkip = Test-CosmosDocumentMigrationProvenanceSkip `
+                -Document $document `
+                -MigrationProvenanceContext $MigrationProvenanceContext
+            $destinationProvenanceSkip = (
+                -not [string]::IsNullOrWhiteSpace($documentIdentity) -and
+                $migrationProvenanceSkipDocumentIdentities.Contains($documentIdentity)
+            )
+            if ($sourceProvenanceSkip -or $destinationProvenanceSkip) {
+                $processedCount++
+                $skippedCount++
+                continue
+            }
             try {
                 $workItems.Add((New-CosmosDocumentWriteWorkItem `
                     -Document $document `
                     -ContainerDefinition $SourceContainer `
-                    -Sequence $scheduledCount))
+                    -Sequence $scheduledCount `
+                    -MigrationProvenanceContext $MigrationProvenanceContext))
             }
             catch {
                 $processedCount++
@@ -1985,6 +2167,7 @@ try {
         containers = @($stateContainerNames)
         containerSelectionMode = $selectionMode
         mode = $migrationMode
+        skipMigratedWithinHours = $SkipMigratedWithinHours
         cosmosApiVersion = $CosmosApiVersion
         cosmosDnsSuffix = $CosmosDnsSuffix
         excludedAdminSettingsDocument = "$adminSettingsContainerName/$adminSettingsDocumentId"
@@ -1993,8 +2176,14 @@ try {
         -MigrationType "cosmos" `
         -StateFilePath $StateFilePath `
         -Configuration $stateConfiguration `
+        -MigrationId $MigrationId `
         -Reset:$ResetState
+    $migrationProvenanceContext = New-MigrationProvenanceContext `
+        -MigrationId ([string]$migrationState.Data["migrationId"]) `
+        -MigratedAtUtc ([string]$migrationState.Data["migrationStartedUtc"]) `
+        -SkipMigratedWithinHours $SkipMigratedWithinHours
     Write-Host "Migration state: $($migrationState.Path)"
+    Write-Host "Migration ID: $($migrationProvenanceContext.MigrationId)"
 
     New-CosmosDatabaseIfMissing `
         -Endpoint $destinationEndpoint `
@@ -2090,7 +2279,8 @@ try {
             -DestinationKey $resolvedDestinationKey `
             -DestinationDatabase $DestinationDatabaseName `
             -MigrationState $migrationState `
-            -MigrationResourceName $resourceName
+            -MigrationResourceName $resourceName `
+            -MigrationProvenanceContext $migrationProvenanceContext
         Complete-MigrationResourceCheckpoint `
             -Context $migrationState `
             -ResourceName $resourceName `

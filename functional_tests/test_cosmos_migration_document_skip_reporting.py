@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos migration JSON property and skip reporting.
-Version: 0.250.064
+Version: 0.250.077
 Implemented in: 0.250.064
 
 This test ensures documents with empty or case-distinct JSON property names
@@ -41,6 +41,8 @@ $statePath = '__STATE_PATH__'
 $global:mockFatalWrites = $false
 $global:mockThrottleResponsesRemaining = 0
 $global:mockSleepRecords = [System.Collections.Generic.List[object]]::new()
+$global:mockProvenanceWriteCount = 0
+$global:mockDestinationProvenanceQueryCount = 0
 
 function Start-Sleep {
     [CmdletBinding()]
@@ -85,7 +87,7 @@ function Invoke-WebRequest {
         return [pscustomobject]@{
             StatusCode = 200
             Headers = @{}
-            Content = '{"DocumentCollections":[{"id":"documents","partitionKey":{"paths":["/tenant"],"kind":"Hash","version":2},"statistics":[{"documentCount":4}]}]}'
+            Content = '{"DocumentCollections":[{"id":"documents","partitionKey":{"paths":["/tenant"],"kind":"Hash","version":2},"statistics":[{"documentCount":5}]}]}'
         }
     }
 
@@ -94,10 +96,38 @@ function Invoke-WebRequest {
         $isSource -and
         $Uri -match "/dbs/SimpleChat/colls/documents/docs$"
     ) {
+        $recentMigrationTimestamp = [DateTime]::UtcNow.ToString("o")
         return [pscustomobject]@{
             StatusCode = 200
             Headers = @{}
-            Content = '{"Documents":[{"id":"empty-key-doc","tenant":"a","":"root-empty","Name":"upper","name":"lower","nested":{"":"nested-empty"},"_rid":"remove"},{"id":"bad-doc","tenant":"b","content":"reject"},{"tenant":"missing-id","content":"cannot write"},{"id":"after-doc","tenant":"c","content":"continues"}],"_count":4}'
+            Content = ('{"Documents":[{"id":"empty-key-doc","tenant":"a","":"root-empty","Name":"upper","name":"lower","nested":{"":"nested-empty"},"_rid":"remove"},{"id":"bad-doc","tenant":"b","content":"reject"},{"tenant":"missing-id","content":"cannot write"},{"id":"after-doc","tenant":"c","content":"continues"},{"id":"recent-migrated-doc","tenant":"d","simplechatMigration":{"migrationId":"22222222-2222-2222-2222-222222222222","migratedAtUtc":"' + $recentMigrationTimestamp + '","status":"succeeded"}}],"_count":5}')
+        }
+    }
+
+    if (
+        $Method -eq "PUT" -and
+        $isDestination -and
+        $Uri -match "/dbs/SimpleChat/colls/documents$"
+    ) {
+        return [pscustomobject]@{
+            StatusCode = 200
+            Headers = @{}
+            Content = '{}'
+        }
+    }
+
+    if (
+        $Method -eq "POST" -and
+        $isDestination -and
+        $Uri -match "/dbs/SimpleChat/colls/documents/docs$" -and
+        $Headers.ContainsKey("x-ms-documentdb-isquery")
+    ) {
+        $global:mockDestinationProvenanceQueryCount++
+        $recentDestinationTimestamp = [DateTime]::UtcNow.ToString("o")
+        return [pscustomobject]@{
+            StatusCode = 200
+            Headers = @{}
+            Content = ('{"Documents":[{"id":"after-doc","tenant":"c","simplechatMigration":{"migrationId":"11111111-1111-1111-1111-111111111111","migratedAtUtc":"' + $recentDestinationTimestamp + '","status":"succeeded"}}],"_count":1}')
         }
     }
 
@@ -107,6 +137,19 @@ function Invoke-WebRequest {
         $Uri -match "/dbs/SimpleChat/colls/documents/docs$"
     ) {
         $document = $Body | ConvertFrom-Json -AsHashtable -Depth 100
+        $migrationMetadata = $document["simplechatMigration"]
+        if (
+            $null -eq $migrationMetadata -or
+            $migrationMetadata["migrationId"] -ne "11111111-1111-1111-1111-111111111111" -or
+            $migrationMetadata["status"] -ne "succeeded" -or
+            [string]::IsNullOrWhiteSpace([string]$migrationMetadata["migratedAtUtc"])
+        ) {
+            throw "Migration provenance metadata was missing or incomplete: $Body"
+        }
+        if ($document.id -eq "recent-migrated-doc") {
+            $global:mockProvenanceWriteCount++
+            throw "A recently migrated document should not have reached the destination writer."
+        }
         if ($global:mockFatalWrites -and $document.id -eq "after-doc") {
             return [pscustomobject]@{
                 StatusCode = 503
@@ -166,6 +209,7 @@ $parameters = @{
     DestinationPrimaryKey = "ZGVzdGluYXRpb24ta2V5"
     Containers = @("documents")
     DifferentialMigration = $true
+    MigrationId = "11111111-1111-1111-1111-111111111111"
     ShowProgress = $false
     PageSize = 100
     MaxConcurrentDocuments = 2
@@ -189,10 +233,17 @@ if ($state.status -ne "completed") {
     throw "Migration state was not completed: $($state.status)"
 }
 if (
-    $result.ProcessedCount -ne 4 -or
+    $state.migrationId -ne $parameters.MigrationId -or
+    [string]::IsNullOrWhiteSpace([string]$state.migrationStartedUtc)
+) {
+    throw "Migration state did not preserve provenance: $($state | ConvertTo-Json -Compress)"
+}
+if (
+    $result.ProcessedCount -ne 5 -or
     $result.CopiedCount -ne 2 -or
-    $result.SkippedCount -ne 2 -or
-    $result.ErrorSkippedCount -ne 2
+    $result.SkippedCount -ne 3 -or
+    $result.ErrorSkippedCount -ne 2 -or
+    $global:mockProvenanceWriteCount -ne 0
 ) {
     throw "Unexpected result counts: $($result | ConvertTo-Json -Compress)"
 }
@@ -244,9 +295,9 @@ $sequentialState = [IO.File]::ReadAllText($sequentialStatePath) |
 $sequentialResult = $sequentialState.resources.documents.result
 if (
     $sequentialState.status -ne "completed" -or
-    $sequentialResult.ProcessedCount -ne 4 -or
+    $sequentialResult.ProcessedCount -ne 5 -or
     $sequentialResult.CopiedCount -ne 2 -or
-    $sequentialResult.SkippedCount -ne 2 -or
+    $sequentialResult.SkippedCount -ne 3 -or
     $sequentialResult.ErrorSkippedCount -ne 2 -or
     @($sequentialResult.SkippedDocuments | Where-Object {
         $_.DocumentId -eq "bad-doc"
@@ -285,6 +336,28 @@ if (
 if ($recoveryOutput -notmatch "Recovery pause 1/2 begins now") {
     throw "Throttling recovery warning was missing: $recoveryOutput"
 }
+
+$fullProvenanceStatePath = "$statePath.full-provenance.json"
+$parameters.StateFilePath = $fullProvenanceStatePath
+$parameters.DifferentialMigration = $false
+$parameters.MaxConcurrentDocuments = 1
+$global:mockDestinationProvenanceQueryCount = 0
+$fullProvenanceOutput = @(& $scriptPath @parameters 3>&1 6>&1) | Out-String
+$fullProvenanceState = [IO.File]::ReadAllText($fullProvenanceStatePath) |
+    ConvertFrom-Json -AsHashtable -Depth 100
+$fullProvenanceResult = $fullProvenanceState.resources.documents.result
+if (
+    $fullProvenanceState.status -ne "completed" -or
+    $fullProvenanceResult.ProcessedCount -ne 5 -or
+    $fullProvenanceResult.CopiedCount -ne 1 -or
+    $fullProvenanceResult.SkippedCount -ne 4 -or
+    $fullProvenanceResult.ErrorSkippedCount -ne 2 -or
+    $global:mockDestinationProvenanceQueryCount -ne 1 -or
+    $fullProvenanceOutput -notmatch "Skipping 1 recently migrated document"
+) {
+    throw "Full migration did not skip the destination-marked document: $($fullProvenanceResult | ConvertTo-Json -Compress)"
+}
+$parameters.DifferentialMigration = $true
 
 $exhaustedRecoveryStatePath = "$statePath.recovery-exhausted.json"
 $parameters.StateFilePath = $exhaustedRecoveryStatePath

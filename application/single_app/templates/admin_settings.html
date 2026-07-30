@@ -5071,6 +5071,16 @@
                             <label class="form-label" for="data_management_target_cosmos_key">Account key</label>
                             <input class="form-control" type="password" id="data_management_target_cosmos_key" autocomplete="off" placeholder="Stored keys stay redacted after save">
                         </div>
+                        <div class="row g-3 mt-1" id="data-management-target-cosmos-management-fields">
+                            <div class="col-md-6">
+                                <label class="form-label" for="data_management_target_cosmos_subscription_id">Subscription ID for capacity management</label>
+                                <input class="form-control" type="text" id="data_management_target_cosmos_subscription_id" autocomplete="off" placeholder="Required only for a temporary RU boost">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label" for="data_management_target_cosmos_resource_group">Resource group for capacity management</label>
+                                <input class="form-control" type="text" id="data_management_target_cosmos_resource_group" autocomplete="off" placeholder="Required only for a temporary RU boost">
+                            </div>
+                        </div>
                     </div>
 
                     <div class="card p-3 border-warning-subtle mt-3" id="data-management-target-ai-search-section">
@@ -5141,6 +5151,32 @@
                                 <i class="bi bi-arrow-clockwise me-1"></i>Refresh Summary
                             </button>
                         </div>
+                        <fieldset class="border-bottom pb-3 mb-3" id="data-management-migration-mode-section">
+                            <legend class="h6 mb-2">Synchronization mode</legend>
+                            <div class="btn-group flex-wrap" role="radiogroup" aria-label="Migration synchronization mode">
+                                <input class="btn-check" type="radio" name="data_management_migration_mode" id="data_management_migration_mode_new_only" value="new_only" checked>
+                                <label class="btn btn-outline-primary" for="data_management_migration_mode_new_only">New only</label>
+                                <input class="btn-check" type="radio" name="data_management_migration_mode" id="data_management_migration_mode_delta_upsert" value="delta_upsert">
+                                <label class="btn btn-outline-primary" for="data_management_migration_mode_delta_upsert">Delta / upsert</label>
+                                <input class="btn-check" type="radio" name="data_management_migration_mode" id="data_management_migration_mode_mirror_with_deletions" value="mirror_with_deletions">
+                                <label class="btn btn-outline-danger" for="data_management_migration_mode_mirror_with_deletions">Mirror with deletions</label>
+                            </div>
+                            <p class="text-muted small mt-2 mb-0" id="data-management-migration-mode-description" aria-live="polite">
+                                Copies source items that are absent from the destination. Existing destination data is never updated or deleted.
+                            </p>
+                            <div class="row g-3 mt-1 d-none" id="data-management-migration-baseline-field">
+                                <div class="col-lg-6">
+                                    <label class="form-label" for="data_management_migration_baseline_job_id">Baseline migration job ID</label>
+                                    <input class="form-control" type="text" id="data_management_migration_baseline_job_id" autocomplete="off" placeholder="Leave blank to use the latest compatible completed migration">
+                                    <div class="form-text">The baseline fixes the prior service watermarks used for this catch-up run.</div>
+                                </div>
+                            </div>
+                            <div class="alert alert-danger mt-3 mb-0 d-none" id="data-management-migration-mirror-confirmation" role="alert">
+                                <strong>Destructive mode.</strong> Only destination items with successful SimpleChat migration ownership are eligible for deletion. Unowned data is retained and reported as a conflict.
+                                <label class="form-label mt-2" for="data_management_migration_mirror_confirmation_phrase">Type <code>MIRROR WITH DELETIONS</code> to continue</label>
+                                <input class="form-control" type="text" id="data_management_migration_mirror_confirmation_phrase" autocomplete="off">
+                            </div>
+                        </fieldset>
                         <div class="row g-3">
                             <div class="col-lg-4">
                                 <div class="border rounded p-3 h-100" data-migration-picker="users">
@@ -5215,11 +5251,54 @@
                                     <input class="form-check-input" type="checkbox" role="switch" id="data_management_migration_include_ai_search" checked>
                                     <label class="form-check-label" for="data_management_migration_include_ai_search">Migrate matching AI Search documents</label>
                                 </div>
+                                <div class="form-check mt-2" id="data-management-migration-search-write-freeze">
+                                    <input class="form-check-input" type="checkbox" id="data_management_migration_target_search_writes_frozen">
+                                    <label class="form-check-label" for="data_management_migration_target_search_writes_frozen">I confirm external destination AI Search writers are frozen for this migration</label>
+                                    <div class="form-text">Azure AI Search does not support conditional document writes. SimpleChat target indexing pauses automatically; freeze all external writers before copying Search documents.</div>
+                                </div>
                             </div>
                             <div class="col-md-6">
                                 <div class="form-check form-switch">
                                     <input class="form-check-input" type="checkbox" role="switch" id="data_management_migration_include_source_blobs">
                                     <label class="form-check-label" for="data_management_migration_include_source_blobs">Migrate selected source document blobs</label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="border rounded p-3 mt-3" id="data-management-migration-performance-section">
+                            <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+                                <div>
+                                    <h6 class="mb-1">Performance And Resume</h6>
+                                    <p class="text-muted small mb-0">Migration uses durable per-resource checkpoints and the same migration ID after a retry.</p>
+                                </div>
+                                <button type="button" class="btn btn-outline-secondary btn-sm" id="data-management-test-migration-access-btn">
+                                    <i class="bi bi-shield-check me-1"></i>Validate Cosmos Migration Access
+                                </button>
+                            </div>
+                            <div class="row g-3">
+                                <div class="col-md-4">
+                                    <label class="form-label" for="data_management_migration_max_parallel_operations">Concurrent operations</label>
+                                    <input class="form-control" type="number" id="data_management_migration_max_parallel_operations" min="1" max="32" value="8">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label" for="data_management_migration_retry_count">Retry attempts</label>
+                                    <input class="form-control" type="number" id="data_management_migration_retry_count" min="1" max="10" value="5">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label" for="data_management_migration_skip_recent_within_hours">Skip successful prior migrations within hours</label>
+                                    <input class="form-control" type="number" id="data_management_migration_skip_recent_within_hours" min="0" max="8760" value="0">
+                                </div>
+                            </div>
+                            <div class="form-check form-switch mt-3">
+                                <input class="form-check-input" type="checkbox" role="switch" id="data_management_migration_temporary_destination_ru_enabled">
+                                <label class="form-check-label" for="data_management_migration_temporary_destination_ru_enabled">Temporarily increase destination Cosmos capacity during this migration</label>
+                            </div>
+                            <div class="row g-3 mt-1" id="data-management-migration-temporary-ru-field">
+                                <div class="col-md-4">
+                                    <label class="form-label" for="data_management_migration_temporary_destination_ru">Temporary destination max RU/s</label>
+                                    <input class="form-control" type="number" id="data_management_migration_temporary_destination_ru" min="1000" max="10000" step="1000" value="10000">
+                                </div>
+                                <div class="col-md-8 d-flex align-items-end">
+                                    <div class="form-text mb-2">The migration records the prior database or dedicated-container capacity, raises only eligible targets up to 10,000 RU/s, and restores it after completion or failure. Capacity changes require destination ARM permission.</div>
                                 </div>
                             </div>
                         </div>
@@ -5521,6 +5600,7 @@
                             </div>
                             <div class="modal-body">
                                 <div class="row g-3 mb-4" id="data-management-job-detail-summary"></div>
+                                <div class="d-flex flex-wrap gap-2 mb-4 d-none" id="data-management-job-detail-actions" aria-label="Migration job actions"></div>
                                 <div id="data-management-job-detail-progress" class="mb-4"></div>
                                 <div class="row g-3">
                                     <div class="col-lg-5">
@@ -5564,6 +5644,25 @@
                                         </div>
                                     </div>
                                 </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal fade" id="data-management-migration-cancel-modal" tabindex="-1" aria-labelledby="data-management-migration-cancel-title" aria-hidden="true">
+                    <div class="modal-dialog modal-dialog-centered">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="data-management-migration-cancel-title">Request Migration Cancellation</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <p class="mb-2" id="data-management-migration-cancel-message"></p>
+                                <p class="text-muted small mb-0">The worker stops at its next durable checkpoint. Completed items remain available for Retry or Resume.</p>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Keep Running</button>
+                                <button type="button" class="btn btn-danger" id="data-management-confirm-migration-cancel-btn">Request Cancellation</button>
                             </div>
                         </div>
                     </div>
