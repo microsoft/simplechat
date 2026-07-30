@@ -270,7 +270,7 @@ DATA_MANAGEMENT_MIGRATION_COSMOS_CONTAINERS = {
         {"name": "public_workspaces", "container_attr": "cosmos_public_workspaces_container", "container_name_attr": "cosmos_public_workspaces_container_name", "partition_key_path": "/id", "id_field": "id"},
         {"name": "public_documents", "container_attr": "cosmos_public_documents_container", "container_name_attr": "cosmos_public_documents_container_name", "partition_key_path": "/id", "filter_field": "public_workspace_id", "documents": True},
         {"name": "public_workspace_identities", "container_attr": "cosmos_public_workspace_identities_container", "container_name_attr": "cosmos_public_workspace_identities_container_name", "partition_key_path": "/public_workspace_id", "filter_field": "public_workspace_id"},
-        {"name": "public_prompts", "container_attr": "cosmos_public_prompts_container", "container_name_attr": "cosmos_public_prompts_container_name", "partition_key_path": "/id", "filter_field": "public_workspace_id"},
+        {"name": "public_prompts", "container_attr": "cosmos_public_prompts_container", "container_name_attr": "cosmos_public_prompts_container_name", "partition_key_path": "/id", "filter_fields": ["public_id", "public_workspace_id"]},
     ],
 }
 
@@ -2189,6 +2189,44 @@ def _restore_temporary_destination_capacity(
     return restore_warnings, migration_state
 
 
+def _get_selected_scope_filter_fields(container_definition):
+    """Return the trusted ownership fields used for selected-scope Cosmos reads."""
+    configured_fields = container_definition.get("filter_fields")
+    if configured_fields is None:
+        configured_fields = [container_definition.get("filter_field")]
+    elif isinstance(configured_fields, str):
+        configured_fields = [configured_fields]
+    elif not isinstance(configured_fields, (list, tuple)):
+        raise DataManagementSettingsValidationError(
+            "Migration container filter fields must be a string, list, or tuple."
+        )
+
+    filter_fields = []
+    for field_name in configured_fields:
+        if not field_name:
+            continue
+        if not isinstance(field_name, str) or not re.fullmatch(
+            r"[A-Za-z_][A-Za-z0-9_]*",
+            field_name,
+        ):
+            raise DataManagementSettingsValidationError(
+                "Migration container filter fields must be valid Cosmos property names."
+            )
+        filter_fields.append(field_name)
+    return filter_fields
+
+
+def _build_selected_scope_filter_clause(filter_fields):
+    """Build the static Cosmos ownership predicate for one selected scope ID."""
+    filter_clauses = [
+        f"c.{field_name} = @selected_id"
+        for field_name in filter_fields
+    ]
+    if len(filter_clauses) == 1:
+        return filter_clauses[0]
+    return f"({' OR '.join(filter_clauses)})"
+
+
 def _iter_selected_cosmos_records(
     container_definition,
     selection,
@@ -2255,11 +2293,13 @@ def _iter_selected_cosmos_records(
             yield prepare_item(item)
         return
 
-    filter_field = container_definition.get("filter_field")
-    if not filter_field:
+    filter_fields = _get_selected_scope_filter_fields(container_definition)
+    if not filter_fields:
         return
+    filter_clause = _build_selected_scope_filter_clause(filter_fields)
+    seen_identities = set() if len(filter_fields) > 1 else None
     for selected_id in ids:
-        query = f"SELECT * FROM c WHERE c.{filter_field} = @selected_id"
+        query = f"SELECT * FROM c WHERE {filter_clause}"
         parameters = [{"name": "@selected_id", "value": selected_id}]
         if source_start_epoch is not None:
             query += " AND c._ts >= @source_start_epoch"
@@ -2272,6 +2312,15 @@ def _iter_selected_cosmos_records(
             parameters=parameters,
             enable_cross_partition_query=True,
         ):
+            if seen_identities is not None:
+                item_identity = _get_cosmos_document_identity(
+                    item,
+                    container_definition["partition_key_path"],
+                )
+                if item_identity and item_identity in seen_identities:
+                    continue
+                if item_identity:
+                    seen_identities.add(item_identity)
             yield prepare_item(item)
 
 
@@ -4728,15 +4777,27 @@ def _iter_target_cosmos_records(target_container, container_definition, selectio
             except (CosmosResourceNotFoundError, ResourceNotFoundError):
                 continue
         return
-    filter_field = container_definition.get("filter_field")
-    if not filter_field:
+    filter_fields = _get_selected_scope_filter_fields(container_definition)
+    if not filter_fields:
         return
+    filter_clause = _build_selected_scope_filter_clause(filter_fields)
+    seen_identities = set() if len(filter_fields) > 1 else None
     for selected_id in selection.get("ids") or []:
-        yield from target_container.query_items(
-            query=f"SELECT * FROM c WHERE c.{filter_field} = @selected_id",
+        for item in target_container.query_items(
+            query=f"SELECT * FROM c WHERE {filter_clause}",
             parameters=[{"name": "@selected_id", "value": selected_id}],
             enable_cross_partition_query=True,
-        )
+        ):
+            if seen_identities is not None:
+                item_identity = _get_cosmos_document_identity(
+                    item,
+                    container_definition["partition_key_path"],
+                )
+                if item_identity and item_identity in seen_identities:
+                    continue
+                if item_identity:
+                    seen_identities.add(item_identity)
+            yield item
 
 
 def _delete_target_cosmos_record(target_container, document, partition_key_path):

@@ -2,11 +2,12 @@
 # test_file_sync_azure_blob_storage.py
 """
 Functional test for Azure Blob Storage File Sync.
-Version: 0.250.070
+Version: 0.250.072
 Implemented in: 0.250.067
 Security hardening in: 0.250.068
 Container SAS support in: 0.250.069
 Non-Key-Vault and List/Read validation fix in: 0.250.070
+Updated in: 0.250.072
 
 This test ensures Azure Blob Storage is wired into the shared File Sync
 pipeline for every supported workspace scope without requiring live Azure
@@ -85,7 +86,7 @@ def test_version_and_dependency_pin():
     config_text = read_text("application/single_app/config.py")
     requirements_text = read_text("application/single_app/requirements.txt")
 
-    assert 'VERSION = "0.250.071"' in config_text
+    assert 'VERSION = "0.250.072"' in config_text
     assert "azure-storage-blob==12.24.1" in requirements_text
 
 
