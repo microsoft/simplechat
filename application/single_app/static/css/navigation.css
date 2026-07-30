@@ -93,12 +93,12 @@ body {
 
 @media (max-width: 991.98px) {
   .top-nav-mobile-drawer.offcanvas-start {
-    height: calc(100vh - var(--top-nav-height));
+    height: calc(100dvh - var(--top-nav-height));
     top: var(--top-nav-height);
   }
 
   body.has-classification-banner .top-nav-mobile-drawer.offcanvas-start {
-    height: calc(100vh - var(--top-nav-height) - var(--classification-banner-height));
+    height: calc(100dvh - var(--top-nav-height) - var(--classification-banner-height));
     top: calc(var(--top-nav-height) + var(--classification-banner-height));
   }
 }
@@ -159,7 +159,7 @@ body {
 }
 
 .custom-pages-drawer-list {
-  max-height: calc(100vh - 9rem);
+  max-height: calc(100dvh - 9rem);
   overflow-y: auto;
 }
 

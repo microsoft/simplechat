@@ -1,7 +1,14 @@
 <!-- templates/base.html -->
- 
+
+{% set allowed_font_size_preferences = ['xs', 's', 'm', 'l', 'xl'] %}
+{% set saved_font_size_preference = user_settings.get('settings', {}).get('fontSizePreference', 'm') %}
 <!DOCTYPE html>
-<html lang="en" data-bs-theme="light" id="htmlRoot">
+<html
+  lang="en"
+  data-bs-theme="light"
+  data-font-size="{{ saved_font_size_preference if saved_font_size_preference in allowed_font_size_preferences else 'm' }}"
+  id="htmlRoot"
+>
 
 <head>
   <meta charset="UTF-8" />
@@ -176,7 +183,8 @@
     .editor-toolbar a.fa-question-circle:before { content: "?"; }
 
     .chat-container {
-      max-height: calc(100vh - var(--top-nav-height, 66px));
+      max-height: 100%;
+      min-height: 0;
       display: flex;
       flex-direction: column;
       overflow: hidden;

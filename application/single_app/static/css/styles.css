@@ -1,5 +1,25 @@
 /* css/styles.css */
 
+html[data-font-size="xs"] {
+    font-size: 75%;
+}
+
+html[data-font-size="s"] {
+    font-size: 87.5%;
+}
+
+html[data-font-size="m"] {
+    font-size: 100%;
+}
+
+html[data-font-size="l"] {
+    font-size: 150%;
+}
+
+html[data-font-size="xl"] {
+    font-size: 200%;
+}
+
 body {
     font-family: var(--bs-font-sans-serif);
     margin: 0;

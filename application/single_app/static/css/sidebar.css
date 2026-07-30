@@ -15,6 +15,7 @@ body.sidebar-nav-enabled {
 /* Sidebar container */
 #sidebar-nav {
   display: none;
+  height: 100dvh !important;
   transition: transform 0.3s ease;
 }
 
@@ -57,19 +58,19 @@ body.sidebar-nav-enabled .container-fluid {
 /* Classification banner adjustments for sidebar layout */
 body.has-classification-banner #sidebar-nav {
   top: 40px !important; /* Start below the classification banner */
-  height: calc(100vh - 40px) !important; /* Adjust height to account for banner */
+  height: calc(100dvh - 40px) !important; /* Adjust height to account for banner */
 }
 
 /* Chats top-nav layout: align the fixed sidebar just below the navbar */
 nav.navbar.fixed-top + #sidebar-nav {
   top: var(--top-nav-height) !important;
-  height: calc(100vh - var(--top-nav-height));
+  height: calc(100dvh - var(--top-nav-height)) !important;
 }
 
 /* Account for classification banner when present */
 body.has-classification-banner nav.navbar + #sidebar-nav {
   top: calc(var(--top-nav-height) + var(--classification-banner-height)) !important;
-  height: calc(100vh - var(--top-nav-height) - var(--classification-banner-height));
+  height: calc(100dvh - var(--top-nav-height) - var(--classification-banner-height)) !important;
 }
 
 body.chat-top-nav-shell {
@@ -116,7 +117,7 @@ body.chat-top-nav-shell #sidebar-nav.chat-sidebar-nav .chat-sidebar-mobile-secti
 
 @media (min-width: 992px) {
   body.chat-top-nav-shell #sidebar-nav.chat-sidebar-nav {
-    height: calc(100vh - var(--chat-sidebar-top));
+    height: calc(100dvh - var(--chat-sidebar-top)) !important;
     left: 0;
     max-width: none;
     position: fixed;
@@ -131,7 +132,7 @@ body.chat-top-nav-shell #sidebar-nav.chat-sidebar-nav .chat-sidebar-mobile-secti
 
 @media (max-width: 991.98px) {
   body.chat-top-nav-shell #sidebar-nav.chat-sidebar-nav {
-    height: calc(100vh - var(--chat-sidebar-top));
+    height: calc(100dvh - var(--chat-sidebar-top)) !important;
     max-width: min(88vw, 22rem);
     top: var(--chat-sidebar-top);
     z-index: 1045;
