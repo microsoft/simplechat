@@ -3153,7 +3153,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     return !isStreamingAssistantPlaceholder(messageId, fullMessageObject);
   }
 
-  function getForkablePersonalConversationId(fullMessageObject = null) {
+  function getForkableSingleUserConversationId(fullMessageObject = null) {
     const conversationId = resolveMessageConversationId(fullMessageObject);
     const activeConversationId = String(
       window.chatConversations?.getCurrentConversationId?.()
@@ -3173,7 +3173,14 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     }
 
     const chatType = String(conversationItem.dataset.chatType || '').trim().toLowerCase();
-    return ['', 'new', 'personal', 'personal_single_user'].includes(chatType)
+    return [
+      '',
+      'new',
+      'personal',
+      'personal_single_user',
+      'group-single-user',
+      'public',
+    ].includes(chatType)
       ? conversationId
       : '';
   }
@@ -3185,7 +3192,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       normalizedMessageId
       && persistedMessageId === normalizedMessageId
       && shouldRenderCompletedAssistantActions(messageId, fullMessageObject)
-      && getForkablePersonalConversationId(fullMessageObject)
+      && getForkableSingleUserConversationId(fullMessageObject)
     );
   }
 
@@ -3204,7 +3211,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     }
 
     const messageId = String(messageDiv?.dataset?.messageId || '').trim();
-    const conversationId = getForkablePersonalConversationId(fullMessageObject);
+    const conversationId = getForkableSingleUserConversationId(fullMessageObject);
     if (!messageId || !conversationId) {
       showToast('This message is not available to fork.', 'warning');
       return;

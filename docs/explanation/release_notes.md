@@ -11,6 +11,19 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Added fair bounded concurrency, Retry-After-aware handling for throttling and service interruptions, adaptive pressure reduction and recovery, and sanitized per-index throughput and failure metrics.
     *   (Ref: Closes #1094, `functions_data_management.py`, `test_data_management_ai_search_backup_export.py`, `DATA_MANAGEMENT_BACKUP_MIGRATION.md`)
 
+*   **Conversation Context Grounding**
+    *   Models and agents now receive bounded, credential-sanitized metadata for every user turn, including the active model, SimpleChat version, workspace scope, selected documents, agent, and capability state.
+    *   Each assistant response exposes the identical snapshot as a visible Conversation Context citation across streaming, non-streaming, retry, fallback, collaboration, and document-action paths.
+    *   (Ref: microsoft/simplechat#508, `functions_conversation_context.py`, `route_backend_chats.py`, `functions_workflow_runner.py`)
+
+#### Bug Fixes
+
+*   **Conversation Fork Workspace Context and HTTP 500 Fix**
+    *   Fixed conversation forks returning HTTP 500 when an owned single-user conversation used group or public workspace knowledge.
+    *   Forking now revalidates current workspace access, preserves the authorized context and chat type, and returns controlled conflicts when access is stale or unavailable.
+    *   Corrected fork-specific structured logging so validation, conflict, cleanup, and cache errors retain their intended response behavior.
+    *   (Ref: microsoft/simplechat#1025, `functions_simplechat_operations.py`, `route_backend_conversations.py`, `chat-messages.js`, `CONVERSATION_FORK_HTTP_500_FIX.md`)
+
 ### **(v0.250.100)**
 
 #### Bug Fixes
