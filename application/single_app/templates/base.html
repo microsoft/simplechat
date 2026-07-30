@@ -721,8 +721,9 @@
   <!-- Profile Image JavaScript -->
   <script src="{{ url_for('static', filename='js/profile-image.js') }}"></script>
   {% if session.get('user') %}
+  <script src="{{ url_for('static', filename='js/completion-audio-cues.js') }}?v={{ config['VERSION'] }}"></script>
   <!-- Notifications JavaScript (for badge polling on authenticated pages) -->
-  <script src="{{ url_for('static', filename='js/notifications.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/notifications.js') }}?v={{ config['VERSION'] }}"></script>
   {% endif %}
   {% if session.get('user') and app_settings.enable_speech_to_text_input %}
   <script src="{{ url_for('static', filename='js/form-voice-input.js') }}?v={{ config['VERSION'] }}"></script>
