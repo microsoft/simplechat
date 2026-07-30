@@ -41,6 +41,10 @@ from functions_notifications import broadcast_system_notification
 from functions_logging import *
 from functions_document_actions import normalize_document_action_capabilities
 from functions_model_capabilities import is_vision_capable_model
+from functions_ai_notice import (
+    normalize_ai_notice_frequency,
+    normalize_ai_notice_message,
+)
 from functions_terms_of_use import (
     TERMS_OF_USE_DEFAULT_REDIRECT,
     TERMS_OF_USE_MAX_BUTTON_TEXT_LENGTH,
@@ -841,6 +845,14 @@ def register_route_frontend_admin_settings(bp):
             settings['terms_of_use_accept_button_text'] = 'Accept and continue'
         if 'terms_of_use_decline_button_text' not in settings:
             settings['terms_of_use_decline_button_text'] = 'Cancel'
+        if 'enable_ai_notice' not in settings:
+            settings['enable_ai_notice'] = False
+        settings['ai_notice_message'] = normalize_ai_notice_message(
+            settings.get('ai_notice_message')
+        )
+        settings['ai_notice_frequency'] = normalize_ai_notice_frequency(
+            settings.get('ai_notice_frequency')
+        )
         # --- Add defaults for user agreement ---
         if 'enable_user_agreement' not in settings:
             settings['enable_user_agreement'] = False
@@ -2077,6 +2089,18 @@ def register_route_frontend_admin_settings(bp):
                 flash('Terms of Use message is required when the feature is enabled.', 'danger')
                 return redirect(url_for('frontend_admin_settings.admin_settings'))
 
+            # --- AI Notice Settings ---
+            enable_ai_notice = form_data.get('enable_ai_notice') == 'on'
+            ai_notice_message = normalize_ai_notice_message(
+                form_data.get('ai_notice_message')
+            )
+            ai_notice_frequency = normalize_ai_notice_frequency(
+                form_data.get('ai_notice_frequency')
+            )
+            if enable_ai_notice and not ai_notice_message:
+                flash('AI notice message is required when the feature is enabled.', 'danger')
+                return redirect(url_for('frontend_admin_settings.admin_settings'))
+
             # --- Authentication & Redirect Settings ---
             enable_front_door = form_data.get('enable_front_door') == 'on'
             front_door_url = form_data.get('front_door_url', '').strip()
@@ -2459,6 +2483,11 @@ def register_route_frontend_admin_settings(bp):
                 'terms_of_use_decline_redirect_url': terms_of_use_decline_redirect_url,
                 'terms_of_use_accept_button_text': terms_of_use_accept_button_text,
                 'terms_of_use_decline_button_text': terms_of_use_decline_button_text,
+
+                # AI Notice
+                'enable_ai_notice': enable_ai_notice,
+                'ai_notice_message': ai_notice_message,
+                'ai_notice_frequency': ai_notice_frequency,
 
                 # Multimedia & Metadata
                 'enable_video_file_support': enable_video_file_support,
