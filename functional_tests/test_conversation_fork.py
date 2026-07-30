@@ -7,17 +7,21 @@ Implemented in: 0.250.074
 
 This test ensures persisted personal conversation history is copied through an
 assistant boundary with independent identifiers, deterministic ordering,
-workspace-context authorization, concurrency protection, and failed-write cleanup.
+workspace-context authorization, concurrency protection, failed-write cleanup,
+and stable conflict responses when structured logging is invoked.
 """
 
+import ast
 import copy
 import importlib
+import logging
 import os
 import sys
 import types
 
 import pytest
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
+from flask import Blueprint, Flask, jsonify, request
 
 
 sys.path.insert(
@@ -31,6 +35,13 @@ sys.path.insert(
 )
 
 TEST_OPERATIONS_MODULE = None
+ROUTE_MODULE_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    '..',
+    'application',
+    'single_app',
+    'route_backend_conversations.py',
+)
 
 
 def _stub_module(module_name, attributes):
@@ -173,6 +184,24 @@ def load_operations_module_for_test():
             sys.modules['functions_simplechat_operations'] = original_operations_module
 
     return TEST_OPERATIONS_MODULE
+
+
+def load_route_registrar_for_test(route_globals):
+    """Compile the production route registrar with isolated dependencies."""
+    with open(ROUTE_MODULE_PATH, 'r', encoding='utf-8-sig') as file_handle:
+        route_tree = ast.parse(file_handle.read(), filename=ROUTE_MODULE_PATH)
+
+    registrar_node = next(
+        node
+        for node in route_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == 'register_route_backend_conversations'
+    )
+    isolated_tree = ast.Module(body=[registrar_node], type_ignores=[])
+    ast.fix_missing_locations(isolated_tree)
+    namespace = dict(route_globals)
+    exec(compile(isolated_tree, ROUTE_MODULE_PATH, 'exec'), namespace)
+    return namespace['register_route_backend_conversations']
 
 
 class FakeConversationContainer:
@@ -743,6 +772,79 @@ def test_fork_rejects_concurrent_source_changes():
     operations_module = load_operations_module_for_test()
     with pytest.raises(operations_module.ConversationForkConflictError):
         run_fork(mutate_on_second_query=True)
+
+
+def test_fork_route_preserves_conflict_response_when_logging_metadata():
+    """Return 409 after logging a fork eligibility conflict with canonical metadata."""
+    operations_module = load_operations_module_for_test()
+    logged_events = []
+
+    def identity_decorator(function):
+        return function
+
+    def swagger_route(**kwargs):
+        return identity_decorator
+
+    def capture_log_event(
+        message,
+        extra=None,
+        level=logging.INFO,
+        exceptionTraceback=None,
+    ):
+        logged_events.append({
+            'message': message,
+            'extra': extra,
+            'level': level,
+            'exceptionTraceback': exceptionTraceback,
+        })
+
+    def raise_conflict(**kwargs):
+        raise operations_module.ConversationForkConflictError(
+            'Only personal conversations can be forked'
+        )
+
+    register_routes = load_route_registrar_for_test({
+        'Blueprint': Blueprint,
+        'ConversationForkConflictError': operations_module.ConversationForkConflictError,
+        '_authorize_personal_conversation_read': lambda user_id, conversation_id: build_source_conversation(),
+        'bump_conversation_cache_version': lambda *args, **kwargs: None,
+        'fork_personal_conversation_for_user': raise_conflict,
+        'get_auth_security': lambda: [],
+        'get_current_user_id': lambda: 'owner-user',
+        'jsonify': jsonify,
+        'log_event': capture_log_event,
+        'logging': logging,
+        'login_required': identity_decorator,
+        'request': request,
+        'swagger_route': swagger_route,
+        'user_required': identity_decorator,
+    })
+    app = Flask(__name__)
+    app.config['TESTING'] = True
+    blueprint = Blueprint('conversation_fork_contract', __name__)
+    register_routes(blueprint)
+    app.register_blueprint(blueprint)
+
+    response = app.test_client().post(
+        '/api/conversations/source-conversation/fork',
+        json={'message_id': 'message-003-target'},
+    )
+
+    assert response.status_code == 409
+    assert response.get_json() == {'error': 'Conversation fork conflict'}
+    assert logged_events == [{
+        'message': (
+            '[ConversationFork] Conflict while creating conversation fork: '
+            'Only personal conversations can be forked'
+        ),
+        'extra': {
+            'source_conversation_id': 'source-conversation',
+            'selected_message_id': 'message-003-target',
+            'user_id': 'owner-user',
+        },
+        'level': logging.WARNING,
+        'exceptionTraceback': None,
+    }]
 
 
 def test_fork_rejects_missing_generated_artifact_records():

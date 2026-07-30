@@ -24,6 +24,11 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Corrected fork-specific structured logging so validation, conflict, cleanup, and cache errors retain their intended response behavior.
     *   (Ref: microsoft/simplechat#1025, `functions_simplechat_operations.py`, `route_backend_conversations.py`, `chat-messages.js`, `CONVERSATION_FORK_HTTP_500_FIX.md`)
 
+*   **Application-Wide Log Event Contract Guard**
+    *   Fixed conversation fork conflict and recovery logging that used unsupported metadata keywords, preventing logger errors from replacing intended HTTP responses such as eligibility conflicts with HTTP 500.
+    *   Standardized structured metadata on `extra=` and added an application-wide call-signature check plus route regression coverage for the HTTP 409 conflict path.
+    *   (Ref: #1112, `functions_simplechat_operations.py`, `route_backend_conversations.py`, `test_log_event_call_contract.py`)
+
 ### **(v0.250.100)**
 
 #### Bug Fixes
