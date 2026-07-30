@@ -28,6 +28,7 @@
     let activeWorkflowAlert = null;
     let activeWorkflowAlertTargets = [];
     let isLoadingWorkflowAlerts = false;
+    let isLoadingChatCompletionEvents = false;
     const shownWorkflowAlertsStorageKey = 'simplechat-shown-workflow-alerts';
     const workflowAlertModalEl = document.getElementById('workflowAlertModal');
     const workflowAlertModal = workflowAlertModalEl && window.bootstrap
@@ -560,6 +561,44 @@
             });
     }
 
+    function loadChatCompletionEvents() {
+        const completionAudio = window.simpleChatCompletionAudio;
+        if (
+            notificationPollingDisabled
+            || isLoadingChatCompletionEvents
+            || !completionAudio?.isPollingEnabled()
+        ) {
+            return Promise.resolve();
+        }
+
+        isLoadingChatCompletionEvents = true;
+        return fetch('/api/notifications/chat-completions?limit=50', {
+            headers: {
+                'Accept': 'application/json',
+            },
+        })
+            .then(response => parseNotificationJsonResponse(response, 'chat completion events'))
+            .then(data => {
+                if (!data.success) {
+                    return undefined;
+                }
+                completionAudio.setAdminEnabled(
+                    data.enabled === true,
+                    data.updated_at
+                );
+                if (data.enabled !== true) {
+                    return undefined;
+                }
+                return completionAudio.processPolledEvents(data.notifications || []);
+            })
+            .catch(error => {
+                console.warn('Unable to process chat completion audio events:', error);
+            })
+            .finally(() => {
+                isLoadingChatCompletionEvents = false;
+            });
+    }
+
     function fetchNotificationCount() {
         if (notificationPollingDisabled) {
             return Promise.resolve();
@@ -575,9 +614,15 @@
                 if (data.success) {
                     consecutivePollFailures = 0;
                     updateNotificationBadge(data.count);
+                    window.simpleChatCompletionAudio?.setAdminEnabled(
+                        data.chat_completion_audio_enabled === true,
+                        data.chat_completion_audio_updated_at
+                    );
+                    const followUpRequests = [loadChatCompletionEvents()];
                     if (data.count > 0) {
-                        return loadWorkflowAlerts();
+                        followUpRequests.push(loadWorkflowAlerts());
                     }
+                    return Promise.all(followUpRequests);
                 }
                 return undefined;
             })
@@ -679,6 +724,7 @@
         stopPolling: disableNotificationPolling,
         isPollingDisabled: () => notificationPollingDisabled,
         refreshCount: fetchNotificationCount,
+        refreshCompletionEvents: loadChatCompletionEvents,
     };
     
     /**
