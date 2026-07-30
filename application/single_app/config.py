@@ -432,6 +432,28 @@ else:
 cosmos_database_name = "SimpleChat"
 cosmos_database = cosmos_client.create_database_if_not_exists(cosmos_database_name)
 
+_cosmos_create_container_if_not_exists = cosmos_database.create_container_if_not_exists
+
+
+def _create_container_if_not_exists_with_conflict_recovery(*args, **kwargs):
+    """Return the existing container when concurrent startup creates it first."""
+    try:
+        return _cosmos_create_container_if_not_exists(*args, **kwargs)
+    except exceptions.CosmosResourceExistsError:
+        container_id = kwargs.get('id')
+        if container_id is None and args:
+            container_id = args[0]
+
+        if not container_id:
+            raise
+
+        container = cosmos_database.get_container_client(container_id)
+        container.read()
+        return container
+
+
+cosmos_database.create_container_if_not_exists = _create_container_if_not_exists_with_conflict_recovery
+
 cosmos_conversations_container_name = "conversations"
 cosmos_conversations_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_conversations_container_name,

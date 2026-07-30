@@ -118,6 +118,13 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 ### **(v0.250.062)**
 
+#### Bug Fixes
+
+*   **Cosmos Container Startup Conflict Recovery**
+    *   Fixed a local Docker startup failure where multiple gunicorn workers could race while creating first-run Cosmos containers, causing a `NotFound` followed by a `Conflict` during app import.
+    *   Container initialization now re-reads and returns the existing container when another worker creates it first, preserving normal startup behavior for already-provisioned environments.
+    *   (Ref: `config.py`, `test_cosmos_container_conflict_recovery.py`, `COSMOS_CONTAINER_STARTUP_CONFLICT_FIX.md`)
+
 #### New Features
 
 *   **Workflow Run Cancellation**
