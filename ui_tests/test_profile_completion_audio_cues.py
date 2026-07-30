@@ -1,8 +1,8 @@
 # test_profile_completion_audio_cues.py
 """
 UI test for configurable AI response completion audio cues.
-Version: 0.250.102
-Implemented in: 0.250.102
+Version: 0.250.103
+Implemented in: 0.250.103
 
 This test verifies admin gating, profile persistence and preview controls, plus
 foreground suppression and duplicate-free background playback.

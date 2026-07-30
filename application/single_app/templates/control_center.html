@@ -3504,7 +3504,7 @@ window.GroupManager = {
         const saveButton = document.getElementById('saveGlobalGroupSettings');
         
         if (!disableToggle) {
-            alert('Error: Toggle element not found');
+            showToast('Error: Toggle element not found', 'danger');
             return;
         }
         
@@ -3525,14 +3525,14 @@ window.GroupManager = {
             });
             
             if (response.ok) {
-                alert('Global group settings saved successfully!');
+                showToast('Global group settings saved successfully!', 'success');
             } else {
                 const data = await response.json().catch(() => ({ error: 'Failed to parse error response' }));
-                alert('Error saving settings: ' + (data.error || 'Unknown error'));
+                showToast('Error saving settings: ' + (data.error || 'Unknown error'), 'danger');
             }
         } catch (error) {
             console.error('Error saving global group settings:', error);
-            alert('Error saving settings: ' + error.message);
+            showToast('Error saving settings: ' + error.message, 'danger');
         } finally {
             // Re-enable button
             saveButton.disabled = false;
@@ -3639,7 +3639,7 @@ window.GroupManager = {
             
         } catch (error) {
             console.error('Error loading group details:', error);
-            alert(`Error loading group details: ${error.message}`);
+            showToast(`Error loading group details: ${error.message}`, 'danger');
         }
     },
 
@@ -3694,15 +3694,15 @@ window.GroupManager = {
             });
             
             if (response.ok) {
-                alert(`Group status changed to "${statusText}" successfully!`);
+                showToast(`Group status changed to "${statusText}" successfully!`, 'success');
                 this.loadGroups(); // Refresh the groups list
             } else {
                 const error = await response.json().catch(() => ({ error: 'Unknown error' }));
-                alert(`Error changing group status: ${error.error || 'Unknown error'}`);
+                showToast(`Error changing group status: ${error.error || 'Unknown error'}`, 'danger');
             }
         } catch (error) {
             console.error('Error changing group status:', error);
-            alert(`Error changing group status: ${error.message}`);
+            showToast(`Error changing group status: ${error.message}`, 'danger');
         }
     },
 
@@ -3720,15 +3720,15 @@ window.GroupManager = {
             });
             
             if (response.ok) {
-                alert('Group deleted successfully!');
+                showToast('Group deleted successfully!', 'success');
                 this.loadGroups(); // Refresh the groups list
             } else {
                 const error = await response.json().catch(() => ({ error: 'Unknown error' }));
-                alert(`Error deleting group: ${error.error || 'Unknown error'}`);
+                showToast(`Error deleting group: ${error.error || 'Unknown error'}`, 'danger');
             }
         } catch (error) {
             console.error('Error deleting group:', error);
-            alert(`Error deleting group: ${error.message}`);
+            showToast(`Error deleting group: ${error.message}`, 'danger');
         }
     },
 
@@ -3800,7 +3800,7 @@ window.GroupManager = {
             
         } catch (error) {
             console.error('[Activity] Error in viewActivity:', error);
-            alert(`Error loading group activity: ${error.message}`);
+            showToast(`Error loading group activity: ${error.message}`, 'danger');
         }
     },
 
@@ -3808,11 +3808,11 @@ window.GroupManager = {
     showBulkActionModal: function() {
         const selectedGroups = document.querySelectorAll('.group-checkbox:checked');
         if (selectedGroups.length === 0) {
-            alert('Please select groups to perform bulk actions');
+            showToast('Please select groups to perform bulk actions', 'warning');
             return;
         }
         
-        alert(`Bulk action modal for ${selectedGroups.length} selected groups would open here`);
+        showToast(`Bulk action modal for ${selectedGroups.length} selected groups would open here`, 'warning');
     },
 
     // Refresh groups
@@ -3908,20 +3908,20 @@ window.GroupManager = {
         const saveButton = document.getElementById('saveGroupChangesBtn');
         
         if (!groupId) {
-            alert('Error: No group ID found');
+            showToast('Error: No group ID found', 'danger');
             return;
         }
         
         // Validate ownership change reason if ownership action selected
         if ((ownership === 'admin' || ownership === 'transfer') && !ownershipReason) {
-            alert('Please provide a reason for the ownership change');
+            showToast('Please provide a reason for the ownership change', 'warning');
             document.getElementById('groupOwnershipReason').focus();
             return;
         }
         
         // Validate transfer to another user selection
         if (ownership === 'transfer' && !newOwnerId) {
-            alert('Please select a member to transfer ownership to');
+            showToast('Please select a member to transfer ownership to', 'warning');
             return;
         }
         
@@ -4044,7 +4044,7 @@ window.GroupManager = {
             
         } catch (error) {
             console.error('Error saving group changes:', error);
-            alert('Error saving group settings: ' + error.message);
+            showToast('Error saving group settings: ' + error.message, 'danger');
         } finally {
             // Re-enable button
             if (saveButton) {
@@ -4060,7 +4060,7 @@ window.GroupManager = {
         const groupId = modal.getAttribute('data-group-id');
         
         if (!groupId) {
-            alert('Error: No group ID found');
+            showToast('Error: No group ID found', 'danger');
             return;
         }
         
@@ -4446,7 +4446,7 @@ window.GroupManager = {
     
     startCsvUpload: async function() {
         if (!GroupManager.csvParsedData || GroupManager.csvParsedData.length === 0) {
-            alert('No valid data to upload');
+            showToast('No valid data to upload', 'info');
             return;
         }
 
@@ -5029,7 +5029,7 @@ window.GroupManager = {
     // Show raw activity modal
     showRawActivityModal: function(activityIndex) {
         if (!this.currentActivities || !this.currentActivities[activityIndex]) {
-            alert('Activity data not available');
+            showToast('Activity data not available', 'warning');
             return;
         }
 
@@ -5038,7 +5038,7 @@ window.GroupManager = {
         const modalTitle = document.getElementById('rawActivityModalTitle');
         
         if (!modalBody || !modalTitle) {
-            alert('Modal elements not found');
+            showToast('Modal elements not found', 'danger');
             return;
         }
 
@@ -5059,7 +5059,7 @@ window.GroupManager = {
     copyRawActivityToClipboard: function() {
         const rawText = document.getElementById('rawActivityModalBody')?.textContent;
         if (!rawText) {
-            alert('No activity data to copy');
+            showToast('No activity data to copy', 'info');
             return;
         }
 
@@ -5067,7 +5067,7 @@ window.GroupManager = {
             window.controlCenter.showToast('Activity data copied to clipboard', 'success');
         }).catch(err => {
             console.error('Failed to copy:', err);
-            alert('Failed to copy to clipboard');
+            showToast('Failed to copy to clipboard', 'danger');
         });
     },
     

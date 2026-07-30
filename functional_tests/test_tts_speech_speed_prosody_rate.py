@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for TTS speech speed prosody rate formatting.
-Version: 0.241.102
+Version: 0.250.102
 Implemented in: 0.241.102
 
 This test ensures that chat text-to-speech speed multipliers are translated

@@ -1315,13 +1315,13 @@ async function applyBulkTagChanges() {
     
     if (documentIds.length === 0) {
         console.log('[Bulk Tag] ERROR: No documents selected');
-        alert('No documents selected');
+        showToast('No documents selected', 'warning');
         return false;
     }
     
     if (selectedTags.length === 0) {
         console.log('[Bulk Tag] ERROR: No tags selected');
-        alert('Please select at least one tag by clicking on it');
+        showToast('Please select at least one tag by clicking on it', 'warning');
         return false;
     }
     
@@ -1379,7 +1379,7 @@ async function applyBulkTagChanges() {
         if (errorCount > 0) {
             message += `\n${errorCount} document(s) had errors`;
         }
-        alert(message);
+        showToast(message, 'info');
 
         // Reload workspace tags and documents
         console.log('[Bulk Tag] Reloading tags and documents...');
@@ -1414,7 +1414,7 @@ async function applyBulkTagChanges() {
             errorMessage += `\n${error.message}`;
         }
 
-        alert(errorMessage);
+        showToast(errorMessage, 'danger');
         return false;
     } finally {
         setBulkTagButtonLoadingState(applyBtn, false);
@@ -1486,7 +1486,7 @@ window.deleteTag = async function(tagName) {
         const result = await response.json();
         
         if (response.ok) {
-            alert(result.message);
+            showToast(result.message, 'info');
             await loadWorkspaceTags();
             if (currentView === 'grid') {
                 renderGridView();
@@ -1494,11 +1494,11 @@ window.deleteTag = async function(tagName) {
                 window.fetchUserDocuments?.();
             }
         } else {
-            alert('Error: ' + (result.error || 'Failed to delete tag'));
+            showToast('Error: ' + (result.error || 'Failed to delete tag'), 'danger');
         }
     } catch (error) {
         console.error('Error deleting tag:', error);
-        alert('Error deleting tag');
+        showToast('Error deleting tag', 'danger');
     }
 };
 

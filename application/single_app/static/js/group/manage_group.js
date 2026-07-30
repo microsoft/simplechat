@@ -328,7 +328,7 @@ $(document).ready(function () {
   $("#bulkAssignRoleBtn").on("click", function () {
     const selectedMembers = getSelectedMembers();
     if (selectedMembers.length === 0) {
-      alert("Please select at least one member");
+      showToast("Please select at least one member", 'warning');
       return;
     }
     $("#bulkRoleCount").text(selectedMembers.length);
@@ -343,7 +343,7 @@ $(document).ready(function () {
   $("#bulkRemoveMembersBtn").on("click", function () {
     const selectedMembers = getSelectedMembers();
     if (selectedMembers.length === 0) {
-      alert("Please select at least one member");
+      showToast("Please select at least one member", 'warning');
       return;
     }
     
@@ -433,22 +433,22 @@ $(document).ready(function () {
           url: `/api/groups/${groupId}`,
           method: "DELETE",
           success: function (resp) {
-            alert("Group deleted successfully!");
+            showToast("Group deleted successfully!", 'success', { persist: true });
             window.location.href = "/profile?tab=groups";
           },
           error: function (err) {
             console.error(err);
             if (err.responseJSON && err.responseJSON.error) {
-              alert("Error: " + err.responseJSON.error);
+              showToast("Error: " + err.responseJSON.error, 'danger');
             } else {
-              alert("Failed to delete group.");
+              showToast("Failed to delete group.", 'danger');
             }
           },
         });
       }
     }).fail(function (err) {
       console.error(err);
-      alert("Unable to check file count. Cannot proceed with deletion.");
+      showToast("Unable to check file count. Cannot proceed with deletion.", 'danger');
     });
   });
 });
@@ -543,7 +543,7 @@ function loadGroupInfo(doneCallback) {
     }
   }).fail(function (err) {
     console.error(err);
-    alert("Failed to load group info.");
+    showToast("Failed to load group info.", 'danger');
   });
 }
 
@@ -554,15 +554,15 @@ function leaveGroup() {
     url: `/api/groups/${groupId}/members/${userId}`,
     method: "DELETE",
     success: function (resp) {
-      alert("You have left the group.");
+      showToast("You have left the group.", 'success', { persist: true });
       window.location.href = "/profile?tab=groups";
     },
     error: function (err) {
       console.error(err);
       if (err.responseJSON && err.responseJSON.error) {
-        alert("Error: " + err.responseJSON.error);
+        showToast("Error: " + err.responseJSON.error, 'danger');
       } else {
-        alert("Unable to leave group.");
+        showToast("Unable to leave group.", 'danger');
       }
     },
   });
@@ -592,21 +592,21 @@ async function updateGroupInfo() {
     if (logoFile) {
       try {
         await uploadGroupLogo(logoFile);
-        alert('Group updated successfully and logo uploaded.');
+        showToast('Group updated successfully and logo uploaded.', 'success');
       } catch (error) {
         console.error(error);
         loadGroupInfo();
-        alert(`Group details saved, but logo upload failed: ${error.message}`);
+        showToast(`Group details saved, but logo upload failed: ${error.message}`, 'danger');
         return;
       }
     } else {
-      alert('Group updated successfully!');
+      showToast('Group updated successfully!', 'success');
     }
 
     loadGroupInfo();
   } catch (error) {
     console.error(error);
-    alert(error.message || 'Failed to update group info.');
+    showToast(error.message || 'Failed to update group info.', 'danger');
   }
 }
 
@@ -889,7 +889,7 @@ function approveRequest(requestId) {
     },
     error: function (err) {
       console.error(err);
-      alert("Failed to approve request.");
+      showToast("Failed to approve request.", 'danger');
     },
   });
 }
@@ -905,7 +905,7 @@ function rejectRequest(requestId) {
     },
     error: function (err) {
       console.error(err);
-      alert("Failed to reject request.");
+      showToast("Failed to reject request.", 'danger');
     },
   });
 }
@@ -994,7 +994,7 @@ function addMemberDirectly() {
   const email = $("#newUserEmail").val().trim();
 
   if (!userId) {
-    alert("Please select or enter a valid user ID.");
+    showToast("Please select or enter a valid user ID.", 'warning');
     return;
   }
 
@@ -1009,7 +1009,7 @@ function addMemberDirectly() {
     },
     error: function (err) {
       console.error(err);
-      alert("Failed to add member directly.");
+      showToast("Failed to add member directly.", 'danger');
     },
   });
 }
@@ -1657,7 +1657,7 @@ function showCsvError(message) {
 
 function startCsvUpload() {
   if (csvParsedData.length === 0) {
-    alert("No valid data to upload");
+    showToast("No valid data to upload", 'info');
     return;
   }
 
@@ -1824,7 +1824,7 @@ async function bulkAssignRole() {
   const newRole = $("#bulkRoleSelect").val();
   
   if (selectedMembers.length === 0) {
-    alert("No members selected");
+    showToast("No members selected", 'warning');
     return;
   }
 
@@ -1867,7 +1867,7 @@ async function bulkAssignRole() {
       message += `\n... and ${failures.length - 5} more`;
     }
   }
-  alert(message);
+  showToast(message, 'info');
 
   // Reload members and clear selection
   loadMembers();
@@ -1877,7 +1877,7 @@ async function bulkRemoveMembers() {
   const selectedMembers = getSelectedMembers();
 
   if (selectedMembers.length === 0) {
-    alert("No members selected");
+    showToast("No members selected", 'warning');
     return;
   }
 
@@ -1918,7 +1918,7 @@ async function bulkRemoveMembers() {
       message += `\n... and ${failures.length - 5} more`;
     }
   }
-  alert(message);
+  showToast(message, 'info');
 
   // Reload members and clear selection
   loadMembers();

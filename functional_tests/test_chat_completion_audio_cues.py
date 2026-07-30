@@ -1,8 +1,8 @@
 # test_chat_completion_audio_cues.py
 """
 Functional test for configurable AI response completion audio cues.
-Version: 0.250.102
-Implemented in: 0.250.102
+Version: 0.250.103
+Implemented in: 0.250.103
 
 This test validates local assets, settings and route wiring, and executable
 browser behavior for foreground suppression, background playback, volume

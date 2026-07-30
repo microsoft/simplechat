@@ -5,12 +5,14 @@ import copy
 import base64
 from email.utils import parsedate_to_datetime
 import hashlib
+import io
 import json
 import logging
 import os
 import random
 import re
 import socket
+import struct
 import time
 import tempfile
 import uuid
@@ -21,7 +23,12 @@ from urllib.parse import urlparse
 
 from azure.core import MatchConditions
 from azure.core.credentials import AzureKeyCredential
-from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
+from azure.core.exceptions import (
+    ResourceExistsError,
+    ResourceNotFoundError,
+    ServiceRequestError,
+    ServiceResponseError,
+)
 import azure.cosmos as azure_cosmos
 from azure.cosmos import PartitionKey
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
@@ -29,7 +36,7 @@ from azure.identity import DefaultAzureCredential
 from azure.search.documents import SearchClient
 from azure.search.documents.indexes import SearchIndexClient
 from azure.search.documents.indexes.models import SearchField, SearchFieldDataType, SearchIndex
-from azure.storage.blob import BlobServiceClient, ContentSettings
+from azure.storage.blob import BlobBlock, BlobServiceClient, ContentSettings
 from cryptography.fernet import Fernet
 
 import config as app_config
@@ -173,6 +180,12 @@ DATA_MANAGEMENT_BACKUP_DEFAULT_PARALLEL_OPERATIONS = 4
 DATA_MANAGEMENT_BACKUP_MAX_PARALLEL_OPERATIONS = 16
 DATA_MANAGEMENT_BACKUP_DEFAULT_RETRY_COUNT = 5
 DATA_MANAGEMENT_BACKUP_MAX_RETRY_COUNT = 10
+DATA_MANAGEMENT_BLOB_BACKUP_DEFAULT_PARALLEL_OPERATIONS = 4
+DATA_MANAGEMENT_BLOB_BACKUP_MAX_PARALLEL_OPERATIONS = 8
+DATA_MANAGEMENT_BLOB_BACKUP_DEFAULT_CHUNK_SIZE_MIB = 8
+DATA_MANAGEMENT_BLOB_BACKUP_MIN_CHUNK_SIZE_MIB = 1
+DATA_MANAGEMENT_BLOB_BACKUP_MAX_CHUNK_SIZE_MIB = 16
+DATA_MANAGEMENT_BLOB_BACKUP_CLEAN_TRANSFER_RECOVERY_COUNT = 3
 DATA_MANAGEMENT_BACKUP_DEFAULT_SOURCE_RU = 10000
 DATA_MANAGEMENT_BACKUP_MAX_SOURCE_RU = 10000
 DATA_MANAGEMENT_BACKUP_CAPACITY_FAILURE_POLICY_FAIL = "fail"
@@ -187,6 +200,11 @@ DATA_MANAGEMENT_SEARCH_BACKUP_PAGE_SIZE = 1000
 DATA_MANAGEMENT_SEARCH_BACKUP_CLEAN_PAGE_RECOVERY_COUNT = 3
 DATA_MANAGEMENT_SEARCH_BACKUP_MAX_INDEX_CONCURRENCY = 3
 DATA_MANAGEMENT_BLOB_SERVICE_TIMEOUT_SECONDS = 120
+DATA_MANAGEMENT_BLOB_BACKUP_ENCRYPTED_FORMAT = "fernet-chunked-v1"
+DATA_MANAGEMENT_BLOB_BACKUP_RAW_FORMAT = "raw-v1"
+DATA_MANAGEMENT_BLOB_BACKUP_ENCRYPTED_MAGIC = b"SCBF1\n"
+DATA_MANAGEMENT_BLOB_BACKUP_ENCRYPTED_HEADER_SIZE = 49
+DATA_MANAGEMENT_BLOB_BACKUP_MAX_BLOCKS = 50000
 DATA_MANAGEMENT_MIGRATION_REMOTE_REQUEST_TIMEOUT_SECONDS = 30
 DATA_MANAGEMENT_MIGRATION_HEARTBEAT_INTERVAL_SECONDS = 2.0
 DATA_MANAGEMENT_MIGRATION_HEARTBEAT_POLL_SECONDS = 1.0
@@ -257,6 +275,9 @@ DATA_MANAGEMENT_DEFAULT_SETTINGS = {
     "max_parallel_operations": 1,
     "backup_max_parallel_operations": DATA_MANAGEMENT_BACKUP_DEFAULT_PARALLEL_OPERATIONS,
     "backup_retry_count": DATA_MANAGEMENT_BACKUP_DEFAULT_RETRY_COUNT,
+    "backup_blob_max_parallel_operations": DATA_MANAGEMENT_BLOB_BACKUP_DEFAULT_PARALLEL_OPERATIONS,
+    "backup_blob_chunk_size_mib": DATA_MANAGEMENT_BLOB_BACKUP_DEFAULT_CHUNK_SIZE_MIB,
+    "backup_blob_retry_count": DATA_MANAGEMENT_BACKUP_DEFAULT_RETRY_COUNT,
     "backup_temporary_source_ru_enabled": False,
     "backup_temporary_source_ru": DATA_MANAGEMENT_BACKUP_DEFAULT_SOURCE_RU,
     "backup_capacity_failure_policy": DATA_MANAGEMENT_BACKUP_CAPACITY_FAILURE_POLICY_CONTINUE,
@@ -708,6 +729,24 @@ def normalize_data_management_settings(payload=None, existing_settings=None, cur
     )
     source["backup_retry_count"] = _safe_int(
         source.get("backup_retry_count"),
+        default=DATA_MANAGEMENT_BACKUP_DEFAULT_RETRY_COUNT,
+        minimum=1,
+        maximum=DATA_MANAGEMENT_BACKUP_MAX_RETRY_COUNT,
+    )
+    source["backup_blob_max_parallel_operations"] = _safe_int(
+        source.get("backup_blob_max_parallel_operations"),
+        default=DATA_MANAGEMENT_BLOB_BACKUP_DEFAULT_PARALLEL_OPERATIONS,
+        minimum=1,
+        maximum=DATA_MANAGEMENT_BLOB_BACKUP_MAX_PARALLEL_OPERATIONS,
+    )
+    source["backup_blob_chunk_size_mib"] = _safe_int(
+        source.get("backup_blob_chunk_size_mib"),
+        default=DATA_MANAGEMENT_BLOB_BACKUP_DEFAULT_CHUNK_SIZE_MIB,
+        minimum=DATA_MANAGEMENT_BLOB_BACKUP_MIN_CHUNK_SIZE_MIB,
+        maximum=DATA_MANAGEMENT_BLOB_BACKUP_MAX_CHUNK_SIZE_MIB,
+    )
+    source["backup_blob_retry_count"] = _safe_int(
+        source.get("backup_blob_retry_count"),
         default=DATA_MANAGEMENT_BACKUP_DEFAULT_RETRY_COUNT,
         minimum=1,
         maximum=DATA_MANAGEMENT_BACKUP_MAX_RETRY_COUNT,
@@ -1320,6 +1359,67 @@ def _get_backup_search_retry_count(settings, backup_plan=None):
     )
 
 
+def _get_backup_blob_parallel_operations(settings, backup_plan=None):
+    execution = (
+        (backup_plan or {}).get("source_blob_execution")
+        if isinstance(backup_plan, dict) else {}
+    )
+    configured_value = (
+        (execution or {}).get("max_parallel_operations")
+        if isinstance(execution, dict) and "max_parallel_operations" in execution else
+        (settings or {}).get("backup_blob_max_parallel_operations")
+        if backup_plan is None else
+        DATA_MANAGEMENT_BLOB_BACKUP_DEFAULT_PARALLEL_OPERATIONS
+    )
+    return _safe_int(
+        configured_value,
+        default=DATA_MANAGEMENT_BLOB_BACKUP_DEFAULT_PARALLEL_OPERATIONS,
+        minimum=1,
+        maximum=DATA_MANAGEMENT_BLOB_BACKUP_MAX_PARALLEL_OPERATIONS,
+    )
+
+
+def _get_backup_blob_chunk_size_bytes(settings, backup_plan=None):
+    execution = (
+        (backup_plan or {}).get("source_blob_execution")
+        if isinstance(backup_plan, dict) else {}
+    )
+    configured_value = (
+        (execution or {}).get("chunk_size_mib")
+        if isinstance(execution, dict) and "chunk_size_mib" in execution else
+        (settings or {}).get("backup_blob_chunk_size_mib")
+        if backup_plan is None else
+        DATA_MANAGEMENT_BLOB_BACKUP_DEFAULT_CHUNK_SIZE_MIB
+    )
+    chunk_size_mib = _safe_int(
+        configured_value,
+        default=DATA_MANAGEMENT_BLOB_BACKUP_DEFAULT_CHUNK_SIZE_MIB,
+        minimum=DATA_MANAGEMENT_BLOB_BACKUP_MIN_CHUNK_SIZE_MIB,
+        maximum=DATA_MANAGEMENT_BLOB_BACKUP_MAX_CHUNK_SIZE_MIB,
+    )
+    return chunk_size_mib * 1024 * 1024
+
+
+def _get_backup_blob_retry_count(settings, backup_plan=None):
+    execution = (
+        (backup_plan or {}).get("source_blob_execution")
+        if isinstance(backup_plan, dict) else {}
+    )
+    configured_value = (
+        (execution or {}).get("retry_count")
+        if isinstance(execution, dict) and "retry_count" in execution else
+        (settings or {}).get("backup_blob_retry_count")
+        if backup_plan is None else
+        DATA_MANAGEMENT_BACKUP_DEFAULT_RETRY_COUNT
+    )
+    return _safe_int(
+        configured_value,
+        default=DATA_MANAGEMENT_BACKUP_DEFAULT_RETRY_COUNT,
+        minimum=1,
+        maximum=DATA_MANAGEMENT_BACKUP_MAX_RETRY_COUNT,
+    )
+
+
 def _get_backup_capacity_failure_policy(settings, backup_plan=None):
     execution = (backup_plan or {}).get("cosmos_execution") if isinstance(backup_plan, dict) else {}
     configured_value = (
@@ -1830,6 +1930,7 @@ def _update_migration_state_totals(state):
             "collision_count",
             "processed_count",
             "bytes",
+            "artifact_bytes",
         ):
             totals[field_name] += _safe_int(metrics.get(field_name), default=0, minimum=0)
         try:
@@ -4673,6 +4774,10 @@ def _get_blob_properties_or_none(blob_client):
         return blob_client.get_blob_properties()
     except ResourceNotFoundError:
         return None
+    except Exception as exc:
+        if getattr(exc, "status_code", None) == 404:
+            return None
+        raise
 
 
 def _get_blob_content_md5(blob_properties):
@@ -7514,6 +7619,14 @@ def _normalize_data_management_backup_plan(settings, backup_type, options=None, 
             "page_size": DATA_MANAGEMENT_SEARCH_BACKUP_PAGE_SIZE,
             "clean_page_recovery_count": DATA_MANAGEMENT_SEARCH_BACKUP_CLEAN_PAGE_RECOVERY_COUNT,
         },
+        "source_blob_execution": {
+            "max_parallel_operations": _get_backup_blob_parallel_operations(settings),
+            "chunk_size_mib": (
+                _get_backup_blob_chunk_size_bytes(settings) // (1024 * 1024)
+            ),
+            "retry_count": _get_backup_blob_retry_count(settings),
+            "clean_transfer_recovery_count": DATA_MANAGEMENT_BLOB_BACKUP_CLEAN_TRANSFER_RECOVERY_COUNT,
+        },
         "resource_contract": ["cosmos", "ai_search", "source_blobs"],
     }
 
@@ -7938,14 +8051,18 @@ def _sanitize_data_management_backup_state_for_admin(state):
                     "processed_count",
                     "item_count",
                     "blob_count",
+                    "reused_count",
                     "skipped_count",
                     "failed_count",
                     "bytes",
+                    "artifact_bytes",
                     "checkpoint_count",
                     "retry_attempt_count",
                     "throttle_count",
                     "parallel_operations",
                     "active_parallel_operations",
+                    "chunk_size_bytes",
+                    "in_flight_count",
                     "source_page_count",
                     "page_count",
                     "current_page",
@@ -7967,6 +8084,7 @@ def _sanitize_data_management_backup_state_for_admin(state):
             "current_container": _safe_text(
                 progress.get("current_container") or progress.get("current_index")
             ),
+            "current_file": _safe_text(progress.get("current_file")),
             "cursor_committed": bool(progress.get("cursor_committed")),
             "checkpoint": {
                 "next_batch_number": _safe_int(checkpoint.get("next_batch_number"), default=0, minimum=0),
@@ -8056,6 +8174,7 @@ def _sanitize_data_management_backup_state_for_admin(state):
                 "skipped_count",
                 "failed_count",
                 "bytes",
+                "artifact_bytes",
                 "checkpoint_count",
                 "retry_attempt_count",
                 "throttle_count",
@@ -8067,20 +8186,28 @@ def _sanitize_data_management_backup_state_for_admin(state):
                 "elapsed_seconds",
                 "records_per_second",
                 "request_units_per_second",
+                "bytes_per_second",
             )
         },
         "telemetry": {
             "current_container": _safe_text(telemetry.get("current_container")),
+            "current_file": _safe_text(telemetry.get("current_file")),
             "current_page": _safe_int(telemetry.get("current_page"), default=0, minimum=0),
             "checkpoint_position": _safe_int(telemetry.get("checkpoint_position"), default=0, minimum=0),
             "records_processed": _safe_int(telemetry.get("records_processed"), default=0, minimum=0),
             "bytes": _safe_int(telemetry.get("bytes"), default=0, minimum=0),
+            "artifact_bytes": _safe_int(
+                telemetry.get("artifact_bytes"),
+                default=0,
+                minimum=0,
+            ),
             "request_units": sanitize_metric_number(telemetry.get("request_units")),
             "retries": _safe_int(telemetry.get("retries"), default=0, minimum=0),
             "throttles": _safe_int(telemetry.get("throttles"), default=0, minimum=0),
             "elapsed_seconds": sanitize_metric_number(telemetry.get("elapsed_seconds")),
             "records_per_second": sanitize_metric_number(telemetry.get("records_per_second")),
             "request_units_per_second": sanitize_metric_number(telemetry.get("request_units_per_second")),
+            "bytes_per_second": sanitize_metric_number(telemetry.get("bytes_per_second")),
         },
         "source_capacity": public_source_capacity,
         "warnings": [
@@ -8635,7 +8762,10 @@ def _summarize_backup_artifact(artifact):
         "destination_failed_count",
         "destination_provenance_skip_count",
         "blob_count",
+        "reused_count",
         "encrypted",
+        "transfer_format",
+        "chunk_size_bytes",
         "container_name",
         "partition_key_path",
         "index_name",
@@ -10292,6 +10422,488 @@ def _source_blob_container_names():
     ]
 
 
+def _get_backup_blob_property(properties, field_name, default=None):
+    if isinstance(properties, dict):
+        return properties.get(field_name, default)
+    return getattr(properties, field_name, default)
+
+
+def _build_backup_blob_source_item(source_container_name, blob_name, properties):
+    last_modified = _get_backup_blob_property(properties, "last_modified")
+    source_size = _safe_int(
+        _get_backup_blob_property(properties, "size"),
+        default=0,
+        minimum=0,
+    )
+    source_etag = _safe_text(_get_backup_blob_property(properties, "etag"))
+    return {
+        "source_identity": _build_backup_source_identity(
+            "source_blobs",
+            source_container_name,
+            blob_name,
+        ),
+        "source_version": _build_backup_source_version({
+            "etag": source_etag,
+            "last_modified": last_modified,
+            "size": source_size,
+        }),
+        "source_etag": source_etag,
+        "source_size": source_size,
+        "last_modified": last_modified,
+    }
+
+
+def _get_backup_blob_metadata(properties):
+    metadata = _get_backup_blob_property(properties, "metadata", {})
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _build_backup_blob_target_metadata(
+    backup_job,
+    source_item,
+    transfer_format,
+    status,
+):
+    return {
+        "simplechatbackupstatus": _safe_text(status),
+        "simplechatbackupjob": _safe_text((backup_job or {}).get("id")),
+        "simplechatbackupattempt": _safe_text(
+            (backup_job or {}).get("backup_attempt_id")
+        ),
+        "simplechatbackupleasegeneration": str(
+            _safe_int((backup_job or {}).get("lease_generation"), default=0, minimum=0)
+        ),
+        "simplechatbackupsourceversion": _safe_text(
+            (source_item or {}).get("source_version")
+        ),
+        "simplechatbackupsourcebytes": str(
+            _safe_int((source_item or {}).get("source_size"), default=0, minimum=0)
+        ),
+        "simplechatbackupformat": _safe_text(transfer_format),
+    }
+
+
+def _is_verified_backup_blob_artifact(
+    target_properties,
+    backup_job,
+    source_item,
+    transfer_format,
+):
+    if target_properties is None:
+        return False
+    metadata = _get_backup_blob_metadata(target_properties)
+    target_generation = _safe_int(
+        metadata.get("simplechatbackupleasegeneration"),
+        default=0,
+        minimum=0,
+    )
+    current_generation = _safe_int(
+        (backup_job or {}).get("lease_generation"),
+        default=0,
+        minimum=0,
+    )
+    if (
+        _safe_text(metadata.get("simplechatbackupjob")) ==
+        _safe_text((backup_job or {}).get("id")) and
+        target_generation > current_generation
+    ):
+        raise DataManagementBackupLeaseLostError(
+            "A newer backup attempt already finalized this source artifact."
+        )
+    return (
+        _safe_text(metadata.get("simplechatbackupstatus")).lower() == "succeeded" and
+        _safe_text(metadata.get("simplechatbackupjob")) ==
+        _safe_text((backup_job or {}).get("id")) and
+        bool(_safe_text(metadata.get("simplechatbackupattempt"))) and
+        target_generation <= current_generation and
+        _safe_text(metadata.get("simplechatbackupsourceversion")) ==
+        _safe_text((source_item or {}).get("source_version")) and
+        _safe_int(metadata.get("simplechatbackupsourcebytes"), default=-1) ==
+        _safe_int((source_item or {}).get("source_size"), default=0, minimum=0) and
+        _safe_text(metadata.get("simplechatbackupformat")) == _safe_text(transfer_format)
+    )
+
+
+def _is_retryable_backup_blob_error(error):
+    status_code = _get_backup_exception_status_code(error)
+    return (
+        isinstance(
+            error,
+            (TimeoutError, socket.timeout, ServiceRequestError, ServiceResponseError),
+        ) or
+        status_code in {408, 409, 412, 429} or
+        (status_code is not None and 500 <= status_code <= 599)
+    )
+
+
+def _read_backup_blob_range(
+    source_blob_client,
+    offset,
+    length,
+    source_etag,
+):
+    download_kwargs = {
+        "offset": offset,
+        "length": length,
+        "max_concurrency": 1,
+        "timeout": DATA_MANAGEMENT_BLOB_SERVICE_TIMEOUT_SECONDS,
+    }
+    if source_etag:
+        download_kwargs.update({
+            "etag": source_etag,
+            "match_condition": MatchConditions.IfNotModified,
+        })
+    download = source_blob_client.download_blob(**download_kwargs)
+    buffer = io.BytesIO()
+    download.readinto(buffer)
+    return buffer.getvalue()
+
+
+def _encode_backup_blob_chunk(
+    chunk,
+    fernet,
+    chunk_index,
+    total_chunks,
+    source_version,
+):
+    if fernet is None:
+        return chunk
+    source_version_digest = hashlib.sha256(
+        _safe_text(source_version).encode("utf-8")
+    ).digest()
+    authenticated_chunk = (
+        source_version_digest +
+        struct.pack(
+            ">QQ?",
+            int(chunk_index),
+            int(total_chunks),
+            int(chunk_index) == int(total_chunks) - 1,
+        ) +
+        chunk
+    )
+    encrypted_chunk = fernet.encrypt(authenticated_chunk)
+    prefix = DATA_MANAGEMENT_BLOB_BACKUP_ENCRYPTED_MAGIC if chunk_index == 0 else b""
+    return prefix + struct.pack(">I", len(encrypted_chunk)) + encrypted_chunk
+
+
+def _backup_blob_block_id(block_index, transfer_identity):
+    block_value = f"{_safe_text(transfer_identity)[:24]}:{int(block_index):08d}"
+    return base64.b64encode(block_value.encode("ascii")).decode("ascii")
+
+
+def _run_backup_source_blob_transfer(*args, **kwargs):
+    """Convert per-file setup and transfer failures into isolated worker outcomes."""
+    source_item = kwargs.get("source_item")
+    target_blob_name = kwargs.get("target_blob_name")
+    fernet = kwargs.get("fernet")
+    if source_item is None and len(args) > 3:
+        source_item = args[3]
+    if target_blob_name is None and len(args) > 2:
+        target_blob_name = args[2]
+    if fernet is None and len(args) > 4:
+        fernet = args[4]
+    try:
+        return _transfer_backup_source_blob(*args, **kwargs)
+    except (DataManagementBackupCanceledError, DataManagementBackupLeaseLostError):
+        raise
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "artifact_path": _encrypted_blob_name(target_blob_name, fernet),
+            "source_bytes": _safe_int(
+                (source_item or {}).get("source_size"),
+                default=0,
+                minimum=0,
+            ),
+            "artifact_bytes": 0,
+            "retry_attempt_count": 0,
+            "throttle_count": 0,
+            "throttle_delay_seconds": 0.0,
+            "transfer_format": (
+                DATA_MANAGEMENT_BLOB_BACKUP_ENCRYPTED_FORMAT
+                if fernet else DATA_MANAGEMENT_BLOB_BACKUP_RAW_FORMAT
+            ),
+            "failure_summary": (
+                _sanitize_data_management_backup_text(str(exc)) or
+                "Source blob transfer failed."
+            ),
+        }
+
+
+def _transfer_backup_source_blob(
+    target_container_client,
+    source_blob_client,
+    target_blob_name,
+    source_item,
+    fernet=None,
+    backup_job=None,
+    chunk_size_bytes=None,
+    retry_count=None,
+    cancel_event=None,
+):
+    """Transfer one source blob through bounded blocks and verify its durable target."""
+    final_blob_name = _encrypted_blob_name(target_blob_name, fernet)
+    transfer_format = (
+        DATA_MANAGEMENT_BLOB_BACKUP_ENCRYPTED_FORMAT
+        if fernet else DATA_MANAGEMENT_BLOB_BACKUP_RAW_FORMAT
+    )
+    target_blob_client = target_container_client.get_blob_client(final_blob_name)
+    existing_target = _get_blob_properties_or_none(target_blob_client)
+    if _is_verified_backup_blob_artifact(
+        existing_target,
+        backup_job,
+        source_item,
+        transfer_format,
+    ):
+        return {
+            "status": "reused",
+            "artifact_path": final_blob_name,
+            "source_bytes": _safe_int(source_item.get("source_size"), default=0, minimum=0),
+            "artifact_bytes": _safe_int(
+                _get_backup_blob_property(existing_target, "size"),
+                default=0,
+                minimum=0,
+            ),
+            "retry_attempt_count": 0,
+            "throttle_count": 0,
+            "throttle_delay_seconds": 0.0,
+            "transfer_format": transfer_format,
+        }
+
+    configured_chunk_size = _safe_int(
+        chunk_size_bytes,
+        default=DATA_MANAGEMENT_BLOB_BACKUP_DEFAULT_CHUNK_SIZE_MIB * 1024 * 1024,
+        minimum=DATA_MANAGEMENT_BLOB_BACKUP_MIN_CHUNK_SIZE_MIB * 1024 * 1024,
+        maximum=DATA_MANAGEMENT_BLOB_BACKUP_MAX_CHUNK_SIZE_MIB * 1024 * 1024,
+    )
+    source_size = _safe_int(source_item.get("source_size"), default=0, minimum=0)
+    required_chunk_size = (
+        (source_size + DATA_MANAGEMENT_BLOB_BACKUP_MAX_BLOCKS - 1) //
+        DATA_MANAGEMENT_BLOB_BACKUP_MAX_BLOCKS
+    )
+    if required_chunk_size > DATA_MANAGEMENT_BLOB_BACKUP_MAX_CHUNK_SIZE_MIB * 1024 * 1024:
+        raise ValueError(
+            "Source blob exceeds the configured bounded block-transfer size limit."
+        )
+    effective_chunk_size = max(configured_chunk_size, required_chunk_size)
+    attempts = _safe_int(
+        retry_count,
+        default=DATA_MANAGEMENT_BACKUP_DEFAULT_RETRY_COUNT,
+        minimum=1,
+        maximum=DATA_MANAGEMENT_BACKUP_MAX_RETRY_COUNT,
+    )
+    source_etag = _safe_text(source_item.get("source_etag"))
+    total_chunks = max(
+        1,
+        (source_size + effective_chunk_size - 1) // effective_chunk_size,
+    )
+    transfer_identity = hashlib.sha256(json.dumps(
+        {
+            "job_id": _safe_text((backup_job or {}).get("id")),
+            "attempt_id": _safe_text((backup_job or {}).get("backup_attempt_id")),
+            "lease_generation": _safe_int(
+                (backup_job or {}).get("lease_generation"),
+                default=0,
+                minimum=0,
+            ),
+            "source_version": _safe_text(source_item.get("source_version")),
+        },
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")).hexdigest()
+    retry_attempt_count = 0
+    throttle_count = 0
+    throttle_delay_seconds = 0.0
+    started_at = time.perf_counter()
+
+    for attempt in range(1, attempts + 1):
+        try:
+            if cancel_event is not None and cancel_event.is_set():
+                raise DataManagementBackupCanceledError(
+                    "Source blob transfer stopped after backup cancellation or lease loss."
+                )
+            pending_metadata = _build_backup_blob_target_metadata(
+                backup_job,
+                source_item,
+                transfer_format,
+                "pending",
+            )
+            current_target = _get_blob_properties_or_none(target_blob_client)
+            if _is_verified_backup_blob_artifact(
+                current_target,
+                backup_job,
+                source_item,
+                transfer_format,
+            ):
+                return {
+                    "status": "reused",
+                    "artifact_path": final_blob_name,
+                    "source_bytes": source_size,
+                    "artifact_bytes": _safe_int(
+                        _get_backup_blob_property(current_target, "size"),
+                        default=0,
+                        minimum=0,
+                    ),
+                    "target_etag": _safe_text(
+                        _get_backup_blob_property(current_target, "etag")
+                    ),
+                    "retry_attempt_count": retry_attempt_count,
+                    "throttle_count": throttle_count,
+                    "throttle_delay_seconds": round(throttle_delay_seconds, 3),
+                    "elapsed_seconds": round(time.perf_counter() - started_at, 3),
+                    "transfer_format": transfer_format,
+                }
+            target_condition = {}
+            current_target_etag = _safe_text(
+                _get_backup_blob_property(current_target, "etag")
+            )
+            if current_target_etag:
+                target_condition.update({
+                    "etag": current_target_etag,
+                    "match_condition": MatchConditions.IfNotModified,
+                })
+            else:
+                target_condition["match_condition"] = MatchConditions.IfMissing
+            block_list = []
+            artifact_bytes = 0
+            if source_size == 0:
+                empty_payload = _encode_backup_blob_chunk(
+                    b"",
+                    fernet,
+                    chunk_index=0,
+                    total_chunks=1,
+                    source_version=source_item.get("source_version"),
+                )
+                target_blob_client.upload_blob(
+                    data=empty_payload,
+                    overwrite=True,
+                    metadata=pending_metadata,
+                    content_settings=ContentSettings(content_type="application/octet-stream"),
+                    timeout=DATA_MANAGEMENT_BLOB_SERVICE_TIMEOUT_SECONDS,
+                    **target_condition,
+                )
+                artifact_bytes = len(empty_payload)
+            else:
+                block_index = 0
+                for offset in range(0, source_size, effective_chunk_size):
+                    if cancel_event is not None and cancel_event.is_set():
+                        raise DataManagementBackupCanceledError(
+                            "Source blob transfer stopped after backup cancellation or lease loss."
+                        )
+                    length = min(effective_chunk_size, source_size - offset)
+                    source_chunk = _read_backup_blob_range(
+                        source_blob_client,
+                        offset,
+                        length,
+                        source_etag,
+                    )
+                    if len(source_chunk) != length:
+                        raise RuntimeError(
+                            "Source blob range length changed during transfer."
+                        )
+                    block_payload = _encode_backup_blob_chunk(
+                        source_chunk,
+                        fernet,
+                        chunk_index=block_index,
+                        total_chunks=total_chunks,
+                        source_version=source_item.get("source_version"),
+                    )
+                    block_id = _backup_blob_block_id(block_index, transfer_identity)
+                    target_blob_client.stage_block(
+                        block_id=block_id,
+                        data=block_payload,
+                        timeout=DATA_MANAGEMENT_BLOB_SERVICE_TIMEOUT_SECONDS,
+                    )
+                    block_list.append(BlobBlock(block_id=block_id))
+                    artifact_bytes += len(block_payload)
+                    block_index += 1
+                target_blob_client.commit_block_list(
+                    block_list,
+                    metadata=pending_metadata,
+                    content_settings=ContentSettings(content_type="application/octet-stream"),
+                    timeout=DATA_MANAGEMENT_BLOB_SERVICE_TIMEOUT_SECONDS,
+                    **target_condition,
+                )
+
+            target_properties = target_blob_client.get_blob_properties()
+            if _safe_int(
+                _get_backup_blob_property(target_properties, "size"),
+                default=-1,
+            ) != artifact_bytes:
+                raise RuntimeError(
+                    "Backup artifact length did not match the committed transfer."
+                )
+            current_source_properties = source_blob_client.get_blob_properties()
+            current_source_etag = _safe_text(
+                _get_backup_blob_property(current_source_properties, "etag")
+            )
+            if source_etag and current_source_etag != source_etag:
+                raise RuntimeError("Source blob changed while it was being backed up.")
+            succeeded_metadata = _build_backup_blob_target_metadata(
+                backup_job,
+                source_item,
+                transfer_format,
+                "succeeded",
+            )
+            metadata_kwargs = {"metadata": succeeded_metadata}
+            target_etag = _safe_text(_get_backup_blob_property(target_properties, "etag"))
+            if target_etag:
+                metadata_kwargs.update({
+                    "etag": target_etag,
+                    "match_condition": MatchConditions.IfNotModified,
+                })
+            target_blob_client.set_blob_metadata(**metadata_kwargs)
+            final_target_properties = target_blob_client.get_blob_properties()
+            return {
+                "status": "succeeded",
+                "artifact_path": final_blob_name,
+                "source_bytes": source_size,
+                "artifact_bytes": artifact_bytes,
+                "target_etag": _safe_text(
+                    _get_backup_blob_property(final_target_properties, "etag")
+                ),
+                "retry_attempt_count": retry_attempt_count,
+                "throttle_count": throttle_count,
+                "throttle_delay_seconds": round(throttle_delay_seconds, 3),
+                "elapsed_seconds": round(time.perf_counter() - started_at, 3),
+                "transfer_format": transfer_format,
+            }
+        except (DataManagementBackupCanceledError, DataManagementBackupLeaseLostError):
+            raise
+        except Exception as exc:
+            status_code = _get_backup_exception_status_code(exc)
+            if status_code in {429, 503}:
+                throttle_count += 1
+            if not _is_retryable_backup_blob_error(exc) or attempt >= attempts:
+                return {
+                    "status": "failed",
+                    "artifact_path": final_blob_name,
+                    "source_bytes": source_size,
+                    "artifact_bytes": 0,
+                    "retry_attempt_count": retry_attempt_count,
+                    "throttle_count": throttle_count,
+                    "throttle_delay_seconds": round(throttle_delay_seconds, 3),
+                    "elapsed_seconds": round(time.perf_counter() - started_at, 3),
+                    "transfer_format": transfer_format,
+                    "failure_summary": (
+                        _sanitize_data_management_backup_text(str(exc)) or
+                        "Source blob transfer failed."
+                    ),
+                }
+            retry_attempt_count += 1
+            delay = _get_backup_retry_delay(exc, attempt)
+            throttle_delay_seconds += delay
+            if cancel_event is not None:
+                if cancel_event.wait(delay):
+                    raise DataManagementBackupCanceledError(
+                        "Source blob transfer stopped during retry backoff."
+                    ) from exc
+            else:
+                time.sleep(delay)
+    raise RuntimeError("Source blob transfer exhausted its retry budget.")
+
+
 def _copy_source_blob(
     target_container_client,
     source_blob_client,
@@ -10301,40 +10913,31 @@ def _copy_source_blob(
     backup_settings=None,
     heartbeat_message="",
 ):
-    def download():
-        return source_blob_client.download_blob().readall()
-
-    if isinstance(backup_job, dict):
-        blob_bytes = _run_backup_transfer_with_heartbeat(
-            backup_job,
+    """Compatibility wrapper for bounded source-blob transfer callers."""
+    del heartbeat_message
+    source_properties = source_blob_client.get_blob_properties()
+    source_item = _build_backup_blob_source_item("", target_blob_name, source_properties)
+    result = _transfer_backup_source_blob(
+        target_container_client,
+        source_blob_client,
+        target_blob_name,
+        source_item,
+        fernet=fernet,
+        backup_job=backup_job,
+        chunk_size_bytes=_get_backup_blob_chunk_size_bytes(
             backup_settings or {},
-            heartbeat_message or "Downloading source blob for backup",
-            download,
-        )
-    else:
-        blob_bytes = download()
-    final_blob_name = _encrypted_blob_name(target_blob_name, fernet)
-    if fernet:
-        blob_bytes = fernet.encrypt(blob_bytes)
-
-    def upload():
-        target_container_client.upload_blob(
-            name=final_blob_name,
-            data=blob_bytes,
-            overwrite=True,
-            content_settings=ContentSettings(content_type="application/octet-stream"),
-        )
-
-    if isinstance(backup_job, dict):
-        _run_backup_transfer_with_heartbeat(
-            backup_job,
+            (backup_job or {}).get("backup_plan") if isinstance(backup_job, dict) else None,
+        ),
+        retry_count=_get_backup_blob_retry_count(
             backup_settings or {},
-            heartbeat_message or "Uploading source blob backup artifact",
-            upload,
+            (backup_job or {}).get("backup_plan") if isinstance(backup_job, dict) else None,
+        ),
+    )
+    if result.get("status") == "failed":
+        raise RuntimeError(
+            result.get("failure_summary") or "Source blob transfer failed."
         )
-    else:
-        upload()
-    return final_blob_name, len(blob_bytes)
+    return result["artifact_path"], result["artifact_bytes"]
 
 
 def _export_source_blob_artifacts(container_client, base_prefix, settings, fernet=None):
@@ -10381,7 +10984,7 @@ def _export_source_blob_artifacts(container_client, base_prefix, settings, ferne
                 artifact["bytes"] += uploaded_bytes
         except Exception as exc:
             artifact["status"] = "warning"
-            artifact["warning"] = str(exc)
+            artifact["warning"] = _sanitize_data_management_backup_text(str(exc))
         artifacts.append(artifact)
     return artifacts
 
@@ -10634,6 +11237,14 @@ def _sanitize_backup_manifest_entry(entry):
         "artifact_checkpoint_id",
         "artifact_path",
         "bytes",
+        "source_etag",
+        "source_last_modified",
+        "source_bytes",
+        "artifact_bytes",
+        "target_etag",
+        "retry_attempt_count",
+        "throttle_count",
+        "transfer_format",
         "recorded_at",
         "failure_summary",
         "skip_summary",
@@ -10734,25 +11345,35 @@ def _update_backup_state_totals(state):
         "skipped_count": 0,
         "failed_count": 0,
         "bytes": 0,
+        "artifact_bytes": 0,
         "checkpoint_count": 0,
         "request_units": 0.0,
         "retry_attempt_count": 0,
         "throttle_count": 0,
     }
     current_container = ""
+    current_file = ""
     current_page = 0
     started_at_values = []
     for resource in (state.get("resources") or {}).values():
         metrics = _backup_resource_metrics(resource)
         totals["processed_count"] += _safe_int(metrics.get("processed_count"), default=0, minimum=0)
         totals["exported_count"] += _safe_int(
-            metrics.get("item_count", metrics.get("exported_count")),
+            metrics.get(
+                "item_count",
+                metrics.get("exported_count", metrics.get("blob_count")),
+            ),
             default=0,
             minimum=0,
         )
         totals["skipped_count"] += _safe_int(metrics.get("skipped_count"), default=0, minimum=0)
         totals["failed_count"] += _safe_int(metrics.get("failed_count"), default=0, minimum=0)
         totals["bytes"] += _safe_int(metrics.get("bytes"), default=0, minimum=0)
+        totals["artifact_bytes"] += _safe_int(
+            metrics.get("artifact_bytes"),
+            default=0,
+            minimum=0,
+        )
         totals["checkpoint_count"] += _safe_int(metrics.get("checkpoint_count"), default=0, minimum=0)
         try:
             totals["request_units"] += max(0.0, float(metrics.get("request_units") or 0.0))
@@ -10780,6 +11401,7 @@ def _update_backup_state_totals(state):
                 metrics.get("current_container") or metrics.get("current_index")
             )
             current_page = _safe_int(metrics.get("current_page"), default=0, minimum=0)
+            current_file = _safe_text(metrics.get("current_file"))
     started_at = min(started_at_values) if started_at_values else None
     elapsed_seconds = max(
         0.001,
@@ -10788,19 +11410,23 @@ def _update_backup_state_totals(state):
     totals["request_units"] = round(totals["request_units"], 3)
     totals["elapsed_seconds"] = round(elapsed_seconds, 3)
     totals["records_per_second"] = round(totals["processed_count"] / elapsed_seconds, 3)
+    totals["bytes_per_second"] = round(totals["bytes"] / elapsed_seconds, 3)
     totals["request_units_per_second"] = round(totals["request_units"] / elapsed_seconds, 3)
     state["totals"] = totals
     state["telemetry"] = {
         "current_container": current_container,
+        "current_file": current_file,
         "current_page": current_page,
         "checkpoint_position": totals["checkpoint_count"],
         "records_processed": totals["processed_count"],
         "bytes": totals["bytes"],
+        "artifact_bytes": totals["artifact_bytes"],
         "request_units": totals["request_units"],
         "retries": totals["retry_attempt_count"],
         "throttles": totals["throttle_count"],
         "elapsed_seconds": totals["elapsed_seconds"],
         "records_per_second": totals["records_per_second"],
+        "bytes_per_second": totals["bytes_per_second"],
         "request_units_per_second": totals["request_units_per_second"],
     }
     return totals
@@ -12417,6 +13043,9 @@ def _execute_backup_jsonl_resource(
                 resource_name,
                 source_item,
                 "skipped",
+                source_etag=source_item.get("source_etag"),
+                source_last_modified=source_item.get("last_modified"),
+                source_bytes=source_item.get("source_size"),
                 skip_summary=skip_summary,
             ))
             _queue_backup_latest_item_state_update(
@@ -12996,7 +13625,7 @@ def _execute_backup_source_blob_resource(
     source_container_client,
     source_container_name,
 ):
-    """Copy source blobs one at a time so each successful blob is durable on restart."""
+    """Transfer source blobs concurrently while one coordinator commits checkpoints."""
     resource_name = f"source_blobs:{source_container_name}"
     _sync_backup_latest_item_state_from_manifest(job, resource_name)
     existing_resource = get_backup_resource(state, resource_name)
@@ -13005,12 +13634,39 @@ def _execute_backup_source_blob_resource(
     resource = start_backup_resource(state, resource_name, "source_blobs")
     previous_progress = resource.get("progress") if isinstance(resource.get("progress"), dict) else {}
     previous_checkpoint = resource.get("checkpoint") if isinstance(resource.get("checkpoint"), dict) else {}
-    copied_count = _safe_int(previous_progress.get("blob_count"), default=0, minimum=0)
-    skipped_count = _safe_int(previous_progress.get("skipped_count"), default=0, minimum=0)
+    copied_count = 0
+    reused_count = 0
+    skipped_count = 0
     failed_count = 0
-    byte_count = _safe_int(previous_progress.get("bytes"), default=0, minimum=0)
+    byte_count = 0
+    artifact_byte_count = 0
     checkpoint_count = _safe_int(previous_progress.get("checkpoint_count"), default=0, minimum=0)
+    source_read_count = _safe_int(
+        previous_progress.get("source_read_count"),
+        default=0,
+        minimum=0,
+    )
+    retry_attempt_count = _safe_int(
+        previous_progress.get("retry_attempt_count"),
+        default=0,
+        minimum=0,
+    )
+    throttle_count = _safe_int(
+        previous_progress.get("throttle_count"),
+        default=0,
+        minimum=0,
+    )
+    throttle_delay_seconds = float(previous_progress.get("throttle_delay_seconds") or 0.0)
     batch_number = _safe_int(previous_checkpoint.get("next_batch_number"), default=1, minimum=1)
+    backup_plan = job.get("backup_plan") if isinstance(job.get("backup_plan"), dict) else {}
+    configured_parallelism = _get_backup_blob_parallel_operations(settings, backup_plan)
+    active_parallelism = configured_parallelism
+    chunk_size_bytes = _get_backup_blob_chunk_size_bytes(settings, backup_plan)
+    retry_count = _get_backup_blob_retry_count(settings, backup_plan)
+    clean_transfer_count = 0
+    current_files = set()
+    started_at = time.perf_counter()
+    cancel_event = Event()
     append_manifest, flush_manifest, manifest_buffer = _create_backup_manifest_writer(
         job.get("id"),
         resource_name,
@@ -13018,17 +13674,31 @@ def _execute_backup_source_blob_resource(
     pending_latest_state_updates = []
 
     def persist(message):
-        nonlocal state
+        nonlocal state, previous_checkpoint
         _assert_backup_job_lease(job)
         if manifest_buffer:
             flush_manifest()
+        elapsed_seconds = max(0.001, time.perf_counter() - started_at)
         progress = {
             "processed_count": copied_count + skipped_count + failed_count,
             "blob_count": copied_count,
+            "reused_count": reused_count,
             "skipped_count": skipped_count,
             "failed_count": failed_count,
             "bytes": byte_count,
+            "artifact_bytes": artifact_byte_count,
             "checkpoint_count": checkpoint_count,
+            "source_read_count": source_read_count,
+            "retry_attempt_count": retry_attempt_count,
+            "throttle_count": throttle_count,
+            "throttle_delay_seconds": round(throttle_delay_seconds, 3),
+            "parallel_operations": configured_parallelism,
+            "active_parallel_operations": active_parallelism,
+            "chunk_size_bytes": chunk_size_bytes,
+            "in_flight_count": len(current_files),
+            "current_file": sorted(current_files)[0] if current_files else "",
+            "elapsed_seconds": round(elapsed_seconds, 3),
+            "bytes_per_second": round(byte_count / elapsed_seconds, 3),
         }
         state = _persist_backup_checkpoint(
             job,
@@ -13046,172 +13716,312 @@ def _execute_backup_source_blob_resource(
             pending_latest_state_updates,
         )
 
-    try:
-        blob_properties_iterable = source_container_client.list_blobs()
-        for blob_properties in blob_properties_iterable:
-            artifact_path = ""
-            blob_name = _safe_text(getattr(blob_properties, "name", None) or blob_properties.get("name"))
+    def record_skipped(source_item, latest_state):
+        nonlocal skipped_count
+        skipped_count += 1
+        skip_summary = "Latest successful backup state matches the source version."
+        _append_backup_state_summary(state, "skipped_items", {
+            "service": "source_blobs",
+            "resource_name": resource_name,
+            "source_identity": source_item["source_identity"],
+            "skip_summary": skip_summary,
+        })
+        append_manifest(_build_backup_manifest_entry(
+            job,
+            "source_blobs",
+            resource_name,
+            source_item,
+            "skipped",
+            skip_summary=skip_summary,
+        ))
+        _queue_backup_latest_item_state_update(
+            pending_latest_state_updates,
+            source_item,
+            "skipped",
+            checkpoint_id=_safe_text((latest_state or {}).get("artifact_checkpoint_id")),
+            artifact_path=_safe_text((latest_state or {}).get("artifact_path")),
+            skip_summary=skip_summary,
+        )
+
+    def next_transfer_candidate(source_iterator):
+        nonlocal source_read_count
+        while True:
+            blob_properties = next(source_iterator)
+            blob_name = _safe_text(_get_backup_blob_property(blob_properties, "name"))
             if not blob_name:
                 continue
-            last_modified = getattr(blob_properties, "last_modified", None)
-            if last_modified is None and isinstance(blob_properties, dict):
-                last_modified = blob_properties.get("last_modified")
+            source_read_count += 1
+            source_item = _build_backup_blob_source_item(
+                source_container_name,
+                blob_name,
+                blob_properties,
+            )
             if not _is_backup_value_within_cutoff(
-                last_modified,
-                (job.get("backup_plan") or {}).get("source_cutoff_at"),
+                source_item.get("last_modified"),
+                backup_plan.get("source_cutoff_at"),
             ):
                 continue
-            blob_etag = getattr(blob_properties, "etag", None)
-            if blob_etag is None and isinstance(blob_properties, dict):
-                blob_etag = blob_properties.get("etag")
-            blob_size = getattr(blob_properties, "size", None)
-            if blob_size is None and isinstance(blob_properties, dict):
-                blob_size = blob_properties.get("size")
-            source_item = {
-                "source_identity": _build_backup_source_identity(
-                    "source_blobs",
-                    source_container_name,
-                    blob_name,
-                ),
-                "source_version": _build_backup_source_version({
-                    "etag": blob_etag,
-                    "last_modified": last_modified,
-                    "size": blob_size,
-                }),
-            }
             latest_state = _read_backup_latest_item_state(
                 _get_backup_source_scope(job),
-                _build_backup_lineage_id(job.get("backup_plan")),
+                _build_backup_lineage_id(backup_plan),
                 "source_blobs",
                 resource_name,
                 source_item["source_identity"],
             )
             if not _is_backup_item_due_for_export(
-                job.get("backup_plan"),
+                backup_plan,
                 latest_state,
                 source_item["source_version"],
                 backup_job_id=job.get("id"),
             ):
-                skipped_count += 1
-                skip_summary = "Latest successful backup state matches the source version."
-                _append_backup_state_summary(state, "skipped_items", {
-                    "service": "source_blobs",
-                    "resource_name": resource_name,
-                    "source_identity": source_item["source_identity"],
-                    "skip_summary": skip_summary,
-                })
-                append_manifest(_build_backup_manifest_entry(
-                    job,
-                    "source_blobs",
-                    resource_name,
-                    source_item,
-                    "skipped",
-                    skip_summary=skip_summary,
-                ))
-                _queue_backup_latest_item_state_update(
-                    pending_latest_state_updates,
-                    source_item,
-                    "skipped",
-                    checkpoint_id=_safe_text((latest_state or {}).get("artifact_checkpoint_id")),
-                    artifact_path=_safe_text((latest_state or {}).get("artifact_path")),
-                    skip_summary=skip_summary,
-                )
+                if (
+                    _safe_text((latest_state or {}).get("job_id")) ==
+                    _safe_text(job.get("id")) and
+                    _safe_text((latest_state or {}).get("status")).lower() == "succeeded"
+                ):
+                    return {
+                        "blob_name": blob_name,
+                        "source_item": source_item,
+                        "target_blob_name": (
+                            f"{base_prefix}/source_blobs/{source_container_name}/{blob_name}"
+                        ),
+                    }
+                record_skipped(source_item, latest_state)
                 if len(manifest_buffer) >= DATA_MANAGEMENT_BACKUP_MANIFEST_BATCH_SIZE:
                     persist(f"Checkpointed unchanged source blobs for {source_container_name}")
                 continue
+            return {
+                "blob_name": blob_name,
+                "source_item": source_item,
+                "target_blob_name": (
+                    f"{base_prefix}/source_blobs/{source_container_name}/{blob_name}"
+                ),
+            }
 
-            checkpoint_id = _build_backup_checkpoint_id(job, resource_name, batch_number)
-            target_blob_name = f"{base_prefix}/source_blobs/{source_container_name}/{blob_name}"
-            _assert_backup_job_lease(job)
-            try:
-                source_blob_client = source_container_client.get_blob_client(blob_name)
-                artifact_path, uploaded_bytes = _copy_source_blob(
-                    container_client,
-                    source_blob_client,
-                    target_blob_name,
-                    fernet=fernet,
-                    backup_job=job,
-                    backup_settings=settings,
-                    heartbeat_message=f"Copying source blob backup for {source_container_name}",
-                )
-                _assert_backup_job_lease(job)
-                copied_count += 1
-                byte_count += _safe_int(uploaded_bytes, default=0, minimum=0)
-                append_manifest(_build_backup_manifest_entry(
-                    job,
-                    "source_blobs",
-                    resource_name,
-                    source_item,
-                    "succeeded",
-                    artifact_checkpoint_id=checkpoint_id,
-                    artifact_path=artifact_path,
-                    bytes=uploaded_bytes,
-                ))
-                _queue_backup_latest_item_state_update(
-                    pending_latest_state_updates,
-                    source_item,
-                    "succeeded",
-                    checkpoint_id=checkpoint_id,
-                    artifact_path=artifact_path,
-                )
-            except (DataManagementBackupCanceledError, DataManagementBackupLeaseLostError):
-                raise
-            except Exception as exc:
-                failed_count += 1
-                failure_summary = _safe_text(str(exc))[:500] or "Source blob copy failed."
-                _assert_backup_job_lease(job)
-                _append_backup_state_summary(state, "failed_items", {
-                    "service": "source_blobs",
-                    "resource_name": resource_name,
-                    "source_identity": source_item["source_identity"],
-                    "failure_summary": failure_summary,
-                })
-                append_manifest(_build_backup_manifest_entry(
-                    job,
-                    "source_blobs",
-                    resource_name,
-                    source_item,
-                    "failed",
-                    failure_summary=failure_summary,
-                ))
-                _queue_backup_latest_item_state_update(
-                    pending_latest_state_updates,
-                    source_item,
-                    "failed",
-                    failure_summary=failure_summary,
-                )
-            checkpoint_count += 1
-            previous_checkpoint = _build_backup_checkpoint_summary(
-                previous_checkpoint,
-                batch_number,
-                artifact_path,
+    def record_transfer_result(candidate, transfer_result):
+        nonlocal copied_count, reused_count, failed_count, byte_count
+        nonlocal artifact_byte_count, checkpoint_count, batch_number
+        nonlocal previous_checkpoint, retry_attempt_count, throttle_count
+        nonlocal throttle_delay_seconds, active_parallelism, clean_transfer_count
+        source_item = candidate["source_item"]
+        artifact_path = _safe_text(transfer_result.get("artifact_path"))
+        result_status = _safe_text(transfer_result.get("status")).lower()
+        retry_attempt_count += _safe_int(
+            transfer_result.get("retry_attempt_count"),
+            default=0,
+            minimum=0,
+        )
+        result_throttles = _safe_int(
+            transfer_result.get("throttle_count"),
+            default=0,
+            minimum=0,
+        )
+        throttle_count += result_throttles
+        throttle_delay_seconds += float(
+            transfer_result.get("throttle_delay_seconds") or 0.0
+        )
+        if result_throttles:
+            active_parallelism = max(1, active_parallelism // 2)
+            clean_transfer_count = 0
+        else:
+            clean_transfer_count += 1
+            if (
+                active_parallelism < configured_parallelism and
+                clean_transfer_count >= DATA_MANAGEMENT_BLOB_BACKUP_CLEAN_TRANSFER_RECOVERY_COUNT
+            ):
+                active_parallelism += 1
+                clean_transfer_count = 0
+
+        checkpoint_id = _build_backup_checkpoint_id(job, resource_name, batch_number)
+        if result_status in {"succeeded", "reused"}:
+            copied_count += 1
+            if result_status == "reused":
+                reused_count += 1
+            source_bytes = _safe_int(
+                transfer_result.get("source_bytes"),
+                default=0,
+                minimum=0,
             )
-            batch_number += 1
-            persist(f"Checkpointed source blob backup for {source_container_name}")
+            artifact_bytes = _safe_int(
+                transfer_result.get("artifact_bytes"),
+                default=0,
+                minimum=0,
+            )
+            byte_count += source_bytes
+            artifact_byte_count += artifact_bytes
+            append_manifest(_build_backup_manifest_entry(
+                job,
+                "source_blobs",
+                resource_name,
+                source_item,
+                "succeeded",
+                artifact_checkpoint_id=checkpoint_id,
+                artifact_path=artifact_path,
+                bytes=source_bytes,
+                source_etag=source_item.get("source_etag"),
+                source_last_modified=source_item.get("last_modified"),
+                source_bytes=source_bytes,
+                artifact_bytes=artifact_bytes,
+                target_etag=transfer_result.get("target_etag"),
+                retry_attempt_count=transfer_result.get("retry_attempt_count"),
+                throttle_count=transfer_result.get("throttle_count"),
+                transfer_format=transfer_result.get("transfer_format"),
+            ))
+            _queue_backup_latest_item_state_update(
+                pending_latest_state_updates,
+                source_item,
+                "succeeded",
+                checkpoint_id=checkpoint_id,
+                artifact_path=artifact_path,
+            )
+        else:
+            failed_count += 1
+            failure_summary = (
+                _sanitize_data_management_backup_text(
+                    transfer_result.get("failure_summary")
+                ) or
+                "Source blob transfer failed."
+            )
+            _append_backup_state_summary(state, "failed_items", {
+                "service": "source_blobs",
+                "resource_name": resource_name,
+                "source_identity": source_item["source_identity"],
+                "failure_summary": failure_summary,
+            })
+            append_manifest(_build_backup_manifest_entry(
+                job,
+                "source_blobs",
+                resource_name,
+                source_item,
+                "failed",
+                artifact_path=artifact_path,
+                source_etag=source_item.get("source_etag"),
+                source_last_modified=source_item.get("last_modified"),
+                source_bytes=source_item.get("source_size"),
+                retry_attempt_count=transfer_result.get("retry_attempt_count"),
+                throttle_count=transfer_result.get("throttle_count"),
+                transfer_format=transfer_result.get("transfer_format"),
+                failure_summary=failure_summary,
+            ))
+            _queue_backup_latest_item_state_update(
+                pending_latest_state_updates,
+                source_item,
+                "failed",
+                failure_summary=failure_summary,
+            )
+        checkpoint_count += 1
+        previous_checkpoint = _build_backup_checkpoint_summary(
+            previous_checkpoint,
+            batch_number,
+            artifact_path,
+        )
+        batch_number += 1
+        persist(f"Checkpointed source blob backup for {source_container_name}")
+
+    try:
+        source_iterator = iter(source_container_client.list_blobs())
+        source_exhausted = False
+        in_flight = {}
+        last_heartbeat_at = time.monotonic()
+        with ThreadPoolExecutor(max_workers=configured_parallelism) as executor:
+            try:
+                while not source_exhausted or in_flight:
+                    while not source_exhausted and len(in_flight) < active_parallelism:
+                        _assert_backup_job_lease(job)
+                        try:
+                            candidate = next_transfer_candidate(source_iterator)
+                        except StopIteration:
+                            source_exhausted = True
+                            break
+                        current_files.add(candidate["source_item"]["source_identity"])
+                        future = executor.submit(
+                            _run_backup_source_blob_transfer,
+                            container_client,
+                            source_container_client.get_blob_client(candidate["blob_name"]),
+                            candidate["target_blob_name"],
+                            candidate["source_item"],
+                            fernet,
+                            job,
+                            chunk_size_bytes,
+                            retry_count,
+                            cancel_event,
+                        )
+                        in_flight[future] = candidate
+                    if not in_flight:
+                        continue
+                    completed, _ = wait(
+                        tuple(in_flight),
+                        timeout=DATA_MANAGEMENT_BACKUP_HEARTBEAT_POLL_SECONDS,
+                        return_when=FIRST_COMPLETED,
+                    )
+                    if not completed:
+                        if (
+                            time.monotonic() - last_heartbeat_at >=
+                            DATA_MANAGEMENT_BACKUP_HEARTBEAT_INTERVAL_SECONDS
+                        ):
+                            _persist_backup_heartbeat(
+                                job,
+                                settings,
+                                f"Transferring source blobs for {source_container_name}",
+                            )
+                            last_heartbeat_at = time.monotonic()
+                        else:
+                            _assert_backup_job_lease(job)
+                        continue
+                    for future in completed:
+                        candidate = in_flight.pop(future)
+                        current_files.discard(candidate["source_item"]["source_identity"])
+                        transfer_result = future.result()
+                        record_transfer_result(candidate, transfer_result)
+            except (DataManagementBackupCanceledError, DataManagementBackupLeaseLostError):
+                cancel_event.set()
+                raise
     except (DataManagementBackupCanceledError, DataManagementBackupLeaseLostError):
+        cancel_event.set()
         raise
     except Exception as exc:
+        cancel_event.set()
         failed_count += 1
+        failure_summary = (
+            _sanitize_data_management_backup_text(str(exc)) or
+            "Source blob enumeration failed."
+        )
         _append_backup_state_summary(state, "failed_items", {
             "service": "source_blobs",
             "resource_name": resource_name,
-            "failure_summary": _safe_text(str(exc))[:500],
+            "failure_summary": failure_summary,
         })
 
     if manifest_buffer or pending_latest_state_updates:
         persist(f"Finalized source blob checkpoints for {source_container_name}")
+    elapsed_seconds = max(0.001, time.perf_counter() - started_at)
     result = {
         "name": source_container_name,
         "type": "source_blob_container",
         "container_name": source_container_name,
         "status": "warning" if failed_count else "completed",
         "blob_count": copied_count,
+        "reused_count": reused_count,
         "skipped_count": skipped_count,
         "failed_count": failed_count,
         "bytes": byte_count,
+        "artifact_bytes": artifact_byte_count,
         "encrypted": bool(fernet),
+        "transfer_format": (
+            DATA_MANAGEMENT_BLOB_BACKUP_ENCRYPTED_FORMAT
+            if fernet else DATA_MANAGEMENT_BLOB_BACKUP_RAW_FORMAT
+        ),
         "prefix": f"{base_prefix}/source_blobs/{source_container_name}/",
         "checkpoint_count": checkpoint_count,
+        "source_read_count": source_read_count,
+        "retry_attempt_count": retry_attempt_count,
+        "throttle_count": throttle_count,
+        "throttle_delay_seconds": round(throttle_delay_seconds, 3),
+        "parallel_operations": configured_parallelism,
+        "active_parallel_operations": active_parallelism,
+        "chunk_size_bytes": chunk_size_bytes,
+        "elapsed_seconds": round(elapsed_seconds, 3),
+        "bytes_per_second": round(byte_count / elapsed_seconds, 3),
     }
     if failed_count:
         _fail_backup_resource_checkpoint(

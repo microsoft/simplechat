@@ -30,6 +30,14 @@ function getMessageMarkdown(messageDiv, role) {
     return '';
 }
 
+function getMessagePlainText(messageDiv) {
+    const messageText = messageDiv.querySelector('.message-text');
+    if (!messageText) {
+        return '';
+    }
+    return String(messageText.innerText || messageText.textContent || '').trim();
+}
+
 /**
  * Get the sender label from a message div.
  */
@@ -185,6 +193,33 @@ export function exportMessageAsMarkdown(messageDiv, messageId, role) {
     const filename = `message_export_${filenameTimestamp()}.md`;
     downloadBlob(blob, filename);
     showToast('Message exported as Markdown.', 'success');
+}
+
+/**
+ * Export a single message as an MP3 using the active TTS voice and speed.
+ */
+export async function exportMessageAsAudio(messageDiv, messageId, role) {
+    if (!window.appSettings?.enable_text_to_speech) {
+        showToast('Text-to-speech is not enabled.', 'warning');
+        return;
+    }
+
+    const content = getMessagePlainText(messageDiv);
+    if (!content) {
+        showToast('No message content to export.', 'warning');
+        return;
+    }
+
+    try {
+        const { synthesizeSpeechBlob } = await import('./chat-tts.js');
+        const audioBlob = await synthesizeSpeechBlob(content);
+        const filename = `message_audio_${filenameTimestamp()}.mp3`;
+        downloadBlob(audioBlob, filename);
+        showToast('Message exported as audio.', 'success');
+    } catch (err) {
+        console.error('Error exporting message to audio:', err);
+        showToast(err.message || 'Failed to export message as audio.', 'danger');
+    }
 }
 
 /**

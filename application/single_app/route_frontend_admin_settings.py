@@ -41,6 +41,10 @@ from functions_notifications import broadcast_system_notification
 from functions_logging import *
 from functions_document_actions import normalize_document_action_capabilities
 from functions_model_capabilities import is_vision_capable_model
+from functions_ai_notice import (
+    normalize_ai_notice_frequency,
+    normalize_ai_notice_message,
+)
 from functions_terms_of_use import (
     TERMS_OF_USE_DEFAULT_REDIRECT,
     TERMS_OF_USE_MAX_BUTTON_TEXT_LENGTH,
@@ -571,6 +575,8 @@ def register_route_frontend_admin_settings(bp):
             settings['require_member_of_create_public_workspace'] = False
         if 'enable_chat_file_uploads' not in settings:
             settings['enable_chat_file_uploads'] = True
+        if 'enable_desktop_notifications' not in settings:
+            settings['enable_desktop_notifications'] = False
         if 'enable_conversation_contents_drawer' not in settings:
             settings['enable_conversation_contents_drawer'] = True
         if 'require_member_of_chat_file_upload_user' not in settings:
@@ -587,6 +593,14 @@ def register_route_frontend_admin_settings(bp):
         settings['control_center_auto_refresh_time'] = control_center_auto_refresh_schedule['time']
         settings['control_center_auto_refresh_hour'] = control_center_auto_refresh_schedule['hour']
         settings['control_center_auto_refresh_minute'] = control_center_auto_refresh_schedule['minute']
+        settings['control_center_auto_refresh_timezone'] = control_center_auto_refresh_schedule['timezone']
+        if (
+            settings['control_center_auto_refresh_enabled']
+            and not settings.get('control_center_auto_refresh_next_run')
+        ):
+            settings['control_center_auto_refresh_next_run'] = (
+                calculate_next_control_center_auto_refresh_run(settings).isoformat()
+            )
         settings.update(normalize_cosmos_throughput_settings(settings))
         cosmos_resource_config = get_cosmos_resource_config(settings)
         settings['cosmos_throughput_resolved_subscription_id'] = cosmos_resource_config.get('subscription_id', '')
@@ -841,6 +855,14 @@ def register_route_frontend_admin_settings(bp):
             settings['terms_of_use_accept_button_text'] = 'Accept and continue'
         if 'terms_of_use_decline_button_text' not in settings:
             settings['terms_of_use_decline_button_text'] = 'Cancel'
+        if 'enable_ai_notice' not in settings:
+            settings['enable_ai_notice'] = False
+        settings['ai_notice_message'] = normalize_ai_notice_message(
+            settings.get('ai_notice_message')
+        )
+        settings['ai_notice_frequency'] = normalize_ai_notice_frequency(
+            settings.get('ai_notice_frequency')
+        )
         # --- Add defaults for user agreement ---
         if 'enable_user_agreement' not in settings:
             settings['enable_user_agreement'] = False
@@ -1142,19 +1164,25 @@ def register_route_frontend_admin_settings(bp):
             control_center_auto_refresh_enabled = form_data.get('control_center_auto_refresh_enabled') == 'on'
             incoming_control_center_auto_refresh_time = form_data.get(
                 'control_center_auto_refresh_time',
-                settings.get('control_center_auto_refresh_time', '06:00')
+                settings.get('control_center_auto_refresh_time', '02:00')
+            )
+            incoming_control_center_auto_refresh_timezone = form_data.get(
+                'control_center_auto_refresh_timezone',
+                settings.get('control_center_auto_refresh_timezone', 'America/New_York'),
             )
             control_center_auto_refresh_schedule = get_control_center_auto_refresh_schedule({
                 'control_center_auto_refresh_time': incoming_control_center_auto_refresh_time,
-                'control_center_auto_refresh_hour': settings.get('control_center_auto_refresh_hour', 6),
+                'control_center_auto_refresh_hour': settings.get('control_center_auto_refresh_hour', 2),
                 'control_center_auto_refresh_minute': settings.get('control_center_auto_refresh_minute', 0),
+                'control_center_auto_refresh_timezone': incoming_control_center_auto_refresh_timezone,
             })
             existing_control_center_auto_refresh_schedule = get_control_center_auto_refresh_schedule(settings)
             existing_control_center_auto_refresh_enabled = settings.get('control_center_auto_refresh_enabled', True)
             existing_control_center_auto_refresh_next_run = settings.get('control_center_auto_refresh_next_run')
             control_center_auto_refresh_schedule_changed = (
                 control_center_auto_refresh_enabled != existing_control_center_auto_refresh_enabled or
-                control_center_auto_refresh_schedule['time'] != existing_control_center_auto_refresh_schedule['time']
+                control_center_auto_refresh_schedule['time'] != existing_control_center_auto_refresh_schedule['time'] or
+                control_center_auto_refresh_schedule['timezone'] != existing_control_center_auto_refresh_schedule['timezone']
             )
             if control_center_auto_refresh_enabled:
                 if control_center_auto_refresh_schedule_changed or not existing_control_center_auto_refresh_next_run:
@@ -1163,6 +1191,7 @@ def register_route_frontend_admin_settings(bp):
                             'control_center_auto_refresh_time': control_center_auto_refresh_schedule['time'],
                             'control_center_auto_refresh_hour': control_center_auto_refresh_schedule['hour'],
                             'control_center_auto_refresh_minute': control_center_auto_refresh_schedule['minute'],
+                            'control_center_auto_refresh_timezone': control_center_auto_refresh_schedule['timezone'],
                         },
                         current_time=datetime.now(timezone.utc),
                     ).isoformat()
@@ -2085,6 +2114,18 @@ def register_route_frontend_admin_settings(bp):
                 flash('Terms of Use message is required when the feature is enabled.', 'danger')
                 return redirect(url_for('frontend_admin_settings.admin_settings'))
 
+            # --- AI Notice Settings ---
+            enable_ai_notice = form_data.get('enable_ai_notice') == 'on'
+            ai_notice_message = normalize_ai_notice_message(
+                form_data.get('ai_notice_message')
+            )
+            ai_notice_frequency = normalize_ai_notice_frequency(
+                form_data.get('ai_notice_frequency')
+            )
+            if enable_ai_notice and not ai_notice_message:
+                flash('AI notice message is required when the feature is enabled.', 'danger')
+                return redirect(url_for('frontend_admin_settings.admin_settings'))
+
             # --- Authentication & Redirect Settings ---
             enable_front_door = form_data.get('enable_front_door') == 'on'
             front_door_url = form_data.get('front_door_url', '').strip()
@@ -2468,6 +2509,11 @@ def register_route_frontend_admin_settings(bp):
                 'terms_of_use_accept_button_text': terms_of_use_accept_button_text,
                 'terms_of_use_decline_button_text': terms_of_use_decline_button_text,
 
+                # AI Notice
+                'enable_ai_notice': enable_ai_notice,
+                'ai_notice_message': ai_notice_message,
+                'ai_notice_frequency': ai_notice_frequency,
+
                 # Multimedia & Metadata
                 'enable_video_file_support': enable_video_file_support,
                 'enable_audio_file_support': enable_audio_file_support,
@@ -2535,6 +2581,7 @@ def register_route_frontend_admin_settings(bp):
 
                 # Feedback, Archiving & Thoughts
                 'enable_user_feedback': form_data.get('enable_user_feedback') == 'on',
+                'enable_desktop_notifications': form_data.get('enable_desktop_notifications') == 'on',
                 'enable_conversation_archiving': form_data.get('enable_conversation_archiving') == 'on',
                 'enable_thoughts': form_data.get('enable_thoughts') == 'on',
 
@@ -2687,6 +2734,7 @@ def register_route_frontend_admin_settings(bp):
                 'control_center_auto_refresh_time': control_center_auto_refresh_schedule['time'],
                 'control_center_auto_refresh_hour': control_center_auto_refresh_schedule['hour'],
                 'control_center_auto_refresh_minute': control_center_auto_refresh_schedule['minute'],
+                'control_center_auto_refresh_timezone': control_center_auto_refresh_schedule['timezone'],
                 'control_center_auto_refresh_next_run': control_center_auto_refresh_next_run,
             }
             

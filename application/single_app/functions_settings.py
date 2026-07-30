@@ -49,6 +49,7 @@ USER_UI_SETTINGS_KEYS = (
     "navLayout",
     "darkModeEnabled",
     "showTutorialButtons",
+    "desktopNotificationsEnabled",
     "chatLayout",
     "streamingEnabled",
     "notifications_per_page",
@@ -881,9 +882,10 @@ def get_settings(use_cosmos=False, include_source=False):
         # Control Center settings
         'control_center_last_refresh': None,  # Timestamp of last data refresh
         'control_center_auto_refresh_enabled': True,
-        'control_center_auto_refresh_time': '06:00',
-        'control_center_auto_refresh_hour': 6,
+        'control_center_auto_refresh_time': '02:00',
+        'control_center_auto_refresh_hour': 2,
         'control_center_auto_refresh_minute': 0,
+        'control_center_auto_refresh_timezone': 'America/New_York',
         'control_center_auto_refresh_next_run': None,
         # -- Your entire default dictionary here --
         'app_title': 'Simple Chat',
@@ -906,6 +908,9 @@ def get_settings(use_cosmos=False, include_source=False):
         'terms_of_use_decline_redirect_url': '/',
         'terms_of_use_accept_button_text': 'Accept and continue',
         'terms_of_use_decline_button_text': 'Cancel',
+        'enable_ai_notice': False,
+        'ai_notice_message': '',
+        'ai_notice_frequency': 'non_dismissible',
         'enable_dark_mode_default': False,
         'enable_left_nav_default': True,
         'release_notifications_registered': False,
@@ -1145,6 +1150,7 @@ def get_settings(use_cosmos=False, include_source=False):
 
         # User Feedback / Conversation Archiving
         'enable_user_feedback': True,
+        'enable_desktop_notifications': False,
         'require_member_of_feedback_admin': False,
         'enable_conversation_archiving': False,
 
@@ -1419,9 +1425,33 @@ def get_settings(use_cosmos=False, include_source=False):
                         level=logging.WARNING
                     )
 
+        legacy_control_center_schedule = (
+            'control_center_auto_refresh_timezone' not in settings_item
+        )
+        legacy_control_center_time = settings_item.get('control_center_auto_refresh_time')
+        if not isinstance(legacy_control_center_time, str):
+            legacy_hour = settings_item.get('control_center_auto_refresh_hour', 6)
+            legacy_minute = settings_item.get('control_center_auto_refresh_minute', 0)
+            if not isinstance(legacy_hour, int):
+                legacy_hour = 6
+            if not isinstance(legacy_minute, int):
+                legacy_minute = 0
+            legacy_control_center_time = f"{legacy_hour:02d}:{legacy_minute:02d}"
+
         # Merge default_settings in, to fill in any missing or nested keys
         merge_changed = deep_merge_dicts(default_settings, settings_item)
         merged = settings_item
+        control_center_schedule_migration_updated = False
+        if legacy_control_center_schedule:
+            if legacy_control_center_time == '06:00':
+                merged['control_center_auto_refresh_time'] = '02:00'
+                merged['control_center_auto_refresh_hour'] = 2
+                merged['control_center_auto_refresh_minute'] = 0
+                merged['control_center_auto_refresh_timezone'] = 'America/New_York'
+            else:
+                merged['control_center_auto_refresh_timezone'] = 'UTC'
+            merged['control_center_auto_refresh_next_run'] = None
+            control_center_schedule_migration_updated = True
         migration_updated = apply_custom_endpoint_setting_migration(merged)
         assignment_settings_updated = normalize_group_workflow_assignment_settings(merged)
         promoted_popular_settings_updated = normalize_agents_page_promoted_popular_settings(merged)
@@ -1433,6 +1463,7 @@ def get_settings(use_cosmos=False, include_source=False):
         # If merging added anything new, upsert back to Cosmos so future reads remain up to date
         if (
             merge_changed
+            or control_center_schedule_migration_updated
             or migration_updated
             or assignment_settings_updated
             or promoted_popular_settings_updated
@@ -2124,6 +2155,9 @@ def get_user_settings(user_id, allow_cross_user=False):
         if 'showTutorialButtons' not in doc['settings']:
             doc['settings']['showTutorialButtons'] = True
             updated = True
+        if 'desktopNotificationsEnabled' not in doc['settings']:
+            doc['settings']['desktopNotificationsEnabled'] = True
+            updated = True
         
         if should_sync_session_profile:
             # Try to update email/display_name if missing and available in session
@@ -2167,6 +2201,7 @@ def get_user_settings(user_id, allow_cross_user=False):
         doc = {"id": user_id, "settings": {}}
         doc["settings"]["personal_model_endpoints"] = []
         doc["settings"]["showTutorialButtons"] = True
+        doc["settings"]["desktopNotificationsEnabled"] = True
         if should_sync_session_profile:
             user = session.get("user", {})
             email = user.get("preferred_username") or user.get("email")

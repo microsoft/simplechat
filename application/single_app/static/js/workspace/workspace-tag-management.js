@@ -305,21 +305,21 @@ async function createNewTag(tagName, tagColor) {
     debugLog('Attempting to create tag:', { tagName, tagColor });
     
     if (!tagName) {
-        alert('Please enter a tag name');
+        showToast('Please enter a tag name', 'warning');
         debugLog('Tag name is empty');
         return;
     }
     
     // Validate tag name
     if (!/^[a-z0-9_-]+$/.test(tagName)) {
-        alert('Tag name must contain only lowercase letters, numbers, hyphens, and underscores');
+        showToast('Tag name must contain only lowercase letters, numbers, hyphens, and underscores', 'warning');
         debugLog('Tag name validation failed:', tagName);
         return;
     }
     
     // Check if tag already exists
     if (allWorkspaceTags.some(t => t.name === tagName)) {
-        alert('A tag with this name already exists');
+        showToast('A tag with this name already exists', 'warning');
         debugLog('Tag already exists:', tagName);
         return;
     }
@@ -359,12 +359,12 @@ async function createNewTag(tagName, tagColor) {
             showToast('Tag created successfully', 'success');
         } else {
             debugLog('Failed to create tag:', data.error);
-            alert('Failed to create tag: ' + (data.error || 'Unknown error'));
+            showToast('Failed to create tag: ' + (data.error || 'Unknown error'), 'danger');
         }
     } catch (error) {
         console.error('Error creating tag:', error);
         debugLog('Exception creating tag:', error);
-        alert('Error creating tag');
+        showToast('Error creating tag', 'danger');
     }
 }
 
@@ -435,18 +435,18 @@ async function saveTagEdit(newName, newColor) {
     // Validate new name if changed
     if (nameChanged) {
         if (!newName) {
-            alert('Please enter a tag name');
+            showToast('Please enter a tag name', 'warning');
             return;
         }
         
         if (!/^[a-z0-9_-]+$/.test(newName)) {
-            alert('Tag name must contain only lowercase letters, numbers, hyphens, and underscores');
+            showToast('Tag name must contain only lowercase letters, numbers, hyphens, and underscores', 'warning');
             return;
         }
         
         // Check if new name conflicts with existing tag (excluding current tag)
         if (allWorkspaceTags.some(t => t.name === newName && t.name !== editingTag.originalName)) {
-            alert('A tag with this name already exists');
+            showToast('A tag with this name already exists', 'warning');
             return;
         }
     }
@@ -485,12 +485,12 @@ async function saveTagEdit(newName, newColor) {
             showToast('Tag updated successfully', 'success');
         } else {
             debugLog('Failed to update tag:', data.error);
-            alert('Failed to update tag: ' + (data.error || 'Unknown error'));
+            showToast('Failed to update tag: ' + (data.error || 'Unknown error'), 'danger');
         }
     } catch (error) {
         console.error('Error updating tag:', error);
         debugLog('Exception updating tag:', error);
-        alert('Error updating tag');
+        showToast('Error updating tag', 'danger');
     }
 }
 
@@ -597,12 +597,12 @@ function setupDeleteConfirmation() {
                     showToast('Tag deleted successfully', 'success');
                 } else {
                     debugLog('Failed to delete tag:', data.error);
-                    alert('Failed to delete tag: ' + (data.error || 'Unknown error'));
+                    showToast('Failed to delete tag: ' + (data.error || 'Unknown error'), 'danger');
                 }
             } catch (error) {
                 console.error('Error deleting tag:', error);
                 debugLog('Exception deleting tag:', error);
-                alert('Error deleting tag');
+                showToast('Error deleting tag', 'danger');
             }
         });
     }

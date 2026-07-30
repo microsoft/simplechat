@@ -1,5 +1,6 @@
 // admin_settings.js
 import { showToast } from "../chat/chat-toast.js";
+import { sanitizeHttpUrl } from "../chat/chat-utils.js";
 
 let gptSelected = window.gptSelected || [];
 let gptAll      = window.gptAll || [];
@@ -5404,7 +5405,6 @@ window.selectEmbeddingModel = (deploymentName, modelName) => {
     renderEmbeddingModels();
     updateEmbeddingHiddenInput();
     markFormAsModified();    // mark form as modified
-    //alert(`Selected embedding model: ${deploymentName}`);
 };
 
 function updateEmbeddingHiddenInput() {
@@ -5452,7 +5452,6 @@ window.selectImageModel = (deploymentName, modelName) => {
     renderImageModels();
     updateImageHiddenInput();
     markFormAsModified();    // mark form as modified
-    // alert(`Selected image model: ${deploymentName}`);
 };
 
 function updateImageHiddenInput() {
@@ -5679,7 +5678,7 @@ function handleSaveClassification(row, indexAttr, isNew) {
 
     // Basic validation
     if (!newLabel) {
-        alert('Label cannot be empty.');
+        showToast('Label cannot be empty.', 'warning');
         labelInput?.focus();
         return;
     }
@@ -5921,41 +5920,93 @@ function renderExternalLinks() {
  */
 function createExternalLinkRow(link, index, isNew = false) {
     const row = document.createElement('tr');
-    row.setAttribute('data-index', index);
+    row.dataset.index = String(index);
 
     if (isNew) {
-        // Create an editable row for new links
-        row.innerHTML = `
-            <td>
-                <input type="text" class="form-control form-control-sm external-link-label-input" 
-                       value="${escapeHtml(link.label)}" placeholder="Link Label">
-            </td>
-            <td>
-                <input type="url" class="form-control form-control-sm external-link-url-input" 
-                       value="${escapeHtml(link.url)}" placeholder="https://example.com">
-            </td>
-            <td>
-                <button type="button" class="btn btn-sm btn-success external-link-save-btn" data-index="${index}">Save</button>
-                <button type="button" class="btn btn-sm btn-secondary ms-1 external-link-cancel-btn" data-index="${index}">Cancel</button>
-            </td>
-        `;
+        populateExternalLinkEditorRow(row, link, index);
     } else {
-        // Create a read-only row for existing links
-        row.innerHTML = `
-            <td class="external-link-label">${escapeHtml(link.label)}</td>
-            <td class="external-link-url">
-                <a href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer">
-                    ${escapeHtml(link.url)}
-                </a>
-            </td>
-            <td>
-                <button type="button" class="btn btn-sm btn-outline-primary external-link-edit-btn" data-index="${index}">Edit</button>
-                <button type="button" class="btn btn-sm btn-outline-danger ms-1 external-link-delete-btn" data-index="${index}">Delete</button>
-            </td>
-        `;
+        const labelCell = document.createElement('td');
+        labelCell.className = 'external-link-label';
+        labelCell.textContent = link.label;
+
+        const urlCell = document.createElement('td');
+        urlCell.className = 'external-link-url';
+        const safeUrl = sanitizeHttpUrl(link.url);
+        if (safeUrl) {
+            const anchor = document.createElement('a');
+            anchor.href = safeUrl;
+            anchor.target = '_blank';
+            anchor.rel = 'noopener noreferrer';
+            anchor.textContent = link.url;
+            urlCell.appendChild(anchor);
+        } else {
+            urlCell.textContent = link.url;
+        }
+
+        const actionsCell = document.createElement('td');
+        actionsCell.className = 'text-nowrap';
+
+        const moveUpButton = createIconButton('bi bi-arrow-up', `Move ${link.label} up`);
+        moveUpButton.classList.add('external-link-move-up-btn');
+        moveUpButton.dataset.index = String(index);
+        moveUpButton.disabled = index === 0;
+
+        const moveDownButton = createIconButton('bi bi-arrow-down', `Move ${link.label} down`);
+        moveDownButton.classList.add('external-link-move-down-btn', 'ms-1');
+        moveDownButton.dataset.index = String(index);
+        moveDownButton.disabled = index === externalLinks.length - 1;
+
+        const editButton = document.createElement('button');
+        editButton.type = 'button';
+        editButton.className = 'btn btn-sm btn-outline-primary ms-1 external-link-edit-btn';
+        editButton.dataset.index = String(index);
+        editButton.textContent = 'Edit';
+
+        const deleteButton = document.createElement('button');
+        deleteButton.type = 'button';
+        deleteButton.className = 'btn btn-sm btn-outline-danger ms-1 external-link-delete-btn';
+        deleteButton.dataset.index = String(index);
+        deleteButton.textContent = 'Delete';
+
+        actionsCell.append(moveUpButton, moveDownButton, editButton, deleteButton);
+        row.append(labelCell, urlCell, actionsCell);
     }
 
     return row;
+}
+
+function populateExternalLinkEditorRow(row, link, index) {
+    const labelCell = document.createElement('td');
+    const labelInput = document.createElement('input');
+    labelInput.type = 'text';
+    labelInput.className = 'form-control form-control-sm external-link-label-input';
+    labelInput.value = link.label;
+    labelInput.placeholder = 'Link Label';
+    labelCell.appendChild(labelInput);
+
+    const urlCell = document.createElement('td');
+    const urlInput = document.createElement('input');
+    urlInput.type = 'url';
+    urlInput.className = 'form-control form-control-sm external-link-url-input';
+    urlInput.value = link.url;
+    urlInput.placeholder = 'https://example.com';
+    urlCell.appendChild(urlInput);
+
+    const actionsCell = document.createElement('td');
+    const saveButton = document.createElement('button');
+    saveButton.type = 'button';
+    saveButton.className = 'btn btn-sm btn-success external-link-save-btn';
+    saveButton.dataset.index = String(index);
+    saveButton.textContent = 'Save';
+
+    const cancelButton = document.createElement('button');
+    cancelButton.type = 'button';
+    cancelButton.className = 'btn btn-sm btn-secondary ms-1 external-link-cancel-btn';
+    cancelButton.dataset.index = String(index);
+    cancelButton.textContent = 'Cancel';
+
+    actionsCell.append(saveButton, cancelButton);
+    row.replaceChildren(labelCell, urlCell, actionsCell);
 }
 
 /**
@@ -5989,8 +6040,8 @@ function handleAddExternalLink() {
  * @param {Event} event - The click event.
  */
 function handleExternalLinksAction(event) {
-    const target = event.target;
-    if (!target.matches('button')) return;
+    const target = event.target.closest('button');
+    if (!target) return;
 
     const row = target.closest('tr');
     if (!row) return;
@@ -6006,7 +6057,32 @@ function handleExternalLinksAction(event) {
         handleCancelExternalLink(row, indexAttr, isNew);
     } else if (target.classList.contains('external-link-delete-btn')) {
         handleDeleteExternalLink(row, indexAttr, isNew);
+    } else if (target.classList.contains('external-link-move-up-btn')) {
+        handleMoveExternalLink(indexAttr, -1);
+    } else if (target.classList.contains('external-link-move-down-btn')) {
+        handleMoveExternalLink(indexAttr, 1);
     }
+}
+
+function handleMoveExternalLink(indexAttr, direction) {
+    const index = Number.parseInt(indexAttr, 10);
+    const destinationIndex = index + direction;
+
+    if (
+        !Number.isInteger(index)
+        || ![-1, 1].includes(direction)
+        || destinationIndex < 0
+        || destinationIndex >= externalLinks.length
+    ) {
+        return;
+    }
+
+    [externalLinks[index], externalLinks[destinationIndex]] = [
+        externalLinks[destinationIndex],
+        externalLinks[index],
+    ];
+    renderExternalLinks();
+    markFormAsModified();
 }
 
 /**
@@ -6014,25 +6090,11 @@ function handleExternalLinksAction(event) {
  * @param {HTMLTableRowElement} row - The table row to make editable.
  */
 function handleEditExternalLink(row) {
-    const index = parseInt(row.getAttribute('data-index'));
+    const index = Number.parseInt(row.dataset.index, 10);
     const link = externalLinks[index];
     if (!link) return;
 
-    // Replace the row content with editable inputs
-    row.innerHTML = `
-        <td>
-            <input type="text" class="form-control form-control-sm external-link-label-input" 
-                   value="${escapeHtml(link.label)}" placeholder="Link Label">
-        </td>
-        <td>
-            <input type="url" class="form-control form-control-sm external-link-url-input" 
-                   value="${escapeHtml(link.url)}" placeholder="https://example.com">
-        </td>
-        <td>
-            <button type="button" class="btn btn-sm btn-success external-link-save-btn" data-index="${index}">Save</button>
-            <button type="button" class="btn btn-sm btn-secondary ms-1 external-link-cancel-btn" data-index="${index}">Cancel</button>
-        </td>
-    `;
+    populateExternalLinkEditorRow(row, link, index);
 
     // Focus on the label input
     const labelInput = row.querySelector('.external-link-label-input');
@@ -6060,13 +6122,13 @@ function handleSaveExternalLink(row, indexAttr, isNew) {
 
     // Validation
     if (!label) {
-        alert('Please enter a label for the link.');
+        showToast('Please enter a label for the link.', 'warning');
         labelInput.focus();
         return;
     }
 
     if (!url) {
-        alert('Please enter a URL for the link.');
+        showToast('Please enter a URL for the link.', 'warning');
         urlInput.focus();
         return;
     }
@@ -6075,7 +6137,7 @@ function handleSaveExternalLink(row, indexAttr, isNew) {
     try {
         new URL(url);
     } catch (e) {
-        alert('Please enter a valid URL (e.g., https://example.com).');
+        showToast('Please enter a valid URL (e.g., https://example.com).', 'warning');
         urlInput.focus();
         return;
     }
@@ -6083,26 +6145,16 @@ function handleSaveExternalLink(row, indexAttr, isNew) {
     const linkData = { label, url };
 
     if (isNew) {
-        // Add new link to the array
         externalLinks.push(linkData);
-        const newIndex = externalLinks.length - 1;
-        
-        // Replace the row with a read-only version
-        const newRow = createExternalLinkRow(linkData, newIndex, false);
-        row.parentNode.replaceChild(newRow, row);
     } else {
-        // Update existing link
-        const index = parseInt(indexAttr);
-        if (index >= 0 && index < externalLinks.length) {
-            externalLinks[index] = linkData;
-            
-            // Replace the row with a read-only version
-            const updatedRow = createExternalLinkRow(linkData, index, false);
-            row.parentNode.replaceChild(updatedRow, row);
+        const index = Number.parseInt(indexAttr, 10);
+        if (index < 0 || index >= externalLinks.length) {
+            return;
         }
+        externalLinks[index] = linkData;
     }
 
-    updateExternalLinksJsonInput();
+    renderExternalLinks();
     markFormAsModified();
 }
 
@@ -6735,6 +6787,16 @@ function setupToggles() {
     if (enableWebSearchUserNotice && webSearchUserNoticeSettings) {
         enableWebSearchUserNotice.addEventListener('change', function() {
             toggleVisibility(webSearchUserNoticeSettings, this.checked);
+            markFormAsModified();
+        });
+    }
+
+    const enableAiNotice = document.getElementById('enable_ai_notice');
+    const aiNoticeSettings = document.getElementById('ai_notice_settings');
+    if (enableAiNotice && aiNoticeSettings) {
+        toggleVisibility(aiNoticeSettings, enableAiNotice.checked);
+        enableAiNotice.addEventListener('change', function() {
+            toggleVisibility(aiNoticeSettings, this.checked);
             markFormAsModified();
         });
     }
@@ -9249,16 +9311,20 @@ document.addEventListener('DOMContentLoaded', () => {
                 })
                 .then(resp => {
                     if (resp.status === 'success') {
-                        alert(resp.message || `Successfully ${action === 'create' ? 'created' : 'fixed'} ${type} index!`);
+                        showToast(
+                            resp.message || `Successfully ${action === 'create' ? 'created' : 'fixed'} ${type} index!`,
+                            'success',
+                            { persist: true }
+                        );
                         window.location.reload();
                     } else {
-                        alert(`Failed to ${action} ${type} index: ${resp.error}`);
+                        showToast(`Failed to ${action} ${type} index: ${resp.error}`, 'danger');
                         fixBtn.disabled = false;
                         fixBtn.textContent = `${action === 'create' ? 'Create' : 'Fix'} ${type} Index`;
                     }
                 })
                 .catch(err => {
-                    alert(`Error ${action === 'create' ? 'creating' : 'fixing'} ${type} index: ${err.message || err}`);
+                    showToast(`Error ${action === 'create' ? 'creating' : 'fixing'} ${type} index: ${err.message || err}`, 'danger');
                     fixBtn.disabled = false;
                     fixBtn.textContent = `${action === 'create' ? 'Create' : 'Fix'} ${type} Index`;
                 });

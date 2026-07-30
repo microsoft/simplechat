@@ -7,7 +7,7 @@ finishes outside the conversation they are actively viewing. Administrators
 control whether the capability is available, and each user explicitly opts in
 and chooses a local sound and volume.
 
-**Implemented in version: 0.250.102**
+**Implemented in version: 0.250.103**
 
 ## Dependencies
 
