@@ -8217,6 +8217,31 @@
                         </label>
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to upload files directly into personal, group, and multi-user chat conversations."></i>
                     </div>
+
+                    <div class="card mb-3 p-3" id="conversation-contents-drawer-section">
+                        <h5>
+                            <i class="bi bi-list-nested me-2"></i>Conversation Contents Drawer
+                        </h5>
+                        <p class="text-muted">
+                            Let users navigate long conversations from a list of their prompts.
+                        </p>
+                        <div class="form-group form-check form-switch mb-2">
+                            <input
+                                type="checkbox"
+                                class="form-check-input"
+                                id="enable_conversation_contents_drawer"
+                                name="enable_conversation_contents_drawer"
+                                {% if settings.enable_conversation_contents_drawer %}checked{% endif %}
+                            />
+                            <label class="form-check-label ms-2" for="enable_conversation_contents_drawer">
+                                Enable Conversation Contents Drawer
+                            </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to open a responsive contents drawer that lists persisted user messages and jumps to them."></i>
+                        </div>
+                        <p class="text-muted small mb-0">
+                            When enabled, users can turn the drawer off for their own account from Profile settings.
+                        </p>
+                    </div>
                     <div class="form-group form-check form-switch mb-2">
                         <input type="checkbox"
                             class="form-check-input"

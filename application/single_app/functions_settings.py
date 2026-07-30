@@ -981,6 +981,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'require_public_workspace_assignment_for_file_downloads': False,
         'file_download_allowed_public_workspace_ids': [],
         'enable_chat_file_uploads': True,
+        'enable_conversation_contents_drawer': True,
         'require_member_of_chat_file_upload_user': False,
         'enforce_workspace_scope_lock': True,
 

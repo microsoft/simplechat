@@ -185,6 +185,8 @@ def register_route_frontend_admin_settings(bp):
             settings['require_member_of_create_public_workspace'] = False
         if 'enable_chat_file_uploads' not in settings:
             settings['enable_chat_file_uploads'] = True
+        if 'enable_conversation_contents_drawer' not in settings:
+            settings['enable_conversation_contents_drawer'] = True
         if 'require_member_of_chat_file_upload_user' not in settings:
             settings['require_member_of_chat_file_upload_user'] = False
         if 'require_member_of_safety_violation_admin' not in settings:
@@ -1989,6 +1991,7 @@ def register_route_frontend_admin_settings(bp):
                 'enable_public_workspaces': form_data.get('enable_public_workspaces') == 'on',
                 'enable_file_sharing': form_data.get('enable_file_sharing') == 'on',
                 'enable_chat_file_uploads': form_data.get('enable_chat_file_uploads') == 'on',
+                'enable_conversation_contents_drawer': form_data.get('enable_conversation_contents_drawer') == 'on',
                 'require_member_of_chat_file_upload_user': require_member_of_chat_file_upload_user,
                 'allow_user_workflows': form_data.get('allow_user_workflows') == 'on',
                 'require_member_of_workflow_user': require_member_of_workflow_user,

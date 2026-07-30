@@ -6,11 +6,22 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 #### New Features
 
+*   **Conversation Contents Drawer**
+    *   Added an admin-controlled, default-on conversation contents drawer that indexes persisted user messages and lets users jump directly to earlier prompts in long chats.
+    *   Added a default-on user profile preference so each user can hide the drawer while the global admin feature remains enabled.
+    *   (Ref: microsoft/simplechat#1026, `chat-conversation-contents.js`, `admin_settings.html`, `profile.html`)
+
 *   **Fork Personal Conversations from Assistant Responses**
     *   Added a Fork conversation action for persisted assistant messages, creating an independent personal conversation containing the active history through the selected response while leaving the source unchanged.
     *   Forks remap conversation, message, thread, reply, and artifact identifiers; copy blob-backed attachments to independent paths; reject unauthorized or changed sources; and clean up failed copies before they become visible.
     *   Added confirmation, duplicate-click prevention, failure feedback, immediate fork navigation, backend regression coverage, and browser workflow coverage.
     *   (Ref: microsoft/simplechat#1025, `functions_simplechat_operations.py`, `route_backend_conversations.py`, `chat-messages.js`, `FORK_CONVERSATION.md`)
+
+#### User Interface Enhancements
+
+*   **Responsive Long-Chat Navigation**
+    *   Added safe plain-text labels, active-location tracking, keyboard focus management, destination highlighting, and persistent desktop or off-canvas mobile layouts.
+    *   (Ref: microsoft/simplechat#1026, `chats.html`, `chats.css`, `test_chat_conversation_contents_drawer.py`)
 
 ### **(v0.250.073)**
 

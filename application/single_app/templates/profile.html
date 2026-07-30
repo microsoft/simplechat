@@ -979,6 +979,51 @@
         <div id="tutorial-preference-status" class="preference-status small mt-3 text-muted"></div>
     </div>
 
+    {% if app_settings.enable_conversation_contents_drawer %}
+    <div class="section-card" id="conversation-contents-preferences">
+        <div class="d-flex flex-column flex-lg-row align-items-lg-start justify-content-between gap-3">
+            <div class="d-flex gap-3 align-items-start">
+                <span class="preference-card-icon" aria-hidden="true">
+                    <i class="bi bi-list-nested"></i>
+                </span>
+                <div>
+                    <h5 class="mb-2"><i class="bi bi-layout-sidebar-reverse me-2"></i>Conversation Navigation</h5>
+                    <p class="text-muted mb-2">Show a contents drawer in Chat for jumping between your prompts in long conversations.</p>
+                    <p class="small text-muted mb-0">The drawer is enabled by default and can be changed at any time.</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="row g-3 align-items-center mt-1">
+            <div class="col-lg-8">
+                <div class="form-check form-switch mt-3">
+                    <input
+                        class="form-check-input"
+                        type="checkbox"
+                        id="conversation-contents-drawer-toggle"
+                        {% if user_settings.get('settings', {}).get('conversationContentsDrawerEnabled', True) %}checked{% endif %}
+                    />
+                    <label class="form-check-label fw-semibold" for="conversation-contents-drawer-toggle">
+                        Show the conversation contents drawer
+                    </label>
+                </div>
+            </div>
+            <div class="col-lg-4 text-lg-end">
+                <button type="button" class="btn btn-primary" id="save-conversation-contents-preference-btn">
+                    <i class="bi bi-save me-1"></i>Save Conversation Preference
+                </button>
+            </div>
+        </div>
+
+        <div
+            id="conversation-contents-preference-status"
+            class="preference-status small mt-3 text-muted"
+            role="status"
+            aria-live="polite"
+        ></div>
+    </div>
+    {% endif %}
+
     <div class="section-card" id="fact-memory-settings">
         <div class="d-flex flex-column flex-lg-row align-items-lg-start justify-content-between gap-3">
             <div class="d-flex gap-3 align-items-start">
@@ -2440,6 +2485,7 @@ document.addEventListener('DOMContentLoaded', function() {
     initializeFontSizePreferences();
     loadNavigationPreferences();
     loadTutorialPreferences();
+    loadConversationContentsPreference();
     initializeProfileStatsWindowControls();
     initializeFactMemoryModalInstances();
     loadFactMemory();
@@ -2492,6 +2538,11 @@ document.addEventListener('DOMContentLoaded', function() {
     const saveFontSizePreferenceButton = document.getElementById('save-font-size-preference-btn');
     if (saveFontSizePreferenceButton) {
         saveFontSizePreferenceButton.addEventListener('click', saveFontSizePreference);
+    }
+
+    const saveConversationContentsPreferenceButton = document.getElementById('save-conversation-contents-preference-btn');
+    if (saveConversationContentsPreferenceButton) {
+        saveConversationContentsPreferenceButton.addEventListener('click', saveConversationContentsPreference);
     }
 
     // Initialize TTS settings if enabled
@@ -2751,6 +2802,23 @@ function saveNavigationPreferences() {
 
 function updateTutorialPreferenceStatus(message, type = 'muted') {
     const statusElement = document.getElementById('tutorial-preference-status');
+    if (!statusElement) {
+        return;
+    }
+
+    const classMap = {
+        muted: 'text-muted',
+        info: 'text-info',
+        success: 'text-success',
+        danger: 'text-danger'
+    };
+
+    statusElement.textContent = message || '';
+    statusElement.className = `preference-status small mt-3 ${classMap[type] || classMap.muted}`;
+}
+
+function updateConversationContentsPreferenceStatus(message, type = 'muted') {
+    const statusElement = document.getElementById('conversation-contents-preference-status');
     if (!statusElement) {
         return;
     }
@@ -3382,6 +3450,74 @@ function saveTutorialPreferences() {
         .finally(() => {
             button.disabled = false;
             button.innerHTML = originalHtml;
+        });
+}
+
+function loadConversationContentsPreference() {
+    const toggle = document.getElementById('conversation-contents-drawer-toggle');
+    if (!toggle) {
+        return;
+    }
+
+    fetch('/api/user/settings')
+        .then(response => response.json())
+        .then(data => {
+            toggle.checked = data.settings?.conversationContentsDrawerEnabled !== false;
+            updateConversationContentsPreferenceStatus('Conversation navigation is shown by default until you change this setting.');
+        })
+        .catch(error => {
+            console.error('Error loading conversation contents preference:', error);
+            updateConversationContentsPreferenceStatus('Unable to refresh the conversation navigation preference. The current page state is still shown.', 'danger');
+        });
+}
+
+function saveConversationContentsPreference() {
+    const toggle = document.getElementById('conversation-contents-drawer-toggle');
+    const button = document.getElementById('save-conversation-contents-preference-btn');
+    if (!toggle || !button) {
+        return;
+    }
+
+    const originalContent = Array.from(button.childNodes).map(node => node.cloneNode(true));
+    button.disabled = true;
+    const savingIcon = document.createElement('i');
+    savingIcon.className = 'bi bi-hourglass-split me-1';
+    savingIcon.setAttribute('aria-hidden', 'true');
+    button.replaceChildren(savingIcon, document.createTextNode('Saving...'));
+    updateConversationContentsPreferenceStatus('Saving your conversation navigation preference...', 'info');
+
+    fetch('/api/user/settings', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            settings: {
+                conversationContentsDrawerEnabled: toggle.checked
+            }
+        })
+    })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Failed to save conversation navigation preference');
+            }
+
+            return response.json();
+        })
+        .then(() => {
+            const message = toggle.checked
+                ? 'The conversation contents drawer will be available in Chat.'
+                : 'The conversation contents drawer is hidden for your account.';
+            updateConversationContentsPreferenceStatus(message, 'success');
+            showToastMessage('Conversation navigation preference saved successfully', 'success');
+        })
+        .catch(error => {
+            console.error('Error saving conversation contents preference:', error);
+            updateConversationContentsPreferenceStatus('Failed to save the conversation navigation preference. Please try again.', 'danger');
+        })
+        .finally(() => {
+            button.disabled = false;
+            button.replaceChildren(...originalContent);
         });
 }
 

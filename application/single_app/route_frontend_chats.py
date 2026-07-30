@@ -18,6 +18,7 @@ from functions_collaboration import (
     serialize_collaboration_conversation,
     serialize_collaboration_message,
 )
+from functions_conversation_contents import is_conversation_contents_drawer_enabled
 from functions_source_review import get_deep_research_config, is_source_review_enabled_for_user, is_url_access_enabled_for_user
 from functions_documents import *
 from functions_group import (
@@ -700,6 +701,10 @@ def register_route_frontend_chats(bp):
         public_settings['enable_url_access'] = url_access_enabled_for_user
         public_settings['enable_chat_file_uploads'] = chat_file_upload_enabled_for_user
         public_settings['allow_user_workflows'] = user_workflows_enabled_for_user
+        conversation_contents_drawer_enabled = is_conversation_contents_drawer_enabled(
+            public_settings,
+            user_settings_dict,
+        )
         public_settings['enable_deep_source_review'] = bool(
             source_review_enabled_for_user and settings.get('enable_deep_source_review', False)
         )
@@ -868,6 +873,7 @@ def register_route_frontend_chats(bp):
             chat_agent_options=chat_agent_options,
             chat_model_options=chat_model_options,
             initial_chat_model_selection=initial_chat_model_selection,
+            conversation_contents_drawer_enabled=conversation_contents_drawer_enabled,
         )
 
     @bp.route('/workflow-activity', methods=['GET'])
