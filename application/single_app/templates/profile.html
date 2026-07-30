@@ -824,6 +824,117 @@
         ></div>
     </div>
 
+    {% if app_settings.enable_chat_completion_audio_cues %}
+    {% set completion_audio_enabled = user_settings.get('settings', {}).get('chatCompletionAudioEnabled', false) %}
+    {% set completion_audio_muted = user_settings.get('settings', {}).get('chatCompletionAudioMuted', false) %}
+    {% set completion_audio_sound = user_settings.get('settings', {}).get('chatCompletionAudioSound', 'aurora') %}
+    {% set completion_audio_volume = user_settings.get('settings', {}).get('chatCompletionAudioVolume', 5) %}
+    <div class="section-card" id="completion-audio-preferences">
+        <div class="d-flex flex-column flex-lg-row align-items-lg-start justify-content-between gap-3">
+            <div class="d-flex gap-3 align-items-start">
+                <span class="preference-card-icon" aria-hidden="true">
+                    <i class="bi bi-bell-fill"></i>
+                </span>
+                <div>
+                    <h5 class="mb-2"><i class="bi bi-volume-up me-2"></i>AI Response Completion Audio</h5>
+                    <p class="text-muted mb-2">Choose an optional sound for responses that finish outside your active view.</p>
+                    <p class="small text-muted mb-0" id="completion-audio-help">
+                        Cues stay silent when you are already viewing the completed conversation. Browser audio policies may require an interaction with SimpleChat before background audio can play.
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <div class="row g-4 mt-1">
+            <div class="col-lg-5">
+                <div class="form-check form-switch mb-3">
+                    <input
+                        class="form-check-input"
+                        type="checkbox"
+                        id="completion-audio-enabled-toggle"
+                        {% if completion_audio_enabled %}checked{% endif %}
+                    />
+                    <label class="form-check-label fw-semibold" for="completion-audio-enabled-toggle">
+                        Play completion cues
+                    </label>
+                </div>
+                <div class="form-check form-switch">
+                    <input
+                        class="form-check-input"
+                        type="checkbox"
+                        id="completion-audio-muted-toggle"
+                        {% if completion_audio_muted %}checked{% endif %}
+                    />
+                    <label class="form-check-label fw-semibold" for="completion-audio-muted-toggle">
+                        Mute cues without changing my sound or volume
+                    </label>
+                </div>
+            </div>
+            <div class="col-lg-4">
+                <label class="form-label fw-semibold" for="completion-audio-sound-select">Completion sound</label>
+                <div class="input-group">
+                    <select
+                        class="form-select"
+                        id="completion-audio-sound-select"
+                        aria-describedby="completion-audio-help"
+                    >
+                        {% for sound_id, sound_label in [
+                            ('aurora', 'Aurora'),
+                            ('bell', 'Bell'),
+                            ('bloom', 'Bloom'),
+                            ('chime', 'Chime'),
+                            ('crystal', 'Crystal'),
+                            ('glimmer', 'Glimmer'),
+                            ('marimba', 'Marimba'),
+                            ('pulse', 'Pulse'),
+                            ('spark', 'Spark'),
+                            ('summit', 'Summit')
+                        ] %}
+                        <option value="{{ sound_id }}" {% if completion_audio_sound == sound_id %}selected{% endif %}>
+                            {{ sound_label }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                    <button
+                        type="button"
+                        class="btn btn-outline-secondary"
+                        id="preview-completion-audio-btn"
+                        aria-label="Preview selected completion sound"
+                    >
+                        <i class="bi bi-play-fill me-1" aria-hidden="true"></i>Preview
+                    </button>
+                </div>
+            </div>
+            <div class="col-lg-3">
+                <label class="form-label fw-semibold" for="completion-audio-volume-range">
+                    Volume: <span id="completion-audio-volume-value">{{ completion_audio_volume }}</span>/10
+                </label>
+                <input
+                    type="range"
+                    class="form-range"
+                    id="completion-audio-volume-range"
+                    min="1"
+                    max="10"
+                    step="1"
+                    value="{{ completion_audio_volume }}"
+                />
+            </div>
+        </div>
+
+        <div class="d-flex flex-column flex-sm-row align-items-sm-center justify-content-between gap-3 mt-4">
+            <div
+                id="completion-audio-preference-status"
+                class="preference-status small text-muted"
+                role="status"
+                aria-live="polite"
+            ></div>
+            <button type="button" class="btn btn-primary" id="save-completion-audio-preferences-btn">
+                <i class="bi bi-save me-1" aria-hidden="true"></i>Save Audio Preferences
+            </button>
+        </div>
+    </div>
+    {% endif %}
+
     {% set sidebar_toggle_style = user_settings.get('settings', {}).get('sidebarToggleStyle', 'large') %}
     {% set latest_features_hidden_version = user_settings.get('settings', {}).get('latestFeaturesHiddenVersion') %}
     {% set latest_features_hidden_for_current_version = latest_features_hidden_version == config['VERSION'] %}
