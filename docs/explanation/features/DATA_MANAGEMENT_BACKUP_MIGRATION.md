@@ -1,7 +1,7 @@
 # Data Management Backup and Migration
 
 Implemented in version: **0.241.211**
-Updated in version: **0.250.074**
+Updated in version: **0.250.076**
 
 ## Overview
 
@@ -166,5 +166,5 @@ For optional local/source Cosmos backup capacity management, assign the App Serv
 
 ## Version References
 
-- Application version updated in `application/single_app/config.py` to `0.250.074`.
+- Application version updated in `application/single_app/config.py` to `0.250.076`.
 - Functional and UI tests include the same implementation version.

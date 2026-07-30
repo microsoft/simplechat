@@ -2,9 +2,9 @@
 # test_data_management_backup_durability.py
 """
 Functional test for durable Data Management backup jobs.
-Version: 0.250.074
+Version: 0.250.076
 Implemented in: 0.250.073
-Updated in: 0.250.074
+Updated in: 0.250.076
 
 This test ensures full and partial backups persist immutable plans and
 cutoffs, enforce source fencing, honor cancellation at durable boundaries,
@@ -123,7 +123,7 @@ def load_data_management_module(monkeypatch, job_container, item_state_container
     """Load production backup helpers with in-memory Cosmos dependencies."""
     config_module = types.ModuleType("config")
     config_module.CLIENTS = {}
-    config_module.VERSION = "0.250.074"
+    config_module.VERSION = "0.250.076"
     config_module.cosmos_data_management_jobs_container = job_container
     config_module.cosmos_data_management_job_items_container = job_container
     config_module.cosmos_settings_container = job_container

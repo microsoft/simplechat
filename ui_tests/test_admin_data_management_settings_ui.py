@@ -1,11 +1,10 @@
 # test_admin_data_management_settings_ui.py
 """
 UI test for Admin Settings Data Management controls.
-Version: 0.250.074
+Version: 0.250.076
 Implemented in: 0.241.211
 Updated in: 0.241.221
-Updated in: 0.250.074
-Updated in: 0.250.074
+Updated in: 0.250.076
 
 This test ensures admins can discover the Data Management tab, see the
 operational-business-hours warning, and access the backup, encryption,
@@ -15,7 +14,7 @@ Version 0.250.050 keeps this coverage aligned with the Cosmos editor save-path f
 Version 0.250.051 verifies the Cosmos editor results list scrolls independently.
 Version 0.250.071 adds resilient migration provenance, incremental modes, cutover
 reconciliation, and the external target Search writer freeze acknowledgement.
-Version 0.250.074 adds shared backup and migration retry/cancellation controls.
+Version 0.250.076 adds bounded parallel backup and source capacity controls.
 """
 
 import os

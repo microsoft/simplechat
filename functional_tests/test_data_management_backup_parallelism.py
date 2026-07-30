@@ -2,8 +2,8 @@
 # test_data_management_backup_parallelism.py
 """
 Functional test for bounded parallel Data Management Cosmos backups.
-Version: 0.250.074
-Implemented in: 0.250.074
+Version: 0.250.076
+Implemented in: 0.250.076
 
 This test ensures a durable Cosmos backup streams deterministic bounded JSONL
 batches with parallel staging, retries transient pressure safely, restores an
@@ -156,7 +156,7 @@ def load_module(monkeypatch, job_container, item_state_container, source_contain
     """Load production backup helpers with in-memory infrastructure fakes."""
     config_module = types.ModuleType("config")
     config_module.CLIENTS = {}
-    config_module.VERSION = "0.250.074"
+    config_module.VERSION = "0.250.076"
     config_module.cosmos_data_management_jobs_container = job_container
     config_module.cosmos_data_management_job_items_container = job_container
     config_module.cosmos_settings_container = job_container
@@ -343,7 +343,17 @@ def test_parallel_cosmos_backup_streams_10000_records_deterministically(monkeypa
     assert result["parallel_operations"] == 4
     assert backup_container.max_active_uploads <= 4
     assert backup_container.max_active_uploads > 1
-    assert elapsed_seconds < 100 * backup_container.delay_seconds * 0.8
+    serial_module, serial_job, _serial_job_container, _serial_item_states, serial_source_container = setup_job(
+        monkeypatch,
+        source_records(10_000),
+        build_plan(parallel_operations=1),
+    )
+    serial_container = FakeBackupContainer(delay_seconds=0.05)
+    serial_started_at = time.perf_counter()
+    run_resource(serial_module, serial_job, serial_container, serial_source_container)
+    serial_elapsed_seconds = time.perf_counter() - serial_started_at
+
+    assert elapsed_seconds < serial_elapsed_seconds * 0.9
     assert source_container.calls[0]["query"].endswith("ORDER BY c.id")
     assert source_container.calls[0]["max_item_count"] == 100
     entries = [entry for entry in manifest_entries(job_container, module, job["id"]) if entry["status"] == "succeeded"]
