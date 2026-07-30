@@ -591,6 +591,14 @@ def register_route_frontend_admin_settings(bp):
         settings['control_center_auto_refresh_time'] = control_center_auto_refresh_schedule['time']
         settings['control_center_auto_refresh_hour'] = control_center_auto_refresh_schedule['hour']
         settings['control_center_auto_refresh_minute'] = control_center_auto_refresh_schedule['minute']
+        settings['control_center_auto_refresh_timezone'] = control_center_auto_refresh_schedule['timezone']
+        if (
+            settings['control_center_auto_refresh_enabled']
+            and not settings.get('control_center_auto_refresh_next_run')
+        ):
+            settings['control_center_auto_refresh_next_run'] = (
+                calculate_next_control_center_auto_refresh_run(settings).isoformat()
+            )
         settings.update(normalize_cosmos_throughput_settings(settings))
         cosmos_resource_config = get_cosmos_resource_config(settings)
         settings['cosmos_throughput_resolved_subscription_id'] = cosmos_resource_config.get('subscription_id', '')
@@ -1146,19 +1154,25 @@ def register_route_frontend_admin_settings(bp):
             control_center_auto_refresh_enabled = form_data.get('control_center_auto_refresh_enabled') == 'on'
             incoming_control_center_auto_refresh_time = form_data.get(
                 'control_center_auto_refresh_time',
-                settings.get('control_center_auto_refresh_time', '06:00')
+                settings.get('control_center_auto_refresh_time', '02:00')
+            )
+            incoming_control_center_auto_refresh_timezone = form_data.get(
+                'control_center_auto_refresh_timezone',
+                settings.get('control_center_auto_refresh_timezone', 'America/New_York'),
             )
             control_center_auto_refresh_schedule = get_control_center_auto_refresh_schedule({
                 'control_center_auto_refresh_time': incoming_control_center_auto_refresh_time,
-                'control_center_auto_refresh_hour': settings.get('control_center_auto_refresh_hour', 6),
+                'control_center_auto_refresh_hour': settings.get('control_center_auto_refresh_hour', 2),
                 'control_center_auto_refresh_minute': settings.get('control_center_auto_refresh_minute', 0),
+                'control_center_auto_refresh_timezone': incoming_control_center_auto_refresh_timezone,
             })
             existing_control_center_auto_refresh_schedule = get_control_center_auto_refresh_schedule(settings)
             existing_control_center_auto_refresh_enabled = settings.get('control_center_auto_refresh_enabled', True)
             existing_control_center_auto_refresh_next_run = settings.get('control_center_auto_refresh_next_run')
             control_center_auto_refresh_schedule_changed = (
                 control_center_auto_refresh_enabled != existing_control_center_auto_refresh_enabled or
-                control_center_auto_refresh_schedule['time'] != existing_control_center_auto_refresh_schedule['time']
+                control_center_auto_refresh_schedule['time'] != existing_control_center_auto_refresh_schedule['time'] or
+                control_center_auto_refresh_schedule['timezone'] != existing_control_center_auto_refresh_schedule['timezone']
             )
             if control_center_auto_refresh_enabled:
                 if control_center_auto_refresh_schedule_changed or not existing_control_center_auto_refresh_next_run:
@@ -1167,6 +1181,7 @@ def register_route_frontend_admin_settings(bp):
                             'control_center_auto_refresh_time': control_center_auto_refresh_schedule['time'],
                             'control_center_auto_refresh_hour': control_center_auto_refresh_schedule['hour'],
                             'control_center_auto_refresh_minute': control_center_auto_refresh_schedule['minute'],
+                            'control_center_auto_refresh_timezone': control_center_auto_refresh_schedule['timezone'],
                         },
                         current_time=datetime.now(timezone.utc),
                     ).isoformat()
@@ -2706,6 +2721,7 @@ def register_route_frontend_admin_settings(bp):
                 'control_center_auto_refresh_time': control_center_auto_refresh_schedule['time'],
                 'control_center_auto_refresh_hour': control_center_auto_refresh_schedule['hour'],
                 'control_center_auto_refresh_minute': control_center_auto_refresh_schedule['minute'],
+                'control_center_auto_refresh_timezone': control_center_auto_refresh_schedule['timezone'],
                 'control_center_auto_refresh_next_run': control_center_auto_refresh_next_run,
             }
             

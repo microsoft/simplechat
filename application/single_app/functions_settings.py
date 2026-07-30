@@ -837,9 +837,10 @@ def get_settings(use_cosmos=False, include_source=False):
         # Control Center settings
         'control_center_last_refresh': None,  # Timestamp of last data refresh
         'control_center_auto_refresh_enabled': True,
-        'control_center_auto_refresh_time': '06:00',
-        'control_center_auto_refresh_hour': 6,
+        'control_center_auto_refresh_time': '02:00',
+        'control_center_auto_refresh_hour': 2,
         'control_center_auto_refresh_minute': 0,
+        'control_center_auto_refresh_timezone': 'America/New_York',
         'control_center_auto_refresh_next_run': None,
         # -- Your entire default dictionary here --
         'app_title': 'Simple Chat',
@@ -1376,9 +1377,33 @@ def get_settings(use_cosmos=False, include_source=False):
                         level=logging.WARNING
                     )
 
+        legacy_control_center_schedule = (
+            'control_center_auto_refresh_timezone' not in settings_item
+        )
+        legacy_control_center_time = settings_item.get('control_center_auto_refresh_time')
+        if not isinstance(legacy_control_center_time, str):
+            legacy_hour = settings_item.get('control_center_auto_refresh_hour', 6)
+            legacy_minute = settings_item.get('control_center_auto_refresh_minute', 0)
+            if not isinstance(legacy_hour, int):
+                legacy_hour = 6
+            if not isinstance(legacy_minute, int):
+                legacy_minute = 0
+            legacy_control_center_time = f"{legacy_hour:02d}:{legacy_minute:02d}"
+
         # Merge default_settings in, to fill in any missing or nested keys
         merge_changed = deep_merge_dicts(default_settings, settings_item)
         merged = settings_item
+        control_center_schedule_migration_updated = False
+        if legacy_control_center_schedule:
+            if legacy_control_center_time == '06:00':
+                merged['control_center_auto_refresh_time'] = '02:00'
+                merged['control_center_auto_refresh_hour'] = 2
+                merged['control_center_auto_refresh_minute'] = 0
+                merged['control_center_auto_refresh_timezone'] = 'America/New_York'
+            else:
+                merged['control_center_auto_refresh_timezone'] = 'UTC'
+            merged['control_center_auto_refresh_next_run'] = None
+            control_center_schedule_migration_updated = True
         migration_updated = apply_custom_endpoint_setting_migration(merged)
         assignment_settings_updated = normalize_group_workflow_assignment_settings(merged)
         promoted_popular_settings_updated = normalize_agents_page_promoted_popular_settings(merged)
@@ -1390,6 +1415,7 @@ def get_settings(use_cosmos=False, include_source=False):
         # If merging added anything new, upsert back to Cosmos so future reads remain up to date
         if (
             merge_changed
+            or control_center_schedule_migration_updated
             or migration_updated
             or assignment_settings_updated
             or promoted_popular_settings_updated
