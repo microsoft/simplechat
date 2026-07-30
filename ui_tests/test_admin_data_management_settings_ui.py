@@ -1,10 +1,11 @@
 # test_admin_data_management_settings_ui.py
 """
 UI test for Admin Settings Data Management controls.
-Version: 0.250.073
+Version: 0.250.074
 Implemented in: 0.241.211
 Updated in: 0.241.221
-Updated in: 0.250.073
+Updated in: 0.250.074
+Updated in: 0.250.074
 
 This test ensures admins can discover the Data Management tab, see the
 operational-business-hours warning, and access the backup, encryption,
@@ -14,7 +15,7 @@ Version 0.250.050 keeps this coverage aligned with the Cosmos editor save-path f
 Version 0.250.051 verifies the Cosmos editor results list scrolls independently.
 Version 0.250.071 adds resilient migration provenance, incremental modes, cutover
 reconciliation, and the external target Search writer freeze acknowledgement.
-Version 0.250.073 adds shared backup and migration retry/cancellation controls.
+Version 0.250.074 adds shared backup and migration retry/cancellation controls.
 """
 
 import os
@@ -71,6 +72,13 @@ def test_admin_data_management_controls_render_from_template():
         "data_management_encryption_enabled",
         "data-management-key-storage-alert",
         "data-management-key-vault-link",
+        "data-management-backup-performance-section",
+        "data_management_backup_max_parallel_operations",
+        "data_management_backup_retry_count",
+        "data_management_backup_capacity_failure_policy",
+        "data_management_backup_temporary_source_ru_enabled",
+        "data-management-backup-temporary-ru-field",
+        "data_management_backup_temporary_source_ru",
         "data-management-migration-section",
         "data-management-target-cosmos-section",
         "data_management_target_cosmos_auth",
@@ -210,6 +218,9 @@ def test_admin_data_management_controls_render_from_template():
     assert "Modify them at your own risk" in template
     assert "Use a dedicated backup storage account" in template
     assert "Open Key Vault settings" in template
+    assert "Cosmos Backup Performance" in template
+    assert "Temporary source max RU/s" in template
+    assert "continue_without_boost" in template
     assert "For managed identity, assign this App Service identity Cosmos DB Data Contributor" in template
     assert "Paste a connection string to save or replace it" in template
     assert 'id="data-management-connection-string-status"' in template
@@ -225,6 +236,12 @@ def test_admin_data_management_controls_render_from_template():
     assert 'updateKeyStorageExperience' in js_source
     assert 'openKeyVaultSettings' in js_source
     assert 'setMigrationTargetVisibility' in js_source
+    assert 'updateBackupCapacityVisibility' in js_source
+    assert 'getBackupLiveMetrics' in js_source
+    assert 'Skipped / failed' in js_source
+    assert 'label: "Elapsed"' in js_source
+    assert 'backup_max_parallel_operations' in js_source
+    assert 'backup_temporary_source_ru_enabled' in js_source
     assert 'buildMigrationPlan' in js_source
     assert 'queueMigration(false)' in js_source
     assert 'loadMigrationCatalog(targetType)' in js_source
@@ -318,6 +335,9 @@ def test_admin_data_management_tab_browser_workflow():
         expect(page.locator("#data_management_target_cosmos_database")).to_have_value("SimpleChat")
         expect(page.locator("#data_management_target_cosmos_database")).to_have_attribute("readonly", "")
         expect(page.locator("#data_management_migration_max_parallel_operations")).to_be_visible()
+        expect(page.locator("#data_management_backup_max_parallel_operations")).to_be_visible()
+        expect(page.locator("#data_management_backup_retry_count")).to_be_visible()
+        expect(page.get_by_label("Temporarily increase local source Cosmos capacity for this backup")).to_be_visible()
         expect(page.locator("#data_management_migration_retry_count")).to_be_visible()
         expect(page.locator("#data_management_migration_skip_recent_within_hours")).to_be_visible()
         expect(page.get_by_label("New only")).to_be_checked()

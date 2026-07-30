@@ -1022,6 +1022,44 @@ resource "azurerm_role_assignment" "managed_identity_cosmosdb_contributor" {
   principal_id         = azurerm_user_assigned_identity.id.principal_id
 }
 
+# Minimum management-plane access for Cosmos throughput monitoring and temporary
+# Data Management source-capacity boosts. This does not grant Cosmos data-plane access.
+resource "azurerm_role_definition" "simplechat_cosmos_throughput_operator" {
+  name        = "SimpleChat Cosmos Throughput Operator ${azurerm_resource_group.rg.name}"
+  scope       = azurerm_resource_group.rg.id
+  description = "Allows SimpleChat to read and adjust Cosmos DB SQL database/container throughput settings."
+
+  permissions {
+    actions = [
+      "Microsoft.DocumentDB/databaseAccounts/read",
+      "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/read",
+      "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/read",
+      "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/throughputSettings/read",
+      "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/throughputSettings/write",
+      "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/throughputSettings/migrateToAutoscale/action",
+      "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/throughputSettings/operationResults/read",
+      "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/throughputSettings/migrateToAutoscale/operationResults/read",
+      "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/throughputSettings/read",
+      "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/throughputSettings/write",
+      "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/throughputSettings/migrateToAutoscale/action",
+      "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/throughputSettings/operationResults/read",
+      "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/throughputSettings/migrateToAutoscale/operationResults/read",
+      "Microsoft.Insights/metrics/read",
+    ]
+    not_actions = []
+  }
+
+  assignable_scopes = [
+    azurerm_resource_group.rg.id,
+  ]
+}
+
+resource "azurerm_role_assignment" "managed_identity_cosmos_throughput_operator" {
+  scope              = azurerm_cosmosdb_account.cosmos.id
+  role_definition_id = azurerm_role_definition.simplechat_cosmos_throughput_operator.role_definition_resource_id
+  principal_id       = azurerm_user_assigned_identity.id.principal_id
+}
+
 # Storage Blob Data Contributor on Storage Account
 resource "azurerm_role_assignment" "managed_identity_storage_contributor" {
   scope                = azurerm_storage_account.sa.id
