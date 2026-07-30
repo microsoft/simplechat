@@ -4,7 +4,6 @@ import logging
 import os
 import re
 import threading
-import hashlib
 from typing import Any, Dict, Optional, Tuple
 
 from azure.monitor.opentelemetry import configure_azure_monitor
@@ -135,10 +134,6 @@ def sanitize_log_properties(value: Any, _depth: int = 0) -> Any:
     return sanitize_log_message(value)
 
 
-def _safe_log_hash(value: Any) -> str:
-    return hashlib.sha256(str(value or "").encode("utf-8")).hexdigest()[:16]
-
-
 def _normalize_extra_key(key: Any) -> str:
     normalized_key = re.sub(r"[^A-Za-z0-9_]", "_", str(key or "").strip())[:80]
     normalized_key = normalized_key.strip("_") or "value"
@@ -151,7 +146,7 @@ def _normalize_extra_key(key: Any) -> str:
 def _logger_safe_scalar(value: Any) -> Any:
     if value is None or isinstance(value, (int, float, bool)):
         return value
-    return _safe_log_hash(value)
+    return type(value).__name__
 
 
 def _build_logger_extra(
@@ -160,7 +155,6 @@ def _build_logger_extra(
 ) -> Optional[Dict[str, Any]]:
     """Build log-record properties without clear-text user-controlled values."""
     logger_extra: Dict[str, Any] = {
-        "sc_message_hash": _safe_log_hash(message),
         "sc_message_length": len(str(message or "")),
     }
 
@@ -172,12 +166,9 @@ def _build_logger_extra(
                 continue
             if isinstance(value, dict):
                 logger_extra[f"{normalized_key}_count"] = len(value)
-                logger_extra[f"{normalized_key}_hash"] = _safe_log_hash(value)
             elif isinstance(value, (list, tuple, set)):
                 logger_extra[f"{normalized_key}_count"] = len(value)
-                logger_extra[f"{normalized_key}_hash"] = _safe_log_hash(value)
             elif isinstance(value, str):
-                logger_extra[f"{normalized_key}_hash"] = _safe_log_hash(value)
                 logger_extra[f"{normalized_key}_length"] = len(value)
             else:
                 logger_extra[normalized_key] = _logger_safe_scalar(value)

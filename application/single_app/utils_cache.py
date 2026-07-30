@@ -18,6 +18,7 @@ Cache Strategy:
 import hashlib
 import logging
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 from config import (
@@ -27,12 +28,23 @@ from config import (
     cosmos_search_cache_container
 )
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
-from functions_appinsights import sanitize_log_message
 
 logger = logging.getLogger(__name__)
 
 # Debug logging control - set environment variable DEBUG_SEARCH_CACHE=1 to enable
 DEBUG_ENABLED = os.environ.get('DEBUG_SEARCH_CACHE', '0') == '1'
+DEBUG_SECRET_ASSIGNMENT_RE = re.compile(
+    r"(?i)\b(api[-_]?key|access[-_]?token|client[-_]?secret|connection[-_]?string|password|secret|subscription[-_]?key|token|sig|signature)=([^&\s,;]+)"
+)
+DEBUG_AUTHORIZATION_VALUE_RE = re.compile(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+")
+DEBUG_CONTROL_CHAR_RE = re.compile(r"[\r\n\t]+")
+
+
+def _sanitize_debug_log_value(value):
+    value_text = str(value)
+    value_text = DEBUG_SECRET_ASSIGNMENT_RE.sub(lambda match: f"{match.group(1)}=***REDACTED***", value_text)
+    value_text = DEBUG_AUTHORIZATION_VALUE_RE.sub(lambda match: f"{match.group(1)} ***REDACTED***", value_text)
+    return DEBUG_CONTROL_CHAR_RE.sub(" ", value_text)
 
 
 def get_cache_settings():
@@ -76,12 +88,12 @@ def _debug_print(message: str, context: str = "CACHE", **kwargs):
     extra_info = ""
     if kwargs:
         extra_parts = [
-            f"{sanitize_log_message(k)}={sanitize_log_message(v)}"
+            f"{_sanitize_debug_log_value(k)}={_sanitize_debug_log_value(v)}"
             for k, v in kwargs.items()
         ]
         extra_info = " | " + ", ".join(extra_parts)
     
-    debug_message = sanitize_log_message(f"[{timestamp}] [{context}] {message}{extra_info}")
+    debug_message = _sanitize_debug_log_value(f"[{timestamp}] [{context}] {message}{extra_info}")
     logger.info("[SearchCacheDebug]")
     print(debug_message, flush=True)  # Also print to stdout for visibility
 

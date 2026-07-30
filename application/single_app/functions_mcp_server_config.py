@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import sys
 from urllib.parse import urlparse
 
 import requests
@@ -397,11 +398,13 @@ def normalize_inbound_mcp_settings(settings):
 def get_inbound_mcp_runtime_config(settings=None):
     """Return normalized runtime config backed by the Cosmos app_settings document."""
     if settings is None:
-        # Imported locally to avoid a settings/config cache import cycle during app startup.
-        import app_settings_cache
-
-        settings_getter = getattr(app_settings_cache, "get_settings_cache", None)
-        settings = settings_getter() if callable(settings_getter) else {}
+        settings = {}
+        for module_name in ("app_settings_cache", "single_app.app_settings_cache"):
+            settings_cache_module = sys.modules.get(module_name)
+            settings_getter = getattr(settings_cache_module, "get_settings_cache", None)
+            if callable(settings_getter):
+                settings = settings_getter()
+                break
 
     config = dict(settings or {})
     normalize_inbound_mcp_settings(config)
