@@ -1,10 +1,9 @@
 # test_admin_data_management_settings_ui.py
 """
 UI test for Admin Settings Data Management controls.
-Version: 0.250.051
+Version: 0.250.071
 Implemented in: 0.241.211
 Updated in: 0.241.221
-Updated in: 0.250.051
 
 This test ensures admins can discover the Data Management tab, see the
 operational-business-hours warning, and access the backup, encryption,
@@ -12,6 +11,8 @@ migration, Cosmos DB JSON editor, backup inventory, and job-history controls wit
 Version 0.250.049 moves query results and document editing into a scrollable modal.
 Version 0.250.050 keeps this coverage aligned with the Cosmos editor save-path fix.
 Version 0.250.051 verifies the Cosmos editor results list scrolls independently.
+Version 0.250.071 adds resilient migration provenance, incremental modes, cutover
+reconciliation, and the external target Search writer freeze acknowledgement.
 """
 
 import os
@@ -74,6 +75,8 @@ def test_admin_data_management_controls_render_from_template():
         "data_management_target_cosmos_endpoint",
         "data_management_target_cosmos_database",
         "data-management-target-cosmos-key-field",
+        "data_management_target_cosmos_subscription_id",
+        "data_management_target_cosmos_resource_group",
         "data-management-test-target-cosmos-btn",
         "data-management-target-ai-search-section",
         "data_management_target_ai_search_auth",
@@ -89,6 +92,24 @@ def test_admin_data_management_controls_render_from_template():
         "data_management_target_ec_connection_string",
         "data-management-test-target-ec-storage-btn",
         "data-management-migration-workflow-section",
+        "data-management-test-migration-access-btn",
+        "data-management-migration-mode-section",
+        "data_management_migration_mode_new_only",
+        "data_management_migration_mode_delta_upsert",
+        "data_management_migration_mode_mirror_with_deletions",
+        "data-management-migration-mode-description",
+        "data-management-migration-baseline-field",
+        "data_management_migration_baseline_job_id",
+        "data-management-migration-mirror-confirmation",
+        "data_management_migration_mirror_confirmation_phrase",
+        "data-management-migration-search-write-freeze",
+        "data_management_migration_target_search_writes_frozen",
+        "data_management_migration_max_parallel_operations",
+        "data_management_migration_retry_count",
+        "data_management_migration_skip_recent_within_hours",
+        "data_management_migration_temporary_destination_ru_enabled",
+        "data-management-migration-temporary-ru-field",
+        "data_management_migration_temporary_destination_ru",
         "data_management_migration_users_mode",
         "data-management-migration-users-available",
         "data-management-migration-users-selected",
@@ -139,10 +160,14 @@ def test_admin_data_management_controls_render_from_template():
         "data-management-job-detail-modal",
         "data-management-job-detail-refresh-state",
         "data-management-job-detail-progress",
+        "data-management-job-detail-actions",
         "data-management-job-items-tbody",
         "data-management-job-artifacts-tbody",
         "data-management-job-manifest-detail",
         "data-management-job-warnings",
+        "data-management-migration-cancel-modal",
+        "data-management-migration-cancel-message",
+        "data-management-confirm-migration-cancel-btn",
     ]
 
     for element_id in required_ids:
@@ -187,6 +212,11 @@ def test_admin_data_management_controls_render_from_template():
     assert "Paste a connection string to save or replace it" in template
     assert 'id="data-management-connection-string-status"' in template
     assert 'id="data_management_target_cosmos_database" value="SimpleChat" readonly aria-readonly="true"' in template
+    assert 'max="10000"' in template
+    assert 'Validate Cosmos Migration Access' in template
+    assert 'role="radiogroup" aria-label="Migration synchronization mode"' in template
+    assert "MIRROR WITH DELETIONS" in template
+    assert "I confirm external destination AI Search writers are frozen for this migration" in template
     assert 'setStorageAuthVisibility' in js_source
     assert 'updateConnectionStringStatus' in js_source
     assert 'updateSourceBlobBackupAvailability' in js_source
@@ -206,6 +236,25 @@ def test_admin_data_management_controls_render_from_template():
     assert 'The edit was recorded in Activity Logs.' in js_source
     assert 'closest("[data-ignore-data-management-change' in js_source
     assert 'testTargetCosmos' in js_source
+    assert 'testMigrationAccess' in js_source
+    assert 'retryMigrationJob' in js_source
+    assert 'openMigrationCancellationModal' in js_source
+    assert 'requestMigrationCancellation' in js_source
+    assert 'getMigrationLiveMetrics' in js_source
+    assert 'jobDetailRefreshIntervalMs = 2000' in js_source
+    assert '/progress`' in js_source
+    assert 'Observed transferred' in js_source
+    assert 'Running - alive, no recent progress' in js_source
+    assert 'updateMigrationCapacityVisibility' in js_source
+    assert 'updateMigrationModeVisibility' in js_source
+    assert 'updateMigrationSearchWriteFreezeVisibility' in js_source
+    assert 'target_ai_search_writes_frozen' in js_source
+    assert 'createMigrationPreviewOutcomes' in js_source
+    assert 'include_inventory: Boolean(showSuccess)' in js_source
+    assert 'Stage ${formatNumber(displayedStage)} of ${formatNumber(totalSteps)}' in js_source
+    assert 'Active stage' in js_source
+    assert 'Migration stage is active; measured throughput is shown below.' in js_source
+    assert 'Migration cancellation requested. The worker will stop at its next durable checkpoint.' in js_source
     assert 'testTargetSearch' in js_source
     assert 'testTargetEnhancedCitationStorage' in js_source
     assert 'Migration preview refreshed.' in js_source
@@ -215,6 +264,8 @@ def test_admin_data_management_controls_render_from_template():
     assert 'loadDataManagementBackups' in js_source
     assert 'loadDataManagementJobDetail' in js_source
     assert 'renderJobArtifacts' in js_source
+    assert 'renderJobDetailActions' in js_source
+    assert 'createMigrationManifestDownloadLink' in js_source
     assert 'createDetailChipGroup' in js_source
     assert 'startJobDetailAutoRefresh' in js_source
     assert 'Live updates on -' in js_source
@@ -263,6 +314,17 @@ def test_admin_data_management_tab_browser_workflow():
         expect(page.get_by_role("button", name="Advanced backup scope")).to_be_visible()
         expect(page.locator("#data_management_target_cosmos_database")).to_have_value("SimpleChat")
         expect(page.locator("#data_management_target_cosmos_database")).to_have_attribute("readonly", "")
+        expect(page.locator("#data_management_migration_max_parallel_operations")).to_be_visible()
+        expect(page.locator("#data_management_migration_retry_count")).to_be_visible()
+        expect(page.locator("#data_management_migration_skip_recent_within_hours")).to_be_visible()
+        expect(page.get_by_label("New only")).to_be_checked()
+        expect(page.locator("#data-management-migration-baseline-field")).to_have_class(re.compile(r"\bd-none\b"))
+        page.get_by_label("Delta / upsert").check()
+        expect(page.locator("#data-management-migration-baseline-field")).not_to_have_class(re.compile(r"\bd-none\b"))
+        page.get_by_label("Mirror with deletions").check()
+        expect(page.locator("#data-management-migration-mirror-confirmation")).to_be_visible()
+        expect(page.get_by_label("Temporarily increase destination Cosmos capacity during this migration")).to_be_visible()
+        expect(page.get_by_role("button", name="Validate Cosmos Migration Access")).to_be_visible()
         expect(page.locator("#data-management-target-ai-search-section")).to_be_visible()
         expect(page.locator("#data-management-test-target-search-btn")).to_be_visible()
         expect(page.locator("#data-management-migration-workflow-section")).to_be_visible()
@@ -286,6 +348,7 @@ def test_admin_data_management_tab_browser_workflow():
         expect(page.locator("#data-management-backups-tbody")).to_be_visible()
         expect(page.locator("#data-management-jobs-tbody")).to_be_visible()
         expect(page.locator("#data-management-job-detail-modal")).to_be_attached()
+        expect(page.locator("#data-management-migration-cancel-modal")).to_be_attached()
     finally:
         context.close()
         browser.close()

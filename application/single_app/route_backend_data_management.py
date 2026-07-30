@@ -3,7 +3,7 @@
 
 import logging
 
-from flask import current_app, jsonify, request, session
+from flask import Response, current_app, jsonify, request, session
 
 from functions_activity_logging import log_general_admin_action
 from functions_appinsights import log_event
@@ -15,17 +15,23 @@ from functions_data_management import (
     DATA_MANAGEMENT_OPERATION_RESTORE,
     DataManagementCosmosEditorError,
     DataManagementSettingsValidationError,
+    export_data_management_migration_manifest,
     generate_data_management_encryption_key,
     get_data_management_cosmos_editor_containers,
     get_data_management_cosmos_editor_document,
     get_data_management_backup_summary,
     get_data_management_job_detail,
+    get_data_management_job_progress,
     get_data_management_jobs,
     get_data_management_migration_catalog,
     get_data_management_settings,
     log_data_management_cosmos_editor_activity,
+    preview_data_management_migration_plan,
     queue_data_management_job,
     query_data_management_cosmos_editor_documents,
+    request_data_management_migration_cancellation,
+    resolve_data_management_migration_manifest_item,
+    retry_data_management_migration_job,
     sanitize_data_management_job_for_admin,
     sanitize_data_management_settings_for_admin,
     save_data_management_cosmos_editor_document,
@@ -182,8 +188,12 @@ def register_route_backend_data_management(bp):
     def test_admin_data_management_target_cosmos():
         payload = request.get_json(silent=True) or {}
         settings_payload = payload.get("settings") if isinstance(payload.get("settings"), dict) else None
+        migration_plan = payload.get("migration_plan") if isinstance(payload.get("migration_plan"), dict) else None
         try:
-            result = test_target_cosmos_connection(settings=settings_payload)
+            result = test_target_cosmos_connection(
+                settings=settings_payload,
+                migration_plan=migration_plan,
+            )
         except Exception as exc:
             log_event(
                 "[DataManagement] Target Cosmos connection test failed.",
@@ -406,6 +416,116 @@ def register_route_backend_data_management(bp):
             return jsonify({"success": False, "error": "Data Management job was not found."}), 404
         return jsonify({"success": True, **detail}), 200
 
+    @bp.route("/api/admin/data-management/jobs/<job_id>/progress", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def get_admin_data_management_job_progress(job_id):
+        progress = get_data_management_job_progress(job_id)
+        if not progress:
+            return jsonify({"success": False, "error": "Data Management job was not found."}), 404
+        return jsonify({"success": True, "job": progress}), 200
+
+    @bp.route("/api/admin/data-management/jobs/<job_id>/migration-manifest", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def download_admin_data_management_migration_manifest(job_id):
+        statuses = {
+            status.strip().lower()
+            for status in str(request.args.get("statuses") or "").split(",")
+            if status.strip()
+        }
+        try:
+            export = export_data_management_migration_manifest(job_id, statuses=statuses)
+        except DataManagementSettingsValidationError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 404
+        response = Response(
+            export["content"],
+            status=200,
+            content_type="application/x-ndjson; charset=utf-8",
+        )
+        suffix = "-failures" if statuses else ""
+        response.headers["Content-Disposition"] = (
+            f'attachment; filename="migration-{job_id}{suffix}.jsonl"'
+        )
+        response.headers["X-Migration-Manifest-Entries"] = str(export["entry_count"])
+        return response
+
+    @bp.route(
+        "/api/admin/data-management/jobs/<job_id>/migration-manifest/items/<item_ref>",
+        methods=["GET"],
+    )
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def resolve_admin_data_management_migration_manifest_item(job_id, item_ref):
+        try:
+            item = resolve_data_management_migration_manifest_item(job_id, item_ref)
+        except DataManagementSettingsValidationError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 404
+        return jsonify({"success": True, "item": item}), 200
+
+    @bp.route("/api/admin/data-management/jobs/<job_id>/retry", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def retry_admin_data_management_migration_job(job_id):
+        try:
+            job = retry_data_management_migration_job(job_id)
+            submitted = submit_data_management_job(current_app._get_current_object(), job.get("id"))
+        except DataManagementSettingsValidationError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
+        except Exception as exc:
+            log_event(
+                "[DataManagement] Failed to retry migration job.",
+                {"job_id": job_id, "error": str(exc)},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"success": False, "error": "Migration retry could not be queued."}), 400
+
+        _log_data_management_admin_action(
+            "data_management_migration_retry_queued",
+            "Queued a Data Management migration retry from durable checkpoints.",
+            {"job_id": job.get("id"), "submitted": submitted},
+        )
+        public_job = sanitize_data_management_job_for_admin(job)
+        public_job["submitted_to_executor"] = submitted
+        return jsonify({"success": True, "job": public_job}), 202
+
+    @bp.route("/api/admin/data-management/jobs/<job_id>/cancel", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def cancel_admin_data_management_migration_job(job_id):
+        payload = request.get_json(silent=True) or {}
+        admin_user_id, admin_email = _get_admin_context()
+        try:
+            job = request_data_management_migration_cancellation(
+                job_id,
+                requested_by=admin_user_id,
+                requested_by_email=admin_email,
+                reason=payload.get("reason"),
+            )
+        except DataManagementSettingsValidationError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
+        except Exception as exc:
+            log_event(
+                "[DataManagement] Failed to request migration cancellation.",
+                {"job_id": job_id, "error": str(exc)},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"success": False, "error": "Migration cancellation could not be requested."}), 400
+
+        _log_data_management_admin_action(
+            "data_management_migration_cancel_requested",
+            "Requested cancellation of a Data Management migration.",
+            {"job_id": job.get("id"), "status": job.get("status")},
+        )
+        return jsonify({"success": True, "job": sanitize_data_management_job_for_admin(job)}), 202
+
     @bp.route("/api/admin/data-management/backups", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -436,9 +556,26 @@ def register_route_backend_data_management(bp):
         payload = request.get_json(silent=True) or {}
         try:
             summary = summarize_data_management_migration_plan(payload)
+            preview = None
+            if payload.get("include_inventory") is True:
+                preview = preview_data_management_migration_plan(
+                    get_data_management_settings(),
+                    payload,
+                )
         except DataManagementSettingsValidationError as exc:
             return jsonify({"success": False, "error": str(exc)}), 400
-        return jsonify({"success": True, "summary": summary}), 200
+        except Exception as exc:
+            log_event(
+                "[DataManagement] Migration inventory preview failed.",
+                {"error": str(exc)},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({
+                "success": False,
+                "error": "Migration inventory preview could not be completed.",
+            }), 400
+        return jsonify({"success": True, "summary": summary, "preview": preview}), 200
 
     @bp.route("/api/admin/data-management/jobs", methods=["POST"])
     @swagger_route(security=get_auth_security())
@@ -458,12 +595,17 @@ def register_route_backend_data_management(bp):
 
         admin_user_id, admin_email = _get_admin_context()
         try:
+            job_options = (
+                dict(payload.get("options"))
+                if isinstance(payload.get("options"), dict)
+                else {}
+            )
             job = queue_data_management_job(
                 operation,
                 backup_type=backup_type,
                 requested_by=admin_user_id,
                 requested_by_email=admin_email,
-                options=payload.get("options") if isinstance(payload.get("options"), dict) else {},
+                options=job_options,
             )
             submitted = submit_data_management_job(current_app._get_current_object(), job.get("id"))
         except Exception as exc:
