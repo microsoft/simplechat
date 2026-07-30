@@ -11,6 +11,13 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Downloads reuse the active Azure Speech voice and speed, include only visible message text, and remain transient without storing generated audio in SimpleChat.
     *   (Ref: microsoft/simplechat#628, `chat-tts.js`, `chat-message-export.js`, `chat-messages.js`, `MESSAGE_AUDIO_EXPORT.md`)
 
+#### User Interface Enhancements
+
+*   **External Link Ordering Controls**
+    *   Admins can now move saved external links up or down and save the resulting navigation order without deleting and recreating links.
+    *   The first and last links expose disabled boundary controls, and the visible order stays synchronized with the Admin Settings save payload.
+    *   (Ref: Closes #793, `admin_settings.js`, `test_admin_external_link_ordering.py`, `EXTERNAL_LINK_ORDERING_FIX.md`)
+
 ### **(v0.250.101)**
 
 #### New Features
