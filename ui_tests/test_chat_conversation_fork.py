@@ -1,12 +1,12 @@
 # test_chat_conversation_fork.py
 """
 UI test for personal conversation forking.
-Version: 0.250.074
+Version: 0.250.101
 Implemented in: 0.250.074
 
-This test ensures only persisted completed assistant messages in personal
-conversations expose the fork action and validates confirmation, failure
-feedback, duplicate-click prevention, and successful fork activation.
+This test ensures persisted completed assistant messages in supported
+single-user conversations expose the fork action and validates confirmation,
+failure feedback, duplicate-click prevention, and successful fork activation.
 """
 
 import json
@@ -190,17 +190,69 @@ def test_personal_assistant_message_fork_workflow():
                         metadata: {},
                     }
                 );
+
+                sourceItem.dataset.chatType = 'public';
+                chatMessages.appendMessage(
+                    'AI',
+                    'Public response',
+                    null,
+                    'public-assistant',
+                    false,
+                    [],
+                    [],
+                    [],
+                    null,
+                    null,
+                    {
+                        id: 'public-assistant',
+                        conversation_id: 'fork-source',
+                        role: 'assistant',
+                        content: 'Public response',
+                        metadata: {}
+                    }
+                );
+
+                sourceItem.dataset.chatType = 'personal_single_user';
+                sourceItem.dataset.conversationKind = 'collaborative';
+                chatMessages.appendMessage(
+                    'AI',
+                    'Collaborative response',
+                    null,
+                    'collaborative-assistant',
+                    false,
+                    [],
+                    [],
+                    [],
+                    null,
+                    null,
+                    {
+                        id: 'collaborative-assistant',
+                        conversation_id: 'fork-source',
+                        role: 'assistant',
+                        content: 'Collaborative response',
+                        metadata: {}
+                    }
+                );
+                delete sourceItem.dataset.conversationKind;
                 sourceItem.dataset.chatType = 'personal_single_user';
 
                 return {
                     persisted: Boolean(document.querySelector('[data-message-id="persisted-assistant"] .dropdown-fork-conversation-btn')),
                     streaming: Boolean(document.querySelector('[data-message-id="temp_ai_streaming"] .dropdown-fork-conversation-btn')),
                     group: Boolean(document.querySelector('[data-message-id="group-assistant"] .dropdown-fork-conversation-btn')),
+                    public: Boolean(document.querySelector('[data-message-id="public-assistant"] .dropdown-fork-conversation-btn')),
+                    collaborative: Boolean(document.querySelector('[data-message-id="collaborative-assistant"] .dropdown-fork-conversation-btn')),
                 };
             }"""
         )
 
-        assert visibility == {'persisted': True, 'streaming': False, 'group': False}
+        assert visibility == {
+            'persisted': True,
+            'streaming': False,
+            'group': True,
+            'public': True,
+            'collaborative': False,
+        }
 
         fork_action = page.locator(
             '[data-message-id="persisted-assistant"] .dropdown-fork-conversation-btn'

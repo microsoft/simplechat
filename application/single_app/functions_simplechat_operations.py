@@ -61,13 +61,24 @@ from functions_group import (
 )
 from functions_notifications import create_notification
 from functions_personal_workflows import save_personal_workflow
+from functions_public_workspaces import (
+    check_public_workspace_status_allows_operation,
+    find_public_workspace_by_id,
+)
 from functions_settings import get_settings, is_user_workflows_enabled_for_user
 from utils_cache import invalidate_group_search_cache, invalidate_personal_search_cache
 
 
 SIMPLECHAT_PLUGIN_TYPE = "simplechat"
 SIMPLECHAT_DEFAULT_ENDPOINT = "simplechat://internal"
-PERSONAL_FORK_CHAT_TYPES = {"", "new", "personal", "personal_single_user"}
+FORKABLE_SINGLE_USER_CHAT_TYPES = {
+    "",
+    "new",
+    "personal",
+    "personal_single_user",
+    "group-single-user",
+    "public",
+}
 PERSONAL_FORK_CONVERSATION_FIELDS = (
     "context",
     "tags",
@@ -244,20 +255,77 @@ class ConversationForkConflictError(RuntimeError):
     """Raised when the source changes or cannot be forked safely."""
 
 
-def is_forkable_personal_conversation(conversation_item: Dict[str, Any]) -> bool:
-    """Return whether a legacy personal conversation is eligible for forking."""
+def is_forkable_single_user_conversation(conversation_item: Dict[str, Any]) -> bool:
+    """Return whether a user-owned single-user conversation can be considered for forking."""
     chat_type = str((conversation_item or {}).get("chat_type") or "").strip().lower()
-    if chat_type not in PERSONAL_FORK_CHAT_TYPES:
-        return False
+    return chat_type in FORKABLE_SINGLE_USER_CHAT_TYPES
 
-    for context_item in (conversation_item or {}).get("context") or []:
+
+def _authorize_fork_conversation_context(
+    conversation_item: Dict[str, Any],
+    user_id: str,
+) -> str:
+    """Revalidate stored workspace context and return the destination chat type."""
+    if not is_forkable_single_user_conversation(conversation_item):
+        raise ConversationForkConflictError("Only supported single-user conversations can be forked")
+
+    authorized_scopes = set()
+    for context_item in conversation_item.get("context") or []:
         if not isinstance(context_item, dict):
-            continue
-        scope = str(context_item.get("scope") or "").strip().lower()
-        if scope and scope != "personal":
-            return False
+            raise ConversationForkConflictError("The conversation context is invalid")
 
-    return True
+        scope = str(context_item.get("scope") or "").strip().lower()
+        if scope in {"", "personal"}:
+            authorized_scopes.add("personal")
+            continue
+
+        context_id = str(context_item.get("id") or "").strip()
+        if not context_id:
+            raise ConversationForkConflictError("The conversation workspace context is incomplete")
+
+        if scope == "group":
+            group_doc = find_group_by_id(context_id)
+            if not group_doc:
+                raise ConversationForkConflictError("The conversation group is no longer available")
+            allowed, _ = check_group_status_allows_operation(group_doc, "chat")
+            if not allowed:
+                raise ConversationForkConflictError("The conversation group no longer allows chat")
+            try:
+                assert_group_role(
+                    user_id,
+                    context_id,
+                    allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+                )
+            except (LookupError, PermissionError) as access_error:
+                raise ConversationForkConflictError(
+                    "The conversation group is no longer available to this user"
+                ) from access_error
+            authorized_scopes.add(scope)
+            continue
+
+        if scope == "public":
+            workspace_doc = find_public_workspace_by_id(context_id)
+            if not workspace_doc:
+                raise ConversationForkConflictError("The public workspace is no longer available")
+            allowed, _ = check_public_workspace_status_allows_operation(workspace_doc, "chat")
+            if not allowed:
+                raise ConversationForkConflictError("The public workspace no longer allows chat")
+            authorized_scopes.add(scope)
+            continue
+
+        raise ConversationForkConflictError("The conversation has an unsupported workspace context")
+
+    if "group" in authorized_scopes and "public" in authorized_scopes:
+        raise ConversationForkConflictError("Mixed group and public workspace context cannot be forked")
+    if "group" in authorized_scopes:
+        return "group-single-user"
+    if "public" in authorized_scopes:
+        return "public"
+
+    source_chat_type = str(conversation_item.get("chat_type") or "").strip().lower()
+    if source_chat_type in {"group-single-user", "public"}:
+        raise ConversationForkConflictError("The conversation workspace context is incomplete")
+    return "personal_single_user"
 
 
 def _message_fork_sort_key(message_doc: Dict[str, Any]) -> Tuple[str, int, str]:
@@ -462,6 +530,7 @@ def _build_fork_conversation_document(
     selected_message_id: str,
     fork_conversation_id: str,
     user_id: str,
+    destination_chat_type: str,
 ) -> Dict[str, Any]:
     source_title = str(source_conversation.get("title") or "New Conversation").strip() or "New Conversation"
     fork_title = f"Fork of {source_title}"
@@ -476,7 +545,7 @@ def _build_fork_conversation_document(
         "strict": False,
         "is_pinned": False,
         "is_hidden": False,
-        "chat_type": "personal_single_user",
+        "chat_type": destination_chat_type,
         "has_unread_assistant_response": False,
         "last_unread_assistant_message_id": None,
         "last_unread_assistant_at": None,
@@ -658,8 +727,10 @@ def fork_personal_conversation_for_user(
         raise ValueError("Source conversation, assistant message, and user are required")
     if source_conversation.get("user_id") != normalized_user_id:
         raise PermissionError("Forbidden")
-    if not is_forkable_personal_conversation(source_conversation):
-        raise ConversationForkConflictError("Only personal conversations can be forked")
+    destination_chat_type = _authorize_fork_conversation_context(
+        source_conversation,
+        normalized_user_id,
+    )
 
     query = (
         "SELECT * FROM c "
@@ -711,6 +782,7 @@ def fork_personal_conversation_for_user(
         normalized_message_id,
         fork_conversation_id,
         normalized_user_id,
+        destination_chat_type,
     )
     written_message_ids = []
     created_blob_targets: List[Tuple[str, str]] = []

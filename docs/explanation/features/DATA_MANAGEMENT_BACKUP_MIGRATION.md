@@ -1,7 +1,7 @@
 # Data Management Backup and Migration
 
 Implemented in version: **0.241.211**
-Updated in version: **0.250.076**
+Updated in version: **0.250.101**
 
 ## Overview
 
@@ -28,6 +28,11 @@ Full and partial backups use the same Cosmos-backed durable job contract as resi
 - Resource checkpoints retain bounded counters and rolling batch identities. Per-item outcomes are stored in bounded job-manifest batches plus the latest-only sidecar state, so verified units are not replayed after a restart or focused retry.
 - Cosmos exports read deterministic `c.id`-ordered source pages and stream checkpoint-sized JSONL batches. A bounded worker pool stages no more than the configured concurrent batch count while the lease-owning coordinator commits manifests, latest-item state, and checkpoints strictly in source sequence. This avoids materializing whole containers in memory and preserves deterministic retry/resume output.
 - Cosmos page reads and batch staging retry `408`, `429`, `449`, and `5xx` responses with bounded exponential backoff, jitter, and `Retry-After` guidance where supplied. Throttle events reduce active staging concurrency; clean completed batches gradually restore it up to the configured limit. Permanent serialization/upload failures are checkpointed as retryable item outcomes rather than silently omitted.
+- AI Search exports use independent, bounded JSONL page artifacts under `ai_search/<index>/pages/` rather than a monolithic index JSONL blob. Each supported index validates its captured schema before export: `id` must be the single retrievable, filterable, sortable `Edm.String` key and `upload_date` must be retrievable, filterable, and sortable.
+- Search pages use `upload_date` source windows from the immutable backup cutoff and partial-backup lower bound, capture an index-specific upper `id`, then advance with `id gt last_committed_id and id le upper_id` ordered ascending. This avoids deep `skip` paging and supports restart from the last committed page without duplicate or omitted manifest outcomes.
+- Search page reads and uploads are scheduled across indexes with at most one page in flight per index. The immutable Search execution plan records the bounded concurrency, retry budget, page size, and clean-page recovery threshold. `429` and `503` responses honor `Retry-After`, reduce active concurrency, and clean pages gradually restore it.
+- Page uploads, manifest outcomes, checkpoints, and latest-only state acknowledgements commit in that order through the lease-owning coordinator. Per-index checkpoints retain the source window, upper key, last committed key, next page, bounded recent parts, counts, retries, throttles, and bytes. Raw key cursors remain durable-only and are not exposed in admin progress.
+- Azure AI Search does not provide a transactional snapshot. The date window and upper key bound make traversal deterministic, while missing, duplicate, out-of-order, out-of-window, or schema-incompatible documents fail that index's integrity check. Incomplete indexes are retained for diagnostics/resume but marked unavailable for restore-ready output; other indexes continue.
 - Queued jobs cancel immediately. Running jobs stop cooperatively at a durable boundary; already verified work remains available for Retry or Resume.
 - The scheduler resubmits delayed queued and stale backup jobs through the executor. Scheduled runs defer when another active backup owns the same source scope instead of overlapping it. Pending source-capacity restoration is claimed only by the newly fenced recovery attempt and runs before storage or encryption initialization.
 - Backup progress and job timelines expose bounded resource counters, warnings, failed/skipped summaries, attempt history, checkpoint counts, source page position, request units, retries/throttles, elapsed time, records/sec, and RU/sec. They do not expose settings, credentials, source content, ARM routing, SAS query strings, signed artifact URLs, or provider error strings containing secrets.
@@ -60,7 +65,7 @@ The latest-only sidecar records source identity and version, backup lineage, job
 Backup jobs write JSON/JSONL artifacts to the configured Azure Blob Storage container:
 
 - Cosmos DB app data for settings, users/groups/workspaces, conversations, documents, agents, actions, prompts, and workspace identities.
-- AI Search schemas and retrievable index documents for personal, group, and public indexes.
+- AI Search schemas and retrievable index documents for personal, group, and public indexes. Search documents are stored as deterministic page parts with schema fingerprints, source-window metadata, bounded part summaries, integrity status, and concurrent-write semantics in the artifact manifest.
 - Optional source document blob backup can be enabled from the admin UI.
 - A manifest records artifact paths, app version, backup type, encryption status, and warnings.
 
@@ -152,6 +157,7 @@ For optional local/source Cosmos backup capacity management, assign the App Serv
 - Functional security coverage: `functional_tests/test_data_management_security_patterns.py`.
 - Backup durability coverage: `functional_tests/test_data_management_backup_durability.py`.
 - Parallel Cosmos backup, retry/adaptive pressure, source capacity restoration/recovery, fencing, resume, and sanitized telemetry coverage: `functional_tests/test_data_management_backup_parallelism.py`.
+- AI Search keyset paging, >100,000 logical-result traversal, page concurrency, `429`/`503` recovery, resume, latest-state skips, schema/integrity validation, isolated index failure, and sanitized telemetry coverage: `functional_tests/test_data_management_ai_search_backup_export.py`.
 - UI/template coverage: `ui_tests/test_admin_data_management_settings_ui.py`.
 - Scheduler/recovery, cancellation, retry, coordinator, provenance, and write-fence coverage remains in the focused `functional_tests/test_data_management_*` modules.
 - Syntax validation: `python -m py_compile` for modified backend modules and `node --check` for the admin browser module.
@@ -163,8 +169,9 @@ For optional local/source Cosmos backup capacity management, assign the App Serv
 - Source capacity boosts are not available for serverless Cosmos, non-scalable shared/dedicated topology, or targets above 10,000 RU/s. Existing source capacity above the cap remains portal-managed and is never reduced by SimpleChat.
 - Capacity operations can take time to apply and may be denied by network/RBAC policy. The documented failure policy determines whether the backup continues at existing capacity or fails before export; unresolved `restore_pending` state must be retried before another boost is applied.
 - Restore execution is documented separately. Migration apply supports selected SimpleChat Cosmos, Search, and Enhanced Citations Blob surfaces rather than arbitrary Azure resources.
+- Search page artifacts are restore-ready only after every page, schema fingerprint, and integrity result agrees. Concurrent writes or deletes inside an active Search window can cause an index to be marked unavailable and require a resume or new backup.
 
 ## Version References
 
-- Application version updated in `application/single_app/config.py` to `0.250.076`.
+- Application version updated in `application/single_app/config.py` to `0.250.101`.
 - Functional and UI tests include the same implementation version.
