@@ -893,6 +893,34 @@
     </div>
 </div>
 
+<!-- Modal for forking a personal conversation -->
+<div class="modal fade" id="fork-conversation-modal" tabindex="-1" aria-labelledby="forkConversationModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="forkConversationModalLabel">
+                    <i class="bi bi-signpost-split me-2"></i>Fork Conversation
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>Create a new personal conversation containing the history through this assistant response?</p>
+                <p class="text-muted small mb-0">The original conversation will not be changed.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="confirm-fork-conversation-btn">
+                    <span id="fork-conversation-button-label">Fork conversation</span>
+                    <span id="fork-conversation-button-spinner" class="d-none">
+                        <span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>
+                        Forking...
+                    </span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Modal for deleting user messages (with thread option) -->
 <div class="modal fade" id="delete-message-modal" tabindex="-1" aria-labelledby="deleteMessageModalLabel" aria-hidden="true">
     <div class="modal-dialog">
