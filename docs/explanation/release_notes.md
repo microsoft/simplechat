@@ -23,6 +23,11 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The first and last links expose disabled boundary controls, and the visible order stays synchronized with the Admin Settings save payload.
     *   (Ref: Closes #793, `admin_settings.js`, `test_admin_external_link_ordering.py`, `EXTERNAL_LINK_ORDERING_FIX.md`)
 
+*   **Application-Wide Non-Blocking Toast Notifications**
+    *   Replaced native browser alerts across admin, group, public, personal workspace, profile, feedback, safety, and control-center workflows with consistent Bootstrap toast notifications.
+    *   Added a shared, accessible toast utility that safely renders dynamic messages as text and preserves specialized chat toast positioning.
+    *   (Ref: Closes #739, `toast.js`, `chat-toast.js`, first-party templates and workspace scripts)
+
 ### **(v0.250.101)**
 
 #### New Features
