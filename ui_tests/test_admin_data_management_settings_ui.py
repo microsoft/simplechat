@@ -1,10 +1,10 @@
 # test_admin_data_management_settings_ui.py
 """
 UI test for Admin Settings Data Management controls.
-Version: 0.250.076
+Version: 0.250.102
 Implemented in: 0.241.211
 Updated in: 0.241.221
-Updated in: 0.250.076
+Updated in: 0.250.102
 
 This test ensures admins can discover the Data Management tab, see the
 operational-business-hours warning, and access the backup, encryption,
@@ -15,6 +15,7 @@ Version 0.250.051 verifies the Cosmos editor results list scrolls independently.
 Version 0.250.071 adds resilient migration provenance, incremental modes, cutover
 reconciliation, and the external target Search writer freeze acknowledgement.
 Version 0.250.076 adds bounded parallel backup and source capacity controls.
+Version 0.250.102 adds independently bounded source-blob transfer controls.
 """
 
 import os
@@ -74,6 +75,10 @@ def test_admin_data_management_controls_render_from_template():
         "data-management-backup-performance-section",
         "data_management_backup_max_parallel_operations",
         "data_management_backup_retry_count",
+        "data-management-blob-backup-performance-section",
+        "data_management_backup_blob_max_parallel_operations",
+        "data_management_backup_blob_chunk_size_mib",
+        "data_management_backup_blob_retry_count",
         "data_management_backup_capacity_failure_policy",
         "data_management_backup_temporary_source_ru_enabled",
         "data-management-backup-temporary-ru-field",
@@ -240,6 +245,9 @@ def test_admin_data_management_controls_render_from_template():
     assert 'Skipped / failed' in js_source
     assert 'label: "Elapsed"' in js_source
     assert 'backup_max_parallel_operations' in js_source
+    assert 'backup_blob_max_parallel_operations' in js_source
+    assert 'backup_blob_chunk_size_mib' in js_source
+    assert 'backup_blob_retry_count' in js_source
     assert 'backup_temporary_source_ru_enabled' in js_source
     assert 'buildMigrationPlan' in js_source
     assert 'queueMigration(false)' in js_source
@@ -336,6 +344,9 @@ def test_admin_data_management_tab_browser_workflow():
         expect(page.locator("#data_management_migration_max_parallel_operations")).to_be_visible()
         expect(page.locator("#data_management_backup_max_parallel_operations")).to_be_visible()
         expect(page.locator("#data_management_backup_retry_count")).to_be_visible()
+        expect(page.locator("#data_management_backup_blob_max_parallel_operations")).to_be_visible()
+        expect(page.locator("#data_management_backup_blob_chunk_size_mib")).to_be_visible()
+        expect(page.locator("#data_management_backup_blob_retry_count")).to_be_visible()
         expect(page.get_by_label("Temporarily increase local source Cosmos capacity for this backup")).to_be_visible()
         expect(page.locator("#data_management_migration_retry_count")).to_be_visible()
         expect(page.locator("#data_management_migration_skip_recent_within_hours")).to_be_visible()

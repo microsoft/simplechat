@@ -2,9 +2,9 @@
 # test_data_management_security_patterns.py
 """
 Functional test for Data Management security patterns.
-Version: 0.250.101
+Version: 0.250.102
 Implemented in: 0.241.211
-Updated in: 0.250.101
+Updated in: 0.250.102
 
 This test ensures Data Management admin routes require authenticated admin
 access, secrets stay redacted in frontend responses, and the admin browser
@@ -69,7 +69,7 @@ def test_version_and_container_registration():
     """Validate the Data Management version and Cosmos job container registrations."""
     config_source = read_text(CONFIG_FILE)
 
-    assert 'VERSION = "0.250.101"' in config_source
+    assert 'VERSION = "0.250.102"' in config_source
     assert 'cosmos_data_management_jobs_container_name = "data_management_jobs"' in config_source
     assert 'partition_key=PartitionKey(path="/id")' in config_source
     assert 'cosmos_data_management_job_items_container_name = "data_management_job_items"' in config_source
@@ -350,6 +350,9 @@ def test_admin_javascript_uses_safe_dom_patterns():
         'getBackupLiveMetrics',
         'updateBackupCapacityVisibility',
         'backup_max_parallel_operations',
+        'backup_blob_max_parallel_operations',
+        'backup_blob_chunk_size_mib',
+        'backup_blob_retry_count',
         'backup_temporary_source_ru_enabled',
         'updateMigrationCapacityVisibility',
         'updateMigrationModeVisibility',
@@ -412,6 +415,9 @@ def test_admin_ui_exposes_data_management_without_external_assets():
         'id="data_management_migration_max_parallel_operations"',
         'id="data_management_backup_max_parallel_operations"',
         'id="data_management_backup_retry_count"',
+        'id="data_management_backup_blob_max_parallel_operations"',
+        'id="data_management_backup_blob_chunk_size_mib"',
+        'id="data_management_backup_blob_retry_count"',
         'id="data_management_backup_capacity_failure_policy"',
         'id="data_management_backup_temporary_source_ru_enabled"',
         'id="data_management_backup_temporary_source_ru"',
