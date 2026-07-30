@@ -359,12 +359,12 @@ def register_route_backend_safety(bp):
                 "total_count": len(logs)
             }), 200
 
-        except ValueError as e:
-            return jsonify({"error": str(e)}), 400
-        except Exception as e:
-            print(f"Error in get_safety_logs: {str(e)}") # Log the error server-side
-            # Consider using Flask's logging mechanism
-            return jsonify({"error": f"An error occurred while fetching safety logs: {str(e)}"}), 500
+        except ValueError:
+            logging.exception("Invalid request parameters in get_safety_logs")
+            return jsonify({"error": "Invalid request parameters."}), 400
+        except Exception:
+            logging.exception("Error in get_safety_logs")
+            return jsonify({"error": "An internal error occurred while fetching safety logs."}), 500
 
     @bp.route('/api/safety/logs/stats', methods=['GET'])
     @swagger_route(security=get_auth_security())
@@ -383,10 +383,12 @@ def register_route_backend_safety(bp):
                 archive_state=archive_state,
             )
             return jsonify(_build_safety_stats(logs)), 200
-        except ValueError as e:
-            return jsonify({"error": str(e)}), 400
-        except Exception as e:
-            return jsonify({"error": f"Failed to retrieve safety stats: {str(e)}"}), 500
+        except ValueError:
+            logging.exception("Invalid request parameters in get_safety_log_stats")
+            return jsonify({"error": "Invalid request parameters."}), 400
+        except Exception:
+            logging.exception("Error in get_safety_log_stats")
+            return jsonify({"error": "Failed to retrieve safety stats."}), 500
 
     @bp.route('/api/safety/logs/export', methods=['GET'])
     @swagger_route(security=get_auth_security())
@@ -406,7 +408,8 @@ def register_route_backend_safety(bp):
             )
             return _build_safety_export_response(logs, 'admin_safety_violations_export', include_user_id=True)
         except ValueError as e:
-            return jsonify({"error": str(e)}), 400
+            logging.exception("Invalid parameters when exporting safety logs")
+            return jsonify({"error": "Invalid request parameters."}), 400
         except Exception as e:
             return jsonify({"error": f"Failed to export safety logs: {str(e)}"}), 500
 
