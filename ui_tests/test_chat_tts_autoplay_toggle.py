@@ -1,7 +1,7 @@
 # test_chat_tts_autoplay_toggle.py
 """
 UI test for chat AI voice response autoplay toggle.
-Version: 0.242.048
+Version: 0.250.102
 Implemented in: 0.242.048
 
 This test ensures the chat toolbar AI voice response toggle persists both the

@@ -237,33 +237,38 @@ export async function playTTS(messageId, text) {
 }
 
 /**
- * Synthesize a text chunk and return Audio element
+ * Synthesize text with the active voice and speed and return an MP3 Blob.
+ */
+export async function synthesizeSpeechBlob(text) {
+    const response = await fetch('/api/chat/tts', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            text: text,
+            voice: ttsVoice,
+            speed: ttsSpeed
+        })
+    });
+
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        throw new Error(errorData?.error || 'Failed to generate speech');
+    }
+
+    return response.blob();
+}
+
+/**
+ * Synthesize a text chunk and return an Audio element.
  */
 async function synthesizeChunk(text, messageId) {
     try {
-        const response = await fetch('/api/chat/tts', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                text: text,
-                voice: ttsVoice,
-                speed: ttsSpeed
-            })
-        });
-        
-        if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.error || 'Failed to generate speech');
-        }
-        
-        // Get audio blob
-        const audioBlob = await response.blob();
+        const audioBlob = await synthesizeSpeechBlob(text);
         const audioUrl = URL.createObjectURL(audioBlob);
-        
+
         return new Audio(audioUrl);
-        
     } catch (error) {
         console.error('Error synthesizing chunk:', error);
         throw error;
