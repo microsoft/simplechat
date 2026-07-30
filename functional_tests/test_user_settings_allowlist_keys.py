@@ -36,6 +36,7 @@ def test_user_settings_allowlist_contains_known_keys():
             'personal_model_endpoints',
             'tag_definitions',
             'deepResearchDefaultEnabled',
+            'fontSizePreference',
         ]
 
         missing_keys = [

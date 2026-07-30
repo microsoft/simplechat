@@ -6,6 +6,7 @@ order: 120
 category: Version History
 ---
 
+- [Font Size and 200 Percent Zoom Fix](FONT_SIZE_AND_200_PERCENT_ZOOM_FIX.md)
 - [Public Workspace Prompt Migration Fix](PUBLIC_WORKSPACE_PROMPT_MIGRATION_FIX.md)
 - [Azure OpenAI Model Discovery Identity Fix](v0.250.001/AZURE_OPENAI_MODEL_DISCOVERY_IDENTITY_FIX.md)
 - [CosmosClient Import Binding CodeQL Fix](COSMOSCLIENT_IMPORT_BINDING_CODEQL_FIX.md)

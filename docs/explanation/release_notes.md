@@ -2,6 +2,21 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.073)**
+
+#### New Features
+
+*   **User Font Size Preferences**
+    *   Added persisted XS, S, M, L, and XL font-size choices to the user profile, ranging from 75% to 200% with medium as the default.
+    *   Font-size selections preview immediately and apply across SimpleChat after the user saves the preference.
+    *   (Ref: microsoft/simplechat#1099, `profile.html`, `functions_settings.py`, `FONT_SIZE_AND_200_PERCENT_ZOOM_FIX.md`)
+
+#### User Interface Enhancements
+
+*   **200% Zoom and Large-Text Layout Support**
+    *   Updated Chat, top navigation, classification banners, and sidebar scrolling to reserve font-relative space and keep messages, navigation, tools, and the composer reachable at 200% browser zoom and large saved font sizes.
+    *   (Ref: microsoft/simplechat#1099, `chats.css`, `navigation.css`, `sidebar.css`)
+
 ### **(v0.250.072)**
 
 #### Bug Fixes
