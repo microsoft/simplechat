@@ -3,11 +3,13 @@
 ## Overview
 
 **Implemented in version: 0.250.074**
+**Workspace-context support fixed in version: 0.250.101**
 
-Fork Conversation lets a user branch a personal conversation from a persisted
-assistant response without changing the source conversation. The fork contains
-the active message history from the beginning through the selected assistant
-message, inclusive, and opens immediately as an independent conversation.
+Fork Conversation lets a user branch an owned single-user conversation from a
+persisted assistant response without changing the source conversation. The fork
+contains the active message history from the beginning through the selected
+assistant message, inclusive, and opens immediately as an independent
+conversation.
 
 ### Purpose
 
@@ -28,7 +30,7 @@ message, inclusive, and opens immediately as an independent conversation.
 ### Architecture
 
 1. The assistant message action is rendered only for a persisted, completed
-   assistant message in an active personal conversation.
+   assistant message in a supported active single-user conversation.
 2. A Bootstrap confirmation modal submits the source conversation ID and
    selected message ID.
 3. The backend authorizes ownership and resolves the authoritative persisted
@@ -72,15 +74,19 @@ The endpoint can return:
 - `400` for a missing message ID or a non-assistant fork point.
 - `403` when the current user does not own the source conversation.
 - `404` when the selected message is not on the active persisted timeline.
-- `409` when the source is not an eligible personal conversation or changes
-  during the operation.
+- `409` when the source is not an eligible single-user conversation, its
+  workspace context is no longer authorized, or it changes during the
+  operation.
 - `500` when destination persistence fails.
 
 ### Security and authorization
 
 - Source ownership is revalidated at the API boundary.
-- Group, public, and collaborative conversation types are rejected.
-- Stored context is eligible only when it remains personal to the same owner.
+- Collaborative, multi-user, workflow, and unknown conversation types are
+  rejected.
+- Personal, group-single-user, and public context is copied only after the
+  current user's group role or public workspace access and chat status are
+  revalidated.
 - The selected message must belong to the authorized source conversation and
   must be an active assistant message.
 - Source conversation and message snapshots are checked again before writes to
@@ -90,11 +96,12 @@ The endpoint can return:
 
 ### Preserved and reset state
 
-The fork preserves personal context, tags, strict mode, classification, scope
-lock state, supported model/agent selections, message content, attachments,
-citations, and assistant artifact metadata. It assigns new conversation,
-message, artifact, and thread identifiers, and copies blob-backed message files
-to independent destination paths.
+The fork preserves authorized personal, group, or public context, its normalized
+single-user chat type, tags, strict mode, classification, scope lock state,
+supported model/agent selections, message content, attachments, citations, and
+assistant artifact metadata. It assigns new conversation, message, artifact,
+and thread identifiers, and copies blob-backed message files to independent
+destination paths.
 
 Pin, hidden, unread, Cosmos system, streaming, and other destination lifecycle
 state is reset. The source conversation and all later messages remain
@@ -111,14 +118,15 @@ unchanged.
 
 ## Usage
 
-1. Open a personal conversation containing a completed assistant response.
+1. Open an owned personal, group-single-user, or public single-user conversation
+   containing a completed assistant response.
 2. Open the response's **More actions** menu.
 3. Select **Fork conversation**.
 4. Confirm the operation.
 5. Continue in the newly opened `Fork of <source title>` conversation.
 
 The action is unavailable for streaming or transient assistant messages and for
-group, public, or collaborative conversations.
+collaborative, multi-user, workflow, or unknown conversation types.
 
 ## Testing and Validation
 
@@ -129,8 +137,11 @@ group, public, or collaborative conversations.
 - Independent and remapped message, artifact, reply, conversation, and thread
   identifiers.
 - Source immutability.
-- Missing, non-assistant, inactive, foreign, and non-personal fork requests.
+- Missing, non-assistant, inactive, foreign, and unsupported fork requests.
+- Authorized group/public context and stale, inactive, or inaccessible
+  workspace context.
 - Concurrent source changes and failed-write cleanup.
+- Route-level conflict logging that preserves the intended HTTP 409 response.
 - Browser action visibility, confirmation and cancellation, failure feedback,
   duplicate-click prevention, list insertion, and fork activation.
 
@@ -142,8 +153,8 @@ conversation is not listed until all destination message writes complete.
 
 ### Limitations
 
-- Only personal, single-user conversations are supported.
-- Group, public, and collaborative conversations require separate resource and
-  participant authorization designs.
+- Only owned single-user conversations are supported.
+- Collaborative and multi-user conversations require separate participant
+  authorization and destination-membership designs.
 - Cross-container atomic transactions are not available. The implementation
   uses publish-last behavior plus cleanup to provide an atomic user experience.

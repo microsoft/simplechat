@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.101)**
+
+#### Bug Fixes
+
+*   **Conversation Fork Workspace Context and HTTP 500 Fix**
+    *   Fixed conversation forks returning HTTP 500 when an owned single-user conversation used group or public workspace knowledge.
+    *   Forking now revalidates current workspace access, preserves the authorized context and chat type, and returns controlled conflicts when access is stale or unavailable.
+    *   Corrected fork-specific structured logging so validation, conflict, cleanup, and cache errors retain their intended response behavior.
+    *   (Ref: microsoft/simplechat#1025, `functions_simplechat_operations.py`, `route_backend_conversations.py`, `chat-messages.js`, `CONVERSATION_FORK_HTTP_500_FIX.md`)
+
 ### **(v0.250.100)**
 
 #### Bug Fixes

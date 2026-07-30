@@ -2,12 +2,12 @@
 # test_conversation_fork.py
 """
 Functional test for personal conversation forking.
-Version: 0.250.074
+Version: 0.250.101
 Implemented in: 0.250.074
 
 This test ensures persisted personal conversation history is copied through an
 assistant boundary with independent identifiers, deterministic ordering,
-authorization, concurrency protection, and failed-write cleanup.
+workspace-context authorization, concurrency protection, and failed-write cleanup.
 """
 
 import copy
@@ -131,6 +131,13 @@ def load_operations_module_for_test():
         'functions_personal_workflows': _stub_module(
             'functions_personal_workflows',
             {'save_personal_workflow': no_op},
+        ),
+        'functions_public_workspaces': _stub_module(
+            'functions_public_workspaces',
+            {
+                'check_public_workspace_status_allows_operation': no_op,
+                'find_public_workspace_by_id': no_op,
+            },
         ),
         'functions_settings': _stub_module(
             'functions_settings',
@@ -478,6 +485,7 @@ def run_fork(
     source_messages=None,
     user_id='owner-user',
     selected_message_id='message-003-target',
+    access_replacements=None,
     **message_container_options,
 ):
     """Execute the fork helper with isolated fake storage."""
@@ -490,16 +498,16 @@ def run_fork(
     message_container = FakeMessageContainer(messages, **message_container_options)
     blob_service = FakeBlobService()
 
-    with PatchSet(
-        operations_module,
-        {
-            'cosmos_conversations_container': conversation_container,
-            'cosmos_messages_container': message_container,
-            'CLIENTS': {'storage_account_office_docs_client': blob_service},
-            'log_conversation_creation': lambda **kwargs: None,
-            'log_event': lambda *args, **kwargs: None,
-        },
-    ):
+    replacements = {
+        'cosmos_conversations_container': conversation_container,
+        'cosmos_messages_container': message_container,
+        'CLIENTS': {'storage_account_office_docs_client': blob_service},
+        'log_conversation_creation': lambda **kwargs: None,
+        'log_event': lambda *args, **kwargs: None,
+    }
+    replacements.update(access_replacements or {})
+
+    with PatchSet(operations_module, replacements):
         result = operations_module.fork_personal_conversation_for_user(
             source_conversation=conversation,
             selected_message_id=selected_message_id,
@@ -610,16 +618,124 @@ def test_fork_rejects_invalid_message_boundaries(selected_message_id, expected_e
         run_fork(selected_message_id=selected_message_id)
 
 
-def test_fork_rejects_foreign_and_non_personal_conversations():
-    """Require source ownership and personal-only context."""
+def test_fork_rejects_foreign_and_unsupported_conversations():
+    """Require source ownership and reject multi-user conversation kinds."""
     with pytest.raises(PermissionError):
         run_fork(user_id='different-user')
 
-    group_conversation = build_source_conversation(chat_type='group-single-user')
+    group_conversation = build_source_conversation(chat_type='group_multi_user')
     group_conversation['context'] = [{'type': 'primary', 'scope': 'group', 'id': 'group-1'}]
     operations_module = load_operations_module_for_test()
     with pytest.raises(operations_module.ConversationForkConflictError):
         run_fork(source_conversation=group_conversation)
+
+
+@pytest.mark.parametrize(
+    ('chat_type', 'context', 'expected_chat_type', 'access_replacements'),
+    [
+        (
+            'group-single-user',
+            {'type': 'primary', 'scope': 'group', 'id': 'group-1'},
+            'group-single-user',
+            {
+                'find_group_by_id': lambda group_id: {'id': group_id, 'status': 'active'},
+                'check_group_status_allows_operation': lambda group, operation: (True, ''),
+                'assert_group_role': lambda *args, **kwargs: 'User',
+            },
+        ),
+        (
+            'public',
+            {'type': 'primary', 'scope': 'public', 'id': 'public-1'},
+            'public',
+            {
+                'find_public_workspace_by_id': lambda workspace_id: {
+                    'id': workspace_id,
+                    'status': 'active',
+                },
+                'check_public_workspace_status_allows_operation': (
+                    lambda workspace, operation: (True, '')
+                ),
+            },
+        ),
+    ],
+)
+def test_fork_revalidates_and_preserves_workspace_context(
+    chat_type,
+    context,
+    expected_chat_type,
+    access_replacements,
+):
+    """Fork supported workspace-grounded conversations after access checks."""
+    conversation = build_source_conversation(chat_type=chat_type)
+    conversation['context'] = [context]
+
+    test_state = run_fork(
+        source_conversation=conversation,
+        access_replacements=access_replacements,
+    )
+
+    assert test_state['result']['conversation']['chat_type'] == expected_chat_type
+    assert test_state['result']['conversation']['context'] == [context]
+
+
+@pytest.mark.parametrize(
+    ('conversation', 'access_replacements', 'error_match'),
+    [
+        (
+            {
+                **build_source_conversation(chat_type='group-single-user'),
+                'context': [{'type': 'primary', 'scope': 'group', 'id': 'missing-group'}],
+            },
+            {'find_group_by_id': lambda group_id: None},
+            'group is no longer available',
+        ),
+        (
+            {
+                **build_source_conversation(chat_type='group-single-user'),
+                'context': [{'type': 'primary', 'scope': 'group', 'id': 'inactive-group'}],
+            },
+            {
+                'find_group_by_id': lambda group_id: {'id': group_id, 'status': 'inactive'},
+                'check_group_status_allows_operation': lambda group, operation: (False, 'inactive'),
+            },
+            'group no longer allows chat',
+        ),
+        (
+            {
+                **build_source_conversation(chat_type='group-single-user'),
+                'context': [{'type': 'primary', 'scope': 'group', 'id': 'former-group'}],
+            },
+            {
+                'find_group_by_id': lambda group_id: {'id': group_id, 'status': 'active'},
+                'check_group_status_allows_operation': lambda group, operation: (True, ''),
+                'assert_group_role': (
+                    lambda *args, **kwargs: (_ for _ in ()).throw(PermissionError('removed'))
+                ),
+            },
+            'no longer available to this user',
+        ),
+        (
+            {
+                **build_source_conversation(chat_type='public'),
+                'context': [{'type': 'primary', 'scope': 'public', 'id': 'missing-public'}],
+            },
+            {'find_public_workspace_by_id': lambda workspace_id: None},
+            'public workspace is no longer available',
+        ),
+    ],
+)
+def test_fork_rejects_unavailable_workspace_context(
+    conversation,
+    access_replacements,
+    error_match,
+):
+    """Reject stale workspace context before copying any fork records."""
+    operations_module = load_operations_module_for_test()
+    with pytest.raises(operations_module.ConversationForkConflictError, match=error_match):
+        run_fork(
+            source_conversation=conversation,
+            access_replacements=access_replacements,
+        )
 
 
 def test_fork_rejects_concurrent_source_changes():

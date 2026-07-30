@@ -1176,7 +1176,7 @@ def register_route_backend_conversations(bp):
                 log_event(
                     f'[ConversationFork] Fork created but cache invalidation failed: {cache_error}',
                     level=logging.WARNING,
-                    custom_dimensions={
+                    extra={
                         'fork_conversation_id': fork_conversation['id'],
                         'user_id': user_id,
                     },
@@ -1193,7 +1193,7 @@ def register_route_backend_conversations(bp):
                 f'[ConversationFork] Validation failed while creating conversation fork: {validation_error}',
                 level=logging.WARNING,
                 exceptionTraceback=True,
-                custom_dimensions={
+                extra={
                     'source_conversation_id': conversation_id,
                     'selected_message_id': selected_message_id,
                     'user_id': user_id,
@@ -1204,7 +1204,7 @@ def register_route_backend_conversations(bp):
             log_event(
                 f'[ConversationFork] Conflict while creating conversation fork: {conflict_error}',
                 level=logging.WARNING,
-                custom_dimensions={
+                extra={
                     'source_conversation_id': conversation_id,
                     'selected_message_id': selected_message_id,
                     'user_id': user_id,
@@ -1216,7 +1216,7 @@ def register_route_backend_conversations(bp):
                 f'[ConversationFork] Failed to create conversation fork: {error}',
                 level=logging.ERROR,
                 exceptionTraceback=True,
-                custom_dimensions={
+                extra={
                     'source_conversation_id': conversation_id,
                     'selected_message_id': selected_message_id,
                     'user_id': user_id,
