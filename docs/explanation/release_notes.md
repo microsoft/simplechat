@@ -6,6 +6,12 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 #### New Features
 
+*   **Admin Feedback and Safety Record Lifecycle**
+    *   Added archive, unarchive, and permanently delete actions to the Feedback Review and Safety Violations admin pages, with active/archived filtering across lists, cards, statistics, pagination, and CSV exports.
+    *   Archived records are hidden from user profile history, destructive deletion requires confirmation, and safety violations with pending remediation approvals cannot be deleted.
+    *   Archive, unarchive, and delete actions create non-sensitive admin activity audit records, while audit persistence failures are surfaced without undoing successful lifecycle changes.
+    *   (Ref: microsoft/simplechat#991, `functions_review_lifecycle.py`, `route_backend_feedback.py`, `route_backend_safety.py`, `ADMIN_REVIEW_RECORD_LIFECYCLE.md`)
+
 *   **File Processing Log Cleanup**
     *   Added admin controls to permanently delete file-processing logs older than a chosen number of days, weeks, or fixed 30-day months, or delete every stored log through a separate action.
     *   Added explicit confirmation, exact and partial deletion counts, admin activity logging, validation, and secured cross-partition Cosmos DB cleanup.
