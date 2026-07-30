@@ -37,12 +37,19 @@ from collaboration_models import (
 )
 from config import (
     SECRET_KEY,
+    VERSION,
     cognitive_services_scope,
     cosmos_conversations_container,
     cosmos_group_documents_container,
     cosmos_messages_container,
     cosmos_public_documents_container,
     cosmos_user_documents_container,
+)
+from functions_conversation_context import (
+    build_conversation_context_data_message,
+    build_conversation_context_snapshot,
+    build_conversation_context_system_message,
+    serialize_conversation_context_snapshot,
 )
 from functions_activity_logging import log_conversation_creation, log_token_usage, log_workflow_run
 from functions_appinsights import log_event
@@ -1939,22 +1946,108 @@ def _get_workflow_url_access_system_content(url_access_context=None):
     return str(system_message or '').strip()
 
 
-def _build_workflow_chat_messages(prompt_text, url_access_context=None, apply_generation_guidance=False):
+def _build_workflow_chat_messages(
+    prompt_text,
+    url_access_context=None,
+    apply_generation_guidance=False,
+    conversation_context_system=None,
+    conversation_context_data=None,
+):
     user_content = _build_workflow_generation_prompt(prompt_text) if apply_generation_guidance else str(prompt_text or '').strip()
     messages = []
     source_review_content = _get_workflow_url_access_system_content(url_access_context)
     if source_review_content:
         messages.append({'role': 'system', 'content': source_review_content})
+    normalized_context_system = str(conversation_context_system or '').strip()
+    if normalized_context_system:
+        messages.append({'role': 'system', 'content': normalized_context_system})
+    normalized_context_data = str(conversation_context_data or '').strip()
+    if normalized_context_data:
+        messages.append({'role': 'user', 'content': normalized_context_data})
     messages.append({'role': 'user', 'content': user_content})
     return messages
 
 
-def _build_workflow_agent_messages(prompt_text, url_access_context=None, apply_generation_guidance=False):
+def _build_workflow_agent_messages(
+    prompt_text,
+    url_access_context=None,
+    apply_generation_guidance=False,
+    conversation_context_system=None,
+    conversation_context_data=None,
+):
     user_content = _build_workflow_generation_prompt(prompt_text) if apply_generation_guidance else str(prompt_text or '').strip()
     source_review_content = _get_workflow_url_access_system_content(url_access_context)
     if source_review_content:
         user_content = f'{source_review_content}\n\n[Workflow Task]\n{user_content}'
-    return [ChatMessageContent(role='user', content=user_content)]
+    messages = []
+    normalized_context_system = str(conversation_context_system or '').strip()
+    if normalized_context_system:
+        messages.append(ChatMessageContent(role='system', content=normalized_context_system))
+    normalized_context_data = str(conversation_context_data or '').strip()
+    if normalized_context_data:
+        messages.append(ChatMessageContent(role='user', content=normalized_context_data))
+    messages.append(ChatMessageContent(role='user', content=user_content))
+    return messages
+
+
+def _resolve_workflow_conversation_context(
+    workflow,
+    *,
+    model_name=None,
+    model_provider=None,
+    model_endpoint_id=None,
+    selected_agent=None,
+):
+    base_snapshot = (
+        workflow.get('conversation_context_snapshot')
+        if isinstance((workflow or {}).get('conversation_context_snapshot'), dict)
+        else {}
+    )
+    if not base_snapshot:
+        return None
+
+    base_runtime = (
+        base_snapshot.get('runtime')
+        if isinstance(base_snapshot.get('runtime'), dict)
+        else {}
+    )
+    if selected_agent:
+        agent_name = getattr(selected_agent, 'name', None)
+        agent_display_name = getattr(selected_agent, 'display_name', None)
+        agent_model = getattr(selected_agent, 'deployment_name', None)
+        agent_provider = (
+            getattr(selected_agent, 'model_provider', None)
+            or getattr(selected_agent, 'provider', None)
+        )
+    else:
+        agent_name = None
+        agent_display_name = None
+        agent_model = None
+        agent_provider = None
+
+    resolved_snapshot = build_conversation_context_snapshot(
+        base_snapshot.get('message_metadata') or {},
+        application_version=(
+            (base_snapshot.get('application') or {}).get('version')
+            or VERSION
+        ),
+        model_name=model_name or base_runtime.get('configured_model'),
+        model_provider=model_provider or base_runtime.get('model_provider'),
+        model_endpoint_id=model_endpoint_id or base_runtime.get('model_endpoint_id'),
+        agent_name=agent_name,
+        agent_display_name=agent_display_name,
+        agent_model=agent_model,
+        agent_provider=agent_provider,
+    )
+    context_json = serialize_conversation_context_snapshot(resolved_snapshot)
+    workflow['conversation_context_system_message'] = (
+        build_conversation_context_system_message(context_json)
+    )
+    workflow['conversation_context_data_message'] = (
+        build_conversation_context_data_message(context_json)
+    )
+    workflow['_resolved_conversation_context_json'] = context_json
+    return context_json
 
 
 def _format_workflow_url_access_error(validation_result):
@@ -4763,6 +4856,7 @@ def _combine_per_document_analysis_results(document_results):
     provider = ''
     agent_name = ''
     agent_display_name = ''
+    conversation_context_json = ''
 
     for index, item in enumerate(document_results or [], start=1):
         result = item.get('result') if isinstance(item.get('result'), dict) else {}
@@ -4798,6 +4892,11 @@ def _combine_per_document_analysis_results(document_results):
         provider = provider or result.get('provider') or ''
         agent_name = agent_name or result.get('agent_name') or ''
         agent_display_name = agent_display_name or result.get('agent_display_name') or ''
+        conversation_context_json = (
+            conversation_context_json
+            or result.get('conversation_context_json')
+            or ''
+        )
 
     combined_coverage['documents'] = combined_documents
     combined_coverage['document_count'] = len(combined_documents) or len(document_results or [])
@@ -4830,6 +4929,7 @@ def _combine_per_document_analysis_results(document_results):
         'agent_citations': agent_citations,
         'generated_tabular_outputs': generated_tabular_outputs,
         'alert_targets': _select_preferred_workflow_alert_targets(alert_targets),
+        'conversation_context_json': conversation_context_json,
     }
 
 
@@ -5164,18 +5264,26 @@ def _execute_document_analysis_workflow(
                 len(analysis_document_ids),
             )
             per_document_action = per_document_workflow.get('document_action') or {}
+            per_document_result = _execute_document_analysis_workflow(
+                per_document_workflow,
+                settings,
+                conversation_id=conversation_id,
+                run_id=run_id,
+                thought_tracker=thought_tracker,
+                external_activity_callback=external_activity_callback,
+                action_config=per_document_action,
+                url_access_context=url_access_context,
+            )
+            resolved_context_json = per_document_workflow.get(
+                '_resolved_conversation_context_json'
+            )
+            if resolved_context_json:
+                per_document_result['conversation_context_json'] = (
+                    resolved_context_json
+                )
             per_document_results.append({
                 'document_id': document_id,
-                'result': _execute_document_analysis_workflow(
-                    per_document_workflow,
-                    settings,
-                    conversation_id=conversation_id,
-                    run_id=run_id,
-                    thought_tracker=thought_tracker,
-                    external_activity_callback=external_activity_callback,
-                    action_config=per_document_action,
-                    url_access_context=url_access_context,
-                ),
+                'result': per_document_result,
             })
 
         if thought_tracker and run_id:
@@ -5243,6 +5351,13 @@ def _execute_document_analysis_workflow(
                     loaded_agent = agent_objs.get(requested_name)
                 if loaded_agent is None:
                     loaded_agent = next(iter(agent_objs.values()))
+                _resolve_workflow_conversation_context(
+                    workflow,
+                    model_name=workflow.get('legacy_model_deployment'),
+                    model_provider=(workflow.get('model_binding_summary') or {}).get('provider'),
+                    model_endpoint_id=workflow.get('model_endpoint_id'),
+                    selected_agent=loaded_agent,
+                )
 
                 if thought_tracker and run_id and conversation_id:
                     callback_key = register_plugin_invocation_thought_callback(
@@ -5260,6 +5375,8 @@ def _execute_document_analysis_workflow(
                         lambda: asyncio.run(loaded_agent.invoke(_build_workflow_agent_messages(
                             prompt_text,
                             url_access_context=url_access_context,
+                            conversation_context_system=workflow.get('conversation_context_system_message'),
+                            conversation_context_data=workflow.get('conversation_context_data_message'),
                         ))),
                     )
                     _accumulate_token_usage(token_usage_aggregate, result)
@@ -5370,6 +5487,12 @@ def _execute_document_analysis_workflow(
                     g.authorized_chat_context = previous_authorized_chat_context
 
     client, deployment_name, provider = _resolve_model_workflow_client(workflow, settings)
+    _resolve_workflow_conversation_context(
+        workflow,
+        model_name=deployment_name,
+        model_provider=provider,
+        model_endpoint_id=workflow.get('model_endpoint_id'),
+    )
 
     def invoke_model_prompt(prompt_text, stage='window_analysis', metadata=None):
         completion = _execute_cancelable_workflow_step(
@@ -5380,6 +5503,8 @@ def _execute_document_analysis_workflow(
                 messages=_build_workflow_chat_messages(
                     prompt_text,
                     url_access_context=url_access_context,
+                    conversation_context_system=workflow.get('conversation_context_system_message'),
+                    conversation_context_data=workflow.get('conversation_context_data_message'),
                 ),
             ),
         )
@@ -5532,6 +5657,13 @@ def _execute_document_comparison_workflow(
                     loaded_agent = agent_objs.get(requested_name)
                 if loaded_agent is None:
                     loaded_agent = next(iter(agent_objs.values()))
+                _resolve_workflow_conversation_context(
+                    workflow,
+                    model_name=workflow.get('legacy_model_deployment'),
+                    model_provider=(workflow.get('model_binding_summary') or {}).get('provider'),
+                    model_endpoint_id=workflow.get('model_endpoint_id'),
+                    selected_agent=loaded_agent,
+                )
 
                 if thought_tracker and run_id and conversation_id:
                     callback_key = register_plugin_invocation_thought_callback(
@@ -5549,6 +5681,8 @@ def _execute_document_comparison_workflow(
                         lambda: asyncio.run(loaded_agent.invoke(_build_workflow_agent_messages(
                             prompt_text,
                             url_access_context=url_access_context,
+                            conversation_context_system=workflow.get('conversation_context_system_message'),
+                            conversation_context_data=workflow.get('conversation_context_data_message'),
                         ))),
                     )
                     _accumulate_token_usage(token_usage_aggregate, result)
@@ -5651,6 +5785,12 @@ def _execute_document_comparison_workflow(
                     g.authorized_chat_context = previous_authorized_chat_context
 
     client, deployment_name, provider = _resolve_model_workflow_client(workflow, settings)
+    _resolve_workflow_conversation_context(
+        workflow,
+        model_name=deployment_name,
+        model_provider=provider,
+        model_endpoint_id=workflow.get('model_endpoint_id'),
+    )
 
     def invoke_model_prompt(prompt_text, stage='window_analysis', metadata=None):
         completion = _execute_cancelable_workflow_step(
@@ -5661,6 +5801,8 @@ def _execute_document_comparison_workflow(
                 messages=_build_workflow_chat_messages(
                     prompt_text,
                     url_access_context=url_access_context,
+                    conversation_context_system=workflow.get('conversation_context_system_message'),
+                    conversation_context_data=workflow.get('conversation_context_data_message'),
                 ),
             ),
         )
@@ -5795,6 +5937,9 @@ def _execute_document_action_workflow(
         f"processed_windows={(result.get('analysis_coverage') or {}).get('processed_windows', 0)} | "
         f"failed_windows={(result.get('analysis_coverage') or {}).get('failed_windows', 0)}"
     )
+    resolved_context_json = workflow.get('_resolved_conversation_context_json')
+    if resolved_context_json:
+        result['conversation_context_json'] = resolved_context_json
     _raise_if_workflow_run_cancelled(workflow, run_id)
     return result
 
