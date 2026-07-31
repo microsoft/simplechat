@@ -13,6 +13,12 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 #### Bug Fixes
 
+*   **Retention Coverage Across Group and Collaborative Conversations**
+    *   Group-scoped private conversations now follow their primary group's retention policy instead of the creator's personal policy.
+    *   Personal and group collaborative conversations now use their correct governing policy and activity timestamp, while linked conversion sources are cleaned once without duplicate counting.
+    *   Collaboration cleanup now covers messages, per-user state, linked sources, blob-backed files, thoughts, activity logs, and conversation caches; new groups also persist explicit default retention values.
+    *   (Ref: Closes #1054, `functions_retention_policy.py`, `functions_collaboration.py`, `functions_group.py`, `RETENTION_POLICY_CONVERSATION_SCOPE_COVERAGE_FIX.md`)
+
 *   **Custom Databricks-Prefixed Action Discovery**
     *   Fixed action type discovery so custom plugin types such as `databricks_table_dscmo` no longer inherit the built-in Databricks discovery defaults.
     *   Custom Databricks-prefixed plugin types now stay on the standard plugin configuration path and visual treatment unless their type is exactly `databricks` or `databricks_table`.
