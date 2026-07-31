@@ -767,9 +767,14 @@ def register_route_backend_data_management(bp):
                         review_reservation["reservation_token"]
                     )
                 except DataManagementSettingsValidationError as exc:
+                    log_event(
+                        "[DataManagement] Migration review reservation validation failed.",
+                        {"operation": operation, "error": str(exc)},
+                        level=logging.WARNING,
+                    )
                     return jsonify({
                         "success": False,
-                        "error": str(exc),
+                        "error": "Migration review authorization is invalid or expired. Run review again before execution.",
                         "workflow_step": "review",
                     }), 409
             try:
