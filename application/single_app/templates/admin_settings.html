@@ -11359,6 +11359,26 @@
                             </button>
                         </div>
 
+                        <!-- AI Response Completion Audio -->
+                        <div class="mb-4">
+                            <div class="form-check form-switch mb-2">
+                                <input
+                                    type="checkbox"
+                                    class="form-check-input"
+                                    id="enable_chat_completion_audio_cues"
+                                    name="enable_chat_completion_audio_cues"
+                                    {% if settings.enable_chat_completion_audio_cues %}checked{% endif %}
+                                >
+                                <label class="form-check-label ms-2 fw-bold" for="enable_chat_completion_audio_cues">
+                                    <i class="bi bi-bell-fill me-1"></i> Enable AI Response Completion Audio Cues
+                                </label>
+                            </div>
+                            <p class="text-muted small ms-4 ps-3 mb-0">
+                                Let users opt in to a bundled sound when an AI response finishes outside their active view.
+                                These local cues do not require Azure Speech Service.
+                            </p>
+                        </div>
+
                         <div class="alert alert-info mb-4" id="speech_service_shared_alert">
                             <i class="bi bi-lightbulb-fill me-2"></i>
                             <strong>One Speech resource, three features:</strong> Audio file uploads, Voice Input, and Voice Responses all use the same Azure Speech Service section below. Configure the Speech resource once, then turn on whichever speech features you need.

@@ -1566,6 +1566,7 @@
 
     // App settings for feature detection
     window.appSettings = {
+        ...(window.appSettings || {}),
         enable_text_to_speech: {{ app_settings.enable_text_to_speech|tojson }},
         enable_speech_to_text_input: {{ app_settings.enable_speech_to_text_input|tojson }},
         enable_chat_file_uploads: {{ settings.enable_chat_file_uploads|tojson }},

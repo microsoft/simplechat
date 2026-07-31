@@ -1104,6 +1104,14 @@ def register_route_frontend_admin_settings(bp):
             # ... (fetch all other fields using form_data.get) ...
             enable_video_file_support = form_data.get('enable_video_file_support') == 'on'
             enable_audio_file_support = form_data.get('enable_audio_file_support') == 'on'
+            enable_chat_completion_audio_cues = form_data.get('enable_chat_completion_audio_cues') == 'on'
+            chat_completion_audio_cues_updated_at = settings.get(
+                'chat_completion_audio_cues_updated_at'
+            )
+            if enable_chat_completion_audio_cues != bool(
+                settings.get('enable_chat_completion_audio_cues', False)
+            ):
+                chat_completion_audio_cues_updated_at = datetime.now(timezone.utc).isoformat()
             enable_extract_meta_data = form_data.get('enable_extract_meta_data') == 'on'
             
             # Vision settings
@@ -2689,6 +2697,8 @@ def register_route_frontend_admin_settings(bp):
                 'video_index_timeout': int(form_data.get('video_index_timeout', 600)),
 
                 # Audio file settings with Azure speech service
+                'enable_chat_completion_audio_cues': enable_chat_completion_audio_cues,
+                'chat_completion_audio_cues_updated_at': chat_completion_audio_cues_updated_at,
                 'speech_service_endpoint': form_data.get('speech_service_endpoint', '').strip(),
                 'speech_service_location': form_data.get('speech_service_location', '').strip(),
                 'speech_service_subscription_id': form_data.get('speech_service_subscription_id', '').strip(),
