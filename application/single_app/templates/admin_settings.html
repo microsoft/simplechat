@@ -5632,8 +5632,19 @@
                                 <div class="form-text">Default is 03:00 UTC.</div>
                             </div>
                             <div class="col-md-4">
-                                <label class="form-label" for="data_management_retention_days">Retention days</label>
-                                <input class="form-control" type="number" id="data_management_retention_days" min="1" max="3650" value="30">
+                                <label class="form-label" for="data_management_retention_value">Delete backups after</label>
+                                <div class="input-group">
+                                    <input class="form-control" type="number" id="data_management_retention_value" min="1" max="3650" value="30" aria-describedby="data-management-retention-help">
+                                    <label class="visually-hidden" for="data_management_retention_unit">Retention unit</label>
+                                    <select class="form-select" id="data_management_retention_unit" aria-label="Retention unit">
+                                        <option value="days">Days</option>
+                                        <option value="weeks">Weeks</option>
+                                        <option value="months">Months</option>
+                                        <option value="years">Years</option>
+                                    </select>
+                                </div>
+                                <input type="hidden" id="data_management_retention_days" value="30">
+                                <div class="form-text" id="data-management-retention-help">Automatic cleanup keeps the newest successful full backup as a safety baseline.</div>
                             </div>
                         </div>
                         <div class="row g-3 mt-1">
@@ -6493,9 +6504,14 @@
                             <h4 class="mb-1">Backup Inventory</h4>
                             <p class="text-muted mb-0 small">Track completed full and partial backups created by Data Management jobs.</p>
                         </div>
-                        <button type="button" class="btn btn-outline-secondary btn-sm" id="data-management-refresh-backups-btn">
-                            <i class="bi bi-arrow-clockwise me-1"></i>Refresh
-                        </button>
+                        <div class="d-flex flex-wrap gap-2">
+                            <button type="button" class="btn btn-outline-danger btn-sm" id="data-management-run-retention-cleanup-btn">
+                                <i class="bi bi-trash3 me-1"></i>Run Retention Cleanup
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" id="data-management-refresh-backups-btn">
+                                <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                            </button>
+                        </div>
                     </div>
                     <div class="row g-3 mb-3" role="group" aria-label="Backup inventory filters">
                         <div class="col-lg-4">
@@ -6600,6 +6616,96 @@
                             </button>
                         </div>
                     </nav>
+                </div>
+
+                <div class="modal fade" id="data-management-restore-modal" tabindex="-1" aria-labelledby="data-management-restore-title" aria-hidden="true">
+                    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <div>
+                                    <h5 class="modal-title" id="data-management-restore-title">Restore Backup</h5>
+                                    <p class="text-muted small mb-0">Review the target, policy, and backup manifest before queueing a restore job.</p>
+                                </div>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="alert alert-warning" role="alert">
+                                    Restore writes data into the configured target Cosmos DB, AI Search, and Enhanced Citation Storage services. Create-only mode blocks existing destination collisions; overwrite mode requires a separate phrase.
+                                </div>
+                                <section class="border rounded p-3 mb-3" aria-labelledby="data-management-restore-backup-heading">
+                                    <h6 class="mb-2" id="data-management-restore-backup-heading">Selected backup</h6>
+                                    <div class="row g-2" id="data-management-restore-backup-summary">
+                                        <div class="col-12 text-muted">Choose Restore from a backup row.</div>
+                                    </div>
+                                </section>
+                                <section class="border rounded p-3 mb-3" aria-labelledby="data-management-restore-policy-heading">
+                                    <h6 class="mb-3" id="data-management-restore-policy-heading">Restore policy and surfaces</h6>
+                                    <div class="row g-3">
+                                        <div class="col-md-4">
+                                            <label class="form-label" for="data_management_restore_policy">Collision policy</label>
+                                            <select class="form-select" id="data_management_restore_policy">
+                                                <option value="create_only" selected>Create only (block collisions)</option>
+                                                <option value="overwrite_existing">Overwrite existing target records</option>
+                                            </select>
+                                            <div class="form-text">Create-only is non-destructive and recommended for first restore attempts.</div>
+                                        </div>
+                                        <div class="col-md-8">
+                                            <fieldset>
+                                                <legend class="form-label">Restore surfaces</legend>
+                                                <div class="d-flex flex-wrap gap-3">
+                                                    <div class="form-check form-switch">
+                                                        <input class="form-check-input" type="checkbox" role="switch" id="data_management_restore_include_cosmos" checked>
+                                                        <label class="form-check-label" for="data_management_restore_include_cosmos">Cosmos DB</label>
+                                                    </div>
+                                                    <div class="form-check form-switch">
+                                                        <input class="form-check-input" type="checkbox" role="switch" id="data_management_restore_include_ai_search" checked>
+                                                        <label class="form-check-label" for="data_management_restore_include_ai_search">AI Search</label>
+                                                    </div>
+                                                    <div class="form-check form-switch">
+                                                        <input class="form-check-input" type="checkbox" role="switch" id="data_management_restore_include_source_blobs" checked>
+                                                        <label class="form-check-label" for="data_management_restore_include_source_blobs">Enhanced Citation blobs</label>
+                                                    </div>
+                                                </div>
+                                            </fieldset>
+                                        </div>
+                                    </div>
+                                    <div class="mt-3 d-none" id="data-management-restore-confirmation-section">
+                                        <label class="form-label" for="data_management_restore_overwrite_confirmation_phrase">Type the overwrite confirmation phrase</label>
+                                        <input class="form-control" type="text" id="data_management_restore_overwrite_confirmation_phrase" autocomplete="off" aria-describedby="data-management-restore-confirmation-help">
+                                        <div class="form-text" id="data-management-restore-confirmation-help">
+                                            Required phrase: <code>RESTORE WITH OVERWRITE</code>
+                                        </div>
+                                    </div>
+                                </section>
+                                <section class="border rounded p-3" aria-labelledby="data-management-restore-review-heading">
+                                    <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+                                        <div>
+                                            <h6 class="mb-1" id="data-management-restore-review-heading">Preflight review</h6>
+                                            <p class="text-muted small mb-0" id="data-management-restore-review-status">Run review to validate the manifest, target access, and restore policy.</p>
+                                        </div>
+                                        <button type="button" class="btn btn-outline-primary btn-sm" id="data-management-restore-review-btn">
+                                            <i class="bi bi-shield-check me-1"></i>Run Restore Review
+                                        </button>
+                                    </div>
+                                    <div class="list-group" id="data-management-restore-review-checks" aria-live="polite">
+                                        <div class="list-group-item text-muted">No restore review has run yet.</div>
+                                    </div>
+                                </section>
+                                <div class="form-check mt-3">
+                                    <input class="form-check-input" type="checkbox" id="data_management_restore_final_confirmation">
+                                    <label class="form-check-label fw-semibold" for="data_management_restore_final_confirmation">
+                                        I reviewed the restore target, policy, and preflight result.
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                <button type="button" class="btn btn-danger" id="data-management-restore-queue-btn" disabled aria-disabled="true">
+                                    Queue Restore Job
+                                </button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="card p-4 mb-4 border-dark shadow-sm" id="data-management-jobs-section">
@@ -6883,169 +6989,6 @@
                     </div>
                 </div>
 
-                <div class="modal fade" id="data-management-restore-modal" tabindex="-1" aria-labelledby="data-management-restore-title" aria-hidden="true" data-ignore-data-management-change="true">
-                    <div class="modal-dialog modal-xl modal-dialog-scrollable">
-                        <div class="modal-content">
-                            <div class="modal-header">
-                                <div>
-                                    <h5 class="modal-title" id="data-management-restore-title">Restore Workflow</h5>
-                                    <p class="text-muted small mb-0">Stage restore decisions from a completed backup before any job can run.</p>
-                                </div>
-                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                            </div>
-                            <div class="modal-body">
-                                <div class="alert d-none" id="data-management-restore-status" role="status" aria-live="polite"></div>
-                                <nav class="migration-stepper restore-stepper mb-3" aria-label="Restore workflow">
-                                    <button type="button" class="migration-step is-active" data-restore-step-button="backup" aria-current="step">
-                                        <span class="migration-step-marker">1</span>
-                                        <span class="migration-step-copy">
-                                            <span class="migration-step-label">Backup</span>
-                                            <span class="migration-step-state">Confirm source</span>
-                                        </span>
-                                    </button>
-                                    <button type="button" class="migration-step" data-restore-step-button="options">
-                                        <span class="migration-step-marker">2</span>
-                                        <span class="migration-step-copy">
-                                            <span class="migration-step-label">Options</span>
-                                            <span class="migration-step-state">Choose scope</span>
-                                        </span>
-                                    </button>
-                                    <button type="button" class="migration-step" data-restore-step-button="review">
-                                        <span class="migration-step-marker">3</span>
-                                        <span class="migration-step-copy">
-                                            <span class="migration-step-label">Review</span>
-                                            <span class="migration-step-state">Run preflight</span>
-                                        </span>
-                                    </button>
-                                    <button type="button" class="migration-step" data-restore-step-button="confirm">
-                                        <span class="migration-step-marker">4</span>
-                                        <span class="migration-step-copy">
-                                            <span class="migration-step-label">Confirm</span>
-                                            <span class="migration-step-state">Authorize</span>
-                                        </span>
-                                    </button>
-                                    <button type="button" class="migration-step" data-restore-step-button="progress">
-                                        <span class="migration-step-marker">5</span>
-                                        <span class="migration-step-copy">
-                                            <span class="migration-step-label">Progress</span>
-                                            <span class="migration-step-state">Track job</span>
-                                        </span>
-                                    </button>
-                                </nav>
-
-                                <section class="migration-stage restore-stage" data-restore-step-panel="backup" aria-labelledby="data-management-restore-backup-heading">
-                                    <div class="migration-stage-heading">
-                                        <div>
-                                            <h5 id="data-management-restore-backup-heading">Confirm the backup</h5>
-                                            <p>Start from a completed backup in Backup Inventory. Full backups are the safest restore source; partial backups depend on earlier backup history.</p>
-                                        </div>
-                                    </div>
-                                    <div class="migration-confirm-summary" id="data-management-restore-selected-backup">Choose Restore from Backup Inventory.</div>
-                                </section>
-
-                                <section class="migration-stage restore-stage d-none" data-restore-step-panel="options" aria-labelledby="data-management-restore-options-heading">
-                                    <div class="migration-stage-heading">
-                                        <div>
-                                            <h5 id="data-management-restore-options-heading">Choose restore behavior</h5>
-                                            <p>Select the surfaces you expect to restore. Preflight confirms what this backup can support.</p>
-                                        </div>
-                                    </div>
-                                    <div class="row g-3">
-                                        <div class="col-lg-4">
-                                            <label class="form-label" for="data_management_restore_mode">Restore mode</label>
-                                            <select class="form-select" id="data_management_restore_mode">
-                                                <option value="review_only">Review only</option>
-                                                <option value="restore_missing">Restore missing items</option>
-                                                <option value="overwrite_from_backup">Overwrite from backup</option>
-                                            </select>
-                                            <div class="form-text">Restore execution is enabled only after backend preflight confirms support for the selected mode.</div>
-                                        </div>
-                                        <div class="col-lg-8">
-                                            <fieldset class="border rounded p-3">
-                                                <legend class="h6">Included backup surfaces</legend>
-                                                <div class="form-check form-switch">
-                                                    <input class="form-check-input" type="checkbox" role="switch" id="data_management_restore_include_cosmos" checked>
-                                                    <label class="form-check-label" for="data_management_restore_include_cosmos">Cosmos DB app data</label>
-                                                </div>
-                                                <div class="form-check form-switch mt-2">
-                                                    <input class="form-check-input" type="checkbox" role="switch" id="data_management_restore_include_ai_search" checked>
-                                                    <label class="form-check-label" for="data_management_restore_include_ai_search">AI Search indexes</label>
-                                                </div>
-                                                <div class="form-check form-switch mt-2">
-                                                    <input class="form-check-input" type="checkbox" role="switch" id="data_management_restore_include_source_blobs">
-                                                    <label class="form-check-label" for="data_management_restore_include_source_blobs">Source document blobs</label>
-                                                </div>
-                                            </fieldset>
-                                        </div>
-                                    </div>
-                                </section>
-
-                                <section class="migration-stage restore-stage d-none" data-restore-step-panel="review" aria-labelledby="data-management-restore-review-heading">
-                                    <div class="migration-stage-heading">
-                                        <div>
-                                            <h5 id="data-management-restore-review-heading">Run restore preflight</h5>
-                                            <p>Preflight checks backup status, artifact readiness, manifest availability, and whether this build can execute the selected restore plan.</p>
-                                        </div>
-                                        <button type="button" class="btn btn-primary" id="data-management-restore-review-btn">
-                                            <i class="bi bi-clipboard2-check me-1"></i>Run Restore Preflight
-                                        </button>
-                                    </div>
-                                    <div class="migration-review-empty" id="data-management-restore-review-empty">
-                                        <i class="bi bi-clipboard2-pulse" aria-hidden="true"></i>
-                                        <div>
-                                            <strong>Restore preflight has not run.</strong>
-                                            <span>Run preflight before confirming restore execution.</span>
-                                        </div>
-                                    </div>
-                                    <div class="d-none" id="data-management-restore-review-checks"></div>
-                                </section>
-
-                                <section class="migration-stage restore-stage d-none" data-restore-step-panel="confirm" aria-labelledby="data-management-restore-confirm-heading">
-                                    <div class="migration-stage-heading">
-                                        <div>
-                                            <h5 id="data-management-restore-confirm-heading">Confirm restore</h5>
-                                            <p>Restore can overwrite live application data. Execute remains disabled unless preflight reports supported restore execution.</p>
-                                        </div>
-                                    </div>
-                                    <div class="migration-confirm-summary" id="data-management-restore-confirm-summary">Run restore preflight before confirmation.</div>
-                                    <div class="form-check mt-3">
-                                        <input class="form-check-input" type="checkbox" id="data_management_restore_final_confirmation">
-                                        <label class="form-check-label" for="data_management_restore_final_confirmation">I reviewed the backup, selected surfaces, preflight results, and operational impact.</label>
-                                    </div>
-                                    <button type="button" class="btn btn-warning mt-3" id="data-management-execute-restore-btn" disabled aria-disabled="true">
-                                        <i class="bi bi-arrow-counterclockwise me-1"></i>Execute Restore
-                                    </button>
-                                </section>
-
-                                <section class="migration-stage restore-stage d-none" data-restore-step-panel="progress" aria-labelledby="data-management-restore-progress-heading">
-                                    <div class="migration-stage-heading">
-                                        <div>
-                                            <h5 id="data-management-restore-progress-heading">Track restore</h5>
-                                            <p>When restore execution is supported, this stage follows the queued job and links to the full log.</p>
-                                        </div>
-                                    </div>
-                                    <div class="migration-progress-empty" id="data-management-restore-progress-empty">
-                                        <i class="bi bi-hourglass-split" aria-hidden="true"></i>
-                                        <div>
-                                            <strong>No restore job is attached yet.</strong>
-                                            <span>Execute remains blocked until backend restore support is available for the selected backup.</span>
-                                        </div>
-                                    </div>
-                                    <div class="d-none" id="data-management-restore-progress-state"></div>
-                                </section>
-                            </div>
-                            <div class="modal-footer d-flex flex-wrap justify-content-between gap-2">
-                                <span class="small text-muted" id="data-management-restore-step-position">Step 1 of 5</span>
-                                <div class="d-flex gap-2">
-                                    <button type="button" class="btn btn-outline-secondary" id="data-management-restore-back-btn" disabled>Back</button>
-                                    <button type="button" class="btn btn-primary" id="data-management-restore-next-btn">Continue</button>
-                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
                 <div class="modal fade" id="data-management-migration-cancel-modal" tabindex="-1" aria-labelledby="data-management-migration-cancel-title" aria-hidden="true">
                     <div class="modal-dialog modal-dialog-centered">
                         <div class="modal-content">
@@ -7060,6 +7003,27 @@
                             <div class="modal-footer">
                                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Keep Running</button>
                                 <button type="button" class="btn btn-danger" id="data-management-confirm-migration-cancel-btn">Request Cancellation</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="modal fade" id="data-management-backup-delete-modal" tabindex="-1" aria-labelledby="data-management-backup-delete-title" aria-hidden="true">
+                        <div class="modal-dialog modal-dialog-centered">
+                            <div class="modal-content border-danger">
+                                <div class="modal-header">
+                                    <h5 class="modal-title" id="data-management-backup-delete-title">Delete Data Management Backup</h5>
+                                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                </div>
+                                <div class="modal-body">
+                                    <p class="mb-2" id="data-management-backup-delete-message"></p>
+                                    <div class="alert alert-warning small mb-0" role="alert">
+                                        Backup deletion removes stored artifacts, job timeline records, and differential sidecar state for this job. Future partial backups will re-export affected unchanged items.
+                                    </div>
+                                </div>
+                                <div class="modal-footer">
+                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Keep Backup</button>
+                                    <button type="button" class="btn btn-danger" id="data-management-confirm-backup-delete-btn">Delete Backup</button>
+                                </div>
                             </div>
                         </div>
                     </div>

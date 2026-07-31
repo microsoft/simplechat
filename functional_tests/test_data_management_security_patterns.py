@@ -2,13 +2,14 @@
 # test_data_management_security_patterns.py
 """
 Functional test for Data Management security patterns.
-Version: 0.250.106
+Version: 0.250.108
 Implemented in: 0.241.211
 Updated in: 0.250.102
 Updated in: 0.250.103
 Updated in: 0.250.104
 Updated in: 0.250.105
 Updated in: 0.250.106
+Updated in: 0.250.108
 
 This test ensures Data Management admin routes require authenticated admin
 access, secrets stay redacted in frontend responses, and the admin browser
@@ -75,7 +76,7 @@ def test_version_and_container_registration():
     """Validate the Data Management version and Cosmos job container registrations."""
     config_source = read_text(CONFIG_FILE)
 
-    assert 'VERSION = "0.250.106"' in config_source
+    assert 'VERSION = "0.250.108"' in config_source
     assert 'cosmos_data_management_jobs_container_name = "data_management_jobs"' in config_source
     assert 'partition_key=PartitionKey(path="/id")' in config_source
     assert 'cosmos_data_management_job_items_container_name = "data_management_job_items"' in config_source
@@ -95,7 +96,7 @@ def test_version_and_container_registration():
 def test_admin_routes_require_login_admin_and_swagger_security():
     """Validate every Data Management route has the required admin security stack."""
     routes = route_functions_with_decorators()
-    assert len(routes) == 26
+    assert len(routes) == 29
 
     for function_name, decorators in routes:
         assert "swagger_route" in decorators, f"{function_name} missing swagger_route"
@@ -537,7 +538,7 @@ def test_admin_ui_exposes_data_management_without_external_assets():
     assert 'get_data_management_migration_review_fingerprint(' in route_source
     assert 'create_data_management_migration_review_authorization(' in route_source
     assert 'reserve_data_management_migration_review_authorization(' in route_source
-    assert 'release_data_management_migration_review_reservation(' in route_source
+    assert 'release_data_management_migration_review_reservation' in route_source
     assert 'except DataManagementHistoryPaginationError:' in route_source
     assert 'DATA_MANAGEMENT_HISTORY_VALIDATION_ERROR' in route_source
     assert 'except DataManagementHistoryPaginationError as exc:' not in route_source

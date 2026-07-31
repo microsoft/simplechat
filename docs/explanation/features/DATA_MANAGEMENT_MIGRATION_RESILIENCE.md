@@ -1,7 +1,7 @@
 # Data Management Migration Resilience
 
 Implemented in version: **0.250.071**
-Updated in version: **0.250.106**
+Updated in version: **0.250.108**
 
 GitHub issue: [#1043](https://github.com/microsoft/simplechat/issues/1043)
 
@@ -87,7 +87,7 @@ Version 0.250.105 also exposes these checks through the staged browser workflow'
 
 ### Temporary Cosmos Capacity
 
-The optional **destination RU Boost** control raises eligible destination database or dedicated-container throughput to the configured target, capped at **10,000 RU/s**. Version 0.250.106 separates **Validate Cosmos Access** from **Test RU Boost** because data-plane copy permissions and ARM throughput permissions are intentionally different.
+The optional **destination RU Boost** control raises eligible destination database or dedicated-container throughput to the configured target, capped at **10,000 RU/s**. Version 0.250.108 separates **Validate Cosmos Access** from **Test RU Boost** because data-plane copy permissions and ARM throughput permissions are intentionally different.
 
 - The original mode and RU/s value are persisted before every ARM capacity change.
 - Only targets below the requested value are changed.
@@ -153,5 +153,5 @@ The focused coverage verifies provenance and source fingerprints, unowned collis
 
 - Application version updated in `application/single_app/config.py` to `0.250.071`.
 - The staged migration workflow and catalog/review contracts were updated in `application/single_app/config.py` version `0.250.105`.
-- Plain-language mode labels and separate RU Boost permission testing were updated in `application/single_app/config.py` version `0.250.106`.
+- Plain-language mode labels and separate RU Boost permission testing were updated in `application/single_app/config.py` version `0.250.108`.
 - This documentation and the related functional tests use their corresponding implementation versions.

@@ -1,7 +1,7 @@
 # Data Management Backup and Migration
 
 Implemented in version: **0.241.211**
-Updated in version: **0.250.106**
+Updated in version: **0.250.108**
 
 ## Overview
 
@@ -112,11 +112,17 @@ Migration execution currently copies selected SimpleChat Cosmos records, matchin
 
 ### Restore Workflow
 
-Version 0.250.106 adds a staged Restore workflow modal launched from Backup Inventory. The workflow lets admins choose a completed backup, review backup contents and readiness, choose expected restore surfaces, run restore preflight, confirm operational risk, and hand off to job tracking when execution is supported.
+The Backup Inventory exposes a **Restore** action for completed backup jobs with a durable manifest. Restore uses a reviewed workflow before queueing any target writes:
 
-Current restore preflight intentionally reports restore execution as unsupported when the backend restore application layer is unavailable. This prevents the UI from queuing placeholder restore jobs that would only complete with implementation warnings. The preflight still validates backup status, artifact presence, manifest readiness, encryption context, and selected surfaces so admins can use the workflow to prepare a restore plan.
+1. Select a completed backup from Backup Inventory.
+2. Choose create-only or explicitly confirmed overwrite restore policy.
+3. Select included restore surfaces: Cosmos DB, AI Search, and Enhanced Citation blobs.
+4. Run preflight review to validate the manifest, target access, partition-key compatibility, and destination collision policy.
+5. Confirm the reviewed plan and queue a durable restore job.
 
 For durable provenance, destination access probes, collision protection, checkpoint retries, transfer telemetry, and temporary destination Cosmos capacity controls, see [Data Management Migration Resilience](DATA_MANAGEMENT_MIGRATION_RESILIENCE.md).
+
+Create-only restore is the default and blocks existing destination collisions. Overwrite restore requires the exact `RESTORE WITH OVERWRITE` phrase. Running restores use durable checkpoints, sanitized progress, cancellation, retry, and Activity Log auditing. For implementation and recovery guidance, see [Data Management Restore](DATA_MANAGEMENT_RESTORE.md).
 
 ### Security
 
@@ -170,7 +176,7 @@ Data Management settings save through their own API and are excluded from the re
 11. Execute once, then use Progress or the full job log for live telemetry, Cancel, Retry/Resume, warnings, and remediation details.
 12. Open Advanced backup scope only when you need to alter the default Cosmos DB, AI Search index, or source blob backup surfaces.
 13. Use Backup Inventory to see available backups first, filter to full or partial backups, and open View Log for structured backup details.
-14. Use Restore from Backup Inventory to stage a completed backup through backup confirmation, options, preflight, confirmation, and progress handoff. Execution remains disabled when preflight reports the backend restore application layer is unavailable.
+14. Use Restore from Backup Inventory to select a completed backup, choose restore policy and surfaces, run preflight, confirm the reviewed plan, and queue a durable restore job.
 15. Use Job History to inspect active container, checkpoint position, records, bytes, RU, retries/throttles, rates, capacity restoration state, durable backup cutoff/checkpoint state, completed steps, reconciliation readiness, preview divergence, and artifact contents. Backup and migration detail both provide Retry/Resume and Cancel; migration detail also provides full or failure-only JSONL manifest downloads.
 
 Migration is used when moving SimpleChat data into another SimpleChat environment, rehearsing a cutover, or preparing a controlled environment transfer. The target Cosmos account, authentication type, and optional account key are configurable. The target database name is fixed to `SimpleChat` so future migration apply jobs use the standard SimpleChat container layout.
@@ -194,15 +200,15 @@ For optional local/source or destination RU Boost capacity management, assign th
   `functional_tests/test_data_management_blob_backup_transfers.py`.
 - RU Boost permission separation coverage:
   `functional_tests/test_data_management_destination_cosmos_capacity.py`.
-- Restore workflow contract coverage:
-  `functional_tests/test_data_management_restore_workflow_contract.py`.
+- Restore workflow coverage:
+  `functional_tests/test_data_management_restore_workflow.py`.
 - UI/template coverage: `ui_tests/test_admin_data_management_settings_ui.py`.
 - Scheduler/recovery, cancellation, retry, coordinator, provenance, and write-fence coverage remains in the focused `functional_tests/test_data_management_*` modules.
 - Syntax validation: `python -m py_compile` for modified backend modules and `node --check` for the admin browser module.
 
 ## Limitations
 
-- Backup artifact export is implemented for Cosmos DB and AI Search, with optional source blob copying. Restore preflight and staging are available in the UI; restore application remains gated until the backend restore application layer is available for the selected backup and surfaces.
+- Backup artifact export is implemented for Cosmos DB and AI Search, with optional source blob copying. Restore execution supports configured target Cosmos DB, AI Search, and Enhanced Citation blob targets after a passing preflight review.
 - Bicep and Terraform deployments provision `data_management_jobs`, `data_management_job_items`, and `data_management_backup_item_states` so durable job and latest-state storage are available on either IaC path.
 - Source capacity boosts are not available for serverless Cosmos, non-scalable shared/dedicated topology, or targets above 10,000 RU/s. Existing source capacity above the cap remains portal-managed and is never reduced by SimpleChat.
 - Capacity operations can take time to apply and may be denied by network/RBAC policy. The documented failure policy determines whether the backup continues at existing capacity or fails before export; unresolved `restore_pending` state must be retried before another boost is applied.
@@ -211,5 +217,5 @@ For optional local/source or destination RU Boost capacity management, assign th
 
 ## Version References
 
-- Application version updated in `application/single_app/config.py` to `0.250.106`.
+- Application version updated in `application/single_app/config.py` to `0.250.108`.
 - Functional and UI tests include the same implementation version.

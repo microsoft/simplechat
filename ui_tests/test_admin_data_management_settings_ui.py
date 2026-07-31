@@ -1,7 +1,7 @@
 # test_admin_data_management_settings_ui.py
 """
 UI test for Admin Settings Data Management controls.
-Version: 0.250.106
+Version: 0.250.108
 Implemented in: 0.241.211
 Updated in: 0.241.221
 Updated in: 0.250.102
@@ -9,6 +9,7 @@ Updated in: 0.250.103
 Updated in: 0.250.104
 Updated in: 0.250.105
 Updated in: 0.250.106
+Updated in: 0.250.108
 
 This test ensures admins can discover the Data Management tab, see the
 operational-business-hours warning, and access the backup, encryption,
@@ -22,8 +23,10 @@ Version 0.250.076 adds bounded parallel backup and source capacity controls.
 Version 0.250.102 adds independently bounded source-blob transfer controls.
 Version 0.250.103 adds the staged migration workflow, scalable catalogs,
 server-owned review, confirmation gating, and inline durable job progress.
-Version 0.250.106 adds plain-language Backup, Migrate & Restore guidance,
-separate RU Boost testing, and the staged restore workflow modal.
+Version 0.250.106 adds backup cleanup, unit-based retention controls, and
+the restore workflow modal.
+Version 0.250.108 adds plain-language Backup, Migrate & Restore guidance and
+separate RU Boost testing.
 """
 
 import json
@@ -71,6 +74,9 @@ def test_admin_data_management_controls_render_from_template():
         "data_management_enabled",
         "data_management_full_frequency",
         "data_management_scheduled_time_utc",
+        "data_management_retention_value",
+        "data_management_retention_unit",
+        "data_management_retention_days",
         "data_management_partial_enabled",
         "data_management_low_impact_mode",
         "data-management-advanced-scope-drawer",
@@ -198,29 +204,12 @@ def test_admin_data_management_controls_render_from_template():
         "data-management-backup-operations-section",
         "data-management-run-full-backup-btn",
         "data-management-run-partial-backup-btn",
+        "data-management-run-retention-cleanup-btn",
         "data-management-backup-inventory-section",
         "data-management-full-backup-count",
         "data-management-partial-backup-count",
         "data-management-available-backup-count",
         "data-management-backups-tbody",
-        "data-management-restore-modal",
-        "data-management-restore-status",
-        "data-management-restore-selected-backup",
-        "data_management_restore_mode",
-        "data_management_restore_include_cosmos",
-        "data_management_restore_include_ai_search",
-        "data_management_restore_include_source_blobs",
-        "data-management-restore-review-btn",
-        "data-management-restore-review-empty",
-        "data-management-restore-review-checks",
-        "data-management-restore-confirm-summary",
-        "data_management_restore_final_confirmation",
-        "data-management-execute-restore-btn",
-        "data-management-restore-progress-empty",
-        "data-management-restore-progress-state",
-        "data-management-restore-back-btn",
-        "data-management-restore-next-btn",
-        "data-management-restore-step-position",
         "data_management_backup_status_filter",
         "data_management_backup_scheduled_filter",
         "data_management_backup_created_from",
@@ -229,6 +218,20 @@ def test_admin_data_management_controls_render_from_template():
         "data-management-backup-pagination-status",
         "data-management-backup-previous-page-btn",
         "data-management-backup-next-page-btn",
+        "data-management-restore-modal",
+        "data-management-restore-title",
+        "data-management-restore-backup-summary",
+        "data_management_restore_policy",
+        "data_management_restore_include_cosmos",
+        "data_management_restore_include_ai_search",
+        "data_management_restore_include_source_blobs",
+        "data-management-restore-confirmation-section",
+        "data_management_restore_overwrite_confirmation_phrase",
+        "data-management-restore-review-btn",
+        "data-management-restore-review-status",
+        "data-management-restore-review-checks",
+        "data_management_restore_final_confirmation",
+        "data-management-restore-queue-btn",
         "data-management-jobs-tbody",
         "data_management_job_operation_filter",
         "data_management_job_status_filter",
@@ -250,6 +253,9 @@ def test_admin_data_management_controls_render_from_template():
         "data-management-migration-cancel-modal",
         "data-management-migration-cancel-message",
         "data-management-confirm-migration-cancel-btn",
+        "data-management-backup-delete-modal",
+        "data-management-backup-delete-message",
+        "data-management-confirm-backup-delete-btn",
     ]
 
     for element_id in required_ids:
@@ -259,6 +265,8 @@ def test_admin_data_management_controls_render_from_template():
     assert 'id="data-management" role="tabpanel" aria-labelledby="data-management-tab" data-testid="data-management-tab-pane" data-ignore-settings-change="true"' in template
     assert 'id="data-management-save-settings-btn" disabled aria-disabled="true"' in template
     assert '<h4 class="mb-1">Backup</h4>' in template
+    assert "Delete backups after" in template
+    assert "Automatic cleanup keeps the newest successful full backup as a safety baseline." in template
     assert 'id="data-management-migration-title"' in template
     assert "Cosmos DB JSON Editor" in template
     assert "Query results and the JSON editor open in a modal" in template
@@ -273,6 +281,16 @@ def test_admin_data_management_controls_render_from_template():
     assert "I understand this editor can damage overall system health." in template
     assert "Required phrase: <code>I understand this can damage system data</code>" in template
     assert '<h4 class="mb-1">Backup Inventory</h4>' in template
+    assert "Run Retention Cleanup" in template
+    assert "Delete Data Management Backup" in template
+    assert "Future partial backups will re-export affected unchanged items." in template
+    assert "Restore Backup" in template
+    assert "Run Restore Review" in template
+    assert "Queue Restore Job" in template
+    assert "Required phrase: <code>RESTORE WITH OVERWRITE</code>" in template
+    assert "openRestoreModal" in js_source
+    assert 'requestJson("/api/admin/data-management/restore/review"' in js_source
+    assert 'queueOperation("restore"' in js_source
     assert 'aria-label="Backup inventory filters"' in template
     assert '<span>Available backups</span>' in template
     assert '<th scope="col">Backup</th>' in template
@@ -334,6 +352,13 @@ def test_admin_data_management_controls_render_from_template():
     assert 'backup_blob_chunk_size_mib' in js_source
     assert 'backup_blob_retry_count' in js_source
     assert 'backup_temporary_source_ru_enabled' in js_source
+    assert 'retention_value: getNumberValue(elements.datamanagementretentionvalue, 30)' in js_source
+    assert 'retention_unit: getValue(elements.datamanagementretentionunit) || "days"' in js_source
+    assert 'getRetentionDaysValue' in js_source
+    assert 'runBackupRetentionCleanup' in js_source
+    assert 'openDataManagementBackupDeleteModal' in js_source
+    assert 'deleteDataManagementBackup' in js_source
+    assert '/api/admin/data-management/backups/retention/cleanup' in js_source
     assert 'buildMigrationPlan' in js_source
     assert 'queueMigration(false)' in js_source
     assert 'loadMigrationCatalog(targetType, "reset")' in js_source
@@ -362,9 +387,9 @@ def test_admin_data_management_controls_render_from_template():
     assert 'testTargetCosmosRuBoost' in js_source
     assert '/api/admin/data-management/target/cosmos/ru-boost/test' in js_source
     assert 'testMigrationAccess' in js_source
-    assert 'openRestoreWorkflow' in js_source
     assert '/api/admin/data-management/restore/review' in js_source
-    assert 'Restore preflight completed. Restore execution is not enabled for this selection.' in js_source
+    assert 'openRestoreModal' in js_source
+    assert 'updateRestoreQueueButtonState' in js_source
     assert 'retryDataManagementJob' in js_source
     assert 'openDataManagementCancellationModal' in js_source
     assert 'requestDataManagementCancellation' in js_source
@@ -604,6 +629,8 @@ def _run_admin_migration_browser_workflow(viewport):
         expect(page.get_by_label("Enable scheduled backups")).to_be_visible()
         expect(page.get_by_label("Full backup frequency")).to_be_visible()
         expect(page.locator("#data_management_scheduled_time_utc")).to_have_value("03:00")
+        expect(page.get_by_label("Delete backups after")).to_be_visible()
+        expect(page.get_by_label("Retention unit")).to_be_visible()
         expect(page.get_by_label("Run partial backups daily between full backups")).to_be_visible()
         expect(page.get_by_role("button", name="Advanced backup scope")).to_be_visible()
         expect(page.locator("#data_management_target_cosmos_database")).to_have_value("SimpleChat")
@@ -696,6 +723,7 @@ def _run_admin_migration_browser_workflow(viewport):
         expect(page.locator("#data-management-jobs-tbody")).to_be_visible()
         expect(page.locator("#data-management-job-detail-modal")).to_be_attached()
         expect(page.locator("#data-management-migration-cancel-modal")).to_be_attached()
+        expect(page.locator("#data-management-backup-delete-modal")).to_be_attached()
     finally:
         context.close()
         browser.close()

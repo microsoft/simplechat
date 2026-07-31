@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for chat stream retry multi-endpoint resolution.
-Version: 0.241.004
+Version: 0.250.106
 Implemented in: 0.241.003
 
 This test ensures the compatibility retry path reuses the in-app multi-endpoint
@@ -42,16 +42,30 @@ def parse_version(version_text):
     return tuple(int(part) for part in str(version_text).split('.'))
 
 
+def find_first_route_marker(source, markers):
+    for marker in markers:
+        marker_index = source.find(marker)
+        if marker_index != -1:
+            return marker_index
+    return -1
+
+
 def test_chat_api_uses_shared_multi_endpoint_resolution_for_retry_compatibility():
     """Verify compatibility chat requests reuse the in-app multi-endpoint resolver."""
     print('🔍 Testing compatibility retry multi-endpoint resolution wiring...')
 
     route_source = read_file_text(ROUTE_FILE)
-    chat_route_marker = "@app.route('/api/chat', methods=['POST'])"
-    chat_stream_marker = "@app.route('/api/chat/stream', methods=['POST'])"
+    chat_route_markers = [
+        "@bp.route('/api/chat', methods=['POST'])",
+        "@app.route('/api/chat', methods=['POST'])",
+    ]
+    chat_stream_markers = [
+        "@bp.route('/api/chat/stream', methods=['POST'])",
+        "@app.route('/api/chat/stream', methods=['POST'])",
+    ]
 
-    chat_route_index = route_source.find(chat_route_marker)
-    chat_stream_index = route_source.find(chat_stream_marker)
+    chat_route_index = find_first_route_marker(route_source, chat_route_markers)
+    chat_stream_index = find_first_route_marker(route_source, chat_stream_markers)
     assert chat_route_index != -1, 'Expected to find the /api/chat route definition.'
     assert chat_stream_index != -1, 'Expected to find the /api/chat/stream route definition.'
 

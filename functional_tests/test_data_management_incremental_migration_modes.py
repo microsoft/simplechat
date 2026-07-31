@@ -1,9 +1,10 @@
 # test_data_management_incremental_migration_modes.py
 """
 Functional test for explicit Data Management incremental migration modes.
-Version: 0.250.106
+Version: 0.250.108
 Implemented in: 0.250.071
 Updated in: 0.250.106
+Updated in: 0.250.108
 
 This test ensures mode defaults, baseline lineage, and destructive destination
 cleanup confirmation are normalized into the immutable migration plan.

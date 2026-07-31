@@ -1,9 +1,10 @@
 # test_data_management_destination_cosmos_capacity.py
 """
 Functional test for Data Management destination Cosmos migration controls.
-Version: 0.250.106
+Version: 0.250.108
 Implemented in: 0.250.075
 Updated in: 0.250.106
+Updated in: 0.250.108
 
 This test ensures preflight proves destination create/read/delete access and
 an opt-in 10,000 RU migration boost restores the original capacity afterward.
