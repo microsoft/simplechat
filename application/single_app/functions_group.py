@@ -42,6 +42,10 @@ def create_group(name, description):
         ],
         "pendingUsers": [],
         "disable_file_downloads": False,
+        "retention_policy": {
+            "conversation_retention_days": "default",
+            "document_retention_days": "default"
+        },
         "createdDate": now_str,
         "modifiedDate": now_str
     }

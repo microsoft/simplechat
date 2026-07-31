@@ -1,8 +1,8 @@
 # test_data_management_migration_workflow_contract.py
 """
 Functional tests for the Admin Data Management migration workflow contract.
-Version: 0.250.103
-Implemented in: 0.250.103
+Version: 0.250.105
+Implemented in: 0.250.105
 
 This test ensures migration catalogs paginate beyond 50 records, bind
 continuations to the current search, and report exhaustive all-mode counts.
@@ -115,7 +115,7 @@ def load_data_management_module(monkeypatch, users, document_counts):
     job_container = FakeJobContainer()
     config_module = types.ModuleType("config")
     config_module.CLIENTS = {}
-    config_module.VERSION = "0.250.103"
+    config_module.VERSION = "0.250.105"
     config_module.cosmos_data_management_jobs_container = job_container
     config_module.cosmos_data_management_job_items_container = job_container
     config_module.cosmos_settings_container = job_container

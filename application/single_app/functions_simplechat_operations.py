@@ -1274,44 +1274,49 @@ def upload_generated_analysis_artifact_for_user(
     )
 
 
-def delete_blob_backed_chat_message_files(messages: Iterable[Dict[str, Any]]) -> int:
+def delete_blob_backed_chat_message_files(
+    messages: Iterable[Dict[str, Any]],
+    raise_on_error: bool = False,
+) -> int:
     """Delete blob-backed chat files referenced by the provided message documents."""
-    blob_service_client = CLIENTS.get("storage_account_office_docs_client")
-    if not blob_service_client:
-        return 0
-
-    deleted_count = 0
-    deleted_targets = set()
-
+    blob_targets = []
+    seen_targets = set()
     for message in messages or []:
         if not isinstance(message, dict):
             continue
-
         if str(message.get("file_content_source") or "").strip().lower() != "blob":
             continue
 
         blob_container = str(message.get("blob_container") or "").strip()
         blob_path = str(message.get("blob_path") or "").strip()
-        if not blob_container or not blob_path:
-            continue
-
         target = (blob_container, blob_path)
-        if target in deleted_targets:
+        if not blob_container or not blob_path or target in seen_targets:
             continue
 
+        seen_targets.add(target)
+        blob_targets.append(target)
+
+    blob_service_client = CLIENTS.get("storage_account_office_docs_client")
+    if not blob_service_client:
+        if raise_on_error and blob_targets:
+            raise RuntimeError("Blob storage client is unavailable for chat file cleanup")
+        return 0
+
+    deleted_count = 0
+    cleanup_errors = []
+    for blob_container, blob_path in blob_targets:
         try:
             blob_client = blob_service_client.get_blob_client(
                 container=blob_container,
                 blob=blob_path,
             )
             if not blob_client.exists():
-                deleted_targets.add(target)
                 continue
 
             blob_client.delete_blob()
-            deleted_targets.add(target)
             deleted_count += 1
         except Exception as exc:
+            cleanup_errors.append((blob_container, blob_path, exc))
             log_event(
                 "[SimpleChat] Failed to delete blob-backed chat file",
                 {
@@ -1321,6 +1326,11 @@ def delete_blob_backed_chat_message_files(messages: Iterable[Dict[str, Any]]) ->
                 },
                 debug_only=True,
             )
+
+    if cleanup_errors and raise_on_error:
+        raise RuntimeError(
+            f"Failed to delete {len(cleanup_errors)} blob-backed chat file(s)"
+        ) from cleanup_errors[0][2]
 
     return deleted_count
 

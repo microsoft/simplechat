@@ -90,6 +90,19 @@ function markStreamingConversationReadIfActive(conversationId, contextLabel) {
     });
 }
 
+function notifySuccessfulStreamingCompletion(finalData) {
+    if (!window.simpleChatCompletionAudio?.handleCompletion) {
+        return;
+    }
+
+    window.simpleChatCompletionAudio.handleCompletion({
+        conversationId: finalData?.conversation_id,
+        messageId: finalData?.message_id,
+    }, {
+        refreshAdminGate: true,
+    });
+}
+
 function buildDefaultCancelEndpoint(conversationId) {
     const normalizedConversationId = String(conversationId || '').trim();
     if (!normalizedConversationId) {
@@ -1244,6 +1257,7 @@ function handleStreamError(messageId, partialContent, errorMessage, errorDetails
 
 function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackAgentInfo = null) {
     finalData = applyFallbackAgentIcon(finalData, fallbackAgentInfo);
+    notifySuccessfulStreamingCompletion(finalData);
     const messageElement = document.querySelector(`[data-message-id="${messageId}"]`);
     if (!messageElement) return;
 

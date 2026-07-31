@@ -39,7 +39,7 @@ from azure.search.documents import SearchClient
 from azure.search.documents.indexes import SearchIndexClient
 from azure.search.documents.indexes.models import SearchField, SearchFieldDataType, SearchIndex
 from azure.storage.blob import BlobBlock, BlobServiceClient, ContentSettings
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 
 import config as app_config
 from config import (
@@ -170,6 +170,11 @@ DATA_MANAGEMENT_FULL_FREQUENCIES = {
 DATA_MANAGEMENT_DEFAULT_LEASE_SECONDS = 900
 DATA_MANAGEMENT_DEFAULT_STALE_SECONDS = 1200
 DATA_MANAGEMENT_DEFAULT_JOB_LIMIT = 25
+DATA_MANAGEMENT_HISTORY_MAX_PAGE_SIZE = 100
+DATA_MANAGEMENT_HISTORY_TOKEN_TTL_SECONDS = 3600
+DATA_MANAGEMENT_HISTORY_TOKEN_VERSION = 1
+DATA_MANAGEMENT_HISTORY_MAX_DATE_RANGE_DAYS = 366
+DATA_MANAGEMENT_HISTORY_SORT = "created_at_desc_id_desc"
 DATA_MANAGEMENT_DEFAULT_RECOVERY_JOB_LIMIT = 25
 DATA_MANAGEMENT_RECOVERY_QUEUE_DELAY_SECONDS = 60
 DATA_MANAGEMENT_RECOVERY_RESUBMIT_DELAY_SECONDS = 120
@@ -309,6 +314,10 @@ class DataManagementSettingsValidationError(ValueError):
 
 class DataManagementCosmosEditorError(ValueError):
     """Raised when Cosmos editor input is unsafe or incomplete."""
+
+
+class DataManagementHistoryPaginationError(ValueError):
+    """Raised when Data Management history pagination input is invalid."""
 
 
 class DataManagementMigrationLeaseLostError(RuntimeError):
@@ -7814,16 +7823,315 @@ def queue_data_management_job(operation, backup_type=None, requested_by=None, re
         raise
 
 
-def get_data_management_jobs(limit=DATA_MANAGEMENT_DEFAULT_JOB_LIMIT):
-    safe_limit = _safe_int(limit, default=DATA_MANAGEMENT_DEFAULT_JOB_LIMIT, minimum=1, maximum=100)
-    query = "SELECT * FROM c WHERE c.type = @type ORDER BY c.created_at DESC"
-    parameters = [{"name": "@type", "value": DATA_MANAGEMENT_JOB_TYPE}]
-    return list(cosmos_data_management_jobs_container.query_items(
+def _normalize_data_management_history_datetime(value, field_name, end_exclusive=False):
+    text = _safe_text(value)
+    if not text:
+        return None
+    date_only = bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", text))
+    parsed = _parse_iso_datetime(text)
+    if parsed is None:
+        raise DataManagementHistoryPaginationError(
+            f"{field_name} must be an ISO-8601 date or timestamp."
+        )
+    if date_only and end_exclusive:
+        parsed += timedelta(days=1)
+    return parsed.isoformat()
+
+
+def normalize_data_management_history_filters(list_kind, filters=None):
+    normalized_kind = _safe_text(list_kind).lower()
+    if normalized_kind not in {"jobs", "backups"}:
+        raise DataManagementHistoryPaginationError("Unsupported Data Management history list.")
+
+    raw_filters = filters if isinstance(filters, dict) else {}
+    status = _safe_text(raw_filters.get("status")).lower()
+    allowed_statuses = {
+        DATA_MANAGEMENT_STATUS_QUEUED,
+        DATA_MANAGEMENT_STATUS_RUNNING,
+        DATA_MANAGEMENT_STATUS_COMPLETED,
+        DATA_MANAGEMENT_STATUS_COMPLETED_WITH_WARNINGS,
+        DATA_MANAGEMENT_STATUS_FAILED,
+        DATA_MANAGEMENT_STATUS_CANCELED,
+    }
+    if normalized_kind == "backups":
+        allowed_statuses.add("available")
+    if status and status not in allowed_statuses:
+        raise DataManagementHistoryPaginationError("Unsupported Data Management status filter.")
+
+    scheduled_value = _safe_text(raw_filters.get("scheduled")).lower()
+    if scheduled_value in {"", "all"}:
+        scheduled = None
+    elif scheduled_value == "scheduled":
+        scheduled = True
+    elif scheduled_value == "manual":
+        scheduled = False
+    else:
+        raise DataManagementHistoryPaginationError("Scheduled filter must be all, scheduled, or manual.")
+
+    created_from = _normalize_data_management_history_datetime(
+        raw_filters.get("created_from"),
+        "created_from",
+    )
+    created_to = _normalize_data_management_history_datetime(
+        raw_filters.get("created_to"),
+        "created_to",
+        end_exclusive=True,
+    )
+    if bool(created_from) != bool(created_to):
+        raise DataManagementHistoryPaginationError(
+            "created_from and created_to must be provided together."
+        )
+    if created_from and created_to:
+        start = _parse_iso_datetime(created_from)
+        end = _parse_iso_datetime(created_to)
+        if end <= start:
+            raise DataManagementHistoryPaginationError("created_to must be after created_from.")
+        if end - start > timedelta(days=DATA_MANAGEMENT_HISTORY_MAX_DATE_RANGE_DAYS):
+            raise DataManagementHistoryPaginationError(
+                f"Date range cannot exceed {DATA_MANAGEMENT_HISTORY_MAX_DATE_RANGE_DAYS} days."
+            )
+
+    operation = None
+    backup_type = None
+    if normalized_kind == "jobs":
+        operation = _safe_text(raw_filters.get("operation")).lower()
+        if operation and operation not in DATA_MANAGEMENT_OPERATIONS:
+            raise DataManagementHistoryPaginationError("Unsupported Data Management operation filter.")
+    else:
+        backup_type = _safe_text(raw_filters.get("backup_type")).lower()
+        if backup_type and backup_type not in DATA_MANAGEMENT_BACKUP_TYPES:
+            raise DataManagementHistoryPaginationError("Backup type filter must be full or partial.")
+
+    return {
+        "operation": operation or None,
+        "backup_type": backup_type or None,
+        "status": status or None,
+        "scheduled": scheduled,
+        "created_from": created_from,
+        "created_to": created_to,
+    }
+
+
+def _get_data_management_history_cipher():
+    secret = _safe_text(getattr(app_config, "SECRET_KEY", ""))
+    derived_key = hashlib.sha256(
+        f"data-management-history:{secret}".encode("utf-8")
+    ).digest()
+    return Fernet(base64.urlsafe_b64encode(derived_key))
+
+
+def _encode_data_management_history_token(list_kind, filters, page_size, cursor):
+    if not isinstance(cursor, dict):
+        return None
+    cursor_created_at = _safe_text(cursor.get("created_at"))
+    cursor_id = _safe_text(cursor.get("id"))
+    if not cursor_created_at or not cursor_id:
+        return None
+    payload = {
+        "version": DATA_MANAGEMENT_HISTORY_TOKEN_VERSION,
+        "list_kind": list_kind,
+        "filters": filters,
+        "page_size": page_size,
+        "sort": DATA_MANAGEMENT_HISTORY_SORT,
+        "cursor": {
+            "created_at": cursor_created_at,
+            "id": cursor_id,
+        },
+    }
+    token = _get_data_management_history_cipher().encrypt(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    )
+    return token.decode("utf-8")
+
+
+def _decode_data_management_history_token(token, list_kind, filters, page_size):
+    safe_token = _safe_text(token)
+    if not safe_token:
+        return None
+    try:
+        decoded_token = base64.b64decode(
+            safe_token.encode("utf-8"),
+            altchars=b"-_",
+            validate=True,
+        )
+        canonical_token = base64.urlsafe_b64encode(decoded_token).decode("utf-8")
+        if not hmac.compare_digest(canonical_token, safe_token):
+            raise ValueError("Continuation token is not canonical.")
+        decrypted = _get_data_management_history_cipher().decrypt(
+            safe_token.encode("utf-8"),
+            ttl=DATA_MANAGEMENT_HISTORY_TOKEN_TTL_SECONDS,
+        )
+        payload = json.loads(decrypted.decode("utf-8"))
+    except (InvalidToken, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        raise DataManagementHistoryPaginationError(
+            "Continuation token is invalid or expired."
+        ) from exc
+
+    if (
+        not isinstance(payload, dict)
+        or payload.get("version") != DATA_MANAGEMENT_HISTORY_TOKEN_VERSION
+        or payload.get("list_kind") != list_kind
+        or payload.get("filters") != filters
+        or payload.get("page_size") != page_size
+        or payload.get("sort") != DATA_MANAGEMENT_HISTORY_SORT
+        or not isinstance(payload.get("cursor"), dict)
+        or not _safe_text(payload["cursor"].get("created_at"))
+        or not _safe_text(payload["cursor"].get("id"))
+    ):
+        raise DataManagementHistoryPaginationError(
+            "Continuation token is invalid or does not match the active filters."
+        )
+    return {
+        "created_at": _safe_text(payload["cursor"].get("created_at")),
+        "id": _safe_text(payload["cursor"].get("id")),
+    }
+
+
+def _build_data_management_history_query(list_kind, filters, page_limit, cursor=None):
+    clauses = ["c.type = @type"]
+    parameters = [
+        {"name": "@page_limit", "value": page_limit},
+        {"name": "@type", "value": DATA_MANAGEMENT_JOB_TYPE},
+    ]
+    if list_kind == "backups":
+        clauses.append("c.operation = @backup_operation")
+        parameters.append({
+            "name": "@backup_operation",
+            "value": DATA_MANAGEMENT_OPERATION_BACKUP,
+        })
+    elif filters.get("operation"):
+        clauses.append("c.operation = @operation")
+        parameters.append({"name": "@operation", "value": filters["operation"]})
+    if filters.get("backup_type"):
+        clauses.append("c.backup_type = @backup_type")
+        parameters.append({"name": "@backup_type", "value": filters["backup_type"]})
+    if filters.get("status") == "available":
+        clauses.append(
+            "(c.status = @completed OR c.status = @completed_with_warnings)"
+        )
+        parameters.extend([
+            {"name": "@completed", "value": DATA_MANAGEMENT_STATUS_COMPLETED},
+            {
+                "name": "@completed_with_warnings",
+                "value": DATA_MANAGEMENT_STATUS_COMPLETED_WITH_WARNINGS,
+            },
+        ])
+    elif filters.get("status"):
+        clauses.append("c.status = @status")
+        parameters.append({"name": "@status", "value": filters["status"]})
+    if filters.get("scheduled") is not None:
+        clauses.append("c.scheduled = @scheduled")
+        parameters.append({"name": "@scheduled", "value": filters["scheduled"]})
+    if filters.get("created_from"):
+        clauses.append("c.created_at >= @created_from")
+        parameters.append({"name": "@created_from", "value": filters["created_from"]})
+    if filters.get("created_to"):
+        clauses.append("c.created_at < @created_to")
+        parameters.append({"name": "@created_to", "value": filters["created_to"]})
+    if isinstance(cursor, dict):
+        clauses.append(
+            "(c.created_at < @cursor_created_at "
+            "OR (c.created_at = @cursor_created_at AND c.id < @cursor_id))"
+        )
+        parameters.extend([
+            {
+                "name": "@cursor_created_at",
+                "value": cursor["created_at"],
+            },
+            {"name": "@cursor_id", "value": cursor["id"]},
+        ])
+    query = (
+        f"SELECT TOP @page_limit * FROM c WHERE {' AND '.join(clauses)} "
+        "ORDER BY c.created_at DESC, c.id DESC"
+    )
+    return query, parameters
+
+
+def _query_data_management_history_page(
+    list_kind,
+    page_size,
+    continuation_token=None,
+    filters=None,
+):
+    default_page_size = DATA_MANAGEMENT_DEFAULT_JOB_LIMIT
+    safe_page_size = _safe_int(
+        page_size,
+        default=default_page_size,
+        minimum=1,
+        maximum=DATA_MANAGEMENT_HISTORY_MAX_PAGE_SIZE,
+    )
+    normalized_filters = normalize_data_management_history_filters(list_kind, filters)
+    cursor = _decode_data_management_history_token(
+        continuation_token,
+        list_kind,
+        normalized_filters,
+        safe_page_size,
+    )
+    query, parameters = _build_data_management_history_query(
+        list_kind,
+        normalized_filters,
+        safe_page_size + 1,
+        cursor=cursor,
+    )
+    query_iterable = cosmos_data_management_jobs_container.query_items(
         query=query,
         parameters=parameters,
         enable_cross_partition_query=True,
-        max_item_count=safe_limit,
-    ))[:safe_limit]
+        max_item_count=safe_page_size + 1,
+    )
+    results = list(query_iterable)
+    has_more = len(results) > safe_page_size
+    items = results[:safe_page_size]
+    next_cursor = None
+    if has_more and items:
+        last_item = items[-1]
+        next_cursor = {
+            "created_at": last_item.get("created_at"),
+            "id": last_item.get("id"),
+        }
+    next_token = _encode_data_management_history_token(
+        list_kind,
+        normalized_filters,
+        safe_page_size,
+        next_cursor,
+    )
+    return {
+        "items": items,
+        "pagination": {
+            "page_size": safe_page_size,
+            "returned_count": len(items),
+            "has_more": bool(next_token),
+            "next_token": next_token,
+        },
+        "filters": normalized_filters,
+    }
+
+
+def get_data_management_jobs_page(
+    page_size=DATA_MANAGEMENT_DEFAULT_JOB_LIMIT,
+    continuation_token=None,
+    filters=None,
+):
+    page = _query_data_management_history_page(
+        "jobs",
+        page_size,
+        continuation_token=continuation_token,
+        filters=filters,
+    )
+    page["items"] = [
+        public_job
+        for public_job in (
+            sanitize_data_management_job_for_admin(job)
+            for job in page["items"]
+        )
+        if public_job
+    ]
+    page["pagination"]["returned_count"] = len(page["items"])
+    return page
+
+
+def get_data_management_jobs(limit=DATA_MANAGEMENT_DEFAULT_JOB_LIMIT):
+    return get_data_management_jobs_page(page_size=limit)["items"]
 
 
 def get_recoverable_data_management_jobs(
@@ -8885,49 +9193,120 @@ def sanitize_data_management_backup_for_admin(job):
 
 
 def get_data_management_backup_inventory(limit=100):
-    safe_limit = _safe_int(limit, default=100, minimum=1, maximum=500)
-    query = "SELECT * FROM c WHERE c.type = @type AND c.operation = @operation ORDER BY c.created_at DESC"
-    parameters = [
-        {"name": "@type", "value": DATA_MANAGEMENT_JOB_TYPE},
-        {"name": "@operation", "value": DATA_MANAGEMENT_OPERATION_BACKUP},
+    page = _query_data_management_history_page("backups", limit)
+    return [
+        backup
+        for backup in (
+            sanitize_data_management_backup_for_admin(job)
+            for job in page["items"]
+        )
+        if backup
     ]
-    jobs = list(cosmos_data_management_jobs_container.query_items(
-        query=query,
-        parameters=parameters,
-        enable_cross_partition_query=True,
-        max_item_count=safe_limit,
-    ))[:safe_limit]
-    return [backup for backup in (sanitize_data_management_backup_for_admin(job) for job in jobs) if backup]
 
 
-def get_data_management_backup_summary(limit=100):
-    backups = get_data_management_backup_inventory(limit=limit)
+def _get_data_management_backup_global_summary():
     summary = {
         "full": 0,
         "partial": 0,
         "available": 0,
         "running": 0,
         "failed": 0,
-        "total": len(backups),
+        "total": 0,
         "latest_full": None,
         "latest_partial": None,
     }
-    for backup in backups:
-        status = backup.get("status")
-        backup_type = backup.get("backup_type")
-        if status in {DATA_MANAGEMENT_STATUS_COMPLETED, DATA_MANAGEMENT_STATUS_COMPLETED_WITH_WARNINGS}:
-            summary["available"] += 1
+    aggregate_query = (
+        "SELECT c.backup_type, c.status, COUNT(1) AS count FROM c "
+        "WHERE c.type = @type AND c.operation = @operation "
+        "GROUP BY c.backup_type, c.status"
+    )
+    parameters = [
+        {"name": "@type", "value": DATA_MANAGEMENT_JOB_TYPE},
+        {"name": "@operation", "value": DATA_MANAGEMENT_OPERATION_BACKUP},
+    ]
+    aggregate_rows = list(cosmos_data_management_jobs_container.query_items(
+        query=aggregate_query,
+        parameters=parameters,
+        enable_cross_partition_query=True,
+    ))
+    for row in aggregate_rows:
+        if not isinstance(row, dict):
+            continue
+        count = _safe_int(row.get("count"), default=0, minimum=0)
+        status = row.get("status")
+        backup_type = row.get("backup_type")
+        summary["total"] += count
+        if status in {
+            DATA_MANAGEMENT_STATUS_COMPLETED,
+            DATA_MANAGEMENT_STATUS_COMPLETED_WITH_WARNINGS,
+        }:
+            summary["available"] += count
             if backup_type == DATA_MANAGEMENT_BACKUP_FULL:
-                summary["full"] += 1
-                summary["latest_full"] = summary["latest_full"] or backup
+                summary["full"] += count
             elif backup_type == DATA_MANAGEMENT_BACKUP_PARTIAL:
-                summary["partial"] += 1
-                summary["latest_partial"] = summary["latest_partial"] or backup
+                summary["partial"] += count
         elif status == DATA_MANAGEMENT_STATUS_RUNNING:
-            summary["running"] += 1
+            summary["running"] += count
         elif status == DATA_MANAGEMENT_STATUS_FAILED:
-            summary["failed"] += 1
-    return {"summary": summary, "backups": backups}
+            summary["failed"] += count
+
+    for backup_type, summary_field in (
+        (DATA_MANAGEMENT_BACKUP_FULL, "latest_full"),
+        (DATA_MANAGEMENT_BACKUP_PARTIAL, "latest_partial"),
+    ):
+        latest_query = (
+            "SELECT TOP 1 * FROM c WHERE c.type = @type "
+            "AND c.operation = @operation AND c.backup_type = @backup_type "
+            "AND (c.status = @completed OR c.status = @completed_with_warnings) "
+            "ORDER BY c.created_at DESC, c.id DESC"
+        )
+        latest_parameters = parameters + [
+            {"name": "@backup_type", "value": backup_type},
+            {"name": "@completed", "value": DATA_MANAGEMENT_STATUS_COMPLETED},
+            {
+                "name": "@completed_with_warnings",
+                "value": DATA_MANAGEMENT_STATUS_COMPLETED_WITH_WARNINGS,
+            },
+        ]
+        latest_jobs = list(cosmos_data_management_jobs_container.query_items(
+            query=latest_query,
+            parameters=latest_parameters,
+            enable_cross_partition_query=True,
+            max_item_count=1,
+        ))
+        if latest_jobs:
+            summary[summary_field] = sanitize_data_management_backup_for_admin(
+                latest_jobs[0]
+            )
+    return summary
+
+
+def get_data_management_backup_summary(
+    limit=DATA_MANAGEMENT_DEFAULT_JOB_LIMIT,
+    continuation_token=None,
+    filters=None,
+):
+    page = _query_data_management_history_page(
+        "backups",
+        limit,
+        continuation_token=continuation_token,
+        filters=filters,
+    )
+    backups = [
+        backup
+        for backup in (
+            sanitize_data_management_backup_for_admin(job)
+            for job in page["items"]
+        )
+        if backup
+    ]
+    page["pagination"]["returned_count"] = len(backups)
+    return {
+        "summary": _get_data_management_backup_global_summary(),
+        "backups": backups,
+        "pagination": page["pagination"],
+        "filters": page["filters"],
+    }
 
 
 def _get_migration_catalog_definition(target_type):

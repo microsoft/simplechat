@@ -2,10 +2,12 @@
 # test_data_management_security_patterns.py
 """
 Functional test for Data Management security patterns.
-Version: 0.250.103
+Version: 0.250.105
 Implemented in: 0.241.211
 Updated in: 0.250.102
 Updated in: 0.250.103
+Updated in: 0.250.104
+Updated in: 0.250.105
 
 This test ensures Data Management admin routes require authenticated admin
 access, secrets stay redacted in frontend responses, and the admin browser
@@ -72,7 +74,7 @@ def test_version_and_container_registration():
     """Validate the Data Management version and Cosmos job container registrations."""
     config_source = read_text(CONFIG_FILE)
 
-    assert 'VERSION = "0.250.103"' in config_source
+    assert 'VERSION = "0.250.105"' in config_source
     assert 'cosmos_data_management_jobs_container_name = "data_management_jobs"' in config_source
     assert 'partition_key=PartitionKey(path="/id")' in config_source
     assert 'cosmos_data_management_job_items_container_name = "data_management_job_items"' in config_source
@@ -185,6 +187,11 @@ def test_settings_secrets_are_redacted_for_frontend():
     assert 'sanitize_data_management_job_item_for_admin' in source
     assert 'get_data_management_job_detail' in source
     assert 'get_data_management_backup_summary' in source
+    assert 'get_data_management_jobs_page' in source
+    assert 'DATA_MANAGEMENT_HISTORY_TOKEN_TTL_SECONDS = 3600' in source
+    assert 'hmac.compare_digest(canonical_token, safe_token)' in source
+    assert 'ORDER BY c.created_at DESC, c.id DESC' in source
+    assert '"Continuation token is invalid or expired."' in source
     assert 'activity_type": "data_management"' in source
     assert 'summarize_backup_artifacts(artifacts)' in source
     assert 'sanitized[field_name] = DATA_MANAGEMENT_REDACTED_VALUE' in source
@@ -349,7 +356,9 @@ def test_admin_javascript_uses_safe_dom_patterns():
         'loadDataManagementJobDetail',
         'renderJobItems',
         'renderJobArtifacts',
-        'data-management/backups?limit=100',
+        'buildHistoryListUrl(listKind, filters)',
+        'new AbortController()',
+        'requestGeneration !== state.requestGeneration',
         'setStorageAuthVisibility',
         'updateConnectionStringStatus',
         'storedBackupConnectionStringAvailable = settings.backup_storage_connection_string === redactedValue;',
@@ -482,6 +491,12 @@ def test_admin_ui_exposes_data_management_without_external_assets():
         'id="data-management-available-backup-count"',
         'id="data-management-backups-tbody"',
         'id="data-management-jobs-tbody"',
+        'id="data_management_backup_status_filter"',
+        'id="data-management-backup-previous-page-btn"',
+        'id="data-management-backup-next-page-btn"',
+        'id="data_management_job_operation_filter"',
+        'id="data-management-job-previous-page-btn"',
+        'id="data-management-job-next-page-btn"',
         'id="data-management-job-detail-modal"',
         'id="data-management-job-detail-refresh-state"',
         'id="data-management-job-detail-progress"',
@@ -505,6 +520,9 @@ def test_admin_ui_exposes_data_management_without_external_assets():
     assert "'data_management': 'Data Management'" in read_text(CONTROL_CENTER_JS)
 
     assert 'target_cosmos_database_name: targetCosmosDatabaseName' in read_text(ADMIN_JS)
+    assert 'state.abortController?.abort();' in read_text(ADMIN_JS)
+    assert 'requestGeneration !== state.requestGeneration' in read_text(ADMIN_JS)
+    assert 'params.set("continuation_token", state.currentToken);' in read_text(ADMIN_JS)
     assert 'DataManagementSettingsValidationError as exc' in read_text(ROUTE_FILE)
     route_source = read_text(ROUTE_FILE)
     assert 'continuation_token=continuation_token' in route_source
@@ -516,6 +534,9 @@ def test_admin_ui_exposes_data_management_without_external_assets():
     assert 'create_data_management_migration_review_authorization(' in route_source
     assert 'reserve_data_management_migration_review_authorization(' in route_source
     assert 'release_data_management_migration_review_reservation(' in route_source
+    assert 'except DataManagementHistoryPaginationError:' in route_source
+    assert 'DATA_MANAGEMENT_HISTORY_VALIDATION_ERROR' in route_source
+    assert 'except DataManagementHistoryPaginationError as exc:' not in route_source
     assert 'data-management-restore-dry-run-btn' not in template
     assert 'data-management-migration-dry-run-btn' not in template
     admin_settings_js = read_text(APP_ROOT / "static" / "js" / "admin" / "admin_settings.js")

@@ -13,6 +13,8 @@ from config import (
     cosmos_collaboration_messages_container_name,
     cosmos_conversations_container,
     cosmos_conversations_container_name,
+    cosmos_data_management_jobs_container,
+    cosmos_data_management_jobs_container_name,
     cosmos_database,
     cosmos_group_documents_container,
     cosmos_group_documents_container_name,
@@ -26,7 +28,7 @@ from config import (
 from functions_appinsights import log_event
 
 
-COSMOS_INDEXING_POLICY_DEFINITION_VERSION = 1
+COSMOS_INDEXING_POLICY_DEFINITION_VERSION = 2
 COSMOS_INDEXING_POLICY_APPLY_SETTING = 'app_maintenance_apply_cosmos_indexing_policies'
 COSMOS_INDEXING_POLICY_MAX_REPLACE_RETRIES = 3
 
@@ -77,6 +79,17 @@ COSMOS_INDEXING_POLICY_DEFINITIONS = [
                     ('/role', 'ascending'),
                     ('/metadata/thread_info/thread_attempt', 'ascending'),
                 ),
+            ],
+        },
+    },
+    {
+        'container_name': cosmos_data_management_jobs_container_name,
+        'container': cosmos_data_management_jobs_container,
+        'partition_key_path': '/id',
+        'description': 'Deterministic Data Management job and backup history pagination.',
+        'expected_policy': {
+            'compositeIndexes': [
+                _composite_index(('/created_at', 'descending'), ('/id', 'descending')),
             ],
         },
     },

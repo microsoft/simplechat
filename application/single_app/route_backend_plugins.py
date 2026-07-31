@@ -68,6 +68,7 @@ from functions_chart_operations import CHART_DEFAULT_ENDPOINT, CHART_PLUGIN_TYPE
 from functions_databricks_operations import (
     DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE,
     DATABRICKS_PLUGIN_TYPE,
+    is_builtin_databricks_discovery_type,
     normalize_databricks_additional_fields,
 )
 from functions_snowflake_operations import (
@@ -297,6 +298,7 @@ def get_plugin_types(allowed_type_filter=None):
     for fname in os.listdir(plugintypes_dir):
         if fname.endswith('_plugin.py') and fname != 'base_plugin.py':
             module_name = fname[:-3]
+            module_type = module_name.replace('_plugin', '')
             file_path = os.path.join(plugintypes_dir, fname)
             debug_log.append(f"Checking plugin file: {fname}")
             try:
@@ -322,7 +324,7 @@ def get_plugin_types(allowed_type_filter=None):
                         display_name = "OpenAPI"
                         description = "Plugin for integrating with external APIs using OpenAPI specifications. Supports file upload, URL download, and various authentication methods."
                         types.append({
-                            'type': module_name.replace('_plugin', ''),
+                            'type': module_type,
                             'class': attr,
                             'display': display_name,
                             'description': description
@@ -340,7 +342,7 @@ def get_plugin_types(allowed_type_filter=None):
                         
                         # Only add minimal required fields based on plugin type
                         #TODO: This can be improved by ensuring we have additional fields from the schemas we have not created if needed. 
-                        if 'databricks' in module_name.lower():
+                        if is_builtin_databricks_discovery_type(module_type):
                             safe_manifest = {
                                 'endpoint': 'https://adb-1234567890123456.7.azuredatabricks.net',
                                 'auth': {'type': 'key', 'key': 'dummy'},
@@ -505,7 +507,7 @@ def get_plugin_types(allowed_type_filter=None):
                         debug_log.append(f"Complete failure to instantiate {attr}: {e}. Using final fallback.")
                     
                     types.append({
-                        'type': module_name.replace('_plugin', ''),
+                        'type': module_type,
                         'class': attr,
                         'display': display_name,
                         'description': description

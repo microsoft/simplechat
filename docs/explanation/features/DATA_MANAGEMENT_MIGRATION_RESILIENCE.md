@@ -1,7 +1,7 @@
 # Data Management Migration Resilience
 
 Implemented in version: **0.250.071**
-Updated in version: **0.250.103**
+Updated in version: **0.250.105**
 
 GitHub issue: [#1043](https://github.com/microsoft/simplechat/issues/1043)
 
@@ -83,7 +83,7 @@ Job detail exposes readiness, actual outcomes, preview divergence, keyset cursor
 
 Preflight results are saved in the migration state and shown through existing job details and activity history without credentials or source content.
 
-Version 0.250.103 also exposes these checks through the staged browser workflow's **Review** step. The review API accepts the current redacted settings form plus migration plan, resolves stored secret placeholders on the server, and returns only sanitized pass, warning, or blocker results. It combines exhaustive scope/document counts, temporary access probes, partition-key validation, destination coordinator and Search write-gate availability, optional capacity inspection, and the read-only destination inventory preview. Only a ready review receives a short-lived, administrator-bound authorization. Job creation atomically reserves it, releases that exact reservation if durable queueing fails, and the resulting job consumes it before work; blocked, expired, replayed, or changed reviews are rejected. The worker also verifies the reviewed migration-setting fingerprint before execution. The review remains a snapshot, and execution-time worker preflight is authoritative.
+Version 0.250.105 also exposes these checks through the staged browser workflow's **Review** step. The review API accepts the current redacted settings form plus migration plan, resolves stored secret placeholders on the server, and returns only sanitized pass, warning, or blocker results. It combines exhaustive scope/document counts, temporary access probes, partition-key validation, destination coordinator and Search write-gate availability, optional capacity inspection, and the read-only destination inventory preview. Only a ready review receives a short-lived, administrator-bound authorization. Job creation atomically reserves it, releases that exact reservation if durable queueing fails, and the resulting job consumes it before work; blocked, expired, replayed, or changed reviews are rejected. The worker also verifies the reviewed migration-setting fingerprint before execution. The review remains a snapshot, and execution-time worker preflight is authoritative.
 
 ### Temporary Cosmos Capacity
 
@@ -152,5 +152,5 @@ The focused coverage verifies provenance and source fingerprints, unowned collis
 ## Version References
 
 - Application version updated in `application/single_app/config.py` to `0.250.071`.
-- The staged migration workflow and catalog/review contracts were updated in `application/single_app/config.py` version `0.250.103`.
+- The staged migration workflow and catalog/review contracts were updated in `application/single_app/config.py` version `0.250.105`.
 - This documentation and the related functional tests use their corresponding implementation versions.

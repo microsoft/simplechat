@@ -5,8 +5,8 @@
   "metadata": {
     "_generator": {
       "name": "bicep",
-      "version": "0.39.26.7824",
-      "templateHash": "18149734552224966688"
+      "version": "0.41.2.15936",
+      "templateHash": "4181884823834827643"
     }
   },
   "parameters": {
@@ -487,8 +487,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.39.26.7824",
-              "templateHash": "7176922622625181618"
+              "version": "0.41.2.15936",
+              "templateHash": "9460738255069396179"
             }
           },
           "parameters": {
@@ -565,8 +565,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.39.26.7824",
-              "templateHash": "17303831337809018859"
+              "version": "0.41.2.15936",
+              "templateHash": "493906105301296560"
             }
           },
           "parameters": {
@@ -681,8 +681,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.39.26.7824",
-              "templateHash": "11422005521630102334"
+              "version": "0.41.2.15936",
+              "templateHash": "3702219330633152864"
             }
           },
           "parameters": {
@@ -758,8 +758,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.39.26.7824",
-              "templateHash": "17821105440677544406"
+              "version": "0.41.2.15936",
+              "templateHash": "16478820448576828524"
             }
           },
           "parameters": {
@@ -842,8 +842,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.39.26.7824",
-              "templateHash": "2916017619490362875"
+              "version": "0.41.2.15936",
+              "templateHash": "859139323900296552"
             }
           },
           "parameters": {
@@ -891,7 +891,7 @@
               "condition": "[parameters('enableDiagLogging')]",
               "type": "Microsoft.Insights/diagnosticSettings",
               "apiVersion": "2021-05-01-preview",
-              "scope": "[format('Microsoft.KeyVault/vaults/{0}', toLower(format('{0}-{1}-kv', parameters('appName'), parameters('environment'))))]",
+              "scope": "[resourceId('Microsoft.KeyVault/vaults', toLower(format('{0}-{1}-kv', parameters('appName'), parameters('environment'))))]",
               "name": "[toLower(format('{0}-diagnostics', toLower(format('{0}-{1}-kv', parameters('appName'), parameters('environment')))))]",
               "properties": {
                 "workspaceId": "[parameters('logAnalyticsId')]",
@@ -919,8 +919,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.39.26.7824",
-                      "templateHash": "17831098296346471094"
+                      "version": "0.41.2.15936",
+                      "templateHash": "7649984259379022431"
                     }
                   },
                   "variables": {
@@ -1079,8 +1079,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.39.26.7824",
-              "templateHash": "11575322546125174469"
+              "version": "0.41.2.15936",
+              "templateHash": "15395992383660736405"
             }
           },
           "parameters": {
@@ -1165,8 +1165,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.39.26.7824",
-              "templateHash": "9311867041239225357"
+              "version": "0.41.2.15936",
+              "templateHash": "18277603989725510610"
             }
           },
           "parameters": {
@@ -1229,7 +1229,19 @@
               {
                 "name": "data_management_jobs",
                 "partitionKeyPath": "/id",
-                "defaultTtl": null
+                "defaultTtl": null,
+                "compositeIndexes": [
+                  [
+                    {
+                      "path": "/created_at",
+                      "order": "descending"
+                    },
+                    {
+                      "path": "/id",
+                      "order": "descending"
+                    }
+                  ]
+                ]
               },
               {
                 "name": "data_management_job_items",
@@ -1577,7 +1589,7 @@
               "apiVersion": "2023-04-15",
               "name": "[format('{0}/{1}/{2}', toLower(format('{0}-{1}-cosmos', parameters('appName'), parameters('environment'))), 'SimpleChat', variables('cosmosContainers')[copyIndex()].name)]",
               "properties": {
-                "resource": "[union(createObject('id', variables('cosmosContainers')[copyIndex()].name, 'partitionKey', createObject('paths', createArray(variables('cosmosContainers')[copyIndex()].partitionKeyPath))), if(equals(variables('cosmosContainers')[copyIndex()].defaultTtl, null()), createObject(), createObject('defaultTtl', variables('cosmosContainers')[copyIndex()].defaultTtl)))]",
+                "resource": "[union(createObject('id', variables('cosmosContainers')[copyIndex()].name, 'partitionKey', createObject('paths', createArray(variables('cosmosContainers')[copyIndex()].partitionKeyPath))), if(equals(variables('cosmosContainers')[copyIndex()].defaultTtl, null()), createObject(), createObject('defaultTtl', variables('cosmosContainers')[copyIndex()].defaultTtl)), if(contains(variables('cosmosContainers')[copyIndex()], 'compositeIndexes'), createObject('indexingPolicy', createObject('indexingMode', 'consistent', 'automatic', true(), 'includedPaths', createArray(createObject('path', '/*')), 'excludedPaths', createArray(createObject('path', '/\"_etag\"/?')), 'compositeIndexes', variables('cosmosContainers')[copyIndex()].compositeIndexes)), createObject()))]",
                 "options": "[if(equals(parameters('capacityMode'), 'serverless'), createObject(), createObject('autoscaleSettings', createObject('maxThroughput', parameters('containerAutoscaleMaxThroughput'))))]"
               },
               "dependsOn": [
@@ -1588,7 +1600,7 @@
               "condition": "[parameters('enableDiagLogging')]",
               "type": "Microsoft.Insights/diagnosticSettings",
               "apiVersion": "2021-05-01-preview",
-              "scope": "[format('Microsoft.DocumentDB/databaseAccounts/{0}', toLower(format('{0}-{1}-cosmos', parameters('appName'), parameters('environment'))))]",
+              "scope": "[resourceId('Microsoft.DocumentDB/databaseAccounts', toLower(format('{0}-{1}-cosmos', parameters('appName'), parameters('environment'))))]",
               "name": "[toLower(format('{0}-diagnostics', toLower(format('{0}-{1}-cosmos', parameters('appName'), parameters('environment')))))]",
               "properties": {
                 "workspaceId": "[parameters('logAnalyticsId')]",
@@ -1616,8 +1628,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.39.26.7824",
-                      "templateHash": "17831098296346471094"
+                      "version": "0.41.2.15936",
+                      "templateHash": "7649984259379022431"
                     }
                   },
                   "variables": {
@@ -1783,8 +1795,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.39.26.7824",
-              "templateHash": "2295272300390248897"
+              "version": "0.41.2.15936",
+              "templateHash": "17207626058468970666"
             }
           },
           "parameters": {
@@ -1832,7 +1844,7 @@
               "condition": "[parameters('enableDiagLogging')]",
               "type": "Microsoft.Insights/diagnosticSettings",
               "apiVersion": "2021-05-01-preview",
-              "scope": "[format('Microsoft.ContainerRegistry/registries/{0}', parameters('acrName'))]",
+              "scope": "[resourceId('Microsoft.ContainerRegistry/registries', parameters('acrName'))]",
               "name": "[toLower(format('{0}-diagnostics', parameters('acrName')))]",
               "properties": {
                 "workspaceId": "[parameters('logAnalyticsId')]",
@@ -1860,8 +1872,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.39.26.7824",
-                      "templateHash": "17831098296346471094"
+                      "version": "0.41.2.15936",
+                      "templateHash": "7649984259379022431"
                     }
                   },
                   "variables": {
@@ -2033,8 +2045,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.39.26.7824",
-              "templateHash": "16760913210991125183"
+              "version": "0.41.2.15936",
+              "templateHash": "6501140528687127350"
             }
           },
           "parameters": {
@@ -2109,7 +2121,7 @@
               "condition": "[parameters('enableDiagLogging')]",
               "type": "Microsoft.Insights/diagnosticSettings",
               "apiVersion": "2021-05-01-preview",
-              "scope": "[format('Microsoft.Search/searchServices/{0}', toLower(format('{0}-{1}-search', parameters('appName'), parameters('environment'))))]",
+              "scope": "[resourceId('Microsoft.Search/searchServices', toLower(format('{0}-{1}-search', parameters('appName'), parameters('environment'))))]",
               "name": "[toLower(format('{0}-diagnostics', toLower(format('{0}-{1}-search', parameters('appName'), parameters('environment')))))]",
               "properties": {
                 "workspaceId": "[parameters('logAnalyticsId')]",
@@ -2137,8 +2149,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.39.26.7824",
-                      "templateHash": "17831098296346471094"
+                      "version": "0.41.2.15936",
+                      "templateHash": "7649984259379022431"
                     }
                   },
                   "variables": {
@@ -2304,8 +2316,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.39.26.7824",
-              "templateHash": "1191316940440326624"
+              "version": "0.41.2.15936",
+              "templateHash": "10665719054703044011"
             }
           },
           "parameters": {
@@ -2351,7 +2363,7 @@
               "condition": "[parameters('enableDiagLogging')]",
               "type": "Microsoft.Insights/diagnosticSettings",
               "apiVersion": "2021-05-01-preview",
-              "scope": "[format('Microsoft.CognitiveServices/accounts/{0}', toLower(format('{0}-{1}-docintel', parameters('appName'), parameters('environment'))))]",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts', toLower(format('{0}-{1}-docintel', parameters('appName'), parameters('environment'))))]",
               "name": "[toLower(format('{0}-diagnostics', toLower(format('{0}-{1}-docintel', parameters('appName'), parameters('environment')))))]",
               "properties": {
                 "workspaceId": "[parameters('logAnalyticsId')]",
@@ -2379,8 +2391,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.39.26.7824",
-                      "templateHash": "17831098296346471094"
+                      "version": "0.41.2.15936",
+                      "templateHash": "7649984259379022431"
                     }
                   },
                   "variables": {
@@ -2559,8 +2571,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.39.26.7824",
-              "templateHash": "2831441771609683354"
+              "version": "0.41.2.15936",
+              "templateHash": "1180469665094956253"
             }
           },
           "parameters": {
@@ -2648,7 +2660,7 @@
               "condition": "[parameters('enableDiagLogging')]",
               "type": "Microsoft.Insights/diagnosticSettings",
               "apiVersion": "2021-05-01-preview",
-              "scope": "[format('Microsoft.Storage/storageAccounts/{0}', toLower(format('{0}{1}sa', parameters('appName'), parameters('environment'))))]",
+              "scope": "[resourceId('Microsoft.Storage/storageAccounts', toLower(format('{0}{1}sa', parameters('appName'), parameters('environment'))))]",
               "name": "[toLower(format('{0}-diagnostics', toLower(format('{0}{1}sa', parameters('appName'), parameters('environment')))))]",
               "properties": {
                 "workspaceId": "[parameters('logAnalyticsId')]",
@@ -2664,7 +2676,7 @@
               "condition": "[parameters('enableDiagLogging')]",
               "type": "Microsoft.Insights/diagnosticSettings",
               "apiVersion": "2021-05-01-preview",
-              "scope": "[format('Microsoft.Storage/storageAccounts/{0}/blobServices/{1}', toLower(format('{0}{1}sa', parameters('appName'), parameters('environment'))), 'default')]",
+              "scope": "[resourceId('Microsoft.Storage/storageAccounts/blobServices', toLower(format('{0}{1}sa', parameters('appName'), parameters('environment'))), 'default')]",
               "name": "[toLower(format('{0}-blob-diagnostics', toLower(format('{0}{1}sa', parameters('appName'), parameters('environment')))))]",
               "properties": {
                 "workspaceId": "[parameters('logAnalyticsId')]",
@@ -2693,8 +2705,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.39.26.7824",
-                      "templateHash": "17831098296346471094"
+                      "version": "0.41.2.15936",
+                      "templateHash": "7649984259379022431"
                     }
                   },
                   "variables": {
@@ -2830,8 +2842,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.39.26.7824",
-                      "templateHash": "11575322546125174469"
+                      "version": "0.41.2.15936",
+                      "templateHash": "15395992383660736405"
                     }
                   },
                   "parameters": {
@@ -2943,8 +2955,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.39.26.7824",
-              "templateHash": "18030150693716940767"
+              "version": "0.41.2.15936",
+              "templateHash": "10284000514834971249"
             }
           },
           "parameters": {
@@ -3021,7 +3033,7 @@
               "condition": "[and(parameters('enableDiagLogging'), not(variables('useExistingOpenAIEndpoint')))]",
               "type": "Microsoft.Insights/diagnosticSettings",
               "apiVersion": "2021-05-01-preview",
-              "scope": "[format('Microsoft.CognitiveServices/accounts/{0}', toLower(format('{0}-{1}-openai', parameters('appName'), parameters('environment'))))]",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts', toLower(format('{0}-{1}-openai', parameters('appName'), parameters('environment'))))]",
               "name": "[toLower(format('{0}-diagnostics', toLower(format('{0}-{1}-openai', parameters('appName'), parameters('environment')))))]",
               "properties": {
                 "workspaceId": "[parameters('logAnalyticsId')]",
@@ -3049,8 +3061,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.39.26.7824",
-                      "templateHash": "17831098296346471094"
+                      "version": "0.41.2.15936",
+                      "templateHash": "7649984259379022431"
                     }
                   },
                   "variables": {
@@ -3197,8 +3209,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.39.26.7824",
-                      "templateHash": "6320663782365328038"
+                      "version": "0.41.2.15936",
+                      "templateHash": "12746224250029736064"
                     }
                   },
                   "parameters": {
@@ -3304,8 +3316,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.39.26.7824",
-              "templateHash": "17808260090345091884"
+              "version": "0.41.2.15936",
+              "templateHash": "16679874701984557432"
             }
           },
           "parameters": {
@@ -3355,7 +3367,7 @@
               "condition": "[parameters('enableDiagLogging')]",
               "type": "Microsoft.Insights/diagnosticSettings",
               "apiVersion": "2021-05-01-preview",
-              "scope": "[format('Microsoft.Web/serverfarms/{0}', toLower(format('{0}-{1}-asp', parameters('appName'), parameters('environment'))))]",
+              "scope": "[resourceId('Microsoft.Web/serverfarms', toLower(format('{0}-{1}-asp', parameters('appName'), parameters('environment'))))]",
               "name": "[toLower(format('{0}-diagnostics', toLower(format('{0}-{1}-asp', parameters('appName'), parameters('environment')))))]",
               "properties": {
                 "workspaceId": "[parameters('logAnalyticsId')]",
@@ -3383,8 +3395,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.39.26.7824",
-                      "templateHash": "17831098296346471094"
+                      "version": "0.41.2.15936",
+                      "templateHash": "7649984259379022431"
                     }
                   },
                   "variables": {
@@ -3626,8 +3638,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.39.26.7824",
-              "templateHash": "9974559132144732998"
+              "version": "0.41.2.15936",
+              "templateHash": "15107037280969688975"
             }
           },
           "parameters": {
@@ -3862,7 +3874,7 @@
               "condition": "[parameters('enableDiagLogging')]",
               "type": "Microsoft.Insights/diagnosticSettings",
               "apiVersion": "2021-05-01-preview",
-              "scope": "[format('Microsoft.Web/sites/{0}', toLower(format('{0}-{1}-app', parameters('appName'), parameters('environment'))))]",
+              "scope": "[resourceId('Microsoft.Web/sites', toLower(format('{0}-{1}-app', parameters('appName'), parameters('environment'))))]",
               "name": "[toLower(format('{0}-diagnostics', toLower(format('{0}-{1}-app', parameters('appName'), parameters('environment')))))]",
               "properties": {
                 "workspaceId": "[parameters('logAnalyticsId')]",
@@ -3954,8 +3966,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.39.26.7824",
-                      "templateHash": "17831098296346471094"
+                      "version": "0.41.2.15936",
+                      "templateHash": "7649984259379022431"
                     }
                   },
                   "variables": {
@@ -4194,8 +4206,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.39.26.7824",
-              "templateHash": "1704643109395932978"
+              "version": "0.41.2.15936",
+              "templateHash": "4022020899820943835"
             }
           },
           "parameters": {
@@ -4401,7 +4413,7 @@
               "condition": "[parameters('enableDiagLogging')]",
               "type": "Microsoft.Insights/diagnosticSettings",
               "apiVersion": "2021-05-01-preview",
-              "scope": "[format('Microsoft.Web/sites/{0}', toLower(parameters('nativeWebAppName')))]",
+              "scope": "[resourceId('Microsoft.Web/sites', toLower(parameters('nativeWebAppName')))]",
               "name": "[toLower(format('{0}-diagnostics', toLower(parameters('nativeWebAppName'))))]",
               "properties": {
                 "workspaceId": "[parameters('logAnalyticsId')]",
@@ -4497,8 +4509,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.39.26.7824",
-                      "templateHash": "17831098296346471094"
+                      "version": "0.41.2.15936",
+                      "templateHash": "7649984259379022431"
                     }
                   },
                   "variables": {
@@ -4673,8 +4685,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.39.26.7824",
-              "templateHash": "7099998378417907281"
+              "version": "0.41.2.15936",
+              "templateHash": "5518882993099057198"
             }
           },
           "parameters": {
@@ -4720,7 +4732,7 @@
               "condition": "[parameters('enableDiagLogging')]",
               "type": "Microsoft.Insights/diagnosticSettings",
               "apiVersion": "2021-05-01-preview",
-              "scope": "[format('Microsoft.CognitiveServices/accounts/{0}', toLower(format('{0}-{1}-contentsafety', parameters('appName'), parameters('environment'))))]",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts', toLower(format('{0}-{1}-contentsafety', parameters('appName'), parameters('environment'))))]",
               "name": "[toLower(format('{0}-diagnostics', toLower(format('{0}-{1}-contentsafety', parameters('appName'), parameters('environment')))))]",
               "properties": {
                 "workspaceId": "[parameters('logAnalyticsId')]",
@@ -4748,8 +4760,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.39.26.7824",
-                      "templateHash": "17831098296346471094"
+                      "version": "0.41.2.15936",
+                      "templateHash": "7649984259379022431"
                     }
                   },
                   "variables": {
@@ -4916,8 +4928,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.39.26.7824",
-              "templateHash": "2782034465277296608"
+              "version": "0.41.2.15936",
+              "templateHash": "5244921657772448964"
             }
           },
           "parameters": {
@@ -4976,7 +4988,7 @@
               "condition": "[parameters('enableDiagLogging')]",
               "type": "Microsoft.Insights/diagnosticSettings",
               "apiVersion": "2021-05-01-preview",
-              "scope": "[format('Microsoft.Cache/redis/{0}', toLower(format('{0}-{1}-redis', parameters('appName'), parameters('environment'))))]",
+              "scope": "[resourceId('Microsoft.Cache/redis', toLower(format('{0}-{1}-redis', parameters('appName'), parameters('environment'))))]",
               "name": "[toLower(format('{0}-diagnostics', toLower(format('{0}-{1}-redis', parameters('appName'), parameters('environment')))))]",
               "properties": {
                 "workspaceId": "[parameters('logAnalyticsId')]",
@@ -5004,8 +5016,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.39.26.7824",
-                      "templateHash": "17831098296346471094"
+                      "version": "0.41.2.15936",
+                      "templateHash": "7649984259379022431"
                     }
                   },
                   "variables": {
@@ -5172,8 +5184,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.39.26.7824",
-              "templateHash": "4286940570979551018"
+              "version": "0.41.2.15936",
+              "templateHash": "13343807698206273916"
             }
           },
           "parameters": {
@@ -5222,7 +5234,7 @@
               "condition": "[parameters('enableDiagLogging')]",
               "type": "Microsoft.Insights/diagnosticSettings",
               "apiVersion": "2021-05-01-preview",
-              "scope": "[format('Microsoft.CognitiveServices/accounts/{0}', toLower(format('{0}-{1}-speech', parameters('appName'), parameters('environment'))))]",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts', toLower(format('{0}-{1}-speech', parameters('appName'), parameters('environment'))))]",
               "name": "[toLower(format('{0}-diagnostics', toLower(format('{0}-{1}-speech', parameters('appName'), parameters('environment')))))]",
               "properties": {
                 "workspaceId": "[parameters('logAnalyticsId')]",
@@ -5250,8 +5262,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.39.26.7824",
-                      "templateHash": "17831098296346471094"
+                      "version": "0.41.2.15936",
+                      "templateHash": "7649984259379022431"
                     }
                   },
                   "variables": {
@@ -5427,8 +5439,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.39.26.7824",
-              "templateHash": "7577675690203712414"
+              "version": "0.41.2.15936",
+              "templateHash": "14757319513168804759"
             }
           },
           "parameters": {
@@ -5507,7 +5519,7 @@
               "condition": "[and(parameters('enableDiagLogging'), not(variables('useLegacyVideoIndexerApi')))]",
               "type": "Microsoft.Insights/diagnosticSettings",
               "apiVersion": "2021-05-01-preview",
-              "scope": "[format('Microsoft.VideoIndexer/accounts/{0}', toLower(format('{0}-{1}-video', parameters('appName'), parameters('environment'))))]",
+              "scope": "[resourceId('Microsoft.VideoIndexer/accounts', toLower(format('{0}-{1}-video', parameters('appName'), parameters('environment'))))]",
               "name": "[toLower(format('{0}-diagnostics', toLower(format('{0}-{1}-video', parameters('appName'), parameters('environment')))))]",
               "properties": {
                 "workspaceId": "[parameters('logAnalyticsId')]",
@@ -5522,7 +5534,7 @@
               "condition": "[and(parameters('enableDiagLogging'), variables('useLegacyVideoIndexerApi'))]",
               "type": "Microsoft.Insights/diagnosticSettings",
               "apiVersion": "2021-05-01-preview",
-              "scope": "[format('Microsoft.VideoIndexer/accounts/{0}', toLower(format('{0}-{1}-video', parameters('appName'), parameters('environment'))))]",
+              "scope": "[resourceId('Microsoft.VideoIndexer/accounts', toLower(format('{0}-{1}-video', parameters('appName'), parameters('environment'))))]",
               "name": "[toLower(format('{0}-diagnostics', toLower(format('{0}-{1}-video', parameters('appName'), parameters('environment')))))]",
               "properties": {
                 "workspaceId": "[parameters('logAnalyticsId')]",
@@ -5549,8 +5561,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.39.26.7824",
-                      "templateHash": "17831098296346471094"
+                      "version": "0.41.2.15936",
+                      "templateHash": "7649984259379022431"
                     }
                   },
                   "variables": {
@@ -5744,8 +5756,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.39.26.7824",
-              "templateHash": "17310967144940113029"
+              "version": "0.41.2.15936",
+              "templateHash": "7872327915668785970"
             }
           },
           "parameters": {
@@ -5817,7 +5829,7 @@
             {
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
-              "scope": "[format('Microsoft.KeyVault/vaults/{0}', parameters('keyVaultName'))]",
+              "scope": "[resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName'))]",
               "name": "[guid(resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName')), resourceId('Microsoft.Web/sites', parameters('webAppName')), 'kv-secrets-user')]",
               "properties": {
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')]",
@@ -5829,7 +5841,7 @@
               "condition": "[equals(parameters('authenticationType'), 'managed_identity')]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
-              "scope": "[format('Microsoft.DocumentDB/databaseAccounts/{0}', parameters('cosmosDBName'))]",
+              "scope": "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosDBName'))]",
               "name": "[guid(resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosDBName')), resourceId('Microsoft.Web/sites', parameters('webAppName')), 'cosmos-contributor')]",
               "properties": {
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b24988ac-6180-42a0-ab88-20f7382dd24c')]",
@@ -5876,7 +5888,7 @@
             {
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
-              "scope": "[format('Microsoft.DocumentDB/databaseAccounts/{0}', parameters('cosmosDBName'))]",
+              "scope": "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosDBName'))]",
               "name": "[guid(resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosDBName')), resourceId('Microsoft.Web/sites', parameters('webAppName')), 'cosmos-throughput-operator')]",
               "properties": {
                 "roleDefinitionId": "[resourceId('Microsoft.Authorization/roleDefinitions', guid(resourceGroup().id, 'simplechat-cosmos-throughput-operator'))]",
@@ -5901,7 +5913,7 @@
             {
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
-              "scope": "[format('Microsoft.ContainerRegistry/registries/{0}', parameters('acrName'))]",
+              "scope": "[resourceId('Microsoft.ContainerRegistry/registries', parameters('acrName'))]",
               "name": "[guid(resourceId('Microsoft.ContainerRegistry/registries', parameters('acrName')), resourceId('Microsoft.Web/sites', parameters('webAppName')), 'acr-pull-role')]",
               "properties": {
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')]",
@@ -5913,7 +5925,7 @@
               "condition": "[and(and(equals(parameters('authenticationType'), 'managed_identity'), not(equals(parameters('openAIName'), ''))), not(variables('useExternalOpenAIResource')))]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
-              "scope": "[format('Microsoft.CognitiveServices/accounts/{0}', parameters('openAIName'))]",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName'))]",
               "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName')), resourceId('Microsoft.Web/sites', parameters('webAppName')), 'openai-user')]",
               "properties": {
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd')]",
@@ -5925,7 +5937,7 @@
               "condition": "[and(and(equals(parameters('authenticationType'), 'managed_identity'), not(equals(parameters('openAIName'), ''))), not(variables('useExternalOpenAIResource')))]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
-              "scope": "[format('Microsoft.CognitiveServices/accounts/{0}', parameters('openAIName'))]",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName'))]",
               "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName')), resourceId('Microsoft.Web/sites', parameters('webAppName')), 'enterpriseApp-CognitiveServicesOpenAIUserRole')]",
               "properties": {
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd')]",
@@ -5937,7 +5949,7 @@
               "condition": "[and(and(not(equals(parameters('openAIName'), '')), not(variables('useExternalOpenAIResource'))), not(empty(parameters('enterpriseAppServicePrincipalId'))))]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
-              "scope": "[format('Microsoft.CognitiveServices/accounts/{0}', parameters('openAIName'))]",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName'))]",
               "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName')), parameters('enterpriseAppServicePrincipalId'), 'enterpriseApp-CognitiveServicesUserRole')]",
               "properties": {
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')]",
@@ -5949,7 +5961,7 @@
               "condition": "[equals(parameters('authenticationType'), 'managed_identity')]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
-              "scope": "[format('Microsoft.CognitiveServices/accounts/{0}', parameters('docIntelName'))]",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('docIntelName'))]",
               "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('docIntelName')), resourceId('Microsoft.Web/sites', parameters('webAppName')), 'doc-intel-user')]",
               "properties": {
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')]",
@@ -5961,7 +5973,7 @@
               "condition": "[equals(parameters('authenticationType'), 'managed_identity')]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
-              "scope": "[format('Microsoft.Storage/storageAccounts/{0}', parameters('storageAccountName'))]",
+              "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
               "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), resourceId('Microsoft.Web/sites', parameters('webAppName')), 'storage-blob-data-contributor')]",
               "properties": {
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
@@ -5973,7 +5985,7 @@
               "condition": "[and(not(equals(parameters('speechServiceName'), '')), equals(parameters('authenticationType'), 'managed_identity'))]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
-              "scope": "[format('Microsoft.CognitiveServices/accounts/{0}', parameters('speechServiceName'))]",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('speechServiceName'))]",
               "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('speechServiceName')), resourceId('Microsoft.Web/sites', parameters('webAppName')), 'speech-service-user')]",
               "properties": {
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')]",
@@ -5985,7 +5997,7 @@
               "condition": "[equals(parameters('authenticationType'), 'managed_identity')]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
-              "scope": "[format('Microsoft.Search/searchServices/{0}', parameters('searchServiceName'))]",
+              "scope": "[resourceId('Microsoft.Search/searchServices', parameters('searchServiceName'))]",
               "name": "[guid(resourceId('Microsoft.Search/searchServices', parameters('searchServiceName')), resourceId('Microsoft.Web/sites', parameters('webAppName')), 'search-index-data-contributor')]",
               "properties": {
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '8ebe5a00-799e-43f5-93ac-243d3dce84a7')]",
@@ -5997,7 +6009,7 @@
               "condition": "[equals(parameters('authenticationType'), 'managed_identity')]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
-              "scope": "[format('Microsoft.Search/searchServices/{0}', parameters('searchServiceName'))]",
+              "scope": "[resourceId('Microsoft.Search/searchServices', parameters('searchServiceName'))]",
               "name": "[guid(resourceId('Microsoft.Search/searchServices', parameters('searchServiceName')), resourceId('Microsoft.Web/sites', parameters('webAppName')), 'search-service-contributor')]",
               "properties": {
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7ca78c08-252a-4471-8644-bb5ff32d4ba0')]",
@@ -6009,7 +6021,7 @@
               "condition": "[and(not(equals(parameters('contentSafetyName'), '')), equals(parameters('authenticationType'), 'managed_identity'))]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
-              "scope": "[format('Microsoft.CognitiveServices/accounts/{0}', parameters('contentSafetyName'))]",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('contentSafetyName'))]",
               "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('contentSafetyName')), resourceId('Microsoft.Web/sites', parameters('webAppName')), 'content-safety-user')]",
               "properties": {
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')]",
@@ -6021,7 +6033,7 @@
               "condition": "[not(equals(parameters('videoIndexerName'), ''))]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
-              "scope": "[format('Microsoft.Storage/storageAccounts/{0}', parameters('storageAccountName'))]",
+              "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
               "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), resourceId('Microsoft.VideoIndexer/accounts', parameters('videoIndexerName')), 'video-indexer-storage-blob-data-contributor')]",
               "properties": {
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
@@ -6033,7 +6045,7 @@
               "condition": "[and(and(not(equals(parameters('videoIndexerName'), '')), not(variables('useExternalOpenAIResource'))), parameters('videoIndexerSupportsOpenAiIntegration'))]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
-              "scope": "[format('Microsoft.CognitiveServices/accounts/{0}', parameters('openAIName'))]",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName'))]",
               "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName')), resourceId('Microsoft.VideoIndexer/accounts', parameters('videoIndexerName')), 'video-indexer-cog-services-contributor')]",
               "properties": {
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '25fbc0a9-bd7c-42a3-aa1a-3b75d497ee68')]",
@@ -6045,7 +6057,7 @@
               "condition": "[and(and(not(equals(parameters('videoIndexerName'), '')), not(variables('useExternalOpenAIResource'))), parameters('videoIndexerSupportsOpenAiIntegration'))]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
-              "scope": "[format('Microsoft.CognitiveServices/accounts/{0}', parameters('openAIName'))]",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName'))]",
               "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName')), resourceId('Microsoft.VideoIndexer/accounts', parameters('videoIndexerName')), 'video-indexer-cog-services-user')]",
               "properties": {
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')]",
@@ -6057,7 +6069,7 @@
               "condition": "[and(not(equals(parameters('redisCacheName'), '')), equals(parameters('redisAuthenticationType'), 'managed_identity'))]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
-              "scope": "[format('Microsoft.Cache/redis/{0}', parameters('redisCacheName'))]",
+              "scope": "[resourceId('Microsoft.Cache/redis', parameters('redisCacheName'))]",
               "name": "[guid(resourceId('Microsoft.Cache/redis', parameters('redisCacheName')), resourceId('Microsoft.Web/sites', parameters('webAppName')), 'redis-cache-contributor')]",
               "properties": {
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'e0f68234-74aa-48ed-b826-c38b57376e17')]",
@@ -6115,8 +6127,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.39.26.7824",
-                      "templateHash": "11852121988430055118"
+                      "version": "0.41.2.15936",
+                      "templateHash": "4522636670670774179"
                     }
                   },
                   "parameters": {
@@ -6150,7 +6162,7 @@
                       "condition": "[equals(parameters('authenticationType'), 'managed_identity')]",
                       "type": "Microsoft.Authorization/roleAssignments",
                       "apiVersion": "2022-04-01",
-                      "scope": "[format('Microsoft.CognitiveServices/accounts/{0}', parameters('openAIName'))]",
+                      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName'))]",
                       "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName')), parameters('webAppPrincipalId'), 'openai-user')]",
                       "properties": {
                         "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd')]",
@@ -6162,7 +6174,7 @@
                       "condition": "[and(equals(parameters('authenticationType'), 'managed_identity'), not(empty(parameters('enterpriseAppServicePrincipalId'))))]",
                       "type": "Microsoft.Authorization/roleAssignments",
                       "apiVersion": "2022-04-01",
-                      "scope": "[format('Microsoft.CognitiveServices/accounts/{0}', parameters('openAIName'))]",
+                      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName'))]",
                       "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName')), parameters('enterpriseAppServicePrincipalId'), 'enterpriseApp-CognitiveServicesOpenAIUserRole')]",
                       "properties": {
                         "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd')]",
@@ -6174,7 +6186,7 @@
                       "condition": "[not(empty(parameters('enterpriseAppServicePrincipalId')))]",
                       "type": "Microsoft.Authorization/roleAssignments",
                       "apiVersion": "2022-04-01",
-                      "scope": "[format('Microsoft.CognitiveServices/accounts/{0}', parameters('openAIName'))]",
+                      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName'))]",
                       "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName')), parameters('enterpriseAppServicePrincipalId'), 'enterpriseApp-CognitiveServicesUserRole')]",
                       "properties": {
                         "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')]",
@@ -6186,7 +6198,7 @@
                       "condition": "[and(and(not(equals(parameters('videoIndexerName'), '')), not(empty(parameters('videoIndexerPrincipalId')))), parameters('videoIndexerSupportsOpenAiIntegration'))]",
                       "type": "Microsoft.Authorization/roleAssignments",
                       "apiVersion": "2022-04-01",
-                      "scope": "[format('Microsoft.CognitiveServices/accounts/{0}', parameters('openAIName'))]",
+                      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName'))]",
                       "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName')), parameters('videoIndexerPrincipalId'), 'video-indexer-cog-services-contributor')]",
                       "properties": {
                         "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '25fbc0a9-bd7c-42a3-aa1a-3b75d497ee68')]",
@@ -6198,7 +6210,7 @@
                       "condition": "[and(and(not(equals(parameters('videoIndexerName'), '')), not(empty(parameters('videoIndexerPrincipalId')))), parameters('videoIndexerSupportsOpenAiIntegration'))]",
                       "type": "Microsoft.Authorization/roleAssignments",
                       "apiVersion": "2022-04-01",
-                      "scope": "[format('Microsoft.CognitiveServices/accounts/{0}', parameters('openAIName'))]",
+                      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName'))]",
                       "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName')), parameters('videoIndexerPrincipalId'), 'video-indexer-cog-services-user')]",
                       "properties": {
                         "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')]",
@@ -6284,8 +6296,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.39.26.7824",
-              "templateHash": "4951387030333958316"
+              "version": "0.41.2.15936",
+              "templateHash": "2201578881115556468"
             }
           },
           "parameters": {
@@ -6344,7 +6356,7 @@
             {
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
-              "scope": "[format('Microsoft.KeyVault/vaults/{0}', parameters('keyVaultName'))]",
+              "scope": "[resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName'))]",
               "name": "[guid(resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName')), resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), 'kv-secrets-user')]",
               "properties": {
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')]",
@@ -6356,7 +6368,7 @@
               "condition": "[equals(parameters('authenticationType'), 'managed_identity')]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
-              "scope": "[format('Microsoft.DocumentDB/databaseAccounts/{0}', parameters('cosmosDBName'))]",
+              "scope": "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosDBName'))]",
               "name": "[guid(resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosDBName')), resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), 'cosmos-contributor')]",
               "properties": {
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b24988ac-6180-42a0-ab88-20f7382dd24c')]",
@@ -6367,7 +6379,7 @@
             {
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
-              "scope": "[format('Microsoft.DocumentDB/databaseAccounts/{0}', parameters('cosmosDBName'))]",
+              "scope": "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosDBName'))]",
               "name": "[guid(resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosDBName')), resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), 'cosmos-throughput-operator')]",
               "properties": {
                 "roleDefinitionId": "[resourceId('Microsoft.Authorization/roleDefinitions', guid(resourceGroup().id, 'simplechat-cosmos-throughput-operator'))]",
@@ -6390,7 +6402,7 @@
               "condition": "[and(and(equals(parameters('authenticationType'), 'managed_identity'), not(equals(parameters('openAIName'), ''))), not(variables('useExternalOpenAIResource')))]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
-              "scope": "[format('Microsoft.CognitiveServices/accounts/{0}', parameters('openAIName'))]",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName'))]",
               "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName')), resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), 'openai-user')]",
               "properties": {
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd')]",
@@ -6402,7 +6414,7 @@
               "condition": "[equals(parameters('authenticationType'), 'managed_identity')]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
-              "scope": "[format('Microsoft.CognitiveServices/accounts/{0}', parameters('docIntelName'))]",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('docIntelName'))]",
               "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('docIntelName')), resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), 'doc-intel-user')]",
               "properties": {
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')]",
@@ -6414,7 +6426,7 @@
               "condition": "[equals(parameters('authenticationType'), 'managed_identity')]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
-              "scope": "[format('Microsoft.Storage/storageAccounts/{0}', parameters('storageAccountName'))]",
+              "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
               "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), 'storage-blob-data-contributor')]",
               "properties": {
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
@@ -6426,7 +6438,7 @@
               "condition": "[and(not(equals(parameters('speechServiceName'), '')), equals(parameters('authenticationType'), 'managed_identity'))]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
-              "scope": "[format('Microsoft.CognitiveServices/accounts/{0}', parameters('speechServiceName'))]",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('speechServiceName'))]",
               "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('speechServiceName')), resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), 'speech-service-user')]",
               "properties": {
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')]",
@@ -6438,7 +6450,7 @@
               "condition": "[equals(parameters('authenticationType'), 'managed_identity')]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
-              "scope": "[format('Microsoft.Search/searchServices/{0}', parameters('searchServiceName'))]",
+              "scope": "[resourceId('Microsoft.Search/searchServices', parameters('searchServiceName'))]",
               "name": "[guid(resourceId('Microsoft.Search/searchServices', parameters('searchServiceName')), resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), 'search-index-data-contributor')]",
               "properties": {
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '8ebe5a00-799e-43f5-93ac-243d3dce84a7')]",
@@ -6450,7 +6462,7 @@
               "condition": "[equals(parameters('authenticationType'), 'managed_identity')]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
-              "scope": "[format('Microsoft.Search/searchServices/{0}', parameters('searchServiceName'))]",
+              "scope": "[resourceId('Microsoft.Search/searchServices', parameters('searchServiceName'))]",
               "name": "[guid(resourceId('Microsoft.Search/searchServices', parameters('searchServiceName')), resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), 'search-service-contributor')]",
               "properties": {
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7ca78c08-252a-4471-8644-bb5ff32d4ba0')]",
@@ -6462,7 +6474,7 @@
               "condition": "[and(not(equals(parameters('contentSafetyName'), '')), equals(parameters('authenticationType'), 'managed_identity'))]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
-              "scope": "[format('Microsoft.CognitiveServices/accounts/{0}', parameters('contentSafetyName'))]",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('contentSafetyName'))]",
               "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('contentSafetyName')), resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), 'content-safety-user')]",
               "properties": {
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')]",
@@ -6474,7 +6486,7 @@
               "condition": "[and(not(equals(parameters('redisCacheName'), '')), equals(parameters('redisAuthenticationType'), 'managed_identity'))]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
-              "scope": "[format('Microsoft.Cache/redis/{0}', parameters('redisCacheName'))]",
+              "scope": "[resourceId('Microsoft.Cache/redis', parameters('redisCacheName'))]",
               "name": "[guid(resourceId('Microsoft.Cache/redis', parameters('redisCacheName')), resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), 'redis-cache-contributor')]",
               "properties": {
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'e0f68234-74aa-48ed-b826-c38b57376e17')]",
@@ -6534,8 +6546,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.39.26.7824",
-                      "templateHash": "11852121988430055118"
+                      "version": "0.41.2.15936",
+                      "templateHash": "4522636670670774179"
                     }
                   },
                   "parameters": {
@@ -6569,7 +6581,7 @@
                       "condition": "[equals(parameters('authenticationType'), 'managed_identity')]",
                       "type": "Microsoft.Authorization/roleAssignments",
                       "apiVersion": "2022-04-01",
-                      "scope": "[format('Microsoft.CognitiveServices/accounts/{0}', parameters('openAIName'))]",
+                      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName'))]",
                       "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName')), parameters('webAppPrincipalId'), 'openai-user')]",
                       "properties": {
                         "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd')]",
@@ -6581,7 +6593,7 @@
                       "condition": "[and(equals(parameters('authenticationType'), 'managed_identity'), not(empty(parameters('enterpriseAppServicePrincipalId'))))]",
                       "type": "Microsoft.Authorization/roleAssignments",
                       "apiVersion": "2022-04-01",
-                      "scope": "[format('Microsoft.CognitiveServices/accounts/{0}', parameters('openAIName'))]",
+                      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName'))]",
                       "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName')), parameters('enterpriseAppServicePrincipalId'), 'enterpriseApp-CognitiveServicesOpenAIUserRole')]",
                       "properties": {
                         "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd')]",
@@ -6593,7 +6605,7 @@
                       "condition": "[not(empty(parameters('enterpriseAppServicePrincipalId')))]",
                       "type": "Microsoft.Authorization/roleAssignments",
                       "apiVersion": "2022-04-01",
-                      "scope": "[format('Microsoft.CognitiveServices/accounts/{0}', parameters('openAIName'))]",
+                      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName'))]",
                       "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName')), parameters('enterpriseAppServicePrincipalId'), 'enterpriseApp-CognitiveServicesUserRole')]",
                       "properties": {
                         "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')]",
@@ -6605,7 +6617,7 @@
                       "condition": "[and(and(not(equals(parameters('videoIndexerName'), '')), not(empty(parameters('videoIndexerPrincipalId')))), parameters('videoIndexerSupportsOpenAiIntegration'))]",
                       "type": "Microsoft.Authorization/roleAssignments",
                       "apiVersion": "2022-04-01",
-                      "scope": "[format('Microsoft.CognitiveServices/accounts/{0}', parameters('openAIName'))]",
+                      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName'))]",
                       "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName')), parameters('videoIndexerPrincipalId'), 'video-indexer-cog-services-contributor')]",
                       "properties": {
                         "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '25fbc0a9-bd7c-42a3-aa1a-3b75d497ee68')]",
@@ -6617,7 +6629,7 @@
                       "condition": "[and(and(not(equals(parameters('videoIndexerName'), '')), not(empty(parameters('videoIndexerPrincipalId')))), parameters('videoIndexerSupportsOpenAiIntegration'))]",
                       "type": "Microsoft.Authorization/roleAssignments",
                       "apiVersion": "2022-04-01",
-                      "scope": "[format('Microsoft.CognitiveServices/accounts/{0}', parameters('openAIName'))]",
+                      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName'))]",
                       "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('openAIName')), parameters('videoIndexerPrincipalId'), 'video-indexer-cog-services-user')]",
                       "properties": {
                         "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')]",
@@ -6719,8 +6731,8 @@
           "metadata": {
             "_generator": {
               "name": "bicep",
-              "version": "0.39.26.7824",
-              "templateHash": "14655695017771820905"
+              "version": "0.41.2.15936",
+              "templateHash": "5732528072862809219"
             }
           },
           "parameters": {
@@ -6879,8 +6891,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.39.26.7824",
-                      "templateHash": "978028685084335415"
+                      "version": "0.41.2.15936",
+                      "templateHash": "3501998361364242008"
                     }
                   },
                   "parameters": {
@@ -6972,8 +6984,8 @@
                           "metadata": {
                             "_generator": {
                               "name": "bicep",
-                              "version": "0.39.26.7824",
-                              "templateHash": "442272658200021697"
+                              "version": "0.41.2.15936",
+                              "templateHash": "16255331454976703178"
                             }
                           },
                           "parameters": {
@@ -7066,8 +7078,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.39.26.7824",
-                      "templateHash": "3509421390773564668"
+                      "version": "0.41.2.15936",
+                      "templateHash": "18226293550364152784"
                     }
                   },
                   "parameters": {
@@ -7194,8 +7206,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.39.26.7824",
-                      "templateHash": "978028685084335415"
+                      "version": "0.41.2.15936",
+                      "templateHash": "3501998361364242008"
                     }
                   },
                   "parameters": {
@@ -7287,8 +7299,8 @@
                           "metadata": {
                             "_generator": {
                               "name": "bicep",
-                              "version": "0.39.26.7824",
-                              "templateHash": "442272658200021697"
+                              "version": "0.41.2.15936",
+                              "templateHash": "16255331454976703178"
                             }
                           },
                           "parameters": {
@@ -7381,8 +7393,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.39.26.7824",
-                      "templateHash": "3509421390773564668"
+                      "version": "0.41.2.15936",
+                      "templateHash": "18226293550364152784"
                     }
                   },
                   "parameters": {
@@ -7509,8 +7521,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.39.26.7824",
-                      "templateHash": "978028685084335415"
+                      "version": "0.41.2.15936",
+                      "templateHash": "3501998361364242008"
                     }
                   },
                   "parameters": {
@@ -7602,8 +7614,8 @@
                           "metadata": {
                             "_generator": {
                               "name": "bicep",
-                              "version": "0.39.26.7824",
-                              "templateHash": "442272658200021697"
+                              "version": "0.41.2.15936",
+                              "templateHash": "16255331454976703178"
                             }
                           },
                           "parameters": {
@@ -7696,8 +7708,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.39.26.7824",
-                      "templateHash": "3509421390773564668"
+                      "version": "0.41.2.15936",
+                      "templateHash": "18226293550364152784"
                     }
                   },
                   "parameters": {
@@ -7824,8 +7836,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.39.26.7824",
-                      "templateHash": "978028685084335415"
+                      "version": "0.41.2.15936",
+                      "templateHash": "3501998361364242008"
                     }
                   },
                   "parameters": {
@@ -7917,8 +7929,8 @@
                           "metadata": {
                             "_generator": {
                               "name": "bicep",
-                              "version": "0.39.26.7824",
-                              "templateHash": "442272658200021697"
+                              "version": "0.41.2.15936",
+                              "templateHash": "16255331454976703178"
                             }
                           },
                           "parameters": {
@@ -8011,8 +8023,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.39.26.7824",
-                      "templateHash": "3509421390773564668"
+                      "version": "0.41.2.15936",
+                      "templateHash": "18226293550364152784"
                     }
                   },
                   "parameters": {
@@ -8139,8 +8151,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.39.26.7824",
-                      "templateHash": "978028685084335415"
+                      "version": "0.41.2.15936",
+                      "templateHash": "3501998361364242008"
                     }
                   },
                   "parameters": {
@@ -8232,8 +8244,8 @@
                           "metadata": {
                             "_generator": {
                               "name": "bicep",
-                              "version": "0.39.26.7824",
-                              "templateHash": "442272658200021697"
+                              "version": "0.41.2.15936",
+                              "templateHash": "16255331454976703178"
                             }
                           },
                           "parameters": {
@@ -8326,8 +8338,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.39.26.7824",
-                      "templateHash": "3509421390773564668"
+                      "version": "0.41.2.15936",
+                      "templateHash": "18226293550364152784"
                     }
                   },
                   "parameters": {
@@ -8454,8 +8466,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.39.26.7824",
-                      "templateHash": "978028685084335415"
+                      "version": "0.41.2.15936",
+                      "templateHash": "3501998361364242008"
                     }
                   },
                   "parameters": {
@@ -8547,8 +8559,8 @@
                           "metadata": {
                             "_generator": {
                               "name": "bicep",
-                              "version": "0.39.26.7824",
-                              "templateHash": "442272658200021697"
+                              "version": "0.41.2.15936",
+                              "templateHash": "16255331454976703178"
                             }
                           },
                           "parameters": {
@@ -8641,8 +8653,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.39.26.7824",
-                      "templateHash": "3509421390773564668"
+                      "version": "0.41.2.15936",
+                      "templateHash": "18226293550364152784"
                     }
                   },
                   "parameters": {
@@ -8770,8 +8782,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.39.26.7824",
-                      "templateHash": "978028685084335415"
+                      "version": "0.41.2.15936",
+                      "templateHash": "3501998361364242008"
                     }
                   },
                   "parameters": {
@@ -8863,8 +8875,8 @@
                           "metadata": {
                             "_generator": {
                               "name": "bicep",
-                              "version": "0.39.26.7824",
-                              "templateHash": "442272658200021697"
+                              "version": "0.41.2.15936",
+                              "templateHash": "16255331454976703178"
                             }
                           },
                           "parameters": {
@@ -8956,8 +8968,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.39.26.7824",
-                      "templateHash": "3509421390773564668"
+                      "version": "0.41.2.15936",
+                      "templateHash": "18226293550364152784"
                     }
                   },
                   "parameters": {
@@ -9084,8 +9096,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.39.26.7824",
-                      "templateHash": "978028685084335415"
+                      "version": "0.41.2.15936",
+                      "templateHash": "3501998361364242008"
                     }
                   },
                   "parameters": {
@@ -9177,8 +9189,8 @@
                           "metadata": {
                             "_generator": {
                               "name": "bicep",
-                              "version": "0.39.26.7824",
-                              "templateHash": "442272658200021697"
+                              "version": "0.41.2.15936",
+                              "templateHash": "16255331454976703178"
                             }
                           },
                           "parameters": {
@@ -9271,8 +9283,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.39.26.7824",
-                      "templateHash": "3509421390773564668"
+                      "version": "0.41.2.15936",
+                      "templateHash": "18226293550364152784"
                     }
                   },
                   "parameters": {
@@ -9407,8 +9419,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.39.26.7824",
-                      "templateHash": "3509421390773564668"
+                      "version": "0.41.2.15936",
+                      "templateHash": "18226293550364152784"
                     }
                   },
                   "parameters": {
@@ -9543,8 +9555,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.39.26.7824",
-                      "templateHash": "3509421390773564668"
+                      "version": "0.41.2.15936",
+                      "templateHash": "18226293550364152784"
                     }
                   },
                   "parameters": {
@@ -9679,8 +9691,8 @@
                   "metadata": {
                     "_generator": {
                       "name": "bicep",
-                      "version": "0.39.26.7824",
-                      "templateHash": "3509421390773564668"
+                      "version": "0.41.2.15936",
+                      "templateHash": "18226293550364152784"
                     }
                   },
                   "parameters": {
