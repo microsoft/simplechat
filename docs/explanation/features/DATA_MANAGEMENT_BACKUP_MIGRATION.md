@@ -1,7 +1,7 @@
 # Data Management Backup and Migration
 
 Implemented in version: **0.241.211**
-Updated in version: **0.250.101**
+Updated in version: **0.250.102**
 
 ## Overview
 
@@ -67,6 +67,10 @@ Backup jobs write JSON/JSONL artifacts to the configured Azure Blob Storage cont
 - Cosmos DB app data for settings, users/groups/workspaces, conversations, documents, agents, actions, prompts, and workspace identities.
 - AI Search schemas and retrievable index documents for personal, group, and public indexes. Search documents are stored as deterministic page parts with schema fingerprints, source-window metadata, bounded part summaries, integrity status, and concurrent-write semantics in the artifact manifest.
 - Optional source document blob backup can be enabled from the admin UI.
+- Source document blobs use bounded concurrent Azure SDK block transfer,
+  source/target version verification, durable per-file outcomes, adaptive
+  throttling, and `raw-v1` or authenticated `fernet-chunked-v1` artifacts. See
+  [Data Management Source Blob Backup Throughput](DATA_MANAGEMENT_BLOB_BACKUP_THROUGHPUT.md).
 - A manifest records artifact paths, app version, backup type, encryption status, and warnings.
 
 ### Job History and Backup Inventory
@@ -119,6 +123,9 @@ For durable provenance, destination access probes, collision protection, checkpo
 - Source document blob backup is available only when Enhanced Citations is enabled. It defaults on when available and is disabled when Enhanced Citations is off.
 - Backup encryption keys can be stored in Key Vault when Key Vault secret storage is enabled. If Key Vault is unavailable, generated keys fall back to the Data Management settings document and the admin UI recommends enabling Key Vault.
 - Cosmos backup performance: bounded concurrent JSONL batch staging (default 4, maximum 16), retry attempts (default 5, maximum 10), and `continue_without_boost` or `fail` behavior when optional source capacity management cannot proceed.
+- Source blob backup performance: concurrent file transfers (default 4, maximum
+  8), bounded chunk size in MiB (default 8, range 1-16), and independent retry
+  attempts (default 5, maximum 10).
 - Temporary local/source Cosmos capacity boost: disabled by default; capped at 10,000 RU/s and restored from a durable source capacity snapshot.
 - Target Cosmos authentication: managed identity or account key.
 - Target Cosmos database name: always `SimpleChat`.
@@ -158,6 +165,9 @@ For optional local/source Cosmos backup capacity management, assign the App Serv
 - Backup durability coverage: `functional_tests/test_data_management_backup_durability.py`.
 - Parallel Cosmos backup, retry/adaptive pressure, source capacity restoration/recovery, fencing, resume, and sanitized telemetry coverage: `functional_tests/test_data_management_backup_parallelism.py`.
 - AI Search keyset paging, >100,000 logical-result traversal, page concurrency, `429`/`503` recovery, resume, latest-state skips, schema/integrity validation, isolated index failure, and sanitized telemetry coverage: `functional_tests/test_data_management_ai_search_backup_export.py`.
+- Source blob bounded transfer, encryption, resume, throttling, fencing, and
+  failure-isolation coverage:
+  `functional_tests/test_data_management_blob_backup_transfers.py`.
 - UI/template coverage: `ui_tests/test_admin_data_management_settings_ui.py`.
 - Scheduler/recovery, cancellation, retry, coordinator, provenance, and write-fence coverage remains in the focused `functional_tests/test_data_management_*` modules.
 - Syntax validation: `python -m py_compile` for modified backend modules and `node --check` for the admin browser module.
@@ -173,5 +183,5 @@ For optional local/source Cosmos backup capacity management, assign the App Serv
 
 ## Version References
 
-- Application version updated in `application/single_app/config.py` to `0.250.101`.
+- Application version updated in `application/single_app/config.py` to `0.250.102`.
 - Functional and UI tests include the same implementation version.

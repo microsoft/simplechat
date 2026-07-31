@@ -5369,7 +5369,7 @@
                                 <h4 class="mb-1">
                                     <i class="bi bi-calendar-check me-2"></i>Automatic Data Refresh
                                 </h4>
-                                <p class="text-muted mb-0 small">Run the Control Center metrics refresh on a daily UTC schedule</p>
+                                <p class="text-muted mb-0 small">Run the Control Center metrics refresh overnight on a daily timezone-aware schedule</p>
                             </div>
                         </div>
                     </div>
@@ -5386,25 +5386,40 @@
                         <label class="form-check-label ms-2 fw-bold" for="control_center_auto_refresh_enabled">
                             Enable Daily Control Center Refresh
                         </label>
-                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Automatically refresh Control Center user, group, and public workspace metrics once per day in UTC."></i>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Automatically refresh cached Control Center metrics once per day. Execution timestamps are stored in UTC."></i>
                     </div>
 
                     <div id="control-center-auto-refresh-inputs" class="row g-3 {% if not settings.control_center_auto_refresh_enabled %}d-none{% endif %}">
                         <div class="col-md-4">
-                            <label for="control_center_auto_refresh_time" class="form-label">Refresh Time (UTC)</label>
+                            <label for="control_center_auto_refresh_time" class="form-label">
+                                Refresh Time ({{ settings.control_center_auto_refresh_timezone or 'America/New_York' }})
+                            </label>
                             <input
                                 type="time"
                                 class="form-control"
                                 id="control_center_auto_refresh_time"
                                 name="control_center_auto_refresh_time"
-                                value="{{ settings.control_center_auto_refresh_time or '06:00' }}"
+                                value="{{ settings.control_center_auto_refresh_time or '02:00' }}"
                             />
+                            <input
+                                type="hidden"
+                                id="control_center_auto_refresh_timezone"
+                                name="control_center_auto_refresh_timezone"
+                                value="{{ settings.control_center_auto_refresh_timezone or 'America/New_York' }}"
+                            />
+                            <div class="form-text">
+                                Your browser timezone is <span id="control-center-auto-refresh-viewer-timezone">local time</span>.
+                            </div>
                         </div>
                         <div class="col-md-8">
                             <label class="form-label">Next scheduled refresh:</label>
-                            <div id="control-center-auto-refresh-next-run" class="form-control-plaintext text-info fw-bold">
+                            <div
+                                id="control-center-auto-refresh-next-run"
+                                class="form-control-plaintext text-info fw-bold"
+                                data-next-run-utc="{{ settings.control_center_auto_refresh_next_run or '' }}"
+                            >
                                 {% if settings.control_center_auto_refresh_next_run %}
-                                    {{ settings.control_center_auto_refresh_next_run }}
+                                    Loading local time...
                                 {% else %}
                                     Will be calculated when saved
                                 {% endif %}
@@ -5721,6 +5736,28 @@
                                 <h5 class="mb-1">Cosmos Backup Performance</h5>
                                 <p class="text-muted mb-0 small">Backups stream deterministic checkpoint batches and commit only verified work. Higher concurrency can increase source Cosmos cost and pressure.</p>
                             </div>
+                        </div>
+
+                        <div class="card p-3 mt-3 border-info-subtle" id="data-management-blob-backup-performance-section">
+                            <div class="mb-3">
+                                <h5 class="mb-1">Source Blob Backup Performance</h5>
+                                <p class="text-muted mb-0 small">Source files stream through bounded chunks and durable per-file checkpoints. Peak transfer buffering is bounded by concurrent transfers multiplied by chunk size.</p>
+                            </div>
+                            <div class="row g-3">
+                                <div class="col-md-4">
+                                    <label class="form-label" for="data_management_backup_blob_max_parallel_operations">Concurrent blob transfers</label>
+                                    <input class="form-control" type="number" id="data_management_backup_blob_max_parallel_operations" min="1" max="8" value="4" aria-describedby="data-management-backup-blob-memory-help">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label" for="data_management_backup_blob_chunk_size_mib">Transfer chunk size (MiB)</label>
+                                    <input class="form-control" type="number" id="data_management_backup_blob_chunk_size_mib" min="1" max="16" value="8" aria-describedby="data-management-backup-blob-memory-help">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label" for="data_management_backup_blob_retry_count">Blob retry attempts</label>
+                                    <input class="form-control" type="number" id="data_management_backup_blob_retry_count" min="1" max="10" value="5">
+                                </div>
+                            </div>
+                            <div class="form-text mt-2" id="data-management-backup-blob-memory-help">Defaults bound application transfer buffering to approximately 32 MiB, excluding Azure SDK overhead. Throttling temporarily reduces active transfers.</div>
                         </div>
                         <div class="row g-3">
                             <div class="col-md-4">
@@ -9967,6 +10004,30 @@
                     </div>
                 </div>
 
+                <div class="card p-3 mb-3" id="desktop-notifications-section">
+                    <h5>
+                        <i class="bi bi-bell me-2"></i>Desktop Conversation Notifications
+                    </h5>
+                    <p class="text-muted">
+                        Allow users to receive an operating system notification when an AI response finishes while SimpleChat is open in a hidden or unfocused browser tab.
+                    </p>
+                    <div class="form-group form-check form-switch mb-2">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_desktop_notifications"
+                            name="enable_desktop_notifications"
+                            {% if settings.enable_desktop_notifications %}checked{% endif %}
+                        >
+                        <label class="form-check-label ms-2" for="enable_desktop_notifications">
+                            Enable Desktop Conversation Notifications
+                        </label>
+                    </div>
+                    <p class="form-text text-muted mb-0">
+                        Users can turn notifications off from Profile. Browser permission is required, and notifications stop when the SimpleChat tab is closed.
+                    </p>
+                </div>
+
 
                 <div class="card p-3 mb-3" id="permissions-section">
                     <h5>
@@ -11185,6 +11246,26 @@
                             <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#speechServiceInfoModal">
                                 <i class="bi bi-info-circle me-1"></i>Setup Guide
                             </button>
+                        </div>
+
+                        <!-- AI Response Completion Audio -->
+                        <div class="mb-4">
+                            <div class="form-check form-switch mb-2">
+                                <input
+                                    type="checkbox"
+                                    class="form-check-input"
+                                    id="enable_chat_completion_audio_cues"
+                                    name="enable_chat_completion_audio_cues"
+                                    {% if settings.enable_chat_completion_audio_cues %}checked{% endif %}
+                                >
+                                <label class="form-check-label ms-2 fw-bold" for="enable_chat_completion_audio_cues">
+                                    <i class="bi bi-bell-fill me-1"></i> Enable AI Response Completion Audio Cues
+                                </label>
+                            </div>
+                            <p class="text-muted small ms-4 ps-3 mb-0">
+                                Let users opt in to a bundled sound when an AI response finishes outside their active view.
+                                These local cues do not require Azure Speech Service.
+                            </p>
                         </div>
 
                         <div class="alert alert-info mb-4" id="speech_service_shared_alert">
@@ -12543,6 +12624,7 @@
             controlCenterAutoRefreshToggle.addEventListener('change', toggleControlCenterAutoRefreshInputs);
             toggleControlCenterAutoRefreshInputs();
         }
+        displayControlCenterAutoRefreshLocalTime();
     });
 
     function toggleControlCenterAutoRefreshInputs() {
@@ -12552,6 +12634,35 @@
         if (autoRefreshToggle && autoRefreshInputs) {
             autoRefreshInputs.classList.toggle('d-none', !autoRefreshToggle.checked);
         }
+    }
+
+    function displayControlCenterAutoRefreshLocalTime() {
+        const viewerTimezoneElement = document.getElementById('control-center-auto-refresh-viewer-timezone');
+        const nextRunElement = document.getElementById('control-center-auto-refresh-next-run');
+        const resolvedViewerTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const viewerTimezone = resolvedViewerTimezone || 'local time';
+
+        if (viewerTimezoneElement) {
+            viewerTimezoneElement.textContent = viewerTimezone;
+        }
+        if (!nextRunElement || !nextRunElement.dataset.nextRunUtc) {
+            return;
+        }
+
+        const nextRun = new Date(nextRunElement.dataset.nextRunUtc);
+        if (Number.isNaN(nextRun.getTime())) {
+            nextRunElement.textContent = 'Unavailable';
+            return;
+        }
+
+        const formatOptions = {
+            dateStyle: 'medium',
+            timeStyle: 'short',
+        };
+        if (resolvedViewerTimezone) {
+            formatOptions.timeZone = resolvedViewerTimezone;
+        }
+        nextRunElement.textContent = `${nextRun.toLocaleString([], formatOptions)} (${viewerTimezone})`;
     }
 
     // Retention Policy Functions

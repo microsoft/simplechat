@@ -74,6 +74,9 @@ function bindElements() {
         "data_management_encryption_enabled",
         "data_management_backup_max_parallel_operations",
         "data_management_backup_retry_count",
+        "data_management_backup_blob_max_parallel_operations",
+        "data_management_backup_blob_chunk_size_mib",
+        "data_management_backup_blob_retry_count",
         "data_management_backup_capacity_failure_policy",
         "data_management_backup_temporary_source_ru_enabled",
         "data-management-backup-temporary-ru-field",
@@ -475,6 +478,9 @@ function populateSettings(settings) {
     setChecked(elements.datamanagementencryptionenabled, settings.encryption_enabled !== false);
     setValue(elements.datamanagementbackupmaxparalleloperations, settings.backup_max_parallel_operations || 4);
     setValue(elements.datamanagementbackupretrycount, settings.backup_retry_count || 5);
+    setValue(elements.datamanagementbackupblobmaxparalleloperations, settings.backup_blob_max_parallel_operations || 4);
+    setValue(elements.datamanagementbackupblobchunksizemib, settings.backup_blob_chunk_size_mib || 8);
+    setValue(elements.datamanagementbackupblobretrycount, settings.backup_blob_retry_count || 5);
     setValue(elements.datamanagementbackupcapacityfailurepolicy, settings.backup_capacity_failure_policy || "continue_without_boost");
     setChecked(elements.datamanagementbackuptemporarysourceruenabled, Boolean(settings.backup_temporary_source_ru_enabled));
     setValue(elements.datamanagementbackuptemporarysourceru, settings.backup_temporary_source_ru || 10000);
@@ -667,6 +673,9 @@ function collectSettings() {
         encryption_enabled: Boolean(elements.datamanagementencryptionenabled?.checked),
         backup_max_parallel_operations: getNumberValue(elements.datamanagementbackupmaxparalleloperations, 4),
         backup_retry_count: getNumberValue(elements.datamanagementbackupretrycount, 5),
+        backup_blob_max_parallel_operations: getNumberValue(elements.datamanagementbackupblobmaxparalleloperations, 4),
+        backup_blob_chunk_size_mib: getNumberValue(elements.datamanagementbackupblobchunksizemib, 8),
+        backup_blob_retry_count: getNumberValue(elements.datamanagementbackupblobretrycount, 5),
         backup_capacity_failure_policy: getValue(elements.datamanagementbackupcapacityfailurepolicy) || "continue_without_boost",
         backup_temporary_source_ru_enabled: Boolean(elements.datamanagementbackuptemporarysourceruenabled?.checked),
         backup_temporary_source_ru: getNumberValue(elements.datamanagementbackuptemporarysourceru, 10000),

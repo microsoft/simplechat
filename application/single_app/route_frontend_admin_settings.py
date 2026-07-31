@@ -575,6 +575,8 @@ def register_route_frontend_admin_settings(bp):
             settings['require_member_of_create_public_workspace'] = False
         if 'enable_chat_file_uploads' not in settings:
             settings['enable_chat_file_uploads'] = True
+        if 'enable_desktop_notifications' not in settings:
+            settings['enable_desktop_notifications'] = False
         if 'enable_conversation_contents_drawer' not in settings:
             settings['enable_conversation_contents_drawer'] = True
         if 'require_member_of_chat_file_upload_user' not in settings:
@@ -591,6 +593,14 @@ def register_route_frontend_admin_settings(bp):
         settings['control_center_auto_refresh_time'] = control_center_auto_refresh_schedule['time']
         settings['control_center_auto_refresh_hour'] = control_center_auto_refresh_schedule['hour']
         settings['control_center_auto_refresh_minute'] = control_center_auto_refresh_schedule['minute']
+        settings['control_center_auto_refresh_timezone'] = control_center_auto_refresh_schedule['timezone']
+        if (
+            settings['control_center_auto_refresh_enabled']
+            and not settings.get('control_center_auto_refresh_next_run')
+        ):
+            settings['control_center_auto_refresh_next_run'] = (
+                calculate_next_control_center_auto_refresh_run(settings).isoformat()
+            )
         settings.update(normalize_cosmos_throughput_settings(settings))
         cosmos_resource_config = get_cosmos_resource_config(settings)
         settings['cosmos_throughput_resolved_subscription_id'] = cosmos_resource_config.get('subscription_id', '')
@@ -1094,6 +1104,14 @@ def register_route_frontend_admin_settings(bp):
             # ... (fetch all other fields using form_data.get) ...
             enable_video_file_support = form_data.get('enable_video_file_support') == 'on'
             enable_audio_file_support = form_data.get('enable_audio_file_support') == 'on'
+            enable_chat_completion_audio_cues = form_data.get('enable_chat_completion_audio_cues') == 'on'
+            chat_completion_audio_cues_updated_at = settings.get(
+                'chat_completion_audio_cues_updated_at'
+            )
+            if enable_chat_completion_audio_cues != bool(
+                settings.get('enable_chat_completion_audio_cues', False)
+            ):
+                chat_completion_audio_cues_updated_at = datetime.now(timezone.utc).isoformat()
             enable_extract_meta_data = form_data.get('enable_extract_meta_data') == 'on'
             
             # Vision settings
@@ -1146,19 +1164,25 @@ def register_route_frontend_admin_settings(bp):
             control_center_auto_refresh_enabled = form_data.get('control_center_auto_refresh_enabled') == 'on'
             incoming_control_center_auto_refresh_time = form_data.get(
                 'control_center_auto_refresh_time',
-                settings.get('control_center_auto_refresh_time', '06:00')
+                settings.get('control_center_auto_refresh_time', '02:00')
+            )
+            incoming_control_center_auto_refresh_timezone = form_data.get(
+                'control_center_auto_refresh_timezone',
+                settings.get('control_center_auto_refresh_timezone', 'America/New_York'),
             )
             control_center_auto_refresh_schedule = get_control_center_auto_refresh_schedule({
                 'control_center_auto_refresh_time': incoming_control_center_auto_refresh_time,
-                'control_center_auto_refresh_hour': settings.get('control_center_auto_refresh_hour', 6),
+                'control_center_auto_refresh_hour': settings.get('control_center_auto_refresh_hour', 2),
                 'control_center_auto_refresh_minute': settings.get('control_center_auto_refresh_minute', 0),
+                'control_center_auto_refresh_timezone': incoming_control_center_auto_refresh_timezone,
             })
             existing_control_center_auto_refresh_schedule = get_control_center_auto_refresh_schedule(settings)
             existing_control_center_auto_refresh_enabled = settings.get('control_center_auto_refresh_enabled', True)
             existing_control_center_auto_refresh_next_run = settings.get('control_center_auto_refresh_next_run')
             control_center_auto_refresh_schedule_changed = (
                 control_center_auto_refresh_enabled != existing_control_center_auto_refresh_enabled or
-                control_center_auto_refresh_schedule['time'] != existing_control_center_auto_refresh_schedule['time']
+                control_center_auto_refresh_schedule['time'] != existing_control_center_auto_refresh_schedule['time'] or
+                control_center_auto_refresh_schedule['timezone'] != existing_control_center_auto_refresh_schedule['timezone']
             )
             if control_center_auto_refresh_enabled:
                 if control_center_auto_refresh_schedule_changed or not existing_control_center_auto_refresh_next_run:
@@ -1167,6 +1191,7 @@ def register_route_frontend_admin_settings(bp):
                             'control_center_auto_refresh_time': control_center_auto_refresh_schedule['time'],
                             'control_center_auto_refresh_hour': control_center_auto_refresh_schedule['hour'],
                             'control_center_auto_refresh_minute': control_center_auto_refresh_schedule['minute'],
+                            'control_center_auto_refresh_timezone': control_center_auto_refresh_schedule['timezone'],
                         },
                         current_time=datetime.now(timezone.utc),
                     ).isoformat()
@@ -2556,6 +2581,7 @@ def register_route_frontend_admin_settings(bp):
 
                 # Feedback, Archiving & Thoughts
                 'enable_user_feedback': form_data.get('enable_user_feedback') == 'on',
+                'enable_desktop_notifications': form_data.get('enable_desktop_notifications') == 'on',
                 'enable_conversation_archiving': form_data.get('enable_conversation_archiving') == 'on',
                 'enable_thoughts': form_data.get('enable_thoughts') == 'on',
 
@@ -2671,6 +2697,8 @@ def register_route_frontend_admin_settings(bp):
                 'video_index_timeout': int(form_data.get('video_index_timeout', 600)),
 
                 # Audio file settings with Azure speech service
+                'enable_chat_completion_audio_cues': enable_chat_completion_audio_cues,
+                'chat_completion_audio_cues_updated_at': chat_completion_audio_cues_updated_at,
                 'speech_service_endpoint': form_data.get('speech_service_endpoint', '').strip(),
                 'speech_service_location': form_data.get('speech_service_location', '').strip(),
                 'speech_service_subscription_id': form_data.get('speech_service_subscription_id', '').strip(),
@@ -2706,6 +2734,7 @@ def register_route_frontend_admin_settings(bp):
                 'control_center_auto_refresh_time': control_center_auto_refresh_schedule['time'],
                 'control_center_auto_refresh_hour': control_center_auto_refresh_schedule['hour'],
                 'control_center_auto_refresh_minute': control_center_auto_refresh_schedule['minute'],
+                'control_center_auto_refresh_timezone': control_center_auto_refresh_schedule['timezone'],
                 'control_center_auto_refresh_next_run': control_center_auto_refresh_next_run,
             }
             

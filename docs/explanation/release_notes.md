@@ -4,6 +4,13 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 ### **(v0.250.103)**
 
+#### New Features
+
+*   **Configurable AI Response Completion Audio Cues**
+    *   Administrators can enable locally bundled completion sounds, while each user can opt in, choose and preview one of ten cues, set volume, or mute cues without losing their preferences.
+    *   Cues play once for newly completed personal-chat responses outside the active visible conversation, with server-authoritative gating, cross-tab preference synchronization, and historical/duplicate suppression.
+    *   (Ref: Closes #1062, `completion-audio-cues.js`, notification polling, Profile and Admin Settings, `AI_RESPONSE_COMPLETION_AUDIO_CUES.md`)
+
 #### Bug Fixes
 
 *   **Retention Coverage Across Group and Collaborative Conversations**
@@ -12,9 +19,30 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Collaboration cleanup now covers messages, per-user state, linked sources, blob-backed files, thoughts, activity logs, and conversation caches; new groups also persist explicit default retention values.
     *   (Ref: Closes #1054, `functions_retention_policy.py`, `functions_collaboration.py`, `functions_group.py`, `RETENTION_POLICY_CONVERSATION_SCOPE_COVERAGE_FIX.md`)
 
+*   **Custom Databricks-Prefixed Action Discovery**
+    *   Fixed action type discovery so custom plugin types such as `databricks_table_dscmo` no longer inherit the built-in Databricks discovery defaults.
+    *   Custom Databricks-prefixed plugin types now stay on the standard plugin configuration path and visual treatment unless their type is exactly `databricks` or `databricks_table`.
+    *   Added a regression test that scaffolds a temporary fake custom Databricks-prefixed plugin, schema, and definition file to validate discovery and settings merge behavior.
+    *   (Ref: microsoft/simplechat#1124, `functions_databricks_operations.py`, `route_backend_plugins.py`, `view-utils.js`, `test_plugin_type_discovery_custom_databricks.py`)
+
 ### **(v0.250.102)**
 
 #### New Features
+
+*   **High-Throughput Resumable Source Blob Backups**
+    *   Source document backups now stream bounded Azure SDK blocks with configurable file concurrency and chunk size instead of buffering complete blobs or copying files serially.
+    *   Added durable per-file verification and resume, source/target generation fencing, adaptive Retry-After-aware throttling, isolated file failures, authenticated chunked encryption, throughput telemetry, and a reproducible AzCopy/server-copy/SDK benchmark harness.
+    *   (Ref: Closes #1095, `functions_data_management.py`, `test_data_management_blob_backup_transfers.py`, `benchmark_data_management_blob_backup.py`, `DATA_MANAGEMENT_BLOB_BACKUP_THROUGHPUT.md`)
+
+*   **Desktop Conversation Notifications**
+    *   Administrators can enable operating system notifications for completed AI responses, and users can manage their own preference from Profile.
+    *   Notifications appear only while SimpleChat is open in a hidden or unfocused tab, show the application and conversation titles without response content, and focus the existing tab when selected.
+    *   (Ref: Fixes #866, `chat-desktop-notifications.js`, `chat-streaming.js`, Profile and Admin Settings)
+
+*   **Automatic Overnight Control Center Statistics Refresh**
+    *   Added an enabled-by-default daily Control Center metrics refresh at 2:00 AM Eastern, with an administrator toggle and configurable time under Admin Settings > Control Center.
+    *   The recurring schedule follows Eastern daylight-saving changes, stores concrete execution timestamps in UTC, and shows last-run and next-run values in each administrator's browser timezone.
+    *   (Ref: Closes #706, `functions_control_center.py`, `background_tasks.py`, `admin_settings.html`, `control-center.js`)
 
 *   **Configurable Chat AI Notice**
     *   Administrators can display custom plain-text AI guidance directly below the chat composer.

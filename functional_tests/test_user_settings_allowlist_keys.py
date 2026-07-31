@@ -3,7 +3,7 @@
 Functional test for user settings allowlist synchronization.
 Version: 0.250.102
 Implemented in: 0.241.077
-Updated in: 0.250.074
+Updated in: 0.250.102
 AI notice dismissal updated in: 0.250.102
 
 This test ensures that the backend user settings route accepts the
@@ -39,6 +39,7 @@ def test_user_settings_allowlist_contains_known_keys():
             'deepResearchDefaultEnabled',
             'fontSizePreference',
             'conversationContentsDrawerEnabled',
+            'desktopNotificationsEnabled',
             'aiNoticeDismissal',
         ]
 

@@ -18,6 +18,7 @@ from functions_control_center import (
     calculate_next_control_center_auto_refresh_run,
     execute_control_center_refresh,
     get_control_center_auto_refresh_schedule,
+    is_control_center_auto_refresh_due,
     parse_control_center_auto_refresh_datetime,
 )
 from functions_cosmos_throughput import (
@@ -308,13 +309,14 @@ def _seed_control_center_auto_refresh_next_run(settings, current_time):
         'control_center_auto_refresh_time': schedule['time'],
         'control_center_auto_refresh_hour': schedule['hour'],
         'control_center_auto_refresh_minute': schedule['minute'],
+        'control_center_auto_refresh_timezone': schedule['timezone'],
         'control_center_auto_refresh_next_run': next_run.isoformat(),
     })
     return next_run
 
 
 def check_control_center_auto_refresh_once():
-    """Run the scheduled Control Center refresh when its daily UTC schedule is due."""
+    """Run the scheduled Control Center refresh when its UTC timestamp is due."""
     settings = get_settings()
     if not settings.get('control_center_auto_refresh_enabled', True):
         return None
@@ -325,12 +327,15 @@ def check_control_center_auto_refresh_once():
         _seed_control_center_auto_refresh_next_run(settings, current_time)
         return None
 
-    if current_time < next_run:
+    if not is_control_center_auto_refresh_due(settings, current_time=current_time):
         return None
 
     lock_document = acquire_distributed_task_lock('control_center_auto_refresh', lease_seconds=7200)
     if not lock_document:
-        debug_print('Skipping Control Center auto-refresh because another worker holds the lease.')
+        log_event(
+            '[ControlCenterAutoRefresh] Skipped scheduled refresh because another worker holds the lease.',
+            debug_only=True,
+        )
         return None
 
     try:
@@ -343,11 +348,32 @@ def check_control_center_auto_refresh_once():
         if not next_run:
             _seed_control_center_auto_refresh_next_run(settings, current_time)
             return None
-        if current_time < next_run:
+        if not is_control_center_auto_refresh_due(settings, current_time=current_time):
             return None
 
-        print(f"Executing scheduled Control Center auto-refresh at {current_time.isoformat()}")
-        return execute_control_center_refresh(manual_execution=False)
+        schedule = get_control_center_auto_refresh_schedule(settings)
+        log_event(
+            '[ControlCenterAutoRefresh] Starting scheduled Control Center metrics refresh.',
+            extra={
+                'scheduled_run_utc': next_run.isoformat(),
+                'schedule_time': schedule['time'],
+                'schedule_timezone': schedule['timezone'],
+            },
+            level=logging.INFO,
+        )
+        result = execute_control_center_refresh(manual_execution=False)
+        log_event(
+            '[ControlCenterAutoRefresh] Scheduled Control Center metrics refresh completed.',
+            extra={
+                'success': bool(result and result.get('success')),
+                'refreshed_users': result.get('refreshed_users', 0) if result else 0,
+                'failed_users': result.get('failed_users', 0) if result else 0,
+                'refreshed_groups': result.get('refreshed_groups', 0) if result else 0,
+                'failed_groups': result.get('failed_groups', 0) if result else 0,
+            },
+            level=logging.INFO,
+        )
+        return result
     finally:
         release_distributed_task_lock(lock_document)
 
@@ -394,8 +420,12 @@ def run_control_center_auto_refresh_loop():
         try:
             check_control_center_auto_refresh_once()
         except Exception as exc:
-            print(f"Error in Control Center auto-refresh check: {exc}")
-            log_event(f"Error in Control Center auto-refresh check: {exc}", level=logging.ERROR)
+            log_event(
+                '[ControlCenterAutoRefresh] Error checking the scheduled Control Center refresh.',
+                extra={'error': str(exc)},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
 
         time.sleep(300)
 

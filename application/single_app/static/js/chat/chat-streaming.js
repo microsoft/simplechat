@@ -8,6 +8,7 @@ import { beginStreamingThoughtSession, clearStreamingThoughtSession, handleStrea
 import { destroyInlineCharts, hydrateInlineCharts } from './chat-inline-charts.js';
 import { hydrateInlineImageProposals } from './chat-inline-image-proposals.js';
 import { escapeHtml } from './chat-utils.js';
+import { requestDesktopNotificationPermissionIfNeeded, showDesktopConversationNotification } from './chat-desktop-notifications.js';
 
 let currentStreamController = null;
 let currentStreamContext = null;
@@ -86,6 +87,19 @@ function markStreamingConversationReadIfActive(conversationId, contextLabel) {
 
     markConversationRead(conversationId, { force: true, suppressErrorToast: true }).catch(error => {
         console.warn(`Failed to clear unread state after ${contextLabel}:`, error);
+    });
+}
+
+function notifySuccessfulStreamingCompletion(finalData) {
+    if (!window.simpleChatCompletionAudio?.handleCompletion) {
+        return;
+    }
+
+    window.simpleChatCompletionAudio.handleCompletion({
+        conversationId: finalData?.conversation_id,
+        messageId: finalData?.message_id,
+    }, {
+        refreshAdminGate: true,
     });
 }
 
@@ -667,6 +681,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                     data,
                     fallbackAgentInfo
                 );
+                showDesktopConversationNotification(data);
 
                 if (typeof onDone === 'function') {
                     onDone(data);
@@ -913,6 +928,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
 
 export function sendMessageWithStreaming(messageData, tempUserMessageId, currentConversationId, options = {}) {
     const { endpoint = '/api/chat/stream' } = options;
+    void requestDesktopNotificationPermissionIfNeeded();
     const tempAiMessageId = createStreamingPlaceholder();
     const recoveryConversationId = currentConversationId || messageData?.conversation_id || window.currentConversationId || null;
 
@@ -1241,6 +1257,7 @@ function handleStreamError(messageId, partialContent, errorMessage, errorDetails
 
 function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackAgentInfo = null) {
     finalData = applyFallbackAgentIcon(finalData, fallbackAgentInfo);
+    notifySuccessfulStreamingCompletion(finalData);
     const messageElement = document.querySelector(`[data-message-id="${messageId}"]`);
     if (!messageElement) return;
 
