@@ -672,9 +672,15 @@ def register_route_backend_data_management(bp):
                     )
                 )
         except DataManagementSettingsValidationError as exc:
+            log_event(
+                "[DataManagement] Migration review validation failed.",
+                {"error_type": type(exc).__name__},
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
             return jsonify({
                 "success": False,
-                "error": str(exc),
+                "error": "Migration review input is invalid.",
                 "workflow_step": "review",
             }), 400
         except Exception as exc:
