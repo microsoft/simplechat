@@ -1,11 +1,13 @@
 # test_data_management_destination_cosmos_capacity.py
 """
 Functional test for Data Management destination Cosmos migration controls.
-Version: 0.250.071
+Version: 0.250.106
 Implemented in: 0.250.075
+Updated in: 0.250.106
 
 This test ensures preflight proves destination create/read/delete access and
 an opt-in 10,000 RU migration boost restores the original capacity afterward.
+It also verifies RU Boost permission testing is separate from data-copy access.
 """
 
 import copy
@@ -26,7 +28,21 @@ from functions_data_management_migration_state import initialize_migration_state
 class FakeJobContainer:
     """Persist deep-copy job state for checkpoint assertions."""
 
+    def __init__(self):
+        self.items = {}
+
+    def create_item(self, body):
+        self.items[body["id"]] = copy.deepcopy(body)
+        return copy.deepcopy(body)
+
+    def read_item(self, item, partition_key):
+        del partition_key
+        if item in self.items:
+            return copy.deepcopy(self.items[item])
+        return {"id": item, "type": "data_management_settings"}
+
     def upsert_item(self, body):
+        self.items[body["id"]] = copy.deepcopy(body)
         return copy.deepcopy(body)
 
 
@@ -65,6 +81,9 @@ class FakeTargetDatabase:
 
     def create_container_if_not_exists(self, **_kwargs):
         return self.target_container
+
+    def read(self):
+        return {"id": "SimpleChat"}
 
 
 def load_data_management_module(monkeypatch, source_container, job_container):
@@ -210,6 +229,112 @@ def test_destination_cosmos_preflight_and_temporary_capacity_restore(monkeypatch
     assert restored_state["capacity"]["status"] == "restored"
     assert restored_state["capacity"]["targets"][0]["restore_status"] == "restored"
     assert restored_state["capacity"]["targets"][1]["restore_status"] == "restored"
+
+
+def test_ru_boost_permission_test_is_separate_from_data_copy_access(monkeypatch):
+    """Validate RU Boost checks ARM capacity permissions without data-copy probes."""
+    job_container = FakeJobContainer()
+    module = load_data_management_module(monkeypatch, FakeSourceContainer(), job_container)
+    module.DATA_MANAGEMENT_MIGRATION_COSMOS_CONTAINERS = {
+        "users": [{
+            "name": "user_settings",
+            "container_attr": "source_container",
+            "container_name_attr": "target_container_name",
+            "partition_key_path": "/id",
+            "id_field": "id",
+        }],
+        "groups": [],
+        "public_workspaces": [],
+    }
+    monkeypatch.setattr(
+        module,
+        "_preflight_target_cosmos_migration_access",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("data copy probe should not run")),
+    )
+    monkeypatch.setattr(
+        module,
+        "_inspect_target_cosmos_migration_capacity",
+        lambda _settings, _plan: {
+            "target_ru": 10000,
+            "management_settings": {"target": "destination"},
+            "database_mode": "autoscale",
+            "database_current_ru": 4000,
+            "targets": [{
+                "scope": "database",
+                "container_name": "",
+                "mode": "autoscale",
+                "current_ru": 4000,
+            }],
+        },
+    )
+    capacity_calls = []
+
+    def validate_capacity(_settings, target_ru, **kwargs):
+        capacity_calls.append((target_ru, kwargs["reason"], kwargs["decision"]["scope"]))
+        return {"to_ru": target_ru}
+
+    monkeypatch.setattr(module, "set_database_throughput", validate_capacity)
+
+    result = module.test_target_cosmos_capacity_management(
+        settings={
+            "target_cosmos_endpoint": "https://target.documents.azure.com:443/",
+            "target_cosmos_subscription_id": "sub",
+            "target_cosmos_resource_group": "rg",
+            "migration_temporary_destination_ru": 10000,
+        },
+        migration_plan={
+            "users": {"mode": "all", "ids": [], "include_documents": False},
+            "groups": {"mode": "none", "ids": [], "include_documents": False},
+            "public_workspaces": {"mode": "none", "ids": [], "include_documents": False},
+        },
+    )
+
+    assert result["success"] is True
+    assert result["target"] == "cosmos_ru_boost"
+    assert result["targets"][0]["write_verified"] is True
+    assert capacity_calls == [(4000, "validate_data_management_ru_boost_permissions", "database")]
+
+
+def test_target_cosmos_connection_excludes_ru_boost_permissions(monkeypatch):
+    """Validate data-copy access testing does not require ARM capacity permissions."""
+    job_container = FakeJobContainer()
+    target_container = FakeTargetContainer()
+    module = load_data_management_module(monkeypatch, FakeSourceContainer(), job_container)
+    module.DATA_MANAGEMENT_MIGRATION_COSMOS_CONTAINERS = {
+        "users": [{
+            "name": "user_settings",
+            "container_attr": "source_container",
+            "container_name_attr": "target_container_name",
+            "partition_key_path": "/id",
+            "id_field": "id",
+        }],
+        "groups": [],
+        "public_workspaces": [],
+    }
+    monkeypatch.setattr(module, "_get_target_cosmos_database", lambda _settings: FakeTargetDatabase(target_container))
+    monkeypatch.setattr(
+        module,
+        "_inspect_target_cosmos_migration_capacity",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("RU Boost probe should not run")),
+    )
+
+    result = module.test_target_cosmos_connection(
+        settings={
+            "target_cosmos_endpoint": "https://target.documents.azure.com:443/",
+            "migration_temporary_destination_ru_enabled": True,
+            "target_cosmos_subscription_id": "",
+            "target_cosmos_resource_group": "",
+        },
+        migration_plan={
+            "users": {"mode": "all", "ids": [], "include_documents": False},
+            "groups": {"mode": "none", "ids": [], "include_documents": False},
+            "public_workspaces": {"mode": "none", "ids": [], "include_documents": False},
+        },
+    )
+
+    assert result["success"] is True
+    assert "capacity" not in result
+    assert result["migration_access"]["container_count"] == 1
 
 
 def test_failed_capacity_restore_remains_pending_for_later_recovery(monkeypatch):

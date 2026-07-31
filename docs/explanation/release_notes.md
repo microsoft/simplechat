@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.106)**
+
+#### User Interface Enhancements
+
+*   **Backup, Migrate & Restore Admin Refresh**
+    *   Reworked the Admin Settings data-management tab into a clearer Backup, Migrate & Restore control center with start-here guidance, setup modals, and plain-language migration choices.
+    *   Separated destination Cosmos **RU Boost** configuration and testing from Cosmos data-copy access validation so admins can verify the correct Azure management-plane permissions before migration.
+    *   Added a staged Restore workflow modal from Backup Inventory that reviews backup readiness and explicitly blocks restore execution when the backend restore application layer is unavailable.
+    *   (Ref: #1140, `admin_settings.html`, `admin_data_management.js`, `functions_data_management.py`, Data Management docs and tests)
+
 ### **(v0.250.105)**
 
 #### User Interface Enhancements

@@ -234,7 +234,7 @@ DATA_MANAGEMENT_MIGRATION_MODES = {
     DATA_MANAGEMENT_MIGRATION_MODE_DELTA_UPSERT,
     DATA_MANAGEMENT_MIGRATION_MODE_MIRROR,
 }
-DATA_MANAGEMENT_MIRROR_CONFIRMATION = "MIRROR WITH DELETIONS"
+DATA_MANAGEMENT_MIRROR_CONFIRMATION = "MAKE DESTINATION MATCH SOURCE"
 DATA_MANAGEMENT_SEARCH_WRITE_FREEZE_CONFIRMATION_ERROR = (
     "Confirm that external destination AI Search writers are frozen before migrating AI Search documents."
 )
@@ -997,27 +997,60 @@ def test_target_cosmos_connection(settings=None, migration_plan=None):
             normalized_settings,
             normalized_plan,
         )
-    capacity = None
-    if normalized_settings.get("migration_temporary_destination_ru_enabled"):
-        inspected_capacity = _inspect_target_cosmos_migration_capacity(
-            normalized_settings,
-            normalized_plan,
-        )
-        capacity = {
-            "target_ru": inspected_capacity.get("target_ru"),
-            "database_mode": inspected_capacity.get("database_mode"),
-            "database_current_ru": inspected_capacity.get("database_current_ru"),
-            "targets": inspected_capacity.get("targets"),
-        }
     result = {
         "success": True,
         "target": "cosmos",
         "database_name": properties.get("id") or DATA_MANAGEMENT_TARGET_COSMOS_DATABASE_NAME,
         "authentication_type": normalized_settings.get("target_cosmos_authentication_type"),
         "migration_access": migration_access,
-        "capacity": capacity,
     }
     return result
+
+
+def test_target_cosmos_capacity_management(settings=None, migration_plan=None):
+    """Validate destination Cosmos ARM throughput permissions for RU Boost."""
+    normalized_settings = _normalize_data_management_settings_from_payload(settings)
+    normalized_plan = normalize_data_management_migration_plan({
+        "migration_plan": migration_plan if isinstance(migration_plan, dict) else {},
+    })
+    inspected_capacity = _inspect_target_cosmos_migration_capacity(
+        normalized_settings,
+        normalized_plan,
+    )
+    write_results = []
+    for target in inspected_capacity.get("targets") or []:
+        current_ru = _safe_int(target.get("current_ru"), default=0, minimum=0)
+        if not current_ru:
+            raise DataManagementSettingsValidationError(
+                "Destination Cosmos RU Boost test could not determine the current RU/s value."
+            )
+        scale_result = set_database_throughput(
+            inspected_capacity["management_settings"],
+            current_ru,
+            initiated_by="data_management_ru_boost_test",
+            reason="validate_data_management_ru_boost_permissions",
+            decision={
+                "scope": target.get("scope"),
+                "container_name": target.get("container_name") or "",
+                "target_mode": target.get("mode"),
+            },
+        )
+        write_results.append({
+            "scope": target.get("scope"),
+            "container_name": target.get("container_name") or "",
+            "mode": target.get("mode"),
+            "current_ru": current_ru,
+            "write_verified": True,
+            "verified_ru": scale_result.get("to_ru", current_ru),
+        })
+    return {
+        "success": True,
+        "target": "cosmos_ru_boost",
+        "target_ru": inspected_capacity.get("target_ru"),
+        "database_mode": inspected_capacity.get("database_mode"),
+        "database_current_ru": inspected_capacity.get("database_current_ru"),
+        "targets": write_results,
+    }
 
 
 def test_target_search_connection(settings=None):
@@ -1676,7 +1709,7 @@ def _validate_incremental_baseline_job(candidate_job, current_job, current_confi
     source_cutoff_at = _safe_text(candidate_state.get("source_cutoff_at"))
     if _parse_iso_datetime(source_cutoff_at) is None:
         raise DataManagementSettingsValidationError(
-            "Incremental migration baseline does not contain a valid source watermark."
+            "Previous migration does not contain a valid source checkpoint."
         )
     return source_cutoff_at
 
@@ -9023,6 +9056,132 @@ def get_data_management_job_detail(job_id):
             )
             if sanitized_item
         ],
+    }
+
+
+def review_data_management_restore(restore_plan=None):
+    """Return a safe restore workflow preflight for the selected backup."""
+    plan = restore_plan if isinstance(restore_plan, dict) else {}
+    backup_job_id = _safe_text(plan.get("backup_job_id"))
+    checks = []
+    if not backup_job_id:
+        return {
+            "supported": False,
+            "ready": False,
+            "blocker_count": 1,
+            "warning_count": 0,
+            "summary": {},
+            "checks": [{
+                "id": "backup_required",
+                "label": "Backup selection",
+                "status": "block",
+                "summary": "Choose an available backup before running restore preflight.",
+            }],
+        }
+
+    backup_job = get_data_management_job(backup_job_id)
+    if not backup_job or backup_job.get("operation") != DATA_MANAGEMENT_OPERATION_BACKUP:
+        return {
+            "supported": False,
+            "ready": False,
+            "blocker_count": 1,
+            "warning_count": 0,
+            "summary": {"backup_job_id": backup_job_id},
+            "checks": [{
+                "id": "backup_found",
+                "label": "Backup found",
+                "status": "block",
+                "summary": "The selected backup job was not found or is not a backup.",
+            }],
+        }
+
+    backup_plan = backup_job.get("backup_plan") if isinstance(backup_job.get("backup_plan"), dict) else {}
+    backup_result = backup_job.get("result") if isinstance(backup_job.get("result"), dict) else {}
+    backup_artifacts = (
+        backup_result.get("artifacts")
+        if isinstance(backup_result.get("artifacts"), list)
+        else []
+    )
+    backup_state = (
+        backup_job.get("backup_state")
+        if isinstance(backup_job.get("backup_state"), dict)
+        else {}
+    )
+    terminal_status = backup_job.get("status") in {
+        DATA_MANAGEMENT_STATUS_COMPLETED,
+        DATA_MANAGEMENT_STATUS_COMPLETED_WITH_WARNINGS,
+    }
+    has_manifest = bool(backup_result.get("manifest_path") or backup_plan.get("manifest_path"))
+    artifacts_ready = bool(backup_artifacts)
+
+    checks.append({
+        "id": "backup_status",
+        "label": "Backup status",
+        "status": "pass" if terminal_status else "block",
+        "summary": (
+            "The backup completed and can be reviewed."
+            if terminal_status else
+            "Only completed backups can be considered for restore."
+        ),
+    })
+    checks.append({
+        "id": "backup_artifacts",
+        "label": "Backup artifacts",
+        "status": "pass" if artifacts_ready else "warning",
+        "summary": (
+            f"{len(backup_artifacts)} backup artifact records are available."
+            if artifacts_ready else
+            "No artifact records were found in the selected backup result."
+        ),
+    })
+    checks.append({
+        "id": "manifest",
+        "label": "Restore manifest",
+        "status": "pass" if has_manifest else "warning",
+        "summary": (
+            "A manifest location is recorded for this backup."
+            if has_manifest else
+            "No manifest path was recorded; restore readiness may be incomplete."
+        ),
+    })
+    checks.append({
+        "id": "restore_execution",
+        "label": "Restore execution",
+        "status": "block",
+        "summary": (
+            "Restore execution is not enabled in this build. The workflow can stage "
+            "and explain the restore plan, but it will not queue a placeholder job."
+        ),
+    })
+
+    warning_count = sum(1 for check in checks if check["status"] == "warning")
+    blocker_count = sum(1 for check in checks if check["status"] == "block")
+    sanitized_job = sanitize_data_management_job_for_admin(backup_job) or {}
+    sanitized_result = (
+        sanitized_job.get("result")
+        if isinstance(sanitized_job.get("result"), dict)
+        else {}
+    )
+    return {
+        "supported": False,
+        "ready": False,
+        "blocker_count": blocker_count,
+        "warning_count": warning_count,
+        "summary": {
+            "backup_job_id": backup_job_id,
+            "backup_type": backup_job.get("backup_type"),
+            "status": backup_job.get("status"),
+            "completed_at": backup_job.get("completed_at"),
+            "source_cutoff_at": backup_job.get("source_cutoff_at"),
+            "include_cosmos": bool(backup_plan.get("include_cosmos")),
+            "include_ai_search": bool(backup_plan.get("include_ai_search")),
+            "include_source_blobs": bool(backup_plan.get("include_source_blobs")),
+            "encrypted": bool(backup_plan.get("encryption_enabled")),
+            "artifact_count": len(sanitized_result.get("artifacts") or []),
+            "warning_count": len(backup_job.get("warnings") or []),
+            "backup_phase": backup_state.get("phase"),
+        },
+        "checks": checks,
     }
 
 

@@ -1,11 +1,12 @@
 # test_data_management_incremental_migration_modes.py
 """
 Functional test for explicit Data Management incremental migration modes.
-Version: 0.250.071
+Version: 0.250.106
 Implemented in: 0.250.071
+Updated in: 0.250.106
 
-This test ensures mode defaults, baseline lineage, and destructive mirror
-confirmation are normalized into the immutable migration plan.
+This test ensures mode defaults, baseline lineage, and destructive destination
+cleanup confirmation are normalized into the immutable migration plan.
 """
 
 import importlib.util
@@ -118,7 +119,7 @@ def test_incremental_migration_mode_contract(monkeypatch):
     with pytest.raises(module.DataManagementSettingsValidationError, match="exact confirmation phrase"):
         module.normalize_data_management_migration_plan({"migration_plan": mirror_plan})
 
-    mirror_plan["mirror_confirmation"] = "MIRROR WITH DELETIONS"
+    mirror_plan["mirror_confirmation"] = "MAKE DESTINATION MATCH SOURCE"
     normalized_mirror = module.normalize_data_management_migration_plan({
         "migration_plan": mirror_plan,
     })

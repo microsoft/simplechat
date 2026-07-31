@@ -1,13 +1,13 @@
 # Data Management Migration Resilience
 
 Implemented in version: **0.250.071**
-Updated in version: **0.250.105**
+Updated in version: **0.250.106**
 
 GitHub issue: [#1043](https://github.com/microsoft/simplechat/issues/1043)
 
 ## Overview
 
-Data Management migrations use durable, job-scoped provenance and checkpoints across selected Cosmos DB records, Azure AI Search documents, and Enhanced Citations source blobs. A migration retry retains the original migration GUID and resumes from verified service checkpoints. Operators can run create-only, delta/upsert, or explicitly confirmed mirror migrations, preview estimated destination changes, and review final source/destination reconciliation plus preview divergence.
+Data Management migrations use durable, job-scoped provenance and checkpoints across selected Cosmos DB records, Azure AI Search documents, and Enhanced Citations source blobs. A migration retry retains the original migration GUID and resumes from verified service checkpoints. Operators can run Copy missing items only, Catch up changed items, or explicitly confirmed Make destination match source migrations, preview estimated destination changes, and review final source/destination reconciliation plus preview divergence.
 
 ## Dependencies
 
@@ -46,11 +46,11 @@ The migration state is stored on the existing Data Management job record. It con
 
 Failed, canceled, or stale migration jobs can be retried from the existing job detail. Completed resource checkpoints and the migration GUID remain unchanged.
 
-### Incremental Modes And Watermarks
+### Incremental Modes And Previous Runs
 
-- **New only** is the default. It creates missing destination identities and never updates or deletes existing data.
-- **Delta / upsert** requires a compatible completed migration baseline. The backend uses an explicitly selected baseline job or pins the newest compatible completed job when the field is blank. It creates new items, updates changed migration-owned items, and retains destination-only data.
-- **Mirror with deletions** runs delta/upsert and then removes destination-only items only when they carry successful migration ownership. The exact phrase `MIRROR WITH DELETIONS` is required. Unowned destination data is retained and reported.
+- **Copy missing items only** is the default. It creates missing destination identities and never updates or deletes existing data.
+- **Catch up changed items** requires a compatible completed migration baseline. The backend uses an explicitly selected previous migration job or pins the newest compatible completed job when the field is blank. It creates new items, updates changed migration-owned items, and retains destination-only data.
+- **Make destination match source** catches up changed items and then removes destination-only items only when they carry successful migration ownership. The exact phrase `MAKE DESTINATION MATCH SOURCE` is required. Unowned destination data is retained and reported.
 
 Each run captures a UTC cutoff for Cosmos and intentionally includes the baseline second again to avoid timestamp-resolution gaps. Cosmos combines `_ts` with a canonical content hash, so different revisions in the same second are still detected. AI Search has no shared modified-time field, so it uses the source version observed during resumable keyset enumeration plus a canonical source hash. Blob Storage uses the ETag observed immediately before transfer and verifies it again after upload. Search or Blob changes observed after inventory can therefore cause preview divergence or a retryable `not_ready` reconciliation; they are never represented as having a global timestamp cutoff.
 
@@ -87,7 +87,7 @@ Version 0.250.105 also exposes these checks through the staged browser workflow'
 
 ### Temporary Cosmos Capacity
 
-The optional **Temporarily increase destination Cosmos capacity during this migration** control raises eligible destination database or dedicated-container throughput to the configured target, capped at **10,000 RU/s**.
+The optional **destination RU Boost** control raises eligible destination database or dedicated-container throughput to the configured target, capped at **10,000 RU/s**. Version 0.250.106 separates **Validate Cosmos Access** from **Test RU Boost** because data-plane copy permissions and ARM throughput permissions are intentionally different.
 
 - The original mode and RU/s value are persisted before every ARM capacity change.
 - Only targets below the requested value are changed.
@@ -112,7 +112,7 @@ The optional **Temporarily increase destination Cosmos capacity during this migr
 2. Keep the source active and run one or more **Delta / upsert** catch-up migrations.
 3. Resolve preview conflicts and any reconciliation state that is `not_ready`.
 4. Freeze source writes and external destination AI Search writers for the final cutover window. Confirm the destination Search writer freeze in the migration workflow.
-5. Run a final **Delta / upsert**, or a confirmed **Mirror with deletions** only when the destination must exactly follow source deletions.
+5. Run a final **Catch up changed items**, or a confirmed **Make destination match source** only when the destination must exactly follow source deletions.
 6. Switch traffic only after final reconciliation is `ready` or its warnings are explicitly accepted.
 
 ## Testing And Validation
@@ -153,4 +153,5 @@ The focused coverage verifies provenance and source fingerprints, unowned collis
 
 - Application version updated in `application/single_app/config.py` to `0.250.071`.
 - The staged migration workflow and catalog/review contracts were updated in `application/single_app/config.py` version `0.250.105`.
+- Plain-language mode labels and separate RU Boost permission testing were updated in `application/single_app/config.py` version `0.250.106`.
 - This documentation and the related functional tests use their corresponding implementation versions.

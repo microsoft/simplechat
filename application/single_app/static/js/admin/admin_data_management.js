@@ -7,7 +7,7 @@ const backupStorageAuthManagedIdentity = "managed_identity";
 const backupStorageAuthConnectionString = "connection_string";
 const targetCosmosDatabaseName = "SimpleChat";
 const cosmosEditorConfirmationPhrase = "I understand this can damage system data";
-const migrationMirrorConfirmationPhrase = "MIRROR WITH DELETIONS";
+const migrationMirrorConfirmationPhrase = "MAKE DESTINATION MATCH SOURCE";
 const elements = {};
 let dataManagementModified = false;
 let storedBackupConnectionStringAvailable = false;
@@ -34,6 +34,7 @@ const historyListState = {
 };
 const migrationTargetTypes = ["users", "groups", "public_workspaces"];
 const migrationWorkflowSteps = ["target", "scope", "options", "review", "confirm", "progress"];
+const restoreWorkflowSteps = ["backup", "options", "review", "confirm", "progress"];
 const migrationSelections = {
     users: new Map(),
     groups: new Map(),
@@ -61,6 +62,14 @@ const migrationWorkflowState = {
     reviewRequestGeneration: 0,
     submissionInFlight: false,
     submissionAccepted: false,
+    currentJob: null,
+};
+const restoreWorkflowState = {
+    activeStepIndex: 0,
+    highestVisitedStepIndex: 0,
+    selectedBackup: null,
+    review: null,
+    reviewStale: true,
     currentJob: null,
 };
 
@@ -146,6 +155,7 @@ function bindElements() {
         "data_management_target_cosmos_subscription_id",
         "data_management_target_cosmos_resource_group",
         "data-management-test-target-cosmos-btn",
+        "data-management-test-target-cosmos-ru-boost-btn",
         "data-management-target-ai-search-section",
         "data_management_target_ai_search_auth",
         "data_management_target_ai_search_endpoint",
@@ -212,6 +222,24 @@ function bindElements() {
         "data-management-partial-backup-count",
         "data-management-available-backup-count",
         "data-management-backups-tbody",
+        "data-management-restore-modal",
+        "data-management-restore-status",
+        "data-management-restore-selected-backup",
+        "data_management_restore_mode",
+        "data_management_restore_include_cosmos",
+        "data_management_restore_include_ai_search",
+        "data_management_restore_include_source_blobs",
+        "data-management-restore-review-btn",
+        "data-management-restore-review-empty",
+        "data-management-restore-review-checks",
+        "data-management-restore-confirm-summary",
+        "data_management_restore_final_confirmation",
+        "data-management-execute-restore-btn",
+        "data-management-restore-progress-empty",
+        "data-management-restore-progress-state",
+        "data-management-restore-back-btn",
+        "data-management-restore-next-btn",
+        "data-management-restore-step-position",
         "data_management_backup_status_filter",
         "data_management_backup_scheduled_filter",
         "data_management_backup_created_from",
@@ -306,6 +334,7 @@ function bindEvents() {
     elements.dataManagementGenerateKeyBtn?.addEventListener("click", generateEncryptionKey);
     elements.dataManagementTestStorageBtn?.addEventListener("click", testBackupStorage);
     elements.dataManagementTestTargetCosmosBtn?.addEventListener("click", testTargetCosmos);
+    elements.dataManagementTestTargetCosmosRuBoostBtn?.addEventListener("click", testTargetCosmosRuBoost);
     elements.dataManagementTestMigrationAccessBtn?.addEventListener("click", testMigrationAccess);
     elements.dataManagementTestTargetSearchBtn?.addEventListener("click", testTargetSearch);
     elements.dataManagementTestTargetEcStorageBtn?.addEventListener("click", testTargetEnhancedCitationStorage);
@@ -329,6 +358,18 @@ function bindEvents() {
     ].forEach((filter) => filter?.addEventListener("change", () => resetAndLoadHistory("backups")));
     elements.dataManagementBackupPreviousPageBtn?.addEventListener("click", () => loadPreviousHistoryPage("backups"));
     elements.dataManagementBackupNextPageBtn?.addEventListener("click", () => loadNextHistoryPage("backups"));
+    elements.dataManagementRestoreModal?.addEventListener("hidden.bs.modal", resetRestoreWorkflowState);
+    elements.dataManagementRestoreReviewBtn?.addEventListener("click", runRestoreReview);
+    elements.dataManagementRestoreBackBtn?.addEventListener("click", () => showRestoreWorkflowStep(restoreWorkflowState.activeStepIndex - 1));
+    elements.dataManagementRestoreNextBtn?.addEventListener("click", () => showRestoreWorkflowStep(restoreWorkflowState.activeStepIndex + 1));
+    elements.datamanagementrestorefinalconfirmation?.addEventListener("change", updateRestoreExecutionButtonState);
+    elements.dataManagementExecuteRestoreBtn?.addEventListener("click", queueRestore);
+    [
+        elements.datamanagementrestoremode,
+        elements.datamanagementrestoreincludecosmos,
+        elements.datamanagementrestoreincludeaisearch,
+        elements.datamanagementrestoreincludesourceblobs,
+    ].forEach((element) => element?.addEventListener("change", invalidateRestoreReview));
     elements.dataManagementRefreshJobsBtn?.addEventListener("click", loadDataManagementJobs);
     [
         elements.datamanagementjoboperationfilter,
@@ -796,9 +837,16 @@ function setMigrationTargetVisibility() {
 function updateMigrationCapacityVisibility() {
     const enabled = Boolean(elements.datamanagementmigrationtemporarydestinationruenabled?.checked);
     setElementVisible(elements.dataManagementMigrationTemporaryRuField, enabled);
-    if (elements.datamanagementmigrationtemporarydestinationru) {
-        elements.datamanagementmigrationtemporarydestinationru.disabled = !enabled;
-    }
+    [
+        elements.datamanagementmigrationtemporarydestinationru,
+        elements.datamanagementtargetcosmossubscriptionid,
+        elements.datamanagementtargetcosmosresourcegroup,
+        elements.dataManagementTestTargetCosmosRuBoostBtn,
+    ].forEach((element) => {
+        if (element) {
+            element.disabled = !enabled;
+        }
+    });
 }
 
 function updateBackupCapacityVisibility() {
@@ -1466,14 +1514,31 @@ async function testTargetCosmos() {
         });
         const verifiedCount = Number(data.migration_access?.container_count || 0);
         const accessText = verifiedCount ? ` Verified ${formatNumber(verifiedCount)} planned container(s).` : "";
-        const capacityText = data.capacity?.target_ru ? ` Temporary capacity can reach ${formatNumber(data.capacity.target_ru)} RU/s.` : "";
-        setStatus(`Target Cosmos connection succeeded. Database: ${data.database_name || targetCosmosDatabaseName}.${accessText}${capacityText}`, "success");
+        setStatus(`Target Cosmos data access succeeded. Database: ${data.database_name || targetCosmosDatabaseName}.${accessText}`, "success");
         showToast("Target Cosmos connection succeeded.", "success");
     } catch (error) {
         setStatus(error.message || "Target Cosmos connection test failed.", "danger");
         showToast(error.message || "Target Cosmos connection test failed.", "danger");
     } finally {
         setBusy(elements.dataManagementTestTargetCosmosBtn, false);
+    }
+}
+
+async function testTargetCosmosRuBoost() {
+    setBusy(elements.dataManagementTestTargetCosmosRuBoostBtn, true, "Testing...");
+    try {
+        const data = await requestJson("/api/admin/data-management/target/cosmos/ru-boost/test", {
+            method: "POST",
+            body: JSON.stringify({ settings: collectSettings(), migration_plan: buildMigrationPlan() }),
+        });
+        const targetCount = Array.isArray(data.targets) ? data.targets.length : 0;
+        setStatus(`RU Boost permission test succeeded. Verified ${formatNumber(targetCount)} destination capacity target(s) up to ${formatNumber(data.target_ru || 0)} RU/s.`, "success");
+        showToast("RU Boost permission test succeeded.", "success");
+    } catch (error) {
+        setStatus(error.message || "RU Boost permission test failed.", "danger");
+        showToast(error.message || "RU Boost permission test failed.", "danger");
+    } finally {
+        setBusy(elements.dataManagementTestTargetCosmosRuBoostBtn, false);
     }
 }
 
@@ -1485,8 +1550,7 @@ async function testMigrationAccess() {
             body: JSON.stringify({ settings: collectSettings(), migration_plan: buildMigrationPlan() }),
         });
         const verifiedCount = Number(data.migration_access?.container_count || 0);
-        const capacityText = data.capacity?.target_ru ? ` Destination capacity management is ready up to ${formatNumber(data.capacity.target_ru)} RU/s.` : "";
-        setStatus(`Cosmos migration access validation succeeded. ${formatNumber(verifiedCount)} planned Cosmos container(s) can be read and written.${capacityText}`, "success");
+        setStatus(`Cosmos data-copy access validation succeeded. ${formatNumber(verifiedCount)} planned Cosmos container(s) can be read and written. Use Test RU Boost for destination capacity permissions.`, "success");
         showToast("Cosmos migration access validation succeeded.", "success");
     } catch (error) {
         setStatus(error.message || "Cosmos migration access validation failed.", "danger");
@@ -1621,7 +1685,7 @@ async function queueMigration(dryRun) {
         migrationPlan.migration_mode === "mirror_with_deletions" &&
         migrationPlan.mirror_confirmation !== migrationMirrorConfirmationPhrase
     ) {
-        const message = `Type ${migrationMirrorConfirmationPhrase} before running a mirror migration.`;
+        const message = `Type ${migrationMirrorConfirmationPhrase} before running this destination cleanup.`;
         elements.datamanagementmigrationmirrorconfirmationphrase?.classList.add("is-invalid");
         elements.datamanagementmigrationmirrorconfirmationphrase?.focus();
         setStatus(message, "danger");
@@ -2160,8 +2224,8 @@ function updateMigrationModeVisibility() {
     elements.dataManagementMigrationMirrorConfirmation?.classList.toggle("d-none", !isMirror);
     const descriptions = {
         new_only: "Copies source items that are absent from the destination. Existing destination data is never updated or deleted.",
-        delta_upsert: "Copies new items and updates changed migration-owned items since the prior successful watermark. Destination-only data is retained.",
-        mirror_with_deletions: "Runs delta/upsert, then deletes destination-only items that carry successful SimpleChat migration ownership. Unowned data is retained.",
+        delta_upsert: "Copies new items and updates changed migration-owned items from the previous completed migration. Destination-only data is retained.",
+        mirror_with_deletions: "Catches up changed items, then removes destination-only items that were created by SimpleChat migration. Unowned data is retained.",
     };
     if (elements.dataManagementMigrationModeDescription) {
         elements.dataManagementMigrationModeDescription.textContent = descriptions[migrationMode] || descriptions.new_only;
@@ -2320,6 +2384,13 @@ function renderMigrationReviewChecks(checks) {
     if (!container) {
         return;
     }
+    renderDataManagementReviewChecks(container, checks);
+}
+
+function renderDataManagementReviewChecks(container, checks) {
+    if (!container) {
+        return;
+    }
     container.className = "migration-review-checks";
     container.replaceChildren();
     checks.forEach((check) => {
@@ -2398,6 +2469,9 @@ function renderMigrationConfirmSummary(review) {
 function formatOperation(operation, backupType) {
     if (operation === "backup") {
         return `${backupType || "manual"} backup`;
+    }
+    if (operation === "restore") {
+        return "restore";
     }
     return operation.replace(/_/g, " ");
 }
@@ -2916,7 +2990,7 @@ function createBackupRow(backup) {
     row.appendChild(createBackupStorageCell(backup));
     row.appendChild(createBackupProtectionCell(backup));
     row.appendChild(createBackupWarningCell(backup));
-    row.appendChild(createJobActionCell(backup.id));
+    row.appendChild(createBackupActionCell(backup));
     return row;
 }
 
@@ -2982,6 +3056,289 @@ function createBackupWarningCell(backup) {
     noWarnings.textContent = "None";
     cell.appendChild(noWarnings);
     return cell;
+}
+
+function createBackupActionCell(backup) {
+    const cell = document.createElement("td");
+    const buttonGroup = document.createElement("div");
+    buttonGroup.className = "d-flex flex-wrap gap-1";
+
+    const viewButton = document.createElement("button");
+    viewButton.type = "button";
+    viewButton.className = "btn btn-outline-primary btn-sm";
+    viewButton.disabled = !backup.id;
+    viewButton.append(createIcon("bi bi-list-check me-1"), document.createTextNode("View Log"));
+    viewButton.addEventListener("click", () => loadDataManagementJobDetail(backup.id));
+    buttonGroup.appendChild(viewButton);
+
+    const restoreButton = document.createElement("button");
+    restoreButton.type = "button";
+    restoreButton.className = "btn btn-outline-warning btn-sm";
+    restoreButton.disabled = !backup.id || !["completed", "completed_with_warnings"].includes(backup.status);
+    restoreButton.append(createIcon("bi bi-arrow-counterclockwise me-1"), document.createTextNode("Restore"));
+    restoreButton.addEventListener("click", () => openRestoreWorkflow(backup));
+    buttonGroup.appendChild(restoreButton);
+
+    cell.appendChild(buttonGroup);
+    return cell;
+}
+
+function openRestoreWorkflow(backup) {
+    restoreWorkflowState.selectedBackup = backup;
+    restoreWorkflowState.review = null;
+    restoreWorkflowState.reviewStale = true;
+    restoreWorkflowState.currentJob = null;
+    restoreWorkflowState.activeStepIndex = 0;
+    restoreWorkflowState.highestVisitedStepIndex = 0;
+    setChecked(elements.datamanagementrestorefinalconfirmation, false);
+    setRestoreStatus("", "info");
+    renderRestoreSelectedBackup();
+    renderRestoreReviewState();
+    updateRestoreExecutionButtonState();
+    showRestoreWorkflowStep(0, { skipValidation: true });
+    if (elements.dataManagementRestoreModal && window.bootstrap?.Modal) {
+        window.bootstrap.Modal.getOrCreateInstance(elements.dataManagementRestoreModal).show();
+    }
+}
+
+function resetRestoreWorkflowState() {
+    restoreWorkflowState.activeStepIndex = 0;
+    restoreWorkflowState.highestVisitedStepIndex = 0;
+    restoreWorkflowState.selectedBackup = null;
+    restoreWorkflowState.review = null;
+    restoreWorkflowState.reviewStale = true;
+    restoreWorkflowState.currentJob = null;
+    setChecked(elements.datamanagementrestorefinalconfirmation, false);
+    setRestoreStatus("", "info");
+}
+
+function setRestoreStatus(message, variant = "info") {
+    const statusElement = elements.dataManagementRestoreStatus;
+    if (!statusElement) {
+        return;
+    }
+    statusElement.textContent = message || "";
+    statusElement.className = `alert alert-${variant}`;
+    statusElement.classList.toggle("d-none", !message);
+}
+
+function renderRestoreSelectedBackup() {
+    const container = elements.dataManagementRestoreSelectedBackup;
+    const backup = restoreWorkflowState.selectedBackup || {};
+    if (!container) {
+        return;
+    }
+    if (!backup.id) {
+        container.replaceChildren(createSmallMutedElement("Choose Restore from Backup Inventory."));
+        return;
+    }
+    const summary = document.createElement("div");
+    summary.className = "migration-review-grid";
+    [
+        ["Backup type", formatBackupType(backup.backup_type)],
+        ["Status", formatStatusLabel(backup.status || "unknown")],
+        ["Completed", formatDate(backup.completed_at || backup.created_at)],
+        ["Artifacts", formatNumber(backup.artifact_count || 0)],
+        ["Records / blobs", formatBackupRecordCounts(backup)],
+        ["Protection", backup.encrypted ? "Encrypted" : "Not encrypted"],
+    ].forEach(([label, value]) => {
+        const metric = document.createElement("div");
+        metric.className = "migration-review-metric";
+        const metricLabel = document.createElement("span");
+        metricLabel.textContent = label;
+        const metricValue = document.createElement("strong");
+        metricValue.textContent = value;
+        metric.append(metricLabel, metricValue);
+        summary.appendChild(metric);
+    });
+    const backupId = document.createElement("p");
+    backupId.className = "small text-muted text-break mt-3 mb-0";
+    backupId.textContent = `Backup job ID: ${backup.id}`;
+    container.replaceChildren(summary, backupId);
+}
+
+function buildRestorePlan() {
+    const backup = restoreWorkflowState.selectedBackup || {};
+    return {
+        backup_job_id: backup.id || "",
+        restore_mode: getValue(elements.datamanagementrestoremode) || "review_only",
+        include_cosmos: Boolean(elements.datamanagementrestoreincludecosmos?.checked),
+        include_ai_search: Boolean(elements.datamanagementrestoreincludeaisearch?.checked),
+        include_source_blobs: Boolean(elements.datamanagementrestoreincludesourceblobs?.checked),
+    };
+}
+
+function invalidateRestoreReview() {
+    restoreWorkflowState.review = null;
+    restoreWorkflowState.reviewStale = true;
+    setChecked(elements.datamanagementrestorefinalconfirmation, false);
+    renderRestoreReviewState();
+    updateRestoreExecutionButtonState();
+}
+
+async function runRestoreReview() {
+    if (!restoreWorkflowState.selectedBackup?.id) {
+        setRestoreStatus("Choose a backup before running restore preflight.", "warning");
+        return;
+    }
+    setBusy(elements.dataManagementRestoreReviewBtn, true, "Running...");
+    setElementVisible(elements.dataManagementRestoreReviewEmpty, false);
+    setElementVisible(elements.dataManagementRestoreReviewChecks, true);
+    elements.dataManagementRestoreReviewChecks?.replaceChildren(createMigrationCatalogLoadingState());
+    try {
+        const data = await requestJson("/api/admin/data-management/restore/review", {
+            method: "POST",
+            body: JSON.stringify({ restore_plan: buildRestorePlan() }),
+        });
+        restoreWorkflowState.review = data.review || null;
+        restoreWorkflowState.reviewStale = false;
+        renderRestoreReviewState();
+        updateRestoreExecutionButtonState();
+        const supported = restoreWorkflowState.review?.supported === true;
+        const ready = restoreWorkflowState.review?.ready === true;
+        const message = supported && ready
+            ? "Restore preflight is ready for confirmation."
+            : "Restore preflight completed. Restore execution is not enabled for this selection.";
+        setRestoreStatus(message, supported && ready ? "success" : "warning");
+    } catch (error) {
+        restoreWorkflowState.review = null;
+        restoreWorkflowState.reviewStale = true;
+        setRestoreStatus(error.message || "Restore preflight could not be completed.", "danger");
+        elements.dataManagementRestoreReviewChecks?.replaceChildren(createSmallMutedElement(error.message || "Restore preflight failed."));
+    } finally {
+        setBusy(elements.dataManagementRestoreReviewBtn, false);
+    }
+}
+
+function renderRestoreReviewState() {
+    const review = restoreWorkflowState.review || {};
+    if (!review.checks) {
+        setElementVisible(elements.dataManagementRestoreReviewEmpty, true);
+        setElementVisible(elements.dataManagementRestoreReviewChecks, false);
+        renderRestoreConfirmSummary();
+        return;
+    }
+    setElementVisible(elements.dataManagementRestoreReviewEmpty, false);
+    setElementVisible(elements.dataManagementRestoreReviewChecks, true);
+    renderDataManagementReviewChecks(
+        elements.dataManagementRestoreReviewChecks,
+        Array.isArray(review.checks) ? review.checks : []
+    );
+    renderRestoreConfirmSummary();
+}
+
+function renderRestoreConfirmSummary() {
+    const container = elements.dataManagementRestoreConfirmSummary;
+    if (!container) {
+        return;
+    }
+    const review = restoreWorkflowState.review || {};
+    const summary = review.summary || {};
+    if (!review.checks) {
+        container.replaceChildren(createSmallMutedElement("Run restore preflight before confirmation."));
+        return;
+    }
+    const grid = document.createElement("div");
+    grid.className = "migration-review-grid";
+    [
+        ["Backup type", formatBackupType(summary.backup_type)],
+        ["Preflight", review.ready ? "Ready" : "Blocked"],
+        ["Execution support", review.supported ? "Enabled" : "Not enabled"],
+        ["Cosmos", summary.include_cosmos ? "Included" : "Not included"],
+        ["AI Search", summary.include_ai_search ? "Included" : "Not included"],
+        ["Source blobs", summary.include_source_blobs ? "Included" : "Not included"],
+    ].forEach(([label, value]) => {
+        const metric = document.createElement("div");
+        metric.className = "migration-review-metric";
+        const metricLabel = document.createElement("span");
+        metricLabel.textContent = label;
+        const metricValue = document.createElement("strong");
+        metricValue.textContent = value;
+        metric.append(metricLabel, metricValue);
+        grid.appendChild(metric);
+    });
+    container.replaceChildren(grid);
+}
+
+function showRestoreWorkflowStep(stepIndex, options = {}) {
+    const normalizedIndex = Math.max(0, Math.min(restoreWorkflowSteps.length - 1, Number(stepIndex)));
+    if (!options.skipValidation && normalizedIndex > restoreWorkflowState.activeStepIndex) {
+        if (!validateRestoreWorkflowStep(restoreWorkflowState.activeStepIndex)) {
+            return;
+        }
+    }
+    restoreWorkflowState.activeStepIndex = normalizedIndex;
+    restoreWorkflowState.highestVisitedStepIndex = Math.max(
+        restoreWorkflowState.highestVisitedStepIndex,
+        normalizedIndex
+    );
+    const activeStep = restoreWorkflowSteps[normalizedIndex];
+    document.querySelectorAll("[data-restore-step-panel]").forEach((panel) => {
+        const isActive = panel.dataset.restoreStepPanel === activeStep;
+        panel.classList.toggle("d-none", !isActive);
+        panel.setAttribute("aria-hidden", String(!isActive));
+    });
+    document.querySelectorAll("[data-restore-step-button]").forEach((button) => {
+        const buttonIndex = restoreWorkflowSteps.indexOf(button.dataset.restoreStepButton);
+        const isActive = buttonIndex === normalizedIndex;
+        button.classList.toggle("is-active", isActive);
+        button.classList.toggle("is-complete", buttonIndex < normalizedIndex);
+        if (isActive) {
+            button.setAttribute("aria-current", "step");
+        } else {
+            button.removeAttribute("aria-current");
+        }
+    });
+    updateRestoreWorkflowFooter();
+    updateRestoreExecutionButtonState();
+}
+
+function validateRestoreWorkflowStep(stepIndex) {
+    const step = restoreWorkflowSteps[stepIndex];
+    if (step === "backup" && !restoreWorkflowState.selectedBackup?.id) {
+        setRestoreStatus("Choose a backup from Backup Inventory before continuing.", "warning");
+        return false;
+    }
+    if (step === "review" && restoreWorkflowState.reviewStale) {
+        setRestoreStatus("Run restore preflight before continuing.", "warning");
+        return false;
+    }
+    return true;
+}
+
+function updateRestoreWorkflowFooter() {
+    const isFirst = restoreWorkflowState.activeStepIndex === 0;
+    const isLast = restoreWorkflowState.activeStepIndex === restoreWorkflowSteps.length - 1;
+    setButtonDisabled(elements.dataManagementRestoreBackBtn, isFirst);
+    setButtonDisabled(elements.dataManagementRestoreNextBtn, isLast);
+    setText(
+        elements.dataManagementRestoreStepPosition,
+        `Step ${formatNumber(restoreWorkflowState.activeStepIndex + 1)} of ${formatNumber(restoreWorkflowSteps.length)}`
+    );
+}
+
+function updateRestoreExecutionButtonState() {
+    const canExecute = Boolean(
+        restoreWorkflowState.review?.supported === true &&
+        restoreWorkflowState.review?.ready === true &&
+        elements.datamanagementrestorefinalconfirmation?.checked
+    );
+    setButtonDisabled(elements.dataManagementExecuteRestoreBtn, !canExecute);
+}
+
+async function queueRestore() {
+    if (!restoreWorkflowState.review?.supported || !restoreWorkflowState.review?.ready) {
+        setRestoreStatus("Restore execution is not enabled for this backup in the current build.", "warning");
+        return;
+    }
+    const data = await queueOperation("restore", null, { restore_plan: buildRestorePlan() }, elements.dataManagementExecuteRestoreBtn);
+    if (data?.job) {
+        restoreWorkflowState.currentJob = data.job;
+        setElementVisible(elements.dataManagementRestoreProgressEmpty, false);
+        setElementVisible(elements.dataManagementRestoreProgressState, true);
+        elements.dataManagementRestoreProgressState?.replaceChildren(createSmallMutedElement(`Restore job queued: ${data.job.id}`));
+        showRestoreWorkflowStep(restoreWorkflowSteps.indexOf("progress"), { skipValidation: true });
+    }
 }
 
 function createLabeledValue(label, value, allowBreak = false) {
@@ -4058,6 +4415,14 @@ function formatStatusLabel(value) {
 }
 
 function formatActivityLabel(value) {
+    const friendlyLabels = {
+        new_only: "Copy Missing Items Only",
+        delta_upsert: "Catch Up Changed Items",
+        mirror_with_deletions: "Make Destination Match Source",
+    };
+    if (friendlyLabels[value]) {
+        return friendlyLabels[value];
+    }
     return String(value || "")
         .replace(/[_-]/g, " ")
         .replace(/\b\w/g, (letter) => letter.toUpperCase());
