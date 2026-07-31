@@ -131,6 +131,28 @@ def _log_cosmos_editor_failure(action, message, details=None):
     )
 
 
+def _sanitize_backup_cleanup_result_for_response(cleanup_result):
+    if not isinstance(cleanup_result, dict):
+        return {}
+
+    sanitized = dict(cleanup_result)
+    errors = sanitized.get("errors")
+    if isinstance(errors, list):
+        sanitized_errors = []
+        for error_item in errors:
+            if isinstance(error_item, dict):
+                sanitized_errors.append({
+                    "job_id": error_item.get("job_id"),
+                    "error": "Backup cleanup failed for this item.",
+                })
+            else:
+                sanitized_errors.append({
+                    "error": "Backup cleanup failed for this item.",
+                })
+        sanitized["errors"] = sanitized_errors
+    return sanitized
+
+
 def register_route_backend_data_management(bp):
     @bp.route("/api/admin/data-management/settings", methods=["GET"])
     @swagger_route(security=get_auth_security())
@@ -643,13 +665,14 @@ def register_route_backend_data_management(bp):
                 "error_count": len(cleanup_result.get("errors") or []),
             },
         )
+        public_cleanup_result = _sanitize_backup_cleanup_result_for_response(cleanup_result)
         if cleanup_result.get("success") is False:
             return jsonify({
                 "success": False,
                 "error": "Backup retention cleanup completed with errors.",
-                "cleanup": cleanup_result,
+                "cleanup": public_cleanup_result,
             }), 400
-        return jsonify({"success": True, "cleanup": cleanup_result}), 200
+        return jsonify({"success": True, "cleanup": public_cleanup_result}), 200
 
     @bp.route("/api/admin/data-management/backups/<backup_id>", methods=["DELETE"])
     @swagger_route(security=get_auth_security())
