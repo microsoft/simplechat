@@ -10931,7 +10931,7 @@ def cleanup_expired_data_management_backups(
         except Exception as exc:
             error = {
                 "job_id": _safe_text(job.get("id")),
-                "error": _sanitize_data_management_backup_text(str(exc)),
+                "error": "Backup deletion failed for this item.",
             }
             result["errors"].append(error)
             log_event(
