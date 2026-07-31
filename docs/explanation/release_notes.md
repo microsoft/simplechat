@@ -11,6 +11,13 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Restore supports configured target Cosmos DB, AI Search, and Enhanced Citation blob targets while preserving secret-safe review and job responses.
     *   (Ref: Closes #1091, `functions_data_management.py`, `functions_data_management_restore_state.py`, `route_backend_data_management.py`, `admin_settings.html`, `admin_data_management.js`, `DATA_MANAGEMENT_RESTORE.md`)
 
+#### Bug Fixes
+
+*   **Retry and Edit Streaming Parity**
+    *   Retry and edit chat flows now use the same full SSE streaming path as first-send chat, restoring live token updates, streamed thoughts, stop controls, and recovery behavior.
+    *   The stream path reuses the retry/edit user message and thread metadata created by the preparation endpoints, preserving carousel attempt history without duplicating user messages.
+    *   (Ref: Fixes #963, `route_backend_chats.py`, `chat-retry.js`, `chat-edit.js`, `test_chat_retry_edit_streaming_parity.py`)
+
 #### User Interface Enhancements
 
 *   **Custom Pages Admin Open Action**
