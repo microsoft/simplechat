@@ -24,6 +24,7 @@ let cosmosEditorResultCount = 0;
 let cosmosEditorSelectedDocument = null;
 let cosmosEditorPendingDocument = null;
 let pendingDataManagementCancellationJob = null;
+let pendingDataManagementBackupDelete = null;
 let pendingRestoreBackup = null;
 let restoreReview = null;
 let migrationWorkflowRefreshTimer = null;
@@ -108,6 +109,8 @@ function bindElements() {
         "data_management_enabled",
         "data_management_full_frequency",
         "data_management_scheduled_time_utc",
+        "data_management_retention_value",
+        "data_management_retention_unit",
         "data_management_retention_days",
         "data_management_partial_enabled",
         "data_management_low_impact_mode",
@@ -207,6 +210,7 @@ function bindElements() {
         "data-management-test-storage-btn",
         "data-management-run-full-backup-btn",
         "data-management-run-partial-backup-btn",
+        "data-management-run-retention-cleanup-btn",
         "data-management-refresh-backups-btn",
         "data-management-view-full-backups-btn",
         "data-management-view-partial-backups-btn",
@@ -262,6 +266,9 @@ function bindElements() {
         "data-management-migration-cancel-modal",
         "data-management-migration-cancel-message",
         "data-management-confirm-migration-cancel-btn",
+        "data-management-backup-delete-modal",
+        "data-management-backup-delete-message",
+        "data-management-confirm-backup-delete-btn",
         "data-management-cosmos-editor-section",
         "data-management-cosmos-editor-open-danger-btn",
         "data-management-cosmos-editor-locked-message",
@@ -328,6 +335,7 @@ function bindEvents() {
     elements.dataManagementTestTargetEcStorageBtn?.addEventListener("click", testTargetEnhancedCitationStorage);
     elements.dataManagementRunFullBackupBtn?.addEventListener("click", () => queueBackup("full"));
     elements.dataManagementRunPartialBackupBtn?.addEventListener("click", () => queueBackup("partial"));
+    elements.dataManagementRunRetentionCleanupBtn?.addEventListener("click", runBackupRetentionCleanup);
     elements.dataManagementMigrationPreviewBtn?.addEventListener("click", () => runMigrationReview(elements.dataManagementMigrationPreviewBtn));
     elements.dataManagementExecuteMigrationBtn?.addEventListener("click", () => queueMigration(false));
     elements.dataManagementRefreshMigrationSummaryBtn?.addEventListener("click", () => runMigrationReview(elements.dataManagementRefreshMigrationSummaryBtn));
@@ -375,6 +383,10 @@ function bindEvents() {
         pendingDataManagementCancellationJob = null;
     });
     elements.dataManagementConfirmMigrationCancelBtn?.addEventListener("click", requestDataManagementCancellation);
+    elements.dataManagementBackupDeleteModal?.addEventListener("hidden.bs.modal", () => {
+        pendingDataManagementBackupDelete = null;
+    });
+    elements.dataManagementConfirmBackupDeleteBtn?.addEventListener("click", deleteDataManagementBackup);
     elements.dataManagementKeyVaultLink?.addEventListener("click", openKeyVaultSettings);
     elements.dataManagementCosmosEditorOpenDangerBtn?.addEventListener("click", showCosmosEditorDangerModal);
     elements.datamanagementcosmoseditordangeraccept?.addEventListener("change", updateCosmosEditorDangerAcceptState);
@@ -389,6 +401,8 @@ function bindEvents() {
     elements.dataManagementCosmosEditorConfirmSaveBtn?.addEventListener("click", saveCosmosEditorDocument);
     elements.datamanagementmigrationtemporarydestinationruenabled?.addEventListener("change", updateMigrationCapacityVisibility);
     elements.datamanagementbackuptemporarysourceruenabled?.addEventListener("change", updateBackupCapacityVisibility);
+    elements.datamanagementretentionvalue?.addEventListener("input", updateRetentionControls);
+    elements.datamanagementretentionunit?.addEventListener("change", updateRetentionControls);
     [
         elements.datamanagementmigrationmodenewonly,
         elements.datamanagementmigrationmodedeltaupsert,
@@ -408,6 +422,7 @@ function bindEvents() {
     setMigrationTargetVisibility();
     updateMigrationCapacityVisibility();
     updateBackupCapacityVisibility();
+    updateRetentionControls();
     updateMigrationModeVisibility();
     updateMigrationSearchWriteFreezeVisibility();
     updateConnectionStringStatus();
@@ -679,6 +694,8 @@ function populateSettings(settings) {
     setChecked(elements.datamanagementenabled, settings.enabled);
     setValue(elements.datamanagementfullfrequency, settings.full_backup_frequency || "weekly");
     setValue(elements.datamanagementscheduledtimeutc, settings.scheduled_time_utc || settings.default_scheduled_time_utc || "03:00");
+    setValue(elements.datamanagementretentionvalue, settings.retention_value ?? settings.retention_days ?? 30);
+    setValue(elements.datamanagementretentionunit, settings.retention_unit || "days");
     setValue(elements.datamanagementretentiondays, settings.retention_days ?? 30);
     setChecked(elements.datamanagementpartialenabled, settings.partial_backups_enabled !== false);
     setChecked(elements.datamanagementlowimpactmode, settings.low_impact_mode !== false);
@@ -726,6 +743,7 @@ function populateSettings(settings) {
     }
     updateSourceBlobBackupAvailability(settings);
     updateKeyStorageExperience(settings);
+    updateRetentionControls();
     setStorageAuthVisibility();
     setMigrationTargetVisibility();
     updateMigrationCapacityVisibility();
@@ -839,6 +857,34 @@ function updateBackupCapacityVisibility() {
     }
 }
 
+function getRetentionUnitDays(unit) {
+    const unitDays = {
+        days: 1,
+        weeks: 7,
+        months: 30,
+        years: 365,
+    };
+    return unitDays[unit] || unitDays.days;
+}
+
+function getRetentionDaysValue() {
+    const unit = getValue(elements.datamanagementretentionunit) || "days";
+    const value = getNumberValue(elements.datamanagementretentionvalue, 30);
+    return Math.max(1, Math.min(3650, value * getRetentionUnitDays(unit)));
+}
+
+function updateRetentionControls() {
+    const unit = getValue(elements.datamanagementretentionunit) || "days";
+    const maxValue = Math.max(1, Math.floor(3650 / getRetentionUnitDays(unit)));
+    if (elements.datamanagementretentionvalue) {
+        elements.datamanagementretentionvalue.max = String(maxValue);
+        if (getNumberValue(elements.datamanagementretentionvalue, 1) > maxValue) {
+            elements.datamanagementretentionvalue.value = String(maxValue);
+        }
+    }
+    setValue(elements.datamanagementretentiondays, getRetentionDaysValue());
+}
+
 function setKeyStorageAlert(variant, iconClass, title, message, linkText) {
     const alertElement = elements.dataManagementKeyStorageAlert;
     const iconElement = elements.dataManagementKeyStorageAlertIcon;
@@ -875,7 +921,9 @@ function collectSettings() {
         enabled: Boolean(elements.datamanagementenabled?.checked),
         full_backup_frequency: getValue(elements.datamanagementfullfrequency) || "weekly",
         scheduled_time_utc: getValue(elements.datamanagementscheduledtimeutc) || "03:00",
-        retention_days: getNumberValue(elements.datamanagementretentiondays, 30),
+        retention_value: getNumberValue(elements.datamanagementretentionvalue, 30),
+        retention_unit: getValue(elements.datamanagementretentionunit) || "days",
+        retention_days: getRetentionDaysValue(),
         partial_backups_enabled: Boolean(elements.datamanagementpartialenabled?.checked),
         low_impact_mode: Boolean(elements.datamanagementlowimpactmode?.checked),
         include_cosmos: Boolean(elements.datamanagementincludecosmos?.checked),
@@ -3013,40 +3061,46 @@ function createBackupWarningCell(backup) {
         cell.appendChild(createBadge(`${formatNumber(warningCount)} warning${warningCount === 1 ? "" : "s"}`, "bg-warning text-dark"));
         return cell;
     }
-
-    function createBackupActionCell(backup) {
-        const cell = document.createElement("td");
-        const viewButton = document.createElement("button");
-        viewButton.type = "button";
-        viewButton.className = "btn btn-outline-primary btn-sm";
-        viewButton.disabled = !backup?.id;
-        const viewIcon = document.createElement("i");
-        viewIcon.className = "bi bi-list-check me-1";
-        viewButton.append(viewIcon, document.createTextNode("View Log"));
-        viewButton.addEventListener("click", () => loadDataManagementJobDetail(backup.id));
-        cell.appendChild(viewButton);
-
-        const canRestore = Boolean(
-            backup?.id &&
-            backup?.manifest_path &&
-            ["completed", "completed_with_warnings"].includes(String(backup.status || ""))
-        );
-        if (canRestore) {
-            const restoreButton = document.createElement("button");
-            restoreButton.type = "button";
-            restoreButton.className = "btn btn-outline-danger btn-sm ms-1";
-            const restoreIcon = document.createElement("i");
-            restoreIcon.className = "bi bi-arrow-counterclockwise me-1";
-            restoreButton.append(restoreIcon, document.createTextNode("Restore"));
-            restoreButton.addEventListener("click", () => openRestoreModal(backup));
-            cell.appendChild(restoreButton);
-        }
-        return cell;
-    }
     const noWarnings = document.createElement("span");
     noWarnings.className = "text-muted";
     noWarnings.textContent = "None";
     cell.appendChild(noWarnings);
+    return cell;
+}
+
+function createBackupActionCell(backup) {
+    const cell = document.createElement("td");
+    const viewButton = document.createElement("button");
+    viewButton.type = "button";
+    viewButton.className = "btn btn-outline-primary btn-sm";
+    viewButton.disabled = !backup?.id;
+    viewButton.append(createIcon("bi bi-list-check me-1"), document.createTextNode("View Log"));
+    viewButton.addEventListener("click", () => loadDataManagementJobDetail(backup.id));
+    cell.appendChild(viewButton);
+
+    const canRestore = Boolean(
+        backup?.id &&
+        backup?.manifest_path &&
+        ["completed", "completed_with_warnings"].includes(String(backup.status || ""))
+    );
+    if (canRestore) {
+        const restoreButton = document.createElement("button");
+        restoreButton.type = "button";
+        restoreButton.className = "btn btn-outline-danger btn-sm ms-1";
+        restoreButton.append(createIcon("bi bi-arrow-counterclockwise me-1"), document.createTextNode("Restore"));
+        restoreButton.addEventListener("click", () => openRestoreModal(backup));
+        cell.appendChild(restoreButton);
+    }
+
+    if (backup?.can_delete === true) {
+        const deleteButton = document.createElement("button");
+        deleteButton.type = "button";
+        deleteButton.className = "btn btn-outline-danger btn-sm ms-1";
+        deleteButton.disabled = !backup.id;
+        deleteButton.append(createIcon("bi bi-trash3 me-1"), document.createTextNode("Delete"));
+        deleteButton.addEventListener("click", () => openDataManagementBackupDeleteModal(backup));
+        cell.appendChild(deleteButton);
+    }
     return cell;
 }
 
@@ -3379,6 +3433,77 @@ async function requestDataManagementCancellation() {
         showToast(error.message || "Data Management job cancellation could not be requested.", "danger");
     } finally {
         setBusy(elements.dataManagementConfirmMigrationCancelBtn, false);
+    }
+}
+
+async function runBackupRetentionCleanup() {
+    setBusy(elements.dataManagementRunRetentionCleanupBtn, true, "Cleaning...");
+    try {
+        await saveDataManagementSettings(true);
+        const data = await requestJson("/api/admin/data-management/backups/retention/cleanup", {
+            method: "POST",
+            body: JSON.stringify({}),
+        });
+        const cleanup = data.cleanup || {};
+        const deletedCount = Number(cleanup.deleted_count || 0);
+        const message = deletedCount
+            ? `Backup retention cleanup deleted ${formatNumber(deletedCount)} expired backup${deletedCount === 1 ? "" : "s"}.`
+            : "Backup retention cleanup found no expired backups to delete.";
+        setStatus(message, "success");
+        showToast(message, "success");
+        loadDataManagementBackups();
+        loadDataManagementJobs();
+    } catch (error) {
+        setStatus(error.message || "Backup retention cleanup could not be completed.", "danger");
+        showToast(error.message || "Backup retention cleanup could not be completed.", "danger");
+    } finally {
+        setBusy(elements.dataManagementRunRetentionCleanupBtn, false);
+    }
+}
+
+function openDataManagementBackupDeleteModal(backup) {
+    if (!backup?.id || !elements.dataManagementBackupDeleteModal || !window.bootstrap?.Modal) {
+        return;
+    }
+    pendingDataManagementBackupDelete = {
+        id: backup.id,
+        backupType: backup.backup_type || "backup",
+    };
+    setText(
+        elements.dataManagementBackupDeleteMessage,
+        `Delete ${formatBackupType(backup.backup_type || "backup")} backup ${backup.id}?`
+    );
+    window.bootstrap.Modal.getOrCreateInstance(elements.dataManagementBackupDeleteModal).show();
+}
+
+async function deleteDataManagementBackup() {
+    const pendingBackup = pendingDataManagementBackupDelete;
+    const backupId = pendingBackup?.id;
+    if (!backupId) {
+        return;
+    }
+    setBusy(elements.dataManagementConfirmBackupDeleteBtn, true, "Deleting...");
+    try {
+        const data = await requestJson(`/api/admin/data-management/backups/${encodeURIComponent(backupId)}`, {
+            method: "DELETE",
+            body: JSON.stringify({ reason: "manual" }),
+        });
+        const cleanup = data.cleanup || {};
+        const deletedBlobCount = Number(cleanup.deleted_blob_count || 0);
+        const message = `Deleted ${formatBackupType(pendingBackup.backupType)} backup and ${formatNumber(deletedBlobCount)} stored artifact${deletedBlobCount === 1 ? "" : "s"}.`;
+        setStatus(message, "success");
+        showToast("Backup deleted.", "success");
+        window.bootstrap.Modal.getOrCreateInstance(elements.dataManagementBackupDeleteModal).hide();
+        loadDataManagementBackups();
+        loadDataManagementJobs();
+        if (currentJobDetailId === backupId) {
+            stopJobDetailAutoRefresh({ clearJob: true });
+        }
+    } catch (error) {
+        setStatus(error.message || "Backup could not be deleted.", "danger");
+        showToast(error.message || "Backup could not be deleted.", "danger");
+    } finally {
+        setBusy(elements.dataManagementConfirmBackupDeleteBtn, false);
     }
 }
 

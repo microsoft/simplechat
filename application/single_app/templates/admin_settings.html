@@ -5590,8 +5590,19 @@
                                 <div class="form-text">Default is 03:00 UTC.</div>
                             </div>
                             <div class="col-md-4">
-                                <label class="form-label" for="data_management_retention_days">Retention days</label>
-                                <input class="form-control" type="number" id="data_management_retention_days" min="1" max="3650" value="30">
+                                <label class="form-label" for="data_management_retention_value">Delete backups after</label>
+                                <div class="input-group">
+                                    <input class="form-control" type="number" id="data_management_retention_value" min="1" max="3650" value="30" aria-describedby="data-management-retention-help">
+                                    <label class="visually-hidden" for="data_management_retention_unit">Retention unit</label>
+                                    <select class="form-select" id="data_management_retention_unit" aria-label="Retention unit">
+                                        <option value="days">Days</option>
+                                        <option value="weeks">Weeks</option>
+                                        <option value="months">Months</option>
+                                        <option value="years">Years</option>
+                                    </select>
+                                </div>
+                                <input type="hidden" id="data_management_retention_days" value="30">
+                                <div class="form-text" id="data-management-retention-help">Automatic cleanup keeps the newest successful full backup as a safety baseline.</div>
                             </div>
                         </div>
                         <div class="row g-3 mt-1">
@@ -6442,9 +6453,14 @@
                             <h4 class="mb-1">Backup Inventory</h4>
                             <p class="text-muted mb-0 small">Track completed full and partial backups created by Data Management jobs.</p>
                         </div>
-                        <button type="button" class="btn btn-outline-secondary btn-sm" id="data-management-refresh-backups-btn">
-                            <i class="bi bi-arrow-clockwise me-1"></i>Refresh
-                        </button>
+                        <div class="d-flex flex-wrap gap-2">
+                            <button type="button" class="btn btn-outline-danger btn-sm" id="data-management-run-retention-cleanup-btn">
+                                <i class="bi bi-trash3 me-1"></i>Run Retention Cleanup
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" id="data-management-refresh-backups-btn">
+                                <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                            </button>
+                        </div>
                     </div>
                     <div class="row g-3 mb-3" role="group" aria-label="Backup inventory filters">
                         <div class="col-lg-4">
@@ -6936,6 +6952,27 @@
                             <div class="modal-footer">
                                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Keep Running</button>
                                 <button type="button" class="btn btn-danger" id="data-management-confirm-migration-cancel-btn">Request Cancellation</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="modal fade" id="data-management-backup-delete-modal" tabindex="-1" aria-labelledby="data-management-backup-delete-title" aria-hidden="true">
+                        <div class="modal-dialog modal-dialog-centered">
+                            <div class="modal-content border-danger">
+                                <div class="modal-header">
+                                    <h5 class="modal-title" id="data-management-backup-delete-title">Delete Data Management Backup</h5>
+                                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                </div>
+                                <div class="modal-body">
+                                    <p class="mb-2" id="data-management-backup-delete-message"></p>
+                                    <div class="alert alert-warning small mb-0" role="alert">
+                                        Backup deletion removes stored artifacts, job timeline records, and differential sidecar state for this job. Future partial backups will re-export affected unchanged items.
+                                    </div>
+                                </div>
+                                <div class="modal-footer">
+                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Keep Backup</button>
+                                    <button type="button" class="btn btn-danger" id="data-management-confirm-backup-delete-btn">Delete Backup</button>
+                                </div>
                             </div>
                         </div>
                     </div>
