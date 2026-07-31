@@ -48,6 +48,11 @@ from functions_data_management import (
 from swagger_wrapper import get_auth_security, swagger_route
 
 
+DATA_MANAGEMENT_HISTORY_VALIDATION_ERROR = (
+    "Data Management history filters or continuation token are invalid."
+)
+
+
 def _get_admin_context():
     admin_user = session.get("user", {}) if session else {}
     admin_email = admin_user.get("preferred_username") or admin_user.get("email") or "unknown"
@@ -425,8 +430,11 @@ def register_route_backend_data_management(bp):
                 continuation_token=request.args.get("continuation_token"),
                 filters=_get_history_filters("jobs"),
             )
-        except DataManagementHistoryPaginationError as exc:
-            return jsonify({"success": False, "error": str(exc)}), 400
+        except DataManagementHistoryPaginationError:
+            return jsonify({
+                "success": False,
+                "error": DATA_MANAGEMENT_HISTORY_VALIDATION_ERROR,
+            }), 400
         return jsonify({
             "success": True,
             "jobs": page["items"],
@@ -575,8 +583,11 @@ def register_route_backend_data_management(bp):
                 continuation_token=request.args.get("continuation_token"),
                 filters=_get_history_filters("backups"),
             )
-        except DataManagementHistoryPaginationError as exc:
-            return jsonify({"success": False, "error": str(exc)}), 400
+        except DataManagementHistoryPaginationError:
+            return jsonify({
+                "success": False,
+                "error": DATA_MANAGEMENT_HISTORY_VALIDATION_ERROR,
+            }), 400
         return jsonify({"success": True, **backup_summary}), 200
 
     @bp.route("/api/admin/data-management/migration/catalog/<target_type>", methods=["GET"])

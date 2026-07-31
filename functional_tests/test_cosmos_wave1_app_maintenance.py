@@ -2,12 +2,13 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 1 app maintenance framework.
-Version: 0.250.103
+Version: 0.250.104
 Implemented in: 0.250.005
 Conversation cache metrics updated in: 0.250.034
 Stale cache cleanup maintenance updated in: 0.250.038
 DAI version marker TTL hygiene updated in: 0.250.043
 Data Management history pagination index updated in: 0.250.103
+CodeQL remediation version alignment updated in: 0.250.104
 
 This test ensures the maintenance runner initializes cache version documents
 and records durable run state without requiring live Azure resources.
@@ -115,7 +116,7 @@ class FakeCosmosDatabase:
 
 def _load_maintenance_module(container, governance_container=None):
     fake_config = types.ModuleType("config")
-    fake_config.VERSION = "0.250.103"
+    fake_config.VERSION = "0.250.104"
     fake_config.cosmos_settings_container = container
     fake_config.cosmos_governance_policies_container = governance_container or container
     fake_config.cosmos_document_access_index_container = FakeCosmosContainer()

@@ -1,7 +1,7 @@
 # Data Management Backup and Migration
 
 Implemented in version: **0.241.211**
-Updated in version: **0.250.103**
+Updated in version: **0.250.104**
 
 ## Overview
 
@@ -113,6 +113,7 @@ For durable provenance, destination access probes, collision protection, checkpo
 ### Security
 
 - All Data Management routes are admin-only.
+- History validation failures return a fixed public message; raw exception text and internal cursor/query details are never returned to the browser.
 - Backup storage connection strings, target Cosmos keys, and encryption key references are redacted before being returned to the browser.
 - The admin JavaScript uses DOM creation and `textContent` for API-returned job data.
 - Browser runtime JavaScript is served from the local SimpleChat static path: `static/js/admin/admin_data_management.js`.

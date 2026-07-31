@@ -2,8 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test for Data Management history pagination.
-Version: 0.250.103
+Version: 0.250.104
 Implemented in: 0.250.103
+Updated in: 0.250.104
 
 This test ensures job history and backup inventory use deterministic, filtered,
 sanitized Cosmos pages with opaque continuation state and global summaries.
@@ -149,7 +150,7 @@ def load_data_management_module(monkeypatch, container):
     """Load production helpers with an in-memory Data Management job container."""
     config_module = types.ModuleType("config")
     config_module.CLIENTS = {}
-    config_module.VERSION = "0.250.103"
+    config_module.VERSION = "0.250.104"
     config_module.SECRET_KEY = "history-pagination-functional-test-secret"
     config_module.cosmos_data_management_jobs_container = container
     config_module.cosmos_data_management_job_items_container = container
@@ -540,9 +541,10 @@ def test_admin_history_routes_fail_safely_for_invalid_tokens(monkeypatch):
     assert response.status_code == 400
     assert response.get_json() == {
         "success": False,
-        "error": "Continuation token is invalid or expired.",
+        "error": "Data Management history filters or continuation token are invalid.",
     }
     assert "SELECT" not in response.get_data(as_text=True)
+    assert "Continuation token is invalid or expired." not in response.get_data(as_text=True)
 
 
 def test_deployers_apply_the_data_management_history_index():

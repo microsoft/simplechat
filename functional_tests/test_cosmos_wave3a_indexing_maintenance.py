@@ -2,11 +2,12 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 3A indexing policy maintenance.
-Version: 0.250.103
+Version: 0.250.104
 Implemented in: 0.250.008
 Maintenance cleanup integration updated in: 0.250.038
 Manual admin apply override updated in: 0.250.039
 Data Management history pagination index updated in: 0.250.103
+CodeQL remediation version alignment updated in: 0.250.104
 
 This test ensures expected Cosmos indexing policies can be compared, safely
 merged, and invoked through the app maintenance framework without live Azure
