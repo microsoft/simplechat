@@ -1,13 +1,14 @@
 # test_admin_data_management_settings_ui.py
 """
 UI test for Admin Settings Data Management controls.
-Version: 0.250.105
+Version: 0.250.106
 Implemented in: 0.241.211
 Updated in: 0.241.221
 Updated in: 0.250.102
 Updated in: 0.250.103
 Updated in: 0.250.104
 Updated in: 0.250.105
+Updated in: 0.250.106
 
 This test ensures admins can discover the Data Management tab, see the
 operational-business-hours warning, and access the backup, encryption,
@@ -201,6 +202,20 @@ def test_admin_data_management_controls_render_from_template():
         "data-management-backup-pagination-status",
         "data-management-backup-previous-page-btn",
         "data-management-backup-next-page-btn",
+        "data-management-restore-modal",
+        "data-management-restore-title",
+        "data-management-restore-backup-summary",
+        "data_management_restore_policy",
+        "data_management_restore_include_cosmos",
+        "data_management_restore_include_ai_search",
+        "data_management_restore_include_source_blobs",
+        "data-management-restore-confirmation-section",
+        "data_management_restore_overwrite_confirmation_phrase",
+        "data-management-restore-review-btn",
+        "data-management-restore-review-status",
+        "data-management-restore-review-checks",
+        "data_management_restore_final_confirmation",
+        "data-management-restore-queue-btn",
         "data-management-jobs-tbody",
         "data_management_job_operation_filter",
         "data_management_job_status_filter",
@@ -245,6 +260,13 @@ def test_admin_data_management_controls_render_from_template():
     assert "I understand this editor can damage overall system health." in template
     assert "Required phrase: <code>I understand this can damage system data</code>" in template
     assert '<h4 class="mb-1">Backup Inventory</h4>' in template
+    assert "Restore Backup" in template
+    assert "Run Restore Review" in template
+    assert "Queue Restore Job" in template
+    assert "Required phrase: <code>RESTORE WITH OVERWRITE</code>" in template
+    assert "openRestoreModal" in js_source
+    assert 'requestJson("/api/admin/data-management/restore/review"' in js_source
+    assert 'queueOperation("restore"' in js_source
     assert 'aria-label="Backup inventory filters"' in template
     assert '<span>Available backups</span>' in template
     assert '<th scope="col">Backup</th>' in template

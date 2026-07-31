@@ -1,7 +1,7 @@
 # Data Management Backup and Migration
 
 Implemented in version: **0.241.211**
-Updated in version: **0.250.105**
+Updated in version: **0.250.106**
 
 ## Overview
 
@@ -111,6 +111,18 @@ Any target, scope, or option change marks the review stale and prevents confirma
 Migration execution currently copies selected SimpleChat Cosmos records, matching AI Search documents for selected document scopes, and source document blobs when Enhanced Citations source and destination storage are configured.
 
 For durable provenance, destination access probes, collision protection, checkpoint retries, transfer telemetry, and temporary destination Cosmos capacity controls, see [Data Management Migration Resilience](DATA_MANAGEMENT_MIGRATION_RESILIENCE.md).
+
+### Restore Workflow
+
+The Backup Inventory exposes a **Restore** action for completed backup jobs with a durable manifest. Restore uses a reviewed workflow before queueing any target writes:
+
+1. Select a completed backup from Backup Inventory.
+2. Choose create-only or explicitly confirmed overwrite restore policy.
+3. Select included restore surfaces: Cosmos DB, AI Search, and Enhanced Citation blobs.
+4. Run preflight review to validate the manifest, target access, partition-key compatibility, and destination collision policy.
+5. Confirm the reviewed plan and queue a durable restore job.
+
+Create-only restore is the default and blocks existing destination collisions. Overwrite restore requires the exact `RESTORE WITH OVERWRITE` phrase. Running restores use durable checkpoints, sanitized progress, cancellation, retry, and Activity Log auditing. For implementation and recovery guidance, see [Data Management Restore](DATA_MANAGEMENT_RESTORE.md).
 
 ### Security
 

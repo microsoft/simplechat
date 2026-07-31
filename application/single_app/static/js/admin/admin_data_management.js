@@ -8,6 +8,7 @@ const backupStorageAuthConnectionString = "connection_string";
 const targetCosmosDatabaseName = "SimpleChat";
 const cosmosEditorConfirmationPhrase = "I understand this can damage system data";
 const migrationMirrorConfirmationPhrase = "MIRROR WITH DELETIONS";
+const restoreOverwriteConfirmationPhrase = "RESTORE WITH OVERWRITE";
 const elements = {};
 let dataManagementModified = false;
 let storedBackupConnectionStringAvailable = false;
@@ -23,6 +24,8 @@ let cosmosEditorResultCount = 0;
 let cosmosEditorSelectedDocument = null;
 let cosmosEditorPendingDocument = null;
 let pendingDataManagementCancellationJob = null;
+let pendingRestoreBackup = null;
+let restoreReview = null;
 let migrationWorkflowRefreshTimer = null;
 let migrationWorkflowRefreshInFlight = false;
 
@@ -220,6 +223,20 @@ function bindElements() {
         "data-management-backup-pagination-status",
         "data-management-backup-previous-page-btn",
         "data-management-backup-next-page-btn",
+        "data-management-restore-modal",
+        "data-management-restore-title",
+        "data-management-restore-backup-summary",
+        "data_management_restore_policy",
+        "data_management_restore_include_cosmos",
+        "data_management_restore_include_ai_search",
+        "data_management_restore_include_source_blobs",
+        "data-management-restore-confirmation-section",
+        "data_management_restore_overwrite_confirmation_phrase",
+        "data-management-restore-review-btn",
+        "data-management-restore-review-status",
+        "data-management-restore-review-checks",
+        "data_management_restore_final_confirmation",
+        "data-management-restore-queue-btn",
         "data-management-refresh-jobs-btn",
         "data-management-jobs-tbody",
         "data_management_job_operation_filter",
@@ -329,6 +346,19 @@ function bindEvents() {
     ].forEach((filter) => filter?.addEventListener("change", () => resetAndLoadHistory("backups")));
     elements.dataManagementBackupPreviousPageBtn?.addEventListener("click", () => loadPreviousHistoryPage("backups"));
     elements.dataManagementBackupNextPageBtn?.addEventListener("click", () => loadNextHistoryPage("backups"));
+    elements.datamanagementrestorepolicy?.addEventListener("change", () => {
+        invalidateRestoreReview();
+        updateRestoreConfirmationVisibility();
+    });
+    [
+        elements.datamanagementrestoreincludecosmos,
+        elements.datamanagementrestoreincludeaisearch,
+        elements.datamanagementrestoreincludesourceblobs,
+    ].forEach((control) => control?.addEventListener("change", invalidateRestoreReview));
+    elements.datamanagementrestoreoverwriteconfirmationphrase?.addEventListener("input", updateRestoreQueueButtonState);
+    elements.datamanagementrestorefinalconfirmation?.addEventListener("change", updateRestoreQueueButtonState);
+    elements.dataManagementRestoreReviewBtn?.addEventListener("click", runRestoreReview);
+    elements.dataManagementRestoreQueueBtn?.addEventListener("click", queueRestore);
     elements.dataManagementRefreshJobsBtn?.addEventListener("click", loadDataManagementJobs);
     [
         elements.datamanagementjoboperationfilter,
@@ -1662,6 +1692,9 @@ function buttonForOperation(operation, backupType) {
     if (operation === "migration") {
         return elements.dataManagementExecuteMigrationBtn;
     }
+    if (operation === "restore") {
+        return elements.dataManagementRestoreQueueBtn;
+    }
     return null;
 }
 
@@ -2399,6 +2432,9 @@ function formatOperation(operation, backupType) {
     if (operation === "backup") {
         return `${backupType || "manual"} backup`;
     }
+    if (operation === "restore") {
+        return "restore";
+    }
     return operation.replace(/_/g, " ");
 }
 
@@ -2916,7 +2952,7 @@ function createBackupRow(backup) {
     row.appendChild(createBackupStorageCell(backup));
     row.appendChild(createBackupProtectionCell(backup));
     row.appendChild(createBackupWarningCell(backup));
-    row.appendChild(createJobActionCell(backup.id));
+    row.appendChild(createBackupActionCell(backup));
     return row;
 }
 
@@ -2977,11 +3013,224 @@ function createBackupWarningCell(backup) {
         cell.appendChild(createBadge(`${formatNumber(warningCount)} warning${warningCount === 1 ? "" : "s"}`, "bg-warning text-dark"));
         return cell;
     }
+
+    function createBackupActionCell(backup) {
+        const cell = document.createElement("td");
+        const viewButton = document.createElement("button");
+        viewButton.type = "button";
+        viewButton.className = "btn btn-outline-primary btn-sm";
+        viewButton.disabled = !backup?.id;
+        const viewIcon = document.createElement("i");
+        viewIcon.className = "bi bi-list-check me-1";
+        viewButton.append(viewIcon, document.createTextNode("View Log"));
+        viewButton.addEventListener("click", () => loadDataManagementJobDetail(backup.id));
+        cell.appendChild(viewButton);
+
+        const canRestore = Boolean(
+            backup?.id &&
+            backup?.manifest_path &&
+            ["completed", "completed_with_warnings"].includes(String(backup.status || ""))
+        );
+        if (canRestore) {
+            const restoreButton = document.createElement("button");
+            restoreButton.type = "button";
+            restoreButton.className = "btn btn-outline-danger btn-sm ms-1";
+            const restoreIcon = document.createElement("i");
+            restoreIcon.className = "bi bi-arrow-counterclockwise me-1";
+            restoreButton.append(restoreIcon, document.createTextNode("Restore"));
+            restoreButton.addEventListener("click", () => openRestoreModal(backup));
+            cell.appendChild(restoreButton);
+        }
+        return cell;
+    }
     const noWarnings = document.createElement("span");
     noWarnings.className = "text-muted";
     noWarnings.textContent = "None";
     cell.appendChild(noWarnings);
     return cell;
+}
+
+function openRestoreModal(backup) {
+    pendingRestoreBackup = backup || null;
+    restoreReview = null;
+    setValue(elements.datamanagementrestorepolicy, "create_only");
+    setChecked(elements.datamanagementrestoreincludecosmos, true);
+    setChecked(elements.datamanagementrestoreincludeaisearch, true);
+    setChecked(elements.datamanagementrestoreincludesourceblobs, true);
+    setChecked(elements.datamanagementrestorefinalconfirmation, false);
+    setValue(elements.datamanagementrestoreoverwriteconfirmationphrase, "");
+    renderRestoreBackupSummary(backup);
+    renderRestoreReviewEmpty();
+    updateRestoreConfirmationVisibility();
+    updateRestoreQueueButtonState();
+    if (elements.dataManagementRestoreModal && window.bootstrap?.Modal) {
+        window.bootstrap.Modal.getOrCreateInstance(elements.dataManagementRestoreModal).show();
+    }
+}
+
+function renderRestoreBackupSummary(backup) {
+    const container = elements.dataManagementRestoreBackupSummary;
+    if (!container) {
+        return;
+    }
+    container.replaceChildren(
+        createRestoreSummaryTile("Backup ID", backup?.id || "N/A"),
+        createRestoreSummaryTile("Type", formatBackupType(backup?.backup_type || "")),
+        createRestoreSummaryTile("Completed", formatDate(backup?.completed_at || backup?.created_at)),
+        createRestoreSummaryTile("Contents", `${formatNumber(backup?.record_count || 0)} records, ${formatNumber(backup?.blob_count || 0)} blobs`),
+        createRestoreSummaryTile("Manifest", backup?.manifest_path ? "Recorded" : "Missing"),
+        createRestoreSummaryTile("Protection", backup?.encrypted ? "Encrypted" : "Not encrypted")
+    );
+}
+
+function createRestoreSummaryTile(label, value) {
+    const tile = document.createElement("div");
+    tile.className = "col-sm-6 col-xl-4";
+    const labelElement = document.createElement("div");
+    labelElement.className = "small text-muted";
+    labelElement.textContent = label;
+    const valueElement = document.createElement("div");
+    valueElement.className = "fw-semibold text-break";
+    valueElement.textContent = value || "N/A";
+    tile.append(labelElement, valueElement);
+    return tile;
+}
+
+function buildRestorePlan() {
+    return {
+        source_backup_id: pendingRestoreBackup?.id || "",
+        restore_policy: getValue(elements.datamanagementrestorepolicy) || "create_only",
+        include_cosmos: Boolean(elements.datamanagementrestoreincludecosmos?.checked),
+        include_ai_search: Boolean(elements.datamanagementrestoreincludeaisearch?.checked),
+        include_source_blobs: Boolean(elements.datamanagementrestoreincludesourceblobs?.checked),
+        overwrite_confirmed: getValue(elements.datamanagementrestorepolicy) === "overwrite_existing",
+        overwrite_confirmation_phrase: getValue(elements.datamanagementrestoreoverwriteconfirmationphrase),
+    };
+}
+
+function invalidateRestoreReview() {
+    restoreReview = null;
+    renderRestoreReviewEmpty("Restore settings changed. Run review again before queueing.");
+    updateRestoreQueueButtonState();
+}
+
+function updateRestoreConfirmationVisibility() {
+    const requiresOverwrite = getValue(elements.datamanagementrestorepolicy) === "overwrite_existing";
+    setElementVisible(elements.dataManagementRestoreConfirmationSection, requiresOverwrite);
+    updateRestoreQueueButtonState();
+}
+
+function renderRestoreReviewEmpty(message = "Run review to validate the manifest, target access, and restore policy.") {
+    setText(elements.dataManagementRestoreReviewStatus, message);
+    const container = elements.dataManagementRestoreReviewChecks;
+    if (!container) {
+        return;
+    }
+    const item = document.createElement("div");
+    item.className = "list-group-item text-muted";
+    item.textContent = "No current restore review is available.";
+    container.replaceChildren(item);
+}
+
+function renderRestoreReview(review) {
+    const checks = Array.isArray(review?.checks) ? review.checks : [];
+    const container = elements.dataManagementRestoreReviewChecks;
+    setText(
+        elements.dataManagementRestoreReviewStatus,
+        review?.ready
+            ? "Restore preflight passed. Confirm the plan to queue the job."
+            : "Restore preflight found blockers. Resolve them and run review again."
+    );
+    if (!container) {
+        return;
+    }
+    if (!checks.length) {
+        renderRestoreReviewEmpty("Restore review returned no checks.");
+        return;
+    }
+    container.replaceChildren();
+    checks.forEach((check) => {
+        const item = document.createElement("div");
+        item.className = "list-group-item";
+        const header = document.createElement("div");
+        header.className = "d-flex flex-wrap justify-content-between gap-2";
+        const title = document.createElement("strong");
+        title.textContent = check.label || check.id || "Restore check";
+        const badge = createBadge(
+            formatActivityLabel(check.status || "unknown"),
+            check.status === "pass" ? "bg-success" : check.status === "warn" ? "bg-warning text-dark" : "bg-danger"
+        );
+        header.append(title, badge);
+        const message = document.createElement("div");
+        message.className = "small text-muted mt-1";
+        message.textContent = check.message || "";
+        item.append(header, message);
+        container.appendChild(item);
+    });
+}
+
+async function runRestoreReview() {
+    if (!pendingRestoreBackup?.id) {
+        showToast("Choose a backup to restore first.", "warning");
+        return;
+    }
+    setBusy(elements.dataManagementRestoreReviewBtn, true, "Reviewing...");
+    try {
+        await saveDataManagementSettings(true);
+        const data = await requestJson("/api/admin/data-management/restore/review", {
+            method: "POST",
+            body: JSON.stringify({
+                settings: collectSettings(),
+                restore_plan: buildRestorePlan(),
+            }),
+        });
+        restoreReview = data.review || null;
+        renderRestoreReview(restoreReview);
+        updateRestoreQueueButtonState();
+        showToast(
+            restoreReview?.ready ? "Restore preflight passed." : "Restore preflight found blockers.",
+            restoreReview?.ready ? "success" : "warning"
+        );
+    } catch (error) {
+        restoreReview = null;
+        renderRestoreReviewEmpty(error.message || "Restore review failed.");
+        showToast(error.message || "Restore review failed.", "danger");
+        updateRestoreQueueButtonState();
+    } finally {
+        setBusy(elements.dataManagementRestoreReviewBtn, false);
+    }
+}
+
+function updateRestoreQueueButtonState() {
+    const overwriteRequired = getValue(elements.datamanagementrestorepolicy) === "overwrite_existing";
+    const overwriteMatches = !overwriteRequired || getValue(elements.datamanagementrestoreoverwriteconfirmationphrase) === restoreOverwriteConfirmationPhrase;
+    const canQueue = Boolean(
+        pendingRestoreBackup?.id &&
+        restoreReview?.ready === true &&
+        elements.datamanagementrestorefinalconfirmation?.checked &&
+        overwriteMatches
+    );
+    setButtonDisabled(elements.dataManagementRestoreQueueBtn, !canQueue);
+}
+
+async function queueRestore() {
+    if (!restoreReview?.ready || !pendingRestoreBackup?.id) {
+        showToast("Run a passing restore review before queueing.", "warning");
+        return;
+    }
+    const restorePlan = buildRestorePlan();
+    const data = await queueOperation("restore", null, {
+        restore_plan: restorePlan,
+        review_fingerprint: restoreReview.review_fingerprint || "",
+        review_authorization_token: restoreReview.authorization_token || "",
+    }, elements.dataManagementRestoreQueueBtn);
+    if (!data?.job) {
+        return;
+    }
+    if (elements.dataManagementRestoreModal && window.bootstrap?.Modal) {
+        window.bootstrap.Modal.getOrCreateInstance(elements.dataManagementRestoreModal).hide();
+    }
+    loadDataManagementJobDetail(data.job.id);
 }
 
 function createLabeledValue(label, value, allowBreak = false) {
@@ -3388,6 +3637,16 @@ function renderJobDetailProgress(job) {
             });
             body.appendChild(metricGrid);
         }
+    } else if (job.operation === "restore") {
+        const restoreMetrics = getRestoreLiveMetrics(job);
+        if (restoreMetrics.length) {
+            const metricGrid = document.createElement("div");
+            metricGrid.className = "row g-2 small mt-3";
+            restoreMetrics.forEach((metric) => {
+                metricGrid.appendChild(createDetailMetric(metric.label, metric.value));
+            });
+            body.appendChild(metricGrid);
+        }
     }
     card.appendChild(body);
     container.replaceChildren(card);
@@ -3477,6 +3736,33 @@ function getBackupLiveMetrics(job) {
     }
     if (sourceCapacity.restore_pending) {
         metrics.push({ label: "Capacity restore", value: "Pending recovery" });
+    }
+    return metrics;
+}
+
+function getRestoreLiveMetrics(job) {
+    const restoreState = job?.restore_state;
+    if (!restoreState || typeof restoreState !== "object") {
+        return [];
+    }
+    const totals = restoreState.totals && typeof restoreState.totals === "object" ? restoreState.totals : {};
+    const resources = restoreState.resources && typeof restoreState.resources === "object" ? Object.values(restoreState.resources) : [];
+    const activeResource = resources.find((resource) => resource?.status === "in_progress") || {};
+    const activeMetrics = activeResource.progress && typeof activeResource.progress === "object" ? activeResource.progress : {};
+    const metrics = [
+        { label: "Processed", value: formatNumber(totals.processed_count || 0) },
+        { label: "Copied", value: formatNumber(totals.copied_count || 0) },
+        { label: "Created / updated", value: `${formatNumber(totals.created_count || 0)} / ${formatNumber(totals.updated_count || 0)}` },
+        { label: "Skipped / failed", value: `${formatNumber(totals.skipped_count || 0)} / ${formatNumber(totals.failed_count || 0)}` },
+        { label: "Collisions", value: formatNumber(totals.collision_count || 0) },
+        { label: "Transferred", value: formatBytes(totals.bytes || 0) },
+    ];
+    if (activeMetrics.container_name || activeMetrics.index_name) {
+        metrics.push({ label: "Current target", value: activeMetrics.container_name || activeMetrics.index_name });
+    }
+    const progressAge = formatTimestampAge(job?.last_progress_at || restoreState.last_progress_at);
+    if (progressAge) {
+        metrics.push({ label: "Last progress", value: progressAge });
     }
     return metrics;
 }
