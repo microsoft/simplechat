@@ -1,7 +1,7 @@
 # Data Management Backup and Migration
 
 Implemented in version: **0.241.211**
-Updated in version: **0.250.102**
+Updated in version: **0.250.104**
 
 ## Overview
 
@@ -14,6 +14,8 @@ The Data Management feature adds an admin-only portal section for SimpleChat-own
 - Admin API routes live in `route_backend_data_management.py` and require `@swagger_route(security=get_auth_security())`, `@login_required`, and `@admin_required` on every endpoint.
 - Settings, scheduler logic, encryption-key handling, job leasing, and backup artifact creation live in `functions_data_management.py`.
 - Job records are stored in the `data_management_jobs` Cosmos container with partition key `/id`.
+- Job and backup history use a `created_at DESC, id DESC` composite index so equal timestamps retain deterministic order across continuation pages.
+- Bicep/ARM and Terraform deployments apply this composite index to `data_management_jobs`; the application indexing-maintenance contract also detects or applies it for existing environments.
 - Job timeline entries are stored in the `data_management_job_items` Cosmos container with partition key `/job_id`.
 - Latest-only backup item state is stored independently in `data_management_backup_item_states` with partition key `/source_scope`. It never updates a source Cosmos record, source ETag, source `_ts`, or source blob metadata.
 - Data Management job lifecycle events are also written to the shared `activity_logs` container with `activity_type` set to `data_management`, allowing Control Center Activity Logs to filter and search backup job activity by job ID, operation, backup type, and status.
@@ -79,6 +81,12 @@ The Data Management tab shows two complementary historical views:
 
 - **Backup Inventory** leads with available backups, then full and partial backup filters. The inventory table summarizes completed jobs by backup identity, contents, storage/manifest state, protection, warning count, and a View Log action.
 - **Job History** lists recent Data Management jobs with status, progress, message, and a View Log action. The detail modal shows a live progress bar while queued or running, then structured sections for timeline events, backup contents, storage/manifest details, and warnings.
+- Both lists request one bounded server page at a time instead of materializing a fixed 25- or 100-record slice in the browser. Page size supports 10, 25, 50, or 100 records.
+- Job History filters by operation, status, scheduled/manual run type, and an optional created-date range of at most 366 days. Backup Inventory filters by backup type, status, scheduled/manual run type, and the same bounded date range.
+- The API returns `pagination.page_size`, `pagination.returned_count`, `pagination.has_more`, and an opaque `pagination.next_token`. Cross-partition history uses a `created_at`/`id` keyset cursor because the Python Cosmos SDK does not support continuation tokens for cross-partition ordered queries. Tokens expire after one hour and are encrypted and bound to the list, normalized filters, page size, and sort contract. Invalid, expired, tampered, or mismatched tokens return a safe validation error without exposing cursor or query details.
+- Previous navigation reuses opaque tokens retained only in the current browser session. Changing a filter or page size resets to page 1, while explicit refresh and job-completion refresh preserve the current page when its token remains valid.
+- Each list aborts superseded requests and applies a request-generation guard, preventing a slower response for an older page or filter from replacing the latest result.
+- Backup summary counts and latest full/partial references come from independent global queries, so they remain correct regardless of page size, active filters, or current page.
 - **Advanced Backup Scope** lives inside the Schedule card as a collapsed drawer. It includes the Cosmos DB, AI Search index, and source document blob backup switches with explicit risk guidance because excluding a surface can create incomplete backups for restore or migration.
 
 Full backup details focus on the full snapshot contents: Cosmos containers exported, AI Search schemas/documents exported, optional source blob containers, artifact sizes, item/blob counts, encryption status, manifest location, and warnings.
@@ -105,6 +113,7 @@ For durable provenance, destination access probes, collision protection, checkpo
 ### Security
 
 - All Data Management routes are admin-only.
+- History validation failures return a fixed public message; raw exception text and internal cursor/query details are never returned to the browser.
 - Backup storage connection strings, target Cosmos keys, and encryption key references are redacted before being returned to the browser.
 - The admin JavaScript uses DOM creation and `textContent` for API-returned job data.
 - Browser runtime JavaScript is served from the local SimpleChat static path: `static/js/admin/admin_data_management.js`.
@@ -162,6 +171,9 @@ For optional local/source Cosmos backup capacity management, assign the App Serv
 ## Testing and Validation
 
 - Functional security coverage: `functional_tests/test_data_management_security_patterns.py`.
+- History pagination, filtering, deterministic ties, continuation validation, global summary, and sanitization coverage: `functional_tests/test_data_management_history_pagination.py`.
+- Cosmos composite-index maintenance coverage: `functional_tests/test_cosmos_wave3a_indexing_maintenance.py`.
+- Authenticated pagination, filter reset, refresh preservation, responsive controls, and request-order guard coverage: `ui_tests/test_admin_data_management_settings_ui.py`.
 - Backup durability coverage: `functional_tests/test_data_management_backup_durability.py`.
 - Parallel Cosmos backup, retry/adaptive pressure, source capacity restoration/recovery, fencing, resume, and sanitized telemetry coverage: `functional_tests/test_data_management_backup_parallelism.py`.
 - AI Search keyset paging, >100,000 logical-result traversal, page concurrency, `429`/`503` recovery, resume, latest-state skips, schema/integrity validation, isolated index failure, and sanitized telemetry coverage: `functional_tests/test_data_management_ai_search_backup_export.py`.

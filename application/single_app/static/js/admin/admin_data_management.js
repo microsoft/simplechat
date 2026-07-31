@@ -11,7 +11,6 @@ const migrationMirrorConfirmationPhrase = "MIRROR WITH DELETIONS";
 const elements = {};
 let dataManagementModified = false;
 let storedBackupConnectionStringAvailable = false;
-let backupInventory = [];
 let currentBackupFilter = "all";
 let currentJobDetailId = null;
 let jobDetailRefreshTimer = null;
@@ -27,6 +26,10 @@ let pendingDataManagementCancellationJob = null;
 
 const jobDetailRefreshIntervalMs = 2000;
 const activeJobStatuses = new Set(["queued", "running"]);
+const historyListState = {
+    backups: createHistoryListState(),
+    jobs: createHistoryListState(),
+};
 const migrationTargetTypes = ["users", "groups", "public_workspaces"];
 const migrationSelections = {
     users: new Map(),
@@ -163,8 +166,25 @@ function bindElements() {
         "data-management-partial-backup-count",
         "data-management-available-backup-count",
         "data-management-backups-tbody",
+        "data_management_backup_status_filter",
+        "data_management_backup_scheduled_filter",
+        "data_management_backup_created_from",
+        "data_management_backup_created_to",
+        "data_management_backup_page_size",
+        "data-management-backup-pagination-status",
+        "data-management-backup-previous-page-btn",
+        "data-management-backup-next-page-btn",
         "data-management-refresh-jobs-btn",
         "data-management-jobs-tbody",
+        "data_management_job_operation_filter",
+        "data_management_job_status_filter",
+        "data_management_job_scheduled_filter",
+        "data_management_job_created_from",
+        "data_management_job_created_to",
+        "data_management_job_page_size",
+        "data-management-job-pagination-status",
+        "data-management-job-previous-page-btn",
+        "data-management-job-next-page-btn",
         "data-management-job-detail-modal",
         "data-management-job-detail-title",
         "data-management-job-detail-subtitle",
@@ -250,10 +270,29 @@ function bindEvents() {
     elements.dataManagementRefreshMigrationSummaryBtn?.addEventListener("click", () => loadMigrationSummary(elements.dataManagementRefreshMigrationSummaryBtn, true));
     bindMigrationPickerEvents();
     elements.dataManagementRefreshBackupsBtn?.addEventListener("click", loadDataManagementBackups);
-    elements.dataManagementViewFullBackupsBtn?.addEventListener("click", () => setBackupFilter("full"));
-    elements.dataManagementViewPartialBackupsBtn?.addEventListener("click", () => setBackupFilter("partial"));
-    elements.dataManagementViewAllBackupsBtn?.addEventListener("click", () => setBackupFilter("all"));
+    elements.dataManagementViewFullBackupsBtn?.addEventListener("click", () => setBackupFilter("full", { load: true }));
+    elements.dataManagementViewPartialBackupsBtn?.addEventListener("click", () => setBackupFilter("partial", { load: true }));
+    elements.dataManagementViewAllBackupsBtn?.addEventListener("click", () => setBackupFilter("all", { load: true }));
+    [
+        elements.datamanagementbackupstatusfilter,
+        elements.datamanagementbackupscheduledfilter,
+        elements.datamanagementbackupcreatedfrom,
+        elements.datamanagementbackupcreatedto,
+        elements.datamanagementbackuppagesize,
+    ].forEach((filter) => filter?.addEventListener("change", () => resetAndLoadHistory("backups")));
+    elements.dataManagementBackupPreviousPageBtn?.addEventListener("click", () => loadPreviousHistoryPage("backups"));
+    elements.dataManagementBackupNextPageBtn?.addEventListener("click", () => loadNextHistoryPage("backups"));
     elements.dataManagementRefreshJobsBtn?.addEventListener("click", loadDataManagementJobs);
+    [
+        elements.datamanagementjoboperationfilter,
+        elements.datamanagementjobstatusfilter,
+        elements.datamanagementjobscheduledfilter,
+        elements.datamanagementjobcreatedfrom,
+        elements.datamanagementjobcreatedto,
+        elements.datamanagementjobpagesize,
+    ].forEach((filter) => filter?.addEventListener("change", () => resetAndLoadHistory("jobs")));
+    elements.dataManagementJobPreviousPageBtn?.addEventListener("click", () => loadPreviousHistoryPage("jobs"));
+    elements.dataManagementJobNextPageBtn?.addEventListener("click", () => loadNextHistoryPage("jobs"));
     elements.dataManagementJobDetailModal?.addEventListener("hidden.bs.modal", () => stopJobDetailAutoRefresh({ clearJob: true }));
     elements.dataManagementMigrationCancelModal?.addEventListener("hidden.bs.modal", () => {
         pendingDataManagementCancellationJob = null;
@@ -1725,30 +1764,229 @@ function formatOperation(operation, backupType) {
     return operation.replace(/_/g, " ");
 }
 
-async function loadDataManagementJobs() {
-    setBusy(elements.dataManagementRefreshJobsBtn, true, "Refreshing...");
-    try {
-        const data = await requestJson("/api/admin/data-management/jobs?limit=25", { method: "GET" });
-        renderJobs(data.jobs || []);
-    } catch (error) {
-        renderJobMessage(error.message || "Job history could not be loaded.", "danger");
-    } finally {
-        setBusy(elements.dataManagementRefreshJobsBtn, false);
+function createHistoryListState() {
+    return {
+        currentToken: null,
+        nextToken: null,
+        previousTokens: [],
+        pageNumber: 1,
+        requestGeneration: 0,
+        abortController: null,
+    };
+}
+
+function getHistoryListElements(listKind) {
+    if (listKind === "backups") {
+        return {
+            paginationStatus: elements.dataManagementBackupPaginationStatus,
+            previousButton: elements.dataManagementBackupPreviousPageBtn,
+            nextButton: elements.dataManagementBackupNextPageBtn,
+            refreshButton: elements.dataManagementRefreshBackupsBtn,
+        };
+    }
+    return {
+        paginationStatus: elements.dataManagementJobPaginationStatus,
+        previousButton: elements.dataManagementJobPreviousPageBtn,
+        nextButton: elements.dataManagementJobNextPageBtn,
+        refreshButton: elements.dataManagementRefreshJobsBtn,
+    };
+}
+
+function getHistoryListFilters(listKind) {
+    if (listKind === "backups") {
+        return {
+            backup_type: currentBackupFilter === "all" ? "" : currentBackupFilter,
+            status: elements.datamanagementbackupstatusfilter?.value || "",
+            scheduled: elements.datamanagementbackupscheduledfilter?.value || "all",
+            created_from: elements.datamanagementbackupcreatedfrom?.value || "",
+            created_to: elements.datamanagementbackupcreatedto?.value || "",
+            page_size: elements.datamanagementbackuppagesize?.value || "25",
+        };
+    }
+    return {
+        operation: elements.datamanagementjoboperationfilter?.value || "",
+        status: elements.datamanagementjobstatusfilter?.value || "",
+        scheduled: elements.datamanagementjobscheduledfilter?.value || "all",
+        created_from: elements.datamanagementjobcreatedfrom?.value || "",
+        created_to: elements.datamanagementjobcreatedto?.value || "",
+        page_size: elements.datamanagementjobpagesize?.value || "25",
+    };
+}
+
+function buildHistoryListUrl(listKind, filters = getHistoryListFilters(listKind)) {
+    const state = historyListState[listKind];
+    const params = new URLSearchParams();
+    Object.entries(filters).forEach(([key, value]) => {
+        if (value !== "") {
+            params.set(key, value);
+        }
+    });
+    if (state.currentToken) {
+        params.set("continuation_token", state.currentToken);
+    }
+    return `/api/admin/data-management/${listKind}?${params.toString()}`;
+}
+
+function getHistoryDateRangeError(filters) {
+    const createdFrom = filters.created_from || "";
+    const createdTo = filters.created_to || "";
+    if (Boolean(createdFrom) !== Boolean(createdTo)) {
+        return "Select both Created from and Created through to apply a date range.";
+    }
+    if (!createdFrom) {
+        return "";
+    }
+    const start = new Date(`${createdFrom}T00:00:00Z`);
+    const end = new Date(`${createdTo}T00:00:00Z`);
+    if (end < start) {
+        return "Created through must be on or after Created from.";
+    }
+    const rangeDays = Math.floor((end.getTime() - start.getTime()) / 86400000) + 1;
+    if (rangeDays > 366) {
+        return "Date range cannot exceed 366 days.";
+    }
+    return "";
+}
+
+function resetHistoryListState(listKind) {
+    const state = historyListState[listKind];
+    state.abortController?.abort();
+    state.currentToken = null;
+    state.nextToken = null;
+    state.previousTokens = [];
+    state.pageNumber = 1;
+}
+
+function resetAndLoadHistory(listKind) {
+    resetHistoryListState(listKind);
+    if (listKind === "backups") {
+        loadDataManagementBackups();
+    } else {
+        loadDataManagementJobs();
     }
 }
 
-async function loadDataManagementBackups() {
-    setBusy(elements.dataManagementRefreshBackupsBtn, true, "Refreshing...");
-    try {
-        const data = await requestJson("/api/admin/data-management/backups?limit=100", { method: "GET" });
-        backupInventory = Array.isArray(data.backups) ? data.backups : [];
-        renderBackupSummary(data.summary || {});
-        setBackupFilter(currentBackupFilter);
-    } catch (error) {
-        renderBackupMessage(error.message || "Backup inventory could not be loaded.", "danger");
-    } finally {
-        setBusy(elements.dataManagementRefreshBackupsBtn, false);
+function loadNextHistoryPage(listKind) {
+    const state = historyListState[listKind];
+    if (!state.nextToken) {
+        return;
     }
+    state.previousTokens.push(state.currentToken);
+    state.currentToken = state.nextToken;
+    state.nextToken = null;
+    state.pageNumber += 1;
+    if (listKind === "backups") {
+        loadDataManagementBackups();
+    } else {
+        loadDataManagementJobs();
+    }
+}
+
+function loadPreviousHistoryPage(listKind) {
+    const state = historyListState[listKind];
+    if (state.previousTokens.length === 0) {
+        return;
+    }
+    state.currentToken = state.previousTokens.pop() || null;
+    state.nextToken = null;
+    state.pageNumber = Math.max(1, state.pageNumber - 1);
+    if (listKind === "backups") {
+        loadDataManagementBackups();
+    } else {
+        loadDataManagementJobs();
+    }
+}
+
+function updateHistoryPaginationControls(listKind, pagination = {}, message = "") {
+    const state = historyListState[listKind];
+    const listElements = getHistoryListElements(listKind);
+    const returnedCount = Number(pagination.returned_count || 0);
+    state.nextToken = pagination.next_token || null;
+    setButtonDisabled(listElements.previousButton, state.previousTokens.length === 0);
+    setButtonDisabled(listElements.nextButton, !pagination.has_more || !state.nextToken);
+    const suffix = pagination.has_more ? "" : " - final page";
+    setText(
+        listElements.paginationStatus,
+        message || `Page ${state.pageNumber} - ${formatNumber(returnedCount)} record${returnedCount === 1 ? "" : "s"}${suffix}`
+    );
+}
+
+async function loadHistoryList(listKind) {
+    const state = historyListState[listKind];
+    const listElements = getHistoryListElements(listKind);
+    const filters = getHistoryListFilters(listKind);
+    const dateRangeError = getHistoryDateRangeError(filters);
+    if (dateRangeError) {
+        state.abortController?.abort();
+        state.requestGeneration += 1;
+        if (listKind === "backups") {
+            renderBackupMessage(dateRangeError, "danger");
+        } else {
+            renderJobMessage(dateRangeError, "danger");
+        }
+        updateHistoryPaginationControls(listKind, {}, dateRangeError);
+        return;
+    }
+    state.abortController?.abort();
+    const controller = new AbortController();
+    state.abortController = controller;
+    state.requestGeneration += 1;
+    const requestGeneration = state.requestGeneration;
+    setBusy(listElements.refreshButton, true, "Refreshing...");
+    setText(listElements.paginationStatus, `Loading page ${state.pageNumber}...`);
+    setButtonDisabled(listElements.previousButton, true);
+    setButtonDisabled(listElements.nextButton, true);
+    try {
+        const data = await requestJson(
+            buildHistoryListUrl(listKind, filters),
+            { method: "GET", signal: controller.signal }
+        );
+        if (requestGeneration !== state.requestGeneration) {
+            return;
+        }
+        const pagination = data.pagination || {};
+        const items = listKind === "backups" ? data.backups || [] : data.jobs || [];
+        if (
+            items.length === 0
+            && !pagination.has_more
+            && state.pageNumber > 1
+            && state.previousTokens.length > 0
+        ) {
+            loadPreviousHistoryPage(listKind);
+            return;
+        }
+        if (listKind === "backups") {
+            renderBackups(items);
+            renderBackupSummary(data.summary || {});
+        } else {
+            renderJobs(items);
+        }
+        updateHistoryPaginationControls(listKind, pagination);
+    } catch (error) {
+        if (error.name === "AbortError" || requestGeneration !== state.requestGeneration) {
+            return;
+        }
+        const message = error.message || `${listKind === "backups" ? "Backup inventory" : "Job history"} could not be loaded.`;
+        if (listKind === "backups") {
+            renderBackupMessage(message, "danger");
+        } else {
+            renderJobMessage(message, "danger");
+        }
+        updateHistoryPaginationControls(listKind, {}, `Page ${state.pageNumber} could not be loaded.`);
+    } finally {
+        if (requestGeneration === state.requestGeneration) {
+            setBusy(listElements.refreshButton, false);
+            state.abortController = null;
+        }
+    }
+}
+
+async function loadDataManagementJobs() {
+    await loadHistoryList("jobs");
+}
+
+async function loadDataManagementBackups() {
+    await loadHistoryList("backups");
 }
 
 function renderBackupSummary(summary) {
@@ -1757,7 +1995,7 @@ function renderBackupSummary(summary) {
     setText(elements.dataManagementAvailableBackupCount, formatNumber(summary.available || 0));
 }
 
-function setBackupFilter(filterValue) {
+function setBackupFilter(filterValue, options = {}) {
     currentBackupFilter = ["all", "full", "partial"].includes(filterValue) ? filterValue : "all";
     [
         elements.dataManagementViewAllBackupsBtn,
@@ -1773,25 +2011,23 @@ function setBackupFilter(filterValue) {
             element.classList.toggle("text-white-50", selected);
         });
     });
-    renderBackups();
+    if (options.load) {
+        resetAndLoadHistory("backups");
+    }
 }
 
-function renderBackups() {
+function renderBackups(backups) {
     const tbody = elements.dataManagementBackupsTbody;
     if (!tbody) {
         return;
     }
-    const availableBackups = backupInventory.filter(isAvailableBackup);
-    const filteredBackups = currentBackupFilter === "all"
-        ? availableBackups
-        : availableBackups.filter((backup) => backup.backup_type === currentBackupFilter);
     tbody.replaceChildren();
-    if (filteredBackups.length === 0) {
-        renderBackupMessage("No completed backups match this view yet.", "muted");
+    if (!Array.isArray(backups) || backups.length === 0) {
+        renderBackupMessage("No backups match the active filters.", "muted");
         return;
     }
 
-    filteredBackups.forEach((backup) => {
+    backups.forEach((backup) => {
         tbody.appendChild(createBackupRow(backup));
     });
 }
@@ -1890,10 +2126,6 @@ function createLabeledValue(label, value, allowBreak = false) {
     valueElement.textContent = value || "N/A";
     wrapper.append(labelElement, valueElement);
     return wrapper;
-}
-
-function isAvailableBackup(backup) {
-    return backup?.status === "completed" || backup?.status === "completed_with_warnings";
 }
 
 function renderJobs(jobs) {
