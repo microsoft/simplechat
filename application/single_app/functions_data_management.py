@@ -1,8 +1,9 @@
 # functions_data_management.py
 """Data Management settings, schedules, and durable job records."""
 
-import copy
 import base64
+import binascii
+import copy
 from email.utils import parsedate_to_datetime
 import hashlib
 import hmac
@@ -86,6 +87,8 @@ from functions_data_management_backup_state import (
 from functions_data_management_search_write_fence import (
     acquire_data_management_search_write_fence,
     acquire_data_management_target_migration_coordinator,
+    inspect_data_management_search_write_gate,
+    inspect_data_management_target_migration_coordinator,
     release_data_management_search_write_fence,
     release_data_management_target_migration_coordinator,
     renew_data_management_search_write_fence,
@@ -117,6 +120,8 @@ DATA_MANAGEMENT_SETTINGS_TYPE = "data_management_settings"
 DATA_MANAGEMENT_JOB_TYPE = "data_management_job"
 DATA_MANAGEMENT_JOB_ITEM_TYPE = "data_management_job_item"
 DATA_MANAGEMENT_MIGRATION_MANIFEST_BATCH_TYPE = "data_management_migration_manifest_batch"
+DATA_MANAGEMENT_MIGRATION_REVIEW_TYPE = "data_management_migration_review"
+DATA_MANAGEMENT_MIGRATION_REVIEW_TTL_SECONDS = 900
 DATA_MANAGEMENT_MIRROR_DELETION_BATCH_TYPE = "data_management_mirror_deletion_batch"
 DATA_MANAGEMENT_MIGRATION_LOCK_TYPE = "data_management_migration_lock"
 DATA_MANAGEMENT_BACKUP_MANIFEST_BATCH_TYPE = "data_management_backup_manifest_batch"
@@ -176,7 +181,10 @@ DATA_MANAGEMENT_RECOVERY_RESUBMIT_DELAY_SECONDS = 120
 DATA_MANAGEMENT_MIGRATION_LOCK_PREFIX = "data_management_migration_lock"
 DATA_MANAGEMENT_BACKUP_LOCK_PREFIX = "data_management_backup_lock"
 DATA_MANAGEMENT_BACKUP_SOURCE_SCOPE = "simplechat-primary"
-DATA_MANAGEMENT_MIGRATION_CATALOG_LIMIT = 50
+DATA_MANAGEMENT_MIGRATION_CATALOG_LIMIT = 25
+DATA_MANAGEMENT_MIGRATION_CATALOG_MAX_LIMIT = 100
+DATA_MANAGEMENT_MIGRATION_CATALOG_CURSOR_VERSION = 1
+DATA_MANAGEMENT_MIGRATION_MAX_SELECTED_IDS = 2000
 DATA_MANAGEMENT_MIGRATION_BATCH_SIZE = 500
 DATA_MANAGEMENT_MIGRATION_MANIFEST_BATCH_SIZE = 100
 DATA_MANAGEMENT_BACKUP_MANIFEST_BATCH_SIZE = 100
@@ -1082,7 +1090,16 @@ def _normalize_migration_selection(selection=None):
     mode = _safe_text(selection.get("mode"), "none")
     if mode not in {"none", "all", "selected"}:
         mode = "none"
-    ids = _safe_list(selection.get("ids"), limit=2000)
+    raw_ids = selection.get("ids")
+    if (
+        mode == "selected" and
+        isinstance(raw_ids, list) and
+        len(raw_ids) > DATA_MANAGEMENT_MIGRATION_MAX_SELECTED_IDS
+    ):
+        raise DataManagementSettingsValidationError(
+            f"Selected migration scopes cannot exceed {DATA_MANAGEMENT_MIGRATION_MAX_SELECTED_IDS} IDs."
+        )
+    ids = _safe_list(raw_ids, limit=DATA_MANAGEMENT_MIGRATION_MAX_SELECTED_IDS)
     if mode == "selected" and not ids:
         mode = "none"
     return {
@@ -1940,9 +1957,13 @@ def _update_migration_state_totals(state):
             "collision_count",
             "processed_count",
             "bytes",
-            "artifact_bytes",
         ):
             totals[field_name] += _safe_int(metrics.get(field_name), default=0, minimum=0)
+        totals["bytes"] += _safe_int(
+            metrics.get("artifact_bytes"),
+            default=0,
+            minimum=0,
+        )
         try:
             totals["request_units"] += max(0.0, float(metrics.get("request_units") or 0.0))
         except (TypeError, ValueError):
@@ -9288,22 +9309,158 @@ def get_data_management_backup_summary(
     }
 
 
-def _search_text_matches(document, fields, search_text):
-    normalized_search = _safe_text(search_text).lower()
+def _get_migration_catalog_definition(target_type):
+    normalized_target_type = _safe_text(target_type)
+    definitions = {
+        "users": {
+            "container": getattr(app_config, "cosmos_user_settings_container", None),
+            "document_container": getattr(app_config, "cosmos_user_documents_container", None),
+            "document_scope_field": "user_id",
+            "search_fields": ("email", "display_name", "id"),
+            "label_fields": ("display_name", "email", "id"),
+            "description_fields": ("email",),
+            "empty_description": "No email recorded",
+        },
+        "groups": {
+            "container": getattr(app_config, "cosmos_groups_container", None),
+            "document_container": getattr(app_config, "cosmos_group_documents_container", None),
+            "document_scope_field": "group_id",
+            "search_fields": ("name", "description", "id"),
+            "label_fields": ("name", "id"),
+            "description_fields": ("description",),
+            "empty_description": "No description recorded",
+        },
+        "public_workspaces": {
+            "container": getattr(app_config, "cosmos_public_workspaces_container", None),
+            "document_container": getattr(app_config, "cosmos_public_documents_container", None),
+            "document_scope_field": "public_workspace_id",
+            "search_fields": ("name", "description", "id"),
+            "label_fields": ("name", "id"),
+            "description_fields": ("description",),
+            "empty_description": "No description recorded",
+        },
+    }
+    definition = definitions.get(normalized_target_type)
+    if not definition:
+        raise DataManagementSettingsValidationError("Unsupported migration catalog type.")
+    if definition.get("container") is None:
+        raise DataManagementSettingsValidationError(
+            f"Migration catalog '{normalized_target_type}' is not initialized."
+        )
+    return normalized_target_type, definition
+
+
+def _build_migration_catalog_search_clause(search_fields, search_text):
+    normalized_search = _safe_text(search_text).lower()[:200]
     if not normalized_search:
-        return True
-    return any(normalized_search in _safe_text(document.get(field_name)).lower() for field_name in fields)
+        return "", []
+    clauses = [
+        f"CONTAINS(c.{field_name}, @catalog_search, true)"
+        for field_name in search_fields
+    ]
+    return f"({' OR '.join(clauses)})", [
+        {"name": "@catalog_search", "value": normalized_search},
+    ]
 
 
-def _query_catalog_items(container, search_text, search_fields, order_field, limit=DATA_MANAGEMENT_MIGRATION_CATALOG_LIMIT):
-    safe_limit = _safe_int(limit, default=DATA_MANAGEMENT_MIGRATION_CATALOG_LIMIT, minimum=1, maximum=250)
-    results = []
+def _encode_migration_catalog_cursor(target_type, search_text, last_id):
+    payload = {
+        "v": DATA_MANAGEMENT_MIGRATION_CATALOG_CURSOR_VERSION,
+        "type": target_type,
+        "search": _safe_text(search_text).lower()[:200],
+        "last_id": _safe_text(last_id),
+    }
+    encoded = base64.urlsafe_b64encode(json.dumps(
+        payload,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")).decode("ascii")
+    return encoded.rstrip("=")
+
+
+def _decode_migration_catalog_cursor(cursor, target_type, search_text):
+    normalized_cursor = _safe_text(cursor)
+    if not normalized_cursor:
+        return ""
+    if len(normalized_cursor) > 4096:
+        raise DataManagementSettingsValidationError("Migration catalog continuation is invalid.")
+    try:
+        padding = "=" * (-len(normalized_cursor) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(
+            f"{normalized_cursor}{padding}".encode("ascii")
+        ).decode("utf-8"))
+    except (
+        binascii.Error,
+        json.JSONDecodeError,
+        TypeError,
+        UnicodeDecodeError,
+        ValueError,
+    ) as exc:
+        raise DataManagementSettingsValidationError(
+            "Migration catalog continuation is invalid."
+        ) from exc
+    expected_search = _safe_text(search_text).lower()[:200]
+    if (
+        not isinstance(payload, dict) or
+        payload.get("v") != DATA_MANAGEMENT_MIGRATION_CATALOG_CURSOR_VERSION or
+        payload.get("type") != target_type or
+        payload.get("search") != expected_search or
+        not _safe_text(payload.get("last_id"))
+    ):
+        raise DataManagementSettingsValidationError(
+            "Migration catalog continuation does not match the current search."
+        )
+    return _safe_text(payload.get("last_id"))
+
+
+def _query_migration_catalog_count(container, search_fields, search_text):
+    search_clause, parameters = _build_migration_catalog_search_clause(
+        search_fields,
+        search_text,
+    )
+    query = "SELECT VALUE COUNT(1) FROM c"
+    if search_clause:
+        query = f"{query} WHERE {search_clause}"
+    results = list(container.query_items(
+        query=query,
+        parameters=parameters,
+        enable_cross_partition_query=True,
+    ))
+    return results[0] if results and isinstance(results[0], int) else 0
+
+
+def _query_migration_catalog_page(
+    container,
+    search_fields,
+    search_text,
+    after_id,
+    page_size,
+):
+    search_clause, parameters = _build_migration_catalog_search_clause(
+        search_fields,
+        search_text,
+    )
+    conditions = []
+    if search_clause:
+        conditions.append(search_clause)
+    if after_id:
+        conditions.append("c.id > @catalog_after_id")
+        parameters.append({"name": "@catalog_after_id", "value": after_id})
     query = "SELECT * FROM c"
-    for item in container.query_items(query=query, enable_cross_partition_query=True):
-        if _search_text_matches(item, search_fields, search_text):
-            results.append(_strip_cosmos_system_fields(item))
-    results.sort(key=lambda item: _safe_text(item.get(order_field) or item.get("name") or item.get("display_name") or item.get("email") or item.get("id")).lower())
-    return results[:safe_limit]
+    if conditions:
+        query = f"{query} WHERE {' AND '.join(conditions)}"
+    query = f"{query} ORDER BY c.id"
+    results = []
+    for item in container.query_items(
+        query=query,
+        parameters=parameters,
+        enable_cross_partition_query=True,
+    ):
+        results.append(_strip_cosmos_system_fields(item))
+        if len(results) > page_size:
+            break
+    return results
 
 
 def _count_documents_for_scope(container, field_name, scope_id):
@@ -9313,72 +9470,87 @@ def _count_documents_for_scope(container, field_name, scope_id):
     return results[0] if results and isinstance(results[0], int) else 0
 
 
-def get_data_management_migration_catalog(target_type, search_text="", limit=DATA_MANAGEMENT_MIGRATION_CATALOG_LIMIT):
-    normalized_target_type = _safe_text(target_type)
-    if normalized_target_type == "users":
-        users = _query_catalog_items(
-            app_config.cosmos_user_settings_container,
-            search_text,
-            ["email", "display_name", "id"],
-            "display_name",
-            limit=limit,
+def get_data_management_migration_catalog(
+    target_type,
+    search_text="",
+    limit=DATA_MANAGEMENT_MIGRATION_CATALOG_LIMIT,
+    continuation_token="",
+):
+    normalized_target_type, definition = _get_migration_catalog_definition(
+        target_type
+    )
+    normalized_search = _safe_text(search_text).lower()[:200]
+    safe_limit = _safe_int(
+        limit,
+        default=DATA_MANAGEMENT_MIGRATION_CATALOG_LIMIT,
+        minimum=1,
+        maximum=DATA_MANAGEMENT_MIGRATION_CATALOG_MAX_LIMIT,
+    )
+    after_id = _decode_migration_catalog_cursor(
+        continuation_token,
+        normalized_target_type,
+        normalized_search,
+    )
+    total_count = _query_migration_catalog_count(
+        definition["container"],
+        definition["search_fields"],
+        normalized_search,
+    )
+    page = _query_migration_catalog_page(
+        definition["container"],
+        definition["search_fields"],
+        normalized_search,
+        after_id,
+        safe_limit,
+    )
+    has_more = len(page) > safe_limit
+    page = page[:safe_limit]
+    items = []
+    for item in page:
+        item_id = _safe_text(item.get("id"))
+        if not item_id:
+            continue
+        label = next(
+            (
+                _safe_text(item.get(field_name))
+                for field_name in definition["label_fields"]
+                if _safe_text(item.get(field_name))
+            ),
+            item_id,
         )
-        return {
-            "type": "users",
-            "items": [
-                {
-                    "id": user.get("id"),
-                    "label": user.get("display_name") or user.get("email") or user.get("id"),
-                    "description": user.get("email") or "No email recorded",
-                    "document_count": _count_documents_for_scope(app_config.cosmos_user_documents_container, "user_id", user.get("id")),
-                }
-                for user in users
-                if user.get("id")
-            ],
-        }
-    if normalized_target_type == "groups":
-        groups = _query_catalog_items(
-            app_config.cosmos_groups_container,
-            search_text,
-            ["name", "description", "id"],
-            "name",
-            limit=limit,
+        description = next(
+            (
+                _safe_text(item.get(field_name))
+                for field_name in definition["description_fields"]
+                if _safe_text(item.get(field_name))
+            ),
+            definition["empty_description"],
         )
-        return {
-            "type": "groups",
-            "items": [
-                {
-                    "id": group.get("id"),
-                    "label": group.get("name") or group.get("id"),
-                    "description": group.get("description") or "No description recorded",
-                    "document_count": _count_documents_for_scope(app_config.cosmos_group_documents_container, "group_id", group.get("id")),
-                }
-                for group in groups
-                if group.get("id")
-            ],
-        }
-    if normalized_target_type == "public_workspaces":
-        workspaces = _query_catalog_items(
-            app_config.cosmos_public_workspaces_container,
-            search_text,
-            ["name", "description", "id"],
-            "name",
-            limit=limit,
+        items.append({
+            "id": item_id,
+            "label": label,
+            "description": description,
+            "document_count": _count_documents_for_scope(
+                definition["document_container"],
+                definition["document_scope_field"],
+                item_id,
+            ),
+        })
+    next_continuation_token = ""
+    if has_more and page:
+        next_continuation_token = _encode_migration_catalog_cursor(
+            normalized_target_type,
+            normalized_search,
+            page[-1].get("id"),
         )
-        return {
-            "type": "public_workspaces",
-            "items": [
-                {
-                    "id": workspace.get("id"),
-                    "label": workspace.get("name") or workspace.get("id"),
-                    "description": workspace.get("description") or "No description recorded",
-                    "document_count": _count_documents_for_scope(app_config.cosmos_public_documents_container, "public_workspace_id", workspace.get("id")),
-                }
-                for workspace in workspaces
-                if workspace.get("id")
-            ],
-        }
-    raise DataManagementSettingsValidationError("Unsupported migration catalog type.")
+    return {
+        "type": normalized_target_type,
+        "items": items,
+        "total_count": total_count,
+        "page_size": safe_limit,
+        "has_more": has_more,
+        "continuation_token": next_continuation_token,
+    }
 
 
 def _dedupe_limited_strings(values, limit=500):
@@ -9397,7 +9569,10 @@ def _dedupe_limited_strings(values, limit=500):
     return ordered_values
 
 
-def normalize_data_management_migration_plan(options):
+def normalize_data_management_migration_plan(
+    options,
+    require_mirror_confirmation=True,
+):
     raw_plan = options.get("migration_plan") if isinstance(options, dict) else {}
     if not isinstance(raw_plan, dict):
         raw_plan = {}
@@ -9424,6 +9599,7 @@ def normalize_data_management_migration_plan(options):
     )
     if (
         migration_mode == DATA_MANAGEMENT_MIGRATION_MODE_MIRROR and
+        require_mirror_confirmation and
         not mirror_deletions_confirmed
     ):
         raise DataManagementSettingsValidationError(
@@ -9449,22 +9625,84 @@ def normalize_data_management_migration_plan(options):
 
 
 def _resolve_plan_scope_ids(target_type, plan_entry):
+    if plan_entry.get("mode") != "selected":
+        return []
+    return _dedupe_limited_strings(
+        plan_entry.get("ids"),
+        limit=DATA_MANAGEMENT_MIGRATION_MAX_SELECTED_IDS,
+    )
+
+
+def _count_migration_scope_documents(target_type, plan_entry):
+    if not plan_entry.get("include_documents"):
+        return 0
+    document_definitions = {
+        "users": (
+            getattr(app_config, "cosmos_user_documents_container", None),
+            "user_id",
+        ),
+        "groups": (
+            getattr(app_config, "cosmos_group_documents_container", None),
+            "group_id",
+        ),
+        "public_workspaces": (
+            getattr(app_config, "cosmos_public_documents_container", None),
+            "public_workspace_id",
+        ),
+    }
+    document_container, document_scope_field = document_definitions.get(
+        target_type,
+        (None, ""),
+    )
+    if document_container is None:
+        return 0
     if plan_entry.get("mode") == "all":
-        catalog = get_data_management_migration_catalog(target_type, limit=1000)
-        return [item.get("id") for item in catalog.get("items", []) if item.get("id")]
-    return _dedupe_limited_strings(plan_entry.get("ids"))
+        results = list(document_container.query_items(
+            query="SELECT VALUE COUNT(1) FROM c",
+            enable_cross_partition_query=True,
+        ))
+        return results[0] if results and isinstance(results[0], int) else 0
+    return sum(
+        _count_documents_for_scope(
+            document_container,
+            document_scope_field,
+            scope_id,
+        )
+        for scope_id in _resolve_plan_scope_ids(target_type, plan_entry)
+    )
 
 
-def summarize_data_management_migration_plan(options):
-    plan = normalize_data_management_migration_plan(options or {})
+def summarize_data_management_migration_plan(
+    options,
+    require_mirror_confirmation=True,
+):
+    plan = normalize_data_management_migration_plan(
+        options or {},
+        require_mirror_confirmation=require_mirror_confirmation,
+    )
     summary = {}
     for target_type in DATA_MANAGEMENT_MIGRATION_TARGET_TYPES:
-        ids = _resolve_plan_scope_ids(target_type, plan[target_type])
+        plan_entry = plan[target_type]
+        ids = _resolve_plan_scope_ids(target_type, plan_entry)
+        if plan_entry.get("mode") == "all":
+            _, definition = _get_migration_catalog_definition(target_type)
+            count = _query_migration_catalog_count(
+                definition["container"],
+                definition["search_fields"],
+                "",
+            )
+        else:
+            count = len(ids)
         summary[target_type] = {
-            "mode": plan[target_type].get("mode"),
-            "count": len(ids),
-            "include_documents": bool(plan[target_type].get("include_documents")),
+            "mode": plan_entry.get("mode"),
+            "count": count,
+            "document_count": _count_migration_scope_documents(
+                target_type,
+                plan_entry,
+            ),
+            "include_documents": bool(plan_entry.get("include_documents")),
             "ids": ids[:50],
+            "ids_truncated": len(ids) > 50,
         }
     summary["include_ai_search"] = bool(plan.get("include_ai_search"))
     summary["include_source_blobs"] = bool(plan.get("include_source_blobs"))
@@ -9475,6 +9713,605 @@ def summarize_data_management_migration_plan(options):
     summary["baseline_job_id"] = plan.get("baseline_job_id")
     summary["mirror_deletions_confirmed"] = bool(plan.get("mirror_deletions_confirmed"))
     return summary
+
+
+def _migration_review_fingerprint(settings, migration_plan):
+    settings_fields = (
+        "target_cosmos_authentication_type",
+        "target_cosmos_endpoint",
+        "target_cosmos_database_name",
+        "target_cosmos_key",
+        "target_cosmos_subscription_id",
+        "target_cosmos_resource_group",
+        "target_ai_search_authentication_type",
+        "target_ai_search_endpoint",
+        "target_ai_search_key",
+        "target_enhanced_citations_storage_authentication_type",
+        "target_enhanced_citations_storage_blob_endpoint",
+        "target_enhanced_citations_storage_connection_string",
+        "migration_max_parallel_operations",
+        "migration_retry_count",
+        "migration_skip_recent_within_hours",
+        "migration_temporary_destination_ru_enabled",
+        "migration_temporary_destination_ru",
+    )
+    fingerprint_plan = copy.deepcopy(migration_plan)
+    fingerprint_plan.pop("mirror_deletions_confirmed", None)
+    fingerprint_payload = {
+        "migration_plan": fingerprint_plan,
+        "settings": {
+            field_name: settings.get(field_name)
+            for field_name in settings_fields
+        },
+    }
+    return hashlib.sha256(json.dumps(
+        fingerprint_payload,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")).hexdigest()
+
+
+def get_data_management_migration_review_fingerprint(
+    settings=None,
+    migration_plan=None,
+):
+    """Return the execution fingerprint for current settings and plan."""
+    normalized_settings = _normalize_data_management_settings_from_payload(
+        settings
+    )
+    normalized_plan = normalize_data_management_migration_plan(
+        {
+            "migration_plan": (
+                migration_plan
+                if isinstance(migration_plan, dict)
+                else {}
+            ),
+        },
+        require_mirror_confirmation=False,
+    )
+    return _migration_review_fingerprint(
+        normalized_settings,
+        normalized_plan,
+    )
+
+
+def _migration_review_admin_hash(admin_user_id):
+    normalized_user_id = _safe_text(admin_user_id)
+    if not normalized_user_id or normalized_user_id == "unknown":
+        raise DataManagementSettingsValidationError(
+            "An authenticated administrator is required for migration review."
+        )
+    return hashlib.sha256(normalized_user_id.encode("utf-8")).hexdigest()
+
+
+def create_data_management_migration_review_authorization(
+    admin_user_id,
+    review_fingerprint,
+):
+    """Persist one short-lived, admin-bound authorization for a ready review."""
+    normalized_fingerprint = _safe_text(review_fingerprint)
+    if not normalized_fingerprint:
+        raise DataManagementSettingsValidationError(
+            "Migration review fingerprint is required."
+        )
+    now = _now_utc()
+    authorization_id = str(uuid.uuid4())
+    authorization = {
+        "id": authorization_id,
+        "type": DATA_MANAGEMENT_MIGRATION_REVIEW_TYPE,
+        "status": "ready",
+        "admin_hash": _migration_review_admin_hash(admin_user_id),
+        "review_fingerprint": normalized_fingerprint,
+        "created_at": now.isoformat(),
+        "expires_at": (
+            now + timedelta(
+                seconds=DATA_MANAGEMENT_MIGRATION_REVIEW_TTL_SECONDS
+            )
+        ).isoformat(),
+    }
+    created = cosmos_data_management_jobs_container.create_item(
+        body=authorization
+    )
+    return {
+        "authorization_token": created.get("id", authorization_id),
+        "authorization_expires_at": created.get(
+            "expires_at",
+            authorization["expires_at"],
+        ),
+    }
+
+
+def _read_data_management_migration_review_authorization(
+    authorization_token,
+    admin_user_id,
+    review_fingerprint,
+    allow_expired=False,
+):
+    normalized_token = _safe_text(authorization_token)
+    normalized_fingerprint = _safe_text(review_fingerprint)
+    if not normalized_token or not normalized_fingerprint:
+        raise DataManagementSettingsValidationError(
+            "A current migration review authorization is required."
+        )
+    try:
+        authorization = cosmos_data_management_jobs_container.read_item(
+            item=normalized_token,
+            partition_key=normalized_token,
+        )
+    except (
+        CosmosResourceNotFoundError,
+        KeyError,
+        ResourceNotFoundError,
+    ) as exc:
+        raise DataManagementSettingsValidationError(
+            "Migration review authorization is invalid or expired."
+        ) from exc
+    expires_at = _parse_iso_datetime(authorization.get("expires_at"))
+    if (
+        authorization.get("type") != DATA_MANAGEMENT_MIGRATION_REVIEW_TYPE or
+        (
+            not allow_expired and
+            (not expires_at or expires_at <= _now_utc())
+        ) or
+        not hmac.compare_digest(
+            _safe_text(authorization.get("admin_hash")),
+            _migration_review_admin_hash(admin_user_id),
+        ) or
+        not hmac.compare_digest(
+            _safe_text(authorization.get("review_fingerprint")),
+            normalized_fingerprint,
+        )
+    ):
+        raise DataManagementSettingsValidationError(
+            "Migration review authorization is invalid or expired."
+        )
+    return authorization
+
+
+def reserve_data_management_migration_review_authorization(
+    authorization_token,
+    admin_user_id,
+    review_fingerprint,
+):
+    """Reserve one ready authorization before durable job creation."""
+    authorization = _read_data_management_migration_review_authorization(
+        authorization_token,
+        admin_user_id,
+        review_fingerprint,
+    )
+    if authorization.get("status") != "ready":
+        raise DataManagementSettingsValidationError(
+            "Migration review authorization is already reserved or used."
+        )
+    reservation_token = uuid.uuid4().hex
+    job_id = str(uuid.uuid5(
+        uuid.NAMESPACE_URL,
+        f"simplechat-migration-review:{authorization['id']}",
+    ))
+    replacement = copy.deepcopy(authorization)
+    replacement.update({
+        "status": "reserved",
+        "reservation_token": reservation_token,
+        "reserved_at": _now_iso(),
+        "job_id": job_id,
+    })
+    try:
+        cosmos_data_management_jobs_container.replace_item(
+            item=authorization["id"],
+            body=replacement,
+            etag=authorization.get("_etag"),
+            match_condition=MatchConditions.IfNotModified,
+        )
+    except Exception as exc:
+        if getattr(exc, "status_code", None) in {409, 412}:
+            raise DataManagementSettingsValidationError(
+                "Migration review authorization was already reserved or used."
+            ) from exc
+        raise
+    return {
+        "authorization_token": authorization["id"],
+        "reservation_token": reservation_token,
+        "job_id": job_id,
+    }
+
+
+def release_data_management_migration_review_reservation(
+    authorization_token,
+    reservation_token,
+):
+    """Release an exact reservation when durable job creation fails."""
+    normalized_token = _safe_text(authorization_token)
+    normalized_reservation = _safe_text(reservation_token)
+    if not normalized_token or not normalized_reservation:
+        return False
+    try:
+        authorization = cosmos_data_management_jobs_container.read_item(
+            item=normalized_token,
+            partition_key=normalized_token,
+        )
+    except (
+        CosmosResourceNotFoundError,
+        KeyError,
+        ResourceNotFoundError,
+    ):
+        return False
+    if (
+        authorization.get("status") != "reserved" or
+        not hmac.compare_digest(
+            _safe_text(authorization.get("reservation_token")),
+            normalized_reservation,
+        )
+    ):
+        return False
+    replacement = copy.deepcopy(authorization)
+    replacement.update({
+        "status": "ready",
+        "reservation_released_at": _now_iso(),
+    })
+    replacement.pop("reservation_token", None)
+    replacement.pop("reserved_at", None)
+    replacement.pop("job_id", None)
+    try:
+        cosmos_data_management_jobs_container.replace_item(
+            item=normalized_token,
+            body=replacement,
+            etag=authorization.get("_etag"),
+            match_condition=MatchConditions.IfNotModified,
+        )
+    except Exception as exc:
+        if getattr(exc, "status_code", None) in {409, 412}:
+            return False
+        log_event(
+            "[DataManagement] Failed to release migration review reservation.",
+            {
+                "authorization_id": normalized_token,
+                "error_type": type(exc).__name__,
+            },
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+        return False
+    return True
+
+
+def consume_data_management_migration_review_authorization(
+    authorization_token,
+    admin_user_id,
+    review_fingerprint,
+    reservation_token,
+    job_id,
+):
+    """Consume an exact reservation before the reviewed job starts work."""
+    authorization = _read_data_management_migration_review_authorization(
+        authorization_token,
+        admin_user_id,
+        review_fingerprint,
+        allow_expired=True,
+    )
+    normalized_reservation = _safe_text(reservation_token)
+    normalized_job_id = _safe_text(job_id)
+    if (
+        authorization.get("status") == "consumed" and
+        hmac.compare_digest(
+            _safe_text(authorization.get("consumed_job_id")),
+            normalized_job_id,
+        )
+    ):
+        return True
+    if (
+        authorization.get("status") != "reserved" or
+        not normalized_reservation or
+        not normalized_job_id or
+        not hmac.compare_digest(
+            _safe_text(authorization.get("reservation_token")),
+            normalized_reservation,
+        ) or
+        not hmac.compare_digest(
+            _safe_text(authorization.get("job_id")),
+            normalized_job_id,
+        )
+    ):
+        raise DataManagementSettingsValidationError(
+            "Migration review reservation is invalid or already used."
+        )
+    replacement = copy.deepcopy(authorization)
+    replacement.update({
+        "status": "consumed",
+        "consumed_at": _now_iso(),
+        "consumed_job_id": normalized_job_id,
+    })
+    replacement.pop("reservation_token", None)
+    try:
+        cosmos_data_management_jobs_container.replace_item(
+            item=authorization["id"],
+            body=replacement,
+            etag=authorization.get("_etag"),
+            match_condition=MatchConditions.IfNotModified,
+        )
+    except Exception as exc:
+        if getattr(exc, "status_code", None) in {409, 412}:
+            raise DataManagementSettingsValidationError(
+                "Migration review reservation changed before execution."
+            ) from exc
+        raise
+    return True
+
+
+def _migration_review_check(
+    check_id,
+    label,
+    workflow_step,
+    callback,
+    success_summary,
+):
+    try:
+        details = callback()
+    except DataManagementSettingsValidationError as exc:
+        return {
+            "id": check_id,
+            "label": label,
+            "workflow_step": workflow_step,
+            "status": "block",
+            "summary": str(exc),
+            "details": None,
+        }
+    except Exception as exc:
+        log_event(
+            "[DataManagement] Migration review check failed.",
+            {
+                "check_id": check_id,
+                "error_type": type(exc).__name__,
+            },
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+        return {
+            "id": check_id,
+            "label": label,
+            "workflow_step": workflow_step,
+            "status": "block",
+            "summary": f"{label} could not be verified.",
+            "details": None,
+        }
+    return {
+        "id": check_id,
+        "label": label,
+        "workflow_step": workflow_step,
+        "status": "pass",
+        "summary": success_summary,
+        "details": details,
+    }
+
+
+def review_data_management_migration(settings=None, migration_plan=None):
+    """Build a sanitized, server-owned pre-execution migration review."""
+    normalized_settings = _normalize_data_management_settings_from_payload(settings)
+    normalized_plan = normalize_data_management_migration_plan(
+        {
+            "migration_plan": (
+                migration_plan
+                if isinstance(migration_plan, dict)
+                else {}
+            ),
+        },
+        require_mirror_confirmation=False,
+    )
+    summary = summarize_data_management_migration_plan({
+        "migration_plan": normalized_plan,
+    }, require_mirror_confirmation=False)
+    selected_total = sum(
+        summary[target_type]["count"]
+        for target_type in DATA_MANAGEMENT_MIGRATION_TARGET_TYPES
+    )
+    if selected_total == 0:
+        raise DataManagementSettingsValidationError(
+            "Choose at least one user, group, or public workspace before review."
+        )
+
+    checks = []
+    checks.append({
+        "id": "scope",
+        "label": "Migration scope",
+        "workflow_step": "scope",
+        "status": "pass",
+        "summary": f"{selected_total} principal scopes are included.",
+        "details": {
+            target_type: {
+                "mode": summary[target_type]["mode"],
+                "count": summary[target_type]["count"],
+                "document_count": summary[target_type]["document_count"],
+                "include_documents": summary[target_type]["include_documents"],
+            }
+            for target_type in DATA_MANAGEMENT_MIGRATION_TARGET_TYPES
+        },
+    })
+    checks.append(_migration_review_check(
+        "cosmos_access",
+        "Cosmos source and destination access",
+        "target",
+        lambda: _preflight_target_cosmos_migration_access(
+            normalized_settings,
+            normalized_plan,
+        ),
+        "Source reads, destination writes, and partition keys are ready.",
+    ))
+
+    def inspect_destination_coordination():
+        target_database = _get_target_cosmos_database(normalized_settings)
+        gate_container = _get_target_data_management_search_write_gate_container(
+            target_database
+        )
+        return {
+            "migration_coordinator": (
+                inspect_data_management_target_migration_coordinator(
+                    gate_container
+                )
+            ),
+            "search_write_gate": inspect_data_management_search_write_gate(
+                gate_container
+            ),
+        }
+
+    coordination_check = _migration_review_check(
+        "destination_coordination",
+        "Destination migration coordination",
+        "review",
+        inspect_destination_coordination,
+        "No active destination migration lock blocks this plan.",
+    )
+    coordination_details = coordination_check.get("details") or {}
+    if (
+        coordination_check["status"] == "pass" and
+        (
+            not (coordination_details.get("migration_coordinator") or {}).get(
+                "available",
+                True,
+            ) or
+            not (coordination_details.get("search_write_gate") or {}).get(
+                "available",
+                True,
+            )
+        )
+    ):
+        coordination_check.update({
+            "status": "block",
+            "summary": "Another migration currently owns the destination coordination boundary.",
+        })
+    checks.append(coordination_check)
+
+    if normalized_plan.get("include_ai_search"):
+        checks.append(_migration_review_check(
+            "ai_search_access",
+            "AI Search readiness",
+            "target",
+            lambda: _preflight_target_ai_search_migration_access(
+                normalized_settings,
+                normalized_plan,
+            ),
+            "Selected source indexes and destination Search writes are ready.",
+        ))
+    else:
+        checks.append({
+            "id": "ai_search_access",
+            "label": "AI Search readiness",
+            "workflow_step": "options",
+            "status": "warning",
+            "summary": "AI Search documents are excluded from this migration.",
+            "details": None,
+        })
+
+    if normalized_plan.get("include_source_blobs"):
+        checks.append(_migration_review_check(
+            "source_blob_access",
+            "Enhanced Citation source blob readiness",
+            "target",
+            lambda: _preflight_target_blob_migration_access(
+                normalized_settings,
+                normalized_plan,
+            ),
+            "Selected source and destination Blob containers are ready.",
+        ))
+    else:
+        checks.append({
+            "id": "source_blob_access",
+            "label": "Enhanced Citation source blob readiness",
+            "workflow_step": "options",
+            "status": "warning",
+            "summary": "Enhanced Citation source blobs are excluded from this migration.",
+            "details": None,
+        })
+
+    if normalized_settings.get("migration_temporary_destination_ru_enabled"):
+        checks.append(_migration_review_check(
+            "destination_capacity",
+            "Destination capacity policy",
+            "options",
+            lambda: _inspect_target_cosmos_migration_capacity(
+                normalized_settings,
+                normalized_plan,
+            ),
+            "Temporary destination capacity can be inspected with the configured policy.",
+        ))
+    else:
+        checks.append({
+            "id": "destination_capacity",
+            "label": "Destination capacity policy",
+            "workflow_step": "options",
+            "status": "pass",
+            "summary": "Migration will use the destination's current Cosmos capacity.",
+            "details": {
+                "temporary_capacity_enabled": False,
+            },
+        })
+
+    preview_check = _migration_review_check(
+        "destination_inventory",
+        "Destination inventory and collisions",
+        "review",
+        lambda: preview_data_management_migration_plan(
+            normalized_settings,
+            {"migration_plan": normalized_plan},
+            resolved_migration_plan=normalized_plan,
+        ),
+        "Destination inventory completed without detected collisions.",
+    )
+    preview = preview_check.get("details")
+    estimated_outcomes = (
+        preview.get("estimated_outcomes")
+        if isinstance(preview, dict)
+        else {}
+    ) or {}
+    if (
+        preview_check["status"] == "pass" and
+        _safe_int(estimated_outcomes.get("conflict_count"), default=0) > 0
+    ):
+        preview_check.update({
+            "status": "block",
+            "summary": "Destination collisions must be resolved before execution.",
+        })
+    elif (
+        preview_check["status"] == "pass" and
+        _safe_int(estimated_outcomes.get("delete_count"), default=0) > 0
+    ):
+        preview_check.update({
+            "status": "warning",
+            "summary": "The reviewed mirror plan includes destination deletions.",
+        })
+    checks.append(preview_check)
+
+    blockers = sum(check["status"] == "block" for check in checks)
+    warnings = sum(check["status"] == "warning" for check in checks)
+    return {
+        "reviewed_at": _now_iso(),
+        "review_fingerprint": _migration_review_fingerprint(
+            normalized_settings,
+            normalized_plan,
+        ),
+        "ready": blockers == 0,
+        "blocker_count": blockers,
+        "warning_count": warnings,
+        "summary": summary,
+        "preview": preview,
+        "checks": checks,
+        "execution": {
+            "migration_mode": normalized_plan.get("migration_mode"),
+            "max_parallel_operations": normalized_settings.get(
+                "migration_max_parallel_operations"
+            ),
+            "retry_count": normalized_settings.get("migration_retry_count"),
+            "skip_recent_within_hours": normalized_settings.get(
+                "migration_skip_recent_within_hours"
+            ),
+            "temporary_destination_ru_enabled": normalized_settings.get(
+                "migration_temporary_destination_ru_enabled"
+            ),
+            "temporary_destination_ru": normalized_settings.get(
+                "migration_temporary_destination_ru"
+            ),
+        },
+    }
 
 
 def _count_preview_source_cosmos_records(migration_plan, source_cutoff_at):
@@ -14840,6 +15677,33 @@ def execute_backup_job(job, settings):
 def execute_migration_job(job, settings):
     options = job.get("options") if isinstance(job.get("options"), dict) else {}
     migration_plan = normalize_data_management_migration_plan(options)
+    reviewed_fingerprint = _safe_text(options.get("review_fingerprint"))
+    if reviewed_fingerprint:
+        current_fingerprint = _migration_review_fingerprint(
+            settings,
+            migration_plan,
+        )
+        if not hmac.compare_digest(
+            reviewed_fingerprint,
+            current_fingerprint,
+        ):
+            raise DataManagementSettingsValidationError(
+                "Migration settings changed after review. Run preflight review again."
+            )
+        review_authorization_token = _safe_text(
+            options.get("review_authorization_token")
+        )
+        review_reservation_token = _safe_text(
+            options.get("review_reservation_token")
+        )
+        if review_authorization_token and review_reservation_token:
+            consume_data_management_migration_review_authorization(
+                review_authorization_token,
+                job.get("requested_by"),
+                reviewed_fingerprint,
+                review_reservation_token,
+                job.get("id"),
+            )
     total_steps = 10
     _set_job_progress(
         job,

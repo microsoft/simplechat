@@ -2,11 +2,12 @@
 # test_data_management_security_patterns.py
 """
 Functional test for Data Management security patterns.
-Version: 0.250.104
+Version: 0.250.105
 Implemented in: 0.241.211
 Updated in: 0.250.102
 Updated in: 0.250.103
 Updated in: 0.250.104
+Updated in: 0.250.105
 
 This test ensures Data Management admin routes require authenticated admin
 access, secrets stay redacted in frontend responses, and the admin browser
@@ -21,6 +22,8 @@ Version 0.250.051 keeps version coverage aligned with the Cosmos editor
 results-pane scroll refinement.
 Version 0.250.076 adds bounded parallel backup checkpoints, source capacity recovery, generic
 admin cancellation/retry controls, and latest-only sidecar state sanitization.
+Version 0.250.103 verifies paginated migration catalogs and sanitized
+server-owned review results.
 """
 
 import ast
@@ -71,7 +74,7 @@ def test_version_and_container_registration():
     """Validate the Data Management version and Cosmos job container registrations."""
     config_source = read_text(CONFIG_FILE)
 
-    assert 'VERSION = "0.250.104"' in config_source
+    assert 'VERSION = "0.250.105"' in config_source
     assert 'cosmos_data_management_jobs_container_name = "data_management_jobs"' in config_source
     assert 'partition_key=PartitionKey(path="/id")' in config_source
     assert 'cosmos_data_management_job_items_container_name = "data_management_job_items"' in config_source
@@ -91,7 +94,7 @@ def test_version_and_container_registration():
 def test_admin_routes_require_login_admin_and_swagger_security():
     """Validate every Data Management route has the required admin security stack."""
     routes = route_functions_with_decorators()
-    assert len(routes) == 23
+    assert len(routes) == 24
 
     for function_name, decorators in routes:
         assert "swagger_route" in decorators, f"{function_name} missing swagger_route"
@@ -99,6 +102,22 @@ def test_admin_routes_require_login_admin_and_swagger_security():
         assert "admin_required" in decorators, f"{function_name} missing admin_required"
 
     source = read_text(ROUTE_FILE)
+    route_tree = ast.parse(source)
+    create_job_function = next(
+        node
+        for node in ast.walk(route_tree)
+        if isinstance(node, ast.FunctionDef) and
+        node.name == "create_admin_data_management_job"
+    )
+    assert any(
+        isinstance(node, ast.Assign) and
+        any(
+            isinstance(target, ast.Name) and
+            target.id == "review_reservation"
+            for target in node.targets
+        )
+        for node in create_job_function.body
+    )
     assert 'from swagger_wrapper import get_auth_security, swagger_route' in source
     assert '/api/admin/data-management/settings' in source
     assert '/api/admin/data-management/jobs' in source
@@ -106,6 +125,7 @@ def test_admin_routes_require_login_admin_and_swagger_security():
     assert '/api/admin/data-management/backups' in source
     assert '/api/admin/data-management/migration/catalog/<target_type>' in source
     assert '/api/admin/data-management/migration/summary' in source
+    assert '/api/admin/data-management/migration/review' in source
     assert '/api/admin/data-management/target/cosmos/test' in source
     assert '/api/admin/data-management/target/search/test' in source
     assert '/api/admin/data-management/target/enhanced-citation-storage/test' in source
@@ -313,13 +333,13 @@ def test_admin_javascript_uses_safe_dom_patterns():
         'openKeyVaultSettings',
         'buildMigrationPlan()',
         'queueMigration(false)',
-        'loadMigrationCatalog(targetType)',
-        'renderMigrationSummary(data.summary || {}, data.preview || null)',
+        'loadMigrationCatalog(targetType, "reset")',
+        'renderMigrationSummary(review.summary || {}, review.preview || null)',
         'testTargetCosmos',
         'testMigrationAccess',
         'testTargetSearch',
         'testTargetEnhancedCitationStorage',
-        'Migration preview refreshed.',
+        'Migration preflight review is ready for confirmation.',
         'setMigrationTargetVisibility()',
         'updateSourceBlobBackupAvailability(settings)',
         'updateKeyStorageExperience(settings)',
@@ -391,8 +411,8 @@ def test_admin_ui_exposes_data_management_without_external_assets():
         'id="data-management-backup-inventory-section"',
         'We suggest not running backups, restores, or migrations during your operational business hours.',
         '<h4 class="mb-1">Backup</h4>',
-        '<h4 class="mb-1">Migration</h4>',
-        '<h5 class="mb-1">Target Cosmos Database</h5>',
+        'id="data-management-migration-title"',
+        'id="data-management-target-cosmos-heading"',
         'id="data_management_full_frequency"',
         'id="data_management_scheduled_time_utc" value="03:00"',
         'id="data_management_partial_enabled"',
@@ -412,7 +432,7 @@ def test_admin_ui_exposes_data_management_without_external_assets():
         'id="data_management_migration_mirror_confirmation_phrase"',
         'id="data-management-migration-search-write-freeze"',
         'id="data_management_migration_target_search_writes_frozen"',
-        'I confirm external destination AI Search writers are frozen for this migration',
+        'I confirm external destination AI Search writers are frozen',
         'id="data-management-test-target-cosmos-btn"',
         'id="data-management-target-ai-search-section"',
         'id="data-management-test-target-search-btn"',
@@ -420,7 +440,7 @@ def test_admin_ui_exposes_data_management_without_external_assets():
         'id="data-management-test-target-ec-storage-btn"',
         'id="data-management-migration-workflow-section"',
         'id="data-management-test-migration-access-btn"',
-        'Validate Cosmos Migration Access',
+        'Validate Cosmos Access',
         'id="data_management_migration_max_parallel_operations"',
         'id="data_management_backup_max_parallel_operations"',
         'id="data_management_backup_retry_count"',
@@ -504,10 +524,19 @@ def test_admin_ui_exposes_data_management_without_external_assets():
     assert 'requestGeneration !== state.requestGeneration' in read_text(ADMIN_JS)
     assert 'params.set("continuation_token", state.currentToken);' in read_text(ADMIN_JS)
     assert 'DataManagementSettingsValidationError as exc' in read_text(ROUTE_FILE)
-    assert 'except DataManagementHistoryPaginationError:' in read_text(ROUTE_FILE)
-    assert 'DATA_MANAGEMENT_HISTORY_VALIDATION_ERROR' in read_text(ROUTE_FILE)
-    assert 'except DataManagementHistoryPaginationError as exc:' not in read_text(ROUTE_FILE)
-    assert 'get_data_management_migration_catalog(target_type, search_text=search, limit=limit)' in read_text(ROUTE_FILE)
+    route_source = read_text(ROUTE_FILE)
+    assert 'continuation_token=continuation_token' in route_source
+    assert '@bp.route("/api/admin/data-management/migration/review", methods=["POST"])' in route_source
+    assert 'review_data_management_migration(' in route_source
+    assert '"workflow_step": "review"' in route_source
+    assert 'hmac.compare_digest(' in route_source
+    assert 'get_data_management_migration_review_fingerprint(' in route_source
+    assert 'create_data_management_migration_review_authorization(' in route_source
+    assert 'reserve_data_management_migration_review_authorization(' in route_source
+    assert 'release_data_management_migration_review_reservation(' in route_source
+    assert 'except DataManagementHistoryPaginationError:' in route_source
+    assert 'DATA_MANAGEMENT_HISTORY_VALIDATION_ERROR' in route_source
+    assert 'except DataManagementHistoryPaginationError as exc:' not in route_source
     assert 'data-management-restore-dry-run-btn' not in template
     assert 'data-management-migration-dry-run-btn' not in template
     admin_settings_js = read_text(APP_ROOT / "static" / "js" / "admin" / "admin_settings.js")

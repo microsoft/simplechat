@@ -1,7 +1,7 @@
 # Data Management Backup and Migration
 
 Implemented in version: **0.241.211**
-Updated in version: **0.250.104**
+Updated in version: **0.250.105**
 
 ## Overview
 
@@ -95,16 +95,18 @@ Partial backup details use the same artifact layout but expose immutable cutoff 
 
 ### Migration Workflow
 
-The Migration card supports a guided migration workflow:
+The Migration card uses a six-stage administrator workflow:
 
-- Configure Target Cosmos DB, Target Search, and Target Enhanced Citation Storage, with test buttons for each target service.
-- Select whether to migrate no users, all users, or selected users, with optional user document migration.
-- Select whether to migrate no groups, all groups, or selected groups, with optional group document migration.
-- Select whether to migrate no public workspaces, all public workspaces, or selected public workspaces, with optional public workspace document migration.
-- Preview the migration plan to refresh counts and selected IDs before execution.
-- Choose New only, Delta / upsert, or explicitly confirmed Mirror with deletions. Delta and mirror pin a compatible completed migration as their prior watermark.
-- Run a read-only live inventory preview for estimated create, update, unchanged, delete, missing, not-applicable, and conflict counts. Execution also captures its own durable inventory after the worker acquires the global migration lock.
-- Execute Migration queues a durable Data Management migration job. The job history modal shows live progress, per-step timeline events, migrated artifact counts, and warnings.
+1. **Target** configures Target Cosmos DB, Target Search, and Target Enhanced Citation Storage without returning stored secrets to the browser.
+2. **Scope** selects `none`, `selected`, or `all` for users, groups, and public workspaces. Selected mode keeps choices while searching or paging. All mode displays an exhaustive server-owned count rather than treating one catalog page as the full population.
+3. **Content & Options** chooses included documents, AI Search entries, source blobs, New only, Delta / upsert, or Mirror with deletions, plus retry/concurrency and optional destination capacity.
+4. **Review** runs a server-owned preflight snapshot. It reports authoritative principal/document counts, included and skipped surfaces, destination inventory changes, collisions, partition-key compatibility, source and target access, capacity policy, destination coordinator/write-gate readiness, and blockers or warnings.
+5. **Confirm** presents the normalized plan and requires a separate acknowledgement. Mirror mode also requires the exact `MIRROR WITH DELETIONS` phrase.
+6. **Progress** follows the sanitized durable job record and exposes progress, throughput, failures, collisions, warnings, Cancel, Retry/Resume, and the full job log.
+
+Catalog APIs use bounded page sizes, deterministic ID ordering, server-side search, authoritative filtered totals, and opaque continuation state bound to the current scope type and search. Invalid or mismatched continuation input fails safely. Explicit selected scope is bounded to 2,000 IDs and fails validation instead of silently truncating.
+
+Any target, scope, or option change marks the review stale and prevents confirmation until preflight runs again. Ready reviews issue a short-lived, administrator-bound authorization that is atomically reserved before durable job creation and consumed by that exact job before work starts, so blocked, expired, replayed, or changed reviews cannot queue work. A failed job create releases the exact reservation for retry. Submission also has an explicit in-flight guard, and API validation errors return to the relevant workflow stage. The worker rejects execution if migration-relevant settings changed after queueing, then captures its own durable inventory and reruns authoritative preflight after it acquires the migration lease and destination coordinator. A terminal Progress view exposes **Start new migration** to deliberately reset the consumed confirmation.
 
 Migration execution currently copies selected SimpleChat Cosmos records, matching AI Search documents for selected document scopes, and source document blobs when Enhanced Citations source and destination storage are configured.
 
@@ -155,12 +157,13 @@ Data Management settings save through their own API and are excluded from the re
 5. Configure the full backup cadence and scheduled UTC time.
 6. Configure Cosmos Backup Performance when needed. Keep the default bounded concurrency for normal workloads; enable the source boost only when the cost, topology, and ARM permissions have been reviewed.
 7. Queue a full or partial backup, or use the restore/migration dry-run buttons to create durable orchestration records.
-8. Configure and test Target Cosmos, Target Search, and Target Enhanced Citation Storage before running an actual migration.
-9. Use the Migration Workflow to choose users, groups, and public workspaces, then decide whether documents, AI Search entries, and source blobs should be included.
-10. Choose the synchronization mode, preview live destination changes, and then Execute Migration to queue the job. Mirror mode requires the exact destructive confirmation phrase.
-11. Open Advanced backup scope only when you need to alter the default Cosmos DB, AI Search index, or source blob backup surfaces.
-12. Use Backup Inventory to see available backups first, filter to full or partial backups, and open View Log for structured backup details.
-13. Use Job History to inspect active container, checkpoint position, records, bytes, RU, retries/throttles, rates, capacity restoration state, durable backup cutoff/checkpoint state, completed steps, reconciliation readiness, preview divergence, and artifact contents. Backup and migration detail both provide Retry/Resume and Cancel; migration detail also provides full or failure-only JSONL manifest downloads.
+8. In Migration, complete Target, Scope, and Content & Options. Use server-paginated search for selected principals or choose All to use the exhaustive count.
+9. Run Preflight Review and resolve every blocker. Re-run it after changing any earlier-stage input.
+10. Continue to Confirm, acknowledge the normalized plan, and provide the exact destructive phrase for Mirror with deletions.
+11. Execute once, then use Progress or the full job log for live telemetry, Cancel, Retry/Resume, warnings, and remediation details.
+12. Open Advanced backup scope only when you need to alter the default Cosmos DB, AI Search index, or source blob backup surfaces.
+13. Use Backup Inventory to see available backups first, filter to full or partial backups, and open View Log for structured backup details.
+14. Use Job History to inspect active container, checkpoint position, records, bytes, RU, retries/throttles, rates, capacity restoration state, durable backup cutoff/checkpoint state, completed steps, reconciliation readiness, preview divergence, and artifact contents. Backup and migration detail both provide Retry/Resume and Cancel; migration detail also provides full or failure-only JSONL manifest downloads.
 
 Migration is used when moving SimpleChat data into another SimpleChat environment, rehearsing a cutover, or preparing a controlled environment transfer. The target Cosmos account, authentication type, and optional account key are configurable. The target database name is fixed to `SimpleChat` so future migration apply jobs use the standard SimpleChat container layout.
 
@@ -171,6 +174,7 @@ For optional local/source Cosmos backup capacity management, assign the App Serv
 ## Testing and Validation
 
 - Functional security coverage: `functional_tests/test_data_management_security_patterns.py`.
+- Migration workflow contract coverage: `functional_tests/test_data_management_migration_workflow_contract.py`.
 - History pagination, filtering, deterministic ties, continuation validation, global summary, and sanitization coverage: `functional_tests/test_data_management_history_pagination.py`.
 - Cosmos composite-index maintenance coverage: `functional_tests/test_cosmos_wave3a_indexing_maintenance.py`.
 - Authenticated pagination, filter reset, refresh preservation, responsive controls, and request-order guard coverage: `ui_tests/test_admin_data_management_settings_ui.py`.
