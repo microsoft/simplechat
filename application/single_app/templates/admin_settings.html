@@ -6567,6 +6567,96 @@
                     </nav>
                 </div>
 
+                <div class="modal fade" id="data-management-restore-modal" tabindex="-1" aria-labelledby="data-management-restore-title" aria-hidden="true">
+                    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <div>
+                                    <h5 class="modal-title" id="data-management-restore-title">Restore Backup</h5>
+                                    <p class="text-muted small mb-0">Review the target, policy, and backup manifest before queueing a restore job.</p>
+                                </div>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="alert alert-warning" role="alert">
+                                    Restore writes data into the configured target Cosmos DB, AI Search, and Enhanced Citation Storage services. Create-only mode blocks existing destination collisions; overwrite mode requires a separate phrase.
+                                </div>
+                                <section class="border rounded p-3 mb-3" aria-labelledby="data-management-restore-backup-heading">
+                                    <h6 class="mb-2" id="data-management-restore-backup-heading">Selected backup</h6>
+                                    <div class="row g-2" id="data-management-restore-backup-summary">
+                                        <div class="col-12 text-muted">Choose Restore from a backup row.</div>
+                                    </div>
+                                </section>
+                                <section class="border rounded p-3 mb-3" aria-labelledby="data-management-restore-policy-heading">
+                                    <h6 class="mb-3" id="data-management-restore-policy-heading">Restore policy and surfaces</h6>
+                                    <div class="row g-3">
+                                        <div class="col-md-4">
+                                            <label class="form-label" for="data_management_restore_policy">Collision policy</label>
+                                            <select class="form-select" id="data_management_restore_policy">
+                                                <option value="create_only" selected>Create only (block collisions)</option>
+                                                <option value="overwrite_existing">Overwrite existing target records</option>
+                                            </select>
+                                            <div class="form-text">Create-only is non-destructive and recommended for first restore attempts.</div>
+                                        </div>
+                                        <div class="col-md-8">
+                                            <fieldset>
+                                                <legend class="form-label">Restore surfaces</legend>
+                                                <div class="d-flex flex-wrap gap-3">
+                                                    <div class="form-check form-switch">
+                                                        <input class="form-check-input" type="checkbox" role="switch" id="data_management_restore_include_cosmos" checked>
+                                                        <label class="form-check-label" for="data_management_restore_include_cosmos">Cosmos DB</label>
+                                                    </div>
+                                                    <div class="form-check form-switch">
+                                                        <input class="form-check-input" type="checkbox" role="switch" id="data_management_restore_include_ai_search" checked>
+                                                        <label class="form-check-label" for="data_management_restore_include_ai_search">AI Search</label>
+                                                    </div>
+                                                    <div class="form-check form-switch">
+                                                        <input class="form-check-input" type="checkbox" role="switch" id="data_management_restore_include_source_blobs" checked>
+                                                        <label class="form-check-label" for="data_management_restore_include_source_blobs">Enhanced Citation blobs</label>
+                                                    </div>
+                                                </div>
+                                            </fieldset>
+                                        </div>
+                                    </div>
+                                    <div class="mt-3 d-none" id="data-management-restore-confirmation-section">
+                                        <label class="form-label" for="data_management_restore_overwrite_confirmation_phrase">Type the overwrite confirmation phrase</label>
+                                        <input class="form-control" type="text" id="data_management_restore_overwrite_confirmation_phrase" autocomplete="off" aria-describedby="data-management-restore-confirmation-help">
+                                        <div class="form-text" id="data-management-restore-confirmation-help">
+                                            Required phrase: <code>RESTORE WITH OVERWRITE</code>
+                                        </div>
+                                    </div>
+                                </section>
+                                <section class="border rounded p-3" aria-labelledby="data-management-restore-review-heading">
+                                    <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+                                        <div>
+                                            <h6 class="mb-1" id="data-management-restore-review-heading">Preflight review</h6>
+                                            <p class="text-muted small mb-0" id="data-management-restore-review-status">Run review to validate the manifest, target access, and restore policy.</p>
+                                        </div>
+                                        <button type="button" class="btn btn-outline-primary btn-sm" id="data-management-restore-review-btn">
+                                            <i class="bi bi-shield-check me-1"></i>Run Restore Review
+                                        </button>
+                                    </div>
+                                    <div class="list-group" id="data-management-restore-review-checks" aria-live="polite">
+                                        <div class="list-group-item text-muted">No restore review has run yet.</div>
+                                    </div>
+                                </section>
+                                <div class="form-check mt-3">
+                                    <input class="form-check-input" type="checkbox" id="data_management_restore_final_confirmation">
+                                    <label class="form-check-label fw-semibold" for="data_management_restore_final_confirmation">
+                                        I reviewed the restore target, policy, and preflight result.
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                <button type="button" class="btn btn-danger" id="data-management-restore-queue-btn" disabled aria-disabled="true">
+                                    Queue Restore Job
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="card p-4 mb-4 border-dark shadow-sm" id="data-management-jobs-section">
                     <div class="d-flex align-items-center justify-content-between mb-3">
                         <h4 class="mb-0">Job History</h4>

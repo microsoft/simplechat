@@ -81,6 +81,60 @@ function getPublicDeleteModalContent(documentCount) {
   };
 }
 
+async function requestPublicSelectedMetadataExtraction(documentIds) {
+  const response = await fetch('/api/public_documents/extract_metadata', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ document_ids: documentIds }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok && !(Array.isArray(data.queued) && data.queued.length > 0)) {
+    throw new Error(data.error || data.message || 'Unable to queue metadata extraction.');
+  }
+  return data;
+}
+
+function showPublicSelectedMetadataExtractionResult(data) {
+  const queuedCount = Array.isArray(data.queued) ? data.queued.length : 0;
+  const errorCount = Array.isArray(data.errors) ? data.errors.length : 0;
+  const message = errorCount > 0
+    ? `Queued metadata extraction for ${queuedCount} document(s); ${errorCount} item(s) were skipped.`
+    : (data.message || `Queued metadata extraction for ${queuedCount} document(s).`);
+  showPublicWorkspaceToast(message, errorCount > 0 ? 'warning' : 'success');
+}
+
+async function extractPublicSelectedMetadata() {
+  const documentIds = Array.from(publicSelectedDocuments);
+  if (documentIds.length === 0) {
+    return;
+  }
+  if (!(window.enable_extract_meta_data === true || window.enable_extract_meta_data === 'true')) {
+    showPublicWorkspaceToast('Metadata extraction is not enabled.', 'info');
+    return;
+  }
+
+  const extractMetadataBtn = document.getElementById('public-extract-selected-metadata-btn');
+  if (extractMetadataBtn) {
+    extractMetadataBtn.disabled = true;
+    extractMetadataBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>Extracting...';
+  }
+
+  try {
+    const data = await requestPublicSelectedMetadataExtraction(documentIds);
+    showPublicSelectedMetadataExtractionResult(data);
+    publicSelectedDocuments.clear();
+    syncPublicSelectionModeUI();
+    fetchPublicDocs();
+  } catch (error) {
+    showPublicWorkspaceToast(error.message, 'danger');
+  } finally {
+    if (extractMetadataBtn) {
+      extractMetadataBtn.disabled = false;
+      extractMetadataBtn.innerHTML = '<i class="bi bi-magic me-1"></i>Extract Metadata';
+    }
+  }
+}
+
 function showPublicDocumentDeleteFeedback(message, variant = 'danger') {
   if (typeof window.showToast === 'function') {
     window.showToast(message, variant);
@@ -614,11 +668,13 @@ document.addEventListener('DOMContentLoaded', ()=>{
   const publicDownloadSelectedBtn = document.getElementById('public-download-selected-btn');
   const publicClearSelectionBtn = document.getElementById('public-clear-selection-btn');
   const publicChatSelectedBtn = document.getElementById('public-chat-selected-btn');
+  const publicExtractSelectedMetadataBtn = document.getElementById('public-extract-selected-metadata-btn');
 
   if (publicDeleteSelectedBtn) publicDeleteSelectedBtn.addEventListener('click', deletePublicSelectedDocuments);
   if (publicDownloadSelectedBtn) publicDownloadSelectedBtn.addEventListener('click', downloadPublicSelectedDocuments);
   if (publicClearSelectionBtn) publicClearSelectionBtn.addEventListener('click', clearPublicSelection);
   if (publicChatSelectedBtn) publicChatSelectedBtn.addEventListener('click', chatWithPublicSelected);
+  if (publicExtractSelectedMetadataBtn) publicExtractSelectedMetadataBtn.addEventListener('click', extractPublicSelectedMetadata);
   document.getElementById('public-toggle-selection-btn')?.addEventListener('click', togglePublicSelectionMode);
   document.addEventListener('click', handlePublicDocumentCardClick);
 });
@@ -2227,17 +2283,22 @@ function updatePublicBulkActionButtons() {
   const deleteBtn = document.getElementById('public-delete-selected-btn');
   const downloadBtn = document.getElementById('public-download-selected-btn');
   const reprocessDropdown = document.getElementById('public-reprocess-selected-dropdown');
+  const extractMetadataBtn = document.getElementById('public-extract-selected-metadata-btn');
 
   if (publicSelectedDocuments.size > 0) {
     if (bulkActionsBar) bulkActionsBar.style.display = 'block';
     if (selectedCountSpan) selectedCountSpan.textContent = publicSelectedDocuments.size;
     const canManage = ['Owner', 'Admin', 'DocumentManager'].includes(userRoleInActivePublic);
+    const canModify = canManage && (window.currentPublicStatus || 'active') === 'active';
+    const metadataEnabled = window.enable_extract_meta_data === true || window.enable_extract_meta_data === 'true';
     if (deleteBtn) deleteBtn.style.display = canManage ? 'inline-block' : 'none';
     if (downloadBtn) downloadBtn.classList.toggle('d-none', !publicFileDownloadsEnabled);
     if (reprocessDropdown) reprocessDropdown.classList.toggle('d-none', !canManage);
+    if (extractMetadataBtn) extractMetadataBtn.classList.toggle('d-none', !(canModify && metadataEnabled));
   } else {
     if (bulkActionsBar) bulkActionsBar.style.display = 'none';
     if (downloadBtn) downloadBtn.classList.add('d-none');
+    if (extractMetadataBtn) extractMetadataBtn.classList.add('d-none');
   }
 }
 
@@ -2511,6 +2572,7 @@ window.clearPublicSelection = clearPublicSelection;
 window.chatWithPublicSelected = chatWithPublicSelected;
 window.reprocessPublicDocumentExtraction = reprocessPublicDocumentExtraction;
 window.reprocessPublicSelectedDocumentExtraction = reprocessPublicSelectedDocumentExtraction;
+window.extractPublicSelectedMetadata = extractPublicSelectedMetadata;
 
 // Prompts
 function canManagePublicPrompts() {

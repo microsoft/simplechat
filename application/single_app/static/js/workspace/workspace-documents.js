@@ -32,6 +32,7 @@ const docsSharedOnlyFilter = document.getElementById("docs-shared-only-filter");
 const deleteSelectedBtn = document.getElementById("delete-selected-btn");
 const downloadSelectedBtn = document.getElementById("download-selected-btn");
 const chatSelectedBtn = document.getElementById("chat-selected-btn");
+const extractSelectedMetadataBtn = document.getElementById("extract-selected-metadata-btn");
 const clearSelectionBtn = document.getElementById("clear-selection-btn");
 const documentDeleteModalElement = document.getElementById("documentDeleteModal");
 const documentDeleteModal = documentDeleteModalElement ? new bootstrap.Modal(documentDeleteModalElement) : null;
@@ -53,6 +54,10 @@ function getDocumentConversationUrl(doc) {
         return `/chats?conversation_id=${encodeURIComponent(doc.conversation_id)}`;
     }
     return "";
+}
+
+function isWorkspaceMetadataExtractionEnabled() {
+    return window.enable_extract_meta_data === true || window.enable_extract_meta_data === "true";
 }
 
 function setDocumentConversationStatusElement(element, doc) {
@@ -2575,6 +2580,60 @@ window.reprocessSelectedDocumentExtraction = async function(extractionMode) {
     }
 };
 
+async function requestSelectedDocumentMetadataExtraction(documentIds) {
+    const response = await fetch('/api/documents/extract_metadata', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ document_ids: documentIds }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok && !(Array.isArray(data.queued) && data.queued.length > 0)) {
+        throw new Error(data.error || data.message || 'Unable to queue metadata extraction.');
+    }
+    return data;
+}
+
+function showSelectedDocumentMetadataExtractionResult(data) {
+    const queuedCount = Array.isArray(data.queued) ? data.queued.length : 0;
+    const errorCount = Array.isArray(data.errors) ? data.errors.length : 0;
+    const message = errorCount > 0
+        ? `Queued metadata extraction for ${queuedCount} document(s); ${errorCount} item(s) were skipped.`
+        : (data.message || `Queued metadata extraction for ${queuedCount} document(s).`);
+
+    showToast(message, errorCount > 0 ? 'warning' : 'success');
+}
+
+window.extractSelectedMetadata = async function() {
+    const documentIds = Array.from(selectedDocuments);
+    if (documentIds.length === 0) {
+        return;
+    }
+    if (!isWorkspaceMetadataExtractionEnabled()) {
+        showToast("Metadata extraction is not enabled.", 'info');
+        return;
+    }
+
+    if (extractSelectedMetadataBtn) {
+        extractSelectedMetadataBtn.disabled = true;
+        extractSelectedMetadataBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>Extracting...';
+    }
+
+    try {
+        const data = await requestSelectedDocumentMetadataExtraction(documentIds);
+        showSelectedDocumentMetadataExtractionResult(data);
+        selectedDocuments.clear();
+        syncDocumentSelectionModeUI();
+        fetchUserDocuments();
+    } catch (error) {
+        showToast(error.message, 'danger');
+    } finally {
+        if (extractSelectedMetadataBtn) {
+            extractSelectedMetadataBtn.disabled = false;
+            extractSelectedMetadataBtn.innerHTML = '<i class="bi bi-magic me-1"></i>Extract Metadata';
+        }
+    }
+};
+
 // Make fetchUserDocuments globally available for workspace-init.js
 window.fetchUserDocuments = fetchUserDocuments;
 
@@ -2610,6 +2669,7 @@ function updateBulkActionButtons() {
     const bulkActionsBar = document.getElementById('bulkActionsBar');
     const selectedCountSpan = document.getElementById('selectedCount');
     const downloadBtn = document.getElementById('download-selected-btn');
+    const extractMetadataBtn = document.getElementById('extract-selected-metadata-btn');
     
     if (selectedDocuments.size > 0) {
         // Show bulk actions bar with count
@@ -2623,7 +2683,10 @@ function updateBulkActionButtons() {
         if (downloadBtn) {
             downloadBtn.classList.toggle('d-none', !personalWorkspaceFileDownloadsEnabled);
         }
-        
+        if (extractMetadataBtn) {
+            extractMetadataBtn.classList.toggle('d-none', !isWorkspaceMetadataExtractionEnabled());
+        }
+
     } else {
         // Hide bulk actions bar
         if (bulkActionsBar) {
@@ -2632,6 +2695,9 @@ function updateBulkActionButtons() {
         }
         if (downloadBtn) {
             downloadBtn.classList.add('d-none');
+        }
+        if (extractMetadataBtn) {
+            extractMetadataBtn.classList.add('d-none');
         }
     }
 }
@@ -2799,7 +2865,11 @@ document.addEventListener('DOMContentLoaded', function() {
     if (chatSelectedBtn) {
         chatSelectedBtn.addEventListener('click', window.chatWithSelected);
     }
-    
+
+    if (extractSelectedMetadataBtn) {
+        extractSelectedMetadataBtn.addEventListener('click', window.extractSelectedMetadata);
+    }
+
     // Clear selection button
     if (clearSelectionBtn) {
         clearSelectionBtn.addEventListener('click', window.clearDocumentSelection);
