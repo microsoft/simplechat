@@ -666,7 +666,12 @@ def register_route_backend_data_management(bp):
                 reason=payload.get("reason") if isinstance(payload, dict) else "manual",
             )
         except DataManagementSettingsValidationError as exc:
-            return jsonify({"success": False, "error": str(exc)}), 400
+            log_event(
+                "[DataManagement] Backup deletion validation failed.",
+                {"backup_id": backup_id, "error": str(exc)},
+                level=logging.WARNING,
+            )
+            return jsonify({"success": False, "error": "Backup deletion request is invalid."}), 400
         except Exception as exc:
             log_event(
                 "[DataManagement] Backup deletion failed.",
