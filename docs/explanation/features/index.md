@@ -17,17 +17,21 @@ category: Version History
 - [AI Voice Conversations Setup Guide](AI_VOICE_CONVERSATIONS_SETUP_GUIDE.md)
 - [Activity Log Auto-Refresh](CONTROL_CENTER_ACTIVITY_LOG_AUTO_REFRESH.md)
 - [Activity Log Layout Presets](ACTIVITY_LOG_LAYOUT_PRESETS.md)
+- [Content Safety Violation Messages](CONTENT_SAFETY_VIOLATION_MESSAGES.md)
 
 ## Agent and Action Features
 
 - [Action Type Governance](v0.242.064/ACTION_TYPE_GOVERNANCE.md)
-- [Mixed-Source Hardening, Extraction, and Rollout](MIXED_SOURCE_HARDENING_EXTRACTION_AND_ROLLOUT.md)
-- [Mixed-Source Chat and Search Consistency](MIXED_SOURCE_CHAT_AND_SEARCH_CONSISTENCY.md)
-- [Mixed-Source Analyze](MIXED_SOURCE_ANALYZE.md)
-- [Cross-Format Compare](CROSS_FORMAT_COMPARE.md)
 - [Agents Page Customization](v0.241.229/AGENTS_PAGE_CUSTOMIZATION.md)
 - [Microsoft Graph Send Mail Action](MSGRAPH_SEND_MAIL_ACTION.md)
 - [Snowflake Action](v0.250.006/SNOWFLAKE_ACTION.md)
+
+## MCP Features
+
+- [MCP Current State And Remaining Roadmap](MCP_PLUGIN_ROBUSTNESS_PLAN.md)
+- [Inbound SimpleChat MCP Server Architecture](INBOUND_MCP_SERVER_ARCHITECTURE.md)
+- [MCP Server Presets](MCP_SERVER_PRESETS.md)
+- [MCP Server Preconfigurations](MCP_SERVER_PRECONFIGURATIONS.md)
 
 ## Chat Upload Features
 
@@ -40,10 +44,11 @@ category: Version History
 
 ## Versioned Features
 
-- [Generated File Export Framework](GENERATED_FILE_EXPORT_FRAMEWORK.md)
+- [Data Management Durable Backup Jobs](DATA_MANAGEMENT_BACKUP_MIGRATION.md)
+- [Data Management Migration Resilience](DATA_MANAGEMENT_MIGRATION_RESILIENCE.md)
+- [Migration Provenance](MIGRATION_PROVENANCE.md)
 - [Microsoft Teams App SSO](v0.242.072/TEAMS_APP_SSO.md)
 - [Tabular SK Large Result Pagination](v0.242.067/TABULAR_SK_LARGE_RESULT_PAGINATION.md)
-- [Universal CSV Generation](UNIVERSAL_CSV_GENERATION.md)
 - [Model Endpoint Model Icon Picker](v0.242.060/MODEL_ENDPOINT_MODEL_ICON_PICKER.md)
 - [Deployer Capacity Defaults](v0.241.085/DEPLOYER_CAPACITY_DEFAULTS.md)
 - [Chat Inline Export Action Progress Labels](v0.241.107/CHAT_INLINE_EXPORT_ACTION_PROGRESS.md)

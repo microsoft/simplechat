@@ -2,12 +2,14 @@
 
 import re
 import logging
+from urllib.parse import urlparse
 from functions_appinsights import log_event
 from config import *
 from functions_authentication import *
 from functions_settings import *
 from enum import Enum
 import app_settings_cache
+from functions_mcp_operations import MCP_CUSTOM_HEADERS_FIELD, MCP_PLUGIN_TYPE
 from functions_snowflake_operations import SNOWFLAKE_PLUGIN_TYPE, SNOWFLAKE_SENSITIVE_ADDITIONAL_FIELDS
 
 try:
@@ -239,6 +241,12 @@ def _is_snowflake_plugin(plugin_dict):
     return isinstance(plugin_type, str) and plugin_type.lower() == SNOWFLAKE_PLUGIN_TYPE
 
 
+def _is_mcp_plugin(plugin_dict):
+    """Return True when the plugin manifest is an MCP action."""
+    plugin_type = (plugin_dict or {}).get("type", "")
+    return isinstance(plugin_type, str) and plugin_type.lower() == MCP_PLUGIN_TYPE
+
+
 def _is_sensitive_plugin_additional_field(plugin_dict, field_name):
     """Return True when an action additional field should be treated as a secret."""
     return (
@@ -312,6 +320,43 @@ def _store_plugin_secret_reference(updated_plugin, existing_plugin, path, secret
         scope=scope,
     )
     _set_nested_dict_value(updated_plugin, path, full_secret_name)
+
+
+def _store_mcp_custom_header_references(updated_plugin, existing_plugin, plugin_name, scope_value, scope):
+    """Store or preserve MCP custom header values as individual action-addset secrets."""
+    additional_fields = updated_plugin.get('additionalFields', {})
+    if not isinstance(additional_fields, dict):
+        return
+
+    custom_headers = additional_fields.get(MCP_CUSTOM_HEADERS_FIELD, {})
+    if not isinstance(custom_headers, dict):
+        return
+
+    for header_name, header_value in custom_headers.items():
+        if not header_value:
+            continue
+
+        path = ('additionalFields', MCP_CUSTOM_HEADERS_FIELD, header_name)
+        existing_value = _get_nested_dict_value(existing_plugin or {}, path)
+        if header_value == ui_trigger_word:
+            if existing_value:
+                _set_nested_dict_value(updated_plugin, path, existing_value)
+                continue
+            raise ValueError(f"MCP custom header '{header_name}' must be re-entered before saving.")
+
+        secret_name = _build_plugin_additional_field_secret_name(
+            plugin_name,
+            f"mcp-custom-header-{header_name}",
+        )
+        _store_plugin_secret_reference(
+            updated_plugin,
+            existing_plugin,
+            path,
+            secret_name,
+            scope_value,
+            source="action-addset",
+            scope=scope,
+        )
 
 
 def _store_secret_reference(updated, existing, path, secret_name, scope_value, source, scope):
@@ -402,6 +447,13 @@ def redact_plugin_secret_values(plugin_dict, redaction_value=REDACTED_SECRET_VAL
         for key, value in additional_fields.items():
             if not value:
                 continue
+            if _is_mcp_plugin(redacted) and key == MCP_CUSTOM_HEADERS_FIELD and isinstance(value, dict):
+                new_additional_fields[key] = {
+                    header_name: redaction_value
+                    for header_name, header_value in value.items()
+                    if header_value
+                }
+                continue
             if key.endswith("__Secret") or _is_sensitive_plugin_additional_field(redacted, key):
                 new_additional_fields[key] = redaction_value
         redacted["additionalFields"] = new_additional_fields
@@ -484,6 +536,69 @@ def retrieve_secret_from_key_vault_by_full_name(full_secret_name):
     except Exception as e:
         log_event(f"Failed to retrieve secret '{full_secret_name}' from Key Vault: {str(e)}", level=logging.ERROR, exceptionTraceback=True)
         return full_secret_name
+
+
+def resolve_secret_reference_version(full_secret_name):
+    """Resolve a dynamic Key Vault secret name to its immutable versioned reference."""
+    settings = app_settings_cache.get_settings_cache()
+    if not settings.get("enable_key_vault_secret_storage", False):
+        return full_secret_name
+
+    key_vault_name = settings.get("key_vault_name", None)
+    if not key_vault_name or not validate_secret_name_dynamic(full_secret_name):
+        return full_secret_name
+
+    try:
+        key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
+        secret_client = SecretClient(
+            vault_url=key_vault_url,
+            credential=get_keyvault_credential(),
+        )
+        secret = secret_client.get_secret(full_secret_name)
+        return getattr(secret, "id", None) or full_secret_name
+    except Exception as exc:
+        log_event(
+            f"Failed to resolve Key Vault secret version for '{full_secret_name}': {str(exc)}",
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        return full_secret_name
+
+
+def retrieve_secret_from_key_vault_by_reference(secret_reference):
+    """Retrieve a dynamic secret name or a version-pinned Key Vault secret URL."""
+    reference = str(secret_reference or "").strip()
+    parsed_reference = urlparse(reference)
+    if not parsed_reference.scheme or not parsed_reference.netloc:
+        return retrieve_secret_from_key_vault_by_full_name(reference)
+
+    settings = app_settings_cache.get_settings_cache()
+    if not settings.get("enable_key_vault_secret_storage", False):
+        return reference
+    key_vault_name = settings.get("key_vault_name", None)
+    expected_host = f"{key_vault_name}{KEY_VAULT_DOMAIN}".lower() if key_vault_name else ""
+    path_parts = [part for part in parsed_reference.path.split("/") if part]
+    if (
+        parsed_reference.scheme.lower() != "https" or
+        parsed_reference.netloc.lower() != expected_host or
+        len(path_parts) != 3 or
+        path_parts[0].lower() != "secrets"
+    ):
+        raise ValueError("Key Vault secret reference is not a valid versioned secret URL.")
+
+    try:
+        secret_client = SecretClient(
+            vault_url=f"https://{key_vault_name}{KEY_VAULT_DOMAIN}",
+            credential=get_keyvault_credential(),
+        )
+        return secret_client.get_secret(path_parts[1], path_parts[2]).value
+    except Exception as exc:
+        log_event(
+            f"Failed to retrieve version-pinned Key Vault secret '{reference}': {str(exc)}",
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        raise
         
 def retrieve_secret_direct(secret_name, settings=None):
     """
@@ -795,6 +910,23 @@ def keyvault_plugin_save_helper(plugin_dict, scope_value, scope="global", existi
     if isinstance(additional_fields, dict):
         new_additional_fields = dict(additional_fields)
         updated['additionalFields'] = new_additional_fields
+        if _is_mcp_plugin(updated):
+            try:
+                _store_mcp_custom_header_references(
+                    updated,
+                    existing_plugin,
+                    plugin_name,
+                    scope_value,
+                    scope,
+                )
+            except Exception as e:
+                log_event(
+                    f"Failed to store MCP custom header secrets for action '{plugin_name}': {e}",
+                    level=logging.ERROR,
+                    exceptionTraceback=True,
+                )
+                raise Exception(f"Failed to store MCP custom header secrets for action '{plugin_name}': {e}")
+
         for k, v in additional_fields.items():
             if not v:
                 continue
@@ -891,6 +1023,38 @@ def keyvault_plugin_get_helper(plugin_dict, scope_value, scope="global", return_
     additional_fields = updated.get('additionalFields', {})
     if isinstance(additional_fields, dict):
         new_additional_fields = dict(additional_fields)
+        if _is_mcp_plugin(updated):
+            custom_headers = additional_fields.get(MCP_CUSTOM_HEADERS_FIELD, {})
+            if isinstance(custom_headers, dict):
+                new_custom_headers = dict(custom_headers)
+                for header_name, header_value in custom_headers.items():
+                    if not header_value:
+                        continue
+                    if isinstance(header_value, str) and validate_secret_name_dynamic(header_value):
+                        try:
+                            if return_type == SecretReturnType.VALUE:
+                                new_custom_headers[header_name] = resolve_secret_reference_for_context(
+                                    header_value,
+                                    scope_value=scope_value,
+                                    scope=scope,
+                                    allowed_sources={"action-addset"},
+                                    context_label=f"MCP custom header '{header_name}'",
+                                )
+                            elif return_type == SecretReturnType.NAME:
+                                new_custom_headers[header_name] = header_value
+                            else:
+                                new_custom_headers[header_name] = ui_trigger_word
+                        except Exception as e:
+                            log_event(
+                                f"Failed to retrieve MCP custom header secret '{header_name}' from Key Vault: {e}",
+                                level=logging.ERROR,
+                                exceptionTraceback=True,
+                            )
+                            raise Exception(f"Failed to retrieve MCP custom header secret '{header_name}' from Key Vault: {e}")
+                    elif return_type == SecretReturnType.TRIGGER:
+                        new_custom_headers[header_name] = ui_trigger_word
+                new_additional_fields[MCP_CUSTOM_HEADERS_FIELD] = new_custom_headers
+
         for k, v in additional_fields.items():
             if (k.endswith('__Secret') or _is_sensitive_plugin_additional_field(updated, k)) and v and validate_secret_name_dynamic(v):
                 try:
@@ -1130,6 +1294,42 @@ def keyvault_plugin_delete_helper(plugin_dict, scope_value, scope="global"):
 
     additional_fields = plugin_dict.get('additionalFields', {})
     if isinstance(additional_fields, dict):
+        if _is_mcp_plugin(plugin_dict):
+            custom_headers = additional_fields.get(MCP_CUSTOM_HEADERS_FIELD, {})
+            if isinstance(custom_headers, dict):
+                for header_name, header_value in custom_headers.items():
+                    if not header_value or not validate_secret_name_dynamic(header_value):
+                        continue
+                    if not secret_reference_matches_context(
+                        header_value,
+                        scope_value=scope_value,
+                        scope=scope,
+                        allowed_sources={"action-addset"},
+                    ):
+                        _log_secret_reference_context_mismatch(
+                            header_value,
+                            f"MCP custom header '{header_name}' deletion",
+                            scope_value=scope_value,
+                            scope=scope,
+                            allowed_sources={"action-addset"},
+                        )
+                        continue
+                    try:
+                        key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
+                        log_event(
+                            f"Deleting MCP custom header secret '{header_name}' for action '{plugin_name}' for '{scope}' '{scope_value}'",
+                            level=logging.INFO,
+                        )
+                        client = SecretClient(vault_url=key_vault_url, credential=get_keyvault_credential())
+                        client.begin_delete_secret(header_value)
+                    except Exception as e:
+                        log_event(
+                            f"Error deleting MCP custom header secret '{header_name}' for action '{plugin_name}': {e}",
+                            level=logging.ERROR,
+                            exceptionTraceback=True,
+                        )
+                        raise Exception(f"Error deleting MCP custom header secret '{header_name}' for action '{plugin_name}': {e}")
+
         for k, v in additional_fields.items():
             if (k.endswith('__Secret') or _is_sensitive_plugin_additional_field(plugin_dict, k)) and v and validate_secret_name_dynamic(v):
                 if not secret_reference_matches_context(

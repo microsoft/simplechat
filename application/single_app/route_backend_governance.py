@@ -55,6 +55,15 @@ def _sanitize_policy_payload(payload):
     }
 
 
+def _sanitize_item_policy_request_payload(payload):
+    if not isinstance(payload, dict):
+        return "", "", _sanitize_policy_payload({})
+
+    entity_type = str(payload.get("entity_type") or "").strip().lower()
+    item_id = str(payload.get("item_id") or "").strip()
+    return entity_type, item_id, _sanitize_policy_payload(payload)
+
+
 def _normalize_review_pagination(args):
     try:
         page = int(str(args.get("page") or "1").strip())
@@ -134,7 +143,9 @@ def register_route_backend_governance(bp):
                 actor_user_id=actor_user_id,
                 actor_email=actor_email,
             )
-        except Exception:
+        except PermissionError:
+            return jsonify({'error': 'You are not authorized to delete this governance policy.'}), 403
+        except ValueError:
             return jsonify({'error': 'Item governance policy not found.'}), 404
 
         return jsonify({'deleted': deleted}), 200
@@ -211,11 +222,53 @@ def register_route_backend_governance(bp):
         actor_user_id = str(get_current_user_id() or '').strip()
         actor_email = _normalize_actor_email()
 
-        updated = upsert_item_policy(
-            entity_type=normalized_entity_type,
-            item_id=normalized_item_id,
-            payload=payload,
-            actor_user_id=actor_user_id,
-            actor_email=actor_email,
-        )
+        try:
+            updated = upsert_item_policy(
+                entity_type=normalized_entity_type,
+                item_id=normalized_item_id,
+                payload=payload,
+                actor_user_id=actor_user_id,
+                actor_email=actor_email,
+            )
+        except PermissionError:
+            return jsonify({'error': 'You are not authorized to update this governance policy.'}), 403
         return jsonify({'policy': updated}), 200
+
+    @bp.route('/api/admin/governance/item-policies', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def upsert_governance_item_policy_json_route():
+        normalized_entity_type, normalized_item_id, payload = _sanitize_item_policy_request_payload(
+            request.get_json(silent=True) or {}
+        )
+        if not normalized_entity_type or not normalized_item_id:
+            return jsonify({'error': 'entity_type and item_id are required.'}), 400
+
+        actor_user_id = str(get_current_user_id() or '').strip()
+        actor_email = _normalize_actor_email()
+        try:
+            updated = upsert_item_policy(
+                entity_type=normalized_entity_type,
+                item_id=normalized_item_id,
+                payload=payload,
+                actor_user_id=actor_user_id,
+                actor_email=actor_email,
+            )
+        except PermissionError:
+            return jsonify({'error': 'You are not authorized to update this governance policy.'}), 403
+        return jsonify({'policy': updated}), 200
+
+    @bp.route('/api/admin/governance/item-policies/delete', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def delete_governance_item_policy_json_route():
+        payload = request.get_json(silent=True) or {}
+        normalized_entity_type = str((payload or {}).get("entity_type") or '').strip().lower()
+        normalized_item_id = str((payload or {}).get("item_id") or '').strip()
+        normalized_policy_id = str((payload or {}).get("policy_id") or '').strip() or None
+        if not normalized_entity_type or not normalized_item_id:
+            return jsonify({'error': 'entity_type and item_id are required.'}), 400
+
+        return _delete_governance_item_policy(normalized_entity_type, normalized_item_id, normalized_policy_id)

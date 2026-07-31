@@ -25,6 +25,9 @@ from azure.identity import (
 from flask import Flask, g, has_request_context, session
 from openai import AzureOpenAI
 from semantic_kernel import Kernel
+from semantic_kernel.connectors.ai.function_choice_behavior import FunctionChoiceBehavior
+from semantic_kernel.connectors.ai.prompt_execution_settings import PromptExecutionSettings
+from semantic_kernel.contents.chat_history import ChatHistory
 from semantic_kernel.contents.chat_message_content import ChatMessageContent
 
 from collaboration_models import (
@@ -35,6 +38,7 @@ from collaboration_models import (
 )
 from config import (
     SECRET_KEY,
+    VERSION,
     cognitive_services_scope,
     cosmos_conversations_container,
     cosmos_group_documents_container,
@@ -42,6 +46,12 @@ from config import (
     cosmos_public_documents_container,
     cosmos_user_documents_container,
     storage_account_personal_chat_container_name,
+)
+from functions_conversation_context import (
+    build_conversation_context_data_message,
+    build_conversation_context_snapshot,
+    build_conversation_context_system_message,
+    serialize_conversation_context_snapshot,
 )
 from functions_activity_logging import log_conversation_creation, log_token_usage, log_workflow_run
 from functions_appinsights import log_event
@@ -93,7 +103,14 @@ from functions_debug import debug_print
 from functions_document_analysis import run_document_analysis
 from functions_file_sync import get_authorized_sync_source, queue_file_sync_source_run
 from functions_group import assert_group_role, get_group_model_endpoints, get_user_groups
-from functions_group_workflows import save_group_workflow_run, save_group_workflow_run_item
+from functions_group_workflows import (
+    get_group_workflow,
+    get_group_workflow_run,
+    list_group_workflow_run_items,
+    normalize_group_workflow_task_runner,
+    save_group_workflow_run,
+    save_group_workflow_run_item,
+)
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
 from functions_message_artifacts import (
     build_agent_citation_tool_label,
@@ -124,9 +141,19 @@ from functions_mixed_source_orchestration import (
 from model_endpoint_clients import (
     MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
 )
-from functions_model_endpoint_runtime import build_model_endpoint_sync_chat_client
+from functions_model_endpoint_runtime import (
+    build_model_endpoint_sync_chat_client,
+    build_semantic_kernel_chat_service_for_model,
+)
 from functions_notifications import create_workflow_priority_notification
-from functions_personal_workflows import save_personal_workflow_run, save_personal_workflow_run_item
+from functions_personal_workflows import (
+    get_personal_workflow,
+    get_personal_workflow_run,
+    list_personal_workflow_run_items,
+    normalize_personal_workflow_task_runner,
+    save_personal_workflow_run,
+    save_personal_workflow_run_item,
+)
 from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
 from functions_search_service import (
     resolve_document_context,
@@ -165,7 +192,11 @@ from functions_source_review import (
 )
 from functions_thoughts import ThoughtTracker
 from functions_tabular_generated_exports import cancel_tabular_generated_output_run
-from semantic_kernel_loader import load_user_semantic_kernel
+from semantic_kernel_loader import (
+    get_max_auto_invoke_attempts,
+    load_core_plugins_only,
+    load_user_semantic_kernel,
+)
 from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger, sanitize_plugin_invocation_value
 from semantic_kernel_plugins.plugin_invocation_thoughts import register_plugin_invocation_thought_callback
 
@@ -178,6 +209,12 @@ DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_LINE_COUNT = 5
 DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_LINE_LENGTH = 220
 TABULAR_DOCUMENT_EXTENSIONS = {'.csv', '.xls', '.xlsx', '.xlsm'}
 WORKFLOW_CONVERSATION_ACCESS_ERROR = 'Workflow conversation not found or access denied.'
+WORKFLOW_RUN_CANCELLED_MESSAGE = 'Workflow cancellation was requested.'
+WORKFLOW_TASK_CONTEXT_MAX_CHARS = 12000
+
+
+class WorkflowRunCancelledError(BaseException):
+    """Raised when a persisted workflow cancellation request is observed."""
 
 
 def get_workflow_kernel_settings(settings):
@@ -211,6 +248,7 @@ def _is_authorized_workflow_conversation(conversation, workflow):
 
 
 def _save_workflow_run_record(workflow, run_record):
+    run_record = _preserve_workflow_run_cancellation_request(workflow, run_record)
     if _get_workflow_scope(workflow) == 'group':
         return save_group_workflow_run(_get_workflow_group_id(workflow), run_record)
     return save_personal_workflow_run(str((workflow or {}).get('user_id') or '').strip(), run_record)
@@ -220,6 +258,113 @@ def _save_workflow_run_item_record(workflow, item_record):
     if _get_workflow_scope(workflow) == 'group':
         return save_group_workflow_run_item(_get_workflow_group_id(workflow), item_record)
     return save_personal_workflow_run_item(str((workflow or {}).get('user_id') or '').strip(), item_record)
+
+
+def _get_workflow_run_record(workflow, run_id):
+    normalized_run_id = str(run_id or '').strip()
+    if not normalized_run_id:
+        return None
+    if _get_workflow_scope(workflow) == 'group':
+        return get_group_workflow_run(_get_workflow_group_id(workflow), normalized_run_id)
+    return get_personal_workflow_run(str((workflow or {}).get('user_id') or '').strip(), normalized_run_id)
+
+
+def _get_current_workflow_runtime(workflow):
+    workflow_id = str((workflow or {}).get('id') or '').strip()
+    if not workflow_id:
+        return None
+    if _get_workflow_scope(workflow) == 'group':
+        return get_group_workflow(_get_workflow_group_id(workflow), workflow_id)
+    return get_personal_workflow(str((workflow or {}).get('user_id') or '').strip(), workflow_id)
+
+
+def _list_workflow_run_items(workflow, run_id):
+    normalized_run_id = str(run_id or '').strip()
+    if not normalized_run_id:
+        return []
+    if _get_workflow_scope(workflow) == 'group':
+        return list_group_workflow_run_items(normalized_run_id, limit=1000)
+    return list_personal_workflow_run_items(normalized_run_id, limit=1000)
+
+
+def _has_workflow_run_cancellation_request(run_record):
+    run_record = run_record if isinstance(run_record, dict) else {}
+    return bool(
+        run_record.get('cancellation_requested_at')
+        or str(run_record.get('status') or '').strip().lower() in {'cancelling', 'cancelled', 'canceled'}
+    )
+
+
+def _is_workflow_run_cancellation_requested(workflow, run_id):
+    normalized_run_id = str(run_id or '').strip()
+    if not normalized_run_id:
+        return False
+
+    run_record = _get_workflow_run_record(workflow, normalized_run_id)
+    if _has_workflow_run_cancellation_request(run_record):
+        return True
+
+    runtime_workflow = _get_current_workflow_runtime(workflow)
+    if not isinstance(runtime_workflow, dict):
+        return False
+
+    return (
+        str(runtime_workflow.get('active_run_id') or '').strip() == normalized_run_id
+        and bool(
+            runtime_workflow.get('cancellation_requested_at')
+            or str(runtime_workflow.get('status') or '').strip().lower() == 'cancelling'
+        )
+    )
+
+
+def _raise_if_workflow_run_cancelled(workflow, run_id):
+    if _is_workflow_run_cancellation_requested(workflow, run_id):
+        raise WorkflowRunCancelledError(WORKFLOW_RUN_CANCELLED_MESSAGE)
+
+
+def _execute_cancelable_workflow_step(workflow, run_id, operation):
+    _raise_if_workflow_run_cancelled(workflow, run_id)
+    result = operation()
+    _raise_if_workflow_run_cancelled(workflow, run_id)
+    return result
+
+
+def _preserve_workflow_run_cancellation_request(workflow, run_record):
+    run_record = dict(run_record or {})
+    existing_run = _get_workflow_run_record(workflow, run_record.get('id'))
+    if not _has_workflow_run_cancellation_request(existing_run):
+        return run_record
+
+    for field in ('cancellation_requested_at', 'cancellation_requested_by'):
+        if existing_run.get(field):
+            run_record[field] = existing_run.get(field)
+
+    if str(existing_run.get('status') or '').strip().lower() in {'cancelled', 'canceled'}:
+        run_record['status'] = 'cancelled'
+    elif str(run_record.get('status') or '').strip().lower() != 'cancelled':
+        run_record['status'] = 'cancelling'
+    return run_record
+
+
+def _mark_unfinished_workflow_run_items_cancelled(workflow, run_id):
+    completed_at = _utc_now_iso()
+    for item in _list_workflow_run_items(workflow, run_id):
+        status = str(item.get('status') or '').strip().lower()
+        if status in {'succeeded', 'failed', 'skipped', 'cancelled', 'canceled'}:
+            continue
+        cancelled_item = dict(item)
+        cancelled_item.update({
+            'status': 'cancelled',
+            'completed_at': completed_at,
+            'updated_at': completed_at,
+            'error': cancelled_item.get('error') or WORKFLOW_RUN_CANCELLED_MESSAGE,
+        })
+        _save_workflow_run_item_record(workflow, cancelled_item)
+
+
+def create_workflow_run_id():
+    """Create a server-side identifier for a new workflow run."""
+    return str(uuid.uuid4())
 
 
 def _utc_now():
@@ -2634,7 +2779,13 @@ def _get_workflow_url_access_system_content(url_access_context=None):
     return str(system_message or '').strip()
 
 
-def _build_workflow_chat_messages(prompt_text, url_access_context=None, apply_generation_guidance=False):
+def _build_workflow_chat_messages(
+    prompt_text,
+    url_access_context=None,
+    apply_generation_guidance=False,
+    conversation_context_system=None,
+    conversation_context_data=None,
+):
     user_content = _build_workflow_generation_prompt(prompt_text) if apply_generation_guidance else str(prompt_text or '').strip()
     messages = []
     source_review_content = _get_workflow_url_access_system_content(url_access_context)
@@ -2643,11 +2794,23 @@ def _build_workflow_chat_messages(prompt_text, url_access_context=None, apply_ge
     generated_file_output_guidance = build_generated_file_output_guidance(prompt_text)
     if generated_file_output_guidance:
         messages.append({'role': 'system', 'content': generated_file_output_guidance})
+    normalized_context_system = str(conversation_context_system or '').strip()
+    if normalized_context_system:
+        messages.append({'role': 'system', 'content': normalized_context_system})
+    normalized_context_data = str(conversation_context_data or '').strip()
+    if normalized_context_data:
+        messages.append({'role': 'user', 'content': normalized_context_data})
     messages.append({'role': 'user', 'content': user_content})
     return messages
 
 
-def _build_workflow_agent_messages(prompt_text, url_access_context=None, apply_generation_guidance=False):
+def _build_workflow_agent_messages(
+    prompt_text,
+    url_access_context=None,
+    apply_generation_guidance=False,
+    conversation_context_system=None,
+    conversation_context_data=None,
+):
     user_content = _build_workflow_generation_prompt(prompt_text) if apply_generation_guidance else str(prompt_text or '').strip()
     source_review_content = _get_workflow_url_access_system_content(url_access_context)
     generated_file_output_guidance = build_generated_file_output_guidance(prompt_text)
@@ -2657,7 +2820,75 @@ def _build_workflow_agent_messages(prompt_text, url_access_context=None, apply_g
         if content
     ]
     content_sections.append(f'[Workflow Task]\n{user_content}')
-    return [ChatMessageContent(role='user', content='\n\n'.join(content_sections))]
+    messages = []
+    normalized_context_system = str(conversation_context_system or '').strip()
+    if normalized_context_system:
+        messages.append(ChatMessageContent(role='system', content=normalized_context_system))
+    normalized_context_data = str(conversation_context_data or '').strip()
+    if normalized_context_data:
+        messages.append(ChatMessageContent(role='user', content=normalized_context_data))
+    messages.append(ChatMessageContent(role='user', content='\n\n'.join(content_sections)))
+    return messages
+
+
+def _resolve_workflow_conversation_context(
+    workflow,
+    *,
+    model_name=None,
+    model_provider=None,
+    model_endpoint_id=None,
+    selected_agent=None,
+):
+    base_snapshot = (
+        workflow.get('conversation_context_snapshot')
+        if isinstance((workflow or {}).get('conversation_context_snapshot'), dict)
+        else {}
+    )
+    if not base_snapshot:
+        return None
+
+    base_runtime = (
+        base_snapshot.get('runtime')
+        if isinstance(base_snapshot.get('runtime'), dict)
+        else {}
+    )
+    if selected_agent:
+        agent_name = getattr(selected_agent, 'name', None)
+        agent_display_name = getattr(selected_agent, 'display_name', None)
+        agent_model = getattr(selected_agent, 'deployment_name', None)
+        agent_provider = (
+            getattr(selected_agent, 'model_provider', None)
+            or getattr(selected_agent, 'provider', None)
+        )
+    else:
+        agent_name = None
+        agent_display_name = None
+        agent_model = None
+        agent_provider = None
+
+    resolved_snapshot = build_conversation_context_snapshot(
+        base_snapshot.get('message_metadata') or {},
+        application_version=(
+            (base_snapshot.get('application') or {}).get('version')
+            or VERSION
+        ),
+        model_name=model_name or base_runtime.get('configured_model'),
+        model_provider=model_provider or base_runtime.get('model_provider'),
+        model_endpoint_id=model_endpoint_id or base_runtime.get('model_endpoint_id'),
+        agent_name=agent_name,
+        agent_display_name=agent_display_name,
+        agent_model=agent_model,
+        agent_provider=agent_provider,
+    )
+    context_json = serialize_conversation_context_snapshot(resolved_snapshot)
+    workflow['conversation_context_system_message'] = (
+        build_conversation_context_system_message(context_json)
+    )
+    workflow['conversation_context_data_message'] = (
+        build_conversation_context_data_message(context_json)
+    )
+    workflow['_resolved_conversation_context_json'] = context_json
+    return context_json
 
 
 def _format_workflow_url_access_error(validation_result):
@@ -6111,7 +6342,7 @@ def _combine_per_document_analysis_results(document_results):
     }
 
 
-def _execute_model_workflow(workflow, settings, run_id=None, thought_tracker=None, url_access_context=None):
+def _execute_raw_model_workflow(workflow, settings, run_id=None, thought_tracker=None, url_access_context=None):
     if thought_tracker and run_id:
         _add_workflow_activity_thought(
             thought_tracker,
@@ -6159,6 +6390,226 @@ def _execute_model_workflow(workflow, settings, run_id=None, thought_tracker=Non
         'model_deployment_name': deployment_name,
         'provider': provider,
     }
+
+
+def _workflow_model_chat_capabilities_enabled(workflow):
+    value = (workflow or {}).get('chat_capabilities_enabled', False)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {'1', 'true', 'yes', 'on'}
+    return bool(value)
+
+
+def _build_workflow_model_context(workflow, deployment_name, provider):
+    workflow = workflow if isinstance(workflow, dict) else {}
+    binding_summary = workflow.get('model_binding_summary') if isinstance(workflow.get('model_binding_summary'), dict) else {}
+    endpoint_id = str(workflow.get('model_endpoint_id') or binding_summary.get('endpoint_id') or '').strip()
+    model_id = str(workflow.get('model_id') or binding_summary.get('model_id') or '').strip()
+    model_context = {
+        'user_id': str(workflow.get('user_id') or '').strip(),
+        'model_deployment': str(deployment_name or '').strip(),
+        'provider': str(provider or workflow.get('model_provider') or binding_summary.get('provider') or '').strip().lower(),
+    }
+    if endpoint_id:
+        model_context['endpoint_id'] = endpoint_id
+    if model_id:
+        model_context['model_id'] = model_id
+
+    group_id = _get_workflow_group_id(workflow)
+    if group_id:
+        model_context['active_group_ids'] = [group_id]
+
+    return model_context
+
+
+@contextmanager
+def _workflow_model_core_execution_context(workflow, conversation_id, run_id):
+    workflow = workflow if isinstance(workflow, dict) else {}
+    user_id = str(workflow.get('user_id') or '').strip()
+    group_id = _get_workflow_group_id(workflow)
+    context_values = {
+        'conversation_id': str(conversation_id or '').strip(),
+        'workflow_id': str(workflow.get('id') or '').strip(),
+        'workflow_run_id': str(run_id or '').strip(),
+        'conversation_group_id': group_id,
+        'authorized_chat_context': None,
+    }
+    if group_id:
+        context_values['authorized_chat_context'] = {
+            'user_id': user_id,
+            'conversation_id': str(conversation_id or '').strip(),
+            'active_group_ids': [group_id],
+            'active_group_id': group_id,
+            'active_public_workspace_ids': [],
+            'active_public_workspace_id': None,
+            'fact_memory_scope_id': group_id,
+            'fact_memory_scope_type': 'group',
+        }
+
+    with _ensure_execution_context(user_id):
+        previous_values = {
+            name: (hasattr(g, name), getattr(g, name, None))
+            for name in context_values
+        }
+        for name, value in context_values.items():
+            setattr(g, name, value)
+
+        try:
+            yield
+        finally:
+            for name, (was_defined, value) in previous_values.items():
+                if was_defined:
+                    setattr(g, name, value)
+                elif hasattr(g, name):
+                    delattr(g, name)
+
+
+def _execute_model_workflow_with_core_capabilities(
+    workflow,
+    settings,
+    conversation_id='',
+    run_id=None,
+    thought_tracker=None,
+    url_access_context=None,
+):
+    _raise_if_workflow_run_cancelled(workflow, run_id)
+    user_id = str(workflow.get('user_id') or '').strip()
+    if not user_id:
+        raise ValueError('Direct model workflows require an owning user.')
+
+    if thought_tracker and run_id:
+        _add_workflow_activity_thought(
+            thought_tracker,
+            workflow,
+            run_id,
+            step_type='generation',
+            content='Starting direct model execution with core capabilities',
+            detail=None,
+            activity_key=f'generation:{run_id}',
+            kind='model_execution',
+            title='Model execution',
+            status='running',
+        )
+
+    _, deployment_name, provider = _resolve_model_workflow_client(workflow, settings)
+    model_context = _build_workflow_model_context(workflow, deployment_name, provider)
+    workflow_kernel_settings = get_workflow_kernel_settings(settings)
+
+    with _workflow_model_core_execution_context(workflow, conversation_id, run_id):
+        plugin_logger = get_plugin_logger()
+        callback_key = None
+        if conversation_id:
+            plugin_logger.clear_invocations_for_conversation(user_id, conversation_id)
+        if thought_tracker and run_id and conversation_id:
+            callback_key = register_plugin_invocation_thought_callback(
+                plugin_logger,
+                thought_tracker,
+                user_id,
+                conversation_id,
+                actor_label='Workflow model',
+            )
+
+        try:
+            kernel = Kernel()
+            load_core_plugins_only(kernel, workflow_kernel_settings)
+            chat_service, _ = build_semantic_kernel_chat_service_for_model(
+                deployment_name,
+                settings,
+                service_id=f"workflow-model-{workflow.get('id') or 'default'}",
+                model_context=model_context,
+            )
+            kernel.add_service(chat_service)
+
+            _resolve_workflow_conversation_context(
+                workflow,
+                model_name=deployment_name,
+                model_provider=provider,
+                model_endpoint_id=workflow.get('model_endpoint_id'),
+            )
+            chat_history = ChatHistory()
+            for message in _build_workflow_chat_messages(
+                workflow.get('task_prompt', ''),
+                url_access_context=url_access_context,
+                apply_generation_guidance=True,
+                conversation_context_system=workflow.get('conversation_context_system_message'),
+                conversation_context_data=workflow.get('conversation_context_data_message'),
+            ):
+                chat_history.add_message(message)
+
+            execution_settings = PromptExecutionSettings()
+            execution_settings.function_choice_behavior = FunctionChoiceBehavior.Auto(
+                maximum_auto_invoke_attempts=get_max_auto_invoke_attempts(workflow_kernel_settings)
+            )
+            completion_messages = _execute_cancelable_workflow_step(
+                workflow,
+                run_id,
+                lambda: asyncio.run(
+                    chat_service.get_chat_message_contents(
+                        chat_history,
+                        execution_settings,
+                        kernel=kernel,
+                    )
+                ),
+            )
+            reply = _extract_message_text(
+                completion_messages[0].content if completion_messages else ''
+            )
+            agent_citations = _build_agent_citations_from_invocations(user_id, conversation_id)
+            alert_targets = _collect_agent_alert_targets(user_id, conversation_id)
+        finally:
+            if callback_key:
+                plugin_logger.deregister_callbacks(callback_key)
+
+    if thought_tracker and run_id:
+        _add_workflow_activity_thought(
+            thought_tracker,
+            workflow,
+            run_id,
+            step_type='generation',
+            content=f'Direct model execution completed with {deployment_name}',
+            detail=f'provider={provider}; core_capabilities=true',
+            activity_key=f'generation:{run_id}',
+            kind='model_execution',
+            title='Model execution',
+            status='completed',
+        )
+
+    return {
+        'reply': reply,
+        'model_deployment_name': deployment_name,
+        'provider': provider,
+        'agent_citations': agent_citations,
+        'alert_targets': alert_targets,
+        'core_capabilities_enabled': True,
+    }
+
+
+def _execute_model_workflow(
+    workflow,
+    settings,
+    conversation_id='',
+    run_id=None,
+    thought_tracker=None,
+    url_access_context=None,
+):
+    if _workflow_model_chat_capabilities_enabled(workflow):
+        return _execute_model_workflow_with_core_capabilities(
+            workflow,
+            settings,
+            conversation_id=conversation_id,
+            run_id=run_id,
+            thought_tracker=thought_tracker,
+            url_access_context=url_access_context,
+        )
+
+    return _execute_raw_model_workflow(
+        workflow,
+        settings,
+        run_id=run_id,
+        thought_tracker=thought_tracker,
+        url_access_context=url_access_context,
+    )
 
 
 def _execute_document_analysis_workflow(
@@ -7066,6 +7517,7 @@ def _execute_document_action_workflow(
 
 
 def _execute_agent_workflow(workflow, settings, conversation_id='', run_id=None, thought_tracker=None, url_access_context=None):
+    _raise_if_workflow_run_cancelled(workflow, run_id)
     user_id = str(workflow.get('user_id') or '').strip()
     selected_agent = workflow.get('selected_agent') if isinstance(workflow.get('selected_agent'), dict) else {}
     if not selected_agent:
@@ -7139,14 +7591,30 @@ def _execute_agent_workflow(workflow, settings, conversation_id='', run_id=None,
             requested_name = str(selected_agent.get('name') or '').strip()
             if requested_name:
                 loaded_agent = agent_objs.get(requested_name)
+            if loaded_agent is None and workflow.get('task_runner_override'):
+                raise ValueError('The selected task agent is no longer available for workflow execution.')
             if loaded_agent is None:
                 loaded_agent = next(iter(agent_objs.values()))
 
-            result = asyncio.run(loaded_agent.invoke(_build_workflow_agent_messages(
-                workflow.get('task_prompt', ''),
-                url_access_context=url_access_context,
-                apply_generation_guidance=True,
-            )))
+            _resolve_workflow_conversation_context(
+                workflow,
+                model_name=getattr(loaded_agent, 'deployment_name', None) or requested_name,
+                model_provider=(workflow.get('model_binding_summary') or {}).get('provider'),
+                model_endpoint_id=workflow.get('model_endpoint_id'),
+                selected_agent=loaded_agent,
+            )
+
+            result = _execute_cancelable_workflow_step(
+                workflow,
+                run_id,
+                lambda: asyncio.run(loaded_agent.invoke(_build_workflow_agent_messages(
+                    workflow.get('task_prompt', ''),
+                    url_access_context=url_access_context,
+                    apply_generation_guidance=True,
+                    conversation_context_system=workflow.get('conversation_context_system_message'),
+                    conversation_context_data=workflow.get('conversation_context_data_message'),
+                ))),
+            )
             reply = str(result)
             agent_citations = _build_agent_citations_from_invocations(user_id, conversation_id)
             alert_targets = _collect_agent_alert_targets(user_id, conversation_id)
@@ -7218,14 +7686,672 @@ def _execute_agent_workflow(workflow, settings, conversation_id='', run_id=None,
                 g.authorized_chat_context = previous_authorized_chat_context
 
 
-def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, actor_user_id=None):
+def _truncate_workflow_task_context(value, max_chars=WORKFLOW_TASK_CONTEXT_MAX_CHARS):
+    normalized = str(value or '').strip()
+    if len(normalized) <= max_chars:
+        return normalized
+
+    head_length = max_chars // 2
+    tail_length = max_chars - head_length
+    return (
+        f'{normalized[:head_length].rstrip()}\n\n'
+        '[Previous task output truncated]\n\n'
+        f'{normalized[-tail_length:].lstrip()}'
+    )
+
+
+def _build_workflow_task_execution_workflow(workflow, task, previous_reply='', include_document_action=False):
+    task = task if isinstance(task, dict) else {}
+    prepared_workflow = dict(workflow or {})
+    task_instructions = str(task.get('instructions') or '').strip()
+    file_sync_context = str(workflow.get('file_sync_prompt_context') or '').strip()
+    if include_document_action and file_sync_context:
+        task_instructions = (
+            f'{task_instructions}\n\n'
+            '[Workflow input context]\n'
+            f'{file_sync_context}'
+        ).strip()
+    previous_context = _truncate_workflow_task_context(previous_reply)
+    if previous_context:
+        task_instructions = (
+            f'{task_instructions}\n\n'
+            '[Previous workflow task output]\n'
+            f'{previous_context}\n\n'
+            'Use the previous task output as context. Complete only the current task instructions.'
+        ).strip()
+
+    prepared_workflow['task_prompt'] = task_instructions
+    prepared_workflow['active_task'] = {
+        'id': str(task.get('id') or '').strip(),
+        'name': str(task.get('name') or '').strip(),
+        'order': int(task.get('order') or 0),
+    }
+    if not include_document_action:
+        prepared_workflow['document_action'] = {'type': DOCUMENT_ACTION_TYPE_NONE}
+        prepared_workflow['analyze'] = build_analyze_config(prepared_workflow['document_action'])
+    return prepared_workflow
+
+
+def _get_workflow_task_requested_runner_mode(task):
+    task = task if isinstance(task, dict) else {}
+    runner = task.get('runner') if isinstance(task.get('runner'), dict) else {}
+    return str(runner.get('type') or 'inherit').strip().lower() or 'inherit'
+
+
+def _build_workflow_task_runner_audit(workflow, requested_mode, normalized_runner, execution_result=None):
+    workflow = workflow if isinstance(workflow, dict) else {}
+    normalized_runner = normalized_runner if isinstance(normalized_runner, dict) else {'type': 'inherit'}
+    requested_mode = str(requested_mode or 'inherit').strip().lower() or 'inherit'
+    inherited = normalized_runner.get('type') == 'inherit'
+    resolved_type = str(workflow.get('runner_type') if inherited else normalized_runner.get('type') or '').strip().lower()
+    runner_source = workflow if inherited else normalized_runner
+    audit = {
+        'requested_mode': requested_mode,
+        'resolved_type': resolved_type,
+    }
+
+    if resolved_type == 'model':
+        binding_summary = (
+            runner_source.get('model_binding_summary')
+            if isinstance(runner_source.get('model_binding_summary'), dict)
+            else {}
+        )
+        endpoint_id = str(runner_source.get('model_endpoint_id') or binding_summary.get('endpoint_id') or '').strip()
+        model_id = str(runner_source.get('model_id') or binding_summary.get('model_id') or '').strip()
+        if endpoint_id:
+            audit['model_endpoint_id'] = endpoint_id
+        if model_id:
+            audit['model_id'] = model_id
+    elif resolved_type == 'agent':
+        selected_agent = runner_source.get('selected_agent') if isinstance(runner_source.get('selected_agent'), dict) else {}
+        agent_id = str(selected_agent.get('id') or '').strip()
+        agent_name = str(selected_agent.get('name') or '').strip()
+        if agent_id:
+            audit['agent_id'] = agent_id
+        if agent_name:
+            audit['agent_name'] = agent_name
+        if selected_agent.get('is_global'):
+            audit['agent_scope'] = 'global'
+        elif selected_agent.get('is_group'):
+            audit['agent_scope'] = 'group'
+            agent_group_id = str(selected_agent.get('group_id') or '').strip()
+            if agent_group_id:
+                audit['agent_group_id'] = agent_group_id
+        else:
+            audit['agent_scope'] = 'personal'
+
+    execution_result = execution_result if isinstance(execution_result, dict) else {}
+    model_deployment_name = str(execution_result.get('model_deployment_name') or '').strip()
+    provider = str(execution_result.get('provider') or '').strip().lower()
+    if model_deployment_name:
+        audit['model_deployment_name'] = model_deployment_name
+    if provider:
+        audit['provider'] = provider
+    return audit
+
+
+def _resolve_workflow_task_runner(workflow, task, settings, actor_user_id=None):
+    workflow = workflow if isinstance(workflow, dict) else {}
+    task = task if isinstance(task, dict) else {}
+    requested_runner = task.get('runner') if isinstance(task.get('runner'), dict) else {'type': 'inherit'}
+    requested_mode = _get_workflow_task_requested_runner_mode(task)
+    group_id = _get_workflow_group_id(workflow)
+    if group_id:
+        current_actor_user_id = str(actor_user_id or '').strip()
+        if not current_actor_user_id:
+            raise ValueError('Group workflow task runner resolution requires an actor user id.')
+        normalized_runner = normalize_group_workflow_task_runner(
+            current_actor_user_id,
+            group_id,
+            requested_runner,
+            settings=settings,
+        )
+    else:
+        normalized_runner = normalize_personal_workflow_task_runner(
+            str(workflow.get('user_id') or '').strip(),
+            requested_runner,
+            settings=settings,
+        )
+
+    execution_workflow = dict(workflow)
+    if normalized_runner.get('type') == 'model':
+        execution_workflow.update({
+            'runner_type': 'model',
+            'task_runner_override': True,
+            'selected_agent': {},
+            'model_endpoint_id': normalized_runner.get('model_endpoint_id') or '',
+            'model_id': normalized_runner.get('model_id') or '',
+            'model_provider': normalized_runner.get('model_provider') or '',
+            'model_binding_summary': normalized_runner.get('model_binding_summary') or {},
+        })
+    elif normalized_runner.get('type') == 'agent':
+        execution_workflow.update({
+            'runner_type': 'agent',
+            'task_runner_override': True,
+            'selected_agent': normalized_runner.get('selected_agent') or {},
+            'model_endpoint_id': '',
+            'model_id': '',
+            'model_provider': '',
+            'model_binding_summary': None,
+        })
+
+    runner_audit = _build_workflow_task_runner_audit(
+        workflow,
+        requested_mode,
+        normalized_runner,
+    )
+    return execution_workflow, runner_audit
+
+
+def _workflow_task_run_item_id(run_id, task_id):
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f'workflow-task:{run_id}:{task_id}'))
+
+
+def _save_workflow_task_run_item(
+    workflow,
+    run_id,
+    task,
+    status,
+    attempt_count=0,
+    error='',
+    output_summary='',
+    created_at=None,
+    runner_audit=None,
+    token_usage=None,
+):
+    task = task if isinstance(task, dict) else {}
+    task_id = str(task.get('id') or '').strip()
+    now_iso = _utc_now_iso()
+    output_preview = str(output_summary or '')[:4000]
+    allowed_runner_audit_fields = (
+        'requested_mode',
+        'resolved_type',
+        'model_endpoint_id',
+        'model_id',
+        'agent_id',
+        'agent_name',
+        'agent_scope',
+        'agent_group_id',
+        'model_deployment_name',
+        'provider',
+    )
+    runner_audit = runner_audit if isinstance(runner_audit, dict) else {}
+    safe_runner_audit = {
+        field: str(runner_audit.get(field) or '').strip()[:500]
+        for field in allowed_runner_audit_fields
+        if str(runner_audit.get(field) or '').strip()
+    }
+    token_usage = token_usage if isinstance(token_usage, dict) else {}
+    safe_token_usage = {
+        field: int(token_usage.get(field) or 0)
+        for field in ('prompt_tokens', 'completion_tokens', 'total_tokens', 'request_count')
+        if isinstance(token_usage.get(field), (int, float))
+    }
+    item = {
+        'id': _workflow_task_run_item_id(run_id, task_id),
+        'type': 'workflow_run_item',
+        'item_type': 'task',
+        'run_id': run_id,
+        'user_id': str(workflow.get('user_id') or '').strip(),
+        'workflow_id': workflow.get('id'),
+        'group_id': _get_workflow_group_id(workflow) or None,
+        'workflow_name': workflow.get('name'),
+        'task_id': task_id,
+        'task_type': str(task.get('type') or 'instructions').strip(),
+        'task_order': int(task.get('order') or 0),
+        'label': str(task.get('name') or f"Task {task.get('order') or ''}").strip(),
+        'status': status,
+        'attempt_count': int(attempt_count or 0),
+        'error': str(error or '')[:2000],
+        'output_summary': output_preview,
+        'output_preview': output_preview,
+        'runner': safe_runner_audit,
+        'token_usage': safe_token_usage or None,
+        'created_at': created_at or now_iso,
+        'updated_at': now_iso,
+    }
+    if status in {'running', 'succeeded', 'failed', 'skipped', 'cancelled'}:
+        item['started_at'] = created_at or now_iso
+    if status in {'succeeded', 'failed', 'skipped', 'cancelled'}:
+        item['completed_at'] = now_iso
+    return _save_workflow_run_item_record(workflow, item)
+
+
+def _execute_workflow_dispatch(
+    execution_workflow,
+    settings,
+    conversation_id,
+    run_id,
+    thought_tracker,
+    url_access_context,
+    file_sync_result=None,
+):
+    document_action = _get_document_action_config(execution_workflow)
+    workflow_search_context = None
+    if document_action.get('type') == DOCUMENT_ACTION_TYPE_SEARCH:
+        workflow_search_context = _execute_cancelable_workflow_step(
+            execution_workflow,
+            run_id,
+            lambda: _prepare_workflow_search_context(
+                execution_workflow,
+                document_action,
+                settings,
+                conversation_id=conversation_id,
+                thought_tracker=thought_tracker,
+                run_id=run_id,
+            ),
+        )
+        execution_workflow = workflow_search_context.get('workflow') or execution_workflow
+        document_action = _get_document_action_config(execution_workflow)
+
+    if document_action.get('type') in {DOCUMENT_ACTION_TYPE_ANALYZE, DOCUMENT_ACTION_TYPE_COMPARISON}:
+        _raise_if_workflow_run_cancelled(execution_workflow, run_id)
+        document_action = _resolve_recent_document_action_targets(execution_workflow, document_action, settings)
+        execution_workflow = _apply_runtime_document_action_config(execution_workflow, document_action)
+        run_item_callback = _build_run_item_activity_callback(
+            execution_workflow,
+            run_id,
+            file_sync_result=file_sync_result or {},
+        )
+        _initialize_document_run_items(
+            execution_workflow,
+            run_id,
+            document_action,
+            file_sync_result=file_sync_result or {},
+        )
+        execution_result = _execute_cancelable_workflow_step(
+            execution_workflow,
+            run_id,
+            lambda: _execute_document_action_workflow(
+                execution_workflow,
+                settings,
+                conversation_id=conversation_id,
+                run_id=run_id,
+                thought_tracker=thought_tracker,
+                external_activity_callback=run_item_callback,
+                url_access_context=url_access_context,
+                cancel_requested=lambda: _is_workflow_run_cancellation_requested(execution_workflow, run_id),
+                request_correlation_id=run_id,
+            ),
+        )
+    elif execution_workflow.get('runner_type') == 'agent':
+        execution_result = _execute_cancelable_workflow_step(
+            execution_workflow,
+            run_id,
+            lambda: _execute_agent_workflow(
+                execution_workflow,
+                settings,
+                conversation_id=conversation_id,
+                run_id=run_id,
+                thought_tracker=thought_tracker,
+                url_access_context=url_access_context,
+            ),
+        )
+        execution_result = _attach_workflow_search_context(execution_result, workflow_search_context)
+    else:
+        execution_result = _execute_cancelable_workflow_step(
+            execution_workflow,
+            run_id,
+            lambda: _execute_model_workflow(
+                execution_workflow,
+                settings,
+                conversation_id=conversation_id,
+                run_id=run_id,
+                thought_tracker=thought_tracker,
+                url_access_context=url_access_context,
+            ),
+        )
+        execution_result = _attach_workflow_search_context(execution_result, workflow_search_context)
+
+    return execution_result
+
+
+def _merge_workflow_task_execution_results(task_results):
+    task_results = list(task_results or [])
+    successful_results = [item for item in task_results if item.get('status') == 'succeeded']
+    reply_sections = []
+    for item in task_results:
+        task = item.get('task') if isinstance(item.get('task'), dict) else {}
+        task_name = str(task.get('name') or f"Task {task.get('order') or ''}").strip()
+        if item.get('status') == 'succeeded':
+            reply_text = str((item.get('result') or {}).get('reply') or '').strip()
+            reply_sections.extend([f'## {task_name}', '', reply_text or 'No response was generated.', ''])
+        else:
+            reply_sections.extend([
+                f'## {task_name}',
+                '',
+                f"Task failed: {item.get('error') or 'Unknown error'}",
+                '',
+            ])
+
+    final_source = (successful_results[-1].get('result') or {}) if successful_results else {}
+    merged_result = dict(final_source)
+    merged_result['reply'] = '\n'.join(reply_sections).strip()
+    merged_result['task_results'] = [
+        {
+            'task_id': str((item.get('task') or {}).get('id') or '').strip(),
+            'task_name': str((item.get('task') or {}).get('name') or '').strip(),
+            'task_order': int((item.get('task') or {}).get('order') or 0),
+            'status': item.get('status'),
+            'attempt_count': int(item.get('attempt_count') or 0),
+            'error': str(item.get('error') or ''),
+            'response_preview': _build_response_preview((item.get('result') or {}).get('reply')),
+            'runner': dict(item.get('runner') or {}),
+            'token_usage': _merge_token_usage_summaries([item.get('result') or {}]),
+        }
+        for item in task_results
+    ]
+    merged_result['task_error_count'] = sum(1 for item in task_results if item.get('status') == 'failed')
+    merged_result['token_usage'] = _merge_token_usage_summaries([
+        item.get('result') or {}
+        for item in successful_results
+    ])
+
+    for field in (
+        'agent_citations',
+        'hybrid_citations',
+        'web_search_citations',
+        'generated_analysis_artifacts',
+        'generated_tabular_outputs',
+        'alert_targets',
+    ):
+        merged_result[field] = [
+            value
+            for item in successful_results
+            for value in list((item.get('result') or {}).get(field) or [])
+        ]
+    merged_result['augmented'] = any(
+        bool((item.get('result') or {}).get('augmented'))
+        for item in successful_results
+    )
+    return merged_result
+
+
+def _execute_workflow_task_sequence(
+    workflow,
+    settings,
+    conversation_id,
+    run_id,
+    thought_tracker,
+    url_access_context,
+    file_sync_result=None,
+    actor_user_id=None,
+):
+    tasks = list(workflow.get('tasks') or [])
+    error_handling = workflow.get('error_handling') if isinstance(workflow.get('error_handling'), dict) else {}
+    error_strategy = str(error_handling.get('strategy') or 'halt').strip().lower()
+    retry_count = max(0, min(5, int(error_handling.get('retry_count') or 0)))
+    previous_reply = ''
+    task_results = []
+
+    def raise_if_cancelled():
+        cancel_check = globals().get('_raise_if_workflow_run_cancelled')
+        if callable(cancel_check):
+            cancel_check(workflow, run_id)
+
+    for task_index, raw_task in enumerate(tasks):
+        raise_if_cancelled()
+        task = dict(raw_task or {})
+        task['order'] = task_index + 1
+        task_id = str(task.get('id') or f'task-{task_index + 1}').strip()
+        task['id'] = task_id
+        created_at = _utc_now_iso()
+        runner_audit = {
+            'requested_mode': _get_workflow_task_requested_runner_mode(task),
+        }
+        _save_workflow_task_run_item(
+            workflow,
+            run_id,
+            task,
+            'queued',
+            created_at=created_at,
+            runner_audit=runner_audit,
+        )
+        if thought_tracker and run_id:
+            _add_workflow_activity_thought(
+                thought_tracker,
+                workflow,
+                run_id,
+                step_type='task',
+                content=f"Starting task {task_index + 1}: {task.get('name') or task_id}",
+                detail=None,
+                activity_key=f'task:{run_id}:{task_id}',
+                kind='workflow_task',
+                title=str(task.get('name') or f'Task {task_index + 1}'),
+                status='running',
+            )
+        prepared_workflow = _build_workflow_task_execution_workflow(
+            workflow,
+            task,
+            previous_reply=previous_reply,
+            include_document_action=task_index == 0,
+        )
+
+        task_result = None
+        task_error = ''
+        attempt_count = 0
+        for attempt_index in range(retry_count + 1):
+            raise_if_cancelled()
+            attempt_count = attempt_index + 1
+            try:
+                attempt_workflow, runner_audit = _resolve_workflow_task_runner(
+                    prepared_workflow,
+                    task,
+                    settings,
+                    actor_user_id=actor_user_id,
+                )
+                _save_workflow_task_run_item(
+                    workflow,
+                    run_id,
+                    task,
+                    'running',
+                    attempt_count=attempt_count,
+                    created_at=created_at,
+                    runner_audit=runner_audit,
+                )
+                task_result = _execute_workflow_dispatch(
+                    attempt_workflow,
+                    settings,
+                    conversation_id,
+                    run_id,
+                    thought_tracker,
+                    url_access_context,
+                    file_sync_result=file_sync_result,
+                )
+                task_error = ''
+                runner_audit = dict(runner_audit)
+                model_deployment_name = str(task_result.get('model_deployment_name') or '').strip()
+                provider = str(task_result.get('provider') or '').strip().lower()
+                if model_deployment_name:
+                    runner_audit['model_deployment_name'] = model_deployment_name
+                if provider:
+                    runner_audit['provider'] = provider
+                break
+            except Exception as exc:
+                task_error = str(exc)
+                if attempt_index >= retry_count:
+                    break
+                if thought_tracker and run_id:
+                    _add_workflow_activity_thought(
+                        thought_tracker,
+                        workflow,
+                        run_id,
+                        step_type='task',
+                        content=f"Retrying task {task_index + 1}: {task.get('name') or task_id}",
+                        detail=f'attempt={attempt_count + 1}',
+                        activity_key=f'task:{run_id}:{task_id}',
+                        kind='workflow_task',
+                        title=str(task.get('name') or f'Task {task_index + 1}'),
+                        status='running',
+                    )
+
+        if task_result is not None:
+            _save_workflow_task_run_item(
+                workflow,
+                run_id,
+                task,
+                'succeeded',
+                attempt_count=attempt_count,
+                output_summary=_build_response_preview(task_result.get('reply'), max_length=4000),
+                created_at=created_at,
+                runner_audit=runner_audit,
+                token_usage=_merge_token_usage_summaries([task_result]),
+            )
+            task_results.append({
+                'task': task,
+                'status': 'succeeded',
+                'attempt_count': attempt_count,
+                'result': task_result,
+                'error': '',
+                'runner': runner_audit,
+            })
+            if thought_tracker and run_id:
+                _add_workflow_activity_thought(
+                    thought_tracker,
+                    workflow,
+                    run_id,
+                    step_type='task',
+                    content=f"Completed task {task_index + 1}: {task.get('name') or task_id}",
+                    detail=f'attempts={attempt_count}',
+                    activity_key=f'task:{run_id}:{task_id}',
+                    kind='workflow_task',
+                    title=str(task.get('name') or f'Task {task_index + 1}'),
+                    status='completed',
+                )
+            previous_reply = str(task_result.get('reply') or '').strip()
+            continue
+
+        _save_workflow_task_run_item(
+            workflow,
+            run_id,
+            task,
+            'failed',
+            attempt_count=attempt_count,
+            error=task_error,
+            created_at=created_at,
+            runner_audit=runner_audit,
+        )
+        task_results.append({
+            'task': task,
+            'status': 'failed',
+            'attempt_count': attempt_count,
+            'result': {},
+            'error': task_error,
+            'runner': runner_audit,
+        })
+        if thought_tracker and run_id:
+            _add_workflow_activity_thought(
+                thought_tracker,
+                workflow,
+                run_id,
+                step_type='task',
+                content=f"Failed task {task_index + 1}: {task.get('name') or task_id}",
+                detail=task_error,
+                activity_key=f'task:{run_id}:{task_id}',
+                kind='workflow_task',
+                title=str(task.get('name') or f'Task {task_index + 1}'),
+                status='failed',
+            )
+        if error_strategy != 'continue':
+            raise RuntimeError(
+                f"Workflow task '{task.get('name') or task_id}' failed after {attempt_count} attempt(s): {task_error}"
+            )
+
+    return _merge_workflow_task_execution_results(task_results)
+
+
+def _finalize_cancelled_workflow_run(
+    workflow,
+    run_record,
+    run_id,
+    started_at,
+    trigger_source,
+    execution_workflow,
+    thought_tracker=None,
+    file_sync_result=None,
+):
+    """Persist the terminal cancellation state for a workflow run."""
+    workflow = workflow if isinstance(workflow, dict) else {}
+    run_record = dict(run_record or {})
+    user_id = str(workflow.get('user_id') or '').strip()
+    group_id = _get_workflow_group_id(workflow)
+    workspace_type = _get_workflow_scope(workflow)
+    workflow_id = str(workflow.get('id') or '').strip()
+    completed_at = _utc_now_iso()
+    runtime_workflow = _get_current_workflow_runtime(workflow) or {}
+    run_record.update({
+        'status': 'cancelled',
+        'success': False,
+        'completed_at': completed_at,
+        'cancellation_requested_at': (
+            run_record.get('cancellation_requested_at')
+            or runtime_workflow.get('cancellation_requested_at')
+            or completed_at
+        ),
+        'cancellation_requested_by': (
+            run_record.get('cancellation_requested_by')
+            or runtime_workflow.get('cancellation_requested_by')
+            or ''
+        ),
+        'file_sync': file_sync_result or {},
+        'response_preview': '',
+        'error': '',
+    })
+    _mark_unfinished_workflow_run_items_cancelled(workflow, run_id)
+    if thought_tracker:
+        _add_workflow_activity_thought(
+            thought_tracker,
+            execution_workflow,
+            run_id,
+            step_type='workflow',
+            content='Workflow run cancelled',
+            detail=WORKFLOW_RUN_CANCELLED_MESSAGE,
+            activity_key=f'run:{run_id}',
+            kind='workflow_run',
+            title='Workflow run',
+            status='cancelled',
+        )
+    _save_workflow_run_record(workflow, run_record)
+    log_workflow_run(
+        user_id=user_id,
+        workflow_id=workflow_id,
+        workflow_name=workflow.get('name', ''),
+        status='cancelled',
+        trigger_source=trigger_source,
+        run_id=run_id,
+        conversation_id=run_record.get('conversation_id'),
+        runner_type=workflow.get('runner_type'),
+        workspace_type=workspace_type,
+        group_id=group_id or None,
+    )
+    return {
+        'success': True,
+        'run': run_record,
+        'notification': None,
+        'workflow_updates': {
+            'last_run_started_at': started_at,
+            'last_run_at': completed_at,
+            'last_run_status': 'cancelled',
+            'last_run_error': '',
+            'last_run_response_preview': '',
+            'last_run_trigger_source': trigger_source,
+            'run_count': int(workflow.get('run_count') or 0) + 1,
+            'conversation_id': run_record.get('conversation_id'),
+            'active_run_id': '',
+            'cancellation_requested_at': None,
+            'cancellation_requested_by': '',
+        },
+    }
+
+
+def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, actor_user_id=None, run_id=None):
     """Execute a workflow and persist a run record."""
     workflow = workflow if isinstance(workflow, dict) else {}
     user_id = str(workflow.get('user_id') or '').strip()
     group_id = _get_workflow_group_id(workflow)
     workspace_type = _get_workflow_scope(workflow)
     workflow_id = str(workflow.get('id') or '').strip()
-    run_id = str(uuid.uuid4())
+    run_id = str(run_id or create_workflow_run_id())
     started_at = _utc_now_iso()
     settings = get_settings()
 
@@ -7247,6 +8373,8 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
         'conversation_id': workflow.get('conversation_id'),
         'response_preview': '',
         'error': '',
+        'cancellation_requested_at': None,
+        'cancellation_requested_by': '',
     }
     _save_workflow_run_record(workflow, run_record)
 
@@ -7255,12 +8383,18 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
     execution_workflow = workflow
     file_sync_result = None
     try:
-        file_sync_result = _execute_workflow_file_sync(workflow, run_id, trigger_source)
+        _raise_if_workflow_run_cancelled(workflow, run_id)
+        file_sync_result = _execute_cancelable_workflow_step(
+            workflow,
+            run_id,
+            lambda: _execute_workflow_file_sync(workflow, run_id, trigger_source),
+        )
         if file_sync_result and file_sync_result.get('enabled'):
             run_record['file_sync'] = file_sync_result
             _save_workflow_run_record(workflow, run_record)
 
             if not file_sync_result.get('should_continue', True):
+                _raise_if_workflow_run_cancelled(workflow, run_id)
                 completed_at = _utc_now_iso()
                 response_preview = 'No new or changed files were detected by File Sync.'
                 run_record.update({
@@ -7296,14 +8430,20 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
                         'last_run_trigger_source': trigger_source,
                         'run_count': int(workflow.get('run_count') or 0) + 1,
                         'conversation_id': run_record.get('conversation_id'),
+                        'active_run_id': '',
+                        'cancellation_requested_at': None,
+                        'cancellation_requested_by': '',
                     },
                 }
 
             execution_workflow = _apply_file_sync_context_to_workflow(workflow, file_sync_result)
 
+        _raise_if_workflow_run_cancelled(workflow, run_id)
         conversation = _ensure_workflow_conversation(execution_workflow)
         run_record['conversation_id'] = conversation.get('id')
+        _raise_if_workflow_run_cancelled(workflow, run_id)
         user_message_doc = _create_user_message(conversation.get('id'), execution_workflow, trigger_source, run_id)
+        _raise_if_workflow_run_cancelled(workflow, run_id)
         assistant_message_id, thought_tracker = _initialize_workflow_assistant_tracking(
             conversation.get('id'),
             user_id,
@@ -7326,78 +8466,52 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
             status='running',
         )
 
-        url_access_context = _prepare_workflow_url_access_context(
+        url_access_workflow = execution_workflow
+        if execution_workflow.get('tasks'):
+            url_access_workflow = dict(execution_workflow)
+            url_access_workflow['task_prompt'] = '\n\n'.join(
+                str(task.get('instructions') or '').strip()
+                for task in execution_workflow.get('tasks') or []
+                if str(task.get('instructions') or '').strip()
+            )
+        url_access_context = _execute_cancelable_workflow_step(
             execution_workflow,
-            settings,
-            conversation.get('id'),
             run_id,
-            thought_tracker=thought_tracker,
-            user_roles=user_roles,
+            lambda: _prepare_workflow_url_access_context(
+                url_access_workflow,
+                settings,
+                conversation.get('id'),
+                run_id,
+                thought_tracker=thought_tracker,
+                user_roles=user_roles,
+            ),
         )
-        document_action = _get_document_action_config(execution_workflow)
-        workflow_search_context = None
-        if document_action.get('type') == DOCUMENT_ACTION_TYPE_SEARCH:
-            workflow_search_context = _prepare_workflow_search_context(
-                execution_workflow,
-                document_action,
-                settings,
-                conversation_id=conversation.get('id'),
-                thought_tracker=thought_tracker,
-                run_id=run_id,
-            )
-            execution_workflow = workflow_search_context.get('workflow') or execution_workflow
-            document_action = _get_document_action_config(execution_workflow)
-
-        if document_action.get('type') in {DOCUMENT_ACTION_TYPE_ANALYZE, DOCUMENT_ACTION_TYPE_COMPARISON}:
-            document_action = _resolve_recent_document_action_targets(execution_workflow, document_action, settings)
-            execution_workflow = _apply_runtime_document_action_config(execution_workflow, document_action)
-            run_item_callback = _build_run_item_activity_callback(
-                execution_workflow,
-                run_id,
-                file_sync_result=file_sync_result or {},
-            )
-            _initialize_document_run_items(
-                execution_workflow,
-                run_id,
-                document_action,
-                file_sync_result=file_sync_result or {},
-            )
-            execution_result = _execute_document_action_workflow(
+        conversation_id = str(conversation.get('id') or '')
+        if execution_workflow.get('tasks'):
+            execution_result = _execute_workflow_task_sequence(
                 execution_workflow,
                 settings,
-                conversation_id=conversation.get('id'),
-                run_id=run_id,
-                thought_tracker=thought_tracker,
-                external_activity_callback=run_item_callback,
-                url_access_context=url_access_context,
-            )
-        elif execution_workflow.get('runner_type') == 'agent':
-            execution_result = _execute_agent_workflow(
-                execution_workflow,
-                settings,
-                conversation_id=conversation.get('id'),
+                conversation_id,
                 run_id=run_id,
                 thought_tracker=thought_tracker,
                 url_access_context=url_access_context,
-            )
-            execution_result = _attach_workflow_search_context(
-                execution_result,
-                workflow_search_context,
+                file_sync_result=file_sync_result,
+                actor_user_id=actor_user_id or user_id,
             )
         else:
-            execution_result = _execute_model_workflow(
+            execution_result = _execute_workflow_dispatch(
                 execution_workflow,
                 settings,
-                run_id=run_id,
-                thought_tracker=thought_tracker,
-                url_access_context=url_access_context,
+                conversation_id,
+                run_id,
+                thought_tracker,
+                url_access_context,
+                file_sync_result=file_sync_result,
             )
-            execution_result = _attach_workflow_search_context(
-                execution_result,
-                workflow_search_context,
-            )
+        _raise_if_workflow_run_cancelled(execution_workflow, run_id)
         execution_result = _attach_workflow_url_access_result(execution_result, url_access_context)
 
+        _raise_if_workflow_run_cancelled(execution_workflow, run_id)
         assistant_doc = _create_assistant_message(
             conversation,
             execution_workflow,
@@ -7407,11 +8521,13 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
             user_message_doc,
             assistant_message_id=assistant_message_id,
         )
+        _raise_if_workflow_run_cancelled(execution_workflow, run_id)
         _mirror_workflow_visualizations_to_created_conversations(
             execution_workflow,
             assistant_doc,
             execution_result,
         )
+        _raise_if_workflow_run_cancelled(execution_workflow, run_id)
 
         _add_workflow_activity_thought(
             thought_tracker,
@@ -7425,6 +8541,7 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
             title='Workflow run',
             status='completed',
         )
+        _raise_if_workflow_run_cancelled(execution_workflow, run_id)
 
         completed_at = _utc_now_iso()
         run_record.update({
@@ -7438,13 +8555,17 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
             'agent_name': execution_result.get('agent_name'),
             'agent_display_name': execution_result.get('agent_display_name'),
             'analysis_coverage': execution_result.get('analysis_coverage') or {},
+            'task_results': execution_result.get('task_results') or [],
+            'task_error_count': int(execution_result.get('task_error_count') or 0),
             'url_access': execution_result.get('url_access') or {},
             'source_review': execution_result.get('source_review') or {},
             'file_sync': file_sync_result or {},
             'response_preview': _build_response_preview(execution_result.get('reply')),
             'error': '',
         })
+        _raise_if_workflow_run_cancelled(execution_workflow, run_id)
         _save_workflow_run_record(workflow, run_record)
+        _raise_if_workflow_run_cancelled(execution_workflow, run_id)
         log_workflow_run(
             user_id=user_id,
             workflow_id=workflow_id,
@@ -7457,11 +8578,15 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
             workspace_type=workspace_type,
             group_id=group_id or None,
         )
-        alert_notification = _create_workflow_priority_alert(
+        alert_notification = _execute_cancelable_workflow_step(
             execution_workflow,
-            run_record,
-            conversation,
-            execution_result=execution_result,
+            run_id,
+            lambda: _create_workflow_priority_alert(
+                execution_workflow,
+                run_record,
+                conversation,
+                execution_result=execution_result,
+            ),
         )
 
         return {
@@ -7477,9 +8602,34 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
                 'last_run_response_preview': run_record.get('response_preview', ''),
                 'last_run_trigger_source': trigger_source,
                 'run_count': int(workflow.get('run_count') or 0) + 1,
+                'active_run_id': '',
+                'cancellation_requested_at': None,
+                'cancellation_requested_by': '',
             },
         }
+    except WorkflowRunCancelledError:
+        return _finalize_cancelled_workflow_run(
+            workflow,
+            run_record,
+            run_id,
+            started_at,
+            trigger_source,
+            execution_workflow,
+            thought_tracker=thought_tracker,
+            file_sync_result=file_sync_result,
+        )
     except Exception as exc:
+        if _is_workflow_run_cancellation_requested(workflow, run_id):
+            return _finalize_cancelled_workflow_run(
+                workflow,
+                run_record,
+                run_id,
+                started_at,
+                trigger_source,
+                execution_workflow,
+                thought_tracker=thought_tracker,
+                file_sync_result=file_sync_result,
+            )
         if thought_tracker:
             _add_workflow_activity_thought(
                 thought_tracker,
@@ -7503,6 +8653,17 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
             'response_preview': '',
         })
         _save_workflow_run_record(workflow, run_record)
+        if _is_workflow_run_cancellation_requested(workflow, run_id):
+            return _finalize_cancelled_workflow_run(
+                workflow,
+                run_record,
+                run_id,
+                started_at,
+                trigger_source,
+                execution_workflow,
+                thought_tracker=thought_tracker,
+                file_sync_result=file_sync_result,
+            )
         log_workflow_run(
             user_id=user_id,
             workflow_id=workflow_id,
@@ -7545,11 +8706,14 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
                 'last_run_trigger_source': trigger_source,
                 'run_count': int(workflow.get('run_count') or 0) + 1,
                 'conversation_id': run_record.get('conversation_id'),
+                'active_run_id': '',
+                'cancellation_requested_at': None,
+                'cancellation_requested_by': '',
             },
         }
 
 
-def run_group_workflow(workflow, trigger_source='manual', user_roles=None, actor_user_id=None):
+def run_group_workflow(workflow, trigger_source='manual', user_roles=None, actor_user_id=None, run_id=None):
     """Execute a group workflow and persist group-scoped run records."""
     workflow = workflow if isinstance(workflow, dict) else {}
     if not _get_workflow_group_id(workflow):
@@ -7559,4 +8723,5 @@ def run_group_workflow(workflow, trigger_source='manual', user_roles=None, actor
         trigger_source=trigger_source,
         user_roles=user_roles,
         actor_user_id=actor_user_id,
+        run_id=run_id,
     )

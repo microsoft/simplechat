@@ -1,6 +1,6 @@
 # Multi-Modal Vision Analysis Feature
 
-**Version**: 0.229.088 (Initial), 0.229.089 (Expanded model support)  
+**Version**: 0.229.088 (Initial), 0.229.089 (Expanded model support), 0.250.066 (GPT 5.6+ endpoint aliases)
 **Implemented**: November 21, 2025
 
 ## Overview
@@ -337,8 +337,8 @@ group-documents/
 - `o3` - Next-generation reasoning model (if available)
 - `o3-mini` - Compact version (if available)
 
-**GPT-5 Series**:
-- All GPT-5 models support vision (when available in your region)
+**GPT-5 and Later Series**:
+- GPT 5.6 and later GPT model variants are available when they support vision in your region
 
 **GPT-4.5 & GPT-4.1 Series**:
 - `gpt-4.5` - Mid-generation update with vision
@@ -350,7 +350,7 @@ group-documents/
 - `gpt-4-vision` - Standard vision variant
 
 **Model Detection**:
-The admin UI automatically filters and displays only vision-capable models based on naming patterns. If your deployed model includes "vision", "gpt-4o", "gpt-4.1", "gpt-4.5", "gpt-5", or matches o-series patterns (o1, o3, etc.), it will appear in the dropdown.
+The admin UI filters vision-capable models using the model name, display name, and deployment name supplied by each enabled endpoint. Matching is case-insensitive and treats spaces, periods, and underscores as separators. Models identified as "vision", "gpt-4o", "gpt-4.1", "gpt-4.5", GPT major version 5 or later, or supported o-series patterns (o1, o3, etc.) appear in the dropdown.
 
 **API Requirements**:
 - Azure OpenAI API version 2024-02-15-preview or later
@@ -494,7 +494,7 @@ print(doc.get('vision_analysis'))
    - Contains "gpt-4o" (gpt-4o, gpt-4o-mini)
    - Contains "gpt-4.1" (any GPT-4.1 variant)
    - Contains "gpt-4.5" (any GPT-4.5 variant)
-   - Contains "gpt-5" (any GPT-5 variant)
+    - Identifies GPT major version 5 or later in its model, display, or deployment name
    - Matches o-series pattern (o1, o1-preview, o1-mini, o3, o3-mini)
 2. Was model fetched and selected in Chat Model?
 3. For APIM: Is deployment name listed in comma-separated list?
@@ -502,7 +502,7 @@ print(doc.get('vision_analysis'))
 **Supported Model Families**:
 - **GPT-4o series**: gpt-4o, gpt-4o-mini
 - **O-series**: o1, o1-preview, o1-mini, o3, o3-mini
-- **GPT-5 series**: All variants (when available)
+- **GPT-5 and later series**: GPT 5.6 and later variants (when available)
 - **GPT-4.5 & GPT-4.1**: All variants
 - **Legacy vision**: gpt-4-vision, gpt-4-turbo-vision
 
@@ -516,7 +516,7 @@ print(doc.get('vision_analysis'))
 6. Model should now appear in dropdown
 ```
 
-**Note**: If your model supports vision but doesn't appear, check that the deployment name follows Azure OpenAI naming conventions. Custom deployment names may not be detected automatically if they don't include the model family identifiers.
+**Note**: If a custom deployment alias does not identify the model family, ensure its model name or display name contains the supported family identifier.
 
 ## Related Features
 

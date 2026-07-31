@@ -52,7 +52,7 @@ WORKSPACE_IDENTITY_USAGE_ALIASES = {
     "general": "action",
 }
 WORKSPACE_IDENTITY_USAGE_SOURCE_TYPES = {
-    "file_sync": ["smb", "azure_files", "onedrive", "google_drive", "google_shared_drive"],
+    "file_sync": ["smb", "azure_files", "azure_blob", "onedrive", "google_drive", "google_shared_drive"],
     "action": ["action"],
 }
 WORKSPACE_IDENTITY_USAGE_AUTH_TYPES = {

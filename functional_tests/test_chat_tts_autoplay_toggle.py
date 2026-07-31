@@ -2,7 +2,7 @@
 # test_chat_tts_autoplay_toggle.py
 """
 Functional test for chat AI voice response autoplay toggle.
-Version: 0.242.048
+Version: 0.250.102
 Implemented in: 0.242.048
 
 This test ensures the chat AI voice response toggle enables text-to-speech
@@ -30,7 +30,7 @@ def test_chat_tts_autoplay_toggle_enables_tts_state():
     config_content = read_text(CONFIG_FILE)
     chat_tts_content = read_text(CHAT_TTS_JS)
 
-    assert 'VERSION = "0.242.048"' in config_content
+    assert 'VERSION = "0.250.102"' in config_content
     assert "ttsEnabled = Boolean(settings.ttsEnabled || settings.ttsAutoplay);" in chat_tts_content
     assert "const previousTTSEnabled = ttsEnabled;" in chat_tts_content
     assert "if (ttsAutoplay) {\n        ttsEnabled = true;\n    }" in chat_tts_content

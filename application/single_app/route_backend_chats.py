@@ -84,6 +84,7 @@ from functions_service_health import (
     SEMANTIC_SEARCH_QUOTA_WARNING_TYPE,
     SemanticSearchQuotaExceededError,
 )
+from functions_content_safety import build_content_safety_violation_message
 from functions_settings import *
 from functions_assigned_knowledge import (
     ASSIGNED_KNOWLEDGE_USER_ACTION_ANALYZE,
@@ -140,6 +141,16 @@ from functions_chart_operations import (
     user_request_supports_proactive_charts,
 )
 from functions_conversation_cache import invalidate_conversation_cache_for_item
+from functions_conversation_context import (
+    CONVERSATION_CONTEXT_FUNCTION_NAME,
+    CONVERSATION_CONTEXT_METADATA_TYPE,
+    append_conversation_context_citation,
+    build_conversation_context_data_message,
+    build_conversation_context_snapshot,
+    build_conversation_context_system_message,
+    inject_conversation_context_message,
+    serialize_conversation_context_snapshot,
+)
 from functions_conversation_metadata import collect_conversation_metadata, update_conversation_with_metadata
 from functions_conversation_unread import mark_conversation_unread
 from functions_image_messages import build_image_message_documents, decode_image_content
@@ -248,6 +259,68 @@ def _get_foundry_agent_label(agent_type):
 def _build_foundry_runtime_metadata(agent):
     metadata = getattr(agent, 'last_run_metadata', None)
     return metadata if isinstance(metadata, dict) else {}
+
+
+def _get_conversation_context_agent_fields(agent):
+    if not agent:
+        return {
+            'agent_name': None,
+            'agent_display_name': None,
+            'agent_model': None,
+            'agent_provider': None,
+        }
+    if isinstance(agent, dict):
+        agent_name = agent.get('name') or agent.get('selected_agent')
+        agent_display_name = agent.get('display_name') or agent.get('agent_display_name')
+        agent_model = (
+            agent.get('deployment_name')
+            or agent.get('model_deployment')
+            or agent.get('azure_openai_gpt_deployment')
+        )
+        agent_provider = agent.get('model_provider') or agent.get('provider')
+    else:
+        agent_name = getattr(agent, 'name', None)
+        agent_display_name = getattr(agent, 'display_name', None)
+        agent_model = getattr(agent, 'deployment_name', None)
+        agent_provider = (
+            getattr(agent, 'model_provider', None)
+            or getattr(agent, 'provider', None)
+        )
+
+    return {
+        'agent_name': agent_name,
+        'agent_display_name': agent_display_name,
+        'agent_model': agent_model,
+        'agent_provider': agent_provider,
+    }
+
+
+def _prepare_conversation_context_for_invocation(
+    conversation_history,
+    agent_citations,
+    user_metadata,
+    *,
+    model_name=None,
+    model_provider=None,
+    model_endpoint_id=None,
+    selected_agent=None,
+):
+    agent_fields = _get_conversation_context_agent_fields(selected_agent)
+    context_snapshot = build_conversation_context_snapshot(
+        user_metadata,
+        application_version=VERSION,
+        model_name=model_name,
+        model_provider=model_provider,
+        model_endpoint_id=model_endpoint_id,
+        **agent_fields,
+    )
+    context_json = serialize_conversation_context_snapshot(context_snapshot)
+    prepared_history = inject_conversation_context_message(
+        conversation_history,
+        context_json,
+    )
+    append_conversation_context_citation(agent_citations, context_json)
+    return prepared_history, context_json
 
 
 def _resolve_reasoning_effort_for_model(reasoning_effort, model_name, provider=None, endpoint=None):
@@ -3529,7 +3602,6 @@ def _build_safety_message_doc(
             },
         },
     })
-
 
 def _build_fact_memory_context_lines(
     scope_id,
@@ -13690,6 +13762,18 @@ def register_route_backend_chats(bp):
             assigned_knowledge_action_context.get('context_block'),
             normalized_action.get('type'),
         )
+        document_action_agent_fields = _get_conversation_context_agent_fields(request_agent_info)
+        document_action_context_snapshot = build_conversation_context_snapshot(
+            user_metadata,
+            application_version=VERSION,
+            model_name=data.get('model_deployment') or data.get('model_id'),
+            model_provider=data.get('model_provider'),
+            model_endpoint_id=data.get('model_endpoint_id'),
+            **document_action_agent_fields,
+        )
+        document_action_context_json = serialize_conversation_context_snapshot(
+            document_action_context_snapshot
+        )
 
         workflow_like = {
             'id': f'chat-analyze:{conversation_id}',
@@ -13707,6 +13791,13 @@ def register_route_backend_chats(bp):
                 'model_id': str(data.get('model_id') or '').strip(),
                 'provider': str(data.get('model_provider') or '').strip(),
             },
+            'conversation_context_system_message': build_conversation_context_system_message(
+                document_action_context_json
+            ),
+            'conversation_context_data_message': build_conversation_context_data_message(
+                document_action_context_json
+            ),
+            'conversation_context_snapshot': document_action_context_snapshot,
             'document_action': normalized_action,
             'analyze': {
                 'enabled': normalized_action.get('type') == DOCUMENT_ACTION_TYPE_ANALYZE,
@@ -13815,6 +13906,15 @@ def register_route_backend_chats(bp):
         if assigned_knowledge_context_citations:
             hybrid_citations_list.extend(assigned_knowledge_context_citations)
             hybrid_citations_list.sort(key=_build_hybrid_citation_sort_key, reverse=True)
+        document_action_agent_citations = list(execution_result.get('agent_citations') or [])
+        document_action_context_json = (
+            execution_result.get('conversation_context_json')
+            or document_action_context_json
+        )
+        append_conversation_context_citation(
+            document_action_agent_citations,
+            document_action_context_json,
+        )
         prepared_agent_citations = []
         document_generated_analysis_artifacts = list(execution_result.get('generated_analysis_artifacts') or [])
         document_generated_tabular_outputs = list(execution_result.get('generated_tabular_outputs') or [])
@@ -13827,7 +13927,7 @@ def register_route_backend_chats(bp):
             prepared_agent_citations = persist_agent_citation_artifacts(
                 conversation_id=conversation_id,
                 assistant_message_id=assistant_message_id,
-                agent_citations=execution_result.get('agent_citations') or [],
+                agent_citations=document_action_agent_citations,
                 created_timestamp=assistant_timestamp,
                 user_info=response_message_context.get('user_info'),
                 cancel_requested=cancel_requested,
@@ -15421,21 +15521,12 @@ def register_route_backend_chats(bp):
                         cosmos_safety_container.upsert_item(safety_item)
 
                         # Instead of 403, we'll add a "safety" message
-                        blocked_msg_content = (
-                            "Your message was blocked by Content Safety.\n\n"
-                            f"**Reason**: {', '.join(block_reasons)}\n"
-                            "Triggered categories:\n"
+                        blocked_msg_content = build_content_safety_violation_message(
+                            settings=settings,
+                            block_reasons=block_reasons,
+                            triggered_categories=triggered_categories,
+                            blocklist_matches=blocklist_matches,
                         )
-                        for cat in triggered_categories:
-                            blocked_msg_content += (
-                                f" - {cat['category']} (severity={cat['severity']})\n"
-                            )
-                        if blocklist_matches:
-                            blocked_msg_content += (
-                                "\nBlocklist Matches:\n" +
-                                "\n".join([f" - {m['blocklistItemText']} (in {m['blocklistName']})"
-                                        for m in blocklist_matches])
-                            )
 
                         # Insert a special "role": "safety" or "blocked"
                         safety_doc = _build_safety_message_doc(
@@ -17385,14 +17476,25 @@ def register_route_backend_chats(bp):
                     selected_agent,
                 )
 
-                agent_message_history = [
-                    ChatMessageContent(
-                        role=msg["role"],
-                        content=msg["content"],
-                        metadata=msg.get("metadata", {})
+                def build_agent_message_history(context_agent):
+                    nonlocal conversation_history_for_api
+                    conversation_history_for_api, _ = _prepare_conversation_context_for_invocation(
+                        conversation_history_for_api,
+                        agent_citations_list,
+                        user_metadata,
+                        model_name=gpt_model,
+                        model_provider=gpt_provider,
+                        model_endpoint_id=gpt_endpoint_id,
+                        selected_agent=context_agent,
                     )
-                    for msg in conversation_history_for_api
-                ]
+                    return [
+                        ChatMessageContent(
+                            role=msg["role"],
+                            content=msg["content"],
+                            metadata=msg.get("metadata", {})
+                        )
+                        for msg in conversation_history_for_api
+                    ]
 
                 # --- Fallback Chain Steps ---
                 if enable_multi_agent_orchestration and all_agents and agent_name_to_select and "orchestrator" in all_agents and not per_user_semantic_kernel:
@@ -17401,7 +17503,7 @@ def register_route_backend_chats(bp):
                         runtime = InProcessRuntime()
                         return asyncio.run(run_sk_call(
                             orchestrator.invoke,
-                            task=agent_message_history,
+                            task=build_agent_message_history(orchestrator),
                             runtime=runtime,
                         ))
                     def orchestrator_success(result):
@@ -17443,7 +17545,7 @@ def register_route_backend_chats(bp):
                     def invoke_selected_agent():
                         return asyncio.run(run_sk_call(
                             selected_agent.invoke,
-                            agent_message_history,
+                            build_agent_message_history(selected_agent),
                         ))
                     def agent_success(result):
                         nonlocal reload_messages_required
@@ -17566,7 +17668,7 @@ def register_route_backend_chats(bp):
                                 'search_query': search_query,
                             }
                             return selected_agent.invoke(
-                                agent_message_history,
+                                build_agent_message_history(selected_agent),
                                 metadata={k: v for k, v in foundry_metadata.items() if v is not None}
                             )
 
@@ -17660,6 +17762,15 @@ def register_route_backend_chats(bp):
 
                 if kernel and (selected_agent or explicit_chart_request):
                     def invoke_kernel():
+                        nonlocal conversation_history_for_api
+                        conversation_history_for_api, _ = _prepare_conversation_context_for_invocation(
+                            conversation_history_for_api,
+                            agent_citations_list,
+                            user_metadata,
+                            model_name=gpt_model,
+                            model_provider='semantic_kernel',
+                            model_endpoint_id=gpt_endpoint_id,
+                        )
                         plugin_logger = get_plugin_logger()
                         baseline_invocation_count = len(
                             plugin_logger.get_invocations_for_conversation(
@@ -17763,6 +17874,15 @@ def register_route_backend_chats(bp):
 
             thought_tracker.add_thought('generation', f"Sending to '{gpt_model}'")
             def invoke_gpt_fallback():
+                nonlocal conversation_history_for_api
+                conversation_history_for_api, _ = _prepare_conversation_context_for_invocation(
+                    conversation_history_for_api,
+                    agent_citations_list,
+                    user_metadata,
+                    model_name=gpt_model,
+                    model_provider=gpt_provider,
+                    model_endpoint_id=gpt_endpoint_id,
+                )
                 if not conversation_history_for_api:
                     raise Exception('Cannot generate response: No conversation history available.')
                 if conversation_history_for_api[-1].get('role') != 'user':
@@ -19521,21 +19641,12 @@ def register_route_backend_chats(bp):
                             cosmos_safety_container.upsert_item(safety_item)
 
                             # Build blocked message
-                            blocked_msg_content = (
-                                "Your message was blocked by Content Safety.\n\n"
-                                f"**Reason**: {', '.join(block_reasons)}\n"
-                                "Triggered categories:\n"
+                            blocked_msg_content = build_content_safety_violation_message(
+                                settings=settings,
+                                block_reasons=block_reasons,
+                                triggered_categories=triggered_categories,
+                                blocklist_matches=blocklist_matches,
                             )
-                            for cat in triggered_categories:
-                                blocked_msg_content += (
-                                    f" - {cat['category']} (severity={cat['severity']})\n"
-                                )
-                            if blocklist_matches:
-                                blocked_msg_content += (
-                                    "\nBlocklist Matches:\n" +
-                                    "\n".join([f" - {m['blocklistItemText']} (in {m['blocklistName']})"
-                                            for m in blocklist_matches])
-                                )
 
                             # Insert safety message
                             safety_doc = _build_safety_message_doc(
@@ -20973,6 +21084,15 @@ def register_route_backend_chats(bp):
                     settings,
                     selected_agent,
                 )
+                conversation_history_for_api, _ = _prepare_conversation_context_for_invocation(
+                    conversation_history_for_api,
+                    agent_citations_list,
+                    user_metadata,
+                    model_name=gpt_model,
+                    model_provider=gpt_provider,
+                    model_endpoint_id=gpt_endpoint_id,
+                    selected_agent=selected_agent,
+                )
 
                 # Stream the response
                 accumulated_content = ""
@@ -22397,8 +22517,15 @@ def _build_agent_citation_history_lines(agent_citations, max_citations=4):
 
         tool_name = str(citation.get('tool_name') or citation.get('function_name') or '').strip()
         plugin_name = str(citation.get('plugin_name') or '').strip().lower()
+        metadata_type = str(citation.get('metadata_type') or '').strip().lower()
+        function_name = str(citation.get('function_name') or '').strip().lower()
         normalized_tool_name = tool_name.lower()
         if tool_name.startswith('[Debug]') or tool_name == 'Conversation History':
+            return True
+        if (
+            metadata_type == CONVERSATION_CONTEXT_METADATA_TYPE
+            or function_name == CONVERSATION_CONTEXT_FUNCTION_NAME
+        ):
             return True
         if plugin_name in fact_memory_plugin_names or normalized_tool_name in fact_memory_tool_names:
             return True

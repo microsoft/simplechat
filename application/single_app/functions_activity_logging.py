@@ -1989,7 +1989,7 @@ def log_general_admin_action(
     action: str,
     description: Optional[str] = None,
     additional_context: Optional[dict] = None
-) -> None:
+) -> bool:
     """
     Log a general admin action to the activity_logs container.
 
@@ -2001,6 +2001,7 @@ def log_general_admin_action(
         additional_context (dict, optional): Additional context to store
     """
 
+    normalized_admin_user_id = str(admin_user_id or 'unknown')
     try:
         normalized_admin_user_id = coerce_activity_log_user_id(admin_user_id)
         activity_record = {
@@ -2032,6 +2033,7 @@ def log_general_admin_action(
             level=logging.INFO
         )
         debug_print(f"✅ Admin action logged: {action} by {admin_email}")
+        return True
 
     except Exception as e:
         log_event(
@@ -2045,6 +2047,7 @@ def log_general_admin_action(
             level=logging.ERROR
         )
         debug_print(f"⚠️  Warning: Failed to log admin action: {str(e)}")
+        return False
 
 
 def log_file_sync_activity(

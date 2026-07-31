@@ -39,6 +39,12 @@ function initializeFileSyncRoot(root) {
             enabled: true,
         },
         {
+            value: 'azure_blob',
+            label: 'Azure Blob Storage',
+            description: 'Blobs from an Azure Storage container.',
+            enabled: true,
+        },
+        {
             value: 'onedrive',
             label: 'OneDrive',
             description: 'Files and folders from a personal OneDrive.',
@@ -112,6 +118,7 @@ function initializeFileSyncRoot(root) {
     const sourceTypeAuthTypes = {
         smb: ['username_password', 'anonymous'],
         azure_files: ['managed_identity', 'client_secret', 'connection_string'],
+        azure_blob: ['managed_identity', 'client_secret', 'connection_string'],
         onedrive: ['global_identity'],
     };
     const authTypeLabels = {
@@ -124,6 +131,12 @@ function initializeFileSyncRoot(root) {
     };
     const getSourceTypeAuthTypes = (sourceTypeValue) => sourceTypeAuthTypes[sourceTypeValue || 'smb'] || ['username_password', 'anonymous'];
     const formatAuthType = (authType) => authTypeLabels[authType] || String(authType || '').replace(/_/g, ' ');
+    const formatSourceAuthType = (sourceTypeValue, authType) => {
+        if (sourceTypeValue === 'azure_blob' && authType === 'connection_string') {
+            return 'Blob connection string or SAS';
+        }
+        return formatAuthType(authType);
+    };
     const identitySupportsFileSync = (identity, sourceTypeValue) => {
         const usageContexts = Array.isArray(identity.usage_contexts) && identity.usage_contexts.length > 0
             ? identity.usage_contexts
@@ -860,6 +873,8 @@ function initializeFileSyncRoot(root) {
         accountUrl: source.connection?.account_url || source.connection?.share_url || '',
         shareName: source.connection?.share_name || '',
         directoryPath: source.connection?.directory_path || '',
+        containerName: source.connection?.container_name || '',
+        blobPrefix: source.connection?.blob_prefix || '',
         selectedPaths: source.connection?.selected_paths || [],
         identityId: source.identity_id || '',
         authType: source.credentials?.auth_type || 'username_password',
@@ -989,6 +1004,9 @@ function initializeFileSyncRoot(root) {
         const accountUrlField = buildLabeledInput('file-sync-account-url', 'File service URL', 'url', values.accountUrl);
         const shareNameField = buildLabeledInput('file-sync-share-name', 'Share name', 'text', values.shareName);
         const directoryPathField = buildLabeledInput('file-sync-directory-path', 'Directory path', 'text', values.directoryPath);
+        const blobAccountUrlField = buildLabeledInput('file-sync-blob-account-url', 'Blob service URL or account name', 'text', values.accountUrl);
+        const containerNameField = buildLabeledInput('file-sync-container-name', 'Container name', 'text', values.containerName);
+        const blobPrefixField = buildLabeledInput('file-sync-blob-prefix', 'Blob prefix', 'text', values.blobPrefix);
         const enabledField = buildCheckbox('file-sync-enabled', 'Enabled', values.enabled);
         const recursiveField = buildCheckbox(
             'file-sync-recursive',
@@ -1000,6 +1018,8 @@ function initializeFileSyncRoot(root) {
         formGrid.appendChild(nameField.wrapper);
         if (selectedSourceType === 'azure_files') {
             appendChildren(formGrid, [accountUrlField.wrapper, shareNameField.wrapper, directoryPathField.wrapper]);
+        } else if (selectedSourceType === 'azure_blob') {
+            appendChildren(formGrid, [blobAccountUrlField.wrapper, containerNameField.wrapper, blobPrefixField.wrapper]);
         } else if (selectedSourceType === 'onedrive') {
             const oneDriveSummary = createElement('div', { className: 'col-12 text-muted small', text: 'OneDrive sync uses an admin-managed global connector identity with Microsoft Graph application permissions.' });
             formGrid.appendChild(oneDriveSummary);
@@ -1028,13 +1048,19 @@ function initializeFileSyncRoot(root) {
             className: 'alert alert-info py-2 mb-0',
             text: 'OneDrive uses the admin-managed global File Sync connector identity. Personal users choose what to sync, not tenant credentials.',
         });
+        const azureBlobCredentialNotice = createElement('div', {
+            className: 'alert alert-info py-2 mb-3',
+            text: 'Each source syncs one container. A container SAS needs Read and List only. Extra permissions are accepted but are not needed and will be flagged. Account SAS and storage account keys work but grant broader access. To sync multiple containers, create one source per container. Managed identity is recommended. Secret credentials use Azure Key Vault when enabled; otherwise they use the existing File Sync source or identity credential storage.',
+        });
+        const azureBlobCredentialAssessment = createElement('div', { className: 'd-none' });
+        renderCredentialMetadata(azureBlobCredentialAssessment, source?.credential_metadata, false);
 
         const localCredentialsWrapper = createElement('div', { className: 'row g-3' });
         const authTypeWrapper = createElement('div', { className: 'col-md-6' });
         const authTypeLabel = createElement('label', { className: 'form-label', text: 'Authentication', attributes: { for: 'file-sync-auth-type' } });
         const authTypeSelect = createElement('select', { className: 'form-select', attributes: { id: 'file-sync-auth-type' } });
         getSourceTypeAuthTypes(selectedSourceType).forEach((value) => {
-            const option = createElement('option', { text: formatAuthType(value), attributes: { value } });
+            const option = createElement('option', { text: formatSourceAuthType(selectedSourceType, value), attributes: { value } });
             option.selected = values.authType === value;
             authTypeSelect.appendChild(option);
         });
@@ -1043,7 +1069,64 @@ function initializeFileSyncRoot(root) {
         const domainField = buildLabeledInput('file-sync-domain', 'Domain', 'text', values.domain);
         const clientIdField = buildLabeledInput('file-sync-client-id', 'Client ID', 'text', values.clientId);
         const passwordField = buildLabeledInput('file-sync-password', source?.credentials?.password_stored || source?.credentials?.secret_stored ? 'Secret (stored)' : 'Secret', 'password', values.password || values.secret);
+        const blobCredentialHelp = createElement('div', {
+            className: 'form-text d-none',
+            text: 'Paste a storage connection string, full container SAS URL, or standalone SAS token. A standalone token uses the Blob service URL and container entered above.',
+        });
+        passwordField.wrapper.appendChild(blobCredentialHelp);
         appendChildren(localCredentialsWrapper, [authTypeWrapper, usernameField.wrapper, domainField.wrapper, clientIdField.wrapper, passwordField.wrapper]);
+
+        let autoSourceNameEnabled = !source;
+        let lastDerivedSourceName = '';
+        const deriveSourceNameFromContainer = () => {
+            if (selectedSourceType !== 'azure_blob' || !autoSourceNameEnabled) {
+                return;
+            }
+            const containerName = containerNameField.input.value.trim();
+            if (!containerName) {
+                return;
+            }
+            lastDerivedSourceName = `${containerName} Blob Sync`;
+            nameField.input.value = lastDerivedSourceName;
+        };
+        const hydrateBlobFieldsFromSasUrl = (credentialValue) => {
+            const normalizedValue = String(credentialValue || '').trim();
+            if (selectedSourceType !== 'azure_blob' || !normalizedValue.toLowerCase().startsWith('https://')) {
+                return;
+            }
+            try {
+                const parsedUrl = new URL(normalizedValue);
+                if (!parsedUrl.search || !parsedUrl.hostname.toLowerCase().includes('.blob.')) {
+                    return;
+                }
+                if (authTypeSelect.value !== 'connection_string') {
+                    authTypeSelect.value = 'connection_string';
+                    updateCredentialVisibility();
+                }
+                const pathParts = parsedUrl.pathname.split('/').filter(Boolean).map((pathPart) => decodeURIComponent(pathPart));
+                blobAccountUrlField.input.value = `${parsedUrl.protocol}//${parsedUrl.host}`;
+                if (pathParts.length > 0) {
+                    containerNameField.input.value = pathParts[0];
+                    deriveSourceNameFromContainer();
+                }
+            } catch (error) {
+                // Server validation provides the reviewed error message for malformed SAS URLs.
+            }
+        };
+        nameField.input.addEventListener('input', () => {
+            if (nameField.input.value.trim() !== lastDerivedSourceName) {
+                autoSourceNameEnabled = false;
+            }
+        });
+        containerNameField.input.addEventListener('input', deriveSourceNameFromContainer);
+        passwordField.input.addEventListener('input', () => hydrateBlobFieldsFromSasUrl(passwordField.input.value));
+        blobAccountUrlField.input.addEventListener('input', () => {
+            const accountValue = blobAccountUrlField.input.value.trim();
+            if (accountValue.toLowerCase().startsWith('https://') && accountValue.includes('?')) {
+                passwordField.input.value = accountValue;
+                hydrateBlobFieldsFromSasUrl(accountValue);
+            }
+        });
 
         const updateCredentialVisibility = () => {
             const usingIdentity = Boolean(identitySelect.value);
@@ -1056,6 +1139,7 @@ function initializeFileSyncRoot(root) {
             domainField.wrapper.classList.toggle('d-none', !usesUsernamePassword);
             clientIdField.wrapper.classList.toggle('d-none', !usesClientSecret);
             passwordField.wrapper.classList.toggle('d-none', ['anonymous', 'managed_identity', 'global_identity'].includes(authType));
+            blobCredentialHelp.classList.toggle('d-none', !(selectedSourceType === 'azure_blob' && authType === 'connection_string' && !usingIdentity));
             const passwordLabel = passwordField.wrapper.querySelector('label');
             if (passwordLabel) {
                 if (usesUsernamePassword) {
@@ -1063,7 +1147,13 @@ function initializeFileSyncRoot(root) {
                 } else if (usesClientSecret) {
                     passwordLabel.textContent = source?.credentials?.secret_stored ? 'Client secret (stored)' : 'Client secret';
                 } else if (authType === 'connection_string') {
-                    passwordLabel.textContent = source?.credentials?.secret_stored ? 'Connection string (stored)' : 'Connection string';
+                    if (selectedSourceType === 'azure_blob') {
+                        passwordLabel.textContent = source?.credentials?.secret_stored
+                            ? 'Blob connection string or SAS (stored)'
+                            : 'Blob connection string, SAS URL, or SAS token';
+                    } else {
+                        passwordLabel.textContent = source?.credentials?.secret_stored ? 'Connection string (stored)' : 'Connection string';
+                    }
                 } else {
                     passwordLabel.textContent = source?.credentials?.secret_stored ? 'Secret (stored)' : 'Secret';
                 }
@@ -1119,10 +1209,17 @@ function initializeFileSyncRoot(root) {
             intervalField.wrapper.classList.toggle('d-none', !scheduleField.input.checked);
         });
 
+        let identityAndAuthenticationChildren = [identityWrapper, localCredentialsWrapper];
+        if (selectedSourceType === 'onedrive') {
+            identityAndAuthenticationChildren = [globalConnectorNotice];
+        } else if (selectedSourceType === 'azure_blob') {
+            identityAndAuthenticationChildren = [azureBlobCredentialNotice, azureBlobCredentialAssessment, identityWrapper, localCredentialsWrapper];
+        }
+
         appendChildren(content, [
             typeSummary,
             createConfigCard('General', [formGrid, generalSwitches]),
-            createConfigCard('Identity and Authentication', selectedSourceType === 'onedrive' ? [globalConnectorNotice] : [identityWrapper, localCredentialsWrapper]),
+            createConfigCard('Identity and Authentication', identityAndAuthenticationChildren),
             createConfigCard('Selection, Subfolders, and Filters', [recursiveField.wrapper, selectedPathControl.wrapper, patternControl.wrapper, extensionControl.wrapper, folderGrid]),
             createConfigCard('Tags', [tagsField.wrapper]),
             createConfigCard('Sync Schedule', [scheduleField.wrapper, intervalField.wrapper]),
@@ -1153,22 +1250,40 @@ function initializeFileSyncRoot(root) {
                 credentials.client_secret = '';
                 credentials.connection_string = '';
             }
+            if (identitySelect.value) {
+                credentials.password = '';
+                credentials.secret = '';
+                credentials.client_secret = '';
+                credentials.connection_string = '';
+                credentials.identity = '';
+                credentials.client_id = '';
+            }
             const selectedPaths = selectedPathControl.getValues();
-            const connection = selectedSourceType === 'azure_files'
-                ? {
+            let connection;
+            if (selectedSourceType === 'azure_files') {
+                connection = {
                     account_url: accountUrlField.input.value.trim(),
                     share_name: shareNameField.input.value.trim(),
                     directory_path: directoryPathField.input.value.trim(),
                     selected_paths: selectedPaths,
-                }
-                : selectedSourceType === 'onedrive'
-                    ? {
-                        selected_paths: selectedPaths,
-                    }
-                    : {
-                        unc_path: uncField.input.value.trim(),
-                        selected_paths: selectedPaths,
-                    };
+                };
+            } else if (selectedSourceType === 'azure_blob') {
+                connection = {
+                    account_url: blobAccountUrlField.input.value.trim(),
+                    container_name: containerNameField.input.value.trim(),
+                    blob_prefix: blobPrefixField.input.value.trim(),
+                    selected_paths: selectedPaths,
+                };
+            } else if (selectedSourceType === 'onedrive') {
+                connection = {
+                    selected_paths: selectedPaths,
+                };
+            } else {
+                connection = {
+                    unc_path: uncField.input.value.trim(),
+                    selected_paths: selectedPaths,
+                };
+            }
             return {
                 name: nameField.input.value.trim(),
                 source_type: selectedSourceType,
@@ -1217,6 +1332,9 @@ function initializeFileSyncRoot(root) {
                     body: JSON.stringify(buildPayload()),
                 });
                 const connection = payload.connection || {};
+                if (selectedSourceType === 'azure_blob') {
+                    renderCredentialMetadata(azureBlobCredentialAssessment, connection.credential_metadata, false);
+                }
                 showModalStatus(`Connection OK. Checked ${connection.entries_checked || 0} top-level item(s).`, 'success');
             } catch (error) {
                 showModalStatus(error.message, 'danger');
@@ -1520,6 +1638,108 @@ function initializeFileSyncRoot(root) {
         return date.toLocaleString();
     };
 
+    const sasPermissionLabels = {
+        r: 'Read',
+        l: 'List',
+        a: 'Add',
+        c: 'Create',
+        w: 'Write',
+        d: 'Delete',
+        x: 'Delete version',
+        t: 'Tags',
+        m: 'Move',
+        e: 'Execute',
+        o: 'Ownership',
+        p: 'Permissions',
+        i: 'Immutability policy',
+        y: 'Permanent delete',
+    };
+
+    const getCredentialMetadataLines = (metadata = {}) => {
+        if (!metadata || !metadata.credential_type) {
+            return [];
+        }
+        const lines = [];
+        const credentialLabels = {
+            account_key: 'Storage account key',
+            client_secret: 'Service principal',
+            connection_string: 'Connection string',
+            managed_identity: 'Managed identity',
+        };
+        const scopeLabels = {
+            account: 'Account SAS',
+            blob: 'Blob SAS',
+            container: 'Container SAS',
+            unknown: 'SAS',
+        };
+        const credentialLabel = metadata.credential_type === 'sas'
+            ? (scopeLabels[metadata.sas_scope] || 'SAS')
+            : (credentialLabels[metadata.credential_type] || formatAuthType(metadata.credential_type));
+        lines.push({ text: credentialLabel, type: 'summary' });
+
+        const permissions = String(metadata.permissions || '')
+            .split('')
+            .filter((permission, index, allPermissions) => permission && allPermissions.indexOf(permission) === index)
+            .map((permission) => sasPermissionLabels[permission] || permission);
+        if (permissions.length > 0) {
+            lines.push({ text: `Permissions: ${permissions.join(', ')}`, type: 'detail' });
+        }
+        if (metadata.starts_at) {
+            lines.push({ text: `Valid from ${formatDate(metadata.starts_at)}`, type: 'detail' });
+        }
+        if (metadata.ip_range) {
+            lines.push({ text: `IP restriction: ${metadata.ip_range}`, type: 'warning' });
+        }
+
+        if (metadata.expires_at) {
+            const expiresAt = new Date(metadata.expires_at);
+            if (!Number.isNaN(expiresAt.getTime())) {
+                const remainingMilliseconds = expiresAt.getTime() - Date.now();
+                const hoursRemaining = Math.ceil(remainingMilliseconds / 3600000);
+                const daysRemaining = Math.ceil(remainingMilliseconds / 86400000);
+                let remainingText = 'expired';
+                if (remainingMilliseconds >= 0 && hoursRemaining <= 48) {
+                    remainingText = `${hoursRemaining} hour${hoursRemaining === 1 ? '' : 's'} remaining`;
+                } else if (remainingMilliseconds >= 0) {
+                    remainingText = `${daysRemaining} day${daysRemaining === 1 ? '' : 's'} remaining`;
+                }
+                lines.push({
+                    text: `Expires ${formatDate(metadata.expires_at)} (${remainingText})`,
+                    type: remainingMilliseconds < 0 || daysRemaining <= 30 ? 'warning' : 'detail',
+                });
+            }
+        } else if (metadata.stored_access_policy) {
+            lines.push({ text: 'Expiry is controlled by a stored access policy.', type: 'warning' });
+        } else if (metadata.credential_type === 'account_key') {
+            lines.push({ text: 'This credential does not expire automatically.', type: 'warning' });
+        }
+
+        (metadata.warnings || []).forEach((warning) => {
+            lines.push({ text: String(warning || ''), type: 'warning' });
+        });
+        return lines.filter((line) => line.text);
+    };
+
+    const renderCredentialMetadata = (container, metadata, compact = false) => {
+        if (!container) {
+            return;
+        }
+        container.replaceChildren();
+        const lines = getCredentialMetadataLines(metadata);
+        container.className = lines.length === 0
+            ? 'd-none'
+            : (compact ? 'small mt-1' : 'alert alert-light border py-2 mb-3');
+        lines.forEach((line) => {
+            const lineElement = createElement('div', {
+                className: line.type === 'warning'
+                    ? 'text-warning-emphasis'
+                    : (line.type === 'summary' ? 'fw-semibold' : 'text-muted'),
+                text: line.text,
+            });
+            container.appendChild(lineElement);
+        });
+    };
+
     const getSourceConnectionLabel = (source = {}) => {
         const connection = source.connection || {};
         const selectedPaths = Array.isArray(connection.selected_paths) ? connection.selected_paths : [];
@@ -1529,6 +1749,12 @@ function initializeFileSyncRoot(root) {
         }
         if ((source.source_type || 'smb') === 'azure_files') {
             const baseLabel = connection.share_url || [connection.account_url, connection.share_name, connection.directory_path]
+                .filter(Boolean)
+                .join('/');
+            return `${baseLabel}${selectedPathLabel}`;
+        }
+        if ((source.source_type || 'smb') === 'azure_blob') {
+            const baseLabel = [connection.account_url, connection.container_name, connection.blob_prefix]
                 .filter(Boolean)
                 .join('/');
             return `${baseLabel}${selectedPathLabel}`;
@@ -1646,7 +1872,9 @@ function initializeFileSyncRoot(root) {
             const nameText = createElement('div', { className: 'fw-semibold', text: source.name || 'File Sync Source' });
             const pathText = createElement('div', { className: 'small text-muted', text: getSourceConnectionLabel(source) });
             const recursionText = createElement('div', { className: 'small text-muted', text: source.recursive === false ? 'Top folder only' : 'Includes subfolders' });
-            appendChildren(nameCell, [nameText, pathText, recursionText]);
+            const credentialMetadata = createElement('div', { className: 'd-none' });
+            renderCredentialMetadata(credentialMetadata, source.credential_metadata, true);
+            appendChildren(nameCell, [nameText, pathText, recursionText, credentialMetadata]);
 
             const statusText = source.enabled ? 'Enabled' : 'Disabled';
             const typeCell = createElement('td');

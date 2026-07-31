@@ -45,6 +45,11 @@ WORKFLOW_ALERT_PRIORITIES = {'none', 'low', 'medium', 'high'}
 WORKFLOW_FILE_SYNC_WAIT_MODES = {'complete', 'queued'}
 WORKFLOW_FILE_SYNC_CONTINUE_MODES = {'always', 'changed'}
 WORKFLOW_FILE_SYNC_MAX_SOURCES = 10
+WORKFLOW_ERROR_STRATEGIES = {'halt', 'continue'}
+WORKFLOW_MAX_TASKS = 20
+WORKFLOW_TASK_INSTRUCTIONS_MAX_LENGTH = 12000
+WORKFLOW_TASK_NAME_MAX_LENGTH = 120
+WORKFLOW_TASK_RUNNER_TYPES = {'inherit', 'agent', 'model'}
 WORKFLOW_CONVERSATION_ACCESS_ERROR = 'Workflow conversation not found or access denied.'
 
 
@@ -132,6 +137,91 @@ def _normalize_alert_priority(value):
     if normalized not in WORKFLOW_ALERT_PRIORITIES:
         raise ValueError('Alert priority must be none, low, medium, or high.')
     return normalized
+
+
+def _normalize_workflow_tasks(workflow_data, existing_workflow=None, task_runner_normalizer=None):
+    workflow_data = workflow_data if isinstance(workflow_data, dict) else {}
+    existing_workflow = existing_workflow if isinstance(existing_workflow, dict) else {}
+    tasks_supplied = 'tasks' in workflow_data
+    raw_tasks = workflow_data.get('tasks') if tasks_supplied else existing_workflow.get('tasks') or []
+    if not isinstance(raw_tasks, list):
+        raise ValueError('Workflow tasks must be a list.')
+    if not raw_tasks:
+        if not tasks_supplied:
+            return []
+        raise ValueError('Add at least one workflow task.')
+    if len(raw_tasks) > WORKFLOW_MAX_TASKS:
+        raise ValueError(f'Workflows support up to {WORKFLOW_MAX_TASKS} tasks.')
+
+    normalized_tasks = []
+    seen_task_ids = set()
+    for index, raw_task in enumerate(raw_tasks):
+        if not isinstance(raw_task, dict):
+            raise ValueError(f'Workflow task {index + 1} is invalid.')
+
+        task_type = _normalize_text(raw_task.get('type') or 'instructions', 'Task type').lower()
+        if task_type != 'instructions':
+            raise ValueError(f'Workflow task {index + 1} has an unsupported type.')
+
+        task_id = _normalize_text(raw_task.get('id'), 'Task id') or str(uuid.uuid4())
+        if task_id in seen_task_ids:
+            raise ValueError('Workflow task ids must be unique.')
+        seen_task_ids.add(task_id)
+
+        name = _normalize_text(raw_task.get('name'), 'Task name') or f'Task {index + 1}'
+        if len(name) > WORKFLOW_TASK_NAME_MAX_LENGTH:
+            raise ValueError(f'Task name must be {WORKFLOW_TASK_NAME_MAX_LENGTH} characters or fewer.')
+
+        instructions = _normalize_text(raw_task.get('instructions'), 'Task instructions', required=True)
+        if len(instructions) > WORKFLOW_TASK_INSTRUCTIONS_MAX_LENGTH:
+            raise ValueError(
+                f'Task instructions must be {WORKFLOW_TASK_INSTRUCTIONS_MAX_LENGTH} characters or fewer.'
+            )
+
+        raw_runner = raw_task.get('runner') if isinstance(raw_task.get('runner'), dict) else {}
+        runner_type = _normalize_text(raw_runner.get('type') or 'inherit', 'Task runner type').lower()
+        if runner_type not in WORKFLOW_TASK_RUNNER_TYPES:
+            raise ValueError(f'Workflow task {index + 1} has an unsupported runner type.')
+        if runner_type == 'inherit':
+            runner = {'type': 'inherit'}
+        elif callable(task_runner_normalizer):
+            runner = task_runner_normalizer(raw_runner)
+        else:
+            raise ValueError(f'Workflow task {index + 1} runner could not be authorized.')
+
+        normalized_tasks.append({
+            'id': task_id,
+            'type': task_type,
+            'name': name,
+            'instructions': instructions,
+            'order': index + 1,
+            'runner': runner,
+        })
+
+    return normalized_tasks
+
+
+def _normalize_workflow_error_handling(workflow_data, existing_workflow=None):
+    workflow_data = workflow_data if isinstance(workflow_data, dict) else {}
+    existing_workflow = existing_workflow if isinstance(existing_workflow, dict) else {}
+    existing_config = existing_workflow.get('error_handling') if isinstance(existing_workflow.get('error_handling'), dict) else {}
+    raw_config = workflow_data.get('error_handling') if isinstance(workflow_data.get('error_handling'), dict) else existing_config
+
+    strategy = _normalize_text(raw_config.get('strategy') or 'halt', 'Error strategy').lower()
+    if strategy not in WORKFLOW_ERROR_STRATEGIES:
+        raise ValueError('Error strategy must be halt or continue.')
+
+    try:
+        retry_count = int(raw_config.get('retry_count', 0))
+    except (TypeError, ValueError) as exc:
+        raise ValueError('Task retry count must be an integer.') from exc
+    if retry_count < 0 or retry_count > 5:
+        raise ValueError('Task retry count must be between 0 and 5.')
+
+    return {
+        'strategy': strategy,
+        'retry_count': retry_count,
+    }
 
 
 def _normalize_document_action_config(workflow_data, existing_workflow=None, allow_empty_file_sync_targets=False):
@@ -294,8 +384,14 @@ def _find_matching_agent(candidates, requested_agent):
     return None
 
 
-def _normalize_selected_agent(user_id, settings, requested_agent):
-    candidates = _build_selectable_agents(user_id, settings, requested_agent=requested_agent)
+def _normalize_selected_agent(user_id, settings, requested_agent, strict_permissions=False):
+    candidates = _build_selectable_agents(
+        user_id,
+        settings,
+        requested_agent=None if strict_permissions else requested_agent,
+    )
+    if strict_permissions:
+        candidates = [candidate for candidate in candidates if candidate.get('is_enabled', True)]
     matched_agent = _find_matching_agent(candidates, requested_agent)
     if not matched_agent:
         raise ValueError('Select a valid personal or merged global agent.')
@@ -416,6 +512,50 @@ def _summarize_model_binding(candidates, endpoint_id, model_id):
     }
 
 
+def normalize_personal_workflow_task_runner(user_id, requested_runner, settings=None):
+    """Resolve a task runner against the user's currently authorized options."""
+    requested_runner = requested_runner if isinstance(requested_runner, dict) else {}
+    runner_type = _normalize_text(requested_runner.get('type') or 'inherit', 'Task runner type').lower()
+    if runner_type not in WORKFLOW_TASK_RUNNER_TYPES:
+        raise ValueError('Task runner type must be inherit, model, or agent.')
+    if runner_type == 'inherit':
+        return {'type': 'inherit'}
+
+    settings = settings or get_settings()
+    if runner_type == 'agent':
+        if not settings.get('enable_semantic_kernel', False):
+            raise ValueError('Agents must be enabled before selecting a task agent.')
+        if not settings.get('allow_user_agents', False):
+            raise ValueError('User agents must be enabled before selecting a task agent.')
+        selected_agent = _normalize_selected_agent(
+            user_id,
+            settings,
+            requested_runner.get('selected_agent'),
+            strict_permissions=True,
+        )
+        return {
+            'type': 'agent',
+            'selected_agent': selected_agent,
+        }
+
+    model_endpoint_id = _normalize_text(requested_runner.get('model_endpoint_id'), 'Task model endpoint')
+    model_id = _normalize_text(requested_runner.get('model_id'), 'Task model')
+    model_binding_summary = _summarize_model_binding(
+        _build_model_endpoint_candidates(user_id, settings),
+        model_endpoint_id,
+        model_id,
+    )
+    if not model_binding_summary:
+        raise ValueError('Select a model endpoint and model for the task override.')
+    return {
+        'type': 'model',
+        'model_endpoint_id': model_endpoint_id,
+        'model_id': model_id,
+        'model_provider': str(model_binding_summary.get('provider') or '').strip().lower(),
+        'model_binding_summary': model_binding_summary,
+    }
+
+
 def compute_next_run_at(workflow, from_time=None):
     """Return the next scheduled run timestamp for a scheduled workflow."""
     workflow = workflow if isinstance(workflow, dict) else {}
@@ -518,7 +658,20 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
 
     workflow_name = _normalize_text(workflow_data.get('name'), 'Workflow name', required=True)
     description = _normalize_text(workflow_data.get('description'), 'Description')
-    task_prompt = _normalize_text(workflow_data.get('task_prompt'), 'Task prompt', required=True)
+    tasks = _normalize_workflow_tasks(
+        workflow_data,
+        existing_workflow=existing_workflow,
+        task_runner_normalizer=lambda runner: normalize_personal_workflow_task_runner(
+            user_id,
+            runner,
+            settings=settings,
+        ),
+    )
+    task_prompt = _normalize_text(
+        workflow_data.get('task_prompt') or (tasks[0].get('instructions') if tasks else ''),
+        'Task prompt',
+        required=True,
+    )
     runner_type = _normalize_text(workflow_data.get('runner_type'), 'Runner type', required=True).lower()
     if runner_type not in WORKFLOW_RUNNER_TYPES:
         raise ValueError('Runner type must be agent or model.')
@@ -544,6 +697,16 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
     ) if url_access_enabled else False
     alert_priority = _normalize_alert_priority(
         workflow_data.get('alert_priority', (existing_workflow or {}).get('alert_priority', 'none'))
+    )
+    error_handling = _normalize_workflow_error_handling(workflow_data, existing_workflow=existing_workflow)
+    default_chat_capabilities_enabled = (
+        (existing_workflow or {}).get('chat_capabilities_enabled', False)
+        if existing_workflow
+        else True
+    )
+    chat_capabilities_enabled = _normalize_bool(
+        workflow_data.get('chat_capabilities_enabled', default_chat_capabilities_enabled),
+        default=default_chat_capabilities_enabled,
     )
     file_sync = _normalize_file_sync_config(user_id, workflow_data, existing_workflow=existing_workflow)
     allow_empty_file_sync_targets = bool(file_sync.get('enabled') and file_sync.get('use_changed_documents'))
@@ -593,7 +756,10 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
         'name': workflow_name,
         'description': description,
         'task_prompt': task_prompt,
+        'tasks': tasks,
+        'error_handling': error_handling,
         'runner_type': runner_type,
+        'chat_capabilities_enabled': chat_capabilities_enabled,
         'trigger_type': trigger_type,
         'is_enabled': is_enabled,
         'url_access_enabled': url_access_enabled,
@@ -634,6 +800,9 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
         'last_run_response_preview': (existing_workflow or {}).get('last_run_response_preview', ''),
         'last_run_trigger_source': (existing_workflow or {}).get('last_run_trigger_source', ''),
         'run_count': int((existing_workflow or {}).get('run_count') or 0),
+        'active_run_id': (existing_workflow or {}).get('active_run_id', ''),
+        'cancellation_requested_at': (existing_workflow or {}).get('cancellation_requested_at'),
+        'cancellation_requested_by': (existing_workflow or {}).get('cancellation_requested_by', ''),
     }
 
     if trigger_type in {'interval', 'file_sync'} and is_enabled:

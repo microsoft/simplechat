@@ -42,7 +42,7 @@
     {% endif %}
   </div>
   
-  <div id="sidebar-content" class="flex-grow-1 d-flex flex-column overflow-auto">
+  <div id="sidebar-content" class="sidebar-scroll-content flex-grow-1 d-flex flex-column">
     {% if session.get('user') and session['user'].get('roles') and ('Admin' in session['user']['roles'] or 'User' in session['user']['roles']) %}
     <div class="chat-sidebar-mobile-sections d-lg-none px-3 pb-3 border-bottom flex-shrink-0">
       <div class="chat-sidebar-mobile-section">
@@ -171,8 +171,8 @@
     <!-- Conversations Section - Only show on chats page -->
     {% if request.endpoint == 'frontend_chats.chats' %}
     {% set conversations_menu_expanded = sidebar_menu_state.get('conversations', true) %}
-    <div id="conversations-section" class="flex-grow-1 overflow-auto">
-      <div id="conversations-toggle" class="sidebar-section-toggle mt-2 mb-1 ps-3 pe-2 text-muted small d-flex align-items-center justify-content-between" role="button" tabindex="0" aria-controls="conversations-list-container" aria-expanded="{{ 'true' if conversations_menu_expanded else 'false' }}" data-sidebar-menu-key="conversations" data-sidebar-menu-target="conversations-list-container" data-sidebar-menu-caret="conversations-caret">
+    <div id="conversations-section">
+      <div id="conversations-toggle" class="sidebar-section-toggle mb-1 ps-3 pe-2 text-muted small d-flex align-items-center justify-content-between" role="button" tabindex="0" aria-controls="conversations-list-container" aria-expanded="{{ 'true' if conversations_menu_expanded else 'false' }}" data-sidebar-menu-key="conversations" data-sidebar-menu-target="conversations-list-container" data-sidebar-menu-caret="conversations-caret">
         <div class="d-flex align-items-center">
           <span class="nav-text">Conversations</span>
           <i id="conversations-caret" class="bi bi-caret-down-fill ms-2 transition" style="font-size: 0.9em; transition: transform 0.2s;{% if not conversations_menu_expanded %} transform: rotate(-90deg);{% endif %}"></i>

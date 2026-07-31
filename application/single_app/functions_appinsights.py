@@ -36,6 +36,34 @@ SECRET_ASSIGNMENT_RE = re.compile(
     r"(?i)\b(api[-_]?key|access[-_]?token|client[-_]?secret|connection[-_]?string|password|secret|subscription[-_]?key|token|sig|signature)=([^&\s,;]+)"
 )
 AUTHORIZATION_VALUE_RE = re.compile(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+")
+LOG_CONTROL_CHAR_RE = re.compile(r"[\r\n\t]+")
+LOG_RECORD_RESERVED_ATTRS = {
+    "args",
+    "asctime",
+    "created",
+    "exc_info",
+    "exc_text",
+    "filename",
+    "funcName",
+    "levelname",
+    "levelno",
+    "lineno",
+    "message",
+    "module",
+    "msecs",
+    "msg",
+    "name",
+    "pathname",
+    "process",
+    "processName",
+    "relativeCreated",
+    "stack_info",
+    "thread",
+    "threadName",
+}
+LOGGER_EVENT_MESSAGE = "[SimpleChatLogEvent]"
+LOGGER_DEBUG_MESSAGE = "[SimpleChatDebugTrace]"
+LOGGER_FALLBACK_MESSAGE = "[SimpleChatLogFallback]"
 
 
 def _format_message(message: Any, message_args: Optional[Tuple[Any, ...]] = None) -> str:
@@ -73,6 +101,7 @@ def sanitize_log_message(message: Any) -> str:
         lambda match: f"{match.group(1)} {REDACTED_LOG_VALUE}",
         message_text,
     )
+    message_text = LOG_CONTROL_CHAR_RE.sub(" ", message_text)
     if len(message_text) > MAX_LOG_STRING_LENGTH:
         return f"{message_text[:MAX_LOG_STRING_LENGTH]}... [truncated]"
     return message_text
@@ -105,6 +134,48 @@ def sanitize_log_properties(value: Any, _depth: int = 0) -> Any:
     return sanitize_log_message(value)
 
 
+def _normalize_extra_key(key: Any) -> str:
+    normalized_key = re.sub(r"[^A-Za-z0-9_]", "_", str(key or "").strip())[:80]
+    normalized_key = normalized_key.strip("_") or "value"
+    normalized_key = f"sc_{normalized_key}"
+    if normalized_key in LOG_RECORD_RESERVED_ATTRS:
+        normalized_key = f"sc_property_{normalized_key}"
+    return normalized_key
+
+
+def _logger_safe_scalar(value: Any) -> Any:
+    if value is None or isinstance(value, (int, float, bool)):
+        return value
+    return type(value).__name__
+
+
+def _build_logger_extra(
+    message: Any,
+    extra: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Build log-record properties without clear-text user-controlled values."""
+    logger_extra: Dict[str, Any] = {
+        "sc_message_length": len(str(message or "")),
+    }
+
+    if isinstance(extra, dict):
+        for key, value in extra.items():
+            normalized_key = _normalize_extra_key(key)
+            if _is_sensitive_log_key(key):
+                logger_extra[f"{normalized_key}_present"] = value is not None
+                continue
+            if isinstance(value, dict):
+                logger_extra[f"{normalized_key}_count"] = len(value)
+            elif isinstance(value, (list, tuple, set)):
+                logger_extra[f"{normalized_key}_count"] = len(value)
+            elif isinstance(value, str):
+                logger_extra[f"{normalized_key}_length"] = len(value)
+            else:
+                logger_extra[normalized_key] = _logger_safe_scalar(value)
+
+    return logger_extra
+
+
 def _load_logging_settings() -> Dict[str, Any]:
     """Read cached settings first and fall back to live settings when needed."""
     if getattr(_logging_settings_load_state, 'active', False):
@@ -117,18 +188,6 @@ def _load_logging_settings() -> Dict[str, Any]:
     except Exception:
         pass
 
-    try:
-        from functions_settings import get_settings
-
-        _logging_settings_load_state.active = True
-        settings = get_settings()
-        if isinstance(settings, dict):
-            return settings
-    except Exception:
-        pass
-    finally:
-        _logging_settings_load_state.active = False
-
     return {}
 
 
@@ -140,9 +199,11 @@ def _emit_debug_message(
     details: Optional[Dict[str, Any]] = None,
 ) -> None:
     if settings.get('enable_debug_logging', False):
-        debug_msg = f"[DEBUG] [{category}]: {message}"
+        safe_message = sanitize_log_message(message)
+        debug_msg = f"[DEBUG] [{category}]: {safe_message}"
         if details:
-            details_str = ", ".join(f"{key}={value}" for key, value in details.items())
+            safe_details = sanitize_log_properties(details)
+            details_str = ", ".join(f"{key}={value}" for key, value in safe_details.items())
             debug_msg += f" ({details_str})"
         print(debug_msg, flush=flush)
 
@@ -179,18 +240,16 @@ def _emit_appinsights_debug_trace(
     if not debug_logger:
         return
 
-    trace_properties = dict(details or {})
+    trace_properties = sanitize_log_properties(dict(details or {}))
     trace_properties.setdefault('debug_tag', '[debug]')
     trace_properties.setdefault('debug_category', category)
-    trace_message = f"[debug] [{category}] {message}"
+    trace_message = sanitize_log_message(f"[debug] [{category}] {message}")
+    logger_extra = _build_logger_extra(trace_message, trace_properties)
 
     try:
         # Use a child logger so DEBUG traces can flow to App Insights even when the
         # parent logger stays at INFO to avoid broad third-party debug noise.
-        if trace_properties:
-            debug_logger.debug(trace_message, extra=trace_properties, stacklevel=3)
-        else:
-            debug_logger.debug(trace_message, stacklevel=3)
+        debug_logger.debug(LOGGER_DEBUG_MESSAGE, extra=logger_extra, stacklevel=3)
     except Exception:
         pass
 
@@ -198,8 +257,8 @@ def _emit_appinsights_debug_trace(
 def debug_print(message: Any, *args: Any, category: str = "INFO", **kwargs: Any) -> None:
     """Emit debug-only console output and forward a tagged App Insights trace when available."""
     flush = kwargs.pop('flush', False)
-    details = kwargs or None
-    formatted_message = _format_message(message, args)
+    details = sanitize_log_properties(kwargs) if kwargs else None
+    formatted_message = sanitize_log_message(_format_message(message, args))
     settings = _load_logging_settings()
 
     _emit_debug_message(settings, formatted_message, category, flush, details)
@@ -284,7 +343,13 @@ def log_event(
                 if cache and cache.get('enable_debug_logging', False):
                     print(f"[DEBUG][ERROR][Log] {formatted_message} -- {safe_extra if safe_extra else 'No Extra Dimensions'}")
                 # Use logger.exception() for better exception capture in Application Insights
-                logger.exception(formatted_message, extra=safe_extra, stacklevel=stacklevel, stack_info=includeStack, exc_info=True)
+                logger.exception(
+                    LOGGER_EVENT_MESSAGE,
+                    extra=_build_logger_extra(formatted_message, safe_extra),
+                    stacklevel=stacklevel,
+                    stack_info=includeStack,
+                    exc_info=True,
+                )
                 return
             else:
                 # Fallback to standard logging with exc_info
@@ -293,24 +358,14 @@ def log_event(
         # Mirror structured events to stdout when debug logging is enabled.
         if cache and cache.get('enable_debug_logging', False):
             print(f"[DEBUG][Log] {formatted_message} -- {safe_extra if safe_extra else 'No Extra Dimensions'}")  # Debug print to console
-        if safe_extra:
-            # For modern Azure Monitor, extra properties are automatically captured
-            logger.log(
-                level,
-                formatted_message,
-                extra=safe_extra,
-                stacklevel=stacklevel,
-                stack_info=includeStack,
-                exc_info=exc_info_to_use
-            )
-        else:
-            logger.log(
-                level,
-                formatted_message,
-                stacklevel=stacklevel,
-                stack_info=includeStack,
-                exc_info=exc_info_to_use
-            )
+        logger.log(
+            level,
+            LOGGER_EVENT_MESSAGE,
+            extra=_build_logger_extra(formatted_message, safe_extra),
+            stacklevel=stacklevel,
+            stack_info=includeStack,
+            exc_info=exc_info_to_use,
+        )
 
         # For Azure Monitor, ensure exception-level logs are properly categorized
         if level >= logging.ERROR and _azure_monitor_configured:
@@ -325,16 +380,23 @@ def log_event(
                 fallback_logger.addHandler(logging.StreamHandler())
                 fallback_logger.setLevel(logging.INFO)
 
-            fallback_message = f"{formatted_message} | Original error: {str(e)}"
-            if safe_extra:
-                fallback_message += f" | Extra: {safe_extra}"
-
-            fallback_logger.log(level, fallback_message)
+            fallback_logger.log(
+                level,
+                LOGGER_FALLBACK_MESSAGE,
+                extra=_build_logger_extra(
+                    formatted_message,
+                    {
+                        "fallback_error_type": type(e).__name__,
+                        "fallback_error": sanitize_log_message(e),
+                        "extra": safe_extra or {},
+                    },
+                ),
+            )
         except Exception:
             # If even basic logging fails, print to console
-            print(f"[LOG] {formatted_message}")
+            print(LOGGER_FALLBACK_MESSAGE)
             if safe_extra:
-                print(f"[LOG] Extra: {safe_extra}")
+                print("[LOG] Extra dimensions were redacted for logging safety.")
 
 # --- Modern Azure Monitor Application Insights setup ---
 def setup_appinsights_logging(settings):

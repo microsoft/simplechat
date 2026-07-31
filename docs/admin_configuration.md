@@ -229,6 +229,8 @@ For practical operator steps, see [Configure Branding, Home Page, and Support Se
   - Enable logging of file processing events
   - Logs stored in Cosmos DB file_processing container
   - Optional time-based auto-disable feature
+  - Permanently delete logs older than a positive number of days, weeks, or fixed 30-day months
+  - Delete all stored logs through a separate confirmation action
 
 ## Admin Settings Execution Guide
 
@@ -267,6 +269,7 @@ Mixed-source rollout is independently reversible. Keep `enable_mixed_source_mani
 1. Open **Logging** and enable Application Insights logging when agent, orchestration, or operational events should flow into Azure monitoring.
 2. Use **Debug Logging** for short diagnosis windows only, set an auto-disable time, and avoid leaving token or key capture enabled longer than necessary.
 3. Enable **File Processing Logs** when admins need upload, extraction, indexing, or sync troubleshooting history, then save and confirm the expected log container or telemetry stream receives events.
+4. Under **Delete stored logs**, choose an age and unit to remove older entries, or use **Delete all logs** for a complete cleanup. Review the permanent-deletion confirmation carefully; months are fixed 30-day periods.
 
 ### Scale
 

@@ -87,11 +87,20 @@ function Initialize-MigrationState {
         [string]$MigrationType,
         [string]$StateFilePath,
         [System.Collections.IDictionary]$Configuration,
+        [string]$MigrationId = "",
         [switch]$Reset
     )
 
     if ([string]::IsNullOrWhiteSpace($StateFilePath)) {
         throw "StateFilePath cannot be empty when migration state tracking is enabled."
+    }
+
+    $requestedMigrationId = [Guid]::Empty
+    if (
+        -not [string]::IsNullOrWhiteSpace($MigrationId) -and
+        -not [Guid]::TryParse($MigrationId, [ref]$requestedMigrationId)
+    ) {
+        throw "MigrationId must be a valid GUID."
     }
 
     $absoluteStatePath = [IO.Path]::GetFullPath(
@@ -131,6 +140,34 @@ function Initialize-MigrationState {
         if ($null -eq $state["resources"]) {
             $state["resources"] = [ordered]@{}
         }
+        $storedMigrationId = [Guid]::Empty
+        if (
+            -not [string]::IsNullOrWhiteSpace([string]$state["migrationId"]) -and
+            -not [Guid]::TryParse([string]$state["migrationId"], [ref]$storedMigrationId)
+        ) {
+            throw "Migration state file '$absoluteStatePath' contains an invalid migrationId. Use -ResetState after preserving it for investigation."
+        }
+        if ($storedMigrationId -eq [Guid]::Empty) {
+            $storedMigrationId = if ($requestedMigrationId -eq [Guid]::Empty) {
+                [Guid]::NewGuid()
+            }
+            else {
+                $requestedMigrationId
+            }
+            $state["migrationId"] = $storedMigrationId.ToString("D")
+        }
+        elseif (
+            $requestedMigrationId -ne [Guid]::Empty -and
+            $storedMigrationId -ne $requestedMigrationId
+        ) {
+            throw "Migration state file '$absoluteStatePath' belongs to migration ID '$($storedMigrationId.ToString("D"))'. Use a different -StateFilePath or pass -ResetState."
+        }
+        else {
+            $state["migrationId"] = $storedMigrationId.ToString("D")
+        }
+        if ([string]::IsNullOrWhiteSpace([string]$state["migrationStartedUtc"])) {
+            $state["migrationStartedUtc"] = [string]$state["createdUtc"]
+        }
         $state["status"] = "in_progress"
         $state["lastError"] = $null
         $state["currentResource"] = $null
@@ -138,9 +175,17 @@ function Initialize-MigrationState {
     }
     else {
         $timestamp = Get-MigrationStateUtcTimestamp
+        $generatedMigrationId = if ($requestedMigrationId -eq [Guid]::Empty) {
+            [Guid]::NewGuid()
+        }
+        else {
+            $requestedMigrationId
+        }
         $state = [ordered]@{
             schemaVersion = 1
             migrationType = $MigrationType
+            migrationId = $generatedMigrationId.ToString("D")
+            migrationStartedUtc = $timestamp
             configurationFingerprint = $fingerprint
             configuration = $Configuration
             status = "in_progress"

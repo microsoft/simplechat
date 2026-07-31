@@ -1,7 +1,7 @@
 # test_latest_features_nav_hide_preference.py
 """
 UI test for Latest Features navigation hide preference.
-Version: 0.250.059
+Version: 0.250.098
 Implemented in: 0.250.059
 
 This test ensures an authenticated user can clear a versioned Latest Features
@@ -12,13 +12,12 @@ import os
 from pathlib import Path
 
 import pytest
-from playwright.sync_api import expect
 
 
 BASE_URL = os.getenv("SIMPLECHAT_UI_BASE_URL", "").rstrip("/")
 STORAGE_STATE = os.getenv("SIMPLECHAT_UI_STORAGE_STATE", "")
 ADMIN_STORAGE_STATE = os.getenv("SIMPLECHAT_UI_ADMIN_STORAGE_STATE", "")
-CURRENT_VERSION = "0.250.059"
+CURRENT_VERSION = "0.250.098"
 
 
 def _require_base_url():
@@ -66,11 +65,14 @@ def _set_latest_features_hidden_version(page, hidden_version):
 
 
 @pytest.mark.ui
-def test_profile_can_unhide_latest_features_navigation(playwright):
+def test_profile_can_unhide_latest_features_navigation():
     """Validate the profile Settings page restores Latest Features navigation."""
+    sync_api = pytest.importorskip("playwright.sync_api")
+    expect = sync_api.expect
     _require_base_url()
     storage_state = _get_storage_state_path()
 
+    playwright = sync_api.sync_playwright().start()
     browser = playwright.chromium.launch()
     context = browser.new_context(
         storage_state=storage_state,
@@ -106,3 +108,4 @@ def test_profile_can_unhide_latest_features_navigation(playwright):
             _set_latest_features_hidden_version(page, original_hidden_version)
         context.close()
         browser.close()
+        playwright.stop()

@@ -1,5 +1,6 @@
 # functions_search.py
 
+import hashlib
 import logging
 from typing import List, Dict, Any
 from config import *
@@ -22,7 +23,14 @@ from functions_service_health import (
 logger = logging.getLogger(__name__)
 
 
-SEARCH_DEFAULT_TOP_N = 50
+def _query_log_context(query):
+    """Return non-sensitive query metadata for search diagnostics."""
+    query_text = str(query or "")
+    query_hash = hashlib.sha256(query_text.encode("utf-8")).hexdigest()[:12] if query_text else ""
+    return len(query_text), query_hash
+
+
+SEARCH_DEFAULT_TOP_N = 12
 SEARCH_MAX_TOP_N = 500
 VALID_SEARCH_SCOPES = {"all", "personal", "group", "public"}
 BASE_SEARCH_SELECT_FIELDS = [
@@ -259,7 +267,7 @@ def _build_odata_any_eq(collection_field: str, iterator_name: str, value: Any) -
     escaped_value = _escape_odata_literal(value)
     return f"{collection_field}/any({iterator_name}: {iterator_name} eq '{escaped_value}')"
 
-def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=50, doc_scope="all", active_group_id=None, active_group_ids=None, active_public_workspace_id=None, enable_file_sharing=True, tags_filter=None, document_filter_mode="intersection", enforce_public_workspace_visibility=True):
+def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12, doc_scope="all", active_group_id=None, active_group_ids=None, active_public_workspace_id=None, enable_file_sharing=True, tags_filter=None, document_filter_mode="intersection", enforce_public_workspace_visibility=True):
     """
     Hybrid search that queries the user doc index, group doc index, or public doc index
     depending on doc type.
@@ -358,25 +366,29 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=50,
             active_public_workspace_id=active_public_workspace_ids
         )
     if cached_results is not None:
+        query_length, query_hash = _query_log_context(query)
         debug_print(
             "Returning CACHED search results",
             "SEARCH",
-            query=query[:40],
+            query_length=query_length,
+            query_hash=query_hash,
             scope=doc_scope,
             result_count=len(cached_results)
         )
-        logger.info(f"Returning cached search results for query: '{query[:50]}...'")
+        logger.info("Returning cached search results for query hash %s", query_hash)
         return cached_results
 
     # Cache miss - proceed with search
+    query_length, query_hash = _query_log_context(query)
     debug_print(
         "Cache MISS - Executing Azure AI Search",
         "SEARCH",
-        query=query[:40],
+        query_length=query_length,
+        query_hash=query_hash,
         scope=doc_scope,
         top_n=top_n
     )
-    logger.info(f"Cache miss - executing search for query: '{query[:50]}...'")
+    logger.info("Cache miss - executing search for query hash %s", query_hash)
 
     # Unpack tuple from generate_embedding (returns embedding, token_usage)
     result = generate_embedding(query)

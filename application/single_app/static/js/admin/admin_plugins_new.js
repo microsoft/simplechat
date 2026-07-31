@@ -43,7 +43,7 @@ function openPluginModal(plugin = null) {
         // Set up save handler
         setupSaveHandler(plugin, modal);
     } else {
-        alert('Action modal not available. Please refresh the page.');
+        showToast('Action modal not available. Please refresh the page.', 'warning');
     }
 }
 

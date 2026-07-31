@@ -31,6 +31,10 @@ PUBLIC_PATHS = {
     "/ci-auth/session",
     "/robots933456.txt",
     "/favicon.ico",
+    "/.well-known/oauth-protected-resource",
+    "/.well-known/oauth-protected-resource/api/mcp",
+    "/.well-known/oauth-protected-resource/mcp",
+    "/.well-known/oauth-authorization-server",
     "/static/js/<path:filename>",
     "/acceptable_use_policy.html",
     "/auth/teams/token-exchange",
@@ -40,6 +44,10 @@ PUBLIC_PATHS = {
 
 EXTERNAL_BEARER_PATH_PREFIXES = (
     "/external/public_documents",
+)
+
+INBOUND_MCP_BEARER_PATH_PREFIXES = (
+    "/api/mcp",
 )
 
 ADMIN_PATH_PREFIXES = (
@@ -170,6 +178,8 @@ def expected_policy(path: str) -> str:
         return "public"
     if matches_prefix(path, EXTERNAL_BEARER_PATH_PREFIXES):
         return "external_bearer_401"
+    if matches_prefix(path, INBOUND_MCP_BEARER_PATH_PREFIXES):
+        return "inbound_mcp_bearer_401_or_404"
     if matches_prefix(path, ADMIN_PATH_PREFIXES):
         return "session_admin_401_or_redirect"
     if matches_prefix(path, SPECIALIZED_ADMIN_PATH_PREFIXES):

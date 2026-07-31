@@ -18,6 +18,7 @@ from functions_control_center import (
     calculate_next_control_center_auto_refresh_run,
     execute_control_center_refresh,
     get_control_center_auto_refresh_schedule,
+    is_control_center_auto_refresh_due,
     parse_control_center_auto_refresh_datetime,
 )
 from functions_cosmos_throughput import (
@@ -47,7 +48,7 @@ from functions_group_workflows import (
     update_group_workflow_runtime_fields,
 )
 from functions_settings import get_settings, is_group_workflows_enabled_for_group, update_settings
-from functions_workflow_runner import run_group_workflow, run_personal_workflow
+from functions_workflow_runner import create_workflow_run_id, run_group_workflow, run_personal_workflow
 
 
 def _get_lock_holder_id():
@@ -308,13 +309,14 @@ def _seed_control_center_auto_refresh_next_run(settings, current_time):
         'control_center_auto_refresh_time': schedule['time'],
         'control_center_auto_refresh_hour': schedule['hour'],
         'control_center_auto_refresh_minute': schedule['minute'],
+        'control_center_auto_refresh_timezone': schedule['timezone'],
         'control_center_auto_refresh_next_run': next_run.isoformat(),
     })
     return next_run
 
 
 def check_control_center_auto_refresh_once():
-    """Run the scheduled Control Center refresh when its daily UTC schedule is due."""
+    """Run the scheduled Control Center refresh when its UTC timestamp is due."""
     settings = get_settings()
     if not settings.get('control_center_auto_refresh_enabled', True):
         return None
@@ -325,12 +327,15 @@ def check_control_center_auto_refresh_once():
         _seed_control_center_auto_refresh_next_run(settings, current_time)
         return None
 
-    if current_time < next_run:
+    if not is_control_center_auto_refresh_due(settings, current_time=current_time):
         return None
 
     lock_document = acquire_distributed_task_lock('control_center_auto_refresh', lease_seconds=7200)
     if not lock_document:
-        debug_print('Skipping Control Center auto-refresh because another worker holds the lease.')
+        log_event(
+            '[ControlCenterAutoRefresh] Skipped scheduled refresh because another worker holds the lease.',
+            debug_only=True,
+        )
         return None
 
     try:
@@ -343,11 +348,32 @@ def check_control_center_auto_refresh_once():
         if not next_run:
             _seed_control_center_auto_refresh_next_run(settings, current_time)
             return None
-        if current_time < next_run:
+        if not is_control_center_auto_refresh_due(settings, current_time=current_time):
             return None
 
-        print(f"Executing scheduled Control Center auto-refresh at {current_time.isoformat()}")
-        return execute_control_center_refresh(manual_execution=False)
+        schedule = get_control_center_auto_refresh_schedule(settings)
+        log_event(
+            '[ControlCenterAutoRefresh] Starting scheduled Control Center metrics refresh.',
+            extra={
+                'scheduled_run_utc': next_run.isoformat(),
+                'schedule_time': schedule['time'],
+                'schedule_timezone': schedule['timezone'],
+            },
+            level=logging.INFO,
+        )
+        result = execute_control_center_refresh(manual_execution=False)
+        log_event(
+            '[ControlCenterAutoRefresh] Scheduled Control Center metrics refresh completed.',
+            extra={
+                'success': bool(result and result.get('success')),
+                'refreshed_users': result.get('refreshed_users', 0) if result else 0,
+                'failed_users': result.get('failed_users', 0) if result else 0,
+                'refreshed_groups': result.get('refreshed_groups', 0) if result else 0,
+                'failed_groups': result.get('failed_groups', 0) if result else 0,
+            },
+            level=logging.INFO,
+        )
+        return result
     finally:
         release_distributed_task_lock(lock_document)
 
@@ -394,8 +420,12 @@ def run_control_center_auto_refresh_loop():
         try:
             check_control_center_auto_refresh_once()
         except Exception as exc:
-            print(f"Error in Control Center auto-refresh check: {exc}")
-            log_event(f"Error in Control Center auto-refresh check: {exc}", level=logging.ERROR)
+            log_event(
+                '[ControlCenterAutoRefresh] Error checking the scheduled Control Center refresh.',
+                extra={'error': str(exc)},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
 
         time.sleep(300)
 
@@ -514,18 +544,26 @@ def check_due_workflows_once():
                         pass
 
                 started_at = datetime.now(timezone.utc).isoformat()
+                active_run_id = create_workflow_run_id()
                 update_personal_workflow_runtime_fields(
                     user_id,
                     workflow_id,
                     {
                         'status': 'running',
+                        'active_run_id': active_run_id,
+                        'cancellation_requested_at': None,
+                        'cancellation_requested_by': '',
                         'last_run_started_at': started_at,
                         'last_run_trigger_source': trigger_source,
                         'last_run_error': '',
                     },
                 )
 
-                result = run_personal_workflow(refreshed_workflow, trigger_source=trigger_source)
+                result = run_personal_workflow(
+                    refreshed_workflow,
+                    trigger_source=trigger_source,
+                    run_id=active_run_id,
+                )
                 update_fields = dict(result.get('workflow_updates') or {})
                 update_fields['status'] = 'idle'
                 update_fields['next_run_at'] = compute_next_run_at(refreshed_workflow, from_time=datetime.now(timezone.utc))
@@ -590,18 +628,26 @@ def check_due_workflows_once():
                         pass
 
                 started_at = datetime.now(timezone.utc).isoformat()
+                active_run_id = create_workflow_run_id()
                 update_group_workflow_runtime_fields(
                     group_id,
                     workflow_id,
                     {
                         'status': 'running',
+                        'active_run_id': active_run_id,
+                        'cancellation_requested_at': None,
+                        'cancellation_requested_by': '',
                         'last_run_started_at': started_at,
                         'last_run_trigger_source': trigger_source,
                         'last_run_error': '',
                     },
                 )
 
-                result = run_group_workflow(refreshed_workflow, trigger_source=trigger_source)
+                result = run_group_workflow(
+                    refreshed_workflow,
+                    trigger_source=trigger_source,
+                    run_id=active_run_id,
+                )
                 update_fields = dict(result.get('workflow_updates') or {})
                 update_fields['status'] = 'idle'
                 update_fields['next_run_at'] = compute_next_run_at(refreshed_workflow, from_time=datetime.now(timezone.utc))
@@ -684,14 +730,14 @@ def run_tabular_generated_output_scheduler_loop():
         time.sleep(30)
 
 
-def run_data_management_scheduler_loop():
-    """Queue due Data Management backup jobs across scaled-out workers."""
+def run_data_management_scheduler_loop(app=None):
+    """Queue due backup and recoverable migration jobs across scaled-out workers."""
     while True:
         lock_document = None
         try:
             lock_document = acquire_distributed_task_lock('data_management_scheduler_scan', lease_seconds=300)
             if lock_document:
-                check_due_data_management_jobs_once()
+                check_due_data_management_jobs_once(app=app)
         except Exception as exc:
             print(f"Error in Data Management scheduler check: {exc}")
             log_event(f"[DataManagement] Error in scheduler check: {exc}", level=logging.ERROR)
@@ -736,7 +782,7 @@ def run_app_maintenance_loop():
         time.sleep(max(int(sleep_seconds or 3600), 15))
 
 
-def start_background_task_threads():
+def start_background_task_threads(app=None):
     """Start all background task loops for the current process."""
     task_specs = [
         ('Logging timer background task started.', run_logging_timer_loop),
@@ -747,7 +793,7 @@ def start_background_task_threads():
         ('Workflow scheduler background task started.', run_workflow_scheduler_loop),
         ('File Sync scheduler background task started.', run_file_sync_scheduler_loop),
         ('Tabular generated-output scheduler background task started.', run_tabular_generated_output_scheduler_loop),
-        ('Data Management scheduler background task started.', run_data_management_scheduler_loop),
+        ('Data Management scheduler background task started.', lambda: run_data_management_scheduler_loop(app=app)),
         ('App maintenance background task started.', run_app_maintenance_loop),
     ]
 

@@ -1,7 +1,10 @@
 # route_backend_file_sync.py
 
+import logging
+
 from flask import jsonify, request
 
+from functions_appinsights import log_event
 from functions_authentication import admin_required, enabled_required, get_current_user_id, get_current_user_info, login_required, user_required
 from functions_file_sync import (
     FILE_SYNC_MANAGER_ROLES,
@@ -9,6 +12,7 @@ from functions_file_sync import (
     FILE_SYNC_SCOPE_PERSONAL,
     FILE_SYNC_SCOPE_PUBLIC,
     FILE_SYNC_SOURCE_TYPE_SMB,
+    FileSyncPublicValidationError,
     assert_public_workspace_role,
     browse_file_sync_source_path,
     create_file_sync_source,
@@ -116,13 +120,27 @@ def register_route_backend_file_sync(bp):
         }
 
     def _map_exception(error):
+        expected_error = isinstance(error, (PermissionError, LookupError, ValueError))
+        log_event(
+            "[FileSync] Request failed.",
+            level=logging.WARNING if expected_error else logging.ERROR,
+            extra={
+                "endpoint": request.endpoint or "",
+                "method": request.method,
+                "exception_type": type(error).__name__,
+                "error": str(error),
+            },
+            exceptionTraceback=not expected_error,
+        )
+        if isinstance(error, FileSyncPublicValidationError):
+            return _error(error.public_message, 400)
         if isinstance(error, PermissionError):
-            return _error(str(error), 403)
+            return _error("You do not have permission to perform this File Sync operation.", 403)
         if isinstance(error, LookupError):
-            return _error(str(error), 404)
+            return _error("The requested File Sync resource was not found.", 404)
         if isinstance(error, ValueError):
-            return _error(str(error), 400)
-        return _error(str(error), 500)
+            return _error("The File Sync request could not be completed. Verify the source configuration and try again.", 400)
+        return _error("An unexpected error occurred while processing the File Sync request.", 500)
 
     def _list_sources(scope_type, scope_id):
         sources = [sanitize_file_sync_source(source) for source in list_file_sync_sources(scope_type, scope_id)]

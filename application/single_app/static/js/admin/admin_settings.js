@@ -1,5 +1,6 @@
 // admin_settings.js
 import { showToast } from "../chat/chat-toast.js";
+import { sanitizeHttpUrl } from "../chat/chat-utils.js";
 
 let gptSelected = window.gptSelected || [];
 let gptAll      = window.gptAll || [];
@@ -37,6 +38,7 @@ let currentCosmosContainers = [];
 let currentCosmosMetricsWindowMinutes = 0;
 let currentCosmosStatusLoaded = false;
 let currentCosmosContainerSort = { field: 'container_name', direction: 'asc' };
+let pendingFileProcessingLogCleanup = null;
 let documentAccessIndexStatusPollId = null;
 let redisExplorerState = {
     cursor: '0',
@@ -488,11 +490,653 @@ function setButtonBusy(button, isBusy, busyText) {
     }
 }
 
+async function copyTextToClipboard(text) {
+    if (!text) {
+        throw new Error('No text was available to copy.');
+    }
+
+    if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return;
+    }
+
+    const fallbackTextarea = document.createElement('textarea');
+    fallbackTextarea.value = text;
+    fallbackTextarea.setAttribute('readonly', 'readonly');
+    fallbackTextarea.classList.add('visually-hidden');
+    document.body.append(fallbackTextarea);
+    try {
+        fallbackTextarea.focus();
+        fallbackTextarea.select();
+        if (!document.execCommand('copy')) {
+            throw new Error('Clipboard copy command was not available.');
+        }
+    } finally {
+        fallbackTextarea.remove();
+    }
+}
+
+function setupInboundMcpObservabilityCopyButtons() {
+    document.querySelectorAll('.inbound-mcp-kql-copy-btn').forEach(button => {
+        button.addEventListener('click', async () => {
+            const targetId = button.dataset.kqlTarget || '';
+            const queryText = document.getElementById(targetId)?.textContent || '';
+            try {
+                await copyTextToClipboard(queryText.trim());
+                showToast('Application Insights query copied to clipboard.', 'success');
+            } catch (error) {
+                showToast(error.message || 'Could not copy the Application Insights query.', 'danger');
+            }
+        });
+    });
+}
+
+function setupInboundMcpEasyAuthGuard() {
+    const enableToggle = document.getElementById('enable_inbound_mcp_server');
+    const modalElement = document.getElementById('inboundMcpEasyAuthModal');
+    const confirmCheckbox = document.getElementById('inbound-mcp-easy-auth-confirm');
+    const verifyButton = document.getElementById('inbound-mcp-easy-auth-verify');
+    const statusElement = document.getElementById('inbound-mcp-easy-auth-status');
+    const resultsList = document.getElementById('inbound-mcp-easy-auth-results');
+    const copyScriptButton = document.getElementById('inbound-mcp-copy-script');
+    const scriptCodeElement = document.getElementById('inbound-mcp-easy-auth-script-code');
+
+    if (!enableToggle || !modalElement || !confirmCheckbox || !verifyButton) {
+        return;
+    }
+
+    const modal = bootstrap.Modal.getOrCreateInstance(modalElement);
+    const wasEnabledOnLoad = enableToggle.checked;
+    let easyAuthVerified = wasEnabledOnLoad;
+
+    const setStatus = (message, variant = 'info') => {
+        if (!statusElement) {
+            return;
+        }
+        statusElement.textContent = message || '';
+        statusElement.className = `alert alert-${variant}${message ? '' : ' d-none'}`;
+    };
+
+    const renderResults = endpoints => {
+        if (!resultsList) {
+            return;
+        }
+        resultsList.replaceChildren();
+        if (!Array.isArray(endpoints) || endpoints.length === 0) {
+            resultsList.classList.add('d-none');
+            return;
+        }
+        endpoints.forEach(endpoint => {
+            const item = document.createElement('li');
+            const statusBadge = document.createElement('span');
+            const path = document.createElement('code');
+            const message = document.createElement('span');
+
+            item.className = 'list-group-item d-flex flex-column flex-lg-row gap-2 justify-content-between';
+            statusBadge.className = `badge align-self-start ${endpoint.success ? 'text-bg-success' : 'text-bg-danger'}`;
+            statusBadge.textContent = endpoint.success ? 'OK' : 'Needs fix';
+            path.textContent = endpoint.path || 'Unknown endpoint';
+            message.textContent = endpoint.message || 'No details returned.';
+
+            item.append(statusBadge, path, message);
+            resultsList.append(item);
+        });
+        resultsList.classList.remove('d-none');
+    };
+
+    const resetModalState = () => {
+        confirmCheckbox.checked = false;
+        setButtonBusy(verifyButton, false);
+        verifyButton.disabled = true;
+        setStatus('', 'info');
+        renderResults([]);
+    };
+
+    confirmCheckbox.addEventListener('change', () => {
+        verifyButton.disabled = !confirmCheckbox.checked;
+    });
+
+    copyScriptButton?.addEventListener('click', async () => {
+        const scriptText = scriptCodeElement?.textContent || '';
+        if (!scriptText) {
+            showToast('No PowerShell script was available to copy.', 'warning');
+            return;
+        }
+
+        try {
+            await copyTextToClipboard(scriptText);
+            showToast('PowerShell script copied to clipboard.', 'success');
+        } catch (error) {
+            showToast(error.message || 'Could not copy the PowerShell script.', 'danger');
+        }
+    });
+
+    enableToggle.addEventListener('change', event => {
+        if (!enableToggle.checked || easyAuthVerified) {
+            return;
+        }
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        enableToggle.checked = false;
+        resetModalState();
+        modal.show();
+    });
+
+    verifyButton.addEventListener('click', async () => {
+        if (!confirmCheckbox.checked) {
+            return;
+        }
+
+        setButtonBusy(verifyButton, true, 'Verifying endpoints...');
+        setStatus('Checking unauthenticated access to the inbound MCP endpoints...', 'info');
+        renderResults([]);
+
+        try {
+            const response = await fetch('/api/admin/settings/inbound-mcp/easy-auth-check', {
+                method: 'POST',
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json'
+                },
+                credentials: 'same-origin'
+            });
+            const payload = await response.json();
+            renderResults(payload.endpoints);
+
+            if (!response.ok || payload.success !== true) {
+                setStatus(payload.message || 'Easy Auth exclusion verification failed.', 'danger');
+                enableToggle.checked = false;
+                easyAuthVerified = false;
+                return;
+            }
+
+            easyAuthVerified = true;
+            enableToggle.checked = true;
+            setStatus(payload.message || 'Easy Auth exclusions verified.', 'success');
+            markFormAsModified();
+            modal.hide();
+            showToast('Inbound MCP endpoint exclusions verified. Save settings to enable the server.', 'success');
+        } catch (error) {
+            setStatus(error.message || 'Easy Auth exclusion verification failed.', 'danger');
+            enableToggle.checked = false;
+            easyAuthVerified = false;
+        } finally {
+            setButtonBusy(verifyButton, false);
+            verifyButton.disabled = !confirmCheckbox.checked;
+        }
+    });
+
+    adminForm?.addEventListener('submit', event => {
+        if (!enableToggle.checked || easyAuthVerified) {
+            return;
+        }
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        resetModalState();
+        modal.show();
+        showToast('Verify the inbound MCP Easy Auth exclusions before saving.', 'warning');
+    });
+}
+
+const inboundMcpEntryListConfigs = {
+    clients: {
+        hiddenId: 'inbound_mcp_allowed_client_app_entries_json',
+        bodyId: 'inbound-mcp-client-app-entries-body',
+        summaryId: 'inbound-mcp-client-app-entries-summary',
+        modalTitle: 'Client app ID',
+        valueLabel: 'Client app ID',
+        emptyMessage: 'No client app IDs are allowed.',
+        valueHeader: 'Client app ID',
+        requireGuid: true,
+        lowercase: true,
+    },
+    tenants: {
+        hiddenId: 'inbound_mcp_allowed_tenant_entries_json',
+        bodyId: 'inbound-mcp-tenant-entries-body',
+        summaryId: 'inbound-mcp-tenant-entries-summary',
+        modalTitle: 'Tenant ID',
+        valueLabel: 'Tenant ID',
+        emptyMessage: 'Only the configured SimpleChat tenant is allowed.',
+        valueHeader: 'Tenant ID',
+        requireGuid: true,
+        lowercase: true,
+    },
+    sources: {
+        hiddenId: 'inbound_mcp_allowed_source_entries_json',
+        bodyId: 'inbound-mcp-source-entries-body',
+        summaryId: 'inbound-mcp-source-entries-summary',
+        modalTitle: 'Source ID',
+        valueLabel: 'Source value',
+        emptyMessage: 'No explicit source IDs are configured.',
+        valueHeader: 'Source value',
+        requireGuid: false,
+        lowercase: false,
+        disallowWildcard: true,
+    },
+};
+const inboundMcpEntriesByList = {
+    clients: [],
+    tenants: [],
+    sources: [],
+};
+
+function normalizeInboundMcpEntry(candidate, config) {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+        return null;
+    }
+    let value = normalizeAdminText(candidate.value || candidate.id || candidate.guid || candidate.client_id || candidate.tenant_id || candidate.source_id);
+    if (config.lowercase) {
+        value = value.toLowerCase();
+    }
+    if (!value) {
+        return null;
+    }
+    return {
+        value,
+        description: normalizeAdminText(candidate.description || candidate.label || candidate.name),
+    };
+}
+
+function parseInboundMcpEntries(hiddenField, config) {
+    let parsedEntries = [];
+    try {
+        const parsedValue = JSON.parse(hiddenField?.value || '[]');
+        parsedEntries = Array.isArray(parsedValue) ? parsedValue : [];
+    } catch (error) {
+        parsedEntries = [];
+    }
+
+    const seenValues = new Set();
+    return parsedEntries
+        .map(candidate => normalizeInboundMcpEntry(candidate, config))
+        .filter(Boolean)
+        .filter(entry => {
+            const key = config.lowercase ? entry.value.toLowerCase() : entry.value;
+            if (seenValues.has(key)) {
+                return false;
+            }
+            seenValues.add(key);
+            return true;
+        });
+}
+
+function syncInboundMcpEntryInput(listKey, markModified = true) {
+    const config = inboundMcpEntryListConfigs[listKey];
+    const hiddenField = document.getElementById(config?.hiddenId || '');
+    if (!config || !hiddenField) {
+        return;
+    }
+    hiddenField.value = JSON.stringify(inboundMcpEntriesByList[listKey] || []);
+    if (markModified) {
+        markFormAsModified();
+    }
+}
+
+function createInboundMcpEntryActionButton(iconClass, label, buttonClass, handler) {
+    const button = createIconButton(iconClass, label, buttonClass);
+    button.addEventListener('click', handler);
+    return button;
+}
+
+function renderInboundMcpEntries(listKey) {
+    const config = inboundMcpEntryListConfigs[listKey];
+    const body = document.getElementById(config?.bodyId || '');
+    const summary = document.getElementById(config?.summaryId || '');
+    if (!config || !body) {
+        return;
+    }
+
+    syncInboundMcpEntryInput(listKey, false);
+    body.replaceChildren();
+    const entries = inboundMcpEntriesByList[listKey] || [];
+    if (summary) {
+        summary.textContent = entries.length === 0
+            ? config.emptyMessage
+            : `${entries.length} entr${entries.length === 1 ? 'y' : 'ies'} configured.`;
+    }
+
+    if (entries.length === 0) {
+        const row = document.createElement('tr');
+        const cell = document.createElement('td');
+        cell.colSpan = 3;
+        cell.className = 'text-center text-muted';
+        cell.textContent = config.emptyMessage;
+        row.appendChild(cell);
+        body.appendChild(row);
+        return;
+    }
+
+    entries.forEach((entry, index) => {
+        const row = document.createElement('tr');
+
+        const valueCell = document.createElement('td');
+        const valueCode = document.createElement('code');
+        valueCode.textContent = entry.value;
+        valueCell.appendChild(valueCode);
+
+        const descriptionCell = document.createElement('td');
+        descriptionCell.textContent = entry.description || 'No description';
+        if (!entry.description) {
+            descriptionCell.className = 'text-muted';
+        }
+
+        const actionCell = document.createElement('td');
+        actionCell.className = 'text-end text-nowrap';
+        actionCell.appendChild(createInboundMcpEntryActionButton('bi bi-pencil', `Edit ${config.valueHeader}`, 'btn-outline-secondary', () => {
+            openInboundMcpEntryModal(listKey, index);
+        }));
+        actionCell.appendChild(document.createTextNode(' '));
+        actionCell.appendChild(createInboundMcpEntryActionButton('bi bi-trash', `Remove ${config.valueHeader}`, 'btn-outline-danger', () => {
+            inboundMcpEntriesByList[listKey].splice(index, 1);
+            renderInboundMcpEntries(listKey);
+            syncInboundMcpEntryInput(listKey);
+        }));
+
+        row.appendChild(valueCell);
+        row.appendChild(descriptionCell);
+        row.appendChild(actionCell);
+        body.appendChild(row);
+    });
+}
+
+function openInboundMcpEntryModal(listKey, editIndex = -1) {
+    const config = inboundMcpEntryListConfigs[listKey];
+    const modalElement = document.getElementById('inboundMcpEntryModal');
+    if (!config || !modalElement) {
+        return;
+    }
+
+    const modal = bootstrap.Modal.getOrCreateInstance(modalElement);
+    const title = document.getElementById('inboundMcpEntryModalLabel');
+    const listInput = document.getElementById('inbound-mcp-entry-list-key');
+    const editIndexInput = document.getElementById('inbound-mcp-entry-edit-index');
+    const valueInput = document.getElementById('inbound-mcp-entry-value');
+    const descriptionInput = document.getElementById('inbound-mcp-entry-description');
+    const valueLabel = document.getElementById('inbound-mcp-entry-value-label');
+
+    const existingEntry = editIndex >= 0 ? inboundMcpEntriesByList[listKey]?.[editIndex] : null;
+    if (title) {
+        title.textContent = `${existingEntry ? 'Edit' : 'Add'} ${config.modalTitle}`;
+    }
+    if (valueLabel) {
+        valueLabel.textContent = config.valueLabel;
+    }
+    if (listInput) {
+        listInput.value = listKey;
+    }
+    if (editIndexInput) {
+        editIndexInput.value = String(editIndex);
+    }
+    if (valueInput) {
+        valueInput.value = existingEntry?.value || '';
+        valueInput.classList.remove('is-invalid');
+    }
+    if (descriptionInput) {
+        descriptionInput.value = existingEntry?.description || '';
+    }
+    modal.show();
+    valueInput?.focus();
+}
+
+function saveInboundMcpEntryFromModal() {
+    const listKey = normalizeAdminText(document.getElementById('inbound-mcp-entry-list-key')?.value);
+    const config = inboundMcpEntryListConfigs[listKey];
+    const editIndex = Number(document.getElementById('inbound-mcp-entry-edit-index')?.value || '-1');
+    const valueInput = document.getElementById('inbound-mcp-entry-value');
+    const descriptionInput = document.getElementById('inbound-mcp-entry-description');
+    const valueError = document.getElementById('inbound-mcp-entry-value-error');
+    if (!config || !valueInput) {
+        return;
+    }
+
+    let value = normalizeAdminText(valueInput.value);
+    if (config.lowercase) {
+        value = value.toLowerCase();
+    }
+    let errorMessage = '';
+    if (!value) {
+        errorMessage = 'Value is required.';
+    } else if (config.requireGuid && !isGuidLike(value)) {
+        errorMessage = `${config.valueLabel} must be a GUID.`;
+    } else if (config.disallowWildcard && value === '*') {
+        errorMessage = 'Use wildcard source access in Governance policies; keep this list to explicit source values.';
+    }
+
+    if (errorMessage) {
+        valueInput.classList.add('is-invalid');
+        if (valueError) {
+            valueError.textContent = errorMessage;
+        }
+        return;
+    }
+    valueInput.classList.remove('is-invalid');
+
+    const duplicateIndex = (inboundMcpEntriesByList[listKey] || []).findIndex((entry, index) => {
+        if (index === editIndex) {
+            return false;
+        }
+        const left = config.lowercase ? entry.value.toLowerCase() : entry.value;
+        const right = config.lowercase ? value.toLowerCase() : value;
+        return left === right;
+    });
+    if (duplicateIndex >= 0) {
+        valueInput.classList.add('is-invalid');
+        if (valueError) {
+            valueError.textContent = 'That value is already configured.';
+        }
+        return;
+    }
+
+    const nextEntry = {
+        value,
+        description: normalizeAdminText(descriptionInput?.value),
+    };
+    if (editIndex >= 0 && inboundMcpEntriesByList[listKey]?.[editIndex]) {
+        inboundMcpEntriesByList[listKey][editIndex] = nextEntry;
+    } else {
+        inboundMcpEntriesByList[listKey].push(nextEntry);
+    }
+    renderInboundMcpEntries(listKey);
+    syncInboundMcpEntryInput(listKey);
+    bootstrap.Modal.getInstance(document.getElementById('inboundMcpEntryModal'))?.hide();
+}
+
+function ensureDefaultInboundMcpTenantEntry() {
+    const container = document.getElementById('inbound-mcp-configuration');
+    const defaultTenantId = normalizeAdminText(container?.dataset.defaultTenantId).toLowerCase();
+    if (!defaultTenantId || defaultTenantId.startsWith('<')) {
+        return;
+    }
+    const tenantEntries = inboundMcpEntriesByList.tenants || [];
+    if (tenantEntries.some(entry => entry.value.toLowerCase() === defaultTenantId)) {
+        return;
+    }
+    tenantEntries.unshift({
+        value: defaultTenantId,
+        description: 'SimpleChat tenant',
+    });
+}
+
+function setupInboundMcpEntryEditors() {
+    const configurationSection = document.getElementById('inbound-mcp-configuration');
+    if (!configurationSection) {
+        return;
+    }
+
+    Object.entries(inboundMcpEntryListConfigs).forEach(([listKey, config]) => {
+        const hiddenField = document.getElementById(config.hiddenId);
+        inboundMcpEntriesByList[listKey] = parseInboundMcpEntries(hiddenField, config);
+        renderInboundMcpEntries(listKey);
+    });
+
+    document.querySelectorAll('.inbound-mcp-entry-add-btn').forEach(button => {
+        button.addEventListener('click', () => {
+            openInboundMcpEntryModal(button.dataset.mcpEntryList);
+        });
+    });
+
+    document.getElementById('inbound-mcp-entry-save-btn')?.addEventListener('click', saveInboundMcpEntryFromModal);
+
+    const tenantToggle = document.getElementById('inbound_mcp_allow_external_tenants');
+    const tenantContainer = document.getElementById('inbound-mcp-tenant-list-container');
+    tenantToggle?.addEventListener('change', () => {
+        if (tenantToggle.checked) {
+            ensureDefaultInboundMcpTenantEntry();
+            renderInboundMcpEntries('tenants');
+            syncInboundMcpEntryInput('tenants');
+        }
+        tenantContainer?.classList.toggle('d-none', !tenantToggle.checked);
+    });
+
+    const sourceToggle = document.getElementById('inbound_mcp_allow_all_source_ids');
+    const sourceContainer = document.getElementById('inbound-mcp-source-list-container');
+    const allSourceGovernanceCallout = document.getElementById('inbound-mcp-all-source-governance-callout');
+    const controlledSourceGovernanceCallout = document.getElementById('inbound-mcp-controlled-source-governance-callout');
+    const syncSourceGovernanceCallouts = () => {
+        const allowAllSources = Boolean(sourceToggle?.checked);
+        allSourceGovernanceCallout?.classList.toggle('d-none', !allowAllSources);
+        controlledSourceGovernanceCallout?.classList.toggle('d-none', allowAllSources);
+    };
+    if (sourceToggle && !sourceToggle.checked) {
+        inboundMcpEntriesByList.sources = (inboundMcpEntriesByList.sources || []).filter(entry => entry.value !== '*');
+        renderInboundMcpEntries('sources');
+        syncInboundMcpEntryInput('sources', false);
+    }
+    sourceToggle?.addEventListener('change', () => {
+        if (!sourceToggle.checked) {
+            inboundMcpEntriesByList.sources = (inboundMcpEntriesByList.sources || []).filter(entry => entry.value !== '*');
+            renderInboundMcpEntries('sources');
+            syncInboundMcpEntryInput('sources');
+        }
+        sourceContainer?.classList.toggle('d-none', sourceToggle.checked);
+        syncSourceGovernanceCallouts();
+        markFormAsModified();
+    });
+    syncSourceGovernanceCallouts();
+
+    if (tenantToggle?.checked) {
+        ensureDefaultInboundMcpTenantEntry();
+        renderInboundMcpEntries('tenants');
+        syncInboundMcpEntryInput('tenants', false);
+    }
+}
+
 function setElementText(elementId, value) {
     const element = document.getElementById(elementId);
     if (element) {
         element.textContent = value || 'Not loaded';
     }
+}
+
+function getFileProcessingLogCleanupElements() {
+    return {
+        ageInput: document.getElementById('file-processing-log-cleanup-age'),
+        unitSelect: document.getElementById('file-processing-log-cleanup-unit'),
+        deleteOlderButton: document.getElementById('delete-old-file-processing-logs-btn'),
+        deleteAllButton: document.getElementById('delete-all-file-processing-logs-btn'),
+        modalElement: document.getElementById('fileProcessingLogCleanupModal'),
+        confirmationText: document.getElementById('file-processing-log-cleanup-confirmation'),
+        confirmButton: document.getElementById('confirm-file-processing-log-cleanup-btn')
+    };
+}
+
+function setFileProcessingLogCleanupBusy(elements, isBusy) {
+    elements.ageInput.disabled = isBusy;
+    elements.unitSelect.disabled = isBusy;
+    elements.deleteOlderButton.disabled = isBusy;
+    elements.deleteAllButton.disabled = isBusy;
+    setButtonBusy(elements.confirmButton, isBusy, 'Deleting...');
+}
+
+function showFileProcessingLogCleanupConfirmation(elements, requestPayload, message) {
+    pendingFileProcessingLogCleanup = requestPayload;
+    elements.confirmationText.textContent = message;
+    bootstrap.Modal.getOrCreateInstance(elements.modalElement).show();
+}
+
+async function executeFileProcessingLogCleanup(elements) {
+    if (!pendingFileProcessingLogCleanup) {
+        return;
+    }
+
+    setFileProcessingLogCleanupBusy(elements, true);
+    try {
+        const response = await fetch('/api/admin/settings/file-processing-logs/cleanup', {
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+                ...pendingFileProcessingLogCleanup,
+                confirmed: true
+            })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.success) {
+            const partialCount = Number.isInteger(payload.deleted_count) && payload.deleted_count > 0
+                ? ` ${payload.deleted_count} log${payload.deleted_count === 1 ? '' : 's'} were deleted before the operation stopped.`
+                : '';
+            throw new Error(`${payload.error || 'Unable to delete file processing logs.'}${partialCount}`);
+        }
+
+        const deletedCount = Number(payload.deleted_count) || 0;
+        bootstrap.Modal.getInstance(elements.modalElement)?.hide();
+        showToast(
+            `${deletedCount} file processing log${deletedCount === 1 ? '' : 's'} deleted.`,
+            'success'
+        );
+        pendingFileProcessingLogCleanup = null;
+    } catch (error) {
+        showToast(error.message || 'Unable to delete file processing logs.', 'danger');
+    } finally {
+        setFileProcessingLogCleanupBusy(elements, false);
+    }
+}
+
+function setupFileProcessingLogCleanup() {
+    const elements = getFileProcessingLogCleanupElements();
+    if (Object.values(elements).some(element => !element)) {
+        return;
+    }
+
+    elements.ageInput.addEventListener('input', () => {
+        elements.ageInput.classList.remove('is-invalid');
+    });
+    elements.deleteOlderButton.addEventListener('click', () => {
+        const age = Number(elements.ageInput.value);
+        if (!Number.isInteger(age) || age < 1) {
+            elements.ageInput.classList.add('is-invalid');
+            elements.ageInput.focus();
+            showToast('Enter a whole-number log age greater than zero.', 'warning');
+            return;
+        }
+
+        const unit = elements.unitSelect.value;
+        const singularUnit = unit.endsWith('s') ? unit.slice(0, -1) : unit;
+        const ageLabel = `${age} ${age === 1 ? singularUnit : unit}`;
+        showFileProcessingLogCleanupConfirmation(
+            elements,
+            { delete_all: false, age, unit },
+            `Delete every file processing log older than ${ageLabel}?`
+        );
+    });
+    elements.deleteAllButton.addEventListener('click', () => {
+        showFileProcessingLogCleanupConfirmation(
+            elements,
+            { delete_all: true },
+            'Delete every stored file processing log?'
+        );
+    });
+    elements.confirmButton.addEventListener('click', () => {
+        executeFileProcessingLogCleanup(elements);
+    });
+    elements.modalElement.addEventListener('hidden.bs.modal', () => {
+        if (!elements.confirmButton.disabled) {
+            pendingFileProcessingLogCleanup = null;
+        }
+    });
 }
 
 function formatNumber(value) {
@@ -4345,6 +4989,10 @@ document.addEventListener('DOMContentLoaded', () => {
     setupCosmosMaintenanceControls();
     setupDocumentAccessIndexControls();
     setupCosmosThroughputControls();
+    setupFileProcessingLogCleanup();
+    setupInboundMcpEntryEditors();
+    setupInboundMcpObservabilityCopyButtons();
+    setupInboundMcpEasyAuthGuard();
     
     // --- Setup form change tracking ---
     setupFormChangeTracking();
@@ -4757,7 +5405,6 @@ window.selectEmbeddingModel = (deploymentName, modelName) => {
     renderEmbeddingModels();
     updateEmbeddingHiddenInput();
     markFormAsModified();    // mark form as modified
-    //alert(`Selected embedding model: ${deploymentName}`);
 };
 
 function updateEmbeddingHiddenInput() {
@@ -4805,7 +5452,6 @@ window.selectImageModel = (deploymentName, modelName) => {
     renderImageModels();
     updateImageHiddenInput();
     markFormAsModified();    // mark form as modified
-    // alert(`Selected image model: ${deploymentName}`);
 };
 
 function updateImageHiddenInput() {
@@ -5032,7 +5678,7 @@ function handleSaveClassification(row, indexAttr, isNew) {
 
     // Basic validation
     if (!newLabel) {
-        alert('Label cannot be empty.');
+        showToast('Label cannot be empty.', 'warning');
         labelInput?.focus();
         return;
     }
@@ -5274,41 +5920,93 @@ function renderExternalLinks() {
  */
 function createExternalLinkRow(link, index, isNew = false) {
     const row = document.createElement('tr');
-    row.setAttribute('data-index', index);
+    row.dataset.index = String(index);
 
     if (isNew) {
-        // Create an editable row for new links
-        row.innerHTML = `
-            <td>
-                <input type="text" class="form-control form-control-sm external-link-label-input" 
-                       value="${escapeHtml(link.label)}" placeholder="Link Label">
-            </td>
-            <td>
-                <input type="url" class="form-control form-control-sm external-link-url-input" 
-                       value="${escapeHtml(link.url)}" placeholder="https://example.com">
-            </td>
-            <td>
-                <button type="button" class="btn btn-sm btn-success external-link-save-btn" data-index="${index}">Save</button>
-                <button type="button" class="btn btn-sm btn-secondary ms-1 external-link-cancel-btn" data-index="${index}">Cancel</button>
-            </td>
-        `;
+        populateExternalLinkEditorRow(row, link, index);
     } else {
-        // Create a read-only row for existing links
-        row.innerHTML = `
-            <td class="external-link-label">${escapeHtml(link.label)}</td>
-            <td class="external-link-url">
-                <a href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer">
-                    ${escapeHtml(link.url)}
-                </a>
-            </td>
-            <td>
-                <button type="button" class="btn btn-sm btn-outline-primary external-link-edit-btn" data-index="${index}">Edit</button>
-                <button type="button" class="btn btn-sm btn-outline-danger ms-1 external-link-delete-btn" data-index="${index}">Delete</button>
-            </td>
-        `;
+        const labelCell = document.createElement('td');
+        labelCell.className = 'external-link-label';
+        labelCell.textContent = link.label;
+
+        const urlCell = document.createElement('td');
+        urlCell.className = 'external-link-url';
+        const safeUrl = sanitizeHttpUrl(link.url);
+        if (safeUrl) {
+            const anchor = document.createElement('a');
+            anchor.href = safeUrl;
+            anchor.target = '_blank';
+            anchor.rel = 'noopener noreferrer';
+            anchor.textContent = link.url;
+            urlCell.appendChild(anchor);
+        } else {
+            urlCell.textContent = link.url;
+        }
+
+        const actionsCell = document.createElement('td');
+        actionsCell.className = 'text-nowrap';
+
+        const moveUpButton = createIconButton('bi bi-arrow-up', `Move ${link.label} up`);
+        moveUpButton.classList.add('external-link-move-up-btn');
+        moveUpButton.dataset.index = String(index);
+        moveUpButton.disabled = index === 0;
+
+        const moveDownButton = createIconButton('bi bi-arrow-down', `Move ${link.label} down`);
+        moveDownButton.classList.add('external-link-move-down-btn', 'ms-1');
+        moveDownButton.dataset.index = String(index);
+        moveDownButton.disabled = index === externalLinks.length - 1;
+
+        const editButton = document.createElement('button');
+        editButton.type = 'button';
+        editButton.className = 'btn btn-sm btn-outline-primary ms-1 external-link-edit-btn';
+        editButton.dataset.index = String(index);
+        editButton.textContent = 'Edit';
+
+        const deleteButton = document.createElement('button');
+        deleteButton.type = 'button';
+        deleteButton.className = 'btn btn-sm btn-outline-danger ms-1 external-link-delete-btn';
+        deleteButton.dataset.index = String(index);
+        deleteButton.textContent = 'Delete';
+
+        actionsCell.append(moveUpButton, moveDownButton, editButton, deleteButton);
+        row.append(labelCell, urlCell, actionsCell);
     }
 
     return row;
+}
+
+function populateExternalLinkEditorRow(row, link, index) {
+    const labelCell = document.createElement('td');
+    const labelInput = document.createElement('input');
+    labelInput.type = 'text';
+    labelInput.className = 'form-control form-control-sm external-link-label-input';
+    labelInput.value = link.label;
+    labelInput.placeholder = 'Link Label';
+    labelCell.appendChild(labelInput);
+
+    const urlCell = document.createElement('td');
+    const urlInput = document.createElement('input');
+    urlInput.type = 'url';
+    urlInput.className = 'form-control form-control-sm external-link-url-input';
+    urlInput.value = link.url;
+    urlInput.placeholder = 'https://example.com';
+    urlCell.appendChild(urlInput);
+
+    const actionsCell = document.createElement('td');
+    const saveButton = document.createElement('button');
+    saveButton.type = 'button';
+    saveButton.className = 'btn btn-sm btn-success external-link-save-btn';
+    saveButton.dataset.index = String(index);
+    saveButton.textContent = 'Save';
+
+    const cancelButton = document.createElement('button');
+    cancelButton.type = 'button';
+    cancelButton.className = 'btn btn-sm btn-secondary ms-1 external-link-cancel-btn';
+    cancelButton.dataset.index = String(index);
+    cancelButton.textContent = 'Cancel';
+
+    actionsCell.append(saveButton, cancelButton);
+    row.replaceChildren(labelCell, urlCell, actionsCell);
 }
 
 /**
@@ -5342,8 +6040,8 @@ function handleAddExternalLink() {
  * @param {Event} event - The click event.
  */
 function handleExternalLinksAction(event) {
-    const target = event.target;
-    if (!target.matches('button')) return;
+    const target = event.target.closest('button');
+    if (!target) return;
 
     const row = target.closest('tr');
     if (!row) return;
@@ -5359,7 +6057,32 @@ function handleExternalLinksAction(event) {
         handleCancelExternalLink(row, indexAttr, isNew);
     } else if (target.classList.contains('external-link-delete-btn')) {
         handleDeleteExternalLink(row, indexAttr, isNew);
+    } else if (target.classList.contains('external-link-move-up-btn')) {
+        handleMoveExternalLink(indexAttr, -1);
+    } else if (target.classList.contains('external-link-move-down-btn')) {
+        handleMoveExternalLink(indexAttr, 1);
     }
+}
+
+function handleMoveExternalLink(indexAttr, direction) {
+    const index = Number.parseInt(indexAttr, 10);
+    const destinationIndex = index + direction;
+
+    if (
+        !Number.isInteger(index)
+        || ![-1, 1].includes(direction)
+        || destinationIndex < 0
+        || destinationIndex >= externalLinks.length
+    ) {
+        return;
+    }
+
+    [externalLinks[index], externalLinks[destinationIndex]] = [
+        externalLinks[destinationIndex],
+        externalLinks[index],
+    ];
+    renderExternalLinks();
+    markFormAsModified();
 }
 
 /**
@@ -5367,25 +6090,11 @@ function handleExternalLinksAction(event) {
  * @param {HTMLTableRowElement} row - The table row to make editable.
  */
 function handleEditExternalLink(row) {
-    const index = parseInt(row.getAttribute('data-index'));
+    const index = Number.parseInt(row.dataset.index, 10);
     const link = externalLinks[index];
     if (!link) return;
 
-    // Replace the row content with editable inputs
-    row.innerHTML = `
-        <td>
-            <input type="text" class="form-control form-control-sm external-link-label-input" 
-                   value="${escapeHtml(link.label)}" placeholder="Link Label">
-        </td>
-        <td>
-            <input type="url" class="form-control form-control-sm external-link-url-input" 
-                   value="${escapeHtml(link.url)}" placeholder="https://example.com">
-        </td>
-        <td>
-            <button type="button" class="btn btn-sm btn-success external-link-save-btn" data-index="${index}">Save</button>
-            <button type="button" class="btn btn-sm btn-secondary ms-1 external-link-cancel-btn" data-index="${index}">Cancel</button>
-        </td>
-    `;
+    populateExternalLinkEditorRow(row, link, index);
 
     // Focus on the label input
     const labelInput = row.querySelector('.external-link-label-input');
@@ -5413,13 +6122,13 @@ function handleSaveExternalLink(row, indexAttr, isNew) {
 
     // Validation
     if (!label) {
-        alert('Please enter a label for the link.');
+        showToast('Please enter a label for the link.', 'warning');
         labelInput.focus();
         return;
     }
 
     if (!url) {
-        alert('Please enter a URL for the link.');
+        showToast('Please enter a URL for the link.', 'warning');
         urlInput.focus();
         return;
     }
@@ -5428,7 +6137,7 @@ function handleSaveExternalLink(row, indexAttr, isNew) {
     try {
         new URL(url);
     } catch (e) {
-        alert('Please enter a valid URL (e.g., https://example.com).');
+        showToast('Please enter a valid URL (e.g., https://example.com).', 'warning');
         urlInput.focus();
         return;
     }
@@ -5436,26 +6145,16 @@ function handleSaveExternalLink(row, indexAttr, isNew) {
     const linkData = { label, url };
 
     if (isNew) {
-        // Add new link to the array
         externalLinks.push(linkData);
-        const newIndex = externalLinks.length - 1;
-        
-        // Replace the row with a read-only version
-        const newRow = createExternalLinkRow(linkData, newIndex, false);
-        row.parentNode.replaceChild(newRow, row);
     } else {
-        // Update existing link
-        const index = parseInt(indexAttr);
-        if (index >= 0 && index < externalLinks.length) {
-            externalLinks[index] = linkData;
-            
-            // Replace the row with a read-only version
-            const updatedRow = createExternalLinkRow(linkData, index, false);
-            row.parentNode.replaceChild(updatedRow, row);
+        const index = Number.parseInt(indexAttr, 10);
+        if (index < 0 || index >= externalLinks.length) {
+            return;
         }
+        externalLinks[index] = linkData;
     }
 
-    updateExternalLinksJsonInput();
+    renderExternalLinks();
     markFormAsModified();
 }
 
@@ -6088,6 +6787,16 @@ function setupToggles() {
     if (enableWebSearchUserNotice && webSearchUserNoticeSettings) {
         enableWebSearchUserNotice.addEventListener('change', function() {
             toggleVisibility(webSearchUserNoticeSettings, this.checked);
+            markFormAsModified();
+        });
+    }
+
+    const enableAiNotice = document.getElementById('enable_ai_notice');
+    const aiNoticeSettings = document.getElementById('ai_notice_settings');
+    if (enableAiNotice && aiNoticeSettings) {
+        toggleVisibility(aiNoticeSettings, enableAiNotice.checked);
+        enableAiNotice.addEventListener('change', function() {
+            toggleVisibility(aiNoticeSettings, this.checked);
             markFormAsModified();
         });
     }
@@ -8364,18 +9073,22 @@ const visionToggle = document.getElementById('enable_multimodal_vision');
 const visionModelDiv = document.getElementById('multimodal_vision_model_settings');
 const visionSelect = document.getElementById('multimodal_vision_model');
 
-function isVisionCapableModelName(modelName) {
-    const modelNameLower = (modelName || '').toLowerCase();
-    return (
-        modelNameLower.includes('vision') ||
-        modelNameLower.includes('gpt-4o') ||
-        modelNameLower.includes('gpt-4.1') ||
-        modelNameLower.includes('gpt-4.5') ||
-        modelNameLower.includes('gpt-5') ||
-        /^o\d+/.test(modelNameLower) ||
-        modelNameLower.includes('o1-') ||
-        modelNameLower.includes('o3-')
-    );
+function isVisionCapableModelName(...modelNames) {
+    return modelNames.some(modelName => {
+        const normalizedName = String(modelName || '')
+            .trim()
+            .toLowerCase()
+            .replace(/[\s_.]+/g, '-');
+
+        return (
+            normalizedName.includes('vision') ||
+            normalizedName.includes('gpt-4o') ||
+            normalizedName.includes('gpt-4-1') ||
+            normalizedName.includes('gpt-4-5') ||
+            /(?:^|-)gpt-(?:[5-9]|\d{2,})(?:-|$)/.test(normalizedName) ||
+            /(?:^|-)o\d+(?:-|$)/.test(normalizedName)
+        );
+    });
 }
 
 function getSelectedVisionModelOption() {
@@ -8401,10 +9114,18 @@ function populateVisionModels() {
             .filter(ep => ep && ep.enabled)
             .forEach(ep => {
                 (ep.models || [])
-                    .filter(m => m && m.enabled && isVisionCapableModelName(m.modelName || m.displayName))
+                    .filter(m => m && m.enabled && isVisionCapableModelName(
+                        m.modelName,
+                        m.displayName,
+                        m.deploymentName,
+                        m.deployment,
+                        m.name
+                    ))
                     .forEach(m => {
                         const value = m.deploymentName;
-                        const label = `${m.displayName || m.deploymentName} (${m.modelName})`;
+                        const label = m.modelName
+                            ? `${m.displayName || m.deploymentName} (${m.modelName})`
+                            : (m.displayName || m.deploymentName);
                         const opt = new Option(label, value);
                         opt.dataset.endpointId = ep.id || '';
                         opt.dataset.modelId = m.id || '';
@@ -8590,16 +9311,20 @@ document.addEventListener('DOMContentLoaded', () => {
                 })
                 .then(resp => {
                     if (resp.status === 'success') {
-                        alert(resp.message || `Successfully ${action === 'create' ? 'created' : 'fixed'} ${type} index!`);
+                        showToast(
+                            resp.message || `Successfully ${action === 'create' ? 'created' : 'fixed'} ${type} index!`,
+                            'success',
+                            { persist: true }
+                        );
                         window.location.reload();
                     } else {
-                        alert(`Failed to ${action} ${type} index: ${resp.error}`);
+                        showToast(`Failed to ${action} ${type} index: ${resp.error}`, 'danger');
                         fixBtn.disabled = false;
                         fixBtn.textContent = `${action === 'create' ? 'Create' : 'Fix'} ${type} Index`;
                     }
                 })
                 .catch(err => {
-                    alert(`Error ${action === 'create' ? 'creating' : 'fixing'} ${type} index: ${err.message || err}`);
+                    showToast(`Error ${action === 'create' ? 'creating' : 'fixing'} ${type} index: ${err.message || err}`, 'danger');
                     fixBtn.disabled = false;
                     fixBtn.textContent = `${action === 'create' ? 'Create' : 'Fix'} ${type} Index`;
                 });

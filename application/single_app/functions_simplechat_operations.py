@@ -791,10 +791,15 @@ def upload_generated_analysis_artifact_stream_for_user(
     )
 
 
-def delete_blob_backed_chat_message_files(messages: Iterable[Dict[str, Any]]) -> int:
+def delete_blob_backed_chat_message_files(
+    messages: Iterable[Dict[str, Any]],
+    raise_on_error: bool = False,
+) -> int:
     """Delete blob-backed chat files referenced by the provided message documents."""
     blob_service_client = CLIENTS.get("storage_account_office_docs_client")
     if not blob_service_client:
+        if raise_on_error:
+            raise RuntimeError("Blob storage client is unavailable for chat file cleanup")
         return 0
 
     deleted_count = 0
@@ -829,6 +834,8 @@ def delete_blob_backed_chat_message_files(messages: Iterable[Dict[str, Any]]) ->
             deleted_targets.add(target)
             deleted_count += 1
         except Exception as exc:
+            if raise_on_error:
+                raise
             log_event(
                 "[SimpleChat] Failed to delete blob-backed chat file",
                 {

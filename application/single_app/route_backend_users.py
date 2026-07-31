@@ -11,6 +11,10 @@ from collaboration_models import (
     normalize_collaboration_user,
 )
 from functions_appinsights import log_event
+from functions_ai_notice import (
+    AI_NOTICE_USER_SETTINGS_KEY,
+    build_ai_notice_dismissal_record,
+)
 from functions_authentication import *
 from functions_group import (
     check_group_status_allows_operation,
@@ -506,14 +510,21 @@ def register_route_backend_users(bp):
                     # Chat UI settings
                     'navbar_layout', 'chatLayout', 'showChatTitle', 'chatSplitSizes',
                     'deepResearchDefaultEnabled',
-                    'sidebarToggleStyle', 'sidebarMenuState',
+                    'aiNoticeDismissal',
+                    'sidebarToggleStyle', 'sidebarMenuState', 'fontSizePreference',
+                    'conversationContentsDrawerEnabled',
                     LATEST_FEATURES_HIDDEN_VERSION_SETTING,
                     # Microphone permission settings
                     'microphonePermissionPreference', 'microphonePermissionState',
                     # Text-to-speech settings
                     'ttsEnabled', 'ttsVoice', 'ttsSpeed', 'ttsAutoplay',
+                    # AI response completion audio settings
+                    'chatCompletionAudioEnabled', 'chatCompletionAudioMuted',
+                    'chatCompletionAudioSound', 'chatCompletionAudioVolume',
                     # Tutorial visibility settings
                     'showTutorialButtons',
+                    # Desktop conversation notification settings
+                    'desktopNotificationsEnabled',
                     'recentCollaborators',
                     # Personal workspace settings managed by other backend/frontend flows
                     'personal_model_endpoints', 'tag_definitions',
@@ -541,6 +552,62 @@ def register_route_backend_users(bp):
                     if sidebar_toggle_style not in {"large", "compact"}:
                         return jsonify({"error": "Invalid sidebar toggle style"}), 400
                     settings_to_update["sidebarToggleStyle"] = sidebar_toggle_style
+
+                if "fontSizePreference" in settings_to_update:
+                    font_size_preference = str(
+                        settings_to_update.get("fontSizePreference") or ""
+                    ).strip().lower()
+                    if font_size_preference not in FONT_SIZE_PREFERENCES:
+                        return jsonify({"error": "Invalid font size preference"}), 400
+                    settings_to_update["fontSizePreference"] = font_size_preference
+
+                if "conversationContentsDrawerEnabled" in settings_to_update:
+                    if not isinstance(settings_to_update["conversationContentsDrawerEnabled"], bool):
+                        return jsonify({"error": "Invalid conversation contents drawer preference"}), 400
+
+                for boolean_key in (
+                    "chatCompletionAudioEnabled",
+                    "chatCompletionAudioMuted",
+                ):
+                    if (
+                        boolean_key in settings_to_update
+                        and not isinstance(settings_to_update[boolean_key], bool)
+                    ):
+                        return jsonify({"error": f"Invalid {boolean_key} preference"}), 400
+
+                if "chatCompletionAudioSound" in settings_to_update:
+                    selected_sound = str(
+                        settings_to_update.get("chatCompletionAudioSound") or ""
+                    ).strip().lower()
+                    if selected_sound not in CHAT_COMPLETION_AUDIO_SOUND_IDS:
+                        return jsonify({"error": "Invalid completion audio sound"}), 400
+                    settings_to_update["chatCompletionAudioSound"] = selected_sound
+
+                if "chatCompletionAudioVolume" in settings_to_update:
+                    volume = settings_to_update.get("chatCompletionAudioVolume")
+                    if isinstance(volume, bool):
+                        return jsonify({"error": "Invalid completion audio volume"}), 400
+                    try:
+                        volume = int(volume)
+                    except (TypeError, ValueError):
+                        return jsonify({"error": "Invalid completion audio volume"}), 400
+                    if volume < 1 or volume > 10:
+                        return jsonify({"error": "Completion audio volume must be between 1 and 10"}), 400
+                    settings_to_update["chatCompletionAudioVolume"] = volume
+
+                if "desktopNotificationsEnabled" in settings_to_update:
+                    if not isinstance(settings_to_update["desktopNotificationsEnabled"], bool):
+                        return jsonify({"error": "Invalid desktop notification preference"}), 400
+
+                if AI_NOTICE_USER_SETTINGS_KEY in settings_to_update:
+                    try:
+                        settings_to_update[AI_NOTICE_USER_SETTINGS_KEY] = (
+                            build_ai_notice_dismissal_record(
+                                settings_to_update[AI_NOTICE_USER_SETTINGS_KEY]
+                            )
+                        )
+                    except ValueError:
+                        return jsonify({"error": "Invalid AI notice dismissal"}), 400
 
                 if "sidebarMenuState" in settings_to_update:
                     sidebar_menu_state = settings_to_update.get("sidebarMenuState")

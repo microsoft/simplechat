@@ -6,10 +6,14 @@ from flask import g, has_request_context, jsonify, request, session
 
 from config import *
 from functions_appinsights import log_event
+from functions_content_safety import (
+    CONTENT_SAFETY_VIOLATION_MESSAGE_DEFAULT,
+)
 from functions_cosmos_throughput import get_default_cosmos_throughput_settings
 from functions_document_actions import get_default_document_action_capabilities
 from functions_icon_utils import normalize_icon_payload
 from functions_latest_features_nav import LATEST_FEATURES_HIDDEN_VERSION_SETTING
+from functions_mcp_server_config import INBOUND_MCP_SETTINGS_DEFAULTS, normalize_inbound_mcp_settings
 from functions_service_health import get_default_service_health
 import app_settings_cache
 import inspect
@@ -24,17 +28,39 @@ from support_menu_config import (
 
 
 USER_SETTINGS_REQUEST_CACHE_ATTR = "simplechat_user_settings_request_cache"
+FONT_SIZE_PREFERENCES = ("xs", "s", "m", "l", "xl")
+DEFAULT_FONT_SIZE_PREFERENCE = "m"
+CHAT_COMPLETION_AUDIO_SOUND_IDS = (
+    "aurora",
+    "bell",
+    "bloom",
+    "chime",
+    "crystal",
+    "glimmer",
+    "marimba",
+    "pulse",
+    "spark",
+    "summit",
+)
+DEFAULT_CHAT_COMPLETION_AUDIO_SOUND = CHAT_COMPLETION_AUDIO_SOUND_IDS[0]
+DEFAULT_CHAT_COMPLETION_AUDIO_VOLUME = 5
 USER_UI_SETTINGS_KEYS = (
     "profileImage",
     "navLayout",
     "darkModeEnabled",
     "showTutorialButtons",
+    "desktopNotificationsEnabled",
     "chatLayout",
     "streamingEnabled",
     "notifications_per_page",
     "sidebarToggleStyle",
     "sidebarMenuState",
     LATEST_FEATURES_HIDDEN_VERSION_SETTING,
+    "fontSizePreference",
+    "chatCompletionAudioEnabled",
+    "chatCompletionAudioMuted",
+    "chatCompletionAudioSound",
+    "chatCompletionAudioVolume",
 )
 ADMIN_SETTINGS_SECRET_REDACTED_VALUE = "***REDACTED***"
 ADMIN_SETTINGS_FORM_SECRET_FIELDS = (
@@ -126,6 +152,38 @@ def _clone_user_settings_doc(doc):
     return copy.deepcopy(doc or {})
 
 
+def normalize_font_size_preference(value):
+    normalized_value = str(value or "").strip().lower()
+    if normalized_value in FONT_SIZE_PREFERENCES:
+        return normalized_value
+    return DEFAULT_FONT_SIZE_PREFERENCE
+
+
+def normalize_chat_completion_audio_preferences(settings):
+    """Return validated completion-audio preferences with opt-in defaults."""
+    source = settings if isinstance(settings, dict) else {}
+    selected_sound = str(
+        source.get("chatCompletionAudioSound") or DEFAULT_CHAT_COMPLETION_AUDIO_SOUND
+    ).strip().lower()
+    if selected_sound not in CHAT_COMPLETION_AUDIO_SOUND_IDS:
+        selected_sound = DEFAULT_CHAT_COMPLETION_AUDIO_SOUND
+
+    try:
+        volume = int(source.get(
+            "chatCompletionAudioVolume",
+            DEFAULT_CHAT_COMPLETION_AUDIO_VOLUME,
+        ))
+    except (TypeError, ValueError):
+        volume = DEFAULT_CHAT_COMPLETION_AUDIO_VOLUME
+
+    return {
+        "chatCompletionAudioEnabled": source.get("chatCompletionAudioEnabled") is True,
+        "chatCompletionAudioMuted": source.get("chatCompletionAudioMuted") is True,
+        "chatCompletionAudioSound": selected_sound,
+        "chatCompletionAudioVolume": min(10, max(1, volume)),
+    }
+
+
 def _get_user_settings_request_cache():
     if not has_request_context():
         return None
@@ -160,11 +218,16 @@ def _extract_user_ui_settings(doc):
     settings = (doc or {}).get('settings', {})
     if not isinstance(settings, dict):
         settings = {}
-    return {
+    ui_settings = {
         key: copy.deepcopy(settings[key])
         for key in USER_UI_SETTINGS_KEYS
         if key in settings
     }
+    ui_settings["fontSizePreference"] = normalize_font_size_preference(
+        settings.get("fontSizePreference")
+    )
+    ui_settings.update(normalize_chat_completion_audio_preferences(settings))
+    return ui_settings
 
 
 def _delete_user_ui_settings_cache(user_id):
@@ -841,6 +904,9 @@ def get_settings(use_cosmos=False, include_source=False):
         'governance_user_actions': False,
         'governance_group_actions': False,
         'governance_global_actions_usage': False,
+        'enable_mcp_destination_governance': False,
+        'mcp_block_unsafe_destinations': False,
+        **INBOUND_MCP_SETTINGS_DEFAULTS,
         'allow_ai_foundry_agents': False,
         'allow_group_ai_foundry_agents': False,
         'allow_personal_ai_foundry_agents': False,
@@ -867,9 +933,10 @@ def get_settings(use_cosmos=False, include_source=False):
         # Control Center settings
         'control_center_last_refresh': None,  # Timestamp of last data refresh
         'control_center_auto_refresh_enabled': True,
-        'control_center_auto_refresh_time': '06:00',
-        'control_center_auto_refresh_hour': 6,
+        'control_center_auto_refresh_time': '02:00',
+        'control_center_auto_refresh_hour': 2,
         'control_center_auto_refresh_minute': 0,
+        'control_center_auto_refresh_timezone': 'America/New_York',
         'control_center_auto_refresh_next_run': None,
         # -- Your entire default dictionary here --
         'app_title': 'Simple Chat',
@@ -892,6 +959,9 @@ def get_settings(use_cosmos=False, include_source=False):
         'terms_of_use_decline_redirect_url': '/',
         'terms_of_use_accept_button_text': 'Accept and continue',
         'terms_of_use_decline_button_text': 'Cancel',
+        'enable_ai_notice': False,
+        'ai_notice_message': '',
+        'ai_notice_frequency': 'non_dismissible',
         'enable_dark_mode_default': False,
         'enable_left_nav_default': True,
         'release_notifications_registered': False,
@@ -1015,6 +1085,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'require_public_workspace_assignment_for_file_downloads': False,
         'file_download_allowed_public_workspace_ids': [],
         'enable_chat_file_uploads': True,
+        'enable_conversation_contents_drawer': True,
         'require_member_of_chat_file_upload_user': False,
         'enforce_workspace_scope_lock': True,
 
@@ -1044,6 +1115,8 @@ def get_settings(use_cosmos=False, include_source=False):
         # Multimedia
         'enable_video_file_support': False,
         'enable_audio_file_support': False,
+        'enable_chat_completion_audio_cues': False,
+        'chat_completion_audio_cues_updated_at': None,
 
         # Metadata Extraction
         'enable_extract_meta_data': False,
@@ -1114,6 +1187,8 @@ def get_settings(use_cosmos=False, include_source=False):
 
         # Safety (Content Safety) Settings
         'enable_content_safety': False,
+        'content_safety_violation_message': CONTENT_SAFETY_VIOLATION_MESSAGE_DEFAULT,
+        'content_safety_include_trigger_information': True,
         'require_member_of_safety_violation_admin': False,
         'require_member_of_control_center_admin': False,
         'require_member_of_control_center_dashboard_reader': False,
@@ -1126,6 +1201,7 @@ def get_settings(use_cosmos=False, include_source=False):
 
         # User Feedback / Conversation Archiving
         'enable_user_feedback': True,
+        'enable_desktop_notifications': False,
         'require_member_of_feedback_admin': False,
         'enable_conversation_archiving': False,
 
@@ -1400,23 +1476,50 @@ def get_settings(use_cosmos=False, include_source=False):
                         level=logging.WARNING
                     )
 
+        legacy_control_center_schedule = (
+            'control_center_auto_refresh_timezone' not in settings_item
+        )
+        legacy_control_center_time = settings_item.get('control_center_auto_refresh_time')
+        if not isinstance(legacy_control_center_time, str):
+            legacy_hour = settings_item.get('control_center_auto_refresh_hour', 6)
+            legacy_minute = settings_item.get('control_center_auto_refresh_minute', 0)
+            if not isinstance(legacy_hour, int):
+                legacy_hour = 6
+            if not isinstance(legacy_minute, int):
+                legacy_minute = 0
+            legacy_control_center_time = f"{legacy_hour:02d}:{legacy_minute:02d}"
+
         # Merge default_settings in, to fill in any missing or nested keys
         merge_changed = deep_merge_dicts(default_settings, settings_item)
         merged = settings_item
+        control_center_schedule_migration_updated = False
+        if legacy_control_center_schedule:
+            if legacy_control_center_time == '06:00':
+                merged['control_center_auto_refresh_time'] = '02:00'
+                merged['control_center_auto_refresh_hour'] = 2
+                merged['control_center_auto_refresh_minute'] = 0
+                merged['control_center_auto_refresh_timezone'] = 'America/New_York'
+            else:
+                merged['control_center_auto_refresh_timezone'] = 'UTC'
+            merged['control_center_auto_refresh_next_run'] = None
+            control_center_schedule_migration_updated = True
         migration_updated = apply_custom_endpoint_setting_migration(merged)
         assignment_settings_updated = normalize_group_workflow_assignment_settings(merged)
         promoted_popular_settings_updated = normalize_agents_page_promoted_popular_settings(merged)
         document_access_index_settings_updated = normalize_document_access_index_required_settings(merged)
+        inbound_mcp_settings_updated = normalize_inbound_mcp_settings(merged)
 
         merged['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(merged)
 
         # If merging added anything new, upsert back to Cosmos so future reads remain up to date
         if (
             merge_changed
+            or control_center_schedule_migration_updated
             or migration_updated
             or assignment_settings_updated
             or promoted_popular_settings_updated
             or document_access_index_settings_updated
+            or inbound_mcp_settings_updated
         ):
             cosmos_settings_container.upsert_item(merged)
             _refresh_app_settings_cache_after_write(merged, context="merge_upsert")
@@ -1467,6 +1570,7 @@ def update_settings(new_settings):
         normalize_group_workflow_assignment_settings(settings_item)
         normalize_agents_page_promoted_popular_settings(settings_item)
         normalize_document_access_index_required_settings(settings_item)
+        normalize_inbound_mcp_settings(settings_item)
         settings_item['enable_multi_model_endpoints'] = coerce_multi_model_endpoint_enablement(
             existing_multi_endpoint_enabled,
             settings_item.get('enable_multi_model_endpoints', False),
@@ -2102,6 +2206,9 @@ def get_user_settings(user_id, allow_cross_user=False):
         if 'showTutorialButtons' not in doc['settings']:
             doc['settings']['showTutorialButtons'] = True
             updated = True
+        if 'desktopNotificationsEnabled' not in doc['settings']:
+            doc['settings']['desktopNotificationsEnabled'] = True
+            updated = True
         
         if should_sync_session_profile:
             # Try to update email/display_name if missing and available in session
@@ -2145,6 +2252,7 @@ def get_user_settings(user_id, allow_cross_user=False):
         doc = {"id": user_id, "settings": {}}
         doc["settings"]["personal_model_endpoints"] = []
         doc["settings"]["showTutorialButtons"] = True
+        doc["settings"]["desktopNotificationsEnabled"] = True
         if should_sync_session_profile:
             user = session.get("user", {})
             email = user.get("preferred_username") or user.get("email")

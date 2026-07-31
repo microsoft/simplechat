@@ -40,10 +40,27 @@ var cosmosContainers = [
     name: 'data_management_jobs'
     partitionKeyPath: '/id'
     defaultTtl: null
+    compositeIndexes: [
+      [
+        {
+          path: '/created_at'
+          order: 'descending'
+        }
+        {
+          path: '/id'
+          order: 'descending'
+        }
+      ]
+    ]
   }
   {
     name: 'data_management_job_items'
     partitionKeyPath: '/job_id'
+    defaultTtl: null
+  }
+  {
+    name: 'data_management_backup_item_states'
+    partitionKeyPath: '/source_scope'
     defaultTtl: null
   }
   {
@@ -392,7 +409,24 @@ resource cosmosContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/con
       }
     }, container.defaultTtl == null ? {} : {
       defaultTtl: container.defaultTtl
-    })
+    }, contains(container, 'compositeIndexes') ? {
+      indexingPolicy: {
+        indexingMode: 'consistent'
+        automatic: true
+        includedPaths: [
+          {
+            path: '/*'
+          }
+        ]
+        excludedPaths: [
+          {
+            path: '/"_etag"/?'
+          }
+        ]
+        #disable-next-line BCP187 // conditional container metadata includes composite indexes only where required
+        compositeIndexes: container.compositeIndexes
+      }
+    } : {})
     options: capacityMode == 'serverless' ? {} : {
       autoscaleSettings: {
         maxThroughput: containerAutoscaleMaxThroughput

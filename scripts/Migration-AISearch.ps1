@@ -21,6 +21,11 @@ param(
 
     [bool]$DifferentialMigration = $false,
 
+    [string]$MigrationId = "",
+
+    [ValidateRange(0, 8760)]
+    [int]$SkipMigratedWithinHours = 24,
+
     [bool]$ShowProgress = $true,
 
     [ValidateRange(1, 100000)]
@@ -58,6 +63,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "Migration-State.ps1")
+. (Join-Path $PSScriptRoot "Migration-Provenance.ps1")
 
 function Get-AISearchProgressPercent {
     param(
@@ -260,6 +266,44 @@ function ConvertTo-AISearchWritableDefinition {
     return $copy
 }
 
+function Update-AISearchMigrationProvenanceFields {
+    param(
+        [object]$IndexDefinition
+    )
+
+    $fields = [System.Collections.Generic.List[object]]::new()
+    $existingFieldsByName = @{}
+    foreach ($field in @($IndexDefinition.fields)) {
+        $fields.Add($field)
+        $existingFieldsByName[[string]$field.name] = $field
+    }
+
+    $addedFieldCount = 0
+    foreach ($fieldDefinition in Get-AISearchMigrationProvenanceFieldDefinitions) {
+        $fieldName = [string]$fieldDefinition["name"]
+        if ($existingFieldsByName.ContainsKey($fieldName)) {
+            $existingField = $existingFieldsByName[$fieldName]
+            if (
+                [string]$existingField.type -ne [string]$fieldDefinition["type"] -or
+                $existingField.filterable -ne $true
+            ) {
+                throw "Index '$($IndexDefinition.name)' has an incompatible migration provenance field '$fieldName'. It must be a filterable $($fieldDefinition["type"]) field."
+            }
+            continue
+        }
+
+        $fields.Add([pscustomobject]$fieldDefinition)
+        $addedFieldCount++
+    }
+
+    $IndexDefinition | Add-Member `
+        -MemberType NoteProperty `
+        -Name "fields" `
+        -Value $fields.ToArray() `
+        -Force
+    return $addedFieldCount
+}
+
 function Get-AISearchKeyField {
     param(
         [object]$IndexDefinition
@@ -291,6 +335,8 @@ function Get-AISearchDocuments {
         [string]$AdminKey,
         [object]$IndexDefinition,
         [switch]$KeysOnly,
+        [string]$FilterExpression = "",
+        [string[]]$SelectFields = @(),
         [long]$TotalCount = 0,
         [string]$ProgressActivity = "",
         [string]$ProgressPhase = "Documents",
@@ -318,19 +364,35 @@ function Get-AISearchDocuments {
             count = $true
         }
 
+        $selectedFields = [System.Collections.Generic.List[string]]::new()
         if ($KeysOnly) {
-            $requestBody.select = $keyField.name
+            $selectedFields.Add([string]$keyField.name)
+        }
+        foreach ($fieldName in $SelectFields) {
+            if (-not [string]::IsNullOrWhiteSpace($fieldName) -and -not $selectedFields.Contains($fieldName)) {
+                $selectedFields.Add($fieldName)
+            }
+        }
+        if ($selectedFields.Count -gt 0) {
+            $requestBody.select = $selectedFields -join ","
         }
 
+        $filterExpressions = [System.Collections.Generic.List[string]]::new()
+        if (-not [string]::IsNullOrWhiteSpace($FilterExpression)) {
+            $filterExpressions.Add("($FilterExpression)")
+        }
         if ($supportsKeysetPagination) {
             $requestBody.orderby = "$($keyField.name) asc"
             if ($null -ne $lastKey) {
                 $escapedLastKey = ([string]$lastKey).Replace("'", "''")
-                $requestBody.filter = "$($keyField.name) gt '$escapedLastKey'"
+                $filterExpressions.Add("$($keyField.name) gt '$escapedLastKey'")
             }
         }
         else {
             $requestBody.skip = $skip
+        }
+        if ($filterExpressions.Count -gt 0) {
+            $requestBody.filter = $filterExpressions -join " and "
         }
 
         $requestUri = $searchUri
@@ -408,7 +470,9 @@ function ConvertTo-AISearchWriteDocument {
     param(
         [object]$Document,
         [ValidateSet("upload", "mergeOrUpload")]
-        [string]$Action
+        [string]$Action,
+        [AllowNull()]
+        [object]$MigrationProvenanceContext = $null
     )
 
     $writeDocument = [ordered]@{
@@ -419,6 +483,12 @@ function ConvertTo-AISearchWriteDocument {
         if (-not $property.Name.StartsWith("@search.", [System.StringComparison]::Ordinal)) {
             $writeDocument[$property.Name] = $property.Value
         }
+    }
+
+    if ($null -ne $MigrationProvenanceContext) {
+        Add-AISearchMigrationProvenance `
+            -Document $writeDocument `
+            -Context $MigrationProvenanceContext
     }
 
     return [pscustomobject]$writeDocument
@@ -723,6 +793,46 @@ function Update-AISearchDocumentCheckpoint {
         })
 }
 
+function Get-AISearchMigrationProvenanceSkipKeys {
+    param(
+        [object]$DestinationIndex,
+        [string]$DestinationEndpoint,
+        [string]$DestinationKey,
+        [object]$MigrationProvenanceContext
+    )
+
+    $escapedMigrationId = ([string]$MigrationProvenanceContext.MigrationId).Replace("'", "''")
+    $filterExpression = "simplechatMigrationStatus eq 'succeeded' and (simplechatMigrationId eq '$escapedMigrationId'"
+    if ([int]$MigrationProvenanceContext.SkipMigratedWithinHours -gt 0) {
+        $cutoffUtc = [DateTimeOffset]::UtcNow.AddHours(
+            -[int]$MigrationProvenanceContext.SkipMigratedWithinHours
+        )
+        $cutoffText = $cutoffUtc.UtcDateTime.ToString(
+            "yyyy-MM-ddTHH:mm:ss.fffffff'Z'",
+            [System.Globalization.CultureInfo]::InvariantCulture
+        )
+        $filterExpression += " or simplechatMigratedAtUtc ge $cutoffText"
+    }
+    $filterExpression += ")"
+
+    $keyField = Get-AISearchKeyField -IndexDefinition $DestinationIndex
+    $skippedKeys = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::Ordinal
+    )
+    Get-AISearchDocuments `
+        -Endpoint $DestinationEndpoint `
+        -AdminKey $DestinationKey `
+        -IndexDefinition $DestinationIndex `
+        -KeysOnly `
+        -FilterExpression $filterExpression `
+        -ProgressActivity "Index '$($DestinationIndex.name)' documents" `
+        -ProgressPhase "Recently migrated destination keys" | ForEach-Object {
+        $documentKey = [string]$_.PSObject.Properties[$keyField.name].Value
+        [void]$skippedKeys.Add($documentKey)
+    }
+    return ,$skippedKeys
+}
+
 function Copy-AISearchIndexDocuments {
     param(
         [object]$SourceIndex,
@@ -734,7 +844,8 @@ function Copy-AISearchIndexDocuments {
         [string]$DestinationEndpoint,
         [string]$DestinationKey,
         [object]$StateContext,
-        [string]$ResourceName
+        [string]$ResourceName,
+        [object]$MigrationProvenanceContext
     )
 
     $sourceKeyField = Get-AISearchKeyField -IndexDefinition $SourceIndex
@@ -798,6 +909,20 @@ function Copy-AISearchIndexDocuments {
         -SkippedCount $skippedCount `
         -BatchCount $batchCount
     $existingKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    $migrationProvenanceSkipKeys = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::Ordinal
+    )
+
+    if ($DestinationIndexExisted -and -not $DifferentialMigration) {
+        $migrationProvenanceSkipKeys = Get-AISearchMigrationProvenanceSkipKeys `
+            -DestinationIndex $DestinationIndex `
+            -DestinationEndpoint $DestinationEndpoint `
+            -DestinationKey $DestinationKey `
+            -MigrationProvenanceContext $MigrationProvenanceContext
+        if ($migrationProvenanceSkipKeys.Count -gt 0) {
+            Write-Host "Skipping $($migrationProvenanceSkipKeys.Count) recently migrated document(s) in index '$($SourceIndex.name)'."
+        }
+    }
 
     if ($DifferentialMigration -and $DestinationIndexExisted) {
         $destinationKeyField = Get-AISearchKeyField -IndexDefinition $DestinationIndex
@@ -880,11 +1005,21 @@ function Copy-AISearchIndexDocuments {
         -InitialProcessedCount $processedCount | ForEach-Object {
         $sourceDocument = $_
         $keyValue = [string]$sourceDocument.PSObject.Properties[$sourceKeyField.name].Value
-        $documentAlreadyExists = $DifferentialMigration -and $existingKeys.Contains($keyValue)
+        $sourceProvenanceSkip = Test-MigrationProvenanceSkip `
+            -Provenance (Get-AISearchMigrationProvenance -Document $sourceDocument) `
+            -Context $MigrationProvenanceContext
+        $documentAlreadyExists = (
+            $sourceProvenanceSkip -or
+            ($DifferentialMigration -and $existingKeys.Contains($keyValue)) -or
+            $migrationProvenanceSkipKeys.Contains($keyValue)
+        )
         $writeDocument = $null
         $documentBytes = 0
         if (-not $documentAlreadyExists) {
-            $writeDocument = ConvertTo-AISearchWriteDocument -Document $sourceDocument -Action $action
+            $writeDocument = ConvertTo-AISearchWriteDocument `
+                -Document $sourceDocument `
+                -Action $action `
+                -MigrationProvenanceContext $MigrationProvenanceContext
             $documentJson = $writeDocument | ConvertTo-Json -Depth 100 -Compress
             $documentBytes = [System.Text.Encoding]::UTF8.GetByteCount($documentJson)
             if ($documentBytes -gt $MaxBatchBytes) {
@@ -1113,6 +1248,7 @@ try {
         destinationResourceGroup = $DestinationResourceGroup
         destinationSubscriptionId = $DestinationSubscriptionId
         mode = $migrationMode
+        skipMigratedWithinHours = $SkipMigratedWithinHours
         searchApiVersion = $ApiVersion
         managementApiVersion = $ManagementApiVersion
         searchDnsSuffix = $SearchDnsSuffix
@@ -1121,8 +1257,14 @@ try {
         -MigrationType "ai_search" `
         -StateFilePath $StateFilePath `
         -Configuration $stateConfiguration `
+        -MigrationId $MigrationId `
         -Reset:$ResetState
+    $migrationProvenanceContext = New-MigrationProvenanceContext `
+        -MigrationId ([string]$migrationState.Data["migrationId"]) `
+        -MigratedAtUtc ([string]$migrationState.Data["migrationStartedUtc"]) `
+        -SkipMigratedWithinHours $SkipMigratedWithinHours
     Write-Host "Migration state: $($migrationState.Path)"
+    Write-Host "Migration ID: $($migrationProvenanceContext.MigrationId)"
 
     if ([string]::IsNullOrWhiteSpace($SourceAdminKey) -or [string]::IsNullOrWhiteSpace($DestinationAdminKey)) {
         foreach ($requiredCommand in @("Connect-AzAccount", "Set-AzContext", "Invoke-AzRestMethod")) {
@@ -1236,18 +1378,33 @@ try {
 
         if (-not $destinationIndexExisted -or -not $DifferentialMigration) {
             $writableIndex = ConvertTo-AISearchWritableDefinition -Definition $sourceIndex
+            $provenanceFieldsAdded = Update-AISearchMigrationProvenanceFields `
+                -IndexDefinition $writableIndex
+            $updateIndexDefinition = $true
+        }
+        else {
+            $writableIndex = ConvertTo-AISearchWritableDefinition -Definition $destinationIndex
+            $provenanceFieldsAdded = Update-AISearchMigrationProvenanceFields `
+                -IndexDefinition $writableIndex
+            $updateIndexDefinition = $provenanceFieldsAdded -gt 0
+        }
+
+        if ($updateIndexDefinition) {
             $encodedIndexName = [Uri]::EscapeDataString($sourceIndex.name)
-            $destinationIndexUri = New-AISearchUri -Endpoint $destinationEndpoint -RelativePath "indexes/$encodedIndexName"
+            $destinationIndexUri = New-AISearchUri `
+                -Endpoint $destinationEndpoint `
+                -RelativePath "indexes/$encodedIndexName"
             Invoke-AISearchRequest `
                 -Method "PUT" `
                 -Uri $destinationIndexUri `
                 -AdminKey $resolvedDestinationKey `
                 -Body $writableIndex | Out-Null
-            Write-Host "Migrated index definition: $($sourceIndex.name)"
+            Write-Host "Migrated index definition: $($sourceIndex.name) (migration provenance fields added: $provenanceFieldsAdded)"
         }
         else {
             Write-Host "Keeping existing destination index definition: $($sourceIndex.name)"
         }
+        $destinationIndex = $writableIndex
 
         $indexResult = Copy-AISearchIndexDocuments `
             -SourceIndex $sourceIndex `
@@ -1258,7 +1415,8 @@ try {
             -DestinationEndpoint $destinationEndpoint `
             -DestinationKey $resolvedDestinationKey `
             -StateContext $migrationState `
-            -ResourceName $resourceName
+            -ResourceName $resourceName `
+            -MigrationProvenanceContext $migrationProvenanceContext
 
         Complete-MigrationResourceCheckpoint `
             -Context $migrationState `

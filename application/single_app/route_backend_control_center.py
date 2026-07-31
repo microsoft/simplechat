@@ -11,6 +11,11 @@ from flask import make_response
 from config import *
 from functions_authentication import *
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
+from functions_control_center import (
+    calculate_next_control_center_auto_refresh_run,
+    get_control_center_auto_refresh_schedule,
+    parse_control_center_auto_refresh_datetime,
+)
 from functions_settings import *
 from functions_logging import *
 from functions_activity_logging import *
@@ -5873,14 +5878,32 @@ def register_route_backend_control_center(bp):
         Get the last refresh timestamp for Control Center data.
         """
         try:
-            from functions_settings import get_settings
-            
             settings = get_settings()
             last_refresh = settings.get('control_center_last_refresh')
-            
+            last_refresh_datetime = parse_control_center_auto_refresh_datetime(last_refresh)
+            auto_refresh_enabled = settings.get('control_center_auto_refresh_enabled', True)
+            auto_refresh_schedule = get_control_center_auto_refresh_schedule(settings)
+            auto_refresh_next_run = parse_control_center_auto_refresh_datetime(
+                settings.get('control_center_auto_refresh_next_run')
+            )
+            if auto_refresh_enabled and not auto_refresh_next_run:
+                auto_refresh_next_run = calculate_next_control_center_auto_refresh_run(settings)
+
             return jsonify({
                 'last_refresh': last_refresh,
-                'last_refresh_formatted': None if not last_refresh else datetime.fromisoformat(last_refresh.replace('Z', '+00:00') if 'Z' in last_refresh else last_refresh).strftime('%m/%d/%Y %I:%M %p UTC')
+                'last_refresh_formatted': (
+                    last_refresh_datetime.strftime('%m/%d/%Y %I:%M %p UTC')
+                    if last_refresh_datetime
+                    else None
+                ),
+                'auto_refresh_enabled': auto_refresh_enabled,
+                'auto_refresh_time': auto_refresh_schedule['time'],
+                'auto_refresh_timezone': auto_refresh_schedule['timezone'],
+                'auto_refresh_next_run_utc': (
+                    auto_refresh_next_run.isoformat()
+                    if auto_refresh_next_run
+                    else None
+                ),
             }), 200
             
         except Exception as e:

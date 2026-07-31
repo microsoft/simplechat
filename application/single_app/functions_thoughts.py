@@ -189,7 +189,7 @@ def get_pending_thoughts(conversation_id, user_id, message_id=None):
         return []
 
 
-def get_thoughts_for_conversation(conversation_id, user_id):
+def get_thoughts_for_conversation(conversation_id, user_id, raise_on_error=False):
     """Return all thoughts for a conversation."""
     try:
         query = (
@@ -208,13 +208,19 @@ def get_thoughts_for_conversation(conversation_id, user_id):
         return results
     except Exception as e:
         log_event(f"get_thoughts_for_conversation failed: {e}", level="WARNING")
+        if raise_on_error:
+            raise
         return []
 
 
-def archive_thoughts_for_conversation(conversation_id, user_id):
+def archive_thoughts_for_conversation(conversation_id, user_id, raise_on_error=False):
     """Copy all thoughts for a conversation to the archive container, then delete originals."""
     try:
-        thoughts = get_thoughts_for_conversation(conversation_id, user_id)
+        thoughts = get_thoughts_for_conversation(
+            conversation_id,
+            user_id,
+            raise_on_error=raise_on_error,
+        )
         for thought in thoughts:
             archived = dict(thought)
             archived['archived_at'] = datetime.now(timezone.utc).isoformat()
@@ -227,12 +233,18 @@ def archive_thoughts_for_conversation(conversation_id, user_id):
             )
     except Exception as e:
         log_event(f"archive_thoughts_for_conversation failed: {e}", level="WARNING")
+        if raise_on_error:
+            raise
 
 
-def delete_thoughts_for_conversation(conversation_id, user_id):
+def delete_thoughts_for_conversation(conversation_id, user_id, raise_on_error=False):
     """Delete all thoughts for a conversation."""
     try:
-        thoughts = get_thoughts_for_conversation(conversation_id, user_id)
+        thoughts = get_thoughts_for_conversation(
+            conversation_id,
+            user_id,
+            raise_on_error=raise_on_error,
+        )
         for thought in thoughts:
             cosmos_thoughts_container.delete_item(
                 item=thought['id'],
@@ -240,6 +252,8 @@ def delete_thoughts_for_conversation(conversation_id, user_id):
             )
     except Exception as e:
         log_event(f"delete_thoughts_for_conversation failed: {e}", level="WARNING")
+        if raise_on_error:
+            raise
 
 
 def delete_thoughts_for_message(message_id, user_id):

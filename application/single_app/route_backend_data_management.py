@@ -1,9 +1,10 @@
 # route_backend_data_management.py
 """Admin API routes for SimpleChat Data Management."""
 
+import hmac
 import logging
 
-from flask import current_app, jsonify, request, session
+from flask import Response, current_app, jsonify, request, session
 
 from functions_activity_logging import log_general_admin_action
 from functions_appinsights import log_event
@@ -14,18 +15,31 @@ from functions_data_management import (
     DATA_MANAGEMENT_OPERATION_MIGRATION,
     DATA_MANAGEMENT_OPERATION_RESTORE,
     DataManagementCosmosEditorError,
+    DataManagementHistoryPaginationError,
     DataManagementSettingsValidationError,
+    create_data_management_migration_review_authorization,
+    export_data_management_migration_manifest,
     generate_data_management_encryption_key,
     get_data_management_cosmos_editor_containers,
     get_data_management_cosmos_editor_document,
     get_data_management_backup_summary,
     get_data_management_job_detail,
-    get_data_management_jobs,
+    get_data_management_job_progress,
+    get_data_management_jobs_page,
     get_data_management_migration_catalog,
+    get_data_management_migration_review_fingerprint,
     get_data_management_settings,
     log_data_management_cosmos_editor_activity,
+    preview_data_management_migration_plan,
     queue_data_management_job,
     query_data_management_cosmos_editor_documents,
+    request_data_management_job_cancellation,
+    release_data_management_migration_review_reservation,
+    reserve_data_management_migration_review_authorization,
+    review_data_management_migration,
+    retry_data_management_backup_job,
+    resolve_data_management_migration_manifest_item,
+    retry_data_management_migration_job,
     sanitize_data_management_job_for_admin,
     sanitize_data_management_settings_for_admin,
     save_data_management_cosmos_editor_document,
@@ -38,6 +52,11 @@ from functions_data_management import (
     update_data_management_settings,
 )
 from swagger_wrapper import get_auth_security, swagger_route
+
+
+DATA_MANAGEMENT_HISTORY_VALIDATION_ERROR = (
+    "Data Management history filters or continuation token are invalid."
+)
 
 
 def _get_admin_context():
@@ -67,6 +86,20 @@ def _log_data_management_admin_action(action, description, additional_context=No
 def _get_cosmos_editor_payload():
     payload = request.get_json(silent=True) or {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _get_history_filters(list_kind):
+    filters = {
+        "status": request.args.get("status"),
+        "scheduled": request.args.get("scheduled"),
+        "created_from": request.args.get("created_from"),
+        "created_to": request.args.get("created_to"),
+    }
+    if list_kind == "jobs":
+        filters["operation"] = request.args.get("operation")
+    else:
+        filters["backup_type"] = request.args.get("backup_type")
+    return filters
 
 
 def _cosmos_editor_error_status(exc, default_status=400):
@@ -182,8 +215,12 @@ def register_route_backend_data_management(bp):
     def test_admin_data_management_target_cosmos():
         payload = request.get_json(silent=True) or {}
         settings_payload = payload.get("settings") if isinstance(payload.get("settings"), dict) else None
+        migration_plan = payload.get("migration_plan") if isinstance(payload.get("migration_plan"), dict) else None
         try:
-            result = test_target_cosmos_connection(settings=settings_payload)
+            result = test_target_cosmos_connection(
+                settings=settings_payload,
+                migration_plan=migration_plan,
+            )
         except Exception as exc:
             log_event(
                 "[DataManagement] Target Cosmos connection test failed.",
@@ -392,9 +429,24 @@ def register_route_backend_data_management(bp):
     @login_required
     @admin_required
     def list_admin_data_management_jobs():
-        limit = request.args.get("limit", 25)
-        jobs = [sanitize_data_management_job_for_admin(job) for job in get_data_management_jobs(limit=limit)]
-        return jsonify({"success": True, "jobs": jobs}), 200
+        page_size = request.args.get("page_size", request.args.get("limit", 25))
+        try:
+            page = get_data_management_jobs_page(
+                page_size=page_size,
+                continuation_token=request.args.get("continuation_token"),
+                filters=_get_history_filters("jobs"),
+            )
+        except DataManagementHistoryPaginationError:
+            return jsonify({
+                "success": False,
+                "error": DATA_MANAGEMENT_HISTORY_VALIDATION_ERROR,
+            }), 400
+        return jsonify({
+            "success": True,
+            "jobs": page["items"],
+            "pagination": page["pagination"],
+            "filters": page["filters"],
+        }), 200
 
     @bp.route("/api/admin/data-management/jobs/<job_id>", methods=["GET"])
     @swagger_route(security=get_auth_security())
@@ -406,13 +458,142 @@ def register_route_backend_data_management(bp):
             return jsonify({"success": False, "error": "Data Management job was not found."}), 404
         return jsonify({"success": True, **detail}), 200
 
+    @bp.route("/api/admin/data-management/jobs/<job_id>/progress", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def get_admin_data_management_job_progress(job_id):
+        progress = get_data_management_job_progress(job_id)
+        if not progress:
+            return jsonify({"success": False, "error": "Data Management job was not found."}), 404
+        return jsonify({"success": True, "job": progress}), 200
+
+    @bp.route("/api/admin/data-management/jobs/<job_id>/migration-manifest", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def download_admin_data_management_migration_manifest(job_id):
+        statuses = {
+            status.strip().lower()
+            for status in str(request.args.get("statuses") or "").split(",")
+            if status.strip()
+        }
+        try:
+            export = export_data_management_migration_manifest(job_id, statuses=statuses)
+        except DataManagementSettingsValidationError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 404
+        response = Response(
+            export["content"],
+            status=200,
+            content_type="application/x-ndjson; charset=utf-8",
+        )
+        suffix = "-failures" if statuses else ""
+        response.headers["Content-Disposition"] = (
+            f'attachment; filename="migration-{job_id}{suffix}.jsonl"'
+        )
+        response.headers["X-Migration-Manifest-Entries"] = str(export["entry_count"])
+        return response
+
+    @bp.route(
+        "/api/admin/data-management/jobs/<job_id>/migration-manifest/items/<item_ref>",
+        methods=["GET"],
+    )
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def resolve_admin_data_management_migration_manifest_item(job_id, item_ref):
+        try:
+            item = resolve_data_management_migration_manifest_item(job_id, item_ref)
+        except DataManagementSettingsValidationError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 404
+        return jsonify({"success": True, "item": item}), 200
+
+    @bp.route("/api/admin/data-management/jobs/<job_id>/retry", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def retry_admin_data_management_migration_job(job_id):
+        try:
+            existing_job = get_data_management_job_detail(job_id)
+            operation = (
+                (existing_job.get("job") or {}).get("operation")
+                if isinstance(existing_job, dict) else
+                ""
+            )
+            if operation == DATA_MANAGEMENT_OPERATION_BACKUP:
+                job = retry_data_management_backup_job(job_id)
+            else:
+                job = retry_data_management_migration_job(job_id)
+            submitted = submit_data_management_job(current_app._get_current_object(), job.get("id"))
+        except DataManagementSettingsValidationError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
+        except Exception as exc:
+            log_event(
+                "[DataManagement] Failed to retry durable job.",
+                {"job_id": job_id, "error": str(exc)},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"success": False, "error": "Data Management job retry could not be queued."}), 400
+
+        _log_data_management_admin_action(
+            "data_management_job_retry_queued",
+            "Queued a Data Management job retry from durable checkpoints.",
+            {"job_id": job.get("id"), "operation": job.get("operation"), "submitted": submitted},
+        )
+        public_job = sanitize_data_management_job_for_admin(job)
+        public_job["submitted_to_executor"] = submitted
+        return jsonify({"success": True, "job": public_job}), 202
+
+    @bp.route("/api/admin/data-management/jobs/<job_id>/cancel", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def cancel_admin_data_management_migration_job(job_id):
+        payload = request.get_json(silent=True) or {}
+        admin_user_id, admin_email = _get_admin_context()
+        try:
+            job = request_data_management_job_cancellation(
+                job_id,
+                requested_by=admin_user_id,
+                requested_by_email=admin_email,
+                reason=payload.get("reason"),
+            )
+        except DataManagementSettingsValidationError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
+        except Exception as exc:
+            log_event(
+                "[DataManagement] Failed to request Data Management job cancellation.",
+                {"job_id": job_id, "error": str(exc)},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"success": False, "error": "Data Management job cancellation could not be requested."}), 400
+
+        _log_data_management_admin_action(
+            "data_management_job_cancel_requested",
+            "Requested cancellation of a Data Management job.",
+            {"job_id": job.get("id"), "operation": job.get("operation"), "status": job.get("status")},
+        )
+        return jsonify({"success": True, "job": sanitize_data_management_job_for_admin(job)}), 202
+
     @bp.route("/api/admin/data-management/backups", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
     def list_admin_data_management_backups():
-        limit = request.args.get("limit", 100)
-        backup_summary = get_data_management_backup_summary(limit=limit)
+        page_size = request.args.get("page_size", request.args.get("limit", 25))
+        try:
+            backup_summary = get_data_management_backup_summary(
+                limit=page_size,
+                continuation_token=request.args.get("continuation_token"),
+                filters=_get_history_filters("backups"),
+            )
+        except DataManagementHistoryPaginationError:
+            return jsonify({
+                "success": False,
+                "error": DATA_MANAGEMENT_HISTORY_VALIDATION_ERROR,
+            }), 400
         return jsonify({"success": True, **backup_summary}), 200
 
     @bp.route("/api/admin/data-management/migration/catalog/<target_type>", methods=["GET"])
@@ -421,9 +602,15 @@ def register_route_backend_data_management(bp):
     @admin_required
     def get_admin_data_management_migration_catalog(target_type):
         search = request.args.get("search", "")
-        limit = request.args.get("limit", 50)
+        limit = request.args.get("page_size", request.args.get("limit", 25))
+        continuation_token = request.args.get("continuation_token", "")
         try:
-            catalog = get_data_management_migration_catalog(target_type, search_text=search, limit=limit)
+            catalog = get_data_management_migration_catalog(
+                target_type,
+                search_text=search,
+                limit=limit,
+                continuation_token=continuation_token,
+            )
         except DataManagementSettingsValidationError as exc:
             return jsonify({"success": False, "error": str(exc)}), 400
         return jsonify({"success": True, **catalog}), 200
@@ -436,9 +623,79 @@ def register_route_backend_data_management(bp):
         payload = request.get_json(silent=True) or {}
         try:
             summary = summarize_data_management_migration_plan(payload)
+            preview = None
+            if payload.get("include_inventory") is True:
+                preview = preview_data_management_migration_plan(
+                    get_data_management_settings(),
+                    payload,
+                )
         except DataManagementSettingsValidationError as exc:
             return jsonify({"success": False, "error": str(exc)}), 400
-        return jsonify({"success": True, "summary": summary}), 200
+        except Exception as exc:
+            log_event(
+                "[DataManagement] Migration inventory preview failed.",
+                {"error": str(exc)},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({
+                "success": False,
+                "error": "Migration inventory preview could not be completed.",
+            }), 400
+        return jsonify({"success": True, "summary": summary, "preview": preview}), 200
+
+    @bp.route("/api/admin/data-management/migration/review", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def review_admin_data_management_migration():
+        payload = request.get_json(silent=True) or {}
+        try:
+            review = review_data_management_migration(
+                settings=(
+                    payload.get("settings")
+                    if isinstance(payload.get("settings"), dict)
+                    else None
+                ),
+                migration_plan=(
+                    payload.get("migration_plan")
+                    if isinstance(payload.get("migration_plan"), dict)
+                    else None
+                ),
+            )
+            if review.get("ready") is True:
+                admin_user_id, _admin_email = _get_admin_context()
+                review.update(
+                    create_data_management_migration_review_authorization(
+                        admin_user_id,
+                        review.get("review_fingerprint"),
+                    )
+                )
+        except DataManagementSettingsValidationError as exc:
+            log_event(
+                "[DataManagement] Migration review validation failed.",
+                {"error_type": type(exc).__name__},
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
+            return jsonify({
+                "success": False,
+                "error": "Migration review input is invalid.",
+                "workflow_step": "review",
+            }), 400
+        except Exception as exc:
+            log_event(
+                "[DataManagement] Migration review failed.",
+                {"error_type": type(exc).__name__},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({
+                "success": False,
+                "error": "Migration review could not be completed.",
+                "workflow_step": "review",
+            }), 400
+        return jsonify({"success": True, "review": review}), 200
 
     @bp.route("/api/admin/data-management/jobs", methods=["POST"])
     @swagger_route(security=get_auth_security())
@@ -448,6 +705,7 @@ def register_route_backend_data_management(bp):
         payload = request.get_json(silent=True) or {}
         operation = str(payload.get("operation") or DATA_MANAGEMENT_OPERATION_DRY_RUN).strip()
         backup_type = payload.get("backup_type")
+        review_reservation = None
         if operation not in {
             DATA_MANAGEMENT_OPERATION_BACKUP,
             DATA_MANAGEMENT_OPERATION_RESTORE,
@@ -458,14 +716,101 @@ def register_route_backend_data_management(bp):
 
         admin_user_id, admin_email = _get_admin_context()
         try:
-            job = queue_data_management_job(
-                operation,
-                backup_type=backup_type,
-                requested_by=admin_user_id,
-                requested_by_email=admin_email,
-                options=payload.get("options") if isinstance(payload.get("options"), dict) else {},
+            job_options = (
+                dict(payload.get("options"))
+                if isinstance(payload.get("options"), dict)
+                else {}
             )
+            if operation == DATA_MANAGEMENT_OPERATION_MIGRATION:
+                provided_review_fingerprint = str(
+                    job_options.get("review_fingerprint") or ""
+                ).strip()
+                review_authorization_token = str(
+                    job_options.get("review_authorization_token") or ""
+                ).strip()
+                expected_review_fingerprint = (
+                    get_data_management_migration_review_fingerprint(
+                        migration_plan=(
+                            job_options.get("migration_plan")
+                            if isinstance(
+                                job_options.get("migration_plan"),
+                                dict,
+                            )
+                            else None
+                        ),
+                    )
+                )
+                if (
+                    not provided_review_fingerprint or
+                    not hmac.compare_digest(
+                        provided_review_fingerprint,
+                        expected_review_fingerprint,
+                    )
+                ):
+                    return jsonify({
+                        "success": False,
+                        "error": (
+                            "Migration inputs changed after preflight review. "
+                            "Run review again before execution."
+                        ),
+                        "workflow_step": "review",
+                    }), 409
+                try:
+                    review_reservation = (
+                        reserve_data_management_migration_review_authorization(
+                            review_authorization_token,
+                            admin_user_id,
+                            expected_review_fingerprint,
+                        )
+                    )
+                    job_options["review_reservation_token"] = (
+                        review_reservation["reservation_token"]
+                    )
+                except DataManagementSettingsValidationError as exc:
+                    log_event(
+                        "[DataManagement] Migration review reservation validation failed.",
+                        {"operation": operation, "error": str(exc)},
+                        level=logging.WARNING,
+                    )
+                    return jsonify({
+                        "success": False,
+                        "error": "Migration review authorization is invalid or expired. Run review again before execution.",
+                        "workflow_step": "review",
+                    }), 409
+            try:
+                job = queue_data_management_job(
+                    operation,
+                    backup_type=backup_type,
+                    requested_by=admin_user_id,
+                    requested_by_email=admin_email,
+                    options=job_options,
+                    occurrence_id=(
+                        review_reservation.get("job_id")
+                        if review_reservation
+                        else None
+                    ),
+                )
+            except Exception:
+                if review_reservation:
+                    release_data_management_migration_review_reservation(
+                        review_authorization_token,
+                        review_reservation["reservation_token"],
+                    )
+                raise
             submitted = submit_data_management_job(current_app._get_current_object(), job.get("id"))
+        except DataManagementSettingsValidationError as exc:
+            log_event(
+                "[DataManagement] Validation error while queuing data management job.",
+                {"operation": operation, "error": str(exc)},
+                level=logging.WARNING,
+            )
+            response = {
+                "success": False,
+                "error": "Data Management job request is invalid.",
+            }
+            if operation == DATA_MANAGEMENT_OPERATION_MIGRATION:
+                response["workflow_step"] = "confirm"
+            return jsonify(response), 400
         except Exception as exc:
             log_event(
                 "[DataManagement] Failed to queue data management job.",
