@@ -18,6 +18,7 @@ from functions_data_management import (
     DataManagementHistoryPaginationError,
     DataManagementSettingsValidationError,
     create_data_management_migration_review_authorization,
+    create_data_management_restore_review_authorization,
     export_data_management_migration_manifest,
     generate_data_management_encryption_key,
     get_data_management_cosmos_editor_containers,
@@ -28,6 +29,7 @@ from functions_data_management import (
     get_data_management_jobs_page,
     get_data_management_migration_catalog,
     get_data_management_migration_review_fingerprint,
+    get_data_management_restore_review_fingerprint,
     get_data_management_settings,
     log_data_management_cosmos_editor_activity,
     preview_data_management_migration_plan,
@@ -35,11 +37,15 @@ from functions_data_management import (
     query_data_management_cosmos_editor_documents,
     request_data_management_job_cancellation,
     release_data_management_migration_review_reservation,
+    release_data_management_restore_review_reservation,
     reserve_data_management_migration_review_authorization,
+    reserve_data_management_restore_review_authorization,
     review_data_management_migration,
+    review_data_management_restore,
     retry_data_management_backup_job,
     resolve_data_management_migration_manifest_item,
     retry_data_management_migration_job,
+    retry_data_management_restore_job,
     sanitize_data_management_job_for_admin,
     sanitize_data_management_settings_for_admin,
     save_data_management_cosmos_editor_document,
@@ -522,6 +528,8 @@ def register_route_backend_data_management(bp):
             )
             if operation == DATA_MANAGEMENT_OPERATION_BACKUP:
                 job = retry_data_management_backup_job(job_id)
+            elif operation == DATA_MANAGEMENT_OPERATION_RESTORE:
+                job = retry_data_management_restore_job(job_id)
             else:
                 job = retry_data_management_migration_job(job_id)
             submitted = submit_data_management_job(current_app._get_current_object(), job.get("id"))
@@ -697,6 +705,59 @@ def register_route_backend_data_management(bp):
             }), 400
         return jsonify({"success": True, "review": review}), 200
 
+    @bp.route("/api/admin/data-management/restore/review", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def review_admin_data_management_restore():
+        payload = request.get_json(silent=True) or {}
+        try:
+            review = review_data_management_restore(
+                settings=(
+                    payload.get("settings")
+                    if isinstance(payload.get("settings"), dict)
+                    else None
+                ),
+                restore_plan=(
+                    payload.get("restore_plan")
+                    if isinstance(payload.get("restore_plan"), dict)
+                    else None
+                ),
+            )
+            if review.get("ready") is True:
+                admin_user_id, _admin_email = _get_admin_context()
+                review.update(
+                    create_data_management_restore_review_authorization(
+                        admin_user_id,
+                        review.get("review_fingerprint"),
+                    )
+                )
+        except DataManagementSettingsValidationError as exc:
+            log_event(
+                "[DataManagement] Restore review validation failed.",
+                {"error_type": type(exc).__name__},
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
+            return jsonify({
+                "success": False,
+                "error": "Restore review input is invalid.",
+                "workflow_step": "review",
+            }), 400
+        except Exception as exc:
+            log_event(
+                "[DataManagement] Restore review failed.",
+                {"error_type": type(exc).__name__},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({
+                "success": False,
+                "error": "Restore review could not be completed.",
+                "workflow_step": "review",
+            }), 400
+        return jsonify({"success": True, "review": review}), 200
+
     @bp.route("/api/admin/data-management/jobs", methods=["POST"])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -706,6 +767,8 @@ def register_route_backend_data_management(bp):
         operation = str(payload.get("operation") or DATA_MANAGEMENT_OPERATION_DRY_RUN).strip()
         backup_type = payload.get("backup_type")
         review_reservation = None
+        review_authorization_token = ""
+        review_reservation_release = None
         if operation not in {
             DATA_MANAGEMENT_OPERATION_BACKUP,
             DATA_MANAGEMENT_OPERATION_RESTORE,
@@ -766,6 +829,7 @@ def register_route_backend_data_management(bp):
                     job_options["review_reservation_token"] = (
                         review_reservation["reservation_token"]
                     )
+                    review_reservation_release = release_data_management_migration_review_reservation
                 except DataManagementSettingsValidationError as exc:
                     log_event(
                         "[DataManagement] Migration review reservation validation failed.",
@@ -775,6 +839,61 @@ def register_route_backend_data_management(bp):
                     return jsonify({
                         "success": False,
                         "error": "Migration review authorization is invalid or expired. Run review again before execution.",
+                        "workflow_step": "review",
+                    }), 409
+            elif operation == DATA_MANAGEMENT_OPERATION_RESTORE:
+                provided_review_fingerprint = str(
+                    job_options.get("review_fingerprint") or ""
+                ).strip()
+                review_authorization_token = str(
+                    job_options.get("review_authorization_token") or ""
+                ).strip()
+                restore_plan = (
+                    job_options.get("restore_plan")
+                    if isinstance(job_options.get("restore_plan"), dict)
+                    else None
+                )
+                expected_review_fingerprint = (
+                    get_data_management_restore_review_fingerprint(
+                        restore_plan=restore_plan,
+                    )
+                )
+                if (
+                    not provided_review_fingerprint or
+                    not hmac.compare_digest(
+                        provided_review_fingerprint,
+                        expected_review_fingerprint,
+                    )
+                ):
+                    return jsonify({
+                        "success": False,
+                        "error": (
+                            "Restore inputs changed after preflight review. "
+                            "Run review again before execution."
+                        ),
+                        "workflow_step": "review",
+                    }), 409
+                try:
+                    review_reservation = (
+                        reserve_data_management_restore_review_authorization(
+                            review_authorization_token,
+                            admin_user_id,
+                            expected_review_fingerprint,
+                        )
+                    )
+                    job_options["review_reservation_token"] = (
+                        review_reservation["reservation_token"]
+                    )
+                    review_reservation_release = release_data_management_restore_review_reservation
+                except DataManagementSettingsValidationError as exc:
+                    log_event(
+                        "[DataManagement] Restore review reservation validation failed.",
+                        {"operation": operation, "error": str(exc)},
+                        level=logging.WARNING,
+                    )
+                    return jsonify({
+                        "success": False,
+                        "error": "Restore review authorization is invalid or expired. Run review again before execution.",
                         "workflow_step": "review",
                     }), 409
             try:
@@ -791,8 +910,8 @@ def register_route_backend_data_management(bp):
                     ),
                 )
             except Exception:
-                if review_reservation:
-                    release_data_management_migration_review_reservation(
+                if review_reservation and review_reservation_release:
+                    review_reservation_release(
                         review_authorization_token,
                         review_reservation["reservation_token"],
                     )
@@ -808,7 +927,7 @@ def register_route_backend_data_management(bp):
                 "success": False,
                 "error": "Data Management job request is invalid.",
             }
-            if operation == DATA_MANAGEMENT_OPERATION_MIGRATION:
+            if operation in {DATA_MANAGEMENT_OPERATION_MIGRATION, DATA_MANAGEMENT_OPERATION_RESTORE}:
                 response["workflow_step"] = "confirm"
             return jsonify(response), 400
         except Exception as exc:

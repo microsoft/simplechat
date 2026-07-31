@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.106)**
+
+#### New Features
+
+*   **Data Management Backup Restore Workflow**
+    *   Added an admin-only restore workflow for completed Data Management backups, with manifest preflight, create-only default policy, explicit overwrite confirmation, durable restore jobs, cancellation/retry support, and sanitized progress in Job History.
+    *   Restore supports configured target Cosmos DB, AI Search, and Enhanced Citation blob targets while preserving secret-safe review and job responses.
+    *   (Ref: Closes #1091, `functions_data_management.py`, `functions_data_management_restore_state.py`, `route_backend_data_management.py`, `admin_settings.html`, `admin_data_management.js`, `DATA_MANAGEMENT_RESTORE.md`)
+
 ### **(v0.250.105)**
 
 #### User Interface Enhancements
