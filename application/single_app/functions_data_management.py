@@ -208,6 +208,17 @@ DATA_MANAGEMENT_BACKUP_CAPACITY_FAILURE_POLICIES = {
     DATA_MANAGEMENT_BACKUP_CAPACITY_FAILURE_POLICY_FAIL,
     DATA_MANAGEMENT_BACKUP_CAPACITY_FAILURE_POLICY_CONTINUE,
 }
+DATA_MANAGEMENT_RETENTION_DEFAULT_VALUE = 30
+DATA_MANAGEMENT_RETENTION_DEFAULT_UNIT = "days"
+DATA_MANAGEMENT_RETENTION_MAX_DAYS = 3650
+DATA_MANAGEMENT_RETENTION_UNIT_DAYS = {
+    "days": 1,
+    "weeks": 7,
+    "months": 30,
+    "years": 365,
+}
+DATA_MANAGEMENT_BACKUP_RETENTION_CLEANUP_LIMIT = 25
+DATA_MANAGEMENT_BACKUP_RETENTION_CLEANUP_INTERVAL_SECONDS = 23 * 3600
 DATA_MANAGEMENT_SEARCH_KEYSET_PAGE_SIZE = 1000
 DATA_MANAGEMENT_SEARCH_SCOPE_FILTER_BATCH_SIZE = 100
 DATA_MANAGEMENT_SEARCH_BACKUP_PAGE_SIZE = 1000
@@ -281,7 +292,11 @@ DATA_MANAGEMENT_DEFAULT_SETTINGS = {
     "full_backup_frequency": "weekly",
     "scheduled_time_utc": DATA_MANAGEMENT_DEFAULT_TIME_UTC,
     "partial_backups_enabled": True,
-    "retention_days": 30,
+    "retention_value": DATA_MANAGEMENT_RETENTION_DEFAULT_VALUE,
+    "retention_unit": DATA_MANAGEMENT_RETENTION_DEFAULT_UNIT,
+    "retention_days": DATA_MANAGEMENT_RETENTION_DEFAULT_VALUE,
+    "retention_keep_latest_full": True,
+    "backup_retention_cleanup_last_run_at": None,
     "include_cosmos": True,
     "include_ai_search": True,
     "include_source_blobs": True,
@@ -670,6 +685,65 @@ def calculate_next_data_management_run(settings, backup_type=DATA_MANAGEMENT_BAC
     return scheduled_earliest
 
 
+def _max_retention_value_for_unit(retention_unit):
+    unit_days = DATA_MANAGEMENT_RETENTION_UNIT_DAYS.get(
+        retention_unit,
+        DATA_MANAGEMENT_RETENTION_UNIT_DAYS[DATA_MANAGEMENT_RETENTION_DEFAULT_UNIT],
+    )
+    return max(1, DATA_MANAGEMENT_RETENTION_MAX_DAYS // unit_days)
+
+
+def _normalize_data_management_retention_settings(source, payload=None, existing_settings=None):
+    """Normalize retention value/unit while preserving legacy retention_days callers."""
+    payload_has_period = isinstance(payload, dict) and (
+        "retention_value" in payload or "retention_unit" in payload
+    )
+    payload_has_legacy_days = isinstance(payload, dict) and (
+        "retention_days" in payload and not payload_has_period
+    )
+    existing_has_period = isinstance(existing_settings, dict) and (
+        "retention_value" in existing_settings or "retention_unit" in existing_settings
+    )
+    use_period_fields = payload_has_period or (existing_has_period and not payload_has_legacy_days)
+
+    if use_period_fields:
+        retention_unit = _safe_text(
+            source.get("retention_unit"),
+            DATA_MANAGEMENT_RETENTION_DEFAULT_UNIT,
+        ).lower()
+        if retention_unit not in DATA_MANAGEMENT_RETENTION_UNIT_DAYS:
+            retention_unit = DATA_MANAGEMENT_RETENTION_DEFAULT_UNIT
+        retention_value = _safe_int(
+            source.get("retention_value"),
+            default=DATA_MANAGEMENT_RETENTION_DEFAULT_VALUE,
+            minimum=1,
+            maximum=_max_retention_value_for_unit(retention_unit),
+        )
+        source["retention_unit"] = retention_unit
+        source["retention_value"] = retention_value
+        source["retention_days"] = retention_value * DATA_MANAGEMENT_RETENTION_UNIT_DAYS[retention_unit]
+    else:
+        retention_days = _safe_int(
+            source.get("retention_days"),
+            default=DATA_MANAGEMENT_RETENTION_DEFAULT_VALUE,
+            minimum=1,
+            maximum=DATA_MANAGEMENT_RETENTION_MAX_DAYS,
+        )
+        source["retention_unit"] = DATA_MANAGEMENT_RETENTION_DEFAULT_UNIT
+        source["retention_value"] = retention_days
+        source["retention_days"] = retention_days
+
+    source["retention_keep_latest_full"] = _safe_bool(
+        source.get("retention_keep_latest_full"),
+        True,
+    )
+    parsed_cleanup_run = _parse_iso_datetime(source.get("backup_retention_cleanup_last_run_at"))
+    source["backup_retention_cleanup_last_run_at"] = (
+        parsed_cleanup_run.isoformat() if parsed_cleanup_run else None
+    )
+    return source
+
+
 def normalize_data_management_settings(payload=None, existing_settings=None, current_time=None, application_settings=None):
     feature_context = _get_data_management_feature_context(application_settings)
     source = copy.deepcopy(DATA_MANAGEMENT_DEFAULT_SETTINGS)
@@ -729,7 +803,11 @@ def normalize_data_management_settings(payload=None, existing_settings=None, cur
         source["full_backup_frequency"] = DATA_MANAGEMENT_DEFAULT_SETTINGS["full_backup_frequency"]
     source["scheduled_time_utc"] = normalize_data_management_time(source.get("scheduled_time_utc"))
     source["partial_backups_enabled"] = _safe_bool(source.get("partial_backups_enabled"), True)
-    source["retention_days"] = _safe_int(source.get("retention_days"), default=30, minimum=1, maximum=3650)
+    _normalize_data_management_retention_settings(
+        source,
+        payload=payload,
+        existing_settings=existing_settings,
+    )
     source["include_cosmos"] = _safe_bool(source.get("include_cosmos"), True)
     source["include_ai_search"] = _safe_bool(source.get("include_ai_search"), True)
     source["include_source_blobs"] = _safe_bool(source.get("include_source_blobs"), feature_context["enhanced_citations_enabled"])
@@ -9189,6 +9267,7 @@ def sanitize_data_management_backup_for_admin(job):
         "warning_count": len(public_job.get("warnings") or []) + totals.get("warning_count", 0),
         "encrypted": any(bool(artifact.get("encrypted")) for artifact in artifacts if isinstance(artifact, dict)),
         "last_message": public_job.get("last_message"),
+        "can_delete": public_job.get("status") in DATA_MANAGEMENT_TERMINAL_STATUSES,
     }
 
 
@@ -9307,6 +9386,506 @@ def get_data_management_backup_summary(
         "pagination": page["pagination"],
         "filters": page["filters"],
     }
+
+
+def calculate_data_management_backup_retention_cutoff(settings, current_time=None):
+    """Return the UTC cutoff before which terminal backups are retention candidates."""
+    normalized_settings = normalize_data_management_settings(existing_settings=settings or {})
+    now = current_time if isinstance(current_time, datetime) else _now_utc()
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    return now.astimezone(timezone.utc) - timedelta(days=normalized_settings["retention_days"])
+
+
+def _should_run_data_management_backup_retention_cleanup(settings, current_time=None):
+    if not _safe_bool((settings or {}).get("enabled"), False):
+        return False
+    now = current_time if isinstance(current_time, datetime) else _now_utc()
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    last_run = _parse_iso_datetime((settings or {}).get("backup_retention_cleanup_last_run_at"))
+    if not last_run:
+        return True
+    return (
+        now.astimezone(timezone.utc) - last_run
+    ).total_seconds() >= DATA_MANAGEMENT_BACKUP_RETENTION_CLEANUP_INTERVAL_SECONDS
+
+
+def _backup_cleanup_not_found(error):
+    status_code = getattr(error, "status_code", None)
+    if status_code is None:
+        status_code = getattr(getattr(error, "response", None), "status_code", None)
+    return (
+        status_code == 404 or
+        isinstance(error, (CosmosResourceNotFoundError, ResourceNotFoundError))
+    )
+
+
+def _get_existing_backup_container_client(settings):
+    validate_data_management_storage_is_dedicated(settings)
+    blob_service_client = build_backup_storage_client(settings)
+    return blob_service_client.get_container_client(settings.get("backup_storage_container_name"))
+
+
+def _backup_cleanup_allowed_prefix(job, settings):
+    backup_plan = job.get("backup_plan") if isinstance(job, dict) else {}
+    allowed_prefix = _safe_text(
+        (backup_plan or {}).get("backup_storage_path_prefix") or
+        (settings or {}).get("backup_storage_path_prefix"),
+        "simplechat-backups",
+    ).strip("/")
+    if not allowed_prefix:
+        raise DataManagementSettingsValidationError("Backup storage path prefix is required before cleanup.")
+    return allowed_prefix
+
+
+def _normalize_backup_cleanup_blob_target(value, allowed_prefix, target_kind):
+    normalized = _safe_text(value).strip("/")
+    if not normalized:
+        return ""
+    if normalized == allowed_prefix and target_kind == "prefix":
+        raise DataManagementSettingsValidationError(
+            "Backup cleanup refused to delete the entire configured backup prefix."
+        )
+    if normalized == allowed_prefix or normalized.startswith(f"{allowed_prefix}/"):
+        return normalized
+    raise DataManagementSettingsValidationError(
+        "Backup cleanup refused an artifact path outside the configured backup prefix."
+    )
+
+
+def _collect_backup_artifact_delete_targets(job, settings):
+    result = job.get("result") if isinstance((job or {}).get("result"), dict) else {}
+    allowed_prefix = _backup_cleanup_allowed_prefix(job, settings)
+    prefixes = set()
+    blob_names = set()
+
+    base_prefix = _normalize_backup_cleanup_blob_target(
+        result.get("base_prefix"),
+        allowed_prefix,
+        "prefix",
+    )
+    if base_prefix:
+        prefixes.add(f"{base_prefix.rstrip('/')}/")
+
+    def collect(value):
+        if isinstance(value, dict):
+            for field_name in ("manifest_path", "artifact_path", "path"):
+                blob_name = _normalize_backup_cleanup_blob_target(
+                    value.get(field_name),
+                    allowed_prefix,
+                    "blob",
+                )
+                if blob_name:
+                    blob_names.add(blob_name)
+            prefix = _normalize_backup_cleanup_blob_target(
+                value.get("prefix"),
+                allowed_prefix,
+                "prefix",
+            )
+            if prefix:
+                prefixes.add(f"{prefix.rstrip('/')}/")
+            for nested_value in value.values():
+                collect(nested_value)
+        elif isinstance(value, list):
+            for nested_value in value:
+                collect(nested_value)
+
+    collect(result)
+    return prefixes, blob_names
+
+
+def _get_backup_blob_name(blob_item):
+    if isinstance(blob_item, dict):
+        return _safe_text(blob_item.get("name"))
+    return _safe_text(getattr(blob_item, "name", blob_item))
+
+
+def _delete_backup_blob_artifacts(job, settings):
+    prefixes, blob_names = _collect_backup_artifact_delete_targets(job, settings)
+    summary = {
+        "prefix_count": len(prefixes),
+        "blob_name_count": len(blob_names),
+        "deleted_blob_count": 0,
+        "missing_blob_count": 0,
+    }
+    if not prefixes and not blob_names:
+        return summary
+
+    container_client = _get_existing_backup_container_client(settings)
+    deleted_blob_names = set()
+
+    for prefix in sorted(prefixes):
+        for blob_item in container_client.list_blobs(name_starts_with=prefix):
+            blob_name = _get_backup_blob_name(blob_item)
+            if not blob_name or blob_name in deleted_blob_names:
+                continue
+            try:
+                container_client.delete_blob(blob_name)
+                deleted_blob_names.add(blob_name)
+                summary["deleted_blob_count"] += 1
+            except Exception as exc:
+                if _backup_cleanup_not_found(exc):
+                    summary["missing_blob_count"] += 1
+                    continue
+                raise
+
+    for blob_name in sorted(blob_names):
+        if blob_name in deleted_blob_names:
+            continue
+        try:
+            container_client.delete_blob(blob_name)
+            deleted_blob_names.add(blob_name)
+            summary["deleted_blob_count"] += 1
+        except Exception as exc:
+            if _backup_cleanup_not_found(exc):
+                summary["missing_blob_count"] += 1
+                continue
+            raise
+
+    return summary
+
+
+def _delete_backup_latest_item_states(job):
+    safe_job_id = _safe_text((job or {}).get("id"))
+    if not safe_job_id:
+        return 0
+    container = _get_data_management_backup_item_states_container()
+    query = "SELECT * FROM c WHERE c.type = @type AND c.job_id = @job_id"
+    parameters = [
+        {"name": "@type", "value": DATA_MANAGEMENT_BACKUP_LATEST_ITEM_STATE_TYPE},
+        {"name": "@job_id", "value": safe_job_id},
+    ]
+    states = list(container.query_items(
+        query=query,
+        parameters=parameters,
+        enable_cross_partition_query=True,
+    ))
+    deleted_count = 0
+    for state in states:
+        if _safe_text((state or {}).get("job_id")) != safe_job_id:
+            continue
+        state_id = _safe_text((state or {}).get("id"))
+        source_scope = _safe_text((state or {}).get("source_scope")) or _get_backup_source_scope(job)
+        if not state_id or not source_scope:
+            continue
+        try:
+            container.delete_item(item=state_id, partition_key=source_scope)
+            deleted_count += 1
+        except Exception as exc:
+            if _backup_cleanup_not_found(exc):
+                continue
+            raise
+    return deleted_count
+
+
+def _delete_data_management_job_items(job_id):
+    safe_job_id = _safe_text(job_id)
+    if not safe_job_id:
+        return 0
+    query = "SELECT * FROM c WHERE c.job_id = @job_id"
+    parameters = [{"name": "@job_id", "value": safe_job_id}]
+    items = list(cosmos_data_management_job_items_container.query_items(
+        query=query,
+        parameters=parameters,
+        partition_key=safe_job_id,
+        max_item_count=500,
+    ))
+    deleted_count = 0
+    for item in items:
+        if _safe_text((item or {}).get("job_id")) != safe_job_id:
+            continue
+        item_id = _safe_text((item or {}).get("id"))
+        if not item_id:
+            continue
+        try:
+            cosmos_data_management_job_items_container.delete_item(
+                item=item_id,
+                partition_key=safe_job_id,
+            )
+            deleted_count += 1
+        except Exception as exc:
+            if _backup_cleanup_not_found(exc):
+                continue
+            raise
+    return deleted_count
+
+
+def _delete_data_management_job_record(job):
+    safe_job_id = _safe_text((job or {}).get("id"))
+    if not safe_job_id:
+        return False
+    delete_kwargs = {}
+    if (job or {}).get("_etag"):
+        delete_kwargs.update({
+            "etag": job.get("_etag"),
+            "match_condition": MatchConditions.IfNotModified,
+        })
+    try:
+        cosmos_data_management_jobs_container.delete_item(
+            item=safe_job_id,
+            partition_key=safe_job_id,
+            **delete_kwargs,
+        )
+        return True
+    except Exception as exc:
+        if _backup_cleanup_not_found(exc):
+            return False
+        raise
+
+
+def _assert_backup_cleanup_allowed(job):
+    if not isinstance(job, dict) or job.get("operation") != DATA_MANAGEMENT_OPERATION_BACKUP:
+        raise DataManagementSettingsValidationError("Data Management backup was not found.")
+    if job.get("status") not in DATA_MANAGEMENT_TERMINAL_STATUSES:
+        raise DataManagementSettingsValidationError(
+            "Only completed, failed, or canceled backup jobs can be deleted. Cancel active backups first."
+        )
+
+
+def _delete_data_management_backup_job(
+    job,
+    settings,
+    requested_by=None,
+    requested_by_email=None,
+    reason="manual",
+):
+    _assert_backup_cleanup_allowed(job)
+    safe_job_id = _safe_text(job.get("id"))
+    cleanup_job = copy.deepcopy(job)
+    cleanup_job["requested_by"] = _safe_text(requested_by) or _safe_text(job.get("requested_by")) or "system"
+    cleanup_job["requested_by_email"] = (
+        _safe_text(requested_by_email) or
+        _safe_text(job.get("requested_by_email")) or
+        "system"
+    )
+    deleted_at = _now_iso()
+    blob_summary = _delete_backup_blob_artifacts(job, settings)
+    latest_state_deleted_count = _delete_backup_latest_item_states(job)
+    job_item_deleted_count = _delete_data_management_job_items(safe_job_id)
+    job_deleted = _delete_data_management_job_record(job)
+    cleanup_summary = {
+        "job_id": safe_job_id,
+        "backup_type": job.get("backup_type"),
+        "status": job.get("status"),
+        "deleted_at": deleted_at,
+        "reason": _safe_text(reason) or "manual",
+        "job_deleted": job_deleted,
+        "job_item_deleted_count": job_item_deleted_count,
+        "latest_item_state_deleted_count": latest_state_deleted_count,
+        **blob_summary,
+    }
+    _log_data_management_activity(
+        cleanup_job,
+        "data_management_backup_deleted",
+        "success",
+        "Deleted Data Management backup artifacts and metadata.",
+        details=cleanup_summary,
+    )
+    log_event(
+        "[DataManagement] Backup cleanup completed.",
+        cleanup_summary,
+        level=logging.INFO,
+    )
+    return cleanup_summary
+
+
+def delete_data_management_backup(
+    backup_id,
+    requested_by=None,
+    requested_by_email=None,
+    reason="manual",
+    settings=None,
+):
+    safe_backup_id = _safe_text(backup_id)
+    if not safe_backup_id:
+        raise DataManagementSettingsValidationError("Backup id is required.")
+    job = get_data_management_job(safe_backup_id)
+    if not job:
+        raise DataManagementSettingsValidationError("Data Management backup was not found.")
+    cleanup_settings = normalize_data_management_settings(
+        existing_settings=settings or get_data_management_settings()
+    )
+    return _delete_data_management_backup_job(
+        job,
+        cleanup_settings,
+        requested_by=requested_by,
+        requested_by_email=requested_by_email,
+        reason=reason,
+    )
+
+
+def _get_latest_successful_full_backup_id():
+    query = (
+        "SELECT TOP 1 * FROM c WHERE c.type = @type AND c.operation = @operation "
+        "AND c.backup_type = @backup_type "
+        "AND (c.status = @completed OR c.status = @completed_with_warnings) "
+        "ORDER BY c.created_at DESC, c.id DESC"
+    )
+    parameters = [
+        {"name": "@type", "value": DATA_MANAGEMENT_JOB_TYPE},
+        {"name": "@operation", "value": DATA_MANAGEMENT_OPERATION_BACKUP},
+        {"name": "@backup_type", "value": DATA_MANAGEMENT_BACKUP_FULL},
+        {"name": "@completed", "value": DATA_MANAGEMENT_STATUS_COMPLETED},
+        {
+            "name": "@completed_with_warnings",
+            "value": DATA_MANAGEMENT_STATUS_COMPLETED_WITH_WARNINGS,
+        },
+    ]
+    jobs = list(cosmos_data_management_jobs_container.query_items(
+        query=query,
+        parameters=parameters,
+        enable_cross_partition_query=True,
+        max_item_count=1,
+    ))
+    for job in jobs:
+        if (
+            isinstance(job, dict) and
+            job.get("operation") == DATA_MANAGEMENT_OPERATION_BACKUP and
+            job.get("backup_type") == DATA_MANAGEMENT_BACKUP_FULL and
+            job.get("status") in {
+                DATA_MANAGEMENT_STATUS_COMPLETED,
+                DATA_MANAGEMENT_STATUS_COMPLETED_WITH_WARNINGS,
+            }
+        ):
+            return _safe_text(job.get("id"))
+    return ""
+
+
+def _get_backup_retention_candidates(cutoff_at, protected_backup_id="", limit=DATA_MANAGEMENT_BACKUP_RETENTION_CLEANUP_LIMIT):
+    safe_limit = _safe_int(
+        limit,
+        default=DATA_MANAGEMENT_BACKUP_RETENTION_CLEANUP_LIMIT,
+        minimum=1,
+        maximum=100,
+    )
+    cutoff_iso = cutoff_at.isoformat()
+    query = (
+        "SELECT TOP @limit * FROM c WHERE c.type = @type AND c.operation = @operation "
+        "AND c.created_at < @cutoff_at ORDER BY c.created_at ASC, c.id ASC"
+    )
+    parameters = [
+        {"name": "@limit", "value": safe_limit * 2},
+        {"name": "@type", "value": DATA_MANAGEMENT_JOB_TYPE},
+        {"name": "@operation", "value": DATA_MANAGEMENT_OPERATION_BACKUP},
+        {"name": "@cutoff_at", "value": cutoff_iso},
+    ]
+    jobs = list(cosmos_data_management_jobs_container.query_items(
+        query=query,
+        parameters=parameters,
+        enable_cross_partition_query=True,
+        max_item_count=safe_limit * 2,
+    ))
+    candidates = []
+    for job in jobs:
+        if not isinstance(job, dict):
+            continue
+        if job.get("operation") != DATA_MANAGEMENT_OPERATION_BACKUP:
+            continue
+        if _safe_text(job.get("id")) == _safe_text(protected_backup_id):
+            continue
+        if job.get("status") not in DATA_MANAGEMENT_TERMINAL_STATUSES:
+            continue
+        completed_or_created_at = _parse_iso_datetime(
+            job.get("completed_at") or job.get("created_at")
+        )
+        if not completed_or_created_at or completed_or_created_at >= cutoff_at:
+            continue
+        candidates.append(job)
+        if len(candidates) >= safe_limit:
+            break
+    return candidates
+
+
+def _record_backup_retention_cleanup_run(settings, current_time):
+    updated_settings = copy.deepcopy(settings or get_data_management_settings())
+    updated_settings["backup_retention_cleanup_last_run_at"] = current_time.isoformat()
+    updated_settings["last_settings_update_at"] = _now_iso()
+    return cosmos_settings_container.upsert_item(
+        normalize_data_management_settings(existing_settings=updated_settings)
+    )
+
+
+def cleanup_expired_data_management_backups(
+    settings=None,
+    current_time=None,
+    limit=DATA_MANAGEMENT_BACKUP_RETENTION_CLEANUP_LIMIT,
+    requested_by="system",
+    requested_by_email="system",
+    manual_execution=False,
+):
+    cleanup_settings = normalize_data_management_settings(
+        existing_settings=settings or get_data_management_settings()
+    )
+    now = current_time if isinstance(current_time, datetime) else _now_utc()
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    now = now.astimezone(timezone.utc)
+    cutoff_at = calculate_data_management_backup_retention_cutoff(
+        cleanup_settings,
+        current_time=now,
+    )
+    protected_backup_id = (
+        _get_latest_successful_full_backup_id()
+        if cleanup_settings.get("retention_keep_latest_full") else
+        ""
+    )
+    candidates = _get_backup_retention_candidates(
+        cutoff_at,
+        protected_backup_id=protected_backup_id,
+        limit=limit,
+    )
+    result = {
+        "success": True,
+        "manual_execution": bool(manual_execution),
+        "cutoff_at": cutoff_at.isoformat(),
+        "retention_days": cleanup_settings.get("retention_days"),
+        "retention_value": cleanup_settings.get("retention_value"),
+        "retention_unit": cleanup_settings.get("retention_unit"),
+        "protected_latest_full_backup_id": protected_backup_id,
+        "candidate_count": len(candidates),
+        "deleted_count": 0,
+        "deleted_backups": [],
+        "errors": [],
+    }
+    for job in candidates:
+        try:
+            deletion = _delete_data_management_backup_job(
+                job,
+                cleanup_settings,
+                requested_by=requested_by,
+                requested_by_email=requested_by_email,
+                reason="retention",
+            )
+            result["deleted_backups"].append(deletion)
+            result["deleted_count"] += 1
+        except Exception as exc:
+            error = {
+                "job_id": _safe_text(job.get("id")),
+                "error": _sanitize_data_management_backup_text(str(exc)),
+            }
+            result["errors"].append(error)
+            log_event(
+                "[DataManagement] Backup retention cleanup failed for one backup.",
+                error,
+                level=logging.WARNING,
+            )
+
+    result["success"] = not result["errors"]
+    _record_backup_retention_cleanup_run(cleanup_settings, now)
+    log_event(
+        "[DataManagement] Backup retention cleanup completed.",
+        {
+            "success": result["success"],
+            "manual_execution": result["manual_execution"],
+            "cutoff_at": result["cutoff_at"],
+            "candidate_count": result["candidate_count"],
+            "deleted_count": result["deleted_count"],
+            "error_count": len(result["errors"]),
+        },
+        level=logging.INFO if result["success"] else logging.WARNING,
+    )
+    return result
 
 
 def _get_migration_catalog_definition(target_type):
@@ -16388,6 +16967,24 @@ def check_due_data_management_jobs_once(app=None):
     )
     if not settings.get("enabled"):
         return recovery_results
+
+    if _should_run_data_management_backup_retention_cleanup(settings, current_time):
+        try:
+            cleanup_expired_data_management_backups(
+                settings=settings,
+                current_time=current_time,
+                requested_by="system",
+                requested_by_email="system",
+                manual_execution=False,
+            )
+            settings = get_data_management_settings()
+        except Exception as exc:
+            log_event(
+                "[DataManagement] Scheduled backup retention cleanup failed.",
+                {"error": str(exc)},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
 
     queued_jobs = []
     for backup_type, next_key in (

@@ -17,7 +17,9 @@ from functions_data_management import (
     DataManagementCosmosEditorError,
     DataManagementHistoryPaginationError,
     DataManagementSettingsValidationError,
+    cleanup_expired_data_management_backups,
     create_data_management_migration_review_authorization,
+    delete_data_management_backup,
     export_data_management_migration_manifest,
     generate_data_management_encryption_key,
     get_data_management_cosmos_editor_containers,
@@ -595,6 +597,84 @@ def register_route_backend_data_management(bp):
                 "error": DATA_MANAGEMENT_HISTORY_VALIDATION_ERROR,
             }), 400
         return jsonify({"success": True, **backup_summary}), 200
+
+    @bp.route("/api/admin/data-management/backups/retention/cleanup", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def cleanup_admin_data_management_backups():
+        admin_user_id, admin_email = _get_admin_context()
+        try:
+            cleanup_result = cleanup_expired_data_management_backups(
+                requested_by=admin_user_id,
+                requested_by_email=admin_email,
+                manual_execution=True,
+            )
+        except DataManagementSettingsValidationError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
+        except Exception as exc:
+            log_event(
+                "[DataManagement] Manual backup retention cleanup failed.",
+                {"error": str(exc)},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"success": False, "error": "Backup retention cleanup could not be completed."}), 400
+
+        _log_data_management_admin_action(
+            "data_management_backup_retention_cleanup",
+            "Ran Data Management backup retention cleanup.",
+            {
+                "deleted_count": cleanup_result.get("deleted_count", 0),
+                "candidate_count": cleanup_result.get("candidate_count", 0),
+                "error_count": len(cleanup_result.get("errors") or []),
+            },
+        )
+        if cleanup_result.get("success") is False:
+            return jsonify({
+                "success": False,
+                "error": "Backup retention cleanup completed with errors.",
+                "cleanup": cleanup_result,
+            }), 400
+        return jsonify({"success": True, "cleanup": cleanup_result}), 200
+
+    @bp.route("/api/admin/data-management/backups/<backup_id>", methods=["DELETE"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def delete_admin_data_management_backup(backup_id):
+        payload = request.get_json(silent=True) or {}
+        admin_user_id, admin_email = _get_admin_context()
+        try:
+            cleanup_result = delete_data_management_backup(
+                backup_id,
+                requested_by=admin_user_id,
+                requested_by_email=admin_email,
+                reason=payload.get("reason") if isinstance(payload, dict) else "manual",
+            )
+        except DataManagementSettingsValidationError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
+        except Exception as exc:
+            log_event(
+                "[DataManagement] Backup deletion failed.",
+                {"backup_id": backup_id, "error": str(exc)},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"success": False, "error": "Backup could not be deleted."}), 400
+
+        _log_data_management_admin_action(
+            "data_management_backup_deleted",
+            "Deleted a Data Management backup.",
+            {
+                "job_id": cleanup_result.get("job_id"),
+                "backup_type": cleanup_result.get("backup_type"),
+                "deleted_blob_count": cleanup_result.get("deleted_blob_count", 0),
+                "job_item_deleted_count": cleanup_result.get("job_item_deleted_count", 0),
+                "latest_item_state_deleted_count": cleanup_result.get("latest_item_state_deleted_count", 0),
+            },
+        )
+        return jsonify({"success": True, "cleanup": cleanup_result}), 200
 
     @bp.route("/api/admin/data-management/migration/catalog/<target_type>", methods=["GET"])
     @swagger_route(security=get_auth_security())
