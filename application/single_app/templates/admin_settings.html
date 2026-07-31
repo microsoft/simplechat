@@ -5810,299 +5810,583 @@
                     </div>
                 </div>
 
-                <div class="card p-4 mb-4 border-warning shadow-sm" id="data-management-migration-section">
-                    <div class="d-flex align-items-center mb-3">
-                        <div class="bg-warning text-dark rounded-circle p-3 me-3" style="width: 50px; height: 50px; display: flex; align-items: center; justify-content: center;">
-                            <i class="bi bi-arrow-left-right fs-4"></i>
-                        </div>
+                <!--
+                    THESIS: Migration is an evidence-gated operation, not a long settings form; this flow refuses the three-column picker wall.
+                    OWN-WORLD: Restrained Bootstrap admin surfaces, slate neutrals, one blue action accent, and semantic amber/red/green states.
+                    STORY: Configure a destination, define exhaustive scope, choose transfer behavior, prove readiness, confirm risk, then operate the durable job.
+                    FIRST VIEWPORT: A compact six-step rail sits above one focused work area with the current task, evidence, and one next action.
+                    FORM: Established-world extension, ranked first as a control-room checkpoint flow; staging is one focused panel at a time.
+                -->
+                <section class="card p-0 mb-4 shadow-sm migration-workflow" id="data-management-migration-section" aria-labelledby="data-management-migration-title">
+                    <header class="migration-workflow-header">
                         <div>
-                            <h4 class="mb-1">Migration</h4>
-                            <p class="text-muted mb-0 small">Use migration when moving SimpleChat data into another SimpleChat environment, rehearsing a cutover, or preparing a controlled environment transfer.</p>
+                            <h4 class="mb-1" id="data-management-migration-title">
+                                <i class="bi bi-arrow-left-right me-2" aria-hidden="true"></i>Migration
+                            </h4>
+                            <p class="mb-0">Move SimpleChat data through a reviewed, recoverable environment transfer.</p>
                         </div>
-                    </div>
-                    <p class="text-muted small mb-3">
-                        Migration targets a separate Cosmos account that will host the standard SimpleChat database and container layout. The database name is fixed to SimpleChat so exported metadata, container mappings, and future apply jobs use the same app contract in every environment.
-                    </p>
+                        <div class="migration-workflow-readiness" id="data-management-migration-readiness" role="status" aria-live="polite">
+                            <span class="migration-readiness-dot" aria-hidden="true"></span>
+                            <span>Not reviewed</span>
+                        </div>
+                    </header>
 
-                    <div class="card p-3 border-warning-subtle" id="data-management-target-cosmos-section">
-                        <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
-                            <div>
-                                <h5 class="mb-1">Target Cosmos Database</h5>
-                                <p class="text-muted mb-0 small">Fill out the target Cosmos account connection that migration jobs will validate and write to.</p>
-                            </div>
-                            <button type="button" class="btn btn-outline-secondary btn-sm" id="data-management-test-target-cosmos-btn">
-                                <i class="bi bi-plug me-1"></i>Test Target Cosmos
+                    <div class="migration-workflow-body" id="data-management-migration-workflow-section">
+                        <nav class="migration-stepper" aria-label="Migration workflow">
+                            <button type="button" class="migration-step is-active" data-migration-step-button="target" aria-current="step">
+                                <span class="migration-step-marker">1</span>
+                                <span class="migration-step-copy">
+                                    <span class="migration-step-label">Target</span>
+                                    <span class="migration-step-state">Configure services</span>
+                                </span>
                             </button>
-                        </div>
-                        <div class="alert alert-info mb-3" role="note">
-                            For managed identity, assign this App Service identity Cosmos DB Data Contributor on the target account and allow network access from this application environment.
-                        </div>
-                        <div class="row g-3">
-                            <div class="col-md-4">
-                                <label class="form-label" for="data_management_target_cosmos_auth">Authentication</label>
-                                <select class="form-select" id="data_management_target_cosmos_auth">
-                                    <option value="managed_identity">Managed identity</option>
-                                    <option value="key">Account key</option>
-                                </select>
-                            </div>
-                            <div class="col-md-5">
-                                <label class="form-label" for="data_management_target_cosmos_endpoint">Endpoint</label>
-                                <input class="form-control" type="url" id="data_management_target_cosmos_endpoint" placeholder="https://account.documents.azure.com:443/">
-                            </div>
-                            <div class="col-md-3">
-                                <label class="form-label" for="data_management_target_cosmos_database">Database</label>
-                                <input class="form-control" type="text" id="data_management_target_cosmos_database" value="SimpleChat" readonly aria-readonly="true" aria-describedby="data-management-target-cosmos-database-help">
-                                <div class="form-text" id="data-management-target-cosmos-database-help">Always SimpleChat.</div>
-                            </div>
-                        </div>
-                        <div class="mt-3" id="data-management-target-cosmos-key-field">
-                            <label class="form-label" for="data_management_target_cosmos_key">Account key</label>
-                            <input class="form-control" type="password" id="data_management_target_cosmos_key" autocomplete="off" placeholder="Stored keys stay redacted after save">
-                        </div>
-                        <div class="row g-3 mt-1" id="data-management-target-cosmos-management-fields">
-                            <div class="col-md-6">
-                                <label class="form-label" for="data_management_target_cosmos_subscription_id">Subscription ID for capacity management</label>
-                                <input class="form-control" type="text" id="data_management_target_cosmos_subscription_id" autocomplete="off" placeholder="Required only for a temporary RU boost">
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label" for="data_management_target_cosmos_resource_group">Resource group for capacity management</label>
-                                <input class="form-control" type="text" id="data_management_target_cosmos_resource_group" autocomplete="off" placeholder="Required only for a temporary RU boost">
-                            </div>
-                        </div>
-                    </div>
+                            <button type="button" class="migration-step" data-migration-step-button="scope">
+                                <span class="migration-step-marker">2</span>
+                                <span class="migration-step-copy">
+                                    <span class="migration-step-label">Scope</span>
+                                    <span class="migration-step-state">Choose principals</span>
+                                </span>
+                            </button>
+                            <button type="button" class="migration-step" data-migration-step-button="options">
+                                <span class="migration-step-marker">3</span>
+                                <span class="migration-step-copy">
+                                    <span class="migration-step-label">Content &amp; Options</span>
+                                    <span class="migration-step-state">Set transfer policy</span>
+                                </span>
+                            </button>
+                            <button type="button" class="migration-step" data-migration-step-button="review">
+                                <span class="migration-step-marker">4</span>
+                                <span class="migration-step-copy">
+                                    <span class="migration-step-label">Review</span>
+                                    <span class="migration-step-state">Run preflight</span>
+                                </span>
+                            </button>
+                            <button type="button" class="migration-step" data-migration-step-button="confirm">
+                                <span class="migration-step-marker">5</span>
+                                <span class="migration-step-copy">
+                                    <span class="migration-step-label">Confirm</span>
+                                    <span class="migration-step-state">Authorize execution</span>
+                                </span>
+                            </button>
+                            <button type="button" class="migration-step" data-migration-step-button="progress">
+                                <span class="migration-step-marker">6</span>
+                                <span class="migration-step-copy">
+                                    <span class="migration-step-label">Progress</span>
+                                    <span class="migration-step-state">Operate the job</span>
+                                </span>
+                            </button>
+                        </nav>
 
-                    <div class="card p-3 border-warning-subtle mt-3" id="data-management-target-ai-search-section">
-                        <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
-                            <div>
-                                <h5 class="mb-1">Target Search</h5>
-                                <p class="text-muted mb-0 small">Migration copies selected indexed documents into matching SimpleChat AI Search indexes on the target search service.</p>
-                            </div>
-                            <button type="button" class="btn btn-outline-secondary btn-sm" id="data-management-test-target-search-btn">
-                                <i class="bi bi-plug me-1"></i>Test Target Search
-                            </button>
-                        </div>
-                        <div class="row g-3">
-                            <div class="col-md-4">
-                                <label class="form-label" for="data_management_target_ai_search_auth">Authentication</label>
-                                <select class="form-select" id="data_management_target_ai_search_auth">
-                                    <option value="managed_identity">Managed identity</option>
-                                    <option value="key">Admin key</option>
-                                </select>
-                            </div>
-                            <div class="col-md-5">
-                                <label class="form-label" for="data_management_target_ai_search_endpoint">Endpoint</label>
-                                <input class="form-control" type="url" id="data_management_target_ai_search_endpoint" placeholder="https://search-service.search.windows.net">
-                            </div>
-                            <div class="col-md-3" id="data-management-target-ai-search-key-field">
-                                <label class="form-label" for="data_management_target_ai_search_key">Admin key</label>
-                                <input class="form-control" type="password" id="data_management_target_ai_search_key" autocomplete="off" placeholder="Stored keys stay redacted after save">
-                            </div>
-                        </div>
-                    </div>
+                        <div class="alert alert-danger d-none mt-3 mb-0" id="data-management-migration-step-error" role="alert" tabindex="-1"></div>
 
-                    <div class="card p-3 border-warning-subtle mt-3" id="data-management-target-enhanced-citations-section">
-                        <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
-                            <div>
-                                <h5 class="mb-1">Target Enhanced Citation Storage</h5>
-                                <p class="text-muted mb-0 small">Required only when migrating source document blobs for Enhanced Citations.</p>
-                            </div>
-                            <button type="button" class="btn btn-outline-secondary btn-sm" id="data-management-test-target-ec-storage-btn">
-                                <i class="bi bi-plug me-1"></i>Test Target Enhanced Citation Storage
-                            </button>
-                        </div>
-                        <div class="row g-3">
-                            <div class="col-md-4">
-                                <label class="form-label" for="data_management_target_ec_storage_auth">Authentication</label>
-                                <select class="form-select" id="data_management_target_ec_storage_auth">
-                                    <option value="managed_identity">Managed identity</option>
-                                    <option value="connection_string">Connection string</option>
-                                </select>
-                            </div>
-                            <div class="col-md-5" id="data-management-target-ec-blob-endpoint-field">
-                                <label class="form-label" for="data_management_target_ec_blob_endpoint">Blob endpoint</label>
-                                <input class="form-control" type="url" id="data_management_target_ec_blob_endpoint" placeholder="https://account.blob.core.windows.net">
-                            </div>
-                            <div class="col-md-8" id="data-management-target-ec-connection-string-field">
-                                <label class="form-label" for="data_management_target_ec_connection_string">Connection string</label>
-                                <input class="form-control" type="password" id="data_management_target_ec_connection_string" autocomplete="off" placeholder="Paste a connection string to save or replace it">
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="card p-3 border-warning-subtle mt-3" id="data-management-migration-workflow-section">
-                        <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
-                            <div>
-                                <h5 class="mb-1">Migration Workflow</h5>
-                                <p class="text-muted mb-0 small">Choose users, groups, and public workspaces to migrate, then choose whether to include each scope's documents, AI Search entries, and source blobs.</p>
-                            </div>
-                            <button type="button" class="btn btn-outline-secondary btn-sm" id="data-management-refresh-migration-summary-btn">
-                                <i class="bi bi-arrow-clockwise me-1"></i>Refresh Summary
-                            </button>
-                        </div>
-                        <fieldset class="border-bottom pb-3 mb-3" id="data-management-migration-mode-section">
-                            <legend class="h6 mb-2">Synchronization mode</legend>
-                            <div class="btn-group flex-wrap" role="radiogroup" aria-label="Migration synchronization mode">
-                                <input class="btn-check" type="radio" name="data_management_migration_mode" id="data_management_migration_mode_new_only" value="new_only" checked>
-                                <label class="btn btn-outline-primary" for="data_management_migration_mode_new_only">New only</label>
-                                <input class="btn-check" type="radio" name="data_management_migration_mode" id="data_management_migration_mode_delta_upsert" value="delta_upsert">
-                                <label class="btn btn-outline-primary" for="data_management_migration_mode_delta_upsert">Delta / upsert</label>
-                                <input class="btn-check" type="radio" name="data_management_migration_mode" id="data_management_migration_mode_mirror_with_deletions" value="mirror_with_deletions">
-                                <label class="btn btn-outline-danger" for="data_management_migration_mode_mirror_with_deletions">Mirror with deletions</label>
-                            </div>
-                            <p class="text-muted small mt-2 mb-0" id="data-management-migration-mode-description" aria-live="polite">
-                                Copies source items that are absent from the destination. Existing destination data is never updated or deleted.
-                            </p>
-                            <div class="row g-3 mt-1 d-none" id="data-management-migration-baseline-field">
-                                <div class="col-lg-6">
-                                    <label class="form-label" for="data_management_migration_baseline_job_id">Baseline migration job ID</label>
-                                    <input class="form-control" type="text" id="data_management_migration_baseline_job_id" autocomplete="off" placeholder="Leave blank to use the latest compatible completed migration">
-                                    <div class="form-text">The baseline fixes the prior service watermarks used for this catch-up run.</div>
+                        <!-- Target Step -->
+                        <section class="migration-stage" data-migration-step-panel="target" aria-labelledby="data-management-migration-target-heading">
+                            <div class="migration-stage-heading">
+                                <div>
+                                    <h5 id="data-management-migration-target-heading">Connect the destination</h5>
+                                    <p>Configure the services this migration will write to. Stored credentials remain redacted.</p>
                                 </div>
+                                <span class="badge text-bg-light border">Destination database: SimpleChat</span>
+                            </div>
+
+                            <div class="migration-target-grid">
+                                <section class="migration-service-panel" id="data-management-target-cosmos-section" aria-labelledby="data-management-target-cosmos-heading">
+                                    <div class="migration-service-heading">
+                                        <div>
+                                            <h6 id="data-management-target-cosmos-heading"><i class="bi bi-database me-2" aria-hidden="true"></i>Target Cosmos Database</h6>
+                                            <p>Required for every migration.</p>
+                                        </div>
+                                        <button type="button" class="btn btn-outline-secondary btn-sm" id="data-management-test-target-cosmos-btn">
+                                            <i class="bi bi-plug me-1" aria-hidden="true"></i>Test Cosmos
+                                        </button>
+                                    </div>
+                                    <div class="alert alert-info small" role="note">
+                                        Managed identity requires Cosmos DB Data Contributor and target network access.
+                                    </div>
+                                    <div class="row g-3">
+                                        <div class="col-md-4">
+                                            <label class="form-label" for="data_management_target_cosmos_auth">Authentication</label>
+                                            <select class="form-select" id="data_management_target_cosmos_auth">
+                                                <option value="managed_identity">Managed identity</option>
+                                                <option value="key">Account key</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-md-5">
+                                            <label class="form-label" for="data_management_target_cosmos_endpoint">Endpoint</label>
+                                            <input class="form-control" type="url" id="data_management_target_cosmos_endpoint" placeholder="https://account.documents.azure.com:443/" autocomplete="off">
+                                        </div>
+                                        <div class="col-md-3">
+                                            <label class="form-label" for="data_management_target_cosmos_database">Database</label>
+                                            <input class="form-control" type="text" id="data_management_target_cosmos_database" value="SimpleChat" readonly aria-readonly="true" aria-describedby="data-management-target-cosmos-database-help">
+                                            <div class="form-text" id="data-management-target-cosmos-database-help">Fixed app contract.</div>
+                                        </div>
+                                    </div>
+                                    <div class="mt-3" id="data-management-target-cosmos-key-field">
+                                        <label class="form-label" for="data_management_target_cosmos_key">Account key</label>
+                                        <input class="form-control" type="password" id="data_management_target_cosmos_key" autocomplete="off" placeholder="Stored keys stay redacted after save">
+                                    </div>
+                                    <div class="row g-3 mt-1" id="data-management-target-cosmos-management-fields">
+                                        <div class="col-md-6">
+                                            <label class="form-label" for="data_management_target_cosmos_subscription_id">Subscription ID for capacity management</label>
+                                            <input class="form-control" type="text" id="data_management_target_cosmos_subscription_id" autocomplete="off" placeholder="Required only for a temporary RU boost">
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label class="form-label" for="data_management_target_cosmos_resource_group">Resource group for capacity management</label>
+                                            <input class="form-control" type="text" id="data_management_target_cosmos_resource_group" autocomplete="off" placeholder="Required only for a temporary RU boost">
+                                        </div>
+                                    </div>
+                                </section>
+
+                                <section class="migration-service-panel" id="data-management-target-ai-search-section" aria-labelledby="data-management-target-search-heading">
+                                    <div class="migration-service-heading">
+                                        <div>
+                                            <h6 id="data-management-target-search-heading"><i class="bi bi-search me-2" aria-hidden="true"></i>Target Search</h6>
+                                            <p>Required when AI Search documents are included.</p>
+                                        </div>
+                                        <button type="button" class="btn btn-outline-secondary btn-sm" id="data-management-test-target-search-btn">
+                                            <i class="bi bi-plug me-1" aria-hidden="true"></i>Test Search
+                                        </button>
+                                    </div>
+                                    <div class="row g-3">
+                                        <div class="col-md-4">
+                                            <label class="form-label" for="data_management_target_ai_search_auth">Authentication</label>
+                                            <select class="form-select" id="data_management_target_ai_search_auth">
+                                                <option value="managed_identity">Managed identity</option>
+                                                <option value="key">Admin key</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-md-5">
+                                            <label class="form-label" for="data_management_target_ai_search_endpoint">Endpoint</label>
+                                            <input class="form-control" type="url" id="data_management_target_ai_search_endpoint" placeholder="https://search-service.search.windows.net" autocomplete="off">
+                                        </div>
+                                        <div class="col-md-3" id="data-management-target-ai-search-key-field">
+                                            <label class="form-label" for="data_management_target_ai_search_key">Admin key</label>
+                                            <input class="form-control" type="password" id="data_management_target_ai_search_key" autocomplete="off" placeholder="Stored keys stay redacted after save">
+                                        </div>
+                                    </div>
+                                </section>
+
+                                <section class="migration-service-panel" id="data-management-target-enhanced-citations-section" aria-labelledby="data-management-target-storage-heading">
+                                    <div class="migration-service-heading">
+                                        <div>
+                                            <h6 id="data-management-target-storage-heading"><i class="bi bi-file-earmark-lock me-2" aria-hidden="true"></i>Target Enhanced Citation Storage</h6>
+                                            <p>Required only when source document blobs are included.</p>
+                                        </div>
+                                        <button type="button" class="btn btn-outline-secondary btn-sm" id="data-management-test-target-ec-storage-btn">
+                                            <i class="bi bi-plug me-1" aria-hidden="true"></i>Test Storage
+                                        </button>
+                                    </div>
+                                    <div class="row g-3">
+                                        <div class="col-md-4">
+                                            <label class="form-label" for="data_management_target_ec_storage_auth">Authentication</label>
+                                            <select class="form-select" id="data_management_target_ec_storage_auth">
+                                                <option value="managed_identity">Managed identity</option>
+                                                <option value="connection_string">Connection string</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-md-5" id="data-management-target-ec-blob-endpoint-field">
+                                            <label class="form-label" for="data_management_target_ec_blob_endpoint">Blob endpoint</label>
+                                            <input class="form-control" type="url" id="data_management_target_ec_blob_endpoint" placeholder="https://account.blob.core.windows.net" autocomplete="off">
+                                        </div>
+                                        <div class="col-md-8" id="data-management-target-ec-connection-string-field">
+                                            <label class="form-label" for="data_management_target_ec_connection_string">Connection string</label>
+                                            <input class="form-control" type="password" id="data_management_target_ec_connection_string" autocomplete="off" placeholder="Paste a connection string to save or replace it">
+                                        </div>
+                                    </div>
+                                </section>
+                            </div>
+                        </section>
+
+                        <!-- Scope Step -->
+                        <section class="migration-stage d-none" data-migration-step-panel="scope" aria-labelledby="data-management-migration-scope-heading">
+                            <div class="migration-stage-heading">
+                                <div>
+                                    <h5 id="data-management-migration-scope-heading">Choose who and what moves</h5>
+                                    <p>Selections persist while you search and page. “All” always uses the exhaustive server count.</p>
+                                </div>
+                                <div class="migration-scope-total" id="data-management-migration-scope-total" aria-live="polite">0 principal scopes selected</div>
+                            </div>
+
+                            <div class="migration-scope-tabs" role="tablist" aria-label="Migration scope type">
+                                <button type="button" class="btn btn-outline-primary active" data-migration-scope-tab="users" role="tab" aria-selected="true">Users <span class="badge text-bg-light ms-1" data-migration-scope-count="users">0</span></button>
+                                <button type="button" class="btn btn-outline-primary" data-migration-scope-tab="groups" role="tab" aria-selected="false">Groups <span class="badge text-bg-light ms-1" data-migration-scope-count="groups">0</span></button>
+                                <button type="button" class="btn btn-outline-primary" data-migration-scope-tab="public_workspaces" role="tab" aria-selected="false">Public workspaces <span class="badge text-bg-light ms-1" data-migration-scope-count="public_workspaces">0</span></button>
+                            </div>
+
+                            <section class="migration-scope-pane" data-migration-scope-pane="users" role="tabpanel" aria-label="Users">
+                                <input type="hidden" id="data_management_migration_users_mode" value="none">
+                                <fieldset>
+                                    <legend class="h6">Migration mode</legend>
+                                    <div class="migration-mode-options">
+                                        <label class="migration-mode-option">
+                                            <input type="radio" name="data_management_migration_users_mode_choice" value="none" data-migration-mode-option="users" checked>
+                                            <span><strong>None</strong><small>Skip users</small></span>
+                                        </label>
+                                        <label class="migration-mode-option">
+                                            <input type="radio" name="data_management_migration_users_mode_choice" value="selected" data-migration-mode-option="users">
+                                            <span><strong>Selected</strong><small>Choose across pages</small></span>
+                                        </label>
+                                        <label class="migration-mode-option">
+                                            <input type="radio" name="data_management_migration_users_mode_choice" value="all" data-migration-mode-option="users">
+                                            <span><strong>All</strong><small>Use exhaustive count</small></span>
+                                        </label>
+                                    </div>
+                                </fieldset>
+
+                                <div class="migration-catalog-workspace d-none" data-migration-catalog-workspace="users">
+                                    <div class="migration-catalog-column">
+                                        <div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-2">
+                                            <div>
+                                                <h6 class="mb-1">Available users</h6>
+                                                <p class="small text-muted mb-0" data-migration-catalog-status="users">Search the server catalog.</p>
+                                            </div>
+                                            <div class="input-group input-group-sm migration-catalog-search">
+                                                <label class="visually-hidden" for="data_management_migration_users_search">Search users</label>
+                                                <input type="search" class="form-control" id="data_management_migration_users_search" placeholder="Search users" autocomplete="off">
+                                                <button type="button" class="btn btn-outline-secondary" id="data-management-search-users-btn">Search</button>
+                                            </div>
+                                        </div>
+                                        <div class="migration-catalog-list list-group" id="data-management-migration-users-available" aria-live="polite"></div>
+                                        <div class="migration-catalog-pagination">
+                                            <button type="button" class="btn btn-outline-secondary btn-sm" data-migration-page-previous="users" disabled>
+                                                <i class="bi bi-chevron-left me-1" aria-hidden="true"></i>Previous
+                                            </button>
+                                            <span class="small text-muted" data-migration-page-status="users">Page 1</span>
+                                            <button type="button" class="btn btn-outline-secondary btn-sm" data-migration-page-next="users" disabled>
+                                                Next<i class="bi bi-chevron-right ms-1" aria-hidden="true"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <aside class="migration-selection-column" aria-label="Selected users">
+                                        <div class="d-flex justify-content-between align-items-center mb-2">
+                                            <h6 class="mb-0">Selected</h6>
+                                            <span class="badge text-bg-primary" data-migration-selected-count="users">0</span>
+                                        </div>
+                                        <div class="migration-selected-list list-group" id="data-management-migration-users-selected"></div>
+                                    </aside>
+                                </div>
+
+                                <div class="migration-all-summary d-none" data-migration-all-summary="users" role="status">
+                                    <i class="bi bi-collection-fill" aria-hidden="true"></i>
+                                    <div>
+                                        <strong data-migration-all-count="users">Loading exhaustive count…</strong>
+                                        <span>Every current user record will be resolved by the server when the job starts.</span>
+                                    </div>
+                                </div>
+
+                                <div class="form-check form-switch mt-3">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="data_management_migration_users_documents" disabled>
+                                    <label class="form-check-label" for="data_management_migration_users_documents">Include users' documents</label>
+                                </div>
+                            </section>
+
+                            <section class="migration-scope-pane d-none" data-migration-scope-pane="groups" role="tabpanel" aria-label="Groups">
+                                <input type="hidden" id="data_management_migration_groups_mode" value="none">
+                                <fieldset>
+                                    <legend class="h6">Migration mode</legend>
+                                    <div class="migration-mode-options">
+                                        <label class="migration-mode-option">
+                                            <input type="radio" name="data_management_migration_groups_mode_choice" value="none" data-migration-mode-option="groups" checked>
+                                            <span><strong>None</strong><small>Skip groups</small></span>
+                                        </label>
+                                        <label class="migration-mode-option">
+                                            <input type="radio" name="data_management_migration_groups_mode_choice" value="selected" data-migration-mode-option="groups">
+                                            <span><strong>Selected</strong><small>Choose across pages</small></span>
+                                        </label>
+                                        <label class="migration-mode-option">
+                                            <input type="radio" name="data_management_migration_groups_mode_choice" value="all" data-migration-mode-option="groups">
+                                            <span><strong>All</strong><small>Use exhaustive count</small></span>
+                                        </label>
+                                    </div>
+                                </fieldset>
+                                <div class="migration-catalog-workspace d-none" data-migration-catalog-workspace="groups">
+                                    <div class="migration-catalog-column">
+                                        <div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-2">
+                                            <div>
+                                                <h6 class="mb-1">Available groups</h6>
+                                                <p class="small text-muted mb-0" data-migration-catalog-status="groups">Search the server catalog.</p>
+                                            </div>
+                                            <div class="input-group input-group-sm migration-catalog-search">
+                                                <label class="visually-hidden" for="data_management_migration_groups_search">Search groups</label>
+                                                <input type="search" class="form-control" id="data_management_migration_groups_search" placeholder="Search groups" autocomplete="off">
+                                                <button type="button" class="btn btn-outline-secondary" id="data-management-search-groups-btn">Search</button>
+                                            </div>
+                                        </div>
+                                        <div class="migration-catalog-list list-group" id="data-management-migration-groups-available" aria-live="polite"></div>
+                                        <div class="migration-catalog-pagination">
+                                            <button type="button" class="btn btn-outline-secondary btn-sm" data-migration-page-previous="groups" disabled><i class="bi bi-chevron-left me-1" aria-hidden="true"></i>Previous</button>
+                                            <span class="small text-muted" data-migration-page-status="groups">Page 1</span>
+                                            <button type="button" class="btn btn-outline-secondary btn-sm" data-migration-page-next="groups" disabled>Next<i class="bi bi-chevron-right ms-1" aria-hidden="true"></i></button>
+                                        </div>
+                                    </div>
+                                    <aside class="migration-selection-column" aria-label="Selected groups">
+                                        <div class="d-flex justify-content-between align-items-center mb-2">
+                                            <h6 class="mb-0">Selected</h6>
+                                            <span class="badge text-bg-primary" data-migration-selected-count="groups">0</span>
+                                        </div>
+                                        <div class="migration-selected-list list-group" id="data-management-migration-groups-selected"></div>
+                                    </aside>
+                                </div>
+                                <div class="migration-all-summary d-none" data-migration-all-summary="groups" role="status">
+                                    <i class="bi bi-collection-fill" aria-hidden="true"></i>
+                                    <div>
+                                        <strong data-migration-all-count="groups">Loading exhaustive count…</strong>
+                                        <span>Every current group record will be resolved by the server when the job starts.</span>
+                                    </div>
+                                </div>
+                                <div class="form-check form-switch mt-3">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="data_management_migration_groups_documents" disabled>
+                                    <label class="form-check-label" for="data_management_migration_groups_documents">Include group documents</label>
+                                </div>
+                            </section>
+
+                            <section class="migration-scope-pane d-none" data-migration-scope-pane="public_workspaces" role="tabpanel" aria-label="Public Workspaces">
+                                <input type="hidden" id="data_management_migration_public_workspaces_mode" value="none">
+                                <fieldset>
+                                    <legend class="h6">Migration mode</legend>
+                                    <div class="migration-mode-options">
+                                        <label class="migration-mode-option">
+                                            <input type="radio" name="data_management_migration_public_workspaces_mode_choice" value="none" data-migration-mode-option="public_workspaces" checked>
+                                            <span><strong>None</strong><small>Skip public workspaces</small></span>
+                                        </label>
+                                        <label class="migration-mode-option">
+                                            <input type="radio" name="data_management_migration_public_workspaces_mode_choice" value="selected" data-migration-mode-option="public_workspaces">
+                                            <span><strong>Selected</strong><small>Choose across pages</small></span>
+                                        </label>
+                                        <label class="migration-mode-option">
+                                            <input type="radio" name="data_management_migration_public_workspaces_mode_choice" value="all" data-migration-mode-option="public_workspaces">
+                                            <span><strong>All</strong><small>Use exhaustive count</small></span>
+                                        </label>
+                                    </div>
+                                </fieldset>
+                                <div class="migration-catalog-workspace d-none" data-migration-catalog-workspace="public_workspaces">
+                                    <div class="migration-catalog-column">
+                                        <div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-2">
+                                            <div>
+                                                <h6 class="mb-1">Available public workspaces</h6>
+                                                <p class="small text-muted mb-0" data-migration-catalog-status="public_workspaces">Search the server catalog.</p>
+                                            </div>
+                                            <div class="input-group input-group-sm migration-catalog-search">
+                                                <label class="visually-hidden" for="data_management_migration_public_workspaces_search">Search public workspaces</label>
+                                                <input type="search" class="form-control" id="data_management_migration_public_workspaces_search" placeholder="Search public workspaces" autocomplete="off">
+                                                <button type="button" class="btn btn-outline-secondary" id="data-management-search-public-workspaces-btn">Search</button>
+                                            </div>
+                                        </div>
+                                        <div class="migration-catalog-list list-group" id="data-management-migration-public-workspaces-available" aria-live="polite"></div>
+                                        <div class="migration-catalog-pagination">
+                                            <button type="button" class="btn btn-outline-secondary btn-sm" data-migration-page-previous="public_workspaces" disabled><i class="bi bi-chevron-left me-1" aria-hidden="true"></i>Previous</button>
+                                            <span class="small text-muted" data-migration-page-status="public_workspaces">Page 1</span>
+                                            <button type="button" class="btn btn-outline-secondary btn-sm" data-migration-page-next="public_workspaces" disabled>Next<i class="bi bi-chevron-right ms-1" aria-hidden="true"></i></button>
+                                        </div>
+                                    </div>
+                                    <aside class="migration-selection-column" aria-label="Selected public workspaces">
+                                        <div class="d-flex justify-content-between align-items-center mb-2">
+                                            <h6 class="mb-0">Selected</h6>
+                                            <span class="badge text-bg-primary" data-migration-selected-count="public_workspaces">0</span>
+                                        </div>
+                                        <div class="migration-selected-list list-group" id="data-management-migration-public-workspaces-selected"></div>
+                                    </aside>
+                                </div>
+                                <div class="migration-all-summary d-none" data-migration-all-summary="public_workspaces" role="status">
+                                    <i class="bi bi-collection-fill" aria-hidden="true"></i>
+                                    <div>
+                                        <strong data-migration-all-count="public_workspaces">Loading exhaustive count…</strong>
+                                        <span>Every current public workspace record will be resolved by the server when the job starts.</span>
+                                    </div>
+                                </div>
+                                <div class="form-check form-switch mt-3">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="data_management_migration_public_workspaces_documents" disabled>
+                                    <label class="form-check-label" for="data_management_migration_public_workspaces_documents">Include public workspace documents</label>
+                                </div>
+                            </section>
+                        </section>
+
+                        <!-- Content and Options Step -->
+                        <section class="migration-stage d-none" data-migration-step-panel="options" aria-labelledby="data-management-migration-options-heading">
+                            <div class="migration-stage-heading">
+                                <div>
+                                    <h5 id="data-management-migration-options-heading">Choose transfer behavior</h5>
+                                    <p>Set synchronization semantics, included services, retry behavior, and optional destination capacity.</p>
+                                </div>
+                            </div>
+
+                            <fieldset class="migration-option-section" id="data-management-migration-mode-section">
+                                <legend>Synchronization mode</legend>
+                                <div class="btn-group flex-wrap" role="radiogroup" aria-label="Migration synchronization mode">
+                                    <input class="btn-check" type="radio" name="data_management_migration_mode" id="data_management_migration_mode_new_only" value="new_only" checked>
+                                    <label class="btn btn-outline-primary" for="data_management_migration_mode_new_only">New only</label>
+                                    <input class="btn-check" type="radio" name="data_management_migration_mode" id="data_management_migration_mode_delta_upsert" value="delta_upsert">
+                                    <label class="btn btn-outline-primary" for="data_management_migration_mode_delta_upsert">Delta / upsert</label>
+                                    <input class="btn-check" type="radio" name="data_management_migration_mode" id="data_management_migration_mode_mirror_with_deletions" value="mirror_with_deletions">
+                                    <label class="btn btn-outline-danger" for="data_management_migration_mode_mirror_with_deletions">Mirror with deletions</label>
+                                </div>
+                                <p class="text-muted small mt-2 mb-0" id="data-management-migration-mode-description" aria-live="polite">
+                                    Copies source items that are absent from the destination. Existing destination data is never updated or deleted.
+                                </p>
+                                <div class="row g-3 mt-1 d-none" id="data-management-migration-baseline-field">
+                                    <div class="col-lg-7">
+                                        <label class="form-label" for="data_management_migration_baseline_job_id">Baseline migration job ID</label>
+                                        <input class="form-control" type="text" id="data_management_migration_baseline_job_id" autocomplete="off" placeholder="Leave blank to use the latest compatible completed migration">
+                                        <div class="form-text">The baseline fixes the prior service watermarks used for this catch-up run.</div>
+                                    </div>
+                                </div>
+                            </fieldset>
+
+                            <fieldset class="migration-option-section">
+                                <legend>Data surfaces</legend>
+                                <div class="row g-3">
+                                    <div class="col-lg-6">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" role="switch" id="data_management_migration_include_ai_search" checked>
+                                            <label class="form-check-label" for="data_management_migration_include_ai_search">Migrate matching AI Search documents</label>
+                                        </div>
+                                        <div class="form-check mt-3" id="data-management-migration-search-write-freeze">
+                                            <input class="form-check-input" type="checkbox" id="data_management_migration_target_search_writes_frozen">
+                                            <label class="form-check-label" for="data_management_migration_target_search_writes_frozen">I confirm external destination AI Search writers are frozen</label>
+                                            <div class="form-text">SimpleChat pauses its own target indexing. Freeze other writers before review.</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-lg-6">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" role="switch" id="data_management_migration_include_source_blobs">
+                                            <label class="form-check-label" for="data_management_migration_include_source_blobs">Migrate selected source document blobs</label>
+                                            <div class="form-text">Requires Enhanced Citation storage at both source and destination.</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </fieldset>
+
+                            <fieldset class="migration-option-section" id="data-management-migration-performance-section">
+                                <legend>Performance and resume</legend>
+                                <p class="text-muted small">Migration uses durable resource checkpoints and retains the same migration ID after Retry or Resume.</p>
+                                <div class="row g-3">
+                                    <div class="col-md-4">
+                                        <label class="form-label" for="data_management_migration_max_parallel_operations">Concurrent operations</label>
+                                        <input class="form-control" type="number" id="data_management_migration_max_parallel_operations" min="1" max="32" value="8">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label" for="data_management_migration_retry_count">Retry attempts</label>
+                                        <input class="form-control" type="number" id="data_management_migration_retry_count" min="1" max="10" value="5">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label" for="data_management_migration_skip_recent_within_hours">Skip prior successes within hours</label>
+                                        <input class="form-control" type="number" id="data_management_migration_skip_recent_within_hours" min="0" max="8760" value="0">
+                                    </div>
+                                </div>
+                                <div class="form-check form-switch mt-3">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="data_management_migration_temporary_destination_ru_enabled">
+                                    <label class="form-check-label" for="data_management_migration_temporary_destination_ru_enabled">Temporarily increase destination Cosmos capacity during this migration</label>
+                                </div>
+                                <div class="row g-3 mt-1" id="data-management-migration-temporary-ru-field">
+                                    <div class="col-md-4">
+                                        <label class="form-label" for="data_management_migration_temporary_destination_ru">Temporary destination max RU/s</label>
+                                        <input class="form-control" type="number" id="data_management_migration_temporary_destination_ru" min="1000" max="10000" step="1000" value="10000">
+                                    </div>
+                                    <div class="col-md-8 d-flex align-items-end">
+                                        <div class="form-text mb-2">Eligible capacity is raised only to 10,000 RU/s and restored after completion or failure. ARM permission is required.</div>
+                                    </div>
+                                </div>
+                            </fieldset>
+                        </section>
+
+                        <!-- Review Step -->
+                        <section class="migration-stage d-none" data-migration-step-panel="review" aria-labelledby="data-management-migration-review-heading">
+                            <div class="migration-stage-heading">
+                                <div>
+                                    <h5 id="data-management-migration-review-heading">Prove the plan is ready</h5>
+                                    <p>Preflight runs server-owned access probes and inventory. Any earlier change makes this review stale.</p>
+                                </div>
+                                <div class="d-flex flex-wrap gap-2">
+                                    <button type="button" class="btn btn-outline-secondary btn-sm" id="data-management-test-migration-access-btn">
+                                        <i class="bi bi-shield-check me-1" aria-hidden="true"></i>Validate Cosmos Access
+                                    </button>
+                                    <button type="button" class="btn btn-primary" id="data-management-migration-preview-btn">
+                                        <i class="bi bi-clipboard2-check me-1" aria-hidden="true"></i>Run Preflight Review
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="migration-review-empty" id="data-management-migration-review-empty">
+                                <i class="bi bi-clipboard2-pulse" aria-hidden="true"></i>
+                                <div>
+                                    <strong>Review has not run.</strong>
+                                    <span>Run preflight to verify target access, counts, collisions, locks, and capacity policy.</span>
+                                </div>
+                            </div>
+                            <div class="d-none" id="data-management-migration-summary" aria-live="polite"></div>
+                            <div class="d-none" id="data-management-migration-review-checks"></div>
+                            <button type="button" class="btn btn-link btn-sm px-0 mt-3 d-none" id="data-management-refresh-migration-summary-btn">
+                                <i class="bi bi-arrow-clockwise me-1" aria-hidden="true"></i>Refresh review
+                            </button>
+                        </section>
+
+                        <!-- Confirm Step -->
+                        <section class="migration-stage d-none" data-migration-step-panel="confirm" aria-labelledby="data-management-migration-confirm-heading">
+                            <div class="migration-stage-heading">
+                                <div>
+                                    <h5 id="data-management-migration-confirm-heading">Confirm execution</h5>
+                                    <p>Review the final server-normalized plan. Submission is guarded against duplicate requests.</p>
+                                </div>
+                            </div>
+                            <div class="migration-confirm-summary" id="data-management-migration-confirm-summary">
+                                <p class="text-muted mb-0">Complete preflight review before confirmation.</p>
                             </div>
                             <div class="alert alert-danger mt-3 mb-0 d-none" id="data-management-migration-mirror-confirmation" role="alert">
-                                <strong>Destructive mode.</strong> Only destination items with successful SimpleChat migration ownership are eligible for deletion. Unowned data is retained and reported as a conflict.
-                                <label class="form-label mt-2" for="data_management_migration_mirror_confirmation_phrase">Type <code>MIRROR WITH DELETIONS</code> to continue</label>
+                                <strong>Destructive mode.</strong> Migration-owned destination items may be deleted. Unowned destination data is retained and reported as a conflict.
+                                <label class="form-label mt-3" for="data_management_migration_mirror_confirmation_phrase">Type <code>MIRROR WITH DELETIONS</code> to authorize this run</label>
                                 <input class="form-control" type="text" id="data_management_migration_mirror_confirmation_phrase" autocomplete="off">
                             </div>
-                        </fieldset>
-                        <div class="row g-3">
-                            <div class="col-lg-4">
-                                <div class="border rounded p-3 h-100" data-migration-picker="users">
-                                    <h6 class="mb-2">Users</h6>
-                                    <select class="form-select form-select-sm mb-2" id="data_management_migration_users_mode" aria-label="User migration mode">
-                                        <option value="none">Do not migrate users</option>
-                                        <option value="all">Migrate all users</option>
-                                        <option value="selected">Select users</option>
-                                    </select>
-                                    <div class="input-group input-group-sm mb-2">
-                                        <input type="search" class="form-control" id="data_management_migration_users_search" placeholder="Search users">
-                                        <button type="button" class="btn btn-outline-secondary" id="data-management-search-users-btn">Search</button>
-                                    </div>
-                                    <div class="small text-muted mb-1">Available</div>
-                                    <div class="list-group small mb-2" id="data-management-migration-users-available"></div>
-                                    <div class="small text-muted mb-1">Selected</div>
-                                    <div class="list-group small mb-2" id="data-management-migration-users-selected"></div>
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="checkbox" id="data_management_migration_users_documents">
-                                        <label class="form-check-label" for="data_management_migration_users_documents">Include users' documents</label>
-                                    </div>
-                                </div>
+                            <div class="form-check mt-3">
+                                <input class="form-check-input" type="checkbox" id="data_management_migration_final_confirmation">
+                                <label class="form-check-label" for="data_management_migration_final_confirmation">I reviewed the normalized plan, destination checks, warnings, and operational impact.</label>
                             </div>
-                            <div class="col-lg-4">
-                                <div class="border rounded p-3 h-100" data-migration-picker="groups">
-                                    <h6 class="mb-2">Groups</h6>
-                                    <select class="form-select form-select-sm mb-2" id="data_management_migration_groups_mode" aria-label="Group migration mode">
-                                        <option value="none">Do not migrate groups</option>
-                                        <option value="all">Migrate all groups</option>
-                                        <option value="selected">Select groups</option>
-                                    </select>
-                                    <div class="input-group input-group-sm mb-2">
-                                        <input type="search" class="form-control" id="data_management_migration_groups_search" placeholder="Search groups">
-                                        <button type="button" class="btn btn-outline-secondary" id="data-management-search-groups-btn">Search</button>
-                                    </div>
-                                    <div class="small text-muted mb-1">Available</div>
-                                    <div class="list-group small mb-2" id="data-management-migration-groups-available"></div>
-                                    <div class="small text-muted mb-1">Selected</div>
-                                    <div class="list-group small mb-2" id="data-management-migration-groups-selected"></div>
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="checkbox" id="data_management_migration_groups_documents">
-                                        <label class="form-check-label" for="data_management_migration_groups_documents">Include group documents</label>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="col-lg-4">
-                                <div class="border rounded p-3 h-100" data-migration-picker="public_workspaces">
-                                    <h6 class="mb-2">Public Workspaces</h6>
-                                    <select class="form-select form-select-sm mb-2" id="data_management_migration_public_workspaces_mode" aria-label="Public workspace migration mode">
-                                        <option value="none">Do not migrate public workspaces</option>
-                                        <option value="all">Migrate all public workspaces</option>
-                                        <option value="selected">Select public workspaces</option>
-                                    </select>
-                                    <div class="input-group input-group-sm mb-2">
-                                        <input type="search" class="form-control" id="data_management_migration_public_workspaces_search" placeholder="Search public workspaces">
-                                        <button type="button" class="btn btn-outline-secondary" id="data-management-search-public-workspaces-btn">Search</button>
-                                    </div>
-                                    <div class="small text-muted mb-1">Available</div>
-                                    <div class="list-group small mb-2" id="data-management-migration-public-workspaces-available"></div>
-                                    <div class="small text-muted mb-1">Selected</div>
-                                    <div class="list-group small mb-2" id="data-management-migration-public-workspaces-selected"></div>
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="checkbox" id="data_management_migration_public_workspaces_documents">
-                                        <label class="form-check-label" for="data_management_migration_public_workspaces_documents">Include public workspace documents</label>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="row g-3 mt-3">
-                            <div class="col-md-6">
-                                <div class="form-check form-switch">
-                                    <input class="form-check-input" type="checkbox" role="switch" id="data_management_migration_include_ai_search" checked>
-                                    <label class="form-check-label" for="data_management_migration_include_ai_search">Migrate matching AI Search documents</label>
-                                </div>
-                                <div class="form-check mt-2" id="data-management-migration-search-write-freeze">
-                                    <input class="form-check-input" type="checkbox" id="data_management_migration_target_search_writes_frozen">
-                                    <label class="form-check-label" for="data_management_migration_target_search_writes_frozen">I confirm external destination AI Search writers are frozen for this migration</label>
-                                    <div class="form-text">Azure AI Search does not support conditional document writes. SimpleChat target indexing pauses automatically; freeze all external writers before copying Search documents.</div>
-                                </div>
-                            </div>
-                            <div class="col-md-6">
-                                <div class="form-check form-switch">
-                                    <input class="form-check-input" type="checkbox" role="switch" id="data_management_migration_include_source_blobs">
-                                    <label class="form-check-label" for="data_management_migration_include_source_blobs">Migrate selected source document blobs</label>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="border rounded p-3 mt-3" id="data-management-migration-performance-section">
-                            <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+                            <button type="button" class="btn btn-warning mt-3" id="data-management-execute-migration-btn" disabled aria-disabled="true">
+                                <i class="bi bi-arrow-left-right me-1" aria-hidden="true"></i>Execute Migration
+                            </button>
+                        </section>
+
+                        <!-- Progress Step -->
+                        <section class="migration-stage d-none" data-migration-step-panel="progress" aria-labelledby="data-management-migration-progress-heading">
+                            <div class="migration-stage-heading">
                                 <div>
-                                    <h6 class="mb-1">Performance And Resume</h6>
-                                    <p class="text-muted small mb-0">Migration uses durable per-resource checkpoints and the same migration ID after a retry.</p>
+                                    <h5 id="data-management-migration-progress-heading">Operate the migration</h5>
+                                    <p>Progress comes from the durable job record. Cancel, Retry, and Resume retain verified checkpoints.</p>
                                 </div>
-                                <button type="button" class="btn btn-outline-secondary btn-sm" id="data-management-test-migration-access-btn">
-                                    <i class="bi bi-shield-check me-1"></i>Validate Cosmos Migration Access
+                                <div class="d-flex flex-wrap gap-2">
+                                    <button type="button" class="btn btn-outline-primary btn-sm d-none" id="data-management-migration-start-new-btn">
+                                        <i class="bi bi-plus-circle me-1" aria-hidden="true"></i>Start new migration
+                                    </button>
+                                    <button type="button" class="btn btn-outline-secondary btn-sm d-none" id="data-management-migration-view-job-btn">
+                                        <i class="bi bi-list-check me-1" aria-hidden="true"></i>View full job log
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="migration-progress-empty" id="data-management-migration-progress-empty">
+                                <i class="bi bi-hourglass-split" aria-hidden="true"></i>
+                                <div>
+                                    <strong>No migration is attached to this workflow yet.</strong>
+                                    <span>After execution, this stage follows the queued job and exposes its recovery actions.</span>
+                                </div>
+                            </div>
+                            <div class="d-none" id="data-management-migration-workflow-progress">
+                                <div id="data-management-migration-workflow-progress-summary"></div>
+                                <div id="data-management-migration-workflow-progress-state"></div>
+                                <div class="d-flex flex-wrap gap-2 mt-3" id="data-management-migration-workflow-progress-actions"></div>
+                            </div>
+                        </section>
+
+                        <footer class="migration-workflow-footer">
+                            <div>
+                                <button type="button" class="btn btn-outline-secondary" id="data-management-migration-back-btn" disabled>
+                                    <i class="bi bi-arrow-left me-1" aria-hidden="true"></i>Back
+                                </button>
+                                <button type="button" class="btn btn-primary" id="data-management-migration-next-btn">
+                                    Continue to Scope<i class="bi bi-arrow-right ms-1" aria-hidden="true"></i>
                                 </button>
                             </div>
-                            <div class="row g-3">
-                                <div class="col-md-4">
-                                    <label class="form-label" for="data_management_migration_max_parallel_operations">Concurrent operations</label>
-                                    <input class="form-control" type="number" id="data_management_migration_max_parallel_operations" min="1" max="32" value="8">
-                                </div>
-                                <div class="col-md-4">
-                                    <label class="form-label" for="data_management_migration_retry_count">Retry attempts</label>
-                                    <input class="form-control" type="number" id="data_management_migration_retry_count" min="1" max="10" value="5">
-                                </div>
-                                <div class="col-md-4">
-                                    <label class="form-label" for="data_management_migration_skip_recent_within_hours">Skip successful prior migrations within hours</label>
-                                    <input class="form-control" type="number" id="data_management_migration_skip_recent_within_hours" min="0" max="8760" value="0">
-                                </div>
-                            </div>
-                            <div class="form-check form-switch mt-3">
-                                <input class="form-check-input" type="checkbox" role="switch" id="data_management_migration_temporary_destination_ru_enabled">
-                                <label class="form-check-label" for="data_management_migration_temporary_destination_ru_enabled">Temporarily increase destination Cosmos capacity during this migration</label>
-                            </div>
-                            <div class="row g-3 mt-1" id="data-management-migration-temporary-ru-field">
-                                <div class="col-md-4">
-                                    <label class="form-label" for="data_management_migration_temporary_destination_ru">Temporary destination max RU/s</label>
-                                    <input class="form-control" type="number" id="data_management_migration_temporary_destination_ru" min="1000" max="10000" step="1000" value="10000">
-                                </div>
-                                <div class="col-md-8 d-flex align-items-end">
-                                    <div class="form-text mb-2">The migration records the prior database or dedicated-container capacity, raises only eligible targets up to 10,000 RU/s, and restores it after completion or failure. Capacity changes require destination ARM permission.</div>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="border rounded p-3 mt-3" id="data-management-migration-summary">
-                            <p class="text-muted mb-0">Choose migration targets to see the summary.</p>
-                        </div>
-                        <div class="d-flex flex-wrap gap-2 mt-3">
-                            <button type="button" class="btn btn-outline-secondary" id="data-management-migration-preview-btn">
-                                <i class="bi bi-card-checklist me-1"></i>Preview Migration
-                            </button>
-                            <button type="button" class="btn btn-warning" id="data-management-execute-migration-btn">
-                                <i class="bi bi-arrow-left-right me-1"></i>Execute Migration
-                            </button>
-                        </div>
+                            <span class="small text-muted" id="data-management-migration-step-position">Step 1 of 6</span>
+                        </footer>
                     </div>
-                </div>
+                </section>
 
                 <div class="card p-4 mb-4 border-danger shadow-sm" id="data-management-cosmos-editor-section" data-ignore-data-management-change="true">
                     <div class="d-flex flex-wrap align-items-start justify-content-between gap-3 mb-3">

@@ -1,6 +1,7 @@
 # Data Management Migration Resilience
 
 Implemented in version: **0.250.071**
+Updated in version: **0.250.103**
 
 GitHub issue: [#1043](https://github.com/microsoft/simplechat/issues/1043)
 
@@ -82,6 +83,8 @@ Job detail exposes readiness, actual outcomes, preview divergence, keyset cursor
 
 Preflight results are saved in the migration state and shown through existing job details and activity history without credentials or source content.
 
+Version 0.250.103 also exposes these checks through the staged browser workflow's **Review** step. The review API accepts the current redacted settings form plus migration plan, resolves stored secret placeholders on the server, and returns only sanitized pass, warning, or blocker results. It combines exhaustive scope/document counts, temporary access probes, partition-key validation, destination coordinator and Search write-gate availability, optional capacity inspection, and the read-only destination inventory preview. Only a ready review receives a short-lived, administrator-bound authorization. Job creation atomically reserves it, releases that exact reservation if durable queueing fails, and the resulting job consumes it before work; blocked, expired, replayed, or changed reviews are rejected. The worker also verifies the reviewed migration-setting fingerprint before execution. The review remains a snapshot, and execution-time worker preflight is authoritative.
+
 ### Temporary Cosmos Capacity
 
 The optional **Temporarily increase destination Cosmos capacity during this migration** control raises eligible destination database or dedicated-container throughput to the configured target, capped at **10,000 RU/s**.
@@ -94,13 +97,13 @@ The optional **Temporarily increase destination Cosmos capacity during this migr
 
 ## Usage
 
-1. Open **Admin Settings > Migration** and configure the destination services.
-2. Select the scopes and document surfaces to migrate.
-3. Choose **New only**, **Delta / upsert**, or **Mirror with deletions**. Delta and mirror can name a completed baseline job or automatically use the latest compatible baseline.
-4. Select **Preview Migration** and review estimated creates, updates, unchanged items, deletes, missing sources, and conflicts. For mirror, type the exact destructive confirmation phrase.
-5. Select **Validate Cosmos Migration Access** to confirm the selected source and destination permissions. The worker performs complete Cosmos, Search, and Blob preflight before copying data.
-6. Optionally enable the temporary destination Cosmos capacity boost, supply the target subscription and resource group, and leave the target at or below 10,000 RU/s.
-7. Execute the migration and open the job log to observe durable inventory, stage state, transfer rates, in-flight Blob bytes, keyset checkpoints, outcome counts, reconciliation readiness, and preview divergence. Download the manifest or failure list when item-level remediation is required.
+1. Open **Admin Settings > Data Management > Migration** and complete **Target**.
+2. In **Scope**, choose none, selected, or all for each principal type. Search and page selected catalogs without losing choices.
+3. In **Content & Options**, choose document surfaces, Search/blobs, synchronization mode, concurrency, retry, and optional capacity behavior.
+4. In **Review**, run preflight and resolve blockers for access, partition keys, collisions, locks, compatibility, and capacity. Review estimated creates, updates, unchanged items, deletes, missing sources, and conflicts.
+5. In **Confirm**, acknowledge the normalized plan. Mirror mode requires the exact destructive confirmation phrase.
+6. Execute the migration and use **Progress** or the full job log to observe durable inventory, stage state, transfer rates, in-flight Blob bytes, keyset checkpoints, outcome counts, reconciliation readiness, and preview divergence.
+7. Download the manifest or failure list when item-level remediation is required.
 8. Use **Cancel** to request a cooperative stop. Use **Retry** or **Resume** on a failed, canceled, or stale job. The original migration GUID and completed destination markers are retained.
 
 ### Recommended Cutover
@@ -130,6 +133,7 @@ The optional **Temporarily increase destination Cosmos capacity during this migr
 - `functional_tests/test_data_management_migration_reconciliation.py`
 - `functional_tests/test_data_management_migration_manifest.py`
 - `functional_tests/test_data_management_security_patterns.py`
+- `functional_tests/test_data_management_migration_workflow_contract.py`
 - `ui_tests/test_admin_data_management_settings_ui.py`
 
 The focused coverage verifies provenance and source fingerprints, unowned collision rejection, equal-second Cosmos updates, Search transfer and reconciliation beyond 100,000 documents, failed-page cursor retention, Blob mid-transfer heartbeats and pending-to-succeeded verification, mode and baseline validation, two-phase migration-owned mirror deletion, post-cutoff source protection, preview divergence, durable hashed manifests, global coordination, cancellation/retry recovery, route protection, and safe browser rendering.
@@ -148,4 +152,5 @@ The focused coverage verifies provenance and source fingerprints, unowned collis
 ## Version References
 
 - Application version updated in `application/single_app/config.py` to `0.250.071`.
-- This documentation and the related functional tests use the same implementation version.
+- The staged migration workflow and catalog/review contracts were updated in `application/single_app/config.py` version `0.250.103`.
+- This documentation and the related functional tests use their corresponding implementation versions.

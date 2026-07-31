@@ -459,6 +459,36 @@ def _target_migration_coordinator_is_active(coordinator, now=None):
     )
 
 
+def inspect_data_management_target_migration_coordinator(container):
+    """Return secret-free destination coordinator readiness."""
+    coordinator = _read_target_migration_coordinator(container)
+    active = _target_migration_coordinator_is_active(coordinator)
+    return {
+        "available": not active,
+        "active": active,
+        "expires_at": coordinator.get("expires_at") if active else None,
+    }
+
+
+def inspect_data_management_search_write_gate(container):
+    """Return secret-free Search write-gate readiness."""
+    gate = _read_gate(container)
+    if gate is None:
+        return {
+            "available": True,
+            "state": DATA_MANAGEMENT_SEARCH_WRITE_GATE_STATE_OPEN,
+            "active_writer_count": 0,
+            "expires_at": None,
+        }
+    active_fence = _is_active_migration_fence(gate)
+    return {
+        "available": not active_fence,
+        "state": gate.get("state") or DATA_MANAGEMENT_SEARCH_WRITE_GATE_STATE_OPEN,
+        "active_writer_count": len(_active_writer_leases(gate)),
+        "expires_at": gate.get("expires_at") if active_fence else None,
+    }
+
+
 def _new_target_migration_coordinator(migration_id, lock_token, lease_seconds, now=None):
     timestamp = now or _now_utc()
     return {

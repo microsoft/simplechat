@@ -24,14 +24,41 @@ let cosmosEditorResultCount = 0;
 let cosmosEditorSelectedDocument = null;
 let cosmosEditorPendingDocument = null;
 let pendingDataManagementCancellationJob = null;
+let migrationWorkflowRefreshTimer = null;
+let migrationWorkflowRefreshInFlight = false;
 
 const jobDetailRefreshIntervalMs = 2000;
 const activeJobStatuses = new Set(["queued", "running"]);
 const migrationTargetTypes = ["users", "groups", "public_workspaces"];
+const migrationWorkflowSteps = ["target", "scope", "options", "review", "confirm", "progress"];
 const migrationSelections = {
     users: new Map(),
     groups: new Map(),
     public_workspaces: new Map(),
+};
+const migrationCatalogStates = Object.fromEntries(
+    migrationTargetTypes.map((targetType) => [
+        targetType,
+        {
+            items: [],
+            totalCount: 0,
+            pageIndex: 0,
+            pageTokens: [""],
+            nextToken: "",
+            requestGeneration: 0,
+            search: "",
+        },
+    ])
+);
+const migrationWorkflowState = {
+    activeStepIndex: 0,
+    highestVisitedStepIndex: 0,
+    review: null,
+    reviewStale: true,
+    reviewRequestGeneration: 0,
+    submissionInFlight: false,
+    submissionAccepted: false,
+    currentJob: null,
 };
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -41,6 +68,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     bindEvents();
+    initializeMigrationWorkflow();
     loadDataManagementSettings();
     loadDataManagementBackups();
     loadDataManagementJobs();
@@ -51,6 +79,24 @@ document.addEventListener("DOMContentLoaded", () => {
 function bindElements() {
     const ids = [
         "data-management",
+        "data-management-migration-section",
+        "data-management-migration-readiness",
+        "data-management-migration-step-error",
+        "data-management-migration-scope-total",
+        "data-management-migration-review-empty",
+        "data-management-migration-review-checks",
+        "data-management-migration-confirm-summary",
+        "data_management_migration_final_confirmation",
+        "data-management-migration-start-new-btn",
+        "data-management-migration-view-job-btn",
+        "data-management-migration-progress-empty",
+        "data-management-migration-workflow-progress",
+        "data-management-migration-workflow-progress-summary",
+        "data-management-migration-workflow-progress-state",
+        "data-management-migration-workflow-progress-actions",
+        "data-management-migration-back-btn",
+        "data-management-migration-next-btn",
+        "data-management-migration-step-position",
         "data-management-status",
         "data-management-save-settings-btn",
         "data_management_enabled",
@@ -245,10 +291,11 @@ function bindEvents() {
     elements.dataManagementTestTargetEcStorageBtn?.addEventListener("click", testTargetEnhancedCitationStorage);
     elements.dataManagementRunFullBackupBtn?.addEventListener("click", () => queueBackup("full"));
     elements.dataManagementRunPartialBackupBtn?.addEventListener("click", () => queueBackup("partial"));
-    elements.dataManagementMigrationPreviewBtn?.addEventListener("click", () => loadMigrationSummary(elements.dataManagementMigrationPreviewBtn, true));
+    elements.dataManagementMigrationPreviewBtn?.addEventListener("click", () => runMigrationReview(elements.dataManagementMigrationPreviewBtn));
     elements.dataManagementExecuteMigrationBtn?.addEventListener("click", () => queueMigration(false));
-    elements.dataManagementRefreshMigrationSummaryBtn?.addEventListener("click", () => loadMigrationSummary(elements.dataManagementRefreshMigrationSummaryBtn, true));
+    elements.dataManagementRefreshMigrationSummaryBtn?.addEventListener("click", () => runMigrationReview(elements.dataManagementRefreshMigrationSummaryBtn));
     bindMigrationPickerEvents();
+    bindMigrationWorkflowEvents();
     elements.dataManagementRefreshBackupsBtn?.addEventListener("click", loadDataManagementBackups);
     elements.dataManagementViewFullBackupsBtn?.addEventListener("click", () => setBackupFilter("full"));
     elements.dataManagementViewPartialBackupsBtn?.addEventListener("click", () => setBackupFilter("partial"));
@@ -279,12 +326,14 @@ function bindEvents() {
         elements.datamanagementmigrationmodemirrorwithdeletions,
     ].forEach((modeElement) => modeElement?.addEventListener("change", () => {
         updateMigrationModeVisibility();
-        loadMigrationSummary();
+        invalidateMigrationReview();
     }));
-    elements.datamanagementmigrationbaselinejobid?.addEventListener("change", loadMigrationSummary);
+    elements.datamanagementmigrationbaselinejobid?.addEventListener("change", invalidateMigrationReview);
     elements.datamanagementmigrationmirrorconfirmationphrase?.addEventListener("input", () => {
         elements.datamanagementmigrationmirrorconfirmationphrase?.classList.remove("is-invalid");
+        updateMigrationExecutionButtonState();
     });
+    elements.datamanagementmigrationfinalconfirmation?.addEventListener("change", updateMigrationExecutionButtonState);
     bindDataManagementChangeTracking();
     setStorageAuthVisibility();
     setMigrationTargetVisibility();
@@ -298,24 +347,122 @@ function bindEvents() {
 
 function bindMigrationPickerEvents() {
     migrationTargetTypes.forEach((targetType) => {
-        getMigrationModeElement(targetType)?.addEventListener("change", () => {
-            updateMigrationPickerVisibility(targetType);
-            loadMigrationSummary();
+        document.querySelectorAll(`[data-migration-mode-option="${targetType}"]`).forEach((modeOption) => {
+            modeOption.addEventListener("change", () => {
+                if (!modeOption.checked) {
+                    return;
+                }
+                setMigrationScopeMode(targetType, modeOption.value);
+            });
         });
-        getMigrationDocumentsElement(targetType)?.addEventListener("change", loadMigrationSummary);
-        getMigrationSearchButton(targetType)?.addEventListener("click", () => loadMigrationCatalog(targetType));
+        getMigrationDocumentsElement(targetType)?.addEventListener("change", () => {
+            invalidateMigrationReview();
+            updateMigrationScopeCounts();
+        });
+        getMigrationSearchButton(targetType)?.addEventListener("click", () => loadMigrationCatalog(targetType, "reset"));
         getMigrationSearchElement(targetType)?.addEventListener("keydown", (event) => {
             if (event.key === "Enter") {
                 event.preventDefault();
-                loadMigrationCatalog(targetType);
+                loadMigrationCatalog(targetType, "reset");
             }
         });
+        document.querySelector(`[data-migration-page-previous="${targetType}"]`)?.addEventListener("click", () => loadMigrationCatalog(targetType, "previous"));
+        document.querySelector(`[data-migration-page-next="${targetType}"]`)?.addEventListener("click", () => loadMigrationCatalog(targetType, "next"));
     });
     elements.datamanagementmigrationincludeaisearch?.addEventListener("change", () => {
         updateMigrationSearchWriteFreezeVisibility();
-        loadMigrationSummary();
+        invalidateMigrationReview();
     });
-    elements.datamanagementmigrationincludesourceblobs?.addEventListener("change", loadMigrationSummary);
+    elements.datamanagementmigrationincludesourceblobs?.addEventListener("change", invalidateMigrationReview);
+}
+
+function bindMigrationWorkflowEvents() {
+    elements.dataManagementMigrationBackBtn?.addEventListener("click", () => {
+        showMigrationWorkflowStep(migrationWorkflowState.activeStepIndex - 1);
+    });
+    elements.dataManagementMigrationNextBtn?.addEventListener("click", advanceMigrationWorkflow);
+    elements.dataManagementMigrationViewJobBtn?.addEventListener("click", () => {
+        const jobId = migrationWorkflowState.currentJob?.id;
+        if (jobId) {
+            loadDataManagementJobDetail(jobId);
+        }
+    });
+    elements.dataManagementMigrationStartNewBtn?.addEventListener("click", resetMigrationWorkflowForNewRun);
+    document.querySelectorAll("[data-migration-step-button]").forEach((button) => {
+        button.addEventListener("click", () => {
+            const stepIndex = migrationWorkflowSteps.indexOf(button.dataset.migrationStepButton);
+            if (stepIndex < 0) {
+                return;
+            }
+            const canVisit = (
+                stepIndex <= migrationWorkflowState.highestVisitedStepIndex ||
+                (button.dataset.migrationStepButton === "confirm" && isMigrationReviewCurrentAndReady()) ||
+                (button.dataset.migrationStepButton === "progress" && Boolean(migrationWorkflowState.currentJob))
+            );
+            if (canVisit) {
+                showMigrationWorkflowStep(stepIndex);
+            }
+        });
+    });
+    document.querySelectorAll("[data-migration-scope-tab]").forEach((button) => {
+        button.addEventListener("click", () => activateMigrationScopeTab(button.dataset.migrationScopeTab));
+    });
+    elements.dataManagementMigrationSection?.addEventListener("input", handleMigrationWorkflowInput);
+    elements.dataManagementMigrationSection?.addEventListener("change", handleMigrationWorkflowInput);
+}
+
+function initializeMigrationWorkflow() {
+    migrationTargetTypes.forEach((targetType) => {
+        setValue(getMigrationModeElement(targetType), "none");
+        updateMigrationPickerVisibility(targetType);
+        renderMigrationSelectedList(targetType);
+    });
+    activateMigrationScopeTab("users");
+    updateMigrationScopeCounts();
+    updateMigrationReadiness();
+    showMigrationWorkflowStep(0, { skipValidation: true });
+}
+
+function handleMigrationWorkflowInput(event) {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+        return;
+    }
+    if (
+        target === elements.datamanagementmigrationfinalconfirmation ||
+        target === elements.datamanagementmigrationmirrorconfirmationphrase ||
+        target.matches("input[type='search']")
+    ) {
+        return;
+    }
+    invalidateMigrationReview();
+}
+
+function setMigrationScopeMode(targetType, mode) {
+    const normalizedMode = ["none", "selected", "all"].includes(mode) ? mode : "none";
+    setValue(getMigrationModeElement(targetType), normalizedMode);
+    updateMigrationPickerVisibility(targetType);
+    if (normalizedMode === "selected" && migrationCatalogStates[targetType].items.length === 0) {
+        loadMigrationCatalog(targetType, "reset");
+    } else if (normalizedMode === "all") {
+        loadMigrationCatalog(targetType, "count");
+    }
+    invalidateMigrationReview();
+    updateMigrationScopeCounts();
+}
+
+function activateMigrationScopeTab(targetType) {
+    if (!migrationTargetTypes.includes(targetType)) {
+        return;
+    }
+    document.querySelectorAll("[data-migration-scope-tab]").forEach((button) => {
+        const isActive = button.dataset.migrationScopeTab === targetType;
+        button.classList.toggle("active", isActive);
+        button.setAttribute("aria-selected", String(isActive));
+    });
+    document.querySelectorAll("[data-migration-scope-pane]").forEach((pane) => {
+        pane.classList.toggle("d-none", pane.dataset.migrationScopePane !== targetType);
+    });
 }
 
 function bindDataManagementChangeTracking() {
@@ -724,7 +871,9 @@ async function requestJson(url, options = {}) {
     }
     const data = await response.json().catch(() => ({}));
     if (!response.ok || data.success === false) {
-        throw new Error(data.error || `Request failed with status ${response.status}`);
+        const requestError = new Error(data.error || `Request failed with status ${response.status}`);
+        requestError.workflowStep = data.workflow_step || "";
+        throw requestError;
     }
     return data;
 }
@@ -1368,15 +1517,55 @@ async function queueOperation(operation, backupType = null, options = {}, trigge
         renderJobs([data.job]);
         loadDataManagementJobs();
         loadDataManagementBackups();
+        return data;
     } catch (error) {
         setStatus(error.message || "Data Management job could not be queued.", "danger");
         showToast(error.message || "Data Management job could not be queued.", "danger");
+        if (operation === "migration") {
+            const workflowStep = error.workflowStep || "confirm";
+            if (workflowStep === "review") {
+                migrationWorkflowState.reviewStale = true;
+                migrationWorkflowState.reviewRequestGeneration += 1;
+                setChecked(
+                    elements.datamanagementmigrationfinalconfirmation,
+                    false
+                );
+                updateMigrationReadiness();
+                updateMigrationExecutionButtonState();
+                updateMigrationWorkflowFooter();
+                showMigrationWorkflowStep(
+                    migrationWorkflowSteps.indexOf("review"),
+                    { skipValidation: true }
+                );
+            }
+            showMigrationStepError(
+                error.message || "Migration could not be queued.",
+                workflowStep
+            );
+        }
+        return null;
     } finally {
         setBusy(button, false);
     }
 }
 
-function queueMigration(dryRun) {
+async function queueMigration(dryRun) {
+    if (
+        migrationWorkflowState.submissionInFlight ||
+        migrationWorkflowState.submissionAccepted
+    ) {
+        return;
+    }
+    if (!isMigrationReviewCurrentAndReady()) {
+        showMigrationStepError("Run a current preflight review and resolve every blocker before execution.", "review");
+        showMigrationWorkflowStep(migrationWorkflowSteps.indexOf("review"), { skipValidation: true });
+        return;
+    }
+    if (!elements.datamanagementmigrationfinalconfirmation?.checked) {
+        showMigrationStepError("Confirm that you reviewed the normalized plan and operational impact.", "confirm");
+        elements.datamanagementmigrationfinalconfirmation?.focus();
+        return;
+    }
     const button = elements.dataManagementExecuteMigrationBtn;
     const migrationPlan = buildMigrationPlan();
     if (
@@ -1387,7 +1576,7 @@ function queueMigration(dryRun) {
         elements.datamanagementmigrationtargetsearchwritesfrozen?.focus();
         setStatus(message, "danger");
         showToast(message, "danger");
-        return Promise.resolve();
+        return;
     }
     if (
         migrationPlan.migration_mode === "mirror_with_deletions" &&
@@ -1398,12 +1587,30 @@ function queueMigration(dryRun) {
         elements.datamanagementmigrationmirrorconfirmationphrase?.focus();
         setStatus(message, "danger");
         showToast(message, "danger");
-        return Promise.resolve();
+        return;
     }
-    return queueOperation("migration", null, {
-        dry_run: Boolean(dryRun),
-        migration_plan: migrationPlan,
-    }, button);
+    migrationWorkflowState.submissionInFlight = true;
+    updateMigrationExecutionButtonState();
+    try {
+        const data = await queueOperation("migration", null, {
+            dry_run: Boolean(dryRun),
+            migration_plan: migrationPlan,
+            review_fingerprint: migrationWorkflowState.review?.review_fingerprint || "",
+            review_authorization_token: migrationWorkflowState.review?.authorization_token || "",
+        }, button);
+        if (!data?.job) {
+            return;
+        }
+        migrationWorkflowState.submissionAccepted = true;
+        if (elements.datamanagementmigrationfinalconfirmation) {
+            elements.datamanagementmigrationfinalconfirmation.checked = false;
+        }
+        attachMigrationWorkflowJob(data.job);
+        showMigrationWorkflowStep(migrationWorkflowSteps.indexOf("progress"), { skipValidation: true });
+    } finally {
+        migrationWorkflowState.submissionInFlight = false;
+        updateMigrationExecutionButtonState();
+    }
 }
 
 function buttonForOperation(operation, backupType) {
@@ -1454,29 +1661,84 @@ function formatMigrationTargetName(targetType) {
 function updateMigrationPickerVisibility(targetType) {
     const mode = getValue(getMigrationModeElement(targetType)) || "none";
     const isSelectedMode = mode === "selected";
-    const searchElement = getMigrationSearchElement(targetType);
-    const searchButton = getMigrationSearchButton(targetType);
-    if (searchElement) {
-        searchElement.disabled = !isSelectedMode;
-    }
-    if (searchButton) {
-        searchButton.disabled = !isSelectedMode;
+    const isAllMode = mode === "all";
+    const workspace = document.querySelector(`[data-migration-catalog-workspace="${targetType}"]`);
+    const allSummary = document.querySelector(`[data-migration-all-summary="${targetType}"]`);
+    setElementVisible(workspace, isSelectedMode);
+    setElementVisible(allSummary, isAllMode);
+    const documentsElement = getMigrationDocumentsElement(targetType);
+    if (documentsElement) {
+        documentsElement.disabled = mode === "none";
+        if (mode === "none") {
+            documentsElement.checked = false;
+        }
     }
     renderMigrationSelectedList(targetType);
 }
 
-async function loadMigrationCatalog(targetType) {
+async function loadMigrationCatalog(targetType, direction = "reset") {
     const availableElement = getMigrationAvailableElement(targetType);
-    if (!availableElement) {
+    const state = migrationCatalogStates[targetType];
+    if (!availableElement || !state) {
         return;
     }
-    availableElement.replaceChildren(createSmallMutedElement("Loading..."));
+    const countOnly = direction === "count";
+    if (direction === "reset") {
+        state.search = getValue(getMigrationSearchElement(targetType));
+        state.pageIndex = 0;
+        state.pageTokens = [""];
+        state.nextToken = "";
+    } else if (direction === "next" && state.nextToken) {
+        state.pageIndex += 1;
+        state.pageTokens = state.pageTokens.slice(0, state.pageIndex);
+        state.pageTokens[state.pageIndex] = state.nextToken;
+    } else if (direction === "previous" && state.pageIndex > 0) {
+        state.pageIndex -= 1;
+    } else if (!countOnly) {
+        return;
+    }
+
+    const requestGeneration = state.requestGeneration + 1;
+    state.requestGeneration = requestGeneration;
+    if (!countOnly) {
+        availableElement.replaceChildren(createMigrationCatalogLoadingState());
+        setMigrationCatalogStatus(targetType, "Loading server catalog…");
+    }
     try {
-        const search = getValue(getMigrationSearchElement(targetType));
-        const data = await requestJson(`/api/admin/data-management/migration/catalog/${encodeURIComponent(targetType)}?search=${encodeURIComponent(search)}&limit=50`, { method: "GET" });
-        renderMigrationAvailableList(targetType, Array.isArray(data.items) ? data.items : []);
+        const search = countOnly ? "" : state.search;
+        const continuationToken = countOnly ? "" : (state.pageTokens[state.pageIndex] || "");
+        const pageSize = countOnly ? 1 : 25;
+        const data = await requestJson(
+            `/api/admin/data-management/migration/catalog/${encodeURIComponent(targetType)}?search=${encodeURIComponent(search)}&page_size=${pageSize}&continuation_token=${encodeURIComponent(continuationToken)}`,
+            { method: "GET" }
+        );
+        if (requestGeneration !== state.requestGeneration) {
+            return;
+        }
+        state.totalCount = Number(data.total_count || 0);
+        if (countOnly) {
+            updateMigrationScopeCounts();
+            return;
+        }
+        state.items = Array.isArray(data.items) ? data.items : [];
+        state.nextToken = data.has_more ? String(data.continuation_token || "") : "";
+        setMigrationCatalogStatus(
+            targetType,
+            `${formatNumber(state.totalCount)} match${state.totalCount === 1 ? "" : "es"}`
+        );
+        renderMigrationAvailableList(targetType, state.items);
+        updateMigrationCatalogPagination(targetType);
+        updateMigrationScopeCounts();
     } catch (error) {
-        availableElement.replaceChildren(createSmallMutedElement(error.message || "Migration catalog could not be loaded."));
+        if (requestGeneration !== state.requestGeneration) {
+            return;
+        }
+        const message = error.message || "Migration catalog could not be loaded.";
+        if (!countOnly) {
+            availableElement.replaceChildren(createSmallMutedElement(message));
+            setMigrationCatalogStatus(targetType, message);
+            updateMigrationCatalogPagination(targetType);
+        }
     }
 }
 
@@ -1494,11 +1756,15 @@ function renderMigrationAvailableList(targetType, items) {
         const row = document.createElement("button");
         row.type = "button";
         row.className = "list-group-item list-group-item-action py-2";
-        row.appendChild(createMigrationItemContent(item, "Add"));
+        const isSelected = migrationSelections[targetType].has(item.id);
+        row.disabled = isSelected;
+        row.setAttribute("aria-pressed", String(isSelected));
+        row.appendChild(createMigrationItemContent(item, isSelected ? "Selected" : "Add"));
         row.addEventListener("click", () => {
             migrationSelections[targetType].set(item.id, item);
+            renderMigrationAvailableList(targetType, migrationCatalogStates[targetType].items);
             renderMigrationSelectedList(targetType);
-            loadMigrationSummary();
+            invalidateMigrationReview();
         });
         availableElement.appendChild(row);
     });
@@ -1522,11 +1788,18 @@ function renderMigrationSelectedList(targetType) {
         row.appendChild(createMigrationItemContent(item, "Remove"));
         row.addEventListener("click", () => {
             migrationSelections[targetType].delete(item.id);
+            renderMigrationAvailableList(targetType, migrationCatalogStates[targetType].items);
             renderMigrationSelectedList(targetType);
-            loadMigrationSummary();
+            invalidateMigrationReview();
         });
         selectedElement.appendChild(row);
     });
+    const selectedCount = migrationSelections[targetType].size;
+    setText(
+        document.querySelector(`[data-migration-selected-count="${targetType}"]`),
+        formatNumber(selectedCount)
+    );
+    updateMigrationScopeCounts();
 }
 
 function createMigrationItemContent(item, actionLabel) {
@@ -1553,6 +1826,264 @@ function createSmallMutedElement(text) {
     element.className = "text-muted small p-2";
     element.textContent = text;
     return element;
+}
+
+function createIcon(className) {
+    const icon = document.createElement("i");
+    icon.className = className;
+    icon.setAttribute("aria-hidden", "true");
+    return icon;
+}
+
+function createMigrationCatalogLoadingState() {
+    const wrapper = document.createElement("div");
+    wrapper.className = "p-3";
+    wrapper.setAttribute("role", "status");
+    const label = document.createElement("span");
+    label.className = "text-muted small";
+    label.textContent = "Loading catalog…";
+    wrapper.appendChild(label);
+    return wrapper;
+}
+
+function setMigrationCatalogStatus(targetType, message) {
+    setText(
+        document.querySelector(`[data-migration-catalog-status="${targetType}"]`),
+        message
+    );
+}
+
+function updateMigrationCatalogPagination(targetType) {
+    const state = migrationCatalogStates[targetType];
+    const previousButton = document.querySelector(`[data-migration-page-previous="${targetType}"]`);
+    const nextButton = document.querySelector(`[data-migration-page-next="${targetType}"]`);
+    setButtonDisabled(previousButton, state.pageIndex === 0);
+    setButtonDisabled(nextButton, !state.nextToken);
+    setText(
+        document.querySelector(`[data-migration-page-status="${targetType}"]`),
+        `Page ${formatNumber(state.pageIndex + 1)}`
+    );
+}
+
+function updateMigrationScopeCounts() {
+    let totalCount = 0;
+    migrationTargetTypes.forEach((targetType) => {
+        const mode = getValue(getMigrationModeElement(targetType)) || "none";
+        const count = mode === "all"
+            ? migrationCatalogStates[targetType].totalCount
+            : mode === "selected"
+                ? migrationSelections[targetType].size
+                : 0;
+        totalCount += count;
+        setText(
+            document.querySelector(`[data-migration-scope-count="${targetType}"]`),
+            formatNumber(count)
+        );
+        setText(
+            document.querySelector(`[data-migration-all-count="${targetType}"]`),
+            `${formatNumber(count)} ${formatActivityLabel(targetType)} included`
+        );
+    });
+    setText(
+        elements.dataManagementMigrationScopeTotal,
+        `${formatNumber(totalCount)} principal scope${totalCount === 1 ? "" : "s"} selected`
+    );
+}
+
+function showMigrationWorkflowStep(stepIndex, options = {}) {
+    const normalizedIndex = Math.max(0, Math.min(migrationWorkflowSteps.length - 1, Number(stepIndex)));
+    if (!options.skipValidation && normalizedIndex > migrationWorkflowState.activeStepIndex) {
+        if (!validateMigrationWorkflowStep(migrationWorkflowState.activeStepIndex)) {
+            return;
+        }
+    }
+    migrationWorkflowState.activeStepIndex = normalizedIndex;
+    migrationWorkflowState.highestVisitedStepIndex = Math.max(
+        migrationWorkflowState.highestVisitedStepIndex,
+        normalizedIndex
+    );
+    const activeStep = migrationWorkflowSteps[normalizedIndex];
+    document.querySelectorAll("[data-migration-step-panel]").forEach((panel) => {
+        const isActive = panel.dataset.migrationStepPanel === activeStep;
+        panel.classList.toggle("d-none", !isActive);
+        panel.setAttribute("aria-hidden", String(!isActive));
+    });
+    document.querySelectorAll("[data-migration-step-button]").forEach((button) => {
+        const buttonIndex = migrationWorkflowSteps.indexOf(button.dataset.migrationStepButton);
+        const isActive = buttonIndex === normalizedIndex;
+        button.classList.toggle("is-active", isActive);
+        button.classList.toggle("is-complete", buttonIndex < normalizedIndex);
+        if (isActive) {
+            button.setAttribute("aria-current", "step");
+        } else {
+            button.removeAttribute("aria-current");
+        }
+    });
+    clearMigrationStepError();
+    updateMigrationWorkflowFooter();
+}
+
+function updateMigrationWorkflowFooter() {
+    const activeIndex = migrationWorkflowState.activeStepIndex;
+    const nextLabels = [
+        "Continue to Scope",
+        "Continue to Content & Options",
+        "Continue to Review",
+        "Continue to Confirm",
+    ];
+    setButtonDisabled(elements.dataManagementMigrationBackBtn, activeIndex === 0);
+    const showNext = activeIndex < migrationWorkflowSteps.indexOf("confirm");
+    setElementVisible(elements.dataManagementMigrationNextBtn, showNext);
+    if (showNext) {
+        const label = nextLabels[activeIndex] || "Continue";
+        elements.dataManagementMigrationNextBtn.replaceChildren(
+            document.createTextNode(label),
+            createIcon("bi bi-arrow-right ms-1")
+        );
+        setButtonDisabled(
+            elements.dataManagementMigrationNextBtn,
+            activeIndex === migrationWorkflowSteps.indexOf("review") &&
+            !isMigrationReviewCurrentAndReady()
+        );
+    }
+    setText(
+        elements.dataManagementMigrationStepPosition,
+        `Step ${formatNumber(activeIndex + 1)} of ${formatNumber(migrationWorkflowSteps.length)}`
+    );
+}
+
+function advanceMigrationWorkflow() {
+    const currentIndex = migrationWorkflowState.activeStepIndex;
+    if (!validateMigrationWorkflowStep(currentIndex)) {
+        return;
+    }
+    showMigrationWorkflowStep(currentIndex + 1, { skipValidation: true });
+}
+
+function validateMigrationWorkflowStep(stepIndex) {
+    const step = migrationWorkflowSteps[stepIndex];
+    clearMigrationStepError();
+    if (step === "target" && !getValue(elements.datamanagementtargetcosmosendpoint)) {
+        showMigrationStepError("Enter the target Cosmos endpoint before choosing migration scope.", "target");
+        elements.datamanagementtargetcosmosendpoint?.focus();
+        return false;
+    }
+    if (step === "scope") {
+        const selectedCount = migrationTargetTypes.reduce((total, targetType) => {
+            const mode = getValue(getMigrationModeElement(targetType)) || "none";
+            if (mode === "all") {
+                return total + migrationCatalogStates[targetType].totalCount;
+            }
+            if (mode === "selected") {
+                return total + migrationSelections[targetType].size;
+            }
+            return total;
+        }, 0);
+        if (selectedCount === 0) {
+            showMigrationStepError("Choose at least one user, group, or public workspace before continuing.", "scope");
+            return false;
+        }
+    }
+    if (
+        step === "options" &&
+        elements.datamanagementmigrationincludeaisearch?.checked &&
+        !elements.datamanagementmigrationtargetsearchwritesfrozen?.checked
+    ) {
+        showMigrationStepError("Confirm that external destination AI Search writers are frozen before review.", "options");
+        elements.datamanagementmigrationtargetsearchwritesfrozen?.focus();
+        return false;
+    }
+    if (step === "review" && !isMigrationReviewCurrentAndReady()) {
+        showMigrationStepError("Run a current preflight review and resolve every blocker before confirmation.", "review");
+        return false;
+    }
+    return true;
+}
+
+function showMigrationStepError(message, workflowStep = "") {
+    const errorElement = elements.dataManagementMigrationStepError;
+    if (!errorElement) {
+        return;
+    }
+    setText(errorElement, message);
+    errorElement.classList.remove("d-none");
+    errorElement.focus();
+    document.querySelectorAll("[data-migration-step-button]").forEach((button) => {
+        button.classList.toggle(
+            "has-error",
+            Boolean(workflowStep) && button.dataset.migrationStepButton === workflowStep
+        );
+    });
+}
+
+function clearMigrationStepError() {
+    setElementVisible(elements.dataManagementMigrationStepError, false);
+    document.querySelectorAll("[data-migration-step-button]").forEach((button) => {
+        button.classList.remove("has-error");
+    });
+}
+
+function invalidateMigrationReview() {
+    migrationWorkflowState.reviewRequestGeneration += 1;
+    if (migrationWorkflowState.review && !migrationWorkflowState.reviewStale) {
+        migrationWorkflowState.reviewStale = true;
+        showMigrationStepError(
+            "Migration inputs changed. Run preflight review again before confirmation.",
+            "review"
+        );
+    }
+    if (elements.datamanagementmigrationfinalconfirmation) {
+        elements.datamanagementmigrationfinalconfirmation.checked = false;
+    }
+    updateMigrationReadiness();
+    updateMigrationExecutionButtonState();
+    updateMigrationWorkflowFooter();
+}
+
+function isMigrationReviewCurrentAndReady() {
+    return Boolean(
+        migrationWorkflowState.review?.ready &&
+        !migrationWorkflowState.reviewStale
+    );
+}
+
+function updateMigrationReadiness() {
+    const readiness = elements.dataManagementMigrationReadiness;
+    if (!readiness) {
+        return;
+    }
+    readiness.classList.remove("is-ready", "is-blocked", "is-stale");
+    let message = "Not reviewed";
+    if (migrationWorkflowState.reviewStale && migrationWorkflowState.review) {
+        readiness.classList.add("is-stale");
+        message = "Review is stale";
+    } else if (migrationWorkflowState.review?.ready) {
+        readiness.classList.add("is-ready");
+        message = migrationWorkflowState.review.warning_count
+            ? `Ready with ${formatNumber(migrationWorkflowState.review.warning_count)} warning${migrationWorkflowState.review.warning_count === 1 ? "" : "s"}`
+            : "Ready to confirm";
+    } else if (migrationWorkflowState.review) {
+        readiness.classList.add("is-blocked");
+        message = `${formatNumber(migrationWorkflowState.review.blocker_count || 0)} blocker${migrationWorkflowState.review.blocker_count === 1 ? "" : "s"}`;
+    }
+    const label = readiness.querySelector("span:last-child");
+    setText(label, message);
+}
+
+function updateMigrationExecutionButtonState() {
+    const isMirror = getMigrationTransferMode() === "mirror_with_deletions";
+    const mirrorConfirmed = (
+        !isMirror ||
+        getValue(elements.datamanagementmigrationmirrorconfirmationphrase) === migrationMirrorConfirmationPhrase
+    );
+    const canExecute = (
+        isMigrationReviewCurrentAndReady() &&
+        Boolean(elements.datamanagementmigrationfinalconfirmation?.checked) &&
+        mirrorConfirmed &&
+        !migrationWorkflowState.submissionInFlight &&
+        !migrationWorkflowState.submissionAccepted
+    );
+    setButtonDisabled(elements.dataManagementExecuteMigrationBtn, !canExecute);
 }
 
 function buildMigrationPlan() {
@@ -1596,6 +2127,7 @@ function updateMigrationModeVisibility() {
     if (elements.dataManagementMigrationModeDescription) {
         elements.dataManagementMigrationModeDescription.textContent = descriptions[migrationMode] || descriptions.new_only;
     }
+    updateMigrationExecutionButtonState();
 }
 
 function buildMigrationSelection(targetType) {
@@ -1607,34 +2139,72 @@ function buildMigrationSelection(targetType) {
     };
 }
 
-async function loadMigrationSummary(triggerButton = null, showSuccess = false) {
+async function loadMigrationSummary(triggerButton = null) {
+    return runMigrationReview(triggerButton);
+}
+
+async function runMigrationReview(triggerButton = null) {
     const summaryElement = elements.dataManagementMigrationSummary;
     if (!summaryElement) {
         return;
     }
-    setBusy(triggerButton, true, "Previewing...");
+    clearMigrationStepError();
+    const requestGeneration = migrationWorkflowState.reviewRequestGeneration + 1;
+    migrationWorkflowState.reviewRequestGeneration = requestGeneration;
+    setBusy(triggerButton, true, "Running preflight…");
+    setElementVisible(elements.dataManagementMigrationReviewEmpty, false);
+    setElementVisible(summaryElement, true);
+    summaryElement.replaceChildren(createMigrationCatalogLoadingState());
     try {
-        const data = await requestJson("/api/admin/data-management/migration/summary", {
+        const data = await requestJson("/api/admin/data-management/migration/review", {
             method: "POST",
             body: JSON.stringify({
+                settings: collectSettings(),
                 migration_plan: buildMigrationPlan(),
-                include_inventory: Boolean(showSuccess),
             }),
         });
-        renderMigrationSummary(data.summary || {}, data.preview || null);
-        if (showSuccess) {
-            setStatus("Migration preview refreshed.", "success");
-            showToast("Migration preview refreshed.", "success");
+        if (requestGeneration !== migrationWorkflowState.reviewRequestGeneration) {
+            return;
         }
+        migrationWorkflowState.review = data.review || null;
+        migrationWorkflowState.reviewStale = false;
+        renderMigrationReview(migrationWorkflowState.review || {});
+        updateMigrationReadiness();
+        updateMigrationExecutionButtonState();
+        updateMigrationWorkflowFooter();
+        const isReady = migrationWorkflowState.review?.ready === true;
+        const message = isReady
+            ? "Migration preflight review is ready for confirmation."
+            : "Migration preflight review found blockers.";
+        setStatus(message, isReady ? "success" : "warning");
+        showToast(message, isReady ? "success" : "warning");
     } catch (error) {
-        summaryElement.replaceChildren(createSmallMutedElement(error.message || "Migration summary could not be loaded."));
-        if (showSuccess) {
-            setStatus(error.message || "Migration summary could not be loaded.", "danger");
-            showToast(error.message || "Migration summary could not be loaded.", "danger");
+        if (requestGeneration !== migrationWorkflowState.reviewRequestGeneration) {
+            return;
         }
+        migrationWorkflowState.reviewStale = true;
+        summaryElement.replaceChildren(createSmallMutedElement(error.message || "Migration summary could not be loaded."));
+        showMigrationStepError(
+            error.message || "Migration review could not be completed.",
+            error.workflowStep || "review"
+        );
+        setStatus(error.message || "Migration review could not be completed.", "danger");
+        showToast(error.message || "Migration review could not be completed.", "danger");
+        updateMigrationReadiness();
+        updateMigrationExecutionButtonState();
     } finally {
         setBusy(triggerButton, false);
     }
+}
+
+function renderMigrationReview(review) {
+    setElementVisible(elements.dataManagementMigrationReviewEmpty, false);
+    setElementVisible(elements.dataManagementMigrationSummary, true);
+    setElementVisible(elements.dataManagementMigrationReviewChecks, true);
+    setElementVisible(elements.dataManagementRefreshMigrationSummaryBtn, true);
+    renderMigrationSummary(review.summary || {}, review.preview || null);
+    renderMigrationReviewChecks(Array.isArray(review.checks) ? review.checks : []);
+    renderMigrationConfirmSummary(review);
 }
 
 function renderMigrationSummary(summary, preview = null) {
@@ -1643,29 +2213,27 @@ function renderMigrationSummary(summary, preview = null) {
         return;
     }
     const container = document.createElement("div");
-    container.className = "row g-3";
+    container.className = "migration-review-grid";
     migrationTargetTypes.forEach((targetType) => {
         const targetSummary = summary[targetType] || {};
         container.appendChild(createMigrationSummaryCard(targetType, targetSummary));
     });
-    const optionsColumn = document.createElement("div");
-    optionsColumn.className = "col-12";
     const options = document.createElement("div");
-    options.className = "d-flex flex-wrap gap-2";
+    options.className = "d-flex flex-wrap gap-2 mt-3";
     options.appendChild(createBadge(summary.include_ai_search ? "AI Search included" : "AI Search skipped", summary.include_ai_search ? "bg-info text-dark" : "bg-secondary"));
     options.appendChild(createBadge(summary.include_source_blobs ? "Source blobs included" : "Source blobs skipped", summary.include_source_blobs ? "bg-info text-dark" : "bg-secondary"));
     options.appendChild(createBadge(`Mode: ${formatActivityLabel(summary.migration_mode || "new_only")}`, summary.migration_mode === "mirror_with_deletions" ? "bg-danger" : "bg-primary"));
-    optionsColumn.appendChild(options);
-    container.appendChild(optionsColumn);
+    const wrapper = document.createElement("div");
+    wrapper.append(container, options);
     if (preview?.estimated_outcomes) {
-        container.appendChild(createMigrationPreviewOutcomes(preview));
+        wrapper.appendChild(createMigrationPreviewOutcomes(preview));
     }
-    summaryElement.replaceChildren(container);
+    summaryElement.replaceChildren(wrapper);
 }
 
 function createMigrationPreviewOutcomes(preview) {
     const column = document.createElement("div");
-    column.className = "col-12 border-top pt-3";
+    column.className = "border-top mt-3 pt-3";
     const heading = document.createElement("div");
     heading.className = "fw-semibold mb-2";
     heading.textContent = "Estimated destination changes";
@@ -1691,31 +2259,101 @@ function createMigrationPreviewOutcomes(preview) {
 }
 
 function createMigrationSummaryCard(targetType, targetSummary) {
-    const column = document.createElement("div");
-    column.className = "col-md-4";
     const wrapper = document.createElement("div");
-    wrapper.className = "border rounded p-3 h-100";
+    wrapper.className = "migration-review-metric";
     const title = document.createElement("div");
-    title.className = "fw-semibold";
+    title.className = "text-muted small";
     title.textContent = formatActivityLabel(targetType);
     const count = document.createElement("div");
-    count.className = "fs-5 fw-semibold";
-    count.textContent = formatNumber(targetSummary.count || 0);
+    count.className = "fw-semibold fs-5";
+    count.textContent = `${formatNumber(targetSummary.count || 0)} principal${Number(targetSummary.count || 0) === 1 ? "" : "s"}`;
     const mode = document.createElement("div");
     mode.className = "text-muted small";
-    mode.textContent = `${formatActivityLabel(targetSummary.mode || "none")} - ${targetSummary.include_documents ? "documents included" : "documents skipped"}`;
-    const details = document.createElement("details");
-    details.className = "mt-2";
-    const summaryLabel = document.createElement("summary");
-    summaryLabel.className = "small";
-    summaryLabel.textContent = "View selected IDs";
-    const idList = document.createElement("div");
-    idList.className = "small text-muted text-break mt-1";
-    idList.textContent = Array.isArray(targetSummary.ids) && targetSummary.ids.length ? targetSummary.ids.join(", ") : "No explicit selected IDs.";
-    details.append(summaryLabel, idList);
-    wrapper.append(title, count, mode, details);
-    column.appendChild(wrapper);
-    return column;
+    mode.textContent = targetSummary.include_documents
+        ? `${formatActivityLabel(targetSummary.mode || "none")} · ${formatNumber(targetSummary.document_count || 0)} documents`
+        : `${formatActivityLabel(targetSummary.mode || "none")} · documents skipped`;
+    wrapper.append(title, count, mode);
+    return wrapper;
+}
+
+function renderMigrationReviewChecks(checks) {
+    const container = elements.dataManagementMigrationReviewChecks;
+    if (!container) {
+        return;
+    }
+    container.className = "migration-review-checks";
+    container.replaceChildren();
+    checks.forEach((check) => {
+        const status = ["pass", "warning", "block"].includes(check.status) ? check.status : "block";
+        const row = document.createElement("div");
+        row.className = `migration-review-check is-${status}`;
+        const iconClasses = {
+            pass: "bi bi-check-circle-fill",
+            warning: "bi bi-exclamation-triangle-fill",
+            block: "bi bi-x-octagon-fill",
+        };
+        const icon = createIcon(iconClasses[status]);
+        const copy = document.createElement("div");
+        const title = document.createElement("strong");
+        title.textContent = check.label || "Review check";
+        const summary = document.createElement("p");
+        summary.textContent = check.summary || "No details were returned.";
+        copy.append(title, summary);
+        const badgeClasses = {
+            pass: "bg-success",
+            warning: "bg-warning text-dark",
+            block: "bg-danger",
+        };
+        row.append(icon, copy, createBadge(formatActivityLabel(status), badgeClasses[status]));
+        container.appendChild(row);
+    });
+}
+
+function renderMigrationConfirmSummary(review) {
+    const container = elements.dataManagementMigrationConfirmSummary;
+    if (!container) {
+        return;
+    }
+    const summary = review.summary || {};
+    const preview = review.preview || {};
+    const outcomes = preview.estimated_outcomes || {};
+    const principalCount = migrationTargetTypes.reduce(
+        (total, targetType) => total + Number(summary[targetType]?.count || 0),
+        0
+    );
+    const documentCount = migrationTargetTypes.reduce(
+        (total, targetType) => total + Number(summary[targetType]?.document_count || 0),
+        0
+    );
+    const heading = document.createElement("div");
+    heading.className = "d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3";
+    const title = document.createElement("strong");
+    title.textContent = "Server-normalized execution plan";
+    const readinessBadge = createBadge(
+        review.ready ? "Ready" : "Blocked",
+        review.ready ? "bg-success" : "bg-danger"
+    );
+    heading.append(title, readinessBadge);
+    const metrics = document.createElement("div");
+    metrics.className = "migration-review-grid";
+    [
+        ["Principal scopes", formatNumber(principalCount)],
+        ["Included documents", formatNumber(documentCount)],
+        ["Synchronization mode", formatActivityLabel(summary.migration_mode || "new_only")],
+        ["Creates / updates", `${formatNumber(outcomes.create_count || 0)} / ${formatNumber(outcomes.update_count || 0)}`],
+        ["Deletes", formatNumber(outcomes.delete_count || 0)],
+        ["Conflicts", formatNumber(outcomes.conflict_count || 0)],
+    ].forEach(([label, value]) => {
+        const metric = document.createElement("div");
+        metric.className = "migration-review-metric";
+        const metricLabel = document.createElement("span");
+        metricLabel.textContent = label;
+        const metricValue = document.createElement("strong");
+        metricValue.textContent = value;
+        metric.append(metricLabel, metricValue);
+        metrics.appendChild(metric);
+    });
+    container.replaceChildren(heading, metrics);
 }
 
 function formatOperation(operation, backupType) {
@@ -1723,6 +2361,236 @@ function formatOperation(operation, backupType) {
         return `${backupType || "manual"} backup`;
     }
     return operation.replace(/_/g, " ");
+}
+
+function attachMigrationWorkflowJob(job) {
+    if (!job?.id || job.operation !== "migration") {
+        return;
+    }
+    migrationWorkflowState.currentJob = job;
+    setElementVisible(elements.dataManagementMigrationProgressEmpty, false);
+    setElementVisible(elements.dataManagementMigrationWorkflowProgress, true);
+    setElementVisible(elements.dataManagementMigrationViewJobBtn, true);
+    setElementVisible(
+        elements.dataManagementMigrationStartNewBtn,
+        !activeJobStatuses.has(String(job.status || ""))
+    );
+    renderMigrationWorkflowProgress(job);
+    if (activeJobStatuses.has(String(job.status || ""))) {
+        startMigrationWorkflowRefresh();
+    } else {
+        stopMigrationWorkflowRefresh();
+    }
+}
+
+function resetMigrationWorkflowForNewRun() {
+    const currentStatus = String(migrationWorkflowState.currentJob?.status || "");
+    if (currentStatus && activeJobStatuses.has(currentStatus)) {
+        return;
+    }
+    stopMigrationWorkflowRefresh();
+    migrationWorkflowState.activeStepIndex = 0;
+    migrationWorkflowState.highestVisitedStepIndex = 0;
+    migrationWorkflowState.review = null;
+    migrationWorkflowState.reviewStale = true;
+    migrationWorkflowState.reviewRequestGeneration += 1;
+    migrationWorkflowState.submissionInFlight = false;
+    migrationWorkflowState.submissionAccepted = false;
+    migrationWorkflowState.currentJob = null;
+    setChecked(elements.datamanagementmigrationfinalconfirmation, false);
+    setValue(elements.datamanagementmigrationmirrorconfirmationphrase, "");
+    setElementVisible(elements.dataManagementMigrationProgressEmpty, true);
+    setElementVisible(elements.dataManagementMigrationWorkflowProgress, false);
+    setElementVisible(elements.dataManagementMigrationViewJobBtn, false);
+    setElementVisible(elements.dataManagementMigrationStartNewBtn, false);
+    setElementVisible(elements.dataManagementMigrationReviewEmpty, true);
+    setElementVisible(elements.dataManagementMigrationSummary, false);
+    setElementVisible(elements.dataManagementMigrationReviewChecks, false);
+    setElementVisible(elements.dataManagementRefreshMigrationSummaryBtn, false);
+    updateMigrationReadiness();
+    updateMigrationExecutionButtonState();
+    showMigrationWorkflowStep(0, { skipValidation: true });
+}
+
+function renderMigrationWorkflowProgress(job) {
+    renderMigrationWorkflowProgressSummary(job);
+    renderMigrationWorkflowProgressState(job);
+    renderMigrationWorkflowProgressActions(job);
+}
+
+function renderMigrationWorkflowProgressSummary(job) {
+    const container = elements.dataManagementMigrationWorkflowProgressSummary;
+    if (!container) {
+        return;
+    }
+    const summary = document.createElement("div");
+    summary.className = "migration-review-grid mb-3";
+    [
+        ["Status", formatStatusLabel(job.status || "unknown")],
+        ["Job ID", job.id || "N/A"],
+        ["Created", formatDate(job.created_at)],
+    ].forEach(([label, value]) => {
+        const metric = document.createElement("div");
+        metric.className = "migration-review-metric";
+        const metricLabel = document.createElement("span");
+        metricLabel.textContent = label;
+        const metricValue = document.createElement("strong");
+        metricValue.className = "text-break";
+        metricValue.textContent = value;
+        metric.append(metricLabel, metricValue);
+        summary.appendChild(metric);
+    });
+    container.replaceChildren(summary);
+}
+
+function renderMigrationWorkflowProgressState(job) {
+    const container = elements.dataManagementMigrationWorkflowProgressState;
+    if (!container) {
+        return;
+    }
+    const progress = job.progress && typeof job.progress === "object" ? job.progress : {};
+    const percent = getProgressPercent(progress);
+    const active = activeJobStatuses.has(String(job.status || ""));
+    const panel = document.createElement("div");
+    panel.className = "migration-confirm-summary";
+    const header = document.createElement("div");
+    header.className = "d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2";
+    const title = document.createElement("strong");
+    title.textContent = progress.current_step
+        ? formatActivityLabel(progress.current_step)
+        : "Waiting for migration progress";
+    const status = document.createElement("span");
+    status.className = "small text-muted";
+    status.textContent = active
+        ? "Live updates every 2 seconds"
+        : `Job is ${formatStatusLabel(job.status || "unknown")}`;
+    header.append(title, status);
+
+    const progressWrapper = document.createElement("div");
+    progressWrapper.className = "progress";
+    progressWrapper.setAttribute("role", "progressbar");
+    progressWrapper.setAttribute("aria-valuemin", "0");
+    progressWrapper.setAttribute("aria-valuemax", "100");
+    const progressBar = document.createElement("div");
+    if (active) {
+        progressWrapper.setAttribute("aria-valuetext", "Migration stage is active; measured throughput is shown below.");
+        progressBar.className = "progress-bar progress-bar-striped progress-bar-animated";
+        progressBar.style.width = "100%";
+        progressBar.textContent = "Active stage";
+    } else {
+        progressWrapper.setAttribute("aria-valuenow", String(percent));
+        progressBar.className = `progress-bar ${job.status === "failed" || job.status === "canceled" ? "bg-danger" : "bg-success"}`;
+        progressBar.style.width = `${percent}%`;
+        progressBar.textContent = `${percent}%`;
+    }
+    progressWrapper.appendChild(progressBar);
+    const message = document.createElement("p");
+    message.className = "small text-muted mt-2 mb-0";
+    message.textContent = job.last_message || job.last_error || "No job message has been recorded yet.";
+    panel.append(header, progressWrapper, message);
+
+    const metrics = getMigrationLiveMetrics(job);
+    if (metrics.length) {
+        const metricGrid = document.createElement("div");
+        metricGrid.className = "migration-review-grid mt-3";
+        metrics.forEach((metric) => {
+            const item = document.createElement("div");
+            item.className = "migration-review-metric";
+            const label = document.createElement("span");
+            label.textContent = metric.label;
+            const value = document.createElement("strong");
+            value.textContent = metric.value;
+            item.append(label, value);
+            metricGrid.appendChild(item);
+        });
+        panel.appendChild(metricGrid);
+    }
+    container.replaceChildren(panel);
+}
+
+function renderMigrationWorkflowProgressActions(job) {
+    const container = elements.dataManagementMigrationWorkflowProgressActions;
+    if (!container) {
+        return;
+    }
+    container.replaceChildren();
+    if (job.can_retry === true) {
+        const retryButton = document.createElement("button");
+        retryButton.type = "button";
+        retryButton.className = "btn btn-outline-warning";
+        retryButton.append(
+            createIcon("bi bi-arrow-repeat me-1"),
+            document.createTextNode(job.status === "running" ? "Resume" : "Retry")
+        );
+        retryButton.addEventListener("click", () => retryDataManagementJob(job, retryButton));
+        container.appendChild(retryButton);
+    }
+    if (job.can_cancel === true) {
+        const cancelButton = document.createElement("button");
+        cancelButton.type = "button";
+        cancelButton.className = "btn btn-outline-danger";
+        cancelButton.append(
+            createIcon("bi bi-stop-circle me-1"),
+            document.createTextNode("Cancel")
+        );
+        cancelButton.addEventListener("click", () => openDataManagementCancellationModal(job));
+        container.appendChild(cancelButton);
+    }
+    const logButton = document.createElement("button");
+    logButton.type = "button";
+    logButton.className = "btn btn-outline-primary";
+    logButton.append(
+        createIcon("bi bi-list-check me-1"),
+        document.createTextNode("View warnings and item log")
+    );
+    logButton.addEventListener("click", () => loadDataManagementJobDetail(job.id));
+    container.appendChild(logButton);
+}
+
+function startMigrationWorkflowRefresh() {
+    if (migrationWorkflowRefreshTimer || !migrationWorkflowState.currentJob?.id) {
+        return;
+    }
+    migrationWorkflowRefreshTimer = window.setInterval(
+        refreshMigrationWorkflowProgress,
+        jobDetailRefreshIntervalMs
+    );
+}
+
+async function refreshMigrationWorkflowProgress() {
+    const jobId = migrationWorkflowState.currentJob?.id;
+    if (!jobId || migrationWorkflowRefreshInFlight) {
+        return;
+    }
+    migrationWorkflowRefreshInFlight = true;
+    try {
+        const data = await requestJson(
+            `/api/admin/data-management/jobs/${encodeURIComponent(jobId)}/progress`,
+            { method: "GET" }
+        );
+        const job = data.job || {};
+        attachMigrationWorkflowJob(job);
+        if (!activeJobStatuses.has(String(job.status || ""))) {
+            stopMigrationWorkflowRefresh();
+            loadDataManagementJobs();
+            loadDataManagementBackups();
+        }
+    } catch (error) {
+        stopMigrationWorkflowRefresh();
+        showMigrationStepError(
+            "Live migration updates paused after a request failure. Open the full job log to refresh.",
+            "progress"
+        );
+    } finally {
+        migrationWorkflowRefreshInFlight = false;
+    }
+}
+
+function stopMigrationWorkflowRefresh() {
+    if (migrationWorkflowRefreshTimer) {
+        window.clearInterval(migrationWorkflowRefreshTimer);
+        migrationWorkflowRefreshTimer = null;
+    }
 }
 
 async function loadDataManagementJobs() {
@@ -2020,6 +2888,7 @@ async function requestDataManagementCancellation() {
         );
         window.bootstrap.Modal.getOrCreateInstance(elements.dataManagementMigrationCancelModal).hide();
         renderJobs([data.job]);
+        attachMigrationWorkflowJob(data.job);
         loadDataManagementJobs();
         if (currentJobDetailId === jobId) {
             loadDataManagementJobDetail(jobId, { showModal: false, liveRefresh: true });
@@ -2046,6 +2915,7 @@ async function retryDataManagementJob(job, button) {
         setStatus(`${operationLabel} retry queued from durable checkpoints.`, "success");
         showToast(`${operationLabel} retry queued.`, "success");
         renderJobs([data.job]);
+        attachMigrationWorkflowJob(data.job);
         loadDataManagementJobs();
         loadDataManagementJobDetail(jobId, { showModal: false, liveRefresh: true });
     } catch (error) {
