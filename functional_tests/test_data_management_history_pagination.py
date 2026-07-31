@@ -2,10 +2,11 @@
 #!/usr/bin/env python3
 """
 Functional test for Data Management history pagination.
-Version: 0.250.105
+Version: 0.250.106
 Implemented in: 0.250.103
 Updated in: 0.250.104
 Updated in: 0.250.105
+Updated in: 0.250.106
 
 This test ensures job history and backup inventory use deterministic, filtered,
 sanitized Cosmos pages with opaque continuation state and global summaries.
@@ -206,7 +207,10 @@ def load_route_module(monkeypatch, jobs_page=None, backup_page=None, history_err
     data_management_module.DATA_MANAGEMENT_OPERATION_RESTORE = "restore"
 
     imported_function_names = [
+        "cleanup_expired_data_management_backups",
         "create_data_management_migration_review_authorization",
+        "create_data_management_restore_review_authorization",
+        "delete_data_management_backup",
         "export_data_management_migration_manifest",
         "generate_data_management_encryption_key",
         "get_data_management_cosmos_editor_containers",
@@ -215,6 +219,7 @@ def load_route_module(monkeypatch, jobs_page=None, backup_page=None, history_err
         "get_data_management_job_progress",
         "get_data_management_migration_catalog",
         "get_data_management_migration_review_fingerprint",
+        "get_data_management_restore_review_fingerprint",
         "get_data_management_settings",
         "log_data_management_cosmos_editor_activity",
         "preview_data_management_migration_plan",
@@ -222,11 +227,15 @@ def load_route_module(monkeypatch, jobs_page=None, backup_page=None, history_err
         "query_data_management_cosmos_editor_documents",
         "request_data_management_job_cancellation",
         "release_data_management_migration_review_reservation",
+        "release_data_management_restore_review_reservation",
         "reserve_data_management_migration_review_authorization",
+        "reserve_data_management_restore_review_authorization",
         "review_data_management_migration",
+        "review_data_management_restore",
         "retry_data_management_backup_job",
         "resolve_data_management_migration_manifest_item",
         "retry_data_management_migration_job",
+        "retry_data_management_restore_job",
         "sanitize_data_management_job_for_admin",
         "sanitize_data_management_settings_for_admin",
         "save_data_management_cosmos_editor_document",

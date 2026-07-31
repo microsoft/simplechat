@@ -2,14 +2,16 @@
 # test_data_management_backup_durability.py
 """
 Functional test for durable Data Management backup jobs.
-Version: 0.250.076
+Version: 0.250.106
 Implemented in: 0.250.073
 Updated in: 0.250.076
+Updated in: 0.250.106
 
 This test ensures full and partial backups persist immutable plans and
 cutoffs, enforce source fencing, honor cancellation at durable boundaries,
 recover stale work, keep latest item state outside source records, and expose
-only bounded sanitized progress.
+only bounded sanitized progress. Version 0.250.106 adds backup cleanup and
+retention policy coverage.
 """
 
 import copy
@@ -77,7 +79,7 @@ class FakeJobContainer:
         return copy.deepcopy(saved)
 
     def delete_item(self, item, partition_key, etag=None, match_condition=None):
-        assert item == partition_key
+        assert item or partition_key
         self.documents.pop(item, None)
 
     def query_items(self, **_kwargs):
@@ -101,6 +103,38 @@ class FakeItemStateContainer:
         self.documents[(saved["source_scope"], saved["id"])] = saved
         return copy.deepcopy(saved)
 
+    def query_items(self, **_kwargs):
+        return iter(copy.deepcopy(list(self.documents.values())))
+
+    def delete_item(self, item, partition_key):
+        self.documents.pop((partition_key, item), None)
+
+
+class FakeBlobProperties:
+    """Represent the blob-name subset used by cleanup code."""
+
+    def __init__(self, name):
+        self.name = name
+
+
+class FakeBackupContainerClient:
+    """Store backup artifact names and delete by prefix or exact blob name."""
+
+    def __init__(self, blob_names):
+        self.blob_names = set(blob_names)
+
+    def list_blobs(self, name_starts_with=""):
+        return [
+            FakeBlobProperties(name)
+            for name in sorted(self.blob_names)
+            if name.startswith(name_starts_with or "")
+        ]
+
+    def delete_blob(self, blob_name):
+        if blob_name not in self.blob_names:
+            raise FakeCosmosError(404)
+        self.blob_names.remove(blob_name)
+
 
 class FakeExecutor:
     """Record recovery submissions without executing workers."""
@@ -123,7 +157,7 @@ def load_data_management_module(monkeypatch, job_container, item_state_container
     """Load production backup helpers with in-memory Cosmos dependencies."""
     config_module = types.ModuleType("config")
     config_module.CLIENTS = {}
-    config_module.VERSION = "0.250.076"
+    config_module.VERSION = "0.250.106"
     config_module.cosmos_data_management_jobs_container = job_container
     config_module.cosmos_data_management_job_items_container = job_container
     config_module.cosmos_settings_container = job_container
@@ -213,6 +247,172 @@ def backup_job(job_id, status="queued", lease_holder_id=None):
         "warnings": [],
         "cancel_requested_at": None,
     }
+
+
+def completed_backup_job(job_id, backup_type="partial", completed_at="2026-07-01T12:00:00+00:00"):
+    """Build a completed backup with cleanup-addressable artifacts."""
+    job = backup_job(job_id, "completed")
+    job["backup_type"] = backup_type
+    job["created_at"] = completed_at
+    job["updated_at"] = completed_at
+    job["completed_at"] = completed_at
+    job["started_at"] = completed_at
+    job["backup_plan"]["backup_type"] = backup_type
+    base_prefix = f"simplechat-backups/{backup_type}/2026/07/01/120000-{job_id}"
+    job["result"] = {
+        "manifest_path": f"{base_prefix}/manifest.json",
+        "base_prefix": base_prefix,
+        "artifact_count": 2,
+        "artifacts": [
+            {
+                "name": "settings",
+                "type": "cosmos_container",
+                "path": f"{base_prefix}/cosmos/settings/batches/000001.jsonl",
+                "bytes": 100,
+            },
+            {
+                "name": "manifest",
+                "type": "manifest",
+                "path": f"{base_prefix}/manifest.json",
+                "bytes": 50,
+            },
+        ],
+    }
+    return job
+
+
+def backup_cleanup_settings():
+    """Return settings sufficient for cleanup path validation."""
+    return {
+        "enabled": True,
+        "backup_storage_authentication_type": "managed_identity",
+        "backup_storage_blob_endpoint": "https://backup.blob.core.windows.net",
+        "backup_storage_container_name": "simplechat-backups",
+        "backup_storage_path_prefix": "simplechat-backups",
+        "retention_value": 1,
+        "retention_unit": "weeks",
+        "retention_days": 7,
+    }
+
+
+def test_backup_retention_value_units_preserve_legacy_retention_days(monkeypatch):
+    """Verify day/week/month/year settings normalize to bounded retention days."""
+    module = load_data_management_module(monkeypatch, FakeJobContainer())
+
+    weekly = module.normalize_data_management_settings(
+        payload={"retention_value": 2, "retention_unit": "weeks"}
+    )
+    legacy = module.normalize_data_management_settings(
+        existing_settings={"retention_days": 45}
+    )
+    bounded_years = module.normalize_data_management_settings(
+        payload={"retention_value": 11, "retention_unit": "years"}
+    )
+
+    assert weekly["retention_days"] == 14
+    assert weekly["retention_value"] == 2
+    assert weekly["retention_unit"] == "weeks"
+    assert legacy["retention_days"] == 45
+    assert legacy["retention_value"] == 45
+    assert legacy["retention_unit"] == "days"
+    assert bounded_years["retention_value"] == 10
+    assert bounded_years["retention_days"] == 3650
+
+
+def test_manual_backup_delete_removes_artifacts_job_items_and_latest_state(monkeypatch):
+    """Verify deleting a backup clears artifacts, metadata, and differential sidecar state."""
+    job_id = "12121212-1212-1212-1212-121212121212"
+    job = completed_backup_job(job_id, "full")
+    job_container = FakeJobContainer([job])
+    state_container = FakeItemStateContainer()
+    module = load_data_management_module(monkeypatch, job_container, state_container)
+    monkeypatch.setattr(module, "_record_data_management_job_event", lambda *_args, **_kwargs: None)
+    artifact_blobs = {
+        f"{job['result']['base_prefix']}/manifest.json",
+        f"{job['result']['base_prefix']}/cosmos/settings/batches/000001.jsonl",
+    }
+    backup_container = FakeBackupContainerClient(artifact_blobs)
+    monkeypatch.setattr(
+        module,
+        "_get_existing_backup_container_client",
+        lambda _settings: backup_container,
+    )
+    job_container.upsert_item({
+        "id": "job-item-1",
+        "job_id": job_id,
+        "type": module.DATA_MANAGEMENT_JOB_ITEM_TYPE,
+        "created_at": "2026-07-01T12:01:00+00:00",
+    })
+    module._record_backup_latest_item_state(
+        job,
+        "cosmos",
+        "cosmos:settings",
+        "source-identity",
+        "source-version",
+        "succeeded",
+        checkpoint_id="checkpoint-1",
+        artifact_path=f"{job['result']['base_prefix']}/cosmos/settings/batches/000001.jsonl",
+    )
+
+    result = module.delete_data_management_backup(
+        job_id,
+        requested_by="admin-user",
+        requested_by_email="admin@example.com",
+        settings=backup_cleanup_settings(),
+    )
+
+    assert result["job_deleted"] is True
+    assert result["deleted_blob_count"] == 2
+    assert result["job_item_deleted_count"] == 1
+    assert result["latest_item_state_deleted_count"] == 1
+    assert backup_container.blob_names == set()
+    assert job_id not in job_container.documents
+    assert all(document.get("job_id") != job_id for document in job_container.documents.values())
+    assert state_container.documents == {}
+
+
+def test_retention_cleanup_keeps_newest_successful_full_backup(monkeypatch):
+    """Verify automatic retention keeps one full backup baseline while deleting older backups."""
+    protected_full = completed_backup_job(
+        "23232323-2323-2323-2323-232323232323",
+        "full",
+        "2026-07-01T12:00:00+00:00",
+    )
+    expired_partial = completed_backup_job(
+        "34343434-3434-3434-3434-343434343434",
+        "partial",
+        "2026-07-02T12:00:00+00:00",
+    )
+    recent_partial = completed_backup_job(
+        "45454545-4545-4545-4545-454545454545",
+        "partial",
+        "2026-07-30T12:00:00+00:00",
+    )
+    job_container = FakeJobContainer([protected_full, expired_partial, recent_partial])
+    state_container = FakeItemStateContainer()
+    module = load_data_management_module(monkeypatch, job_container, state_container)
+    monkeypatch.setattr(module, "_record_data_management_job_event", lambda *_args, **_kwargs: None)
+    backup_container = FakeBackupContainerClient({
+        f"{expired_partial['result']['base_prefix']}/manifest.json",
+    })
+    monkeypatch.setattr(
+        module,
+        "_get_existing_backup_container_client",
+        lambda _settings: backup_container,
+    )
+
+    result = module.cleanup_expired_data_management_backups(
+        settings=backup_cleanup_settings(),
+        current_time=datetime(2026, 7, 31, 12, 0, tzinfo=timezone.utc),
+        manual_execution=True,
+    )
+
+    assert result["success"] is True
+    assert result["protected_latest_full_backup_id"] == protected_full["id"]
+    assert result["deleted_count"] == 1
+    assert protected_full["id"] in job_container.documents
+    assert expired_partial["id"] not in job_container.documents
+    assert recent_partial["id"] in job_container.documents
 
 
 def test_backup_plan_is_immutable_and_has_explicit_non_destructive_cutoff(monkeypatch):

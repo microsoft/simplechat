@@ -8,6 +8,7 @@ const backupStorageAuthConnectionString = "connection_string";
 const targetCosmosDatabaseName = "SimpleChat";
 const cosmosEditorConfirmationPhrase = "I understand this can damage system data";
 const migrationMirrorConfirmationPhrase = "MIRROR WITH DELETIONS";
+const restoreOverwriteConfirmationPhrase = "RESTORE WITH OVERWRITE";
 const elements = {};
 let dataManagementModified = false;
 let storedBackupConnectionStringAvailable = false;
@@ -23,6 +24,9 @@ let cosmosEditorResultCount = 0;
 let cosmosEditorSelectedDocument = null;
 let cosmosEditorPendingDocument = null;
 let pendingDataManagementCancellationJob = null;
+let pendingDataManagementBackupDelete = null;
+let pendingRestoreBackup = null;
+let restoreReview = null;
 let migrationWorkflowRefreshTimer = null;
 let migrationWorkflowRefreshInFlight = false;
 
@@ -105,6 +109,8 @@ function bindElements() {
         "data_management_enabled",
         "data_management_full_frequency",
         "data_management_scheduled_time_utc",
+        "data_management_retention_value",
+        "data_management_retention_unit",
         "data_management_retention_days",
         "data_management_partial_enabled",
         "data_management_low_impact_mode",
@@ -204,6 +210,7 @@ function bindElements() {
         "data-management-test-storage-btn",
         "data-management-run-full-backup-btn",
         "data-management-run-partial-backup-btn",
+        "data-management-run-retention-cleanup-btn",
         "data-management-refresh-backups-btn",
         "data-management-view-full-backups-btn",
         "data-management-view-partial-backups-btn",
@@ -220,6 +227,20 @@ function bindElements() {
         "data-management-backup-pagination-status",
         "data-management-backup-previous-page-btn",
         "data-management-backup-next-page-btn",
+        "data-management-restore-modal",
+        "data-management-restore-title",
+        "data-management-restore-backup-summary",
+        "data_management_restore_policy",
+        "data_management_restore_include_cosmos",
+        "data_management_restore_include_ai_search",
+        "data_management_restore_include_source_blobs",
+        "data-management-restore-confirmation-section",
+        "data_management_restore_overwrite_confirmation_phrase",
+        "data-management-restore-review-btn",
+        "data-management-restore-review-status",
+        "data-management-restore-review-checks",
+        "data_management_restore_final_confirmation",
+        "data-management-restore-queue-btn",
         "data-management-refresh-jobs-btn",
         "data-management-jobs-tbody",
         "data_management_job_operation_filter",
@@ -245,6 +266,9 @@ function bindElements() {
         "data-management-migration-cancel-modal",
         "data-management-migration-cancel-message",
         "data-management-confirm-migration-cancel-btn",
+        "data-management-backup-delete-modal",
+        "data-management-backup-delete-message",
+        "data-management-confirm-backup-delete-btn",
         "data-management-cosmos-editor-section",
         "data-management-cosmos-editor-open-danger-btn",
         "data-management-cosmos-editor-locked-message",
@@ -311,6 +335,7 @@ function bindEvents() {
     elements.dataManagementTestTargetEcStorageBtn?.addEventListener("click", testTargetEnhancedCitationStorage);
     elements.dataManagementRunFullBackupBtn?.addEventListener("click", () => queueBackup("full"));
     elements.dataManagementRunPartialBackupBtn?.addEventListener("click", () => queueBackup("partial"));
+    elements.dataManagementRunRetentionCleanupBtn?.addEventListener("click", runBackupRetentionCleanup);
     elements.dataManagementMigrationPreviewBtn?.addEventListener("click", () => runMigrationReview(elements.dataManagementMigrationPreviewBtn));
     elements.dataManagementExecuteMigrationBtn?.addEventListener("click", () => queueMigration(false));
     elements.dataManagementRefreshMigrationSummaryBtn?.addEventListener("click", () => runMigrationReview(elements.dataManagementRefreshMigrationSummaryBtn));
@@ -329,6 +354,19 @@ function bindEvents() {
     ].forEach((filter) => filter?.addEventListener("change", () => resetAndLoadHistory("backups")));
     elements.dataManagementBackupPreviousPageBtn?.addEventListener("click", () => loadPreviousHistoryPage("backups"));
     elements.dataManagementBackupNextPageBtn?.addEventListener("click", () => loadNextHistoryPage("backups"));
+    elements.datamanagementrestorepolicy?.addEventListener("change", () => {
+        invalidateRestoreReview();
+        updateRestoreConfirmationVisibility();
+    });
+    [
+        elements.datamanagementrestoreincludecosmos,
+        elements.datamanagementrestoreincludeaisearch,
+        elements.datamanagementrestoreincludesourceblobs,
+    ].forEach((control) => control?.addEventListener("change", invalidateRestoreReview));
+    elements.datamanagementrestoreoverwriteconfirmationphrase?.addEventListener("input", updateRestoreQueueButtonState);
+    elements.datamanagementrestorefinalconfirmation?.addEventListener("change", updateRestoreQueueButtonState);
+    elements.dataManagementRestoreReviewBtn?.addEventListener("click", runRestoreReview);
+    elements.dataManagementRestoreQueueBtn?.addEventListener("click", queueRestore);
     elements.dataManagementRefreshJobsBtn?.addEventListener("click", loadDataManagementJobs);
     [
         elements.datamanagementjoboperationfilter,
@@ -345,6 +383,10 @@ function bindEvents() {
         pendingDataManagementCancellationJob = null;
     });
     elements.dataManagementConfirmMigrationCancelBtn?.addEventListener("click", requestDataManagementCancellation);
+    elements.dataManagementBackupDeleteModal?.addEventListener("hidden.bs.modal", () => {
+        pendingDataManagementBackupDelete = null;
+    });
+    elements.dataManagementConfirmBackupDeleteBtn?.addEventListener("click", deleteDataManagementBackup);
     elements.dataManagementKeyVaultLink?.addEventListener("click", openKeyVaultSettings);
     elements.dataManagementCosmosEditorOpenDangerBtn?.addEventListener("click", showCosmosEditorDangerModal);
     elements.datamanagementcosmoseditordangeraccept?.addEventListener("change", updateCosmosEditorDangerAcceptState);
@@ -359,6 +401,8 @@ function bindEvents() {
     elements.dataManagementCosmosEditorConfirmSaveBtn?.addEventListener("click", saveCosmosEditorDocument);
     elements.datamanagementmigrationtemporarydestinationruenabled?.addEventListener("change", updateMigrationCapacityVisibility);
     elements.datamanagementbackuptemporarysourceruenabled?.addEventListener("change", updateBackupCapacityVisibility);
+    elements.datamanagementretentionvalue?.addEventListener("input", updateRetentionControls);
+    elements.datamanagementretentionunit?.addEventListener("change", updateRetentionControls);
     [
         elements.datamanagementmigrationmodenewonly,
         elements.datamanagementmigrationmodedeltaupsert,
@@ -378,6 +422,7 @@ function bindEvents() {
     setMigrationTargetVisibility();
     updateMigrationCapacityVisibility();
     updateBackupCapacityVisibility();
+    updateRetentionControls();
     updateMigrationModeVisibility();
     updateMigrationSearchWriteFreezeVisibility();
     updateConnectionStringStatus();
@@ -649,6 +694,8 @@ function populateSettings(settings) {
     setChecked(elements.datamanagementenabled, settings.enabled);
     setValue(elements.datamanagementfullfrequency, settings.full_backup_frequency || "weekly");
     setValue(elements.datamanagementscheduledtimeutc, settings.scheduled_time_utc || settings.default_scheduled_time_utc || "03:00");
+    setValue(elements.datamanagementretentionvalue, settings.retention_value ?? settings.retention_days ?? 30);
+    setValue(elements.datamanagementretentionunit, settings.retention_unit || "days");
     setValue(elements.datamanagementretentiondays, settings.retention_days ?? 30);
     setChecked(elements.datamanagementpartialenabled, settings.partial_backups_enabled !== false);
     setChecked(elements.datamanagementlowimpactmode, settings.low_impact_mode !== false);
@@ -696,6 +743,7 @@ function populateSettings(settings) {
     }
     updateSourceBlobBackupAvailability(settings);
     updateKeyStorageExperience(settings);
+    updateRetentionControls();
     setStorageAuthVisibility();
     setMigrationTargetVisibility();
     updateMigrationCapacityVisibility();
@@ -809,6 +857,34 @@ function updateBackupCapacityVisibility() {
     }
 }
 
+function getRetentionUnitDays(unit) {
+    const unitDays = {
+        days: 1,
+        weeks: 7,
+        months: 30,
+        years: 365,
+    };
+    return unitDays[unit] || unitDays.days;
+}
+
+function getRetentionDaysValue() {
+    const unit = getValue(elements.datamanagementretentionunit) || "days";
+    const value = getNumberValue(elements.datamanagementretentionvalue, 30);
+    return Math.max(1, Math.min(3650, value * getRetentionUnitDays(unit)));
+}
+
+function updateRetentionControls() {
+    const unit = getValue(elements.datamanagementretentionunit) || "days";
+    const maxValue = Math.max(1, Math.floor(3650 / getRetentionUnitDays(unit)));
+    if (elements.datamanagementretentionvalue) {
+        elements.datamanagementretentionvalue.max = String(maxValue);
+        if (getNumberValue(elements.datamanagementretentionvalue, 1) > maxValue) {
+            elements.datamanagementretentionvalue.value = String(maxValue);
+        }
+    }
+    setValue(elements.datamanagementretentiondays, getRetentionDaysValue());
+}
+
 function setKeyStorageAlert(variant, iconClass, title, message, linkText) {
     const alertElement = elements.dataManagementKeyStorageAlert;
     const iconElement = elements.dataManagementKeyStorageAlertIcon;
@@ -845,7 +921,9 @@ function collectSettings() {
         enabled: Boolean(elements.datamanagementenabled?.checked),
         full_backup_frequency: getValue(elements.datamanagementfullfrequency) || "weekly",
         scheduled_time_utc: getValue(elements.datamanagementscheduledtimeutc) || "03:00",
-        retention_days: getNumberValue(elements.datamanagementretentiondays, 30),
+        retention_value: getNumberValue(elements.datamanagementretentionvalue, 30),
+        retention_unit: getValue(elements.datamanagementretentionunit) || "days",
+        retention_days: getRetentionDaysValue(),
         partial_backups_enabled: Boolean(elements.datamanagementpartialenabled?.checked),
         low_impact_mode: Boolean(elements.datamanagementlowimpactmode?.checked),
         include_cosmos: Boolean(elements.datamanagementincludecosmos?.checked),
@@ -1662,6 +1740,9 @@ function buttonForOperation(operation, backupType) {
     if (operation === "migration") {
         return elements.dataManagementExecuteMigrationBtn;
     }
+    if (operation === "restore") {
+        return elements.dataManagementRestoreQueueBtn;
+    }
     return null;
 }
 
@@ -2399,6 +2480,9 @@ function formatOperation(operation, backupType) {
     if (operation === "backup") {
         return `${backupType || "manual"} backup`;
     }
+    if (operation === "restore") {
+        return "restore";
+    }
     return operation.replace(/_/g, " ");
 }
 
@@ -2916,7 +3000,7 @@ function createBackupRow(backup) {
     row.appendChild(createBackupStorageCell(backup));
     row.appendChild(createBackupProtectionCell(backup));
     row.appendChild(createBackupWarningCell(backup));
-    row.appendChild(createJobActionCell(backup.id));
+    row.appendChild(createBackupActionCell(backup));
     return row;
 }
 
@@ -2982,6 +3066,225 @@ function createBackupWarningCell(backup) {
     noWarnings.textContent = "None";
     cell.appendChild(noWarnings);
     return cell;
+}
+
+function createBackupActionCell(backup) {
+    const cell = document.createElement("td");
+    const viewButton = document.createElement("button");
+    viewButton.type = "button";
+    viewButton.className = "btn btn-outline-primary btn-sm";
+    viewButton.disabled = !backup?.id;
+    viewButton.append(createIcon("bi bi-list-check me-1"), document.createTextNode("View Log"));
+    viewButton.addEventListener("click", () => loadDataManagementJobDetail(backup.id));
+    cell.appendChild(viewButton);
+
+    const canRestore = Boolean(
+        backup?.id &&
+        backup?.manifest_path &&
+        ["completed", "completed_with_warnings"].includes(String(backup.status || ""))
+    );
+    if (canRestore) {
+        const restoreButton = document.createElement("button");
+        restoreButton.type = "button";
+        restoreButton.className = "btn btn-outline-danger btn-sm ms-1";
+        restoreButton.append(createIcon("bi bi-arrow-counterclockwise me-1"), document.createTextNode("Restore"));
+        restoreButton.addEventListener("click", () => openRestoreModal(backup));
+        cell.appendChild(restoreButton);
+    }
+
+    if (backup?.can_delete === true) {
+        const deleteButton = document.createElement("button");
+        deleteButton.type = "button";
+        deleteButton.className = "btn btn-outline-danger btn-sm ms-1";
+        deleteButton.disabled = !backup.id;
+        deleteButton.append(createIcon("bi bi-trash3 me-1"), document.createTextNode("Delete"));
+        deleteButton.addEventListener("click", () => openDataManagementBackupDeleteModal(backup));
+        cell.appendChild(deleteButton);
+    }
+    return cell;
+}
+
+function openRestoreModal(backup) {
+    pendingRestoreBackup = backup || null;
+    restoreReview = null;
+    setValue(elements.datamanagementrestorepolicy, "create_only");
+    setChecked(elements.datamanagementrestoreincludecosmos, true);
+    setChecked(elements.datamanagementrestoreincludeaisearch, true);
+    setChecked(elements.datamanagementrestoreincludesourceblobs, true);
+    setChecked(elements.datamanagementrestorefinalconfirmation, false);
+    setValue(elements.datamanagementrestoreoverwriteconfirmationphrase, "");
+    renderRestoreBackupSummary(backup);
+    renderRestoreReviewEmpty();
+    updateRestoreConfirmationVisibility();
+    updateRestoreQueueButtonState();
+    if (elements.dataManagementRestoreModal && window.bootstrap?.Modal) {
+        window.bootstrap.Modal.getOrCreateInstance(elements.dataManagementRestoreModal).show();
+    }
+}
+
+function renderRestoreBackupSummary(backup) {
+    const container = elements.dataManagementRestoreBackupSummary;
+    if (!container) {
+        return;
+    }
+    container.replaceChildren(
+        createRestoreSummaryTile("Backup ID", backup?.id || "N/A"),
+        createRestoreSummaryTile("Type", formatBackupType(backup?.backup_type || "")),
+        createRestoreSummaryTile("Completed", formatDate(backup?.completed_at || backup?.created_at)),
+        createRestoreSummaryTile("Contents", `${formatNumber(backup?.record_count || 0)} records, ${formatNumber(backup?.blob_count || 0)} blobs`),
+        createRestoreSummaryTile("Manifest", backup?.manifest_path ? "Recorded" : "Missing"),
+        createRestoreSummaryTile("Protection", backup?.encrypted ? "Encrypted" : "Not encrypted")
+    );
+}
+
+function createRestoreSummaryTile(label, value) {
+    const tile = document.createElement("div");
+    tile.className = "col-sm-6 col-xl-4";
+    const labelElement = document.createElement("div");
+    labelElement.className = "small text-muted";
+    labelElement.textContent = label;
+    const valueElement = document.createElement("div");
+    valueElement.className = "fw-semibold text-break";
+    valueElement.textContent = value || "N/A";
+    tile.append(labelElement, valueElement);
+    return tile;
+}
+
+function buildRestorePlan() {
+    return {
+        source_backup_id: pendingRestoreBackup?.id || "",
+        restore_policy: getValue(elements.datamanagementrestorepolicy) || "create_only",
+        include_cosmos: Boolean(elements.datamanagementrestoreincludecosmos?.checked),
+        include_ai_search: Boolean(elements.datamanagementrestoreincludeaisearch?.checked),
+        include_source_blobs: Boolean(elements.datamanagementrestoreincludesourceblobs?.checked),
+        overwrite_confirmed: getValue(elements.datamanagementrestorepolicy) === "overwrite_existing",
+        overwrite_confirmation_phrase: getValue(elements.datamanagementrestoreoverwriteconfirmationphrase),
+    };
+}
+
+function invalidateRestoreReview() {
+    restoreReview = null;
+    renderRestoreReviewEmpty("Restore settings changed. Run review again before queueing.");
+    updateRestoreQueueButtonState();
+}
+
+function updateRestoreConfirmationVisibility() {
+    const requiresOverwrite = getValue(elements.datamanagementrestorepolicy) === "overwrite_existing";
+    setElementVisible(elements.dataManagementRestoreConfirmationSection, requiresOverwrite);
+    updateRestoreQueueButtonState();
+}
+
+function renderRestoreReviewEmpty(message = "Run review to validate the manifest, target access, and restore policy.") {
+    setText(elements.dataManagementRestoreReviewStatus, message);
+    const container = elements.dataManagementRestoreReviewChecks;
+    if (!container) {
+        return;
+    }
+    const item = document.createElement("div");
+    item.className = "list-group-item text-muted";
+    item.textContent = "No current restore review is available.";
+    container.replaceChildren(item);
+}
+
+function renderRestoreReview(review) {
+    const checks = Array.isArray(review?.checks) ? review.checks : [];
+    const container = elements.dataManagementRestoreReviewChecks;
+    setText(
+        elements.dataManagementRestoreReviewStatus,
+        review?.ready
+            ? "Restore preflight passed. Confirm the plan to queue the job."
+            : "Restore preflight found blockers. Resolve them and run review again."
+    );
+    if (!container) {
+        return;
+    }
+    if (!checks.length) {
+        renderRestoreReviewEmpty("Restore review returned no checks.");
+        return;
+    }
+    container.replaceChildren();
+    checks.forEach((check) => {
+        const item = document.createElement("div");
+        item.className = "list-group-item";
+        const header = document.createElement("div");
+        header.className = "d-flex flex-wrap justify-content-between gap-2";
+        const title = document.createElement("strong");
+        title.textContent = check.label || check.id || "Restore check";
+        const badge = createBadge(
+            formatActivityLabel(check.status || "unknown"),
+            check.status === "pass" ? "bg-success" : check.status === "warn" ? "bg-warning text-dark" : "bg-danger"
+        );
+        header.append(title, badge);
+        const message = document.createElement("div");
+        message.className = "small text-muted mt-1";
+        message.textContent = check.message || "";
+        item.append(header, message);
+        container.appendChild(item);
+    });
+}
+
+async function runRestoreReview() {
+    if (!pendingRestoreBackup?.id) {
+        showToast("Choose a backup to restore first.", "warning");
+        return;
+    }
+    setBusy(elements.dataManagementRestoreReviewBtn, true, "Reviewing...");
+    try {
+        await saveDataManagementSettings(true);
+        const data = await requestJson("/api/admin/data-management/restore/review", {
+            method: "POST",
+            body: JSON.stringify({
+                settings: collectSettings(),
+                restore_plan: buildRestorePlan(),
+            }),
+        });
+        restoreReview = data.review || null;
+        renderRestoreReview(restoreReview);
+        updateRestoreQueueButtonState();
+        showToast(
+            restoreReview?.ready ? "Restore preflight passed." : "Restore preflight found blockers.",
+            restoreReview?.ready ? "success" : "warning"
+        );
+    } catch (error) {
+        restoreReview = null;
+        renderRestoreReviewEmpty(error.message || "Restore review failed.");
+        showToast(error.message || "Restore review failed.", "danger");
+        updateRestoreQueueButtonState();
+    } finally {
+        setBusy(elements.dataManagementRestoreReviewBtn, false);
+    }
+}
+
+function updateRestoreQueueButtonState() {
+    const overwriteRequired = getValue(elements.datamanagementrestorepolicy) === "overwrite_existing";
+    const overwriteMatches = !overwriteRequired || getValue(elements.datamanagementrestoreoverwriteconfirmationphrase) === restoreOverwriteConfirmationPhrase;
+    const canQueue = Boolean(
+        pendingRestoreBackup?.id &&
+        restoreReview?.ready === true &&
+        elements.datamanagementrestorefinalconfirmation?.checked &&
+        overwriteMatches
+    );
+    setButtonDisabled(elements.dataManagementRestoreQueueBtn, !canQueue);
+}
+
+async function queueRestore() {
+    if (!restoreReview?.ready || !pendingRestoreBackup?.id) {
+        showToast("Run a passing restore review before queueing.", "warning");
+        return;
+    }
+    const restorePlan = buildRestorePlan();
+    const data = await queueOperation("restore", null, {
+        restore_plan: restorePlan,
+        review_fingerprint: restoreReview.review_fingerprint || "",
+        review_authorization_token: restoreReview.authorization_token || "",
+    }, elements.dataManagementRestoreQueueBtn);
+    if (!data?.job) {
+        return;
+    }
+    if (elements.dataManagementRestoreModal && window.bootstrap?.Modal) {
+        window.bootstrap.Modal.getOrCreateInstance(elements.dataManagementRestoreModal).hide();
+    }
+    loadDataManagementJobDetail(data.job.id);
 }
 
 function createLabeledValue(label, value, allowBreak = false) {
@@ -3130,6 +3433,77 @@ async function requestDataManagementCancellation() {
         showToast(error.message || "Data Management job cancellation could not be requested.", "danger");
     } finally {
         setBusy(elements.dataManagementConfirmMigrationCancelBtn, false);
+    }
+}
+
+async function runBackupRetentionCleanup() {
+    setBusy(elements.dataManagementRunRetentionCleanupBtn, true, "Cleaning...");
+    try {
+        await saveDataManagementSettings(true);
+        const data = await requestJson("/api/admin/data-management/backups/retention/cleanup", {
+            method: "POST",
+            body: JSON.stringify({}),
+        });
+        const cleanup = data.cleanup || {};
+        const deletedCount = Number(cleanup.deleted_count || 0);
+        const message = deletedCount
+            ? `Backup retention cleanup deleted ${formatNumber(deletedCount)} expired backup${deletedCount === 1 ? "" : "s"}.`
+            : "Backup retention cleanup found no expired backups to delete.";
+        setStatus(message, "success");
+        showToast(message, "success");
+        loadDataManagementBackups();
+        loadDataManagementJobs();
+    } catch (error) {
+        setStatus(error.message || "Backup retention cleanup could not be completed.", "danger");
+        showToast(error.message || "Backup retention cleanup could not be completed.", "danger");
+    } finally {
+        setBusy(elements.dataManagementRunRetentionCleanupBtn, false);
+    }
+}
+
+function openDataManagementBackupDeleteModal(backup) {
+    if (!backup?.id || !elements.dataManagementBackupDeleteModal || !window.bootstrap?.Modal) {
+        return;
+    }
+    pendingDataManagementBackupDelete = {
+        id: backup.id,
+        backupType: backup.backup_type || "backup",
+    };
+    setText(
+        elements.dataManagementBackupDeleteMessage,
+        `Delete ${formatBackupType(backup.backup_type || "backup")} backup ${backup.id}?`
+    );
+    window.bootstrap.Modal.getOrCreateInstance(elements.dataManagementBackupDeleteModal).show();
+}
+
+async function deleteDataManagementBackup() {
+    const pendingBackup = pendingDataManagementBackupDelete;
+    const backupId = pendingBackup?.id;
+    if (!backupId) {
+        return;
+    }
+    setBusy(elements.dataManagementConfirmBackupDeleteBtn, true, "Deleting...");
+    try {
+        const data = await requestJson(`/api/admin/data-management/backups/${encodeURIComponent(backupId)}`, {
+            method: "DELETE",
+            body: JSON.stringify({ reason: "manual" }),
+        });
+        const cleanup = data.cleanup || {};
+        const deletedBlobCount = Number(cleanup.deleted_blob_count || 0);
+        const message = `Deleted ${formatBackupType(pendingBackup.backupType)} backup and ${formatNumber(deletedBlobCount)} stored artifact${deletedBlobCount === 1 ? "" : "s"}.`;
+        setStatus(message, "success");
+        showToast("Backup deleted.", "success");
+        window.bootstrap.Modal.getOrCreateInstance(elements.dataManagementBackupDeleteModal).hide();
+        loadDataManagementBackups();
+        loadDataManagementJobs();
+        if (currentJobDetailId === backupId) {
+            stopJobDetailAutoRefresh({ clearJob: true });
+        }
+    } catch (error) {
+        setStatus(error.message || "Backup could not be deleted.", "danger");
+        showToast(error.message || "Backup could not be deleted.", "danger");
+    } finally {
+        setBusy(elements.dataManagementConfirmBackupDeleteBtn, false);
     }
 }
 
@@ -3388,6 +3762,16 @@ function renderJobDetailProgress(job) {
             });
             body.appendChild(metricGrid);
         }
+    } else if (job.operation === "restore") {
+        const restoreMetrics = getRestoreLiveMetrics(job);
+        if (restoreMetrics.length) {
+            const metricGrid = document.createElement("div");
+            metricGrid.className = "row g-2 small mt-3";
+            restoreMetrics.forEach((metric) => {
+                metricGrid.appendChild(createDetailMetric(metric.label, metric.value));
+            });
+            body.appendChild(metricGrid);
+        }
     }
     card.appendChild(body);
     container.replaceChildren(card);
@@ -3477,6 +3861,33 @@ function getBackupLiveMetrics(job) {
     }
     if (sourceCapacity.restore_pending) {
         metrics.push({ label: "Capacity restore", value: "Pending recovery" });
+    }
+    return metrics;
+}
+
+function getRestoreLiveMetrics(job) {
+    const restoreState = job?.restore_state;
+    if (!restoreState || typeof restoreState !== "object") {
+        return [];
+    }
+    const totals = restoreState.totals && typeof restoreState.totals === "object" ? restoreState.totals : {};
+    const resources = restoreState.resources && typeof restoreState.resources === "object" ? Object.values(restoreState.resources) : [];
+    const activeResource = resources.find((resource) => resource?.status === "in_progress") || {};
+    const activeMetrics = activeResource.progress && typeof activeResource.progress === "object" ? activeResource.progress : {};
+    const metrics = [
+        { label: "Processed", value: formatNumber(totals.processed_count || 0) },
+        { label: "Copied", value: formatNumber(totals.copied_count || 0) },
+        { label: "Created / updated", value: `${formatNumber(totals.created_count || 0)} / ${formatNumber(totals.updated_count || 0)}` },
+        { label: "Skipped / failed", value: `${formatNumber(totals.skipped_count || 0)} / ${formatNumber(totals.failed_count || 0)}` },
+        { label: "Collisions", value: formatNumber(totals.collision_count || 0) },
+        { label: "Transferred", value: formatBytes(totals.bytes || 0) },
+    ];
+    if (activeMetrics.container_name || activeMetrics.index_name) {
+        metrics.push({ label: "Current target", value: activeMetrics.container_name || activeMetrics.index_name });
+    }
+    const progressAge = formatTimestampAge(job?.last_progress_at || restoreState.last_progress_at);
+    if (progressAge) {
+        metrics.push({ label: "Last progress", value: progressAge });
     }
     return metrics;
 }

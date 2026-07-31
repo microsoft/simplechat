@@ -18435,7 +18435,7 @@ def register_route_backend_chats(bp):
         is_retry = bool(retry_user_message_id)
         is_edit = bool(data.get('edited_user_message_id'))
 
-        compatibility_mode = bool(data.get('image_generation')) or is_retry
+        compatibility_mode = bool(data.get('image_generation'))
         requested_conversation_id = str(data.get('conversation_id') or '').strip() or None
 
         if requested_conversation_id:
@@ -19288,227 +19288,274 @@ def register_route_backend_chats(bp):
                 if conversation_group_id:
                     g.conversation_group_id = conversation_group_id
 
-                # Save user message
-                user_message_id = f"{conversation_id}_user_{int(time.time())}_{random.randint(1000,9999)}"
+                effective_retry_thread_attempt = retry_thread_attempt
 
-                user_metadata = {}
-                current_user = get_current_user_info()
-                if current_user:
-                    user_metadata['user_info'] = {
-                        'user_id': current_user.get('userId'),
-                        'username': current_user.get('userPrincipalName'),
-                        'display_name': current_user.get('displayName'),
-                        'email': current_user.get('email'),
-                        'timestamp': datetime.utcnow().isoformat()
+                if is_retry:
+                    user_message_id = retry_user_message_id
+                    try:
+                        user_message_doc = cosmos_messages_container.read_item(
+                            item=user_message_id,
+                            partition_key=conversation_id,
+                        )
+                    except CosmosResourceNotFoundError:
+                        yield f"data: {json.dumps({'error': 'Retry user message not found'})}\n\n"
+                        return
+                    except Exception as exc:
+                        debug_print(f"[Streaming] Error reading retry/edit user message {user_message_id}: {exc}")
+                        yield f"data: {json.dumps({'error': 'Failed to load retry user message'})}\n\n"
+                        return
+
+                    if user_message_doc.get('role') != 'user':
+                        yield f"data: {json.dumps({'error': 'Retry message must be a user message'})}\n\n"
+                        return
+
+                    user_message = user_message_doc.get('content', user_message)
+                    data['message'] = user_message
+                    user_metadata = user_message_doc.get('metadata') if isinstance(user_message_doc.get('metadata'), dict) else {}
+                    thread_info = user_metadata.get('thread_info') if isinstance(user_metadata.get('thread_info'), dict) else {}
+                    requested_thread_id = str(retry_thread_id or '').strip()
+                    stored_thread_id = str(thread_info.get('thread_id') or '').strip()
+                    if requested_thread_id and stored_thread_id and requested_thread_id != stored_thread_id:
+                        yield f"data: {json.dumps({'error': 'Retry thread metadata mismatch'})}\n\n"
+                        return
+
+                    current_user_thread_id = requested_thread_id or stored_thread_id
+                    if not current_user_thread_id:
+                        yield f"data: {json.dumps({'error': 'Retry message has no thread_id'})}\n\n"
+                        return
+
+                    previous_thread_id = thread_info.get('previous_thread_id')
+                    effective_retry_thread_attempt = (
+                        retry_thread_attempt
+                        if retry_thread_attempt is not None
+                        else thread_info.get('thread_attempt')
+                    )
+                    latest_thread_id = current_user_thread_id
+                    chat_context_metadata = user_metadata.get('chat_context')
+                    if not isinstance(chat_context_metadata, dict):
+                        chat_context_metadata = {}
+                    chat_context_metadata['conversation_id'] = conversation_id
+                    user_metadata['chat_context'] = chat_context_metadata
+                    user_message_doc['metadata'] = user_metadata
+
+                    debug_print(
+                        "[Streaming] Reusing retry/edit user message | "
+                        f"user_message_id={user_message_id} | "
+                        f"thread_id={current_user_thread_id} | "
+                        f"previous_thread_id={previous_thread_id} | "
+                        f"attempt={effective_retry_thread_attempt}"
+                    )
+                else:
+                    # Save user message
+                    user_message_id = f"{conversation_id}_user_{int(time.time())}_{random.randint(1000,9999)}"
+
+                    user_metadata = {}
+                    current_user = get_current_user_info()
+                    if current_user:
+                        user_metadata['user_info'] = {
+                            'user_id': current_user.get('userId'),
+                            'username': current_user.get('userPrincipalName'),
+                            'display_name': current_user.get('displayName'),
+                            'email': current_user.get('email'),
+                            'timestamp': datetime.utcnow().isoformat()
+                        }
+
+                    user_metadata['button_states'] = {
+                        'image_generation': False,
+                        'document_search': request_document_context_enabled,
+                        'web_search': bool(web_search_enabled),
+                        'url_access': bool(url_access_enabled),
+                        'deep_research': bool(deep_research_enabled)
                     }
+                    user_metadata['capability_usage'] = _build_capability_usage_metadata(
+                        workspace_search_enabled=request_document_context_enabled,
+                        document_action_type=DOCUMENT_ACTION_TYPE_NONE,
+                        document_scope=effective_document_scope,
+                        selected_document_ids=effective_selected_document_ids,
+                        active_group_ids=effective_active_group_ids,
+                        active_public_workspace_ids=effective_active_public_workspace_ids,
+                        web_search_enabled=web_search_enabled,
+                        url_access_enabled=url_access_enabled,
+                        source_review_enabled=source_review_enabled,
+                        deep_research_enabled=deep_research_enabled,
+                    )
 
-                user_metadata['button_states'] = {
-                    'image_generation': False,
-                    'document_search': request_document_context_enabled,
-                    'web_search': bool(web_search_enabled),
-                    'url_access': bool(url_access_enabled),
-                    'deep_research': bool(deep_research_enabled)
-                }
-                user_metadata['capability_usage'] = _build_capability_usage_metadata(
-                    workspace_search_enabled=request_document_context_enabled,
-                    document_action_type=DOCUMENT_ACTION_TYPE_NONE,
-                    document_scope=effective_document_scope,
-                    selected_document_ids=effective_selected_document_ids,
-                    active_group_ids=effective_active_group_ids,
-                    active_public_workspace_ids=effective_active_public_workspace_ids,
-                    web_search_enabled=web_search_enabled,
-                    url_access_enabled=url_access_enabled,
-                    source_review_enabled=source_review_enabled,
-                    deep_research_enabled=deep_research_enabled,
-                )
-
-                # Document search scope and selections
-                if request_document_context_enabled:
-                    user_metadata['workspace_search'] = {
-                        'search_enabled': True,
-                        'selection_mode': selection_mode,
-                        'document_context_requested': document_context_requested,
-                        'hybrid_search_preference': bool(hybrid_search_enabled),
-                        'document_scope': effective_document_scope,
-                        'selected_document_id': effective_selected_document_id,
-                        'selected_document_ids': effective_selected_document_ids,
-                        'requested_document_ids': requested_selected_document_ids,
-                        'active_group_ids': effective_active_group_ids,
-                        'active_public_workspace_ids': effective_active_public_workspace_ids,
-                        'classification': classifications_to_send
-                    }
-                    if assigned_knowledge_filters:
-                        assigned_knowledge = assigned_knowledge_filters.get('assigned_knowledge') or {}
-                        user_metadata['workspace_search']['assigned_knowledge'] = {
-                            'enabled': True,
-                            'document_count': len(assigned_knowledge.get('document_ids') or []),
-                            'tag_count': len(assigned_knowledge.get('tags') or []),
-                            'effective_scope': effective_document_scope,
+                    if request_document_context_enabled:
+                        user_metadata['workspace_search'] = {
+                            'search_enabled': True,
+                            'selection_mode': selection_mode,
+                            'document_context_requested': document_context_requested,
+                            'hybrid_search_preference': bool(hybrid_search_enabled),
+                            'document_scope': effective_document_scope,
+                            'selected_document_id': effective_selected_document_id,
+                            'selected_document_ids': effective_selected_document_ids,
+                            'requested_document_ids': requested_selected_document_ids,
                             'active_group_ids': effective_active_group_ids,
                             'active_public_workspace_ids': effective_active_public_workspace_ids,
+                            'classification': classifications_to_send
                         }
-                    if auto_linked_chat_upload_document_ids:
-                        user_metadata['workspace_search']['auto_linked_chat_upload_document_ids'] = auto_linked_chat_upload_document_ids
-                        user_metadata['workspace_search']['auto_linked_chat_upload_document_count'] = len(auto_linked_chat_upload_document_ids)
+                        if assigned_knowledge_filters:
+                            assigned_knowledge = assigned_knowledge_filters.get('assigned_knowledge') or {}
+                            user_metadata['workspace_search']['assigned_knowledge'] = {
+                                'enabled': True,
+                                'document_count': len(assigned_knowledge.get('document_ids') or []),
+                                'tag_count': len(assigned_knowledge.get('tags') or []),
+                                'effective_scope': effective_document_scope,
+                                'active_group_ids': effective_active_group_ids,
+                                'active_public_workspace_ids': effective_active_public_workspace_ids,
+                            }
+                        if auto_linked_chat_upload_document_ids:
+                            user_metadata['workspace_search']['auto_linked_chat_upload_document_ids'] = auto_linked_chat_upload_document_ids
+                            user_metadata['workspace_search']['auto_linked_chat_upload_document_count'] = len(auto_linked_chat_upload_document_ids)
 
-                    # Get document details if specific document selected
-                    if effective_selected_document_id and effective_selected_document_id != "all":
-                        try:
-                            doc_info = _resolve_chat_selected_document_metadata(
-                                effective_selected_document_id,
-                                user_id=user_id,
-                                document_scope=effective_document_scope,
-                                active_group_id=effective_active_group_id,
-                                active_group_ids=effective_active_group_ids,
-                                active_public_workspace_id=effective_active_public_workspace_id,
-                                active_public_workspace_ids=effective_active_public_workspace_ids,
-                            )
-                            if doc_info:
-                                user_metadata['workspace_search']['document_name'] = doc_info.get('title') or doc_info.get('file_name')
-                                user_metadata['workspace_search']['document_filename'] = doc_info.get('file_name')
-                        except Exception as e:
-                            debug_print(f"Error retrieving document details: {e}")
+                        if effective_selected_document_id and effective_selected_document_id != "all":
+                            try:
+                                doc_info = _resolve_chat_selected_document_metadata(
+                                    effective_selected_document_id,
+                                    user_id=user_id,
+                                    document_scope=effective_document_scope,
+                                    active_group_id=effective_active_group_id,
+                                    active_group_ids=effective_active_group_ids,
+                                    active_public_workspace_id=effective_active_public_workspace_id,
+                                    active_public_workspace_ids=effective_active_public_workspace_ids,
+                                )
+                                if doc_info:
+                                    user_metadata['workspace_search']['document_name'] = doc_info.get('title') or doc_info.get('file_name')
+                                    user_metadata['workspace_search']['document_filename'] = doc_info.get('file_name')
+                            except Exception as e:
+                                debug_print(f"Error retrieving document details: {e}")
 
-                    # Add scope-specific details
-                    if effective_document_scope == 'group' and effective_active_group_id:
-                        try:
-                            from functions_debug import debug_print
-                            debug_print(f"Workspace search - looking up group for id: {effective_active_group_id}")
-                            group_doc = find_group_by_id(effective_active_group_id)
-                            debug_print(f"Workspace search group lookup result: {group_doc}")
+                        if effective_document_scope == 'group' and effective_active_group_id:
+                            try:
+                                debug_print(f"Workspace search - looking up group for id: {effective_active_group_id}")
+                                group_doc = find_group_by_id(effective_active_group_id)
+                                debug_print(f"Workspace search group lookup result: {group_doc}")
 
-                            if group_doc and group_doc.get('name'):
-                                group_name = group_doc.get('name')
-                                user_metadata['workspace_search']['group_name'] = group_name
-                                debug_print(f"Workspace search - set group_name to: {group_name}")
-                            else:
-                                debug_print(f"Workspace search - no group found or no name for id: {effective_active_group_id}")
+                                if group_doc and group_doc.get('name'):
+                                    group_name = group_doc.get('name')
+                                    user_metadata['workspace_search']['group_name'] = group_name
+                                    debug_print(f"Workspace search - set group_name to: {group_name}")
+                                else:
+                                    debug_print(f"Workspace search - no group found or no name for id: {effective_active_group_id}")
+                                    user_metadata['workspace_search']['group_name'] = None
+                            except Exception as e:
+                                debug_print(f"Error retrieving group details: {e}")
                                 user_metadata['workspace_search']['group_name'] = None
+                                import traceback
+                                traceback.print_exc()
 
-                        except Exception as e:
-                            debug_print(f"Error retrieving group details: {e}")
-                            user_metadata['workspace_search']['group_name'] = None
-                            import traceback
-                            traceback.print_exc()
+                        if effective_document_scope == 'public' and effective_active_public_workspace_id:
+                            try:
+                                from functions_public_workspaces import find_public_workspace_by_id, check_public_workspace_status_allows_operation
+                                workspace_doc = find_public_workspace_by_id(effective_active_public_workspace_id)
+                                if workspace_doc:
+                                    allowed, reason = check_public_workspace_status_allows_operation(workspace_doc, 'chat')
+                                    if not allowed:
+                                        yield f"data: {json.dumps({'error': reason})}\n\n"
+                                        return
+                            except Exception as e:
+                                debug_print(f"Error checking public workspace status: {e}")
 
-                    if effective_document_scope == 'public' and effective_active_public_workspace_id:
-                        # Check if public workspace status allows chat operations
-                        try:
-                            from functions_public_workspaces import find_public_workspace_by_id, check_public_workspace_status_allows_operation
-                            workspace_doc = find_public_workspace_by_id(effective_active_public_workspace_id)
-                            if workspace_doc:
-                                allowed, reason = check_public_workspace_status_allows_operation(workspace_doc, 'chat')
-                                if not allowed:
-                                    yield f"data: {json.dumps({'error': reason})}\n\n"
-                                    return
-                        except Exception as e:
-                            debug_print(f"Error checking public workspace status: {e}")
+                            user_metadata['workspace_search']['active_public_workspace_id'] = effective_active_public_workspace_id
+                    else:
+                        user_metadata['workspace_search'] = {
+                            'search_enabled': False
+                        }
 
-                        user_metadata['workspace_search']['active_public_workspace_id'] = effective_active_public_workspace_id
-                else:
-                    user_metadata['workspace_search'] = {
-                        'search_enabled': False
+                    user_metadata['model_selection'] = {
+                        'selected_model': gpt_model,
+                        'frontend_requested_model': frontend_gpt_model,
+                        'model_endpoint_id': gpt_endpoint_id or data.get('model_endpoint_id'),
+                        'model_id': gpt_model_id or data.get('model_id'),
+                        'model_provider': gpt_provider or data.get('model_provider'),
+                        'model_icon': gpt_model_icon,
+                        'reasoning_effort': reasoning_effort if reasoning_effort and reasoning_effort != 'none' else None,
+                        'streaming': 'Enabled'
                     }
 
-                user_metadata['model_selection'] = {
-                    'selected_model': gpt_model,
-                    'frontend_requested_model': frontend_gpt_model,
-                    'model_endpoint_id': gpt_endpoint_id or data.get('model_endpoint_id'),
-                    'model_id': gpt_model_id or data.get('model_id'),
-                    'model_provider': gpt_provider or data.get('model_provider'),
-                    'model_icon': gpt_model_icon,
-                    'reasoning_effort': reasoning_effort if reasoning_effort and reasoning_effort != 'none' else None,
-                    'streaming': 'Enabled'
-                }
-
-                agent_selection_metadata = _build_agent_selection_metadata(
-                    request_agent_info,
-                    assigned_knowledge_filters,
-                )
-                if agent_selection_metadata:
-                    user_metadata['agent_selection'] = agent_selection_metadata
-
-                user_metadata['chat_context'] = {
-                    'conversation_id': conversation_id
-                }
-
-                # --- Threading Logic for Streaming ---
-                previous_thread_id = None
-                try:
-                    last_msg_query = f"""
-                        SELECT TOP 1 c.metadata.thread_info.thread_id as thread_id
-                        FROM c
-                        WHERE c.conversation_id = '{conversation_id}'
-                        ORDER BY c.timestamp DESC
-                    """
-                    last_msgs = list(cosmos_messages_container.query_items(
-                        query=last_msg_query,
-                        partition_key=conversation_id
-                    ))
-                    if last_msgs:
-                        previous_thread_id = last_msgs[0].get('thread_id')
-                except Exception as e:
-                    debug_print(f"Error fetching last message for threading: {e}")
-
-                current_user_thread_id = str(uuid.uuid4())
-                latest_thread_id = current_user_thread_id
-
-                # Add thread information to user metadata
-                user_metadata['thread_info'] = {
-                    'thread_id': current_user_thread_id,
-                    'previous_thread_id': previous_thread_id,
-                    'active_thread': True,
-                    'thread_attempt': 1
-                }
-
-                user_message_doc = {
-                    'id': user_message_id,
-                    'conversation_id': conversation_id,
-                    'role': 'user',
-                    'content': user_message,
-                    'timestamp': datetime.utcnow().isoformat(),
-                    'model_deployment_name': None,
-                    'metadata': user_metadata
-                }
-
-                cosmos_messages_container.upsert_item(user_message_doc)
-                debug_print(
-                    f"[Streaming] Saved user message {user_message_id} | thread_id={current_user_thread_id} | previous_thread_id={previous_thread_id}"
-                )
-
-                # Log activity
-                try:
-                    log_chat_activity(
-                        user_id=user_id,
-                        conversation_id=conversation_id,
-                        message_type='user_message',
-                        message_length=len(user_message) if user_message else 0,
-                        has_document_search=request_document_context_enabled,
-                        has_image_generation=False,
-                        document_scope=effective_document_scope,
-                        chat_context=actual_chat_type,
-                        workspace_type='group' if actual_chat_type == 'group' else 'public' if actual_chat_type == 'public' else 'personal',
-                        group_id=effective_active_group_id if actual_chat_type == 'group' else None,
-                        public_workspace_id=effective_active_public_workspace_id if actual_chat_type == 'public' else None,
+                    agent_selection_metadata = _build_agent_selection_metadata(
+                        request_agent_info,
+                        assigned_knowledge_filters,
                     )
-                except Exception as e:
-                    debug_print(f"Activity logging error: {e}")
+                    if agent_selection_metadata:
+                        user_metadata['agent_selection'] = agent_selection_metadata
 
-                # Update conversation title
-                title_updated = _set_initial_conversation_title(conversation_item, user_message)
+                    user_metadata['chat_context'] = {
+                        'conversation_id': conversation_id
+                    }
 
-                conversation_item['last_updated'] = datetime.utcnow().isoformat()
-                cosmos_conversations_container.upsert_item(conversation_item)
-                invalidate_conversation_cache_for_item(conversation_item, reason="conversation_title_initialized")
-                if title_updated:
-                    yield _build_conversation_metadata_stream_event(conversation_item)
+                    previous_thread_id = None
+                    try:
+                        last_msg_query = f"""
+                            SELECT TOP 1 c.metadata.thread_info.thread_id as thread_id
+                            FROM c
+                            WHERE c.conversation_id = '{conversation_id}'
+                            ORDER BY c.timestamp DESC
+                        """
+                        last_msgs = list(cosmos_messages_container.query_items(
+                            query=last_msg_query,
+                            partition_key=conversation_id
+                        ))
+                        if last_msgs:
+                            previous_thread_id = last_msgs[0].get('thread_id')
+                    except Exception as e:
+                        debug_print(f"Error fetching last message for threading: {e}")
+
+                    current_user_thread_id = str(uuid.uuid4())
+                    latest_thread_id = current_user_thread_id
+                    user_metadata['thread_info'] = {
+                        'thread_id': current_user_thread_id,
+                        'previous_thread_id': previous_thread_id,
+                        'active_thread': True,
+                        'thread_attempt': 1
+                    }
+
+                    user_message_doc = {
+                        'id': user_message_id,
+                        'conversation_id': conversation_id,
+                        'role': 'user',
+                        'content': user_message,
+                        'timestamp': datetime.utcnow().isoformat(),
+                        'model_deployment_name': None,
+                        'metadata': user_metadata
+                    }
+
+                    cosmos_messages_container.upsert_item(user_message_doc)
+                    debug_print(
+                        f"[Streaming] Saved user message {user_message_id} | thread_id={current_user_thread_id} | previous_thread_id={previous_thread_id}"
+                    )
+
+                    try:
+                        log_chat_activity(
+                            user_id=user_id,
+                            conversation_id=conversation_id,
+                            message_type='user_message',
+                            message_length=len(user_message) if user_message else 0,
+                            has_document_search=request_document_context_enabled,
+                            has_image_generation=False,
+                            document_scope=effective_document_scope,
+                            chat_context=actual_chat_type,
+                            workspace_type='group' if actual_chat_type == 'group' else 'public' if actual_chat_type == 'public' else 'personal',
+                            group_id=effective_active_group_id if actual_chat_type == 'group' else None,
+                            public_workspace_id=effective_active_public_workspace_id if actual_chat_type == 'public' else None,
+                        )
+                    except Exception as e:
+                        debug_print(f"Activity logging error: {e}")
+
+                    title_updated = _set_initial_conversation_title(conversation_item, user_message)
+
+                    conversation_item['last_updated'] = datetime.utcnow().isoformat()
+                    cosmos_conversations_container.upsert_item(conversation_item)
+                    invalidate_conversation_cache_for_item(conversation_item, reason="conversation_title_initialized")
+                    if title_updated:
+                        yield _build_conversation_metadata_stream_event(conversation_item)
 
                 assistant_message_id, thought_tracker, assistant_thread_attempt, response_message_context = _initialize_assistant_response_tracking(
                     conversation_id=conversation_id,
                     user_message_id=user_message_id,
                     current_user_thread_id=current_user_thread_id,
                     previous_thread_id=previous_thread_id,
-                    retry_thread_attempt=retry_thread_attempt,
+                    retry_thread_attempt=effective_retry_thread_attempt,
                     is_retry=is_retry,
                     user_id=user_id,
                 )

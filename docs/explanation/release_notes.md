@@ -2,6 +2,41 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.106)**
+
+#### New Features
+
+*   **Backup Cleanup and Retention Policy Controls**
+    *   Added Data Management backup cleanup controls so administrators can manually delete backup artifacts and metadata from Backup Inventory.
+    *   Added unit-based backup retention settings for days, weeks, months, and years, with automatic cleanup that preserves the newest successful full backup as a restore safety baseline.
+    *   Cleanup removes stored backup blobs, job timeline records, and differential sidecar state so future partial backups re-export affected unchanged items instead of pointing to deleted artifacts.
+    *   (Ref: Closes #1130, `functions_data_management.py`, `route_backend_data_management.py`, `admin_settings.html`, `admin_data_management.js`)
+
+*   **Multi-Select Metadata Extraction**
+    *   Personal, group, and public workspace document multi-select bars now include an **Extract Metadata** action when metadata extraction is enabled.
+    *   Selected documents are queued through the shared metadata extraction background workflow, preserving generated titles along with authors, abstracts, keywords, publication dates, and organization metadata.
+    *   (Ref: Closes #1134, `route_backend_documents.py`, `route_backend_group_documents.py`, `route_backend_public_documents.py`, workspace document multi-select actions)
+
+*   **Data Management Backup Restore Workflow**
+    *   Added an admin-only restore workflow for completed Data Management backups, with manifest preflight, create-only default policy, explicit overwrite confirmation, durable restore jobs, cancellation/retry support, and sanitized progress in Job History.
+    *   Restore supports configured target Cosmos DB, AI Search, and Enhanced Citation blob targets while preserving secret-safe review and job responses.
+    *   (Ref: Closes #1091, `functions_data_management.py`, `functions_data_management_restore_state.py`, `route_backend_data_management.py`, `admin_settings.html`, `admin_data_management.js`, `DATA_MANAGEMENT_RESTORE.md`)
+
+#### Bug Fixes
+
+*   **Retry and Edit Streaming Parity**
+    *   Retry and edit chat flows now use the same full SSE streaming path as first-send chat, restoring live token updates, streamed thoughts, stop controls, and recovery behavior.
+    *   The stream path reuses the retry/edit user message and thread metadata created by the preparation endpoints, preserving carousel attempt history without duplicating user messages.
+    *   (Ref: Fixes #963, `route_backend_chats.py`, `chat-retry.js`, `chat-edit.js`, `test_chat_retry_edit_streaming_parity.py`)
+
+#### User Interface Enhancements
+
+*   **Custom Pages Admin Open Action**
+    *   Added an Open action to the Admin Settings Custom Pages table so administrators can launch enabled static or Python-backed custom pages directly from their metadata row.
+    *   The action opens encoded `/custom/<slug>` URLs in a new tab while preserving existing Custom Pages route authorization, enabled-state checks, access-level rules, role restrictions, and `.html` alias compatibility.
+    *   Disabled or unavailable pages now show a disabled Open action with explanatory tooltip copy instead of silently omitting the action.
+    *   (Ref: Closes #951, PR #1131, `admin_custom_pages.js`, `CUSTOM_PAGES.md`)
+
 ### **(v0.250.105)**
 
 #### User Interface Enhancements

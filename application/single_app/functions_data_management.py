@@ -84,6 +84,19 @@ from functions_data_management_backup_state import (
     start_backup_resource,
     update_backup_resource,
 )
+from functions_data_management_restore_state import (
+    RESTORE_RESOURCE_STATUS_COMPLETED,
+    RESTORE_RESOURCE_STATUS_FAILED,
+    build_restore_configuration_fingerprint,
+    complete_restore_attempt,
+    complete_restore_resource,
+    fail_restore_resource,
+    initialize_restore_state,
+    is_restore_resource_completed,
+    start_restore_attempt,
+    start_restore_resource,
+    update_restore_resource,
+)
 from functions_data_management_search_write_fence import (
     acquire_data_management_search_write_fence,
     acquire_data_management_target_migration_coordinator,
@@ -122,6 +135,7 @@ DATA_MANAGEMENT_JOB_ITEM_TYPE = "data_management_job_item"
 DATA_MANAGEMENT_MIGRATION_MANIFEST_BATCH_TYPE = "data_management_migration_manifest_batch"
 DATA_MANAGEMENT_MIGRATION_REVIEW_TYPE = "data_management_migration_review"
 DATA_MANAGEMENT_MIGRATION_REVIEW_TTL_SECONDS = 900
+DATA_MANAGEMENT_RESTORE_REVIEW_TYPE = "data_management_restore_review"
 DATA_MANAGEMENT_MIRROR_DELETION_BATCH_TYPE = "data_management_mirror_deletion_batch"
 DATA_MANAGEMENT_MIGRATION_LOCK_TYPE = "data_management_migration_lock"
 DATA_MANAGEMENT_BACKUP_MANIFEST_BATCH_TYPE = "data_management_backup_manifest_batch"
@@ -208,6 +222,17 @@ DATA_MANAGEMENT_BACKUP_CAPACITY_FAILURE_POLICIES = {
     DATA_MANAGEMENT_BACKUP_CAPACITY_FAILURE_POLICY_FAIL,
     DATA_MANAGEMENT_BACKUP_CAPACITY_FAILURE_POLICY_CONTINUE,
 }
+DATA_MANAGEMENT_RETENTION_DEFAULT_VALUE = 30
+DATA_MANAGEMENT_RETENTION_DEFAULT_UNIT = "days"
+DATA_MANAGEMENT_RETENTION_MAX_DAYS = 3650
+DATA_MANAGEMENT_RETENTION_UNIT_DAYS = {
+    "days": 1,
+    "weeks": 7,
+    "months": 30,
+    "years": 365,
+}
+DATA_MANAGEMENT_BACKUP_RETENTION_CLEANUP_LIMIT = 25
+DATA_MANAGEMENT_BACKUP_RETENTION_CLEANUP_INTERVAL_SECONDS = 23 * 3600
 DATA_MANAGEMENT_SEARCH_KEYSET_PAGE_SIZE = 1000
 DATA_MANAGEMENT_SEARCH_SCOPE_FILTER_BATCH_SIZE = 100
 DATA_MANAGEMENT_SEARCH_BACKUP_PAGE_SIZE = 1000
@@ -235,6 +260,16 @@ DATA_MANAGEMENT_MIGRATION_MODES = {
     DATA_MANAGEMENT_MIGRATION_MODE_MIRROR,
 }
 DATA_MANAGEMENT_MIRROR_CONFIRMATION = "MIRROR WITH DELETIONS"
+DATA_MANAGEMENT_RESTORE_POLICY_CREATE_ONLY = "create_only"
+DATA_MANAGEMENT_RESTORE_POLICY_OVERWRITE = "overwrite_existing"
+DATA_MANAGEMENT_RESTORE_POLICIES = {
+    DATA_MANAGEMENT_RESTORE_POLICY_CREATE_ONLY,
+    DATA_MANAGEMENT_RESTORE_POLICY_OVERWRITE,
+}
+DATA_MANAGEMENT_RESTORE_OVERWRITE_CONFIRMATION = "RESTORE WITH OVERWRITE"
+DATA_MANAGEMENT_RESTORE_REVIEW_TTL_SECONDS = 900
+DATA_MANAGEMENT_RESTORE_MAX_MANIFEST_ENTRIES = 100000
+DATA_MANAGEMENT_RESTORE_BATCH_SIZE = 100
 DATA_MANAGEMENT_SEARCH_WRITE_FREEZE_CONFIRMATION_ERROR = (
     "Confirm that external destination AI Search writers are frozen before migrating AI Search documents."
 )
@@ -281,7 +316,11 @@ DATA_MANAGEMENT_DEFAULT_SETTINGS = {
     "full_backup_frequency": "weekly",
     "scheduled_time_utc": DATA_MANAGEMENT_DEFAULT_TIME_UTC,
     "partial_backups_enabled": True,
-    "retention_days": 30,
+    "retention_value": DATA_MANAGEMENT_RETENTION_DEFAULT_VALUE,
+    "retention_unit": DATA_MANAGEMENT_RETENTION_DEFAULT_UNIT,
+    "retention_days": DATA_MANAGEMENT_RETENTION_DEFAULT_VALUE,
+    "retention_keep_latest_full": True,
+    "backup_retention_cleanup_last_run_at": None,
     "include_cosmos": True,
     "include_ai_search": True,
     "include_source_blobs": True,
@@ -338,6 +377,14 @@ class DataManagementBackupCanceledError(RuntimeError):
 
 class DataManagementBackupOverlapError(RuntimeError):
     """Raised when another backup owns the same source scope."""
+
+
+class DataManagementRestoreLeaseLostError(RuntimeError):
+    """Raised when a stale restore worker no longer owns its job lease."""
+
+
+class DataManagementRestoreCanceledError(RuntimeError):
+    """Raised when an administrator requests cooperative restore cancellation."""
 
 DATA_MANAGEMENT_FRONTEND_SECRET_FIELDS = {
     "backup_storage_connection_string",
@@ -670,6 +717,65 @@ def calculate_next_data_management_run(settings, backup_type=DATA_MANAGEMENT_BAC
     return scheduled_earliest
 
 
+def _max_retention_value_for_unit(retention_unit):
+    unit_days = DATA_MANAGEMENT_RETENTION_UNIT_DAYS.get(
+        retention_unit,
+        DATA_MANAGEMENT_RETENTION_UNIT_DAYS[DATA_MANAGEMENT_RETENTION_DEFAULT_UNIT],
+    )
+    return max(1, DATA_MANAGEMENT_RETENTION_MAX_DAYS // unit_days)
+
+
+def _normalize_data_management_retention_settings(source, payload=None, existing_settings=None):
+    """Normalize retention value/unit while preserving legacy retention_days callers."""
+    payload_has_period = isinstance(payload, dict) and (
+        "retention_value" in payload or "retention_unit" in payload
+    )
+    payload_has_legacy_days = isinstance(payload, dict) and (
+        "retention_days" in payload and not payload_has_period
+    )
+    existing_has_period = isinstance(existing_settings, dict) and (
+        "retention_value" in existing_settings or "retention_unit" in existing_settings
+    )
+    use_period_fields = payload_has_period or (existing_has_period and not payload_has_legacy_days)
+
+    if use_period_fields:
+        retention_unit = _safe_text(
+            source.get("retention_unit"),
+            DATA_MANAGEMENT_RETENTION_DEFAULT_UNIT,
+        ).lower()
+        if retention_unit not in DATA_MANAGEMENT_RETENTION_UNIT_DAYS:
+            retention_unit = DATA_MANAGEMENT_RETENTION_DEFAULT_UNIT
+        retention_value = _safe_int(
+            source.get("retention_value"),
+            default=DATA_MANAGEMENT_RETENTION_DEFAULT_VALUE,
+            minimum=1,
+            maximum=_max_retention_value_for_unit(retention_unit),
+        )
+        source["retention_unit"] = retention_unit
+        source["retention_value"] = retention_value
+        source["retention_days"] = retention_value * DATA_MANAGEMENT_RETENTION_UNIT_DAYS[retention_unit]
+    else:
+        retention_days = _safe_int(
+            source.get("retention_days"),
+            default=DATA_MANAGEMENT_RETENTION_DEFAULT_VALUE,
+            minimum=1,
+            maximum=DATA_MANAGEMENT_RETENTION_MAX_DAYS,
+        )
+        source["retention_unit"] = DATA_MANAGEMENT_RETENTION_DEFAULT_UNIT
+        source["retention_value"] = retention_days
+        source["retention_days"] = retention_days
+
+    source["retention_keep_latest_full"] = _safe_bool(
+        source.get("retention_keep_latest_full"),
+        True,
+    )
+    parsed_cleanup_run = _parse_iso_datetime(source.get("backup_retention_cleanup_last_run_at"))
+    source["backup_retention_cleanup_last_run_at"] = (
+        parsed_cleanup_run.isoformat() if parsed_cleanup_run else None
+    )
+    return source
+
+
 def normalize_data_management_settings(payload=None, existing_settings=None, current_time=None, application_settings=None):
     feature_context = _get_data_management_feature_context(application_settings)
     source = copy.deepcopy(DATA_MANAGEMENT_DEFAULT_SETTINGS)
@@ -729,7 +835,11 @@ def normalize_data_management_settings(payload=None, existing_settings=None, cur
         source["full_backup_frequency"] = DATA_MANAGEMENT_DEFAULT_SETTINGS["full_backup_frequency"]
     source["scheduled_time_utc"] = normalize_data_management_time(source.get("scheduled_time_utc"))
     source["partial_backups_enabled"] = _safe_bool(source.get("partial_backups_enabled"), True)
-    source["retention_days"] = _safe_int(source.get("retention_days"), default=30, minimum=1, maximum=3650)
+    _normalize_data_management_retention_settings(
+        source,
+        payload=payload,
+        existing_settings=existing_settings,
+    )
     source["include_cosmos"] = _safe_bool(source.get("include_cosmos"), True)
     source["include_ai_search"] = _safe_bool(source.get("include_ai_search"), True)
     source["include_source_blobs"] = _safe_bool(source.get("include_source_blobs"), feature_context["enhanced_citations_enabled"])
@@ -7416,6 +7526,41 @@ def _assert_data_management_job_lease(job, allow_cancel_requested=False):
         _assert_migration_job_lease(job, allow_cancel_requested=allow_cancel_requested)
     elif job.get("operation") == DATA_MANAGEMENT_OPERATION_BACKUP:
         _assert_backup_job_lease(job, allow_cancel_requested=allow_cancel_requested)
+    elif job.get("operation") == DATA_MANAGEMENT_OPERATION_RESTORE:
+        _assert_restore_job_lease(job, allow_cancel_requested=allow_cancel_requested)
+
+
+def _assert_restore_job_lease(job, allow_cancel_requested=False):
+    """Stop a stale restore worker before it mutates another target resource."""
+    if not isinstance(job, dict) or job.get("operation") != DATA_MANAGEMENT_OPERATION_RESTORE:
+        return
+    lease_holder_id = _safe_text(job.get("lease_holder_id"))
+    if not lease_holder_id:
+        raise DataManagementRestoreLeaseLostError("Restore worker has no durable job lease.")
+    try:
+        persisted_job = _read_job(job.get("id"))
+    except Exception as exc:
+        raise DataManagementRestoreLeaseLostError(
+            "Restore worker could not verify its durable job lease."
+        ) from exc
+    if persisted_job.get("cancel_requested_at") and not allow_cancel_requested:
+        raise DataManagementRestoreCanceledError(
+            "Restore cancellation was requested by an administrator."
+        )
+    persisted_expiry = _parse_iso_datetime(persisted_job.get("lease_expires_at"))
+    if (
+        persisted_job.get("status") != DATA_MANAGEMENT_STATUS_RUNNING or
+        _safe_text(persisted_job.get("lease_holder_id")) != lease_holder_id or
+        _safe_int(persisted_job.get("lease_generation"), default=0) !=
+        _safe_int(job.get("lease_generation"), default=0) or
+        persisted_expiry is None or
+        persisted_expiry <= _now_utc()
+    ):
+        raise DataManagementRestoreLeaseLostError(
+            "Restore worker lease was superseded or expired."
+        )
+    if persisted_job.get("_etag"):
+        job["_etag"] = persisted_job.get("_etag")
 
 
 def _run_backup_transfer_with_heartbeat(job, settings, message, transfer):
@@ -7730,6 +7875,802 @@ def _build_backup_lineage_id(backup_plan):
     })
 
 
+def _get_restore_backup_job(backup_id):
+    safe_backup_id = _safe_text(backup_id)
+    if not safe_backup_id:
+        raise DataManagementSettingsValidationError("Choose a backup before running restore review.")
+    job = get_data_management_job(safe_backup_id)
+    if not job or job.get("operation") != DATA_MANAGEMENT_OPERATION_BACKUP:
+        raise DataManagementSettingsValidationError("Selected backup was not found.")
+    if job.get("status") not in {
+        DATA_MANAGEMENT_STATUS_COMPLETED,
+        DATA_MANAGEMENT_STATUS_COMPLETED_WITH_WARNINGS,
+    }:
+        raise DataManagementSettingsValidationError("Only completed backups can be restored.")
+    return job
+
+
+def _normalize_data_management_restore_plan(options=None, backup_job=None, require_confirmation=False):
+    """Build the secret-free immutable plan used by one restore job."""
+    source = options if isinstance(options, dict) else {}
+    restore_plan = source.get("restore_plan") if isinstance(source.get("restore_plan"), dict) else source
+    backup_id = _safe_text(
+        restore_plan.get("backup_id") or
+        restore_plan.get("source_backup_id") or
+        source.get("backup_id") or
+        source.get("source_backup_id")
+    )
+    selected_backup = backup_job if isinstance(backup_job, dict) else _get_restore_backup_job(backup_id)
+    backup_plan = selected_backup.get("backup_plan") if isinstance(selected_backup.get("backup_plan"), dict) else {}
+    backup_result = selected_backup.get("result") if isinstance(selected_backup.get("result"), dict) else {}
+    manifest_path = _safe_text(backup_result.get("manifest_path") or (selected_backup.get("backup_state") or {}).get("manifest", {}).get("path"))
+    if not manifest_path:
+        raise DataManagementSettingsValidationError("Selected backup does not have a durable manifest.")
+
+    restore_policy = _safe_text(
+        restore_plan.get("restore_policy") or restore_plan.get("policy"),
+        DATA_MANAGEMENT_RESTORE_POLICY_CREATE_ONLY,
+    )
+    if restore_policy not in DATA_MANAGEMENT_RESTORE_POLICIES:
+        restore_policy = DATA_MANAGEMENT_RESTORE_POLICY_CREATE_ONLY
+    overwrite_confirmed = _safe_bool(restore_plan.get("overwrite_confirmed"), False)
+    overwrite_phrase = _safe_text(restore_plan.get("overwrite_confirmation_phrase"))
+    if restore_policy == DATA_MANAGEMENT_RESTORE_POLICY_OVERWRITE:
+        phrase_matches = hmac.compare_digest(
+            overwrite_phrase,
+            DATA_MANAGEMENT_RESTORE_OVERWRITE_CONFIRMATION,
+        )
+        if require_confirmation and (not overwrite_confirmed or not phrase_matches):
+            raise DataManagementSettingsValidationError(
+                "Overwrite restore requires a separate confirmation phrase."
+            )
+    else:
+        overwrite_confirmed = False
+        overwrite_phrase = ""
+
+    return {
+        "source_backup_id": selected_backup.get("id"),
+        "source_backup_type": selected_backup.get("backup_type"),
+        "source_backup_completed_at": selected_backup.get("completed_at"),
+        "source_backup_status": selected_backup.get("status"),
+        "source_backup_manifest_path": manifest_path,
+        "base_prefix": _safe_text(backup_result.get("base_prefix")),
+        "restore_policy": restore_policy,
+        "overwrite_confirmed": overwrite_confirmed,
+        "include_cosmos": _safe_bool(
+            restore_plan.get("include_cosmos"),
+            _safe_bool(backup_plan.get("include_cosmos"), True),
+        ),
+        "include_ai_search": _safe_bool(
+            restore_plan.get("include_ai_search"),
+            _safe_bool(backup_plan.get("include_ai_search"), True),
+        ),
+        "include_source_blobs": _safe_bool(
+            restore_plan.get("include_source_blobs"),
+            _safe_bool(backup_plan.get("include_source_blobs"), True),
+        ),
+        "backup_storage_container_name": _safe_text(backup_plan.get("backup_storage_container_name")),
+        "backup_storage_path_prefix": _safe_text(backup_plan.get("backup_storage_path_prefix")).strip("/"),
+        "backup_storage_identity": _safe_text(backup_plan.get("storage_identity")),
+        "backup_encryption_enabled": _safe_bool(backup_plan.get("encryption_enabled"), False),
+        "backup_encryption_key_storage": _safe_text(backup_plan.get("encryption_key_storage")),
+        "backup_encryption_key_reference": _safe_text(backup_plan.get("encryption_key_reference")),
+        "backup_encryption_key_fingerprint": _safe_text(backup_plan.get("encryption_key_fingerprint")),
+        "deletion_policy": _safe_text(backup_plan.get("deletion_policy") or (backup_plan.get("source_cutoff_semantics") or {}).get("deletion_policy")),
+        "source_cutoff_at": _safe_text(backup_plan.get("source_cutoff_at")),
+        "source_lower_bound_at": _safe_text(backup_plan.get("source_lower_bound_at")),
+        "differential_mode": _safe_text(backup_plan.get("differential_mode")),
+    }
+
+
+def _restore_review_fingerprint(settings, restore_plan):
+    """Bind a restore review to target routing and the immutable restore plan."""
+    plan = restore_plan if isinstance(restore_plan, dict) else {}
+    normalized_settings = normalize_data_management_settings(existing_settings=settings)
+    target_identity = {
+        "target_cosmos_authentication_type": _safe_text(normalized_settings.get("target_cosmos_authentication_type")),
+        "target_cosmos_endpoint_hash": hashlib.sha256(
+            _safe_text(normalized_settings.get("target_cosmos_endpoint")).lower().encode("utf-8")
+        ).hexdigest(),
+        "target_ai_search_authentication_type": _safe_text(normalized_settings.get("target_ai_search_authentication_type")),
+        "target_ai_search_endpoint_hash": hashlib.sha256(
+            _safe_text(normalized_settings.get("target_ai_search_endpoint")).lower().encode("utf-8")
+        ).hexdigest(),
+        "target_enhanced_citations_storage_authentication_type": _safe_text(
+            normalized_settings.get("target_enhanced_citations_storage_authentication_type")
+        ),
+        "target_enhanced_citations_storage_endpoint_hash": hashlib.sha256(
+            _safe_text(normalized_settings.get("target_enhanced_citations_storage_blob_endpoint")).lower().encode("utf-8")
+        ).hexdigest(),
+        "restore_policy": _safe_text(plan.get("restore_policy")),
+    }
+    return build_restore_configuration_fingerprint({
+        "restore_plan": plan,
+        "target_identity": target_identity,
+    })
+
+
+def get_data_management_restore_review_fingerprint(settings=None, restore_plan=None):
+    """Return the execution fingerprint for current restore settings and plan."""
+    normalized_settings = _normalize_data_management_settings_from_payload(settings)
+    normalized_plan = _normalize_data_management_restore_plan(
+        restore_plan if isinstance(restore_plan, dict) else {},
+    )
+    return _restore_review_fingerprint(normalized_settings, normalized_plan)
+
+
+def _restore_review_admin_hash(admin_user_id):
+    normalized_user_id = _safe_text(admin_user_id)
+    if not normalized_user_id or normalized_user_id == "unknown":
+        raise DataManagementSettingsValidationError(
+            "An authenticated administrator is required for restore review."
+        )
+    return hashlib.sha256(normalized_user_id.encode("utf-8")).hexdigest()
+
+
+def create_data_management_restore_review_authorization(admin_user_id, review_fingerprint):
+    """Persist one short-lived, admin-bound authorization for a ready restore review."""
+    normalized_fingerprint = _safe_text(review_fingerprint)
+    if not normalized_fingerprint:
+        raise DataManagementSettingsValidationError("Restore review fingerprint is required.")
+    now = _now_utc()
+    authorization_id = str(uuid.uuid4())
+    authorization = {
+        "id": authorization_id,
+        "type": DATA_MANAGEMENT_RESTORE_REVIEW_TYPE,
+        "status": "ready",
+        "admin_hash": _restore_review_admin_hash(admin_user_id),
+        "review_fingerprint": normalized_fingerprint,
+        "created_at": now.isoformat(),
+        "expires_at": (now + timedelta(seconds=DATA_MANAGEMENT_RESTORE_REVIEW_TTL_SECONDS)).isoformat(),
+    }
+    created = cosmos_data_management_jobs_container.create_item(body=authorization)
+    return {
+        "authorization_token": created.get("id", authorization_id),
+        "authorization_expires_at": created.get("expires_at", authorization["expires_at"]),
+    }
+
+
+def _read_data_management_restore_review_authorization(
+    authorization_token,
+    admin_user_id,
+    review_fingerprint,
+    allow_expired=False,
+):
+    normalized_token = _safe_text(authorization_token)
+    normalized_fingerprint = _safe_text(review_fingerprint)
+    if not normalized_token or not normalized_fingerprint:
+        raise DataManagementSettingsValidationError("A current restore review authorization is required.")
+    try:
+        authorization = cosmos_data_management_jobs_container.read_item(
+            item=normalized_token,
+            partition_key=normalized_token,
+        )
+    except (CosmosResourceNotFoundError, KeyError, ResourceNotFoundError) as exc:
+        raise DataManagementSettingsValidationError(
+            "Restore review authorization is invalid or expired."
+        ) from exc
+    expires_at = _parse_iso_datetime(authorization.get("expires_at"))
+    if (
+        authorization.get("type") != DATA_MANAGEMENT_RESTORE_REVIEW_TYPE or
+        (not allow_expired and (not expires_at or expires_at <= _now_utc())) or
+        not hmac.compare_digest(
+            _safe_text(authorization.get("admin_hash")),
+            _restore_review_admin_hash(admin_user_id),
+        ) or
+        not hmac.compare_digest(
+            _safe_text(authorization.get("review_fingerprint")),
+            normalized_fingerprint,
+        )
+    ):
+        raise DataManagementSettingsValidationError(
+            "Restore review authorization is invalid or expired."
+        )
+    return authorization
+
+
+def reserve_data_management_restore_review_authorization(
+    authorization_token,
+    admin_user_id,
+    review_fingerprint,
+):
+    """Reserve one ready restore authorization before durable job creation."""
+    authorization = _read_data_management_restore_review_authorization(
+        authorization_token,
+        admin_user_id,
+        review_fingerprint,
+    )
+    if authorization.get("status") != "ready":
+        raise DataManagementSettingsValidationError(
+            "Restore review authorization is already reserved or used."
+        )
+    reservation_token = uuid.uuid4().hex
+    job_id = str(uuid.uuid5(
+        uuid.NAMESPACE_URL,
+        f"simplechat-restore-review:{authorization['id']}",
+    ))
+    replacement = copy.deepcopy(authorization)
+    replacement.update({
+        "status": "reserved",
+        "reservation_token": reservation_token,
+        "reserved_at": _now_iso(),
+        "job_id": job_id,
+    })
+    try:
+        cosmos_data_management_jobs_container.replace_item(
+            item=authorization["id"],
+            body=replacement,
+            etag=authorization.get("_etag"),
+            match_condition=MatchConditions.IfNotModified,
+        )
+    except Exception as exc:
+        if getattr(exc, "status_code", None) in {409, 412}:
+            raise DataManagementSettingsValidationError(
+                "Restore review authorization was already reserved or used."
+            ) from exc
+        raise
+    return {
+        "authorization_token": authorization["id"],
+        "reservation_token": reservation_token,
+        "job_id": job_id,
+    }
+
+
+def release_data_management_restore_review_reservation(authorization_token, reservation_token):
+    """Release an exact restore review reservation when durable job creation fails."""
+    normalized_token = _safe_text(authorization_token)
+    normalized_reservation = _safe_text(reservation_token)
+    if not normalized_token or not normalized_reservation:
+        return False
+    try:
+        authorization = cosmos_data_management_jobs_container.read_item(
+            item=normalized_token,
+            partition_key=normalized_token,
+        )
+    except (CosmosResourceNotFoundError, KeyError, ResourceNotFoundError):
+        return False
+    if (
+        authorization.get("status") != "reserved" or
+        not hmac.compare_digest(_safe_text(authorization.get("reservation_token")), normalized_reservation)
+    ):
+        return False
+    replacement = copy.deepcopy(authorization)
+    replacement.update({
+        "status": "ready",
+        "reservation_released_at": _now_iso(),
+    })
+    replacement.pop("reservation_token", None)
+    replacement.pop("reserved_at", None)
+    replacement.pop("job_id", None)
+    try:
+        cosmos_data_management_jobs_container.replace_item(
+            item=normalized_token,
+            body=replacement,
+            etag=authorization.get("_etag"),
+            match_condition=MatchConditions.IfNotModified,
+        )
+    except Exception as exc:
+        if getattr(exc, "status_code", None) in {409, 412}:
+            return False
+        log_event(
+            "[DataManagement] Failed to release restore review reservation.",
+            {"authorization_id": normalized_token, "error_type": type(exc).__name__},
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+        return False
+    return True
+
+
+def consume_data_management_restore_review_authorization(
+    authorization_token,
+    admin_user_id,
+    review_fingerprint,
+    reservation_token,
+    job_id,
+):
+    """Consume an exact restore review reservation before work starts."""
+    authorization = _read_data_management_restore_review_authorization(
+        authorization_token,
+        admin_user_id,
+        review_fingerprint,
+        allow_expired=True,
+    )
+    normalized_reservation = _safe_text(reservation_token)
+    normalized_job_id = _safe_text(job_id)
+    if (
+        authorization.get("status") == "consumed" and
+        hmac.compare_digest(_safe_text(authorization.get("consumed_job_id")), normalized_job_id)
+    ):
+        return True
+    if (
+        authorization.get("status") != "reserved" or
+        not normalized_reservation or
+        not normalized_job_id or
+        not hmac.compare_digest(_safe_text(authorization.get("reservation_token")), normalized_reservation) or
+        not hmac.compare_digest(_safe_text(authorization.get("job_id")), normalized_job_id)
+    ):
+        raise DataManagementSettingsValidationError(
+            "Restore review reservation is invalid or already used."
+        )
+    replacement = copy.deepcopy(authorization)
+    replacement.update({
+        "status": "consumed",
+        "consumed_at": _now_iso(),
+        "consumed_job_id": normalized_job_id,
+    })
+    replacement.pop("reservation_token", None)
+    try:
+        cosmos_data_management_jobs_container.replace_item(
+            item=authorization["id"],
+            body=replacement,
+            etag=authorization.get("_etag"),
+            match_condition=MatchConditions.IfNotModified,
+        )
+    except Exception as exc:
+        if getattr(exc, "status_code", None) in {409, 412}:
+            raise DataManagementSettingsValidationError(
+                "Restore review reservation changed before consumption."
+            ) from exc
+        raise
+    return True
+
+
+def _get_restore_fernet(settings, backup_plan):
+    restore_settings = copy.deepcopy(settings if isinstance(settings, dict) else {})
+    restore_settings["encryption_enabled"] = _safe_bool(backup_plan.get("encryption_enabled"), False)
+    return _get_backup_fernet(
+        restore_settings,
+        key_reference=_safe_text(backup_plan.get("encryption_key_reference")),
+    )
+
+
+def _download_backup_artifact_bytes(container_client, artifact_path):
+    safe_path = _safe_text(artifact_path)
+    if not safe_path:
+        raise DataManagementSettingsValidationError("Backup artifact path is missing.")
+    download = container_client.get_blob_client(safe_path).download_blob(
+        timeout=DATA_MANAGEMENT_BLOB_SERVICE_TIMEOUT_SECONDS,
+    )
+    return download.readall()
+
+
+def _read_backup_json_artifact(container_client, artifact_path, fernet=None):
+    data = _download_backup_artifact_bytes(container_client, artifact_path)
+    if fernet:
+        data = fernet.decrypt(data)
+    try:
+        payload = json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise DataManagementSettingsValidationError("Backup JSON artifact is invalid.") from exc
+    if not isinstance(payload, dict):
+        raise DataManagementSettingsValidationError("Backup JSON artifact must be an object.")
+    return payload
+
+
+def _iter_backup_jsonl_artifact(container_client, artifact_path, fernet=None):
+    data = _download_backup_artifact_bytes(container_client, artifact_path)
+    for raw_line in data.splitlines():
+        if not raw_line:
+            continue
+        line_bytes = raw_line
+        if fernet:
+            line_bytes = fernet.decrypt(raw_line)
+        try:
+            yield json.loads(line_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise DataManagementSettingsValidationError("Backup JSONL artifact contains an invalid record.") from exc
+
+
+def _iter_backup_source_blob_artifact_chunks(
+    container_client,
+    artifact_path,
+    transfer_format,
+    fernet=None,
+    source_version="",
+):
+    data = _download_backup_artifact_bytes(container_client, artifact_path)
+    if transfer_format != DATA_MANAGEMENT_BLOB_BACKUP_ENCRYPTED_FORMAT:
+        yield data
+        return
+    if fernet is None:
+        raise DataManagementSettingsValidationError("Encrypted source blob artifact requires the backup encryption key.")
+    if not data.startswith(DATA_MANAGEMENT_BLOB_BACKUP_ENCRYPTED_MAGIC):
+        raise DataManagementSettingsValidationError("Encrypted source blob artifact has an invalid header.")
+    offset = len(DATA_MANAGEMENT_BLOB_BACKUP_ENCRYPTED_MAGIC)
+    expected_digest = hashlib.sha256(_safe_text(source_version).encode("utf-8")).digest()
+    expected_index = 0
+    total_chunks = None
+    while offset < len(data):
+        if offset + 4 > len(data):
+            raise DataManagementSettingsValidationError("Encrypted source blob artifact is truncated.")
+        token_length = struct.unpack(">I", data[offset:offset + 4])[0]
+        offset += 4
+        token = data[offset:offset + token_length]
+        offset += token_length
+        authenticated_chunk = fernet.decrypt(token)
+        if len(authenticated_chunk) < 49:
+            raise DataManagementSettingsValidationError("Encrypted source blob chunk is invalid.")
+        source_digest = authenticated_chunk[:32]
+        chunk_index, chunk_total, is_last = struct.unpack(">QQ?", authenticated_chunk[32:49])
+        if source_digest != expected_digest:
+            raise DataManagementSettingsValidationError("Encrypted source blob source version did not match the manifest.")
+        if chunk_index != expected_index:
+            raise DataManagementSettingsValidationError("Encrypted source blob chunks are out of order.")
+        if total_chunks is None:
+            total_chunks = chunk_total
+        elif chunk_total != total_chunks:
+            raise DataManagementSettingsValidationError("Encrypted source blob chunk count changed.")
+        if bool(is_last) != (chunk_index == chunk_total - 1):
+            raise DataManagementSettingsValidationError("Encrypted source blob final chunk marker is invalid.")
+        expected_index += 1
+        yield authenticated_chunk[49:]
+    if total_chunks is None or expected_index != total_chunks:
+        raise DataManagementSettingsValidationError("Encrypted source blob artifact ended before all chunks were read.")
+
+
+def _iter_backup_manifest_entries(backup_job_id, service=None, resource_name=None, statuses=None):
+    query = (
+        "SELECT * FROM c WHERE c.job_id = @job_id AND c.type = @type "
+        "ORDER BY c.created_at ASC"
+    )
+    parameters = [
+        {"name": "@job_id", "value": _safe_text(backup_job_id)},
+        {"name": "@type", "value": DATA_MANAGEMENT_BACKUP_MANIFEST_BATCH_TYPE},
+    ]
+    entries_seen = 0
+    allowed_statuses = {
+        _safe_text(status).lower()
+        for status in (statuses or {"succeeded", "skipped"})
+        if _safe_text(status)
+    }
+    batches = cosmos_data_management_job_items_container.query_items(
+        query=query,
+        parameters=parameters,
+        partition_key=_safe_text(backup_job_id),
+        max_item_count=DATA_MANAGEMENT_BACKUP_MANIFEST_BATCH_SIZE,
+    )
+    for batch in batches:
+        if resource_name and _safe_text(batch.get("resource_name")) != _safe_text(resource_name):
+            continue
+        for entry in batch.get("entries") or []:
+            if not isinstance(entry, dict):
+                continue
+            if service and _safe_text(entry.get("service")) != _safe_text(service):
+                continue
+            if allowed_statuses and _safe_text(entry.get("status")).lower() not in allowed_statuses:
+                continue
+            if not _safe_text(entry.get("artifact_path")):
+                continue
+            entries_seen += 1
+            if entries_seen > DATA_MANAGEMENT_RESTORE_MAX_MANIFEST_ENTRIES:
+                raise DataManagementSettingsValidationError(
+                    "Backup manifest exceeds the supported restore entry limit."
+                )
+            yield entry
+
+
+def _get_restore_cosmos_artifact_by_resource(resource_name):
+    normalized_resource = _safe_text(resource_name)
+    for artifact in DATA_MANAGEMENT_COSMOS_ARTIFACTS:
+        if normalized_resource == f"cosmos:{artifact['name']}":
+            return artifact
+    return None
+
+
+def _get_restore_search_artifact_by_resource(resource_name):
+    normalized_resource = _safe_text(resource_name)
+    for artifact in DATA_MANAGEMENT_SEARCH_ARTIFACTS:
+        if normalized_resource in {
+            f"ai_search:{artifact['index_name']}",
+            f"ai_search_schema:{artifact['index_name']}",
+        }:
+            return artifact
+    return None
+
+
+def _build_restore_check(check_id, label, status, message, details=None):
+    return {
+        "id": check_id,
+        "label": label,
+        "status": status,
+        "message": _sanitize_data_management_backup_text(message),
+        "details": _sanitize_activity_value(details if isinstance(details, dict) else {}),
+    }
+
+
+def _get_restore_backup_artifact_context(settings, backup_job):
+    backup_plan = backup_job.get("backup_plan") if isinstance(backup_job.get("backup_plan"), dict) else {}
+    _assert_backup_execution_settings(settings, backup_plan)
+    container_client = _get_backup_container_client(settings)
+    fernet = _get_restore_fernet(settings, backup_plan)
+    return container_client, fernet
+
+
+def _summarize_restore_manifest(manifest, backup_job):
+    artifacts = manifest.get("artifacts") if isinstance(manifest.get("artifacts"), list) else []
+    service_counts = {"cosmos": 0, "ai_search": 0, "source_blobs": 0}
+    for artifact in artifacts:
+        artifact_type = _safe_text((artifact or {}).get("type"))
+        if artifact_type == "cosmos_container":
+            service_counts["cosmos"] += 1
+        elif artifact_type in {"ai_search_schema", "ai_search_documents"}:
+            service_counts["ai_search"] += 1
+        elif artifact_type == "source_blob_container":
+            service_counts["source_blobs"] += 1
+    return {
+        "backup_id": backup_job.get("id"),
+        "backup_type": backup_job.get("backup_type"),
+        "completed_at": backup_job.get("completed_at"),
+        "artifact_count": len(artifacts),
+        "service_counts": service_counts,
+        "warnings": len(manifest.get("warnings") or []),
+        "failed_resource_names": list(manifest.get("failed_resource_names") or []),
+        "differential_mode": _safe_text(manifest.get("differential_mode")),
+        "deletion_policy": _safe_text(manifest.get("deletion_policy")),
+    }
+
+
+def _target_cosmos_container_has_records(container):
+    try:
+        result = next(iter(container.query_items(
+            query="SELECT TOP 1 VALUE c.id FROM c",
+            enable_cross_partition_query=True,
+            max_item_count=1,
+        )), None)
+        return result is not None
+    except Exception:
+        return True
+
+
+def _target_search_index_has_documents(search_client):
+    try:
+        result = next(iter(search_client.search(
+            search_text="*",
+            top=1,
+            select=["id"],
+            include_total_count=False,
+            connection_timeout=DATA_MANAGEMENT_MIGRATION_REMOTE_REQUEST_TIMEOUT_SECONDS,
+            read_timeout=DATA_MANAGEMENT_MIGRATION_REMOTE_REQUEST_TIMEOUT_SECONDS,
+            retry_total=0,
+        )), None)
+        return result is not None
+    except ResourceNotFoundError:
+        return False
+
+
+def _run_data_management_restore_preflight(settings, restore_plan, backup_job, manifest):
+    checks = []
+    blockers = []
+    warnings = []
+    policy = _safe_text(restore_plan.get("restore_policy"), DATA_MANAGEMENT_RESTORE_POLICY_CREATE_ONLY)
+    overwrite = policy == DATA_MANAGEMENT_RESTORE_POLICY_OVERWRITE
+    failed_resources = list(manifest.get("failed_resource_names") or [])
+
+    if failed_resources:
+        blockers.append("Backup has failed resources that must be retried before restore.")
+        checks.append(_build_restore_check(
+            "manifest_integrity",
+            "Backup manifest integrity",
+            "block",
+            "Backup has failed resources that are not restore-safe.",
+            {"failed_resource_count": len(failed_resources)},
+        ))
+    else:
+        checks.append(_build_restore_check(
+            "manifest_integrity",
+            "Backup manifest integrity",
+            "pass",
+            "Backup manifest and resource outcomes are restore-safe.",
+        ))
+
+    if restore_plan.get("differential_mode") == "latest_item_state":
+        warnings.append("Partial backups restore the latest captured changed/unchanged items but do not apply deletions.")
+        checks.append(_build_restore_check(
+            "partial_semantics",
+            "Partial backup semantics",
+            "warn",
+            "Partial backups are non-destructive and do not replay deletions.",
+        ))
+    else:
+        checks.append(_build_restore_check(
+            "partial_semantics",
+            "Partial backup semantics",
+            "pass",
+            "Full backup snapshot semantics are available.",
+        ))
+
+    if restore_plan.get("include_cosmos"):
+        try:
+            database = _get_existing_target_cosmos_database(settings)
+            cosmos_collisions = []
+            for artifact in DATA_MANAGEMENT_COSMOS_ARTIFACTS:
+                container_name = getattr(app_config, artifact["container_name_attr"], artifact["name"])
+                container = database.get_container_client(container_name)
+                try:
+                    container.read()
+                    _validate_target_cosmos_container_partition_key(
+                        container,
+                        container_name,
+                        artifact["partition_key_path"],
+                    )
+                    if not overwrite and _target_cosmos_container_has_records(container):
+                        cosmos_collisions.append(container_name)
+                except (CosmosResourceNotFoundError, ResourceNotFoundError):
+                    continue
+            if cosmos_collisions:
+                blockers.append("Destination Cosmos contains records and restore policy is create-only.")
+                checks.append(_build_restore_check(
+                    "target_cosmos",
+                    "Target Cosmos DB",
+                    "block",
+                    "Existing destination Cosmos records require overwrite confirmation.",
+                    {"collision_container_count": len(cosmos_collisions)},
+                ))
+            else:
+                checks.append(_build_restore_check(
+                    "target_cosmos",
+                    "Target Cosmos DB",
+                    "pass",
+                    "Target Cosmos DB is reachable and partition keys are compatible.",
+                ))
+        except Exception as exc:
+            blockers.append("Target Cosmos DB could not be validated.")
+            checks.append(_build_restore_check(
+                "target_cosmos",
+                "Target Cosmos DB",
+                "block",
+                "Target Cosmos DB validation failed.",
+                {"error_type": type(exc).__name__},
+            ))
+
+    if restore_plan.get("include_ai_search"):
+        try:
+            endpoint = _safe_text(settings.get("target_ai_search_endpoint"))
+            if not endpoint:
+                raise DataManagementSettingsValidationError("Target Search endpoint is required.")
+            index_client = SearchIndexClient(
+                endpoint=endpoint,
+                credential=_get_target_ai_search_credential(settings),
+                connection_timeout=DATA_MANAGEMENT_MIGRATION_REMOTE_REQUEST_TIMEOUT_SECONDS,
+                read_timeout=DATA_MANAGEMENT_MIGRATION_REMOTE_REQUEST_TIMEOUT_SECONDS,
+                retry_total=0,
+            )
+            search_collisions = []
+            for artifact in DATA_MANAGEMENT_SEARCH_ARTIFACTS:
+                try:
+                    index_client.get_index(artifact["index_name"])
+                except ResourceNotFoundError:
+                    continue
+                search_client = _get_target_search_client(settings, artifact["index_name"])
+                if not overwrite and _target_search_index_has_documents(search_client):
+                    search_collisions.append(artifact["index_name"])
+            if search_collisions:
+                blockers.append("Destination Search contains documents and restore policy is create-only.")
+                checks.append(_build_restore_check(
+                    "target_ai_search",
+                    "Target AI Search",
+                    "block",
+                    "Existing destination Search documents require overwrite confirmation.",
+                    {"collision_index_count": len(search_collisions)},
+                ))
+            else:
+                checks.append(_build_restore_check(
+                    "target_ai_search",
+                    "Target AI Search",
+                    "pass",
+                    "Target AI Search is reachable and ready for restore.",
+                ))
+        except Exception as exc:
+            blockers.append("Target AI Search could not be validated.")
+            checks.append(_build_restore_check(
+                "target_ai_search",
+                "Target AI Search",
+                "block",
+                "Target AI Search validation failed.",
+                {"error_type": type(exc).__name__},
+            ))
+
+    if restore_plan.get("include_source_blobs"):
+        try:
+            target_client = _get_target_enhanced_citations_blob_client(settings)
+            container_names = [
+                _safe_text(resource_name).split("source_blobs:", 1)[1]
+                for resource_name in {
+                    _safe_text(entry.get("resource_name"))
+                    for entry in _iter_backup_manifest_entries(
+                        backup_job.get("id"),
+                        service="source_blobs",
+                    )
+                }
+                if _safe_text(resource_name).startswith("source_blobs:")
+            ]
+            for container_name in sorted(set(container_names)):
+                container = target_client.get_container_client(container_name)
+                if container.exists():
+                    continue
+            checks.append(_build_restore_check(
+                "target_source_blobs",
+                "Target Enhanced Citation Storage",
+                "pass",
+                "Target Enhanced Citation Storage is reachable.",
+                {"container_count": len(set(container_names))},
+            ))
+        except Exception as exc:
+            blockers.append("Target Enhanced Citation Storage could not be validated.")
+            checks.append(_build_restore_check(
+                "target_source_blobs",
+                "Target Enhanced Citation Storage",
+                "block",
+                "Target Enhanced Citation Storage validation failed.",
+                {"error_type": type(exc).__name__},
+            ))
+
+    if overwrite:
+        checks.append(_build_restore_check(
+            "destructive_policy",
+            "Restore overwrite policy",
+            "warn",
+            "Overwrite restore is explicitly confirmed and can replace existing target data.",
+        ))
+    else:
+        checks.append(_build_restore_check(
+            "destructive_policy",
+            "Restore overwrite policy",
+            "pass",
+            "Create-only restore is non-destructive and blocks existing target collisions.",
+        ))
+
+    return {
+        "ready": not blockers,
+        "blocker_count": len(blockers),
+        "warning_count": len(warnings),
+        "blockers": blockers,
+        "warnings": warnings,
+        "checks": checks,
+    }
+
+
+def review_data_management_restore(settings=None, restore_plan=None):
+    """Run a sanitized restore preflight without mutating restore targets."""
+    normalized_settings = _normalize_data_management_settings_from_payload(settings)
+    normalized_plan = _normalize_data_management_restore_plan(
+        restore_plan if isinstance(restore_plan, dict) else {},
+    )
+    backup_job = _get_restore_backup_job(normalized_plan["source_backup_id"])
+    container_client, fernet = _get_restore_backup_artifact_context(
+        normalized_settings,
+        backup_job,
+    )
+    manifest = _read_backup_json_artifact(
+        container_client,
+        normalized_plan["source_backup_manifest_path"],
+        fernet=fernet,
+    )
+    if manifest.get("schema_version") != 2 or manifest.get("app") != "SimpleChat":
+        raise DataManagementSettingsValidationError("Selected backup manifest is not supported for restore.")
+    if _safe_text(manifest.get("job_id")) != _safe_text(backup_job.get("id")):
+        raise DataManagementSettingsValidationError("Selected backup manifest does not match the backup job.")
+
+    preflight = _run_data_management_restore_preflight(
+        normalized_settings,
+        normalized_plan,
+        backup_job,
+        manifest,
+    )
+    fingerprint = _restore_review_fingerprint(normalized_settings, normalized_plan)
+    return {
+        **preflight,
+        "review_fingerprint": fingerprint,
+        "summary": _summarize_restore_manifest(manifest, backup_job),
+        "restore_plan": {
+            key: value
+            for key, value in normalized_plan.items()
+            if key != "backup_encryption_key_reference"
+        },
+    }
+
+
 def queue_data_management_job(operation, backup_type=None, requested_by=None, requested_by_email=None, options=None, scheduled=False, occurrence_id=None):
     normalized_operation = _safe_text(operation)
     if normalized_operation not in DATA_MANAGEMENT_OPERATIONS:
@@ -7745,6 +8686,8 @@ def queue_data_management_job(operation, backup_type=None, requested_by=None, re
     job_id = occurrence_id or str(uuid.uuid4())
     backup_plan = None
     backup_state = None
+    restore_plan = None
+    restore_state = None
     source_scope = None
     source_cutoff_at = None
     normalized_options = options if isinstance(options, dict) else {}
@@ -7767,6 +8710,22 @@ def queue_data_management_job(operation, backup_type=None, requested_by=None, re
             backup_plan,
             source_scope,
             source_cutoff_at,
+        )
+    elif normalized_operation == DATA_MANAGEMENT_OPERATION_RESTORE:
+        source_backup = _get_restore_backup_job(
+            (normalized_options.get("restore_plan") or {}).get("source_backup_id")
+            if isinstance(normalized_options.get("restore_plan"), dict)
+            else normalized_options.get("source_backup_id")
+        )
+        restore_plan = _normalize_data_management_restore_plan(
+            normalized_options,
+            backup_job=source_backup,
+            require_confirmation=True,
+        )
+        restore_state = initialize_restore_state(
+            None,
+            job_id,
+            restore_plan,
         )
     job = {
         "id": job_id,
@@ -7804,6 +8763,8 @@ def queue_data_management_job(operation, backup_type=None, requested_by=None, re
         "source_cutoff_at": source_cutoff_at,
         "backup_plan": backup_plan,
         "backup_state": backup_state,
+        "restore_plan": restore_plan,
+        "restore_state": restore_state,
     }
 
     try:
@@ -8168,6 +9129,7 @@ def get_recoverable_data_management_jobs(
         for operation in (operations or {
             DATA_MANAGEMENT_OPERATION_BACKUP,
             DATA_MANAGEMENT_OPERATION_MIGRATION,
+            DATA_MANAGEMENT_OPERATION_RESTORE,
         })
     }
     for job in candidates:
@@ -8211,7 +9173,7 @@ def get_recoverable_data_management_migration_jobs(
 
 
 def recover_data_management_jobs(app=None, settings=None, current_time=None, operations=None):
-    """Resubmit recoverable backup and migration jobs through the executor, never inline."""
+    """Resubmit recoverable backup, restore, and migration jobs through the executor, never inline."""
     now = current_time if isinstance(current_time, datetime) else _now_utc()
     recovery_results = []
     for recovery in get_recoverable_data_management_jobs(
@@ -8221,7 +9183,11 @@ def recover_data_management_jobs(app=None, settings=None, current_time=None, ope
         job = recovery["job"]
         reason = recovery["reason"]
         operation = _safe_text(job.get("operation"))
-        operation_label = "backup" if operation == DATA_MANAGEMENT_OPERATION_BACKUP else "migration"
+        operation_label = (
+            "backup" if operation == DATA_MANAGEMENT_OPERATION_BACKUP else
+            "restore" if operation == DATA_MANAGEMENT_OPERATION_RESTORE else
+            "migration"
+        )
         job.update({
             "last_recovery_submitted_at": now.isoformat(),
             "recovery_attempt_count": _safe_int(job.get("recovery_attempt_count"), default=0, minimum=0) + 1,
@@ -8559,6 +9525,61 @@ def _sanitize_data_management_backup_state_for_admin(state):
     }
 
 
+def _sanitize_data_management_restore_state_for_admin(state):
+    """Expose durable restore progress without backup contents or credentials."""
+    if not isinstance(state, dict):
+        return {}
+    resources = {}
+    for resource_name, resource in (state.get("resources") or {}).items():
+        if not isinstance(resource, dict):
+            continue
+        progress = resource.get("progress") if isinstance(resource.get("progress"), dict) else {}
+        result = resource.get("result") if isinstance(resource.get("result"), dict) else {}
+        resources[_safe_text(resource_name)] = {
+            "status": resource.get("status"),
+            "phase": resource.get("phase"),
+            "attempts": _safe_int(resource.get("attempts"), default=0, minimum=0),
+            "started_at": resource.get("started_at"),
+            "attempt_started_at": resource.get("attempt_started_at"),
+            "updated_at": resource.get("updated_at"),
+            "completed_at": resource.get("completed_at"),
+            "last_error": _sanitize_data_management_backup_text(resource.get("last_error")),
+            "progress": _sanitize_activity_value(progress),
+            "result": _sanitize_activity_value(result),
+        }
+    totals = state.get("totals") if isinstance(state.get("totals"), dict) else {}
+    attempt_history = []
+    for attempt in (state.get("attempt_history") or [])[-DATA_MANAGEMENT_BACKUP_MAX_RECENT_CHECKPOINTS:]:
+        if not isinstance(attempt, dict):
+            continue
+        attempt_history.append({
+            "attempt_id": _safe_text(attempt.get("attempt_id")),
+            "lease_generation": _safe_int(attempt.get("lease_generation"), default=0, minimum=0),
+            "started_at": attempt.get("started_at"),
+            "completed_at": attempt.get("completed_at"),
+            "outcome": _safe_text(attempt.get("outcome")),
+        })
+    return {
+        "schema_version": state.get("schema_version"),
+        "restore_id": state.get("restore_id"),
+        "status": state.get("status"),
+        "phase": _sanitize_data_management_backup_text(state.get("phase")),
+        "created_at": state.get("created_at"),
+        "updated_at": state.get("updated_at"),
+        "completed_at": state.get("completed_at"),
+        "last_progress_at": state.get("last_progress_at"),
+        "resume_count": _safe_int(state.get("resume_count"), default=0, minimum=0),
+        "preflight": _sanitize_activity_value(state.get("preflight") if isinstance(state.get("preflight"), dict) else {}),
+        "totals": _sanitize_activity_value(totals),
+        "warnings": [
+            _sanitize_data_management_backup_text(warning)
+            for warning in (state.get("warnings") or [])[-DATA_MANAGEMENT_BACKUP_MAX_PUBLIC_ITEM_SUMMARIES:]
+        ],
+        "attempt_history": attempt_history,
+        "resources": resources,
+    }
+
+
 def sanitize_data_management_job_for_admin(job):
     if not isinstance(job, dict):
         return None
@@ -8578,6 +9599,18 @@ def sanitize_data_management_job_for_admin(job):
         if "backup_state" in result:
             result["backup_state"] = _sanitize_data_management_backup_state_for_admin(
                 job.get("backup_state")
+            )
+    if isinstance(result, dict) and job.get("operation") == DATA_MANAGEMENT_OPERATION_RESTORE:
+        if isinstance(result.get("artifacts"), list):
+            result["artifacts"] = summarize_backup_artifacts(result.get("artifacts"))
+        if isinstance(result.get("warnings"), list):
+            result["warnings"] = [
+                _sanitize_data_management_backup_text(warning)
+                for warning in result.get("warnings", [])[-DATA_MANAGEMENT_BACKUP_MAX_PUBLIC_ITEM_SUMMARIES:]
+            ]
+        if "restore_state" in result:
+            result["restore_state"] = _sanitize_data_management_restore_state_for_admin(
+                job.get("restore_state")
             )
     return {
         "id": job.get("id"),
@@ -8603,10 +9636,12 @@ def sanitize_data_management_job_for_admin(job):
         "result": result,
         "migration_state": _sanitize_data_management_migration_state_for_admin(job.get("migration_state")),
         "backup_state": _sanitize_data_management_backup_state_for_admin(job.get("backup_state")),
+        "restore_state": _sanitize_data_management_restore_state_for_admin(job.get("restore_state")),
         "can_retry": bool(
             job.get("operation") in {
                 DATA_MANAGEMENT_OPERATION_MIGRATION,
                 DATA_MANAGEMENT_OPERATION_BACKUP,
+                DATA_MANAGEMENT_OPERATION_RESTORE,
             } and
             (
                 job.get("status") in {DATA_MANAGEMENT_STATUS_FAILED, DATA_MANAGEMENT_STATUS_CANCELED} or
@@ -8626,6 +9661,7 @@ def sanitize_data_management_job_for_admin(job):
             job.get("operation") in {
                 DATA_MANAGEMENT_OPERATION_MIGRATION,
                 DATA_MANAGEMENT_OPERATION_BACKUP,
+                DATA_MANAGEMENT_OPERATION_RESTORE,
             } and
             job.get("status") in {DATA_MANAGEMENT_STATUS_QUEUED, DATA_MANAGEMENT_STATUS_RUNNING} and
             not job.get("cancel_requested_at")
@@ -8670,8 +9706,12 @@ def request_data_management_job_cancellation(
     if not job:
         raise DataManagementSettingsValidationError("Data Management job was not found.")
     operation = _safe_text(job.get("operation"))
-    if operation not in {DATA_MANAGEMENT_OPERATION_MIGRATION, DATA_MANAGEMENT_OPERATION_BACKUP}:
-        raise DataManagementSettingsValidationError("Only queued or running backup and migration jobs can be canceled.")
+    if operation not in {
+        DATA_MANAGEMENT_OPERATION_MIGRATION,
+        DATA_MANAGEMENT_OPERATION_BACKUP,
+        DATA_MANAGEMENT_OPERATION_RESTORE,
+    }:
+        raise DataManagementSettingsValidationError("Only queued or running backup, restore, and migration jobs can be canceled.")
     if job.get("status") == DATA_MANAGEMENT_STATUS_CANCELED:
         return job
     if job.get("status") in DATA_MANAGEMENT_TERMINAL_STATUSES:
@@ -8695,6 +9735,14 @@ def request_data_management_job_cancellation(
             "cancel_reason": safe_reason,
             "updated_at": now,
         })
+    restore_state = job.get("restore_state")
+    if isinstance(restore_state, dict):
+        restore_state.update({
+            "cancel_requested_at": now,
+            "cancel_requested_by": _safe_text(requested_by),
+            "cancel_reason": safe_reason,
+            "updated_at": now,
+        })
 
     job.update({
         "cancel_requested_at": now,
@@ -8702,17 +9750,22 @@ def request_data_management_job_cancellation(
         "cancel_requested_by_email": _safe_text(requested_by_email),
         "cancel_reason": safe_reason,
         "updated_at": now,
-        "last_message": "Migration cancellation requested. The worker will stop at its next durable checkpoint.",
+        "last_message": "Data Management job cancellation requested. The worker will stop at its next durable checkpoint.",
         "migration_state": migration_state,
         "backup_state": backup_state,
+        "restore_state": restore_state,
     })
-    noun = "Backup" if operation == DATA_MANAGEMENT_OPERATION_BACKUP else "Migration"
+    noun = (
+        "Backup" if operation == DATA_MANAGEMENT_OPERATION_BACKUP else
+        "Restore" if operation == DATA_MANAGEMENT_OPERATION_RESTORE else
+        "Migration"
+    )
     if job.get("status") == DATA_MANAGEMENT_STATUS_QUEUED:
         job.update({
             "status": DATA_MANAGEMENT_STATUS_CANCELED,
             "completed_at": now,
             "last_heartbeat_at": now,
-            "last_message": "Queued migration canceled before execution started.",
+            "last_message": f"Queued {operation} canceled before execution started.",
             "lease_holder_id": None,
             "lease_expires_at": None,
         })
@@ -8730,6 +9783,14 @@ def request_data_management_job_cancellation(
                 "updated_at": now,
             })
             complete_backup_attempt(backup_state, "canceled")
+        if isinstance(restore_state, dict):
+            restore_state.update({
+                "status": DATA_MANAGEMENT_STATUS_CANCELED,
+                "phase": "canceled",
+                "completed_at": now,
+                "updated_at": now,
+            })
+            complete_restore_attempt(restore_state, "canceled")
         event_name = f"{operation}-canceled"
         event_message = f"Queued {operation} canceled before execution started."
     else:
@@ -8741,6 +9802,12 @@ def request_data_management_job_cancellation(
             "Queued backup canceled before execution started."
             if job.get("status") == DATA_MANAGEMENT_STATUS_CANCELED else
             "Backup cancellation requested. The worker will stop at its next durable checkpoint."
+        )
+    elif operation == DATA_MANAGEMENT_OPERATION_RESTORE:
+        job["last_message"] = (
+            "Queued restore canceled before execution started."
+            if job.get("status") == DATA_MANAGEMENT_STATUS_CANCELED else
+            "Restore cancellation requested. The worker will stop at its next durable checkpoint."
         )
 
     saved_job = _save_data_management_job(job)
@@ -8952,6 +10019,86 @@ def retry_data_management_backup_job(job_id):
         details={
             "source_cutoff_at": (backup_plan or {}).get("source_cutoff_at"),
             "resume_count": (backup_state or {}).get("resume_count", 0),
+        },
+    )
+    return saved_job
+
+
+def retry_data_management_restore_job(job_id):
+    """Requeue a restore from durable checkpoints without changing its immutable plan."""
+    job = get_data_management_job(job_id)
+    if not job or job.get("operation") != DATA_MANAGEMENT_OPERATION_RESTORE:
+        raise DataManagementSettingsValidationError("Data Management restore job was not found.")
+    retryable_statuses = {DATA_MANAGEMENT_STATUS_FAILED, DATA_MANAGEMENT_STATUS_CANCELED}
+    if job.get("status") == DATA_MANAGEMENT_STATUS_RUNNING and _is_stale_job(job):
+        retryable_statuses.add(DATA_MANAGEMENT_STATUS_RUNNING)
+    if job.get("status") not in retryable_statuses:
+        raise DataManagementSettingsValidationError(
+            "Only failed, canceled, or stale restore jobs can be retried."
+        )
+    restore_plan = job.get("restore_plan")
+    restore_state = job.get("restore_state")
+    canceled_before_start = (
+        job.get("status") == DATA_MANAGEMENT_STATUS_CANCELED and
+        not isinstance(restore_state, dict)
+    )
+    if not canceled_before_start and (
+        not isinstance(restore_plan, dict) or
+        not isinstance(restore_state, dict) or
+        _safe_text(restore_state.get("restore_id")) != _safe_text(job.get("id"))
+    ):
+        raise DataManagementSettingsValidationError(
+            "This restore does not have durable checkpoint state to retry."
+        )
+
+    now = _now_iso()
+    if isinstance(restore_state, dict):
+        restore_state["last_cancellation"] = {
+            "requested_at": restore_state.get("cancel_requested_at"),
+            "requested_by": restore_state.get("cancel_requested_by"),
+            "reason": restore_state.get("cancel_reason"),
+        }
+        restore_state.update({
+            "status": DATA_MANAGEMENT_STATUS_QUEUED,
+            "phase": "queued",
+            "updated_at": now,
+            "completed_at": None,
+            "cancel_requested_at": None,
+            "cancel_requested_by": None,
+            "cancel_reason": None,
+        })
+    job.update({
+        "status": DATA_MANAGEMENT_STATUS_QUEUED,
+        "updated_at": now,
+        "completed_at": None,
+        "last_heartbeat_at": None,
+        "last_message": "Restore retry queued from durable checkpoints",
+        "last_error": None,
+        "last_cancellation": {
+            "requested_at": job.get("cancel_requested_at"),
+            "requested_by": job.get("cancel_requested_by"),
+            "requested_by_email": job.get("cancel_requested_by_email"),
+            "reason": job.get("cancel_reason"),
+        },
+        "cancel_requested_at": None,
+        "cancel_requested_by": None,
+        "cancel_requested_by_email": None,
+        "cancel_reason": None,
+        "lease_holder_id": None,
+        "lease_expires_at": None,
+        "restore_state": restore_state,
+        "result": {},
+    })
+    saved_job = _save_data_management_job(job)
+    _record_data_management_job_event(
+        saved_job.get("id"),
+        "restore-retry-queued",
+        saved_job,
+        status=DATA_MANAGEMENT_STATUS_QUEUED,
+        message="Restore retry queued from durable checkpoints",
+        details={
+            "source_backup_id": (restore_plan or {}).get("source_backup_id"),
+            "resume_count": (restore_state or {}).get("resume_count", 0),
         },
     )
     return saved_job
@@ -9189,6 +10336,7 @@ def sanitize_data_management_backup_for_admin(job):
         "warning_count": len(public_job.get("warnings") or []) + totals.get("warning_count", 0),
         "encrypted": any(bool(artifact.get("encrypted")) for artifact in artifacts if isinstance(artifact, dict)),
         "last_message": public_job.get("last_message"),
+        "can_delete": public_job.get("status") in DATA_MANAGEMENT_TERMINAL_STATUSES,
     }
 
 
@@ -9307,6 +10455,506 @@ def get_data_management_backup_summary(
         "pagination": page["pagination"],
         "filters": page["filters"],
     }
+
+
+def calculate_data_management_backup_retention_cutoff(settings, current_time=None):
+    """Return the UTC cutoff before which terminal backups are retention candidates."""
+    normalized_settings = normalize_data_management_settings(existing_settings=settings or {})
+    now = current_time if isinstance(current_time, datetime) else _now_utc()
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    return now.astimezone(timezone.utc) - timedelta(days=normalized_settings["retention_days"])
+
+
+def _should_run_data_management_backup_retention_cleanup(settings, current_time=None):
+    if not _safe_bool((settings or {}).get("enabled"), False):
+        return False
+    now = current_time if isinstance(current_time, datetime) else _now_utc()
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    last_run = _parse_iso_datetime((settings or {}).get("backup_retention_cleanup_last_run_at"))
+    if not last_run:
+        return True
+    return (
+        now.astimezone(timezone.utc) - last_run
+    ).total_seconds() >= DATA_MANAGEMENT_BACKUP_RETENTION_CLEANUP_INTERVAL_SECONDS
+
+
+def _backup_cleanup_not_found(error):
+    status_code = getattr(error, "status_code", None)
+    if status_code is None:
+        status_code = getattr(getattr(error, "response", None), "status_code", None)
+    return (
+        status_code == 404 or
+        isinstance(error, (CosmosResourceNotFoundError, ResourceNotFoundError))
+    )
+
+
+def _get_existing_backup_container_client(settings):
+    validate_data_management_storage_is_dedicated(settings)
+    blob_service_client = build_backup_storage_client(settings)
+    return blob_service_client.get_container_client(settings.get("backup_storage_container_name"))
+
+
+def _backup_cleanup_allowed_prefix(job, settings):
+    backup_plan = job.get("backup_plan") if isinstance(job, dict) else {}
+    allowed_prefix = _safe_text(
+        (backup_plan or {}).get("backup_storage_path_prefix") or
+        (settings or {}).get("backup_storage_path_prefix"),
+        "simplechat-backups",
+    ).strip("/")
+    if not allowed_prefix:
+        raise DataManagementSettingsValidationError("Backup storage path prefix is required before cleanup.")
+    return allowed_prefix
+
+
+def _normalize_backup_cleanup_blob_target(value, allowed_prefix, target_kind):
+    normalized = _safe_text(value).strip("/")
+    if not normalized:
+        return ""
+    if normalized == allowed_prefix and target_kind == "prefix":
+        raise DataManagementSettingsValidationError(
+            "Backup cleanup refused to delete the entire configured backup prefix."
+        )
+    if normalized == allowed_prefix or normalized.startswith(f"{allowed_prefix}/"):
+        return normalized
+    raise DataManagementSettingsValidationError(
+        "Backup cleanup refused an artifact path outside the configured backup prefix."
+    )
+
+
+def _collect_backup_artifact_delete_targets(job, settings):
+    result = job.get("result") if isinstance((job or {}).get("result"), dict) else {}
+    allowed_prefix = _backup_cleanup_allowed_prefix(job, settings)
+    prefixes = set()
+    blob_names = set()
+
+    base_prefix = _normalize_backup_cleanup_blob_target(
+        result.get("base_prefix"),
+        allowed_prefix,
+        "prefix",
+    )
+    if base_prefix:
+        prefixes.add(f"{base_prefix.rstrip('/')}/")
+
+    def collect(value):
+        if isinstance(value, dict):
+            for field_name in ("manifest_path", "artifact_path", "path"):
+                blob_name = _normalize_backup_cleanup_blob_target(
+                    value.get(field_name),
+                    allowed_prefix,
+                    "blob",
+                )
+                if blob_name:
+                    blob_names.add(blob_name)
+            prefix = _normalize_backup_cleanup_blob_target(
+                value.get("prefix"),
+                allowed_prefix,
+                "prefix",
+            )
+            if prefix:
+                prefixes.add(f"{prefix.rstrip('/')}/")
+            for nested_value in value.values():
+                collect(nested_value)
+        elif isinstance(value, list):
+            for nested_value in value:
+                collect(nested_value)
+
+    collect(result)
+    return prefixes, blob_names
+
+
+def _get_backup_blob_name(blob_item):
+    if isinstance(blob_item, dict):
+        return _safe_text(blob_item.get("name"))
+    return _safe_text(getattr(blob_item, "name", blob_item))
+
+
+def _delete_backup_blob_artifacts(job, settings):
+    prefixes, blob_names = _collect_backup_artifact_delete_targets(job, settings)
+    summary = {
+        "prefix_count": len(prefixes),
+        "blob_name_count": len(blob_names),
+        "deleted_blob_count": 0,
+        "missing_blob_count": 0,
+    }
+    if not prefixes and not blob_names:
+        return summary
+
+    container_client = _get_existing_backup_container_client(settings)
+    deleted_blob_names = set()
+
+    for prefix in sorted(prefixes):
+        for blob_item in container_client.list_blobs(name_starts_with=prefix):
+            blob_name = _get_backup_blob_name(blob_item)
+            if not blob_name or blob_name in deleted_blob_names:
+                continue
+            try:
+                container_client.delete_blob(blob_name)
+                deleted_blob_names.add(blob_name)
+                summary["deleted_blob_count"] += 1
+            except Exception as exc:
+                if _backup_cleanup_not_found(exc):
+                    summary["missing_blob_count"] += 1
+                    continue
+                raise
+
+    for blob_name in sorted(blob_names):
+        if blob_name in deleted_blob_names:
+            continue
+        try:
+            container_client.delete_blob(blob_name)
+            deleted_blob_names.add(blob_name)
+            summary["deleted_blob_count"] += 1
+        except Exception as exc:
+            if _backup_cleanup_not_found(exc):
+                summary["missing_blob_count"] += 1
+                continue
+            raise
+
+    return summary
+
+
+def _delete_backup_latest_item_states(job):
+    safe_job_id = _safe_text((job or {}).get("id"))
+    if not safe_job_id:
+        return 0
+    container = _get_data_management_backup_item_states_container()
+    query = "SELECT * FROM c WHERE c.type = @type AND c.job_id = @job_id"
+    parameters = [
+        {"name": "@type", "value": DATA_MANAGEMENT_BACKUP_LATEST_ITEM_STATE_TYPE},
+        {"name": "@job_id", "value": safe_job_id},
+    ]
+    states = list(container.query_items(
+        query=query,
+        parameters=parameters,
+        enable_cross_partition_query=True,
+    ))
+    deleted_count = 0
+    for state in states:
+        if _safe_text((state or {}).get("job_id")) != safe_job_id:
+            continue
+        state_id = _safe_text((state or {}).get("id"))
+        source_scope = _safe_text((state or {}).get("source_scope")) or _get_backup_source_scope(job)
+        if not state_id or not source_scope:
+            continue
+        try:
+            container.delete_item(item=state_id, partition_key=source_scope)
+            deleted_count += 1
+        except Exception as exc:
+            if _backup_cleanup_not_found(exc):
+                continue
+            raise
+    return deleted_count
+
+
+def _delete_data_management_job_items(job_id):
+    safe_job_id = _safe_text(job_id)
+    if not safe_job_id:
+        return 0
+    query = "SELECT * FROM c WHERE c.job_id = @job_id"
+    parameters = [{"name": "@job_id", "value": safe_job_id}]
+    items = list(cosmos_data_management_job_items_container.query_items(
+        query=query,
+        parameters=parameters,
+        partition_key=safe_job_id,
+        max_item_count=500,
+    ))
+    deleted_count = 0
+    for item in items:
+        if _safe_text((item or {}).get("job_id")) != safe_job_id:
+            continue
+        item_id = _safe_text((item or {}).get("id"))
+        if not item_id:
+            continue
+        try:
+            cosmos_data_management_job_items_container.delete_item(
+                item=item_id,
+                partition_key=safe_job_id,
+            )
+            deleted_count += 1
+        except Exception as exc:
+            if _backup_cleanup_not_found(exc):
+                continue
+            raise
+    return deleted_count
+
+
+def _delete_data_management_job_record(job):
+    safe_job_id = _safe_text((job or {}).get("id"))
+    if not safe_job_id:
+        return False
+    delete_kwargs = {}
+    if (job or {}).get("_etag"):
+        delete_kwargs.update({
+            "etag": job.get("_etag"),
+            "match_condition": MatchConditions.IfNotModified,
+        })
+    try:
+        cosmos_data_management_jobs_container.delete_item(
+            item=safe_job_id,
+            partition_key=safe_job_id,
+            **delete_kwargs,
+        )
+        return True
+    except Exception as exc:
+        if _backup_cleanup_not_found(exc):
+            return False
+        raise
+
+
+def _assert_backup_cleanup_allowed(job):
+    if not isinstance(job, dict) or job.get("operation") != DATA_MANAGEMENT_OPERATION_BACKUP:
+        raise DataManagementSettingsValidationError("Data Management backup was not found.")
+    if job.get("status") not in DATA_MANAGEMENT_TERMINAL_STATUSES:
+        raise DataManagementSettingsValidationError(
+            "Only completed, failed, or canceled backup jobs can be deleted. Cancel active backups first."
+        )
+
+
+def _delete_data_management_backup_job(
+    job,
+    settings,
+    requested_by=None,
+    requested_by_email=None,
+    reason="manual",
+):
+    _assert_backup_cleanup_allowed(job)
+    safe_job_id = _safe_text(job.get("id"))
+    cleanup_job = copy.deepcopy(job)
+    cleanup_job["requested_by"] = _safe_text(requested_by) or _safe_text(job.get("requested_by")) or "system"
+    cleanup_job["requested_by_email"] = (
+        _safe_text(requested_by_email) or
+        _safe_text(job.get("requested_by_email")) or
+        "system"
+    )
+    deleted_at = _now_iso()
+    blob_summary = _delete_backup_blob_artifacts(job, settings)
+    latest_state_deleted_count = _delete_backup_latest_item_states(job)
+    job_item_deleted_count = _delete_data_management_job_items(safe_job_id)
+    job_deleted = _delete_data_management_job_record(job)
+    cleanup_summary = {
+        "job_id": safe_job_id,
+        "backup_type": job.get("backup_type"),
+        "status": job.get("status"),
+        "deleted_at": deleted_at,
+        "reason": _safe_text(reason) or "manual",
+        "job_deleted": job_deleted,
+        "job_item_deleted_count": job_item_deleted_count,
+        "latest_item_state_deleted_count": latest_state_deleted_count,
+        **blob_summary,
+    }
+    _log_data_management_activity(
+        cleanup_job,
+        "data_management_backup_deleted",
+        "success",
+        "Deleted Data Management backup artifacts and metadata.",
+        details=cleanup_summary,
+    )
+    log_event(
+        "[DataManagement] Backup cleanup completed.",
+        cleanup_summary,
+        level=logging.INFO,
+    )
+    return cleanup_summary
+
+
+def delete_data_management_backup(
+    backup_id,
+    requested_by=None,
+    requested_by_email=None,
+    reason="manual",
+    settings=None,
+):
+    safe_backup_id = _safe_text(backup_id)
+    if not safe_backup_id:
+        raise DataManagementSettingsValidationError("Backup id is required.")
+    job = get_data_management_job(safe_backup_id)
+    if not job:
+        raise DataManagementSettingsValidationError("Data Management backup was not found.")
+    cleanup_settings = normalize_data_management_settings(
+        existing_settings=settings or get_data_management_settings()
+    )
+    return _delete_data_management_backup_job(
+        job,
+        cleanup_settings,
+        requested_by=requested_by,
+        requested_by_email=requested_by_email,
+        reason=reason,
+    )
+
+
+def _get_latest_successful_full_backup_id():
+    query = (
+        "SELECT TOP 1 * FROM c WHERE c.type = @type AND c.operation = @operation "
+        "AND c.backup_type = @backup_type "
+        "AND (c.status = @completed OR c.status = @completed_with_warnings) "
+        "ORDER BY c.created_at DESC, c.id DESC"
+    )
+    parameters = [
+        {"name": "@type", "value": DATA_MANAGEMENT_JOB_TYPE},
+        {"name": "@operation", "value": DATA_MANAGEMENT_OPERATION_BACKUP},
+        {"name": "@backup_type", "value": DATA_MANAGEMENT_BACKUP_FULL},
+        {"name": "@completed", "value": DATA_MANAGEMENT_STATUS_COMPLETED},
+        {
+            "name": "@completed_with_warnings",
+            "value": DATA_MANAGEMENT_STATUS_COMPLETED_WITH_WARNINGS,
+        },
+    ]
+    jobs = list(cosmos_data_management_jobs_container.query_items(
+        query=query,
+        parameters=parameters,
+        enable_cross_partition_query=True,
+        max_item_count=1,
+    ))
+    for job in jobs:
+        if (
+            isinstance(job, dict) and
+            job.get("operation") == DATA_MANAGEMENT_OPERATION_BACKUP and
+            job.get("backup_type") == DATA_MANAGEMENT_BACKUP_FULL and
+            job.get("status") in {
+                DATA_MANAGEMENT_STATUS_COMPLETED,
+                DATA_MANAGEMENT_STATUS_COMPLETED_WITH_WARNINGS,
+            }
+        ):
+            return _safe_text(job.get("id"))
+    return ""
+
+
+def _get_backup_retention_candidates(cutoff_at, protected_backup_id="", limit=DATA_MANAGEMENT_BACKUP_RETENTION_CLEANUP_LIMIT):
+    safe_limit = _safe_int(
+        limit,
+        default=DATA_MANAGEMENT_BACKUP_RETENTION_CLEANUP_LIMIT,
+        minimum=1,
+        maximum=100,
+    )
+    cutoff_iso = cutoff_at.isoformat()
+    query = (
+        "SELECT TOP @limit * FROM c WHERE c.type = @type AND c.operation = @operation "
+        "AND c.created_at < @cutoff_at ORDER BY c.created_at ASC, c.id ASC"
+    )
+    parameters = [
+        {"name": "@limit", "value": safe_limit * 2},
+        {"name": "@type", "value": DATA_MANAGEMENT_JOB_TYPE},
+        {"name": "@operation", "value": DATA_MANAGEMENT_OPERATION_BACKUP},
+        {"name": "@cutoff_at", "value": cutoff_iso},
+    ]
+    jobs = list(cosmos_data_management_jobs_container.query_items(
+        query=query,
+        parameters=parameters,
+        enable_cross_partition_query=True,
+        max_item_count=safe_limit * 2,
+    ))
+    candidates = []
+    for job in jobs:
+        if not isinstance(job, dict):
+            continue
+        if job.get("operation") != DATA_MANAGEMENT_OPERATION_BACKUP:
+            continue
+        if _safe_text(job.get("id")) == _safe_text(protected_backup_id):
+            continue
+        if job.get("status") not in DATA_MANAGEMENT_TERMINAL_STATUSES:
+            continue
+        completed_or_created_at = _parse_iso_datetime(
+            job.get("completed_at") or job.get("created_at")
+        )
+        if not completed_or_created_at or completed_or_created_at >= cutoff_at:
+            continue
+        candidates.append(job)
+        if len(candidates) >= safe_limit:
+            break
+    return candidates
+
+
+def _record_backup_retention_cleanup_run(settings, current_time):
+    updated_settings = copy.deepcopy(settings or get_data_management_settings())
+    updated_settings["backup_retention_cleanup_last_run_at"] = current_time.isoformat()
+    updated_settings["last_settings_update_at"] = _now_iso()
+    return cosmos_settings_container.upsert_item(
+        normalize_data_management_settings(existing_settings=updated_settings)
+    )
+
+
+def cleanup_expired_data_management_backups(
+    settings=None,
+    current_time=None,
+    limit=DATA_MANAGEMENT_BACKUP_RETENTION_CLEANUP_LIMIT,
+    requested_by="system",
+    requested_by_email="system",
+    manual_execution=False,
+):
+    cleanup_settings = normalize_data_management_settings(
+        existing_settings=settings or get_data_management_settings()
+    )
+    now = current_time if isinstance(current_time, datetime) else _now_utc()
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    now = now.astimezone(timezone.utc)
+    cutoff_at = calculate_data_management_backup_retention_cutoff(
+        cleanup_settings,
+        current_time=now,
+    )
+    protected_backup_id = (
+        _get_latest_successful_full_backup_id()
+        if cleanup_settings.get("retention_keep_latest_full") else
+        ""
+    )
+    candidates = _get_backup_retention_candidates(
+        cutoff_at,
+        protected_backup_id=protected_backup_id,
+        limit=limit,
+    )
+    result = {
+        "success": True,
+        "manual_execution": bool(manual_execution),
+        "cutoff_at": cutoff_at.isoformat(),
+        "retention_days": cleanup_settings.get("retention_days"),
+        "retention_value": cleanup_settings.get("retention_value"),
+        "retention_unit": cleanup_settings.get("retention_unit"),
+        "protected_latest_full_backup_id": protected_backup_id,
+        "candidate_count": len(candidates),
+        "deleted_count": 0,
+        "deleted_backups": [],
+        "errors": [],
+    }
+    for job in candidates:
+        try:
+            deletion = _delete_data_management_backup_job(
+                job,
+                cleanup_settings,
+                requested_by=requested_by,
+                requested_by_email=requested_by_email,
+                reason="retention",
+            )
+            result["deleted_backups"].append(deletion)
+            result["deleted_count"] += 1
+        except Exception as exc:
+            error = {
+                "job_id": _safe_text(job.get("id")),
+                "error": "Backup deletion failed for this item.",
+            }
+            result["errors"].append(error)
+            log_event(
+                "[DataManagement] Backup retention cleanup failed for one backup.",
+                error,
+                level=logging.WARNING,
+            )
+
+    result["success"] = not result["errors"]
+    _record_backup_retention_cleanup_run(cleanup_settings, now)
+    log_event(
+        "[DataManagement] Backup retention cleanup completed.",
+        {
+            "success": result["success"],
+            "manual_execution": result["manual_execution"],
+            "cutoff_at": result["cutoff_at"],
+            "candidate_count": result["candidate_count"],
+            "deleted_count": result["deleted_count"],
+            "error_count": len(result["errors"]),
+        },
+        level=logging.INFO if result["success"] else logging.WARNING,
+    )
+    return result
 
 
 def _get_migration_catalog_definition(target_type):
@@ -10496,6 +12144,8 @@ def _try_claim_data_management_job(job_id, settings=None):
         job["migration_attempt_id"] = str(uuid.uuid4())
     elif job.get("operation") == DATA_MANAGEMENT_OPERATION_BACKUP:
         job["backup_attempt_id"] = str(uuid.uuid4())
+    elif job.get("operation") == DATA_MANAGEMENT_OPERATION_RESTORE:
+        job["restore_attempt_id"] = str(uuid.uuid4())
     try:
         claimed_job = _replace_job(job)
         if claimed_job.get("operation") == DATA_MANAGEMENT_OPERATION_BACKUP:
@@ -15393,6 +17043,737 @@ def _execute_backup_cosmos_resources(
     return artifacts
 
 
+def _append_restore_warning(state, warning):
+    """Keep restore warning text bounded in durable job state."""
+    if not isinstance(state, dict):
+        return
+    warnings = state.setdefault("warnings", [])
+    if not isinstance(warnings, list):
+        warnings = []
+        state["warnings"] = warnings
+    safe_warning = _sanitize_data_management_backup_text(warning)
+    if safe_warning:
+        warnings.append(safe_warning)
+    del warnings[:-DATA_MANAGEMENT_BACKUP_MAX_PUBLIC_ITEM_SUMMARIES]
+
+
+def _update_restore_state_totals(state):
+    totals = {
+        "processed_count": 0,
+        "copied_count": 0,
+        "created_count": 0,
+        "updated_count": 0,
+        "skipped_count": 0,
+        "failed_count": 0,
+        "collision_count": 0,
+        "bytes": 0,
+        "checkpoint_count": 0,
+    }
+    for resource in (state.get("resources") or {}).values():
+        if not isinstance(resource, dict):
+            continue
+        metrics = resource.get("progress") if isinstance(resource.get("progress"), dict) else {}
+        if isinstance(resource.get("result"), dict):
+            metrics = {**metrics, **resource["result"]}
+        totals["processed_count"] += _safe_int(metrics.get("processed_count"), default=0, minimum=0)
+        totals["copied_count"] += _safe_int(metrics.get("copied_count"), default=0, minimum=0)
+        totals["created_count"] += _safe_int(metrics.get("created_count"), default=0, minimum=0)
+        totals["updated_count"] += _safe_int(metrics.get("updated_count"), default=0, minimum=0)
+        totals["skipped_count"] += _safe_int(metrics.get("skipped_count"), default=0, minimum=0)
+        totals["failed_count"] += _safe_int(metrics.get("failed_count"), default=0, minimum=0)
+        totals["collision_count"] += _safe_int(metrics.get("collision_count"), default=0, minimum=0)
+        totals["bytes"] += _safe_int(metrics.get("bytes"), default=0, minimum=0)
+        totals["checkpoint_count"] += _safe_int(metrics.get("checkpoint_count"), default=0, minimum=0)
+    state["totals"] = totals
+    return totals
+
+
+def _persist_restore_state(job, state, settings, message, allow_cancel_requested=False):
+    """Persist restore-level phase changes and renew the fenced job lease."""
+    _assert_restore_job_lease(job, allow_cancel_requested=allow_cancel_requested)
+    _update_restore_state_totals(state)
+    now = _now_utc()
+    state["updated_at"] = now.isoformat()
+    job.update({
+        "restore_state": state,
+        "updated_at": now.isoformat(),
+        "last_heartbeat_at": now.isoformat(),
+        "lease_expires_at": (
+            now + timedelta(seconds=_get_data_management_job_lease_seconds(settings))
+        ).isoformat(),
+        "last_message": _safe_text(message),
+    })
+    _save_data_management_job(job)
+    saved_state = job.get("restore_state") if isinstance(job.get("restore_state"), dict) else state
+    if saved_state is not state:
+        state.clear()
+        state.update(copy.deepcopy(saved_state))
+    return state
+
+
+def _persist_restore_checkpoint(job, state, settings, resource_name, progress, checkpoint, message):
+    """Persist bounded restore resource progress."""
+    _assert_restore_job_lease(job)
+    update_restore_resource(state, resource_name, progress, checkpoint=checkpoint)
+    _update_restore_state_totals(state)
+    now = _now_utc()
+    state["last_progress_at"] = now.isoformat()
+    job.update({
+        "restore_state": state,
+        "updated_at": now.isoformat(),
+        "last_heartbeat_at": now.isoformat(),
+        "last_progress_at": now.isoformat(),
+        "lease_expires_at": (
+            now + timedelta(seconds=_get_data_management_job_lease_seconds(settings))
+        ).isoformat(),
+        "last_message": _safe_text(message),
+    })
+    _save_data_management_job(job)
+    saved_state = job.get("restore_state") if isinstance(job.get("restore_state"), dict) else state
+    if saved_state is not state:
+        state.clear()
+        state.update(copy.deepcopy(saved_state))
+    return state
+
+
+def _complete_restore_resource_checkpoint(job, state, settings, resource_name, result, message):
+    _assert_restore_job_lease(job)
+    complete_restore_resource(state, resource_name, result=result)
+    _update_restore_state_totals(state)
+    now = _now_utc()
+    state["last_progress_at"] = now.isoformat()
+    job.update({
+        "restore_state": state,
+        "updated_at": now.isoformat(),
+        "last_heartbeat_at": now.isoformat(),
+        "last_progress_at": now.isoformat(),
+        "lease_expires_at": (
+            now + timedelta(seconds=_get_data_management_job_lease_seconds(settings))
+        ).isoformat(),
+        "last_message": _safe_text(message),
+    })
+    _save_data_management_job(job)
+    return state
+
+
+def _fail_restore_resource_checkpoint(job, state, settings, resource_name, error_message, message, result=None):
+    _assert_restore_job_lease(job)
+    resource = fail_restore_resource(state, resource_name, _sanitize_data_management_backup_text(error_message))
+    if isinstance(result, dict):
+        resource["result"] = copy.deepcopy(result)
+    _update_restore_state_totals(state)
+    now = _now_utc()
+    job.update({
+        "restore_state": state,
+        "updated_at": now.isoformat(),
+        "last_heartbeat_at": now.isoformat(),
+        "last_progress_at": now.isoformat(),
+        "lease_expires_at": (
+            now + timedelta(seconds=_get_data_management_job_lease_seconds(settings))
+        ).isoformat(),
+        "last_message": _safe_text(message),
+    })
+    _save_data_management_job(job)
+    return state
+
+
+def _restore_policy_allows_overwrite(restore_plan):
+    return _safe_text(restore_plan.get("restore_policy")) == DATA_MANAGEMENT_RESTORE_POLICY_OVERWRITE
+
+
+def _restore_cosmos_source_identity(document, artifact):
+    container_name = _safe_text(getattr(app_config, artifact["container_name_attr"], artifact["name"]))
+    return _build_backup_source_identity(
+        "cosmos",
+        container_name,
+        (document or {}).get("id"),
+        _get_document_path_value(document, artifact["partition_key_path"]),
+    )
+
+
+def _restore_search_source_identity(document, artifact):
+    return _build_backup_source_identity(
+        "ai_search",
+        artifact["index_name"],
+        (document or {}).get("id"),
+    )
+
+
+def _group_restore_entries_by_resource(backup_job_id, service):
+    grouped = {}
+    for entry in _iter_backup_manifest_entries(backup_job_id, service=service):
+        grouped.setdefault(_safe_text(entry.get("resource_name")), []).append(entry)
+    return grouped
+
+
+def _iter_restore_records_from_entries(
+    container_client,
+    entries,
+    fernet,
+    identity_builder,
+):
+    entries_by_artifact = {}
+    for entry in entries:
+        entries_by_artifact.setdefault(_safe_text(entry.get("artifact_path")), set()).add(
+            _safe_text(entry.get("source_identity"))
+        )
+    yielded = set()
+    for artifact_path, expected_identities in entries_by_artifact.items():
+        for record in _iter_backup_jsonl_artifact(container_client, artifact_path, fernet=fernet):
+            source_identity = _safe_text(identity_builder(record))
+            if source_identity not in expected_identities or source_identity in yielded:
+                continue
+            yielded.add(source_identity)
+            yield record
+
+
+def _execute_restore_cosmos_resources(job, state, settings, restore_plan, container_client, fernet):
+    if not restore_plan.get("include_cosmos"):
+        return [{
+            "name": "cosmos",
+            "type": "cosmos_restore",
+            "status": "skipped",
+            "warning": "Cosmos DB restore is disabled for this job.",
+        }]
+    target_database = _get_target_cosmos_database(settings)
+    artifacts = []
+    overwrite = _restore_policy_allows_overwrite(restore_plan)
+    grouped_entries = _group_restore_entries_by_resource(restore_plan["source_backup_id"], "cosmos")
+    for resource_name, entries in grouped_entries.items():
+        artifact = _get_restore_cosmos_artifact_by_resource(resource_name)
+        if not artifact:
+            continue
+        if is_restore_resource_completed(state, resource_name):
+            resource = state.get("resources", {}).get(resource_name) or {}
+            artifacts.append(copy.deepcopy(resource.get("result") or {}))
+            continue
+        start_restore_resource(state, resource_name, "cosmos_restore")
+        target_container_name = getattr(app_config, artifact["container_name_attr"], artifact["name"])
+        target_container = _get_target_cosmos_container(
+            target_database,
+            target_container_name,
+            artifact["partition_key_path"],
+        )
+        result = {
+            "name": artifact["name"],
+            "type": "cosmos_restore",
+            "container_name": target_container_name,
+            "partition_key_path": artifact["partition_key_path"],
+            "status": "completed",
+            "processed_count": 0,
+            "copied_count": 0,
+            "created_count": 0,
+            "updated_count": 0,
+            "skipped_count": 0,
+            "failed_count": 0,
+            "collision_count": 0,
+            "bytes": 0,
+            "checkpoint_count": 0,
+        }
+        try:
+            for record in _iter_restore_records_from_entries(
+                container_client,
+                entries,
+                fernet,
+                lambda document, artifact=artifact: _restore_cosmos_source_identity(document, artifact),
+            ):
+                _assert_restore_job_lease(job)
+                result["processed_count"] += 1
+                result["bytes"] += len(json.dumps(record, default=_json_default).encode("utf-8"))
+                document_id = _safe_text((record or {}).get("id"))
+                partition_key = _get_document_path_value(record, artifact["partition_key_path"])
+                if not document_id or partition_key is None:
+                    result["failed_count"] += 1
+                    continue
+                if overwrite:
+                    target_container.upsert_item(record)
+                    result["updated_count"] += 1
+                else:
+                    try:
+                        target_container.create_item(record)
+                        result["created_count"] += 1
+                    except Exception as exc:
+                        if getattr(exc, "status_code", None) == 409:
+                            result["collision_count"] += 1
+                            result["skipped_count"] += 1
+                            continue
+                        raise
+                result["copied_count"] += 1
+                if result["processed_count"] % DATA_MANAGEMENT_RESTORE_BATCH_SIZE == 0:
+                    result["checkpoint_count"] += 1
+                    _persist_restore_checkpoint(
+                        job,
+                        state,
+                        settings,
+                        resource_name,
+                        result,
+                        {"processed_count": result["processed_count"]},
+                        f"Restored Cosmos records for {target_container_name}",
+                    )
+            result["checkpoint_count"] += 1
+            if result["failed_count"] or result["collision_count"]:
+                result["status"] = "warning"
+            _complete_restore_resource_checkpoint(
+                job,
+                state,
+                settings,
+                resource_name,
+                result,
+                f"Completed Cosmos restore for {target_container_name}",
+            )
+        except (DataManagementRestoreCanceledError, DataManagementRestoreLeaseLostError):
+            raise
+        except Exception as exc:
+            result["status"] = "warning"
+            result["failed_count"] += 1
+            _append_restore_warning(state, f"Cosmos restore failed for {target_container_name}: {str(exc)[:300]}")
+            _fail_restore_resource_checkpoint(
+                job,
+                state,
+                settings,
+                resource_name,
+                str(exc),
+                f"Recorded failed Cosmos restore for {target_container_name}",
+                result=result,
+            )
+        artifacts.append(result)
+    return artifacts
+
+
+def _execute_restore_search_resources(job, state, settings, restore_plan, container_client, fernet):
+    if not restore_plan.get("include_ai_search"):
+        return [{
+            "name": "ai_search",
+            "type": "ai_search_restore",
+            "status": "skipped",
+            "warning": "AI Search restore is disabled for this job.",
+        }]
+    artifacts = []
+    overwrite = _restore_policy_allows_overwrite(restore_plan)
+    grouped_entries = _group_restore_entries_by_resource(restore_plan["source_backup_id"], "ai_search")
+    for resource_name, entries in grouped_entries.items():
+        artifact = _get_restore_search_artifact_by_resource(resource_name)
+        if not artifact:
+            continue
+        if is_restore_resource_completed(state, resource_name):
+            resource = state.get("resources", {}).get(resource_name) or {}
+            artifacts.append(copy.deepcopy(resource.get("result") or {}))
+            continue
+        start_restore_resource(state, resource_name, "ai_search_restore")
+        result = {
+            "name": artifact["name"],
+            "type": "ai_search_restore",
+            "index_name": artifact["index_name"],
+            "status": "completed",
+            "processed_count": 0,
+            "copied_count": 0,
+            "created_count": 0,
+            "updated_count": 0,
+            "skipped_count": 0,
+            "failed_count": 0,
+            "collision_count": 0,
+            "bytes": 0,
+            "checkpoint_count": 0,
+        }
+        try:
+            _ensure_target_search_index(settings, artifact["index_name"], artifact["schema_file"])
+            target_client = _get_target_search_client(settings, artifact["index_name"])
+            batch = []
+
+            def flush_batch():
+                if not batch:
+                    return
+                document_ids = [_safe_text(document.get("id")) for document in batch]
+                existing = _get_target_search_documents_by_ids(target_client, document_ids)
+                writable = []
+                for document in list(batch):
+                    document_id = _safe_text(document.get("id"))
+                    if not document_id:
+                        result["failed_count"] += 1
+                        continue
+                    if not overwrite and document_id in existing:
+                        result["collision_count"] += 1
+                        result["skipped_count"] += 1
+                        continue
+                    writable.append(document)
+                    if document_id in existing:
+                        result["updated_count"] += 1
+                    else:
+                        result["created_count"] += 1
+                if writable:
+                    upload_results = list(target_client.upload_documents(
+                        documents=writable,
+                        connection_timeout=DATA_MANAGEMENT_MIGRATION_REMOTE_REQUEST_TIMEOUT_SECONDS,
+                        read_timeout=DATA_MANAGEMENT_MIGRATION_REMOTE_REQUEST_TIMEOUT_SECONDS,
+                        retry_total=0,
+                    ))
+                    accepted = sum(1 for upload_result in upload_results if _get_search_result_succeeded(upload_result))
+                    failed = max(0, len(writable) - accepted)
+                    result["copied_count"] += accepted
+                    result["failed_count"] += failed
+                batch.clear()
+                result["checkpoint_count"] += 1
+                _persist_restore_checkpoint(
+                    job,
+                    state,
+                    settings,
+                    resource_name,
+                    result,
+                    {"processed_count": result["processed_count"]},
+                    f"Restored AI Search documents for {artifact['index_name']}",
+                )
+
+            for record in _iter_restore_records_from_entries(
+                container_client,
+                entries,
+                fernet,
+                lambda document, artifact=artifact: _restore_search_source_identity(document, artifact),
+            ):
+                _assert_restore_job_lease(job)
+                result["processed_count"] += 1
+                result["bytes"] += len(json.dumps(record, default=_json_default).encode("utf-8"))
+                batch.append(record)
+                if len(batch) >= DATA_MANAGEMENT_RESTORE_BATCH_SIZE:
+                    flush_batch()
+            flush_batch()
+            if result["failed_count"] or result["collision_count"]:
+                result["status"] = "warning"
+            _complete_restore_resource_checkpoint(
+                job,
+                state,
+                settings,
+                resource_name,
+                result,
+                f"Completed AI Search restore for {artifact['index_name']}",
+            )
+        except (DataManagementRestoreCanceledError, DataManagementRestoreLeaseLostError):
+            raise
+        except Exception as exc:
+            result["status"] = "warning"
+            result["failed_count"] += 1
+            _append_restore_warning(state, f"AI Search restore failed for {artifact['index_name']}: {str(exc)[:300]}")
+            _fail_restore_resource_checkpoint(
+                job,
+                state,
+                settings,
+                resource_name,
+                str(exc),
+                f"Recorded failed AI Search restore for {artifact['index_name']}",
+                result=result,
+            )
+        artifacts.append(result)
+    return artifacts
+
+
+def _restore_blob_name_from_artifact_path(artifact_path, base_prefix, container_name, transfer_format):
+    prefix = f"{_safe_text(base_prefix).strip('/')}/source_blobs/{container_name}/"
+    artifact = _safe_text(artifact_path)
+    if artifact.startswith(prefix):
+        blob_name = artifact[len(prefix):]
+    else:
+        marker = f"/source_blobs/{container_name}/"
+        blob_name = artifact.split(marker, 1)[1] if marker in artifact else ""
+    if transfer_format == DATA_MANAGEMENT_BLOB_BACKUP_ENCRYPTED_FORMAT and blob_name.endswith(".fernet"):
+        blob_name = blob_name[:-7]
+    return blob_name
+
+
+def _execute_restore_source_blob_resources(job, state, settings, restore_plan, container_client, fernet):
+    if not restore_plan.get("include_source_blobs"):
+        return [{
+            "name": "source_blobs",
+            "type": "source_blob_restore",
+            "status": "skipped",
+            "warning": "Source blob restore is disabled for this job.",
+        }]
+    target_service = _get_target_enhanced_citations_blob_client(settings)
+    artifacts = []
+    overwrite = _restore_policy_allows_overwrite(restore_plan)
+    grouped_entries = _group_restore_entries_by_resource(restore_plan["source_backup_id"], "source_blobs")
+    for resource_name, entries in grouped_entries.items():
+        if not resource_name.startswith("source_blobs:"):
+            continue
+        if is_restore_resource_completed(state, resource_name):
+            resource = state.get("resources", {}).get(resource_name) or {}
+            artifacts.append(copy.deepcopy(resource.get("result") or {}))
+            continue
+        container_name = resource_name.split("source_blobs:", 1)[1]
+        start_restore_resource(state, resource_name, "source_blob_restore")
+        target_container = target_service.get_container_client(container_name)
+        try:
+            if not target_container.exists():
+                target_container.create_container()
+        except ResourceExistsError:
+            pass
+        result = {
+            "name": container_name,
+            "type": "source_blob_restore",
+            "container_name": container_name,
+            "status": "completed",
+            "processed_count": 0,
+            "copied_count": 0,
+            "created_count": 0,
+            "updated_count": 0,
+            "skipped_count": 0,
+            "failed_count": 0,
+            "collision_count": 0,
+            "bytes": 0,
+            "checkpoint_count": 0,
+        }
+        try:
+            seen_artifacts = set()
+            for entry in entries:
+                artifact_path = _safe_text(entry.get("artifact_path"))
+                if not artifact_path or artifact_path in seen_artifacts:
+                    continue
+                seen_artifacts.add(artifact_path)
+                _assert_restore_job_lease(job)
+                result["processed_count"] += 1
+                transfer_format = _safe_text(entry.get("transfer_format"), DATA_MANAGEMENT_BLOB_BACKUP_RAW_FORMAT)
+                blob_name = _restore_blob_name_from_artifact_path(
+                    artifact_path,
+                    restore_plan.get("base_prefix"),
+                    container_name,
+                    transfer_format,
+                )
+                if not blob_name:
+                    result["failed_count"] += 1
+                    continue
+                target_blob = target_container.get_blob_client(blob_name)
+                existing = _get_blob_properties_or_none(target_blob)
+                if existing is not None and not overwrite:
+                    result["collision_count"] += 1
+                    result["skipped_count"] += 1
+                    continue
+                source_bytes = _safe_int(entry.get("source_bytes") or entry.get("bytes"), default=0, minimum=0)
+                target_blob.upload_blob(
+                    data=_iter_backup_source_blob_artifact_chunks(
+                        container_client,
+                        artifact_path,
+                        transfer_format,
+                        fernet=fernet,
+                        source_version=entry.get("source_version"),
+                    ),
+                    length=source_bytes if source_bytes else None,
+                    overwrite=overwrite,
+                    metadata={
+                        "simplechatrestorejob": _safe_text(job.get("id")),
+                        "simplechatrestorebackup": _safe_text(restore_plan.get("source_backup_id")),
+                    },
+                    timeout=DATA_MANAGEMENT_BLOB_SERVICE_TIMEOUT_SECONDS,
+                )
+                if existing is not None:
+                    result["updated_count"] += 1
+                else:
+                    result["created_count"] += 1
+                result["copied_count"] += 1
+                result["bytes"] += source_bytes
+                result["checkpoint_count"] += 1
+                if result["processed_count"] % DATA_MANAGEMENT_RESTORE_BATCH_SIZE == 0:
+                    _persist_restore_checkpoint(
+                        job,
+                        state,
+                        settings,
+                        resource_name,
+                        result,
+                        {"processed_count": result["processed_count"]},
+                        f"Restored source blobs for {container_name}",
+                    )
+            if result["failed_count"] or result["collision_count"]:
+                result["status"] = "warning"
+            _complete_restore_resource_checkpoint(
+                job,
+                state,
+                settings,
+                resource_name,
+                result,
+                f"Completed source blob restore for {container_name}",
+            )
+        except (DataManagementRestoreCanceledError, DataManagementRestoreLeaseLostError):
+            raise
+        except Exception as exc:
+            result["status"] = "warning"
+            result["failed_count"] += 1
+            _append_restore_warning(state, f"Source blob restore failed for {container_name}: {str(exc)[:300]}")
+            _fail_restore_resource_checkpoint(
+                job,
+                state,
+                settings,
+                resource_name,
+                str(exc),
+                f"Recorded failed source blob restore for {container_name}",
+                result=result,
+            )
+        artifacts.append(result)
+    return artifacts
+
+
+def execute_restore_job(job, settings):
+    """Restore supported backup artifacts into the configured Data Management targets."""
+    restore_plan = _normalize_data_management_restore_plan(
+        job.get("options") if isinstance(job.get("options"), dict) else {},
+        backup_job=_get_restore_backup_job((job.get("restore_plan") or {}).get("source_backup_id")),
+        require_confirmation=True,
+    )
+    job["restore_plan"] = restore_plan
+    reviewed_fingerprint = _safe_text((job.get("options") or {}).get("review_fingerprint"))
+    if reviewed_fingerprint:
+        current_fingerprint = _restore_review_fingerprint(settings, restore_plan)
+        if not hmac.compare_digest(reviewed_fingerprint, current_fingerprint):
+            raise DataManagementSettingsValidationError(
+                "Restore settings changed after review. Run preflight review again."
+            )
+        review_authorization_token = _safe_text((job.get("options") or {}).get("review_authorization_token"))
+        review_reservation_token = _safe_text((job.get("options") or {}).get("review_reservation_token"))
+        if review_authorization_token and review_reservation_token:
+            consume_data_management_restore_review_authorization(
+                review_authorization_token,
+                job.get("requested_by"),
+                reviewed_fingerprint,
+                review_reservation_token,
+                job.get("id"),
+            )
+
+    restore_state = initialize_restore_state(
+        job.get("restore_state"),
+        job.get("id"),
+        restore_plan,
+    )
+    start_restore_attempt(
+        restore_state,
+        job.get("restore_attempt_id"),
+        job.get("lease_generation"),
+    )
+    job["restore_state"] = restore_state
+    restore_state = _persist_restore_state(
+        job,
+        restore_state,
+        settings,
+        "Initialized durable restore plan and checkpoint state",
+    )
+
+    backup_job = _get_restore_backup_job(restore_plan["source_backup_id"])
+    container_client, fernet = _get_restore_backup_artifact_context(settings, backup_job)
+    manifest = _read_backup_json_artifact(
+        container_client,
+        restore_plan["source_backup_manifest_path"],
+        fernet=fernet,
+    )
+    preflight = _run_data_management_restore_preflight(
+        settings,
+        restore_plan,
+        backup_job,
+        manifest,
+    )
+    restore_state["preflight"] = {
+        **preflight,
+        "completed_at": _now_iso(),
+    }
+    if not preflight.get("ready"):
+        raise DataManagementSettingsValidationError("Restore preflight has blockers.")
+
+    total_steps = 5
+    _set_job_progress(job, "Starting restore", 0, total_steps, current_step="start")
+    artifacts = []
+    warnings = []
+
+    artifacts.extend(_execute_restore_cosmos_resources(
+        job,
+        restore_state,
+        settings,
+        restore_plan,
+        container_client,
+        fernet,
+    ))
+    _set_job_progress(job, "Cosmos restore step completed", 1, total_steps, current_step="cosmos")
+
+    artifacts.extend(_execute_restore_search_resources(
+        job,
+        restore_state,
+        settings,
+        restore_plan,
+        container_client,
+        fernet,
+    ))
+    _set_job_progress(job, "AI Search restore step completed", 2, total_steps, current_step="ai_search")
+
+    artifacts.extend(_execute_restore_source_blob_resources(
+        job,
+        restore_state,
+        settings,
+        restore_plan,
+        container_client,
+        fernet,
+    ))
+    _set_job_progress(job, "Source blob restore step completed", 3, total_steps, current_step="source_blobs")
+
+    warnings = list(restore_state.get("warnings") or [])
+    failed_resource_names = [
+        resource_name
+        for resource_name, resource in (restore_state.get("resources") or {}).items()
+        if isinstance(resource, dict) and resource.get("status") == RESTORE_RESOURCE_STATUS_FAILED
+    ]
+    if failed_resource_names:
+        warnings.append("One or more restore resources failed and remain eligible for retry.")
+    restore_state.update({
+        "phase": "completed",
+        "status": RESTORE_RESOURCE_STATUS_COMPLETED,
+        "completed_at": _now_iso(),
+        "failed_resource_names": failed_resource_names,
+    })
+    complete_restore_attempt(
+        restore_state,
+        "completed_with_warnings" if warnings or failed_resource_names else "completed",
+    )
+    _persist_restore_state(
+        job,
+        restore_state,
+        settings,
+        "Restore completed",
+        allow_cancel_requested=True,
+    )
+    artifact_summaries = summarize_backup_artifacts(artifacts)
+    artifact_totals = _backup_artifact_totals(artifact_summaries)
+    _record_data_management_job_event(
+        job.get("id"),
+        "restore",
+        job,
+        status=(
+            DATA_MANAGEMENT_STATUS_COMPLETED_WITH_WARNINGS
+            if warnings or failed_resource_names else DATA_MANAGEMENT_STATUS_COMPLETED
+        ),
+        message="Restore target resources written",
+        details={
+            "source_backup_id": restore_plan.get("source_backup_id"),
+            "restore_policy": restore_plan.get("restore_policy"),
+            "artifact_totals": artifact_totals,
+            "warnings": warnings,
+            "failed_resource_count": len(failed_resource_names),
+        },
+    )
+    _set_job_progress(
+        job,
+        "Restore completed",
+        total_steps,
+        total_steps,
+        current_step="completed",
+        status=(
+            DATA_MANAGEMENT_STATUS_COMPLETED_WITH_WARNINGS
+            if warnings or failed_resource_names else DATA_MANAGEMENT_STATUS_COMPLETED
+        ),
+    )
+    return {
+        "source_backup_id": restore_plan.get("source_backup_id"),
+        "restore_policy": restore_plan.get("restore_policy"),
+        "artifact_count": len(artifacts),
+        "artifact_totals": artifact_totals,
+        "artifacts": artifact_summaries,
+        "warnings": warnings,
+        "restore_state": restore_state,
+        "failed_resource_names": failed_resource_names,
+    }
+
+
 def execute_backup_job(job, settings):
     backup_plan = job.get("backup_plan") if isinstance(job.get("backup_plan"), dict) else {}
     if not backup_plan:
@@ -16154,22 +18535,32 @@ def process_data_management_job(job_id):
             warnings = list(job.get("warnings") or []) + result.get("warnings", [])
             status = DATA_MANAGEMENT_STATUS_COMPLETED_WITH_WARNINGS if warnings else DATA_MANAGEMENT_STATUS_COMPLETED
             message = "Migration completed with warnings" if warnings else "Migration completed successfully"
+        elif job.get("operation") == DATA_MANAGEMENT_OPERATION_RESTORE:
+            result = execute_restore_job(job, settings)
+            warnings = list(job.get("warnings") or []) + result.get("warnings", [])
+            failed_resource_names = list(result.get("failed_resource_names") or [])
+            if failed_resource_names:
+                warnings.append(
+                    "One or more restore resources completed with retryable failures."
+                )
+            status = DATA_MANAGEMENT_STATUS_COMPLETED_WITH_WARNINGS if warnings else DATA_MANAGEMENT_STATUS_COMPLETED
+            message = "Restore completed with warnings" if warnings else "Restore completed successfully"
         else:
             warnings = list(job.get("warnings") or [])
             warnings.append(
-                "Restore and migration apply logic has not run in this job. The durable job record, settings, and admin workflow are ready for the restore and migration implementation layer."
+                "This Data Management operation does not have an execution handler."
             )
             result = {"warnings": warnings}
             _record_data_management_job_event(
                 job.get("id"),
-                "orchestration-foundation",
+                "unsupported-operation",
                 job,
                 status=DATA_MANAGEMENT_STATUS_COMPLETED_WITH_WARNINGS,
-                message="Restore and migration apply logic has not run in this job.",
+                message="Data Management operation has no execution handler.",
                 details={"message": warnings[-1]},
             )
             status = DATA_MANAGEMENT_STATUS_COMPLETED_WITH_WARNINGS
-            message = "Data Management job foundation completed with implementation warnings"
+            message = "Data Management job completed with implementation warnings"
 
         now = _now_iso()
         completed_progress = (
@@ -16300,6 +18691,52 @@ def process_data_management_job(job_id):
             },
         )
         return saved_job
+    except DataManagementRestoreCanceledError:
+        now = _now_iso()
+        try:
+            persisted_job = _read_job(job_id)
+        except Exception:
+            persisted_job = job
+        restore_state = persisted_job.get("restore_state")
+        if isinstance(restore_state, dict):
+            restore_state.update({
+                "status": DATA_MANAGEMENT_STATUS_CANCELED,
+                "phase": "canceled",
+                "completed_at": now,
+                "updated_at": now,
+                "last_error": None,
+            })
+            complete_restore_attempt(restore_state, "canceled")
+        persisted_job.update({
+            "status": DATA_MANAGEMENT_STATUS_CANCELED,
+            "updated_at": now,
+            "completed_at": now,
+            "last_heartbeat_at": now,
+            "last_message": "Restore canceled at a durable checkpoint.",
+            "last_error": None,
+            "lease_holder_id": None,
+            "lease_expires_at": None,
+            "restore_state": restore_state,
+            "progress": {
+                "total_steps": persisted_job.get("progress", {}).get("total_steps", 0),
+                "completed_steps": persisted_job.get("progress", {}).get("completed_steps", 0),
+                "current_step": "canceled",
+                "percent_complete": persisted_job.get("progress", {}).get("percent_complete", 0),
+            },
+        })
+        saved_job = _save_data_management_job(persisted_job)
+        _record_data_management_job_event(
+            saved_job.get("id"),
+            "restore-canceled",
+            saved_job,
+            status=DATA_MANAGEMENT_STATUS_CANCELED,
+            message="Restore canceled at a durable checkpoint.",
+            details={
+                "cancel_requested_at": saved_job.get("cancel_requested_at"),
+                "reason_present": bool(saved_job.get("cancel_reason")),
+            },
+        )
+        return saved_job
     except DataManagementBackupLeaseLostError as exc:
         log_event(
             "[DataManagement] Backup worker stopped after losing its job or source lease.",
@@ -16310,6 +18747,13 @@ def process_data_management_job(job_id):
     except DataManagementMigrationLeaseLostError as exc:
         log_event(
             "[DataManagement] Migration worker stopped after losing its job lease.",
+            {"job_id": job_id, "operation": job.get("operation"), "error": str(exc)},
+            level=logging.WARNING,
+        )
+        return None
+    except DataManagementRestoreLeaseLostError as exc:
+        log_event(
+            "[DataManagement] Restore worker stopped after losing its job lease.",
             {"job_id": job_id, "operation": job.get("operation"), "error": str(exc)},
             level=logging.WARNING,
         )
@@ -16388,6 +18832,24 @@ def check_due_data_management_jobs_once(app=None):
     )
     if not settings.get("enabled"):
         return recovery_results
+
+    if _should_run_data_management_backup_retention_cleanup(settings, current_time):
+        try:
+            cleanup_expired_data_management_backups(
+                settings=settings,
+                current_time=current_time,
+                requested_by="system",
+                requested_by_email="system",
+                manual_execution=False,
+            )
+            settings = get_data_management_settings()
+        except Exception as exc:
+            log_event(
+                "[DataManagement] Scheduled backup retention cleanup failed.",
+                {"error": str(exc)},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
 
     queued_jobs = []
     for backup_type, next_key in (
