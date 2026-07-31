@@ -2,13 +2,14 @@
 # test_conversation_fork.py
 """
 Functional test for personal conversation forking.
-Version: 0.250.101
+Version: 0.250.107
 Implemented in: 0.250.074
 
 This test ensures persisted personal conversation history is copied through an
 assistant boundary with independent identifiers, deterministic ordering,
-workspace-context authorization, concurrency protection, failed-write cleanup,
-and stable conflict responses when structured logging is invoked.
+workspace-context authorization, model-knowledge context handling, concurrency
+protection, failed-write cleanup, and stable conflict responses when structured
+logging is invoked.
 """
 
 import ast
@@ -22,6 +23,11 @@ import types
 import pytest
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from flask import Blueprint, Flask, jsonify, request
+import werkzeug
+
+
+if not hasattr(werkzeug, '__version__'):
+    werkzeug.__version__ = '3'
 
 
 sys.path.insert(
@@ -705,6 +711,32 @@ def test_fork_revalidates_and_preserves_workspace_context(
 
     assert test_state['result']['conversation']['chat_type'] == expected_chat_type
     assert test_state['result']['conversation']['context'] == [context]
+
+
+@pytest.mark.parametrize(
+    ('model_scope', 'model_context_id'),
+    [
+        ('Model', 'N/A'),
+        ('model_knowledge', None),
+    ],
+)
+def test_fork_allows_personal_model_knowledge_context(model_scope, model_context_id):
+    """Allow personal forks when the only stored context is model knowledge."""
+    model_context = {
+        'type': 'secondary',
+        'scope': model_scope,
+        'name': "Model's knowledge",
+    }
+    if model_context_id is not None:
+        model_context['id'] = model_context_id
+
+    conversation = build_source_conversation(chat_type='personal')
+    conversation['context'] = [model_context]
+
+    test_state = run_fork(source_conversation=conversation)
+
+    assert test_state['result']['conversation']['chat_type'] == 'personal_single_user'
+    assert test_state['result']['conversation']['context'] == [model_context]
 
 
 @pytest.mark.parametrize(
