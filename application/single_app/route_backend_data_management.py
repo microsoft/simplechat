@@ -54,6 +54,7 @@ from functions_data_management import (
     summarize_data_management_migration_plan,
     submit_data_management_job,
     test_backup_storage_connection,
+    test_target_cosmos_capacity_management,
     test_target_cosmos_connection,
     test_target_enhanced_citation_storage_connection,
     test_target_search_connection,
@@ -258,6 +259,38 @@ def register_route_backend_data_management(bp):
                 level=logging.WARNING,
             )
             return jsonify({"success": False, "error": "Target Cosmos connection test failed."}), 400
+        return jsonify(result), 200
+
+    @bp.route("/api/admin/data-management/target/cosmos/ru-boost/test", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def test_admin_data_management_target_cosmos_ru_boost():
+        payload = request.get_json(silent=True) or {}
+        settings_payload = payload.get("settings") if isinstance(payload.get("settings"), dict) else None
+        migration_plan = payload.get("migration_plan") if isinstance(payload.get("migration_plan"), dict) else None
+        try:
+            result = test_target_cosmos_capacity_management(
+                settings=settings_payload,
+                migration_plan=migration_plan,
+            )
+        except DataManagementSettingsValidationError as exc:
+            log_event(
+                "[DataManagement] Target Cosmos RU Boost permission test validation failed.",
+                {"error": str(exc)},
+                level=logging.WARNING,
+            )
+            return jsonify({
+                "success": False,
+                "error": "Target Cosmos RU Boost permission test request is invalid.",
+            }), 400
+        except Exception as exc:
+            log_event(
+                "[DataManagement] Target Cosmos RU Boost permission test failed.",
+                {"error": str(exc)},
+                level=logging.WARNING,
+            )
+            return jsonify({"success": False, "error": "Target Cosmos RU Boost permission test failed."}), 400
         return jsonify(result), 200
 
     @bp.route("/api/admin/data-management/target/search/test", methods=["POST"])
@@ -735,6 +768,25 @@ def register_route_backend_data_management(bp):
         except DataManagementSettingsValidationError as exc:
             return jsonify({"success": False, "error": str(exc)}), 400
         return jsonify({"success": True, **catalog}), 200
+
+    @bp.route("/api/admin/data-management/restore/review", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def review_admin_data_management_restore():
+        payload = request.get_json(silent=True) or {}
+        restore_plan = payload.get("restore_plan") if isinstance(payload.get("restore_plan"), dict) else {}
+        try:
+            review = review_data_management_restore(restore_plan)
+        except Exception as exc:
+            log_event(
+                "[DataManagement] Restore review failed.",
+                {"error": str(exc)},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"success": False, "error": "Restore review could not be completed."}), 400
+        return jsonify({"success": True, "review": review}), 200
 
     @bp.route("/api/admin/data-management/migration/summary", methods=["POST"])
     @swagger_route(security=get_auth_security())

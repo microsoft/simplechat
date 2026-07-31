@@ -259,7 +259,7 @@ DATA_MANAGEMENT_MIGRATION_MODES = {
     DATA_MANAGEMENT_MIGRATION_MODE_DELTA_UPSERT,
     DATA_MANAGEMENT_MIGRATION_MODE_MIRROR,
 }
-DATA_MANAGEMENT_MIRROR_CONFIRMATION = "MIRROR WITH DELETIONS"
+DATA_MANAGEMENT_MIRROR_CONFIRMATION = "MAKE DESTINATION MATCH SOURCE"
 DATA_MANAGEMENT_RESTORE_POLICY_CREATE_ONLY = "create_only"
 DATA_MANAGEMENT_RESTORE_POLICY_OVERWRITE = "overwrite_existing"
 DATA_MANAGEMENT_RESTORE_POLICIES = {
@@ -1107,27 +1107,60 @@ def test_target_cosmos_connection(settings=None, migration_plan=None):
             normalized_settings,
             normalized_plan,
         )
-    capacity = None
-    if normalized_settings.get("migration_temporary_destination_ru_enabled"):
-        inspected_capacity = _inspect_target_cosmos_migration_capacity(
-            normalized_settings,
-            normalized_plan,
-        )
-        capacity = {
-            "target_ru": inspected_capacity.get("target_ru"),
-            "database_mode": inspected_capacity.get("database_mode"),
-            "database_current_ru": inspected_capacity.get("database_current_ru"),
-            "targets": inspected_capacity.get("targets"),
-        }
     result = {
         "success": True,
         "target": "cosmos",
         "database_name": properties.get("id") or DATA_MANAGEMENT_TARGET_COSMOS_DATABASE_NAME,
         "authentication_type": normalized_settings.get("target_cosmos_authentication_type"),
         "migration_access": migration_access,
-        "capacity": capacity,
     }
     return result
+
+
+def test_target_cosmos_capacity_management(settings=None, migration_plan=None):
+    """Validate destination Cosmos ARM throughput permissions for RU Boost."""
+    normalized_settings = _normalize_data_management_settings_from_payload(settings)
+    normalized_plan = normalize_data_management_migration_plan({
+        "migration_plan": migration_plan if isinstance(migration_plan, dict) else {},
+    })
+    inspected_capacity = _inspect_target_cosmos_migration_capacity(
+        normalized_settings,
+        normalized_plan,
+    )
+    write_results = []
+    for target in inspected_capacity.get("targets") or []:
+        current_ru = _safe_int(target.get("current_ru"), default=0, minimum=0)
+        if not current_ru:
+            raise DataManagementSettingsValidationError(
+                "Destination Cosmos RU Boost test could not determine the current RU/s value."
+            )
+        scale_result = set_database_throughput(
+            inspected_capacity["management_settings"],
+            current_ru,
+            initiated_by="data_management_ru_boost_test",
+            reason="validate_data_management_ru_boost_permissions",
+            decision={
+                "scope": target.get("scope"),
+                "container_name": target.get("container_name") or "",
+                "target_mode": target.get("mode"),
+            },
+        )
+        write_results.append({
+            "scope": target.get("scope"),
+            "container_name": target.get("container_name") or "",
+            "mode": target.get("mode"),
+            "current_ru": current_ru,
+            "write_verified": True,
+            "verified_ru": scale_result.get("to_ru", current_ru),
+        })
+    return {
+        "success": True,
+        "target": "cosmos_ru_boost",
+        "target_ru": inspected_capacity.get("target_ru"),
+        "database_mode": inspected_capacity.get("database_mode"),
+        "database_current_ru": inspected_capacity.get("database_current_ru"),
+        "targets": write_results,
+    }
 
 
 def test_target_search_connection(settings=None):
@@ -1786,7 +1819,7 @@ def _validate_incremental_baseline_job(candidate_job, current_job, current_confi
     source_cutoff_at = _safe_text(candidate_state.get("source_cutoff_at"))
     if _parse_iso_datetime(source_cutoff_at) is None:
         raise DataManagementSettingsValidationError(
-            "Incremental migration baseline does not contain a valid source watermark."
+            "Previous migration does not contain a valid source checkpoint."
         )
     return source_cutoff_at
 

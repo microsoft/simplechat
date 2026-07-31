@@ -1,7 +1,7 @@
 # test_admin_data_management_settings_ui.py
 """
 UI test for Admin Settings Data Management controls.
-Version: 0.250.106
+Version: 0.250.108
 Implemented in: 0.241.211
 Updated in: 0.241.221
 Updated in: 0.250.102
@@ -9,10 +9,11 @@ Updated in: 0.250.103
 Updated in: 0.250.104
 Updated in: 0.250.105
 Updated in: 0.250.106
+Updated in: 0.250.108
 
 This test ensures admins can discover the Data Management tab, see the
 operational-business-hours warning, and access the backup, encryption,
-migration, Cosmos DB JSON editor, backup inventory, and job-history controls without unsafe frontend rendering.
+migration, restore, Cosmos DB JSON editor, backup inventory, and job-history controls without unsafe frontend rendering.
 Version 0.250.049 moves query results and document editing into a scrollable modal.
 Version 0.250.050 keeps this coverage aligned with the Cosmos editor save-path fix.
 Version 0.250.051 verifies the Cosmos editor results list scrolls independently.
@@ -22,7 +23,10 @@ Version 0.250.076 adds bounded parallel backup and source capacity controls.
 Version 0.250.102 adds independently bounded source-blob transfer controls.
 Version 0.250.103 adds the staged migration workflow, scalable catalogs,
 server-owned review, confirmation gating, and inline durable job progress.
-Version 0.250.106 adds backup cleanup and unit-based retention controls.
+Version 0.250.106 adds backup cleanup, unit-based retention controls, and
+the restore workflow modal.
+Version 0.250.108 adds plain-language Backup, Migrate & Restore guidance and
+separate RU Boost testing.
 """
 
 import json
@@ -59,6 +63,12 @@ def test_admin_data_management_controls_render_from_template():
         "data-management",
         "data-management-save-settings-btn",
         "data-management-operational-warning",
+        "data-management-readiness-section",
+        "data-management-setup-guide-modal",
+        "data-management-backup-guide-modal",
+        "data-management-migration-guide-modal",
+        "data-management-ru-boost-guide-modal",
+        "data-management-restore-guide-modal",
         "data-management-backup-section",
         "data-management-schedule-section",
         "data_management_enabled",
@@ -104,6 +114,7 @@ def test_admin_data_management_controls_render_from_template():
         "data_management_target_cosmos_subscription_id",
         "data_management_target_cosmos_resource_group",
         "data-management-test-target-cosmos-btn",
+        "data-management-test-target-cosmos-ru-boost-btn",
         "data-management-target-ai-search-section",
         "data_management_target_ai_search_auth",
         "data_management_target_ai_search_endpoint",
@@ -298,7 +309,7 @@ def test_admin_data_management_controls_render_from_template():
     assert "Use a dedicated backup storage account" in template
     assert "Open Key Vault settings" in template
     assert "Cosmos Backup Performance" in template
-    assert "Temporary source max RU/s" in template
+    assert "Source RU Boost target" in template
     assert "continue_without_boost" in template
     assert "Managed identity requires Cosmos DB Data Contributor" in template
     assert "Paste a connection string to save or replace it" in template
@@ -306,8 +317,11 @@ def test_admin_data_management_controls_render_from_template():
     assert 'id="data_management_target_cosmos_database" value="SimpleChat" readonly aria-readonly="true"' in template
     assert 'max="10000"' in template
     assert 'Validate Cosmos Access' in template
-    assert 'role="radiogroup" aria-label="Migration synchronization mode"' in template
-    assert "MIRROR WITH DELETIONS" in template
+    assert 'role="radiogroup" aria-label="Migration destination behavior"' in template
+    assert "MAKE DESTINATION MATCH SOURCE" in template
+    assert "Copy missing items only" in template
+    assert "Catch up changed items" in template
+    assert "Make destination match source" in template
     assert "I confirm external destination AI Search writers are frozen" in template
     assert 'data-migration-step-button="target"' in template
     assert 'data-migration-step-button="scope"' in template
@@ -370,7 +384,12 @@ def test_admin_data_management_controls_render_from_template():
     assert 'The edit was recorded in Activity Logs.' in js_source
     assert 'closest("[data-ignore-data-management-change' in js_source
     assert 'testTargetCosmos' in js_source
+    assert 'testTargetCosmosRuBoost' in js_source
+    assert '/api/admin/data-management/target/cosmos/ru-boost/test' in js_source
     assert 'testMigrationAccess' in js_source
+    assert '/api/admin/data-management/restore/review' in js_source
+    assert 'openRestoreModal' in js_source
+    assert 'updateRestoreQueueButtonState' in js_source
     assert 'retryDataManagementJob' in js_source
     assert 'openDataManagementCancellationModal' in js_source
     assert 'requestDataManagementCancellation' in js_source

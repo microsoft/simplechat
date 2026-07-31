@@ -1025,7 +1025,7 @@
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="data-management-tab" data-bs-toggle="tab" data-bs-target="#data-management"
                     type="button" role="tab" aria-controls="data-management" aria-selected="false">
-                    Data Management
+                    Backup, Migrate &amp; Restore
                 </button>
             </li>
 
@@ -5538,8 +5538,8 @@
             <div class="tab-pane fade" id="data-management" role="tabpanel" aria-labelledby="data-management-tab" data-testid="data-management-tab-pane" data-ignore-settings-change="true">
                 <div class="d-flex align-items-center justify-content-between gap-3 mb-2">
                     <div>
-                        <h3 class="mb-1">Data Management</h3>
-                        <p class="text-muted mb-0">Configure best-effort backups, restore preparation, and migration job orchestration.</p>
+                        <h3 class="mb-1">Backup, Migrate &amp; Restore</h3>
+                        <p class="text-muted mb-0">Protect SimpleChat data, move selected workspaces to another environment, and stage restore decisions with guided checks.</p>
                     </div>
                     <button type="button" class="btn btn-secondary" id="data-management-save-settings-btn" disabled aria-disabled="true">
                         <i class="bi bi-save me-1"></i>Saved
@@ -5551,6 +5551,48 @@
                 </div>
 
                 <div class="alert d-none" id="data-management-status" role="status" aria-live="polite"></div>
+
+                <div class="card p-4 mb-4 border-info shadow-sm" id="data-management-readiness-section">
+                    <div class="d-flex flex-column flex-xl-row justify-content-between gap-3 mb-3">
+                        <div>
+                            <h4 class="mb-1"><i class="bi bi-compass me-2"></i>Start Here</h4>
+                            <p class="text-muted mb-0 small">Use these checkpoints before running backup, migration, restore, or advanced repair actions.</p>
+                        </div>
+                        <button type="button" class="btn btn-outline-info align-self-start" data-bs-toggle="modal" data-bs-target="#data-management-setup-guide-modal">
+                            <i class="bi bi-info-circle me-1"></i>Configuration Guide
+                        </button>
+                    </div>
+                    <div class="row g-3">
+                        <div class="col-xl-3 col-md-6">
+                            <div class="border rounded-3 p-3 h-100">
+                                <h5 class="h6 mb-2"><i class="bi bi-archive me-1"></i>Back up</h5>
+                                <p class="small text-muted mb-2">Configure dedicated storage, encryption, schedule, and backup scope before queueing jobs.</p>
+                                <button type="button" class="btn btn-link btn-sm p-0" data-bs-toggle="modal" data-bs-target="#data-management-backup-guide-modal">Backup setup details</button>
+                            </div>
+                        </div>
+                        <div class="col-xl-3 col-md-6">
+                            <div class="border rounded-3 p-3 h-100">
+                                <h5 class="h6 mb-2"><i class="bi bi-arrow-left-right me-1"></i>Migrate</h5>
+                                <p class="small text-muted mb-2">Connect a destination, choose who moves, run preflight, then execute a recoverable transfer.</p>
+                                <button type="button" class="btn btn-link btn-sm p-0" data-bs-toggle="modal" data-bs-target="#data-management-migration-guide-modal">Migration guide</button>
+                            </div>
+                        </div>
+                        <div class="col-xl-3 col-md-6">
+                            <div class="border rounded-3 p-3 h-100">
+                                <h5 class="h6 mb-2"><i class="bi bi-arrow-counterclockwise me-1"></i>Restore</h5>
+                                <p class="small text-muted mb-2">Review backup readiness and stage restore decisions from Backup Inventory.</p>
+                                <button type="button" class="btn btn-link btn-sm p-0" data-bs-toggle="modal" data-bs-target="#data-management-restore-guide-modal">Restore guide</button>
+                            </div>
+                        </div>
+                        <div class="col-xl-3 col-md-6">
+                            <div class="border rounded-3 p-3 h-100">
+                                <h5 class="h6 mb-2"><i class="bi bi-speedometer me-1"></i>RU Boost</h5>
+                                <p class="small text-muted mb-2">Temporarily raise eligible Cosmos capacity during approved backup or migration windows.</p>
+                                <button type="button" class="btn btn-link btn-sm p-0" data-bs-toggle="modal" data-bs-target="#data-management-ru-boost-guide-modal">RU Boost permissions</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
 
                 <div class="card p-4 mb-4 border-primary shadow-sm" id="data-management-backup-section">
                     <div class="d-flex align-items-center mb-3">
@@ -5747,6 +5789,9 @@
                                 <h5 class="mb-1">Cosmos Backup Performance</h5>
                                 <p class="text-muted mb-0 small">Backups stream deterministic checkpoint batches and commit only verified work. Higher concurrency can increase source Cosmos cost and pressure.</p>
                             </div>
+                            <button type="button" class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#data-management-ru-boost-guide-modal">
+                                <i class="bi bi-info-circle me-1"></i>RU Boost Guide
+                            </button>
                         </div>
 
                         <div class="card p-3 mt-3 border-info-subtle" id="data-management-blob-backup-performance-section">
@@ -5780,7 +5825,7 @@
                                 <input class="form-control" type="number" id="data_management_backup_retry_count" min="1" max="10" value="5">
                             </div>
                             <div class="col-md-4">
-                                <label class="form-label" for="data_management_backup_capacity_failure_policy">If source boost is unavailable</label>
+                                <label class="form-label" for="data_management_backup_capacity_failure_policy">If source RU Boost is unavailable</label>
                                 <select class="form-select" id="data_management_backup_capacity_failure_policy">
                                     <option value="continue_without_boost">Continue without boost</option>
                                     <option value="fail">Fail before export</option>
@@ -5789,15 +5834,15 @@
                         </div>
                         <div class="form-check form-switch mt-3">
                             <input class="form-check-input" type="checkbox" role="switch" id="data_management_backup_temporary_source_ru_enabled">
-                            <label class="form-check-label" for="data_management_backup_temporary_source_ru_enabled">Temporarily increase local source Cosmos capacity for this backup</label>
+                            <label class="form-check-label" for="data_management_backup_temporary_source_ru_enabled">Enable source RU Boost for backups</label>
                         </div>
                         <div class="row g-3 mt-1" id="data-management-backup-temporary-ru-field">
                             <div class="col-md-4">
-                                <label class="form-label" for="data_management_backup_temporary_source_ru">Temporary source max RU/s</label>
+                                <label class="form-label" for="data_management_backup_temporary_source_ru">Source RU Boost target</label>
                                 <input class="form-control" type="number" id="data_management_backup_temporary_source_ru" min="1000" max="10000" step="1000" value="10000">
                             </div>
                             <div class="col-md-8 d-flex align-items-end">
-                                <div class="form-text mb-2">The backup snapshots shared-database or dedicated-container capacity, boosts only eligible source targets up to 10,000 RU/s, and restores the original setting after completion, cancellation, failure, or recovery. This can increase Cosmos charges and requires source ARM read/write permission.</div>
+                                <div class="form-text mb-2">The backup records the current source capacity, raises only eligible targets up to 10,000 RU/s, and restores the original setting after completion, cancellation, failure, or recovery. This can increase Cosmos charges and requires source ARM throughput permission.</div>
                             </div>
                         </div>
                     </div>
@@ -5861,8 +5906,8 @@
                             <button type="button" class="migration-step" data-migration-step-button="options">
                                 <span class="migration-step-marker">3</span>
                                 <span class="migration-step-copy">
-                                    <span class="migration-step-label">Content &amp; Options</span>
-                                    <span class="migration-step-state">Set transfer policy</span>
+                                    <span class="migration-step-label">What Moves</span>
+                                    <span class="migration-step-state">Choose behavior</span>
                                 </span>
                             </button>
                             <button type="button" class="migration-step" data-migration-step-button="review">
@@ -5935,16 +5980,6 @@
                                     <div class="mt-3" id="data-management-target-cosmos-key-field">
                                         <label class="form-label" for="data_management_target_cosmos_key">Account key</label>
                                         <input class="form-control" type="password" id="data_management_target_cosmos_key" autocomplete="off" placeholder="Stored keys stay redacted after save">
-                                    </div>
-                                    <div class="row g-3 mt-1" id="data-management-target-cosmos-management-fields">
-                                        <div class="col-md-6">
-                                            <label class="form-label" for="data_management_target_cosmos_subscription_id">Subscription ID for capacity management</label>
-                                            <input class="form-control" type="text" id="data_management_target_cosmos_subscription_id" autocomplete="off" placeholder="Required only for a temporary RU boost">
-                                        </div>
-                                        <div class="col-md-6">
-                                            <label class="form-label" for="data_management_target_cosmos_resource_group">Resource group for capacity management</label>
-                                            <input class="form-control" type="text" id="data_management_target_cosmos_resource_group" autocomplete="off" placeholder="Required only for a temporary RU boost">
-                                        </div>
                                     </div>
                                 </section>
 
@@ -6216,29 +6251,29 @@
                         <section class="migration-stage d-none" data-migration-step-panel="options" aria-labelledby="data-management-migration-options-heading">
                             <div class="migration-stage-heading">
                                 <div>
-                                    <h5 id="data-management-migration-options-heading">Choose transfer behavior</h5>
-                                    <p>Set synchronization semantics, included services, retry behavior, and optional destination capacity.</p>
+                                    <h5 id="data-management-migration-options-heading">Choose what happens at the destination</h5>
+                                    <p>Choose whether to copy only missing items, catch up changes, or make migrated destination data match the source.</p>
                                 </div>
                             </div>
 
                             <fieldset class="migration-option-section" id="data-management-migration-mode-section">
-                                <legend>Synchronization mode</legend>
-                                <div class="btn-group flex-wrap" role="radiogroup" aria-label="Migration synchronization mode">
+                                <legend>Destination behavior</legend>
+                                <div class="btn-group flex-wrap" role="radiogroup" aria-label="Migration destination behavior">
                                     <input class="btn-check" type="radio" name="data_management_migration_mode" id="data_management_migration_mode_new_only" value="new_only" checked>
-                                    <label class="btn btn-outline-primary" for="data_management_migration_mode_new_only">New only</label>
+                                    <label class="btn btn-outline-primary" for="data_management_migration_mode_new_only">Copy missing items only</label>
                                     <input class="btn-check" type="radio" name="data_management_migration_mode" id="data_management_migration_mode_delta_upsert" value="delta_upsert">
-                                    <label class="btn btn-outline-primary" for="data_management_migration_mode_delta_upsert">Delta / upsert</label>
+                                    <label class="btn btn-outline-primary" for="data_management_migration_mode_delta_upsert">Catch up changed items</label>
                                     <input class="btn-check" type="radio" name="data_management_migration_mode" id="data_management_migration_mode_mirror_with_deletions" value="mirror_with_deletions">
-                                    <label class="btn btn-outline-danger" for="data_management_migration_mode_mirror_with_deletions">Mirror with deletions</label>
+                                    <label class="btn btn-outline-danger" for="data_management_migration_mode_mirror_with_deletions">Make destination match source</label>
                                 </div>
                                 <p class="text-muted small mt-2 mb-0" id="data-management-migration-mode-description" aria-live="polite">
                                     Copies source items that are absent from the destination. Existing destination data is never updated or deleted.
                                 </p>
                                 <div class="row g-3 mt-1 d-none" id="data-management-migration-baseline-field">
                                     <div class="col-lg-7">
-                                        <label class="form-label" for="data_management_migration_baseline_job_id">Baseline migration job ID</label>
+                                        <label class="form-label" for="data_management_migration_baseline_job_id">Previous completed migration job ID</label>
                                         <input class="form-control" type="text" id="data_management_migration_baseline_job_id" autocomplete="off" placeholder="Leave blank to use the latest compatible completed migration">
-                                        <div class="form-text">The baseline fixes the prior service watermarks used for this catch-up run.</div>
+                                        <div class="form-text">Leave blank to let SimpleChat choose the latest compatible completed migration as the starting point for this catch-up run.</div>
                                     </div>
                                 </div>
                             </fieldset>
@@ -6286,15 +6321,31 @@
                                 </div>
                                 <div class="form-check form-switch mt-3">
                                     <input class="form-check-input" type="checkbox" role="switch" id="data_management_migration_temporary_destination_ru_enabled">
-                                    <label class="form-check-label" for="data_management_migration_temporary_destination_ru_enabled">Temporarily increase destination Cosmos capacity during this migration</label>
+                                    <label class="form-check-label" for="data_management_migration_temporary_destination_ru_enabled">Enable destination RU Boost for this migration</label>
+                                    <button type="button" class="btn btn-outline-info btn-sm ms-2" data-bs-toggle="modal" data-bs-target="#data-management-ru-boost-guide-modal">
+                                        <i class="bi bi-info-circle me-1"></i>What permissions are needed?
+                                    </button>
                                 </div>
                                 <div class="row g-3 mt-1" id="data-management-migration-temporary-ru-field">
-                                    <div class="col-md-4">
-                                        <label class="form-label" for="data_management_migration_temporary_destination_ru">Temporary destination max RU/s</label>
+                                    <div class="col-md-3">
+                                        <label class="form-label" for="data_management_migration_temporary_destination_ru">Destination RU Boost target</label>
                                         <input class="form-control" type="number" id="data_management_migration_temporary_destination_ru" min="1000" max="10000" step="1000" value="10000">
                                     </div>
-                                    <div class="col-md-8 d-flex align-items-end">
-                                        <div class="form-text mb-2">Eligible capacity is raised only to 10,000 RU/s and restored after completion or failure. ARM permission is required.</div>
+                                    <div class="col-md-3">
+                                        <label class="form-label" for="data_management_target_cosmos_subscription_id">Subscription ID</label>
+                                        <input class="form-control" type="text" id="data_management_target_cosmos_subscription_id" autocomplete="off" placeholder="Required for RU Boost">
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label" for="data_management_target_cosmos_resource_group">Resource group</label>
+                                        <input class="form-control" type="text" id="data_management_target_cosmos_resource_group" autocomplete="off" placeholder="Required for RU Boost">
+                                    </div>
+                                    <div class="col-md-3 d-flex align-items-end">
+                                        <button type="button" class="btn btn-outline-secondary w-100" id="data-management-test-target-cosmos-ru-boost-btn">
+                                            <i class="bi bi-speedometer me-1" aria-hidden="true"></i>Test RU Boost
+                                        </button>
+                                    </div>
+                                    <div class="col-12">
+                                        <div class="form-text">RU Boost validates Azure management-plane throughput permissions separately from Cosmos data-copy access. Eligible capacity is raised only up to 10,000 RU/s during execution and restored after completion or failure.</div>
                                     </div>
                                 </div>
                             </fieldset>
@@ -6342,8 +6393,8 @@
                                 <p class="text-muted mb-0">Complete preflight review before confirmation.</p>
                             </div>
                             <div class="alert alert-danger mt-3 mb-0 d-none" id="data-management-migration-mirror-confirmation" role="alert">
-                                <strong>Destructive mode.</strong> Migration-owned destination items may be deleted. Unowned destination data is retained and reported as a conflict.
-                                <label class="form-label mt-3" for="data_management_migration_mirror_confirmation_phrase">Type <code>MIRROR WITH DELETIONS</code> to authorize this run</label>
+                                <strong>Destructive destination cleanup.</strong> Only destination items previously created by SimpleChat migration may be deleted. Unowned destination data is retained and reported as a conflict.
+                                <label class="form-label mt-3" for="data_management_migration_mirror_confirmation_phrase">Type <code>MAKE DESTINATION MATCH SOURCE</code> to authorize this run</label>
                                 <input class="form-control" type="text" id="data_management_migration_mirror_confirmation_phrase" autocomplete="off">
                             </div>
                             <div class="form-check mt-3">
@@ -6973,6 +7024,107 @@
                                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Keep Backup</button>
                                     <button type="button" class="btn btn-danger" id="data-management-confirm-backup-delete-btn">Delete Backup</button>
                                 </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal fade" id="data-management-setup-guide-modal" tabindex="-1" aria-labelledby="data-management-setup-guide-title" aria-hidden="true">
+                    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="data-management-setup-guide-title">Backup, Migrate &amp; Restore Configuration Guide</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <p>Configure backup, migration, and restore readiness before an incident or cutover window. The safest path is to first prove backups, then rehearse migration or restore decisions from completed backup records.</p>
+                                <ol>
+                                    <li>Use dedicated backup storage that is separate from Enhanced Citation source files.</li>
+                                    <li>Generate and protect the backup encryption key, preferably in Key Vault.</li>
+                                    <li>Run a manual full backup and inspect the Backup Inventory entry.</li>
+                                    <li>For migration, connect destination Cosmos, Search, and storage services before selecting scope.</li>
+                                    <li>For restore, open Backup Inventory and stage the selected backup through the Restore workflow.</li>
+                                </ol>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal fade" id="data-management-backup-guide-modal" tabindex="-1" aria-labelledby="data-management-backup-guide-title" aria-hidden="true">
+                    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="data-management-backup-guide-title">Backup Setup Guide</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <p>Backups create durable artifacts and job records that later migration or restore workflows can inspect. Full backups capture a complete selected snapshot. Partial backups capture daily changes between full backups.</p>
+                                <ul>
+                                    <li><strong>Storage:</strong> Use a dedicated backup account/container so restore and migration artifacts never overwrite source documents.</li>
+                                    <li><strong>Encryption:</strong> Keep backup encryption enabled and store generated keys in Key Vault for production.</li>
+                                    <li><strong>Scope:</strong> Leave Cosmos DB and AI Search enabled unless you are intentionally creating a limited backup.</li>
+                                    <li><strong>Timing:</strong> Queue large backup jobs outside business hours because App Service workers perform the work.</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal fade" id="data-management-migration-guide-modal" tabindex="-1" aria-labelledby="data-management-migration-guide-title" aria-hidden="true">
+                    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="data-management-migration-guide-title">Migration Guide</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <p>Migration moves selected SimpleChat users, groups, public workspaces, and their optional documents to another SimpleChat environment.</p>
+                                <ul>
+                                    <li><strong>Copy missing items only:</strong> safest first run; existing destination records are not changed.</li>
+                                    <li><strong>Catch up changed items:</strong> use after a previous completed migration to copy new items and update migration-owned changes.</li>
+                                    <li><strong>Make destination match source:</strong> use only during cutover when migrated destination-only items should be removed.</li>
+                                    <li><strong>AI Search freeze:</strong> freeze external destination writers before moving Search documents because SimpleChat cannot coordinate external writers.</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal fade" id="data-management-ru-boost-guide-modal" tabindex="-1" aria-labelledby="data-management-ru-boost-guide-title" aria-hidden="true">
+                    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="data-management-ru-boost-guide-title">RU Boost Permission Guide</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <p>RU Boost temporarily raises eligible Cosmos DB throughput up to 10,000 RU/s and then restores the original setting. It can increase Azure charges and requires Azure management-plane permissions.</p>
+                                <ul>
+                                    <li><strong>Data copy permissions</strong> prove the identity can create, read, and delete probe records in destination Cosmos containers.</li>
+                                    <li><strong>RU Boost permissions</strong> prove the identity can read and write Cosmos throughput settings through Azure Resource Manager.</li>
+                                    <li>Destination RU Boost also needs the destination subscription ID and resource group because those values are not part of the data-plane endpoint.</li>
+                                    <li>Use Test RU Boost before a cutover window; it validates capacity permissions separately from migration data access.</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal fade" id="data-management-restore-guide-modal" tabindex="-1" aria-labelledby="data-management-restore-guide-title" aria-hidden="true">
+                    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="data-management-restore-guide-title">Restore Guide</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <p>Restore starts from Backup Inventory. The workflow helps admins confirm what is in the backup, what surfaces are safe to restore, and whether backend restore execution is available for the selected backup.</p>
+                                <ul>
+                                    <li>Prefer full backups for restore decisions because partial backups depend on earlier backup history.</li>
+                                    <li>Confirm the encryption key is still available before relying on encrypted artifacts.</li>
+                                    <li>Review warnings and missing surfaces before restoring AI Search or source document blobs.</li>
+                                    <li>Run restore only in a maintenance window because restored records can affect live users and search results.</li>
+                                </ul>
                             </div>
                         </div>
                     </div>
