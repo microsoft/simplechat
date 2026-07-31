@@ -1,6 +1,6 @@
 # Custom Pages
 
-Current version: **0.242.040**
+Current version: **0.250.106**
 
 Implemented in version: **0.242.023**
 
@@ -34,6 +34,8 @@ Request Access guidance modal and duplicate slug checks implemented in version: 
 
 Authenticated custom page navigation fix implemented in version: **0.242.040**
 
+Admin Settings Open action implemented in version: **0.250.106**
+
 ## Overview
 
 Custom Pages let app teams that deploy SimpleChat add trusted, deployment-time pages under the `/custom` namespace without changing the core application route code. The feature is controlled by the Admin Settings toggle `enable_custom_pages` and fails closed when disabled.
@@ -44,6 +46,7 @@ Custom Pages let app teams that deploy SimpleChat add trusted, deployment-time p
 - Cosmos DB metadata container `custom_pages`, configured in `application/single_app/config.py`
 - Static file folders under `application/single_app/custom_pages/`: `assets`, `css`, `html`, `js`, `json`, and `python`
 - Admin Settings metadata designer in `application/single_app/templates/admin_settings.html`
+- Admin Settings table actions in `application/single_app/static/js/admin/admin_custom_pages.js`
 
 ## Technical Specifications
 
@@ -97,9 +100,13 @@ Version `0.242.037` added post-create guidance for editing the Request Access em
 
 Version `0.242.040` changed navigation rendering so Custom Pages appears for any signed-in user only when `custom_pages_nav` contains at least one enabled, visible, authorized page. This allows `access_level=authenticated` pages such as Request Access to render for signed-in users without `User` or `Admin`, while hiding the pane when no custom page is available.
 
+Version `0.250.106` added an Admin Settings table Open action for each configured custom page. The action builds an encoded `/custom/<slug>` URL and opens it in a new tab so the existing custom page routes continue to enforce feature enablement, per-page enabled state, access level, allowed roles, and `.html` alias compatibility. Disabled pages and pages unavailable because Custom Pages is not enabled show a disabled Open action with explanatory tooltip copy.
+
 ## Usage Instructions
 
 Admins can open Admin Settings > Custom Pages to enable the feature and create metadata for simple static pages. Metadata references files already deployed under `application/single_app/custom_pages/html`, `css`, `js`, `assets`, and `json`.
+
+Admins can use the table's Open action to launch an enabled static or Python-backed page directly from Admin Settings. The action opens `/custom/<slug>` in a new tab with the admin's current session, so the same route-level authorization outcome applies as it would from navigation or a direct URL.
 
 For CSS, JavaScript, asset, and JSON references, admins add one file at a time using the Add button in the metadata designer. The backend still persists those values as arrays in the `custom_pages` Cosmos container.
 
@@ -125,7 +132,7 @@ The Python-backed example is discovered from code, so it should not be created i
 
 ## Testing and Validation
 
-Functional coverage was added in `functional_tests/test_custom_pages_wiring.py`. It validates version/configuration wiring, protected route registration, Admin Settings UI wiring, navigation integration, and the trusted HTML rendering boundary without requiring live Cosmos DB connectivity.
+Functional coverage was added in `functional_tests/test_custom_pages_wiring.py`. It validates version/configuration wiring, protected route registration, Admin Settings UI wiring, navigation integration, table Open action behavior, and the trusted HTML rendering boundary without requiring live Cosmos DB connectivity. UI contract coverage for the Admin Settings Open action lives in `ui_tests/test_admin_custom_pages_open_action.py`.
 
 Known limitations:
 

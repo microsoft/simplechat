@@ -11,6 +11,14 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Restore supports configured target Cosmos DB, AI Search, and Enhanced Citation blob targets while preserving secret-safe review and job responses.
     *   (Ref: Closes #1091, `functions_data_management.py`, `functions_data_management_restore_state.py`, `route_backend_data_management.py`, `admin_settings.html`, `admin_data_management.js`, `DATA_MANAGEMENT_RESTORE.md`)
 
+#### User Interface Enhancements
+
+*   **Custom Pages Admin Open Action**
+    *   Added an Open action to the Admin Settings Custom Pages table so administrators can launch enabled static or Python-backed custom pages directly from their metadata row.
+    *   The action opens encoded `/custom/<slug>` URLs in a new tab while preserving existing Custom Pages route authorization, enabled-state checks, access-level rules, role restrictions, and `.html` alias compatibility.
+    *   Disabled or unavailable pages now show a disabled Open action with explanatory tooltip copy instead of silently omitting the action.
+    *   (Ref: Closes #951, PR #1131, `admin_custom_pages.js`, `CUSTOM_PAGES.md`)
+
 ### **(v0.250.105)**
 
 #### User Interface Enhancements
