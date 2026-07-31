@@ -873,6 +873,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
                   <li><button type="button" class="dropdown-item" title="Extract selected PDFs again with Enhanced extraction. Enhanced preserves tables, page structure, forms, and checkbox states." onclick="reprocessGroupSelectedDocumentExtraction('layout')">Extract Again as Enhanced</button></li>
                 </ul>
               </div>
+              <button type="button" class="btn btn-sm btn-warning me-2 d-none" id="group-extract-selected-metadata-btn">
+                <i class="bi bi-magic me-1"></i>Extract Metadata
+              </button>
               <button type="button" class="btn btn-sm btn-info me-2" id="group-bulk-tag-btn"
                       data-bs-toggle="modal" data-bs-target="#groupBulkTagModal">
                 <i class="bi bi-tags me-1"></i>Tag Selected
@@ -4404,6 +4407,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     const removeBtn = document.getElementById("group-remove-selected-btn");
     const downloadBtn = document.getElementById("group-download-selected-btn");
     const reprocessDropdown = document.getElementById("group-reprocess-selected-dropdown");
+    const extractMetadataBtn = document.getElementById("group-extract-selected-metadata-btn");
 
     if (groupSelectedDocuments.size > 0) {
       // Show bulk actions bar with count
@@ -4419,6 +4423,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
       // Check if user can manage documents (delete permission)
       const canManage = ["Owner", "Admin", "DocumentManager"].includes(userRoleInActiveGroup);
+      const canModify = canManage && (window.currentGroupStatus || "active") === "active";
+      const metadataEnabled = window.enable_extract_meta_data === true || window.enable_extract_meta_data === "true";
 
       // Show/hide delete and remove buttons based on permissions
       if (deleteBtn) {
@@ -4427,6 +4433,10 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
       if (reprocessDropdown) {
         reprocessDropdown.classList.toggle("d-none", !canManage);
+      }
+
+      if (extractMetadataBtn) {
+        extractMetadataBtn.classList.toggle("d-none", !(canModify && metadataEnabled));
       }
 
       // Remove button is available for group documents
@@ -4440,6 +4450,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
       }
       if (downloadBtn) {
         downloadBtn.classList.add("d-none");
+      }
+      if (extractMetadataBtn) {
+        extractMetadataBtn.classList.add("d-none");
       }
     }
   }
@@ -4460,6 +4473,61 @@ app_settings.app_title }} {% endblock %} {% block head %}
     groupSelectedDocuments.clear();
     groupLastCardSelectionAnchorId = null;
     refreshGroupSelectionState();
+  }
+
+  async function requestGroupSelectedMetadataExtraction(documentIds) {
+    const response = await fetch("/api/group_documents/extract_metadata", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ document_ids: documentIds }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok && !(Array.isArray(data.queued) && data.queued.length > 0)) {
+      throw new Error(data.error || data.message || "Unable to queue metadata extraction.");
+    }
+    return data;
+  }
+
+  function showGroupSelectedMetadataExtractionResult(data) {
+    const queuedCount = Array.isArray(data.queued) ? data.queued.length : 0;
+    const errorCount = Array.isArray(data.errors) ? data.errors.length : 0;
+    const message = errorCount > 0
+      ? `Queued metadata extraction for ${queuedCount} document(s); ${errorCount} item(s) were skipped.`
+      : (data.message || `Queued metadata extraction for ${queuedCount} document(s).`);
+
+    showToast(message, errorCount > 0 ? "warning" : "success");
+  }
+
+  async function extractGroupSelectedMetadata() {
+    const documentIds = Array.from(groupSelectedDocuments);
+    if (documentIds.length === 0) {
+      return;
+    }
+    if (!(window.enable_extract_meta_data === true || window.enable_extract_meta_data === "true")) {
+      showToast("Metadata extraction is not enabled.", "info");
+      return;
+    }
+
+    const extractMetadataBtn = document.getElementById("group-extract-selected-metadata-btn");
+    if (extractMetadataBtn) {
+      extractMetadataBtn.disabled = true;
+      extractMetadataBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>Extracting...';
+    }
+
+    try {
+      const data = await requestGroupSelectedMetadataExtraction(documentIds);
+      showGroupSelectedMetadataExtractionResult(data);
+      groupSelectedDocuments.clear();
+      refreshGroupSelectionState();
+      fetchGroupDocuments();
+    } catch (error) {
+      showToast(error.message, "danger");
+    } finally {
+      if (extractMetadataBtn) {
+        extractMetadataBtn.disabled = false;
+        extractMetadataBtn.innerHTML = '<i class="bi bi-magic me-1"></i>Extract Metadata';
+      }
+    }
   }
 
   function deleteGroupSelectedDocuments() {
@@ -4590,6 +4658,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
   window.toggleGroupSelectionMode = toggleGroupSelectionMode;
   window.deleteGroupSelectedDocuments = deleteGroupSelectedDocuments;
   window.removeGroupSelectedDocuments = removeGroupSelectedDocuments;
+  window.extractGroupSelectedMetadata = extractGroupSelectedMetadata;
 
   // --- Initialization ---
   document.addEventListener("DOMContentLoaded", () => {
@@ -4621,6 +4690,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     const groupDeleteSelectedBtn = document.getElementById("group-delete-selected-btn");
     const groupDownloadSelectedBtn = document.getElementById("group-download-selected-btn");
     const groupRemoveSelectedBtn = document.getElementById("group-remove-selected-btn");
+    const groupExtractSelectedMetadataBtn = document.getElementById("group-extract-selected-metadata-btn");
     const groupClearSelectionBtn = document.getElementById("group-clear-selection-btn");
 
     if (groupDeleteSelectedBtn) {
@@ -4631,6 +4701,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
     }
     if (groupRemoveSelectedBtn) {
       groupRemoveSelectedBtn.addEventListener("click", removeGroupSelectedDocuments);
+    }
+    if (groupExtractSelectedMetadataBtn) {
+      groupExtractSelectedMetadataBtn.addEventListener("click", extractGroupSelectedMetadata);
     }
     if (groupClearSelectionBtn) {
       groupClearSelectionBtn.addEventListener("click", clearGroupSelection);
@@ -8854,4 +8927,3 @@ app_settings.app_title }} {% endblock %} {% block head %}
 <script type="module" src="/static/js/workspace/group_plugins.js"></script>
 {% endif %}
 {% endblock %}
-
