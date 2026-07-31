@@ -619,7 +619,12 @@ def register_route_backend_data_management(bp):
                 manual_execution=True,
             )
         except DataManagementSettingsValidationError as exc:
-            return jsonify({"success": False, "error": str(exc)}), 400
+            log_event(
+                "[DataManagement] Manual backup retention cleanup validation failed.",
+                {"error": str(exc)},
+                level=logging.WARNING,
+            )
+            return jsonify({"success": False, "error": "Backup retention cleanup request is invalid."}), 400
         except Exception as exc:
             log_event(
                 "[DataManagement] Manual backup retention cleanup failed.",
