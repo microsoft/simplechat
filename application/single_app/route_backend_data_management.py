@@ -799,9 +799,14 @@ def register_route_backend_data_management(bp):
                 raise
             submitted = submit_data_management_job(current_app._get_current_object(), job.get("id"))
         except DataManagementSettingsValidationError as exc:
+            log_event(
+                "[DataManagement] Validation error while queuing data management job.",
+                {"operation": operation, "error": str(exc)},
+                level=logging.WARNING,
+            )
             response = {
                 "success": False,
-                "error": str(exc),
+                "error": "Data Management job request is invalid.",
             }
             if operation == DATA_MANAGEMENT_OPERATION_MIGRATION:
                 response["workflow_step"] = "confirm"
