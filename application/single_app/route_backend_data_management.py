@@ -275,7 +275,15 @@ def register_route_backend_data_management(bp):
                 migration_plan=migration_plan,
             )
         except DataManagementSettingsValidationError as exc:
-            return jsonify({"success": False, "error": str(exc)}), 400
+            log_event(
+                "[DataManagement] Target Cosmos RU Boost permission test validation failed.",
+                {"error": str(exc)},
+                level=logging.WARNING,
+            )
+            return jsonify({
+                "success": False,
+                "error": "Target Cosmos RU Boost permission test request is invalid.",
+            }), 400
         except Exception as exc:
             log_event(
                 "[DataManagement] Target Cosmos RU Boost permission test failed.",
