@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.107)**
+
+#### Bug Fixes
+
+*   **Mixed Source Manifest Storage Locator Preservation**
+    *   Preserved explicit blob storage locators for authorized non-chat mixed-source manifest entries when archived-revision document metadata already contains a resolved container and blob path.
+    *   Updated focused mixed-source Analyze and conversation-continuity tests for the current rollout/version contract.
+    *   (Ref: #1055, #1056, mixed-source manifests, `functions_mixed_source_orchestration.py`, `test_mixed_source_manifest_contracts.py`)
+
 ### **(v0.250.106)**
 
 #### New Features

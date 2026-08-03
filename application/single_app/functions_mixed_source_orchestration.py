@@ -621,6 +621,8 @@ def _build_authorized_manifest_entry(document_id, user_id, document_context):
 
     storage_locator = None
     if scope != SOURCE_SCOPE_CHAT:
+        explicit_blob_container = document_item.get("blob_container")
+        explicit_blob_path = document_item.get("blob_path") or document_item.get("archived_blob_path")
         try:
             from functions_documents import get_document_blob_storage_info
 
@@ -649,6 +651,11 @@ def _build_authorized_manifest_entry(document_id, user_id, document_context):
                 }
         except Exception:
             storage_locator = None
+        if storage_locator is None and explicit_blob_container and explicit_blob_path:
+            storage_locator = {
+                "container": str(explicit_blob_container),
+                "blob_path": str(explicit_blob_path),
+            }
 
     return {
         "document_id": document_id,

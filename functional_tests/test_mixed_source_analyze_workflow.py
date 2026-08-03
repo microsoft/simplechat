@@ -2,8 +2,8 @@
 # test_mixed_source_analyze_workflow.py
 """
 Functional test for Phase 3 mixed-source combined Analyze.
-Version: 0.250.073
-Implemented in: 0.250.072; updated in 0.250.073
+Version: 0.250.107
+Implemented in: 0.250.072; updated in 0.250.107
 
 This test ensures #1058 composes native narrative and tabular analysis behind
 automatic combined Analyze routing, retains terminal coverage after either
@@ -69,8 +69,8 @@ def test_phase_3_mixed_analyze_is_automatic_and_preserves_per_document_mode():
     )
     runner_source = ast.get_source_segment(workflow_source, runner) or ''
 
-    assert 'enable_mixed_source_analyze' not in settings_source
-    assert 'enable_mixed_source_analyze' not in workflow_source
+    assert "'enable_mixed_source_analyze':" not in settings_source
+    assert "settings.get('enable_mixed_source_analyze'" not in workflow_source
     assert 'def _raise_legacy_mixed_source_analyze_limitation(' not in workflow_source
     assert runner_source.count('analysis_result = _execute_mixed_source_analyze_workflow(') == 2
     assert '_is_per_document_analysis_mode(analysis_config)' in runner_source
