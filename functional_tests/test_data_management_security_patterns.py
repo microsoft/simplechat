@@ -2,12 +2,14 @@
 # test_data_management_security_patterns.py
 """
 Functional test for Data Management security patterns.
-Version: 0.250.105
+Version: 0.250.108
 Implemented in: 0.241.211
 Updated in: 0.250.102
 Updated in: 0.250.103
 Updated in: 0.250.104
 Updated in: 0.250.105
+Updated in: 0.250.106
+Updated in: 0.250.108
 
 This test ensures Data Management admin routes require authenticated admin
 access, secrets stay redacted in frontend responses, and the admin browser
@@ -74,7 +76,7 @@ def test_version_and_container_registration():
     """Validate the Data Management version and Cosmos job container registrations."""
     config_source = read_text(CONFIG_FILE)
 
-    assert 'VERSION = "0.250.105"' in config_source
+    assert 'VERSION = "0.250.108"' in config_source
     assert 'cosmos_data_management_jobs_container_name = "data_management_jobs"' in config_source
     assert 'partition_key=PartitionKey(path="/id")' in config_source
     assert 'cosmos_data_management_job_items_container_name = "data_management_job_items"' in config_source
@@ -94,7 +96,7 @@ def test_version_and_container_registration():
 def test_admin_routes_require_login_admin_and_swagger_security():
     """Validate every Data Management route has the required admin security stack."""
     routes = route_functions_with_decorators()
-    assert len(routes) == 24
+    assert len(routes) == 29
 
     for function_name, decorators in routes:
         assert "swagger_route" in decorators, f"{function_name} missing swagger_route"
@@ -227,7 +229,7 @@ def test_settings_secrets_are_redacted_for_frontend():
     assert 'DATA_MANAGEMENT_MIGRATION_MAX_DESTINATION_RU = 10000' in source
     assert 'DATA_MANAGEMENT_MIGRATION_MODE_DELTA_UPSERT = "delta_upsert"' in source
     assert 'DATA_MANAGEMENT_MIGRATION_MODE_MIRROR = "mirror_with_deletions"' in source
-    assert 'DATA_MANAGEMENT_MIRROR_CONFIRMATION = "MIRROR WITH DELETIONS"' in source
+    assert 'DATA_MANAGEMENT_MIRROR_CONFIRMATION = "MAKE DESTINATION MATCH SOURCE"' in source
     assert 'DATA_MANAGEMENT_SEARCH_WRITE_FREEZE_CONFIRMATION_ERROR' in source
     assert '_validate_target_ai_search_migration_write_safety' in source
     assert '_get_target_data_management_search_write_gate_container' in source
@@ -527,17 +529,23 @@ def test_admin_ui_exposes_data_management_without_external_assets():
     route_source = read_text(ROUTE_FILE)
     assert 'continuation_token=continuation_token' in route_source
     assert '@bp.route("/api/admin/data-management/migration/review", methods=["POST"])' in route_source
+    assert '@bp.route("/api/admin/data-management/target/cosmos/ru-boost/test", methods=["POST"])' in route_source
+    assert '@bp.route("/api/admin/data-management/restore/review", methods=["POST"])' in route_source
     assert 'review_data_management_migration(' in route_source
+    assert 'review_data_management_restore(' in route_source
     assert '"workflow_step": "review"' in route_source
     assert 'hmac.compare_digest(' in route_source
     assert 'get_data_management_migration_review_fingerprint(' in route_source
     assert 'create_data_management_migration_review_authorization(' in route_source
     assert 'reserve_data_management_migration_review_authorization(' in route_source
-    assert 'release_data_management_migration_review_reservation(' in route_source
+    assert 'release_data_management_migration_review_reservation' in route_source
     assert 'except DataManagementHistoryPaginationError:' in route_source
     assert 'DATA_MANAGEMENT_HISTORY_VALIDATION_ERROR' in route_source
     assert 'except DataManagementHistoryPaginationError as exc:' not in route_source
     assert 'data-management-restore-dry-run-btn' not in template
+    assert 'id="data-management-restore-modal"' in template
+    assert 'id="data-management-test-target-cosmos-ru-boost-btn"' in template
+    assert 'MAKE DESTINATION MATCH SOURCE' in template
     assert 'data-management-migration-dry-run-btn' not in template
     admin_settings_js = read_text(APP_ROOT / "static" / "js" / "admin" / "admin_settings.js")
     assert "closest('[data-ignore-settings-change=\"true\"]')" in admin_settings_js
@@ -545,8 +553,10 @@ def test_admin_ui_exposes_data_management_without_external_assets():
     assert "window.updateAdminSettingsSaveButtonState = updateSaveButtonState;" in admin_settings_js
     assert '<span class="nav-text">Target Cosmos</span>' not in sidebar
     assert '<span class="nav-text">Migration</span>' in sidebar
+    assert '<span class="nav-text">Backup, Migrate &amp; Restore</span>' in sidebar
     assert 'cdn.jsdelivr.net' not in read_text(ADMIN_JS)
     assert 'data-tab="data-management"' in sidebar
+    assert 'data-section="data-management-readiness-section"' in sidebar
     assert 'data-section="data-management-backup-section"' in sidebar
     assert 'data-section="data-management-cosmos-editor-section"' in sidebar
     assert 'data-section="data-management-backup-inventory-section"' in sidebar

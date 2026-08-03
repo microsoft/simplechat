@@ -7,7 +7,7 @@ const backupStorageAuthManagedIdentity = "managed_identity";
 const backupStorageAuthConnectionString = "connection_string";
 const targetCosmosDatabaseName = "SimpleChat";
 const cosmosEditorConfirmationPhrase = "I understand this can damage system data";
-const migrationMirrorConfirmationPhrase = "MIRROR WITH DELETIONS";
+const migrationMirrorConfirmationPhrase = "MAKE DESTINATION MATCH SOURCE";
 const restoreOverwriteConfirmationPhrase = "RESTORE WITH OVERWRITE";
 const elements = {};
 let dataManagementModified = false;
@@ -67,7 +67,6 @@ const migrationWorkflowState = {
     submissionAccepted: false,
     currentJob: null,
 };
-
 document.addEventListener("DOMContentLoaded", () => {
     bindElements();
     if (!elements.tabPane) {
@@ -152,6 +151,7 @@ function bindElements() {
         "data_management_target_cosmos_subscription_id",
         "data_management_target_cosmos_resource_group",
         "data-management-test-target-cosmos-btn",
+        "data-management-test-target-cosmos-ru-boost-btn",
         "data-management-target-ai-search-section",
         "data_management_target_ai_search_auth",
         "data_management_target_ai_search_endpoint",
@@ -330,6 +330,7 @@ function bindEvents() {
     elements.dataManagementGenerateKeyBtn?.addEventListener("click", generateEncryptionKey);
     elements.dataManagementTestStorageBtn?.addEventListener("click", testBackupStorage);
     elements.dataManagementTestTargetCosmosBtn?.addEventListener("click", testTargetCosmos);
+    elements.dataManagementTestTargetCosmosRuBoostBtn?.addEventListener("click", testTargetCosmosRuBoost);
     elements.dataManagementTestMigrationAccessBtn?.addEventListener("click", testMigrationAccess);
     elements.dataManagementTestTargetSearchBtn?.addEventListener("click", testTargetSearch);
     elements.dataManagementTestTargetEcStorageBtn?.addEventListener("click", testTargetEnhancedCitationStorage);
@@ -844,9 +845,16 @@ function setMigrationTargetVisibility() {
 function updateMigrationCapacityVisibility() {
     const enabled = Boolean(elements.datamanagementmigrationtemporarydestinationruenabled?.checked);
     setElementVisible(elements.dataManagementMigrationTemporaryRuField, enabled);
-    if (elements.datamanagementmigrationtemporarydestinationru) {
-        elements.datamanagementmigrationtemporarydestinationru.disabled = !enabled;
-    }
+    [
+        elements.datamanagementmigrationtemporarydestinationru,
+        elements.datamanagementtargetcosmossubscriptionid,
+        elements.datamanagementtargetcosmosresourcegroup,
+        elements.dataManagementTestTargetCosmosRuBoostBtn,
+    ].forEach((element) => {
+        if (element) {
+            element.disabled = !enabled;
+        }
+    });
 }
 
 function updateBackupCapacityVisibility() {
@@ -1544,14 +1552,31 @@ async function testTargetCosmos() {
         });
         const verifiedCount = Number(data.migration_access?.container_count || 0);
         const accessText = verifiedCount ? ` Verified ${formatNumber(verifiedCount)} planned container(s).` : "";
-        const capacityText = data.capacity?.target_ru ? ` Temporary capacity can reach ${formatNumber(data.capacity.target_ru)} RU/s.` : "";
-        setStatus(`Target Cosmos connection succeeded. Database: ${data.database_name || targetCosmosDatabaseName}.${accessText}${capacityText}`, "success");
+        setStatus(`Target Cosmos data access succeeded. Database: ${data.database_name || targetCosmosDatabaseName}.${accessText}`, "success");
         showToast("Target Cosmos connection succeeded.", "success");
     } catch (error) {
         setStatus(error.message || "Target Cosmos connection test failed.", "danger");
         showToast(error.message || "Target Cosmos connection test failed.", "danger");
     } finally {
         setBusy(elements.dataManagementTestTargetCosmosBtn, false);
+    }
+}
+
+async function testTargetCosmosRuBoost() {
+    setBusy(elements.dataManagementTestTargetCosmosRuBoostBtn, true, "Testing...");
+    try {
+        const data = await requestJson("/api/admin/data-management/target/cosmos/ru-boost/test", {
+            method: "POST",
+            body: JSON.stringify({ settings: collectSettings(), migration_plan: buildMigrationPlan() }),
+        });
+        const targetCount = Array.isArray(data.targets) ? data.targets.length : 0;
+        setStatus(`RU Boost permission test succeeded. Verified ${formatNumber(targetCount)} destination capacity target(s) up to ${formatNumber(data.target_ru || 0)} RU/s.`, "success");
+        showToast("RU Boost permission test succeeded.", "success");
+    } catch (error) {
+        setStatus(error.message || "RU Boost permission test failed.", "danger");
+        showToast(error.message || "RU Boost permission test failed.", "danger");
+    } finally {
+        setBusy(elements.dataManagementTestTargetCosmosRuBoostBtn, false);
     }
 }
 
@@ -1563,8 +1588,7 @@ async function testMigrationAccess() {
             body: JSON.stringify({ settings: collectSettings(), migration_plan: buildMigrationPlan() }),
         });
         const verifiedCount = Number(data.migration_access?.container_count || 0);
-        const capacityText = data.capacity?.target_ru ? ` Destination capacity management is ready up to ${formatNumber(data.capacity.target_ru)} RU/s.` : "";
-        setStatus(`Cosmos migration access validation succeeded. ${formatNumber(verifiedCount)} planned Cosmos container(s) can be read and written.${capacityText}`, "success");
+        setStatus(`Cosmos data-copy access validation succeeded. ${formatNumber(verifiedCount)} planned Cosmos container(s) can be read and written. Use Test RU Boost for destination capacity permissions.`, "success");
         showToast("Cosmos migration access validation succeeded.", "success");
     } catch (error) {
         setStatus(error.message || "Cosmos migration access validation failed.", "danger");
@@ -1699,7 +1723,7 @@ async function queueMigration(dryRun) {
         migrationPlan.migration_mode === "mirror_with_deletions" &&
         migrationPlan.mirror_confirmation !== migrationMirrorConfirmationPhrase
     ) {
-        const message = `Type ${migrationMirrorConfirmationPhrase} before running a mirror migration.`;
+        const message = `Type ${migrationMirrorConfirmationPhrase} before running this destination cleanup.`;
         elements.datamanagementmigrationmirrorconfirmationphrase?.classList.add("is-invalid");
         elements.datamanagementmigrationmirrorconfirmationphrase?.focus();
         setStatus(message, "danger");
@@ -2241,8 +2265,8 @@ function updateMigrationModeVisibility() {
     elements.dataManagementMigrationMirrorConfirmation?.classList.toggle("d-none", !isMirror);
     const descriptions = {
         new_only: "Copies source items that are absent from the destination. Existing destination data is never updated or deleted.",
-        delta_upsert: "Copies new items and updates changed migration-owned items since the prior successful watermark. Destination-only data is retained.",
-        mirror_with_deletions: "Runs delta/upsert, then deletes destination-only items that carry successful SimpleChat migration ownership. Unowned data is retained.",
+        delta_upsert: "Copies new items and updates changed migration-owned items from the previous completed migration. Destination-only data is retained.",
+        mirror_with_deletions: "Catches up changed items, then removes destination-only items that were created by SimpleChat migration. Unowned data is retained.",
     };
     if (elements.dataManagementMigrationModeDescription) {
         elements.dataManagementMigrationModeDescription.textContent = descriptions[migrationMode] || descriptions.new_only;
@@ -2398,6 +2422,13 @@ function createMigrationSummaryCard(targetType, targetSummary) {
 
 function renderMigrationReviewChecks(checks) {
     const container = elements.dataManagementMigrationReviewChecks;
+    if (!container) {
+        return;
+    }
+    renderDataManagementReviewChecks(container, checks);
+}
+
+function renderDataManagementReviewChecks(container, checks) {
     if (!container) {
         return;
     }
@@ -3086,7 +3117,7 @@ function createBackupActionCell(backup) {
     if (canRestore) {
         const restoreButton = document.createElement("button");
         restoreButton.type = "button";
-        restoreButton.className = "btn btn-outline-danger btn-sm ms-1";
+        restoreButton.className = "btn btn-outline-warning btn-sm ms-1";
         restoreButton.append(createIcon("bi bi-arrow-counterclockwise me-1"), document.createTextNode("Restore"));
         restoreButton.addEventListener("click", () => openRestoreModal(backup));
         cell.appendChild(restoreButton);
@@ -4469,6 +4500,14 @@ function formatStatusLabel(value) {
 }
 
 function formatActivityLabel(value) {
+    const friendlyLabels = {
+        new_only: "Copy Missing Items Only",
+        delta_upsert: "Catch Up Changed Items",
+        mirror_with_deletions: "Make Destination Match Source",
+    };
+    if (friendlyLabels[value]) {
+        return friendlyLabels[value];
+    }
     return String(value || "")
         .replace(/[_-]/g, " ")
         .replace(/\b\w/g, (letter) => letter.toUpperCase());

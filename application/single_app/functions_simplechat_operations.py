@@ -79,6 +79,12 @@ FORKABLE_SINGLE_USER_CHAT_TYPES = {
     "group-single-user",
     "public",
 }
+FORKABLE_PERSONAL_CONTEXT_SCOPES = {
+    "",
+    "personal",
+    "model",
+    "model_knowledge",
+}
 PERSONAL_FORK_CONVERSATION_FIELDS = (
     "context",
     "tags",
@@ -275,7 +281,7 @@ def _authorize_fork_conversation_context(
             raise ConversationForkConflictError("The conversation context is invalid")
 
         scope = str(context_item.get("scope") or "").strip().lower()
-        if scope in {"", "personal"}:
+        if scope in FORKABLE_PERSONAL_CONTEXT_SCOPES:
             authorized_scopes.add("personal")
             continue
 

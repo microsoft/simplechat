@@ -226,6 +226,7 @@ function scrollToSection(sectionId) {
         // Security tab sections
         'keyvault-section': 'keyvault-section',
         // Data Management tab sections
+        'data-management-readiness-section': 'data-management-readiness-section',
         'data-management-backup-section': 'data-management-backup-section',
         'data-management-schedule-section': 'data-management-schedule-section',
         'data-management-storage-section': 'data-management-storage-section',

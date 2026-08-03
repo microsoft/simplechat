@@ -2,6 +2,26 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.109)**
+
+#### New Features
+
+*   **Per-Model Response Length Overrides**
+    *   Administrators can now set an optional response-length/output-token ceiling on each model in global multi-endpoint GPT configuration.
+    *   Standard chat applies the selected model's configured ceiling with the correct backend token parameter for GPT-5/o-series aliases and other OpenAI-compatible chat models.
+    *   Existing endpoint model records remain compatible when the field is blank or absent.
+    *   (Ref: Closes #1143, related #1047 and #358, `functions_settings.py`, `route_backend_chats.py`, `admin_model_endpoints.js`)
+
+### **(v0.250.108)**
+
+#### User Interface Enhancements
+
+*   **Backup, Migrate & Restore Admin Refresh**
+    *   Reworked the Admin Settings data-management tab into a clearer Backup, Migrate & Restore control center with start-here guidance, setup modals, and plain-language migration choices.
+    *   Separated destination Cosmos **RU Boost** configuration and testing from Cosmos data-copy access validation so admins can verify the correct Azure management-plane permissions before migration.
+    *   Aligned the refresh with the restore workflow from Backup Inventory so admins can review backup readiness, choose restore policy/surfaces, run preflight, and queue supported restore jobs.
+    *   (Ref: #1140, `admin_settings.html`, `admin_data_management.js`, `functions_data_management.py`, Data Management docs and tests)
+
 ### **(v0.250.107)**
 
 #### Bug Fixes
