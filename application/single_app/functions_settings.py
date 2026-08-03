@@ -1938,6 +1938,42 @@ def normalize_model_endpoint_auth_for_environment(endpoint_copy):
     return changed
 
 
+MODEL_RESPONSE_LENGTH_FIELDS = (
+    "responseLength",
+    "response_length",
+    "maxTokens",
+    "max_tokens",
+    "maxCompletionTokens",
+    "max_completion_tokens",
+)
+
+
+def normalize_model_response_length(value):
+    """Return a positive integer response length, or None when unset/invalid."""
+    if value in (None, "") or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+
+    value_text = str(value).strip()
+    if not value_text or not value_text.isdigit():
+        return None
+
+    response_length = int(value_text)
+    return response_length if response_length > 0 else None
+
+
+def normalize_model_response_length_from_model(model):
+    """Resolve the canonical response length from a model endpoint row."""
+    if not isinstance(model, dict):
+        return None
+
+    for field_name in MODEL_RESPONSE_LENGTH_FIELDS:
+        if field_name in model:
+            return normalize_model_response_length(model.get(field_name))
+    return None
+
+
 def normalize_model_endpoints(endpoints):
     """Normalize model endpoints with stable IDs and enabled flags."""
     if not isinstance(endpoints, list):
@@ -1985,6 +2021,18 @@ def normalize_model_endpoints(endpoints):
                     changed = True
             if model_copy.get("enabled") is None:
                 model_copy["enabled"] = True
+                changed = True
+            response_length = normalize_model_response_length_from_model(model_copy)
+            for response_length_field in MODEL_RESPONSE_LENGTH_FIELDS:
+                if response_length_field != "responseLength" and response_length_field in model_copy:
+                    model_copy.pop(response_length_field, None)
+                    changed = True
+            if response_length is None:
+                if "responseLength" in model_copy:
+                    model_copy.pop("responseLength", None)
+                    changed = True
+            elif model_copy.get("responseLength") != response_length:
+                model_copy["responseLength"] = response_length
                 changed = True
             try:
                 normalized_icon = normalize_icon_payload(model_copy.get("icon"), field_name="model.icon")

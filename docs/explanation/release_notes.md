@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.109)**
+
+#### New Features
+
+*   **Per-Model Response Length Overrides**
+    *   Administrators can now set an optional response-length/output-token ceiling on each model in global multi-endpoint GPT configuration.
+    *   Standard chat applies the selected model's configured ceiling with the correct backend token parameter for GPT-5/o-series aliases and other OpenAI-compatible chat models.
+    *   Existing endpoint model records remain compatible when the field is blank or absent.
+    *   (Ref: Closes #1143, related #1047 and #358, `functions_settings.py`, `route_backend_chats.py`, `admin_model_endpoints.js`)
+
 ### **(v0.250.108)**
 
 #### User Interface Enhancements
