@@ -290,12 +290,37 @@ def _resolve_reasoning_effort_for_model(reasoning_effort, model_name, provider=N
     return resolved_reasoning_effort
 
 
+def _apply_response_length_for_model(api_params, response_length, model_name, provider=None, response_length_parameter=None):
+    normalized_response_length = normalize_model_response_length(response_length)
+    if not normalized_response_length:
+        return None
+
+    response_length_parameter = response_length_parameter or ModelEndpointBehavior(provider, model_name).response_length_parameter
+    api_params[response_length_parameter] = normalized_response_length
+    debug_print(
+        f"[ModelEndpoint] Applying response length: {response_length_parameter}={normalized_response_length} for {model_name}"
+    )
+    return response_length_parameter
+
+
 def _is_foundry_non_openai_model(provider, model_name):
     return ModelEndpointBehavior(provider, model_name).is_foundry_non_openai_model
 
 
 def _should_inject_fact_memory_context_for_model(provider, model_name):
     return ModelEndpointBehavior(provider, model_name).context_mode != MODEL_CONTEXT_MODE_FOLD_LATEST_USER
+
+
+def _build_model_endpoint_behavior_name(model_cfg, deployment):
+    if not isinstance(model_cfg, dict):
+        return deployment
+    model_names = [
+        deployment,
+        model_cfg.get('modelName'),
+        model_cfg.get('displayName'),
+        model_cfg.get('name'),
+    ]
+    return ' '.join(str(model_name or '').strip() for model_name in model_names if str(model_name or '').strip())
 
 
 def _build_plain_fact_memory_background_notes(prompt_payload):
@@ -10876,6 +10901,13 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
     api_version = str(connection.get('openai_api_version') or connection.get('api_version') or '').strip()
     runtime_protocol = infer_model_endpoint_protocol(provider, endpoint, deployment)
     model_icon = _normalize_model_icon_payload(model_cfg.get('icon'))
+    model_response_length = normalize_model_response_length_from_model(model_cfg)
+    model_behavior_name = _build_model_endpoint_behavior_name(model_cfg, deployment)
+    model_response_length_parameter = (
+        ModelEndpointBehavior(provider, model_behavior_name).response_length_parameter
+        if model_response_length
+        else None
+    )
 
     if requested_provider and requested_provider != provider:
         debug_print(
@@ -10905,7 +10937,9 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
     debug_print(
         f"[Streaming][Model Resolution] Resolved {selection_source} multi-endpoint model | "
         f"provider={provider} | endpoint_id={requested_endpoint_id} | model_id={model_cfg.get('id')} | "
-        f"deployment={deployment} | api_version={api_version} | protocol={runtime_protocol}"
+        f"deployment={deployment} | api_version={api_version} | protocol={runtime_protocol} | "
+        f"response_length={model_response_length or ''} | "
+        f"response_length_parameter={model_response_length_parameter or ''}"
     )
     return (
         gpt_client,
@@ -10917,6 +10951,8 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         requested_endpoint_id,
         str(model_cfg.get('id') or '').strip(),
         model_icon,
+        model_response_length,
+        model_response_length_parameter,
     )
 
 
@@ -12889,6 +12925,8 @@ def register_route_backend_chats(bp):
             gpt_endpoint_id = None
             gpt_model_id = None
             gpt_model_icon = None
+            gpt_response_length = None
+            gpt_response_length_parameter = None
             tabular_model_context = None
             enable_gpt_apim = settings.get('enable_gpt_apim', False)
             enable_image_gen_apim = settings.get('enable_image_gen_apim', False)
@@ -12921,6 +12959,8 @@ def register_route_backend_chats(bp):
                         gpt_endpoint_id,
                         gpt_model_id,
                         gpt_model_icon,
+                        gpt_response_length,
+                        gpt_response_length_parameter,
                     ) = multi_endpoint_config
                 elif enable_gpt_apim:
                     # read raw comma-delimited deployments
@@ -13342,6 +13382,7 @@ def register_route_backend_chats(bp):
                     'model_id': gpt_model_id or data.get('model_id'),
                     'model_provider': gpt_provider or data.get('model_provider'),
                     'model_icon': gpt_model_icon,
+                    'response_length': gpt_response_length,
                     'reasoning_effort': reasoning_effort if reasoning_effort and reasoning_effort != 'none' else None,
                     'streaming': 'Disabled'
                 }
@@ -15597,6 +15638,13 @@ def register_route_backend_chats(bp):
                     'model': gpt_model,
                     'messages': conversation_history_for_api,
                 }
+                _apply_response_length_for_model(
+                    api_params,
+                    gpt_response_length,
+                    gpt_model,
+                    provider=gpt_provider,
+                    response_length_parameter=gpt_response_length_parameter,
+                )
 
                 request_reasoning_effort = _resolve_reasoning_effort_for_model(
                     reasoning_effort,
@@ -15869,6 +15917,7 @@ def register_route_backend_chats(bp):
                         'model_id': gpt_model_id,
                         'model_provider': gpt_provider,
                         'model_icon': gpt_model_icon,
+                        'response_length': gpt_response_length,
                         'streaming': 'Disabled',
                     },
                     'history_context': history_debug_info,
@@ -16592,6 +16641,8 @@ def register_route_backend_chats(bp):
                 gpt_endpoint_id = None
                 gpt_model_id = None
                 gpt_model_icon = None
+                gpt_response_length = None
+                gpt_response_length_parameter = None
                 tabular_model_context = None
                 enable_gpt_apim = settings.get('enable_gpt_apim', False)
                 should_use_default_model = (
@@ -16625,6 +16676,8 @@ def register_route_backend_chats(bp):
                             gpt_endpoint_id,
                             gpt_model_id,
                             gpt_model_icon,
+                            gpt_response_length,
+                            gpt_response_length_parameter,
                         ) = streaming_multi_endpoint_config
                     elif enable_gpt_apim:
                         raw = settings.get('azure_apim_gpt_deployment', '')
@@ -16993,6 +17046,7 @@ def register_route_backend_chats(bp):
                         'model_id': gpt_model_id or data.get('model_id'),
                         'model_provider': gpt_provider or data.get('model_provider'),
                         'model_icon': gpt_model_icon,
+                        'response_length': gpt_response_length,
                         'reasoning_effort': reasoning_effort if reasoning_effort and reasoning_effort != 'none' else None,
                         'streaming': 'Enabled'
                     }
@@ -18432,6 +18486,7 @@ def register_route_backend_chats(bp):
                                     'model_id': gpt_model_id,
                                     'model_provider': gpt_provider,
                                     'model_icon': gpt_model_icon,
+                                    'response_length': gpt_response_length,
                                     'streaming': 'Enabled',
                                 },
                                 'history_context': history_debug_info,
@@ -18836,6 +18891,13 @@ def register_route_backend_chats(bp):
                             'stream': True,
                             'stream_options': {'include_usage': True}  # Request token usage in final chunk
                         }
+                        _apply_response_length_for_model(
+                            stream_params,
+                            gpt_response_length,
+                            gpt_model,
+                            provider=gpt_provider,
+                            response_length_parameter=gpt_response_length_parameter,
+                        )
 
                         request_reasoning_effort = _resolve_reasoning_effort_for_model(
                             reasoning_effort,
@@ -19014,6 +19076,7 @@ def register_route_backend_chats(bp):
                                 'model_id': gpt_model_id,
                                 'model_provider': gpt_provider,
                                 'model_icon': gpt_model_icon,
+                                'response_length': gpt_response_length,
                                 'streaming': 'Enabled',
                             },
                             'history_context': history_debug_info,
@@ -19102,6 +19165,7 @@ def register_route_backend_chats(bp):
                         if 'metadata' in user_message_doc and 'model_selection' in user_message_doc['metadata']:
                             user_message_doc['metadata']['model_selection']['selected_model'] = final_model_used if use_agent_streaming else gpt_model
                             user_message_doc['metadata']['model_selection']['model_icon'] = gpt_model_icon
+                            user_message_doc['metadata']['model_selection']['response_length'] = gpt_response_length
                         if selected_agent_metadata:
                             user_message_doc.setdefault('metadata', {})['agent_selection'] = selected_agent_metadata
                         cosmos_messages_container.upsert_item(user_message_doc)
