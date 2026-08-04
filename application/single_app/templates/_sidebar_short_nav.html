@@ -5,6 +5,7 @@
 {% set sidebar_menu_state = sidebar_menu_state_raw if sidebar_menu_state_raw is mapping else {} %}
 {% set sidebar_settings = settings if settings is defined else app_settings %}
 {% set latest_features_nav_is_hidden = latest_features_nav_hidden | default(false) %}
+{% set public_workspace_labels = app_settings.public_workspace_labels %}
 <div id="sidebar-nav" class="d-flex flex-column bg-light border-end sidebar-expanded chat-sidebar-nav offcanvas-lg offcanvas-start" tabindex="-1" aria-labelledby="chatSidebarDrawerLabel" data-navigation-drawer="chat-rail">
 
   <div class="offcanvas-header chat-sidebar-mobile-header">
@@ -60,7 +61,7 @@
           {% endif %}
           {% if app_settings.enable_public_workspaces %}
           <a class="list-group-item list-group-item-action" href="{{ url_for('frontend_public_workspaces.public_directory') }}">
-            <i class="bi bi-globe-americas me-2"></i>Public
+            <i class="bi bi-globe-americas me-2"></i>{{ public_workspace_labels.short }}
           </a>
           {% endif %}
           <a class="list-group-item list-group-item-action" href="{{ url_for('frontend_chats.chats') }}">
@@ -286,7 +287,7 @@
           {% endif %}
           {% if app_settings.enable_public_workspaces %}
           <li>
-            <a class="dropdown-item" href="{{ url_for('frontend_public_workspaces.my_public_workspaces') }}">My Public Workspaces</a>
+            <a class="dropdown-item" href="{{ url_for('frontend_public_workspaces.my_public_workspaces') }}">My {{ public_workspace_labels.plural }}</a>
           </li>
           {% endif %}
           {% if app_settings.enable_user_feedback %}

@@ -9,6 +9,8 @@ let currentStatsWindow = { days: 30, startDate: '', endDate: '' };
 let currentStatsData = null;
 const defaultWorkspaceHeroColor = '#0078d4';
 const workspaceHeroColorPattern = /^#[0-9a-fA-F]{6}$/;
+const publicWorkspaceSingular = window.getPublicWorkspaceLabel ? window.getPublicWorkspaceLabel('singular') : 'Public Workspace';
+const publicWorkspaceLowerSingular = window.getPublicWorkspaceLabel ? window.getPublicWorkspaceLabel('lower_singular') : 'public workspace';
 
 function normalizeWorkspaceHeroColor(color) {
   const candidate = String(color || '').trim();
@@ -283,7 +285,7 @@ $(document).ready(function () {
           `);
           $("#deleteWorkspaceWarningModal").modal("show");
         } else {
-          if (!confirm("Permanently delete this public workspace?")) return;
+          if (!confirm(`Permanently delete this ${publicWorkspaceLowerSingular}?`)) return;
           $.ajax({
             url: `/api/public_workspaces/${workspaceId}`,
             method: "DELETE",
@@ -1025,7 +1027,7 @@ async function exportWorkspaceStats() {
     const windowLabel = stats.window?.label || getStatsWindowLabel(exportWindow);
     const rows = [];
 
-    rows.push('Public Workspace Stats Export');
+    rows.push(`${publicWorkspaceSingular} Stats Export`);
     appendCsvRow(rows, ['Export Date', new Date().toLocaleString()]);
     appendCsvRow(rows, ['Data Period', windowLabel]);
     appendCsvSectionBreak(rows);
@@ -1077,10 +1079,10 @@ async function exportWorkspaceStats() {
     if (modal) {
       modal.hide();
     }
-    showStatsToast('Public workspace stats exported successfully.', 'success');
+    showStatsToast(`${publicWorkspaceSingular} stats exported successfully.`, 'success');
   } catch (error) {
     console.error('Failed to export public workspace stats:', error);
-    showStatsToast('Failed to export public workspace stats.', 'danger');
+    showStatsToast(`Failed to export ${publicWorkspaceLowerSingular} stats.`, 'danger');
   } finally {
     if (exportButton) {
       exportButton.disabled = false;

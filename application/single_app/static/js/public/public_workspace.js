@@ -6,6 +6,8 @@ let userRoleInActivePublic = null;
 let userPublics = [];
 let activePublicId = null;
 let activePublicName = '';
+const publicWorkspaceLowerSingular = window.getPublicWorkspaceLabel ? window.getPublicWorkspaceLabel('lower_singular') : 'public workspace';
+const publicWorkspaceLowerPlural = window.getPublicWorkspaceLabel ? window.getPublicWorkspaceLabel('lower_plural') : 'public workspaces';
 
 // Documents state
 let publicDocsCurrentPage = 1;
@@ -251,7 +253,7 @@ async function downloadPublicDocumentFile(documentId, event) {
     event.stopPropagation();
   }
   if (!publicFileDownloadsEnabled) {
-    showPublicDocumentDeleteFeedback('File downloads are disabled for this public workspace.', 'warning');
+    showPublicDocumentDeleteFeedback(`File downloads are disabled for this ${publicWorkspaceLowerSingular}.`, 'warning');
     return;
   }
 
@@ -525,8 +527,8 @@ document.addEventListener('DOMContentLoaded', ()=>{
     if(activePublicId) loadActivePublicData();
     else {
       const noActivePublicMessage = userPublics.length === 0
-        ? 'No public workspaces are available. Select My Workspaces to create one.'
-        : 'Please select an active public workspace.';
+        ? `No ${publicWorkspaceLowerPlural} available. Select My Workspaces to create one.`
+        : `Please select an active ${publicWorkspaceLowerSingular}.`;
       setPublicTableMessage(publicDocsTableBody, 4, noActivePublicMessage);
       setPublicTableMessage(publicPromptsTableBody, 2, noActivePublicMessage);
       renderPublicPromptsEmptyState(noActivePublicMessage);
@@ -704,7 +706,7 @@ async function fetchUserPublics(){
 
       const emptyItem = document.createElement('div');
       emptyItem.className = 'dropdown-item-text text-muted small text-wrap';
-      emptyItem.textContent = 'No public workspaces are available. Select My Workspaces to create one.';
+      emptyItem.textContent = `No ${publicWorkspaceLowerPlural} available. Select My Workspaces to create one.`;
       publicDropdownItems.appendChild(emptyItem);
 
       const emptyOption = document.createElement('option');
@@ -2532,7 +2534,7 @@ async function downloadPublicSelectedDocuments() {
     return;
   }
   if (!publicFileDownloadsEnabled) {
-    showPublicDocumentDeleteFeedback('File downloads are disabled for this public workspace.', 'warning');
+    showPublicDocumentDeleteFeedback(`File downloads are disabled for this ${publicWorkspaceLowerSingular}.`, 'warning');
     return;
   }
 

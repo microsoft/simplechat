@@ -40,6 +40,11 @@ from functions_tabular_csv_query import (
     validate_tabular_csv_query_expression,
 )
 from functions_group import assert_group_role
+from functions_generated_file_exports import (
+    normalize_generated_output_format,
+    serialize_generated_json,
+    serialize_generated_xml,
+)
 from functions_model_endpoint_runtime import build_semantic_kernel_chat_service_for_model
 from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
 from functions_settings import get_settings
@@ -226,7 +231,7 @@ def _sanitize_file_base_name(file_name):
 
 def _build_generated_file_name(source_file_name, output_format):
     timestamp_suffix = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
-    normalized_extension = 'csv' if str(output_format or '').strip().lower() == 'csv' else 'json'
+    normalized_extension = normalize_generated_output_format(output_format)
     return f"{_sanitize_file_base_name(source_file_name)}_generated_{timestamp_suffix}.{normalized_extension}"
 
 
@@ -2266,7 +2271,7 @@ def _write_ordered_output_stream(run, output_stream):
 
 
 def _complete_run(run):
-    output_format = str(run.get('output_format') or 'json').strip().lower() or 'json'
+    output_format = normalize_generated_output_format(run.get('output_format'))
     generated_file_name = run.get('generated_file_name') or _build_generated_file_name(
         run.get('source_file_name'),
         output_format,

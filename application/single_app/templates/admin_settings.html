@@ -9621,6 +9621,23 @@
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow creation of public workspaces that are visible and accessible to all users in the organization for broad knowledge sharing."></i>
                     </div>
 
+                    <div class="mb-3">
+                        <label class="form-label" for="public_workspace_display_name">End-user display name</label>
+                        <input
+                            type="text"
+                            class="form-control"
+                            id="public_workspace_display_name"
+                            name="public_workspace_display_name"
+                            maxlength="{{ settings.public_workspace_labels.max_length }}"
+                            value="{{ settings.public_workspace_display_name }}"
+                            placeholder="Public Workspace"
+                            aria-describedby="public-workspace-display-name-help"
+                        >
+                        <div class="form-text" id="public-workspace-display-name-help">
+                            Optional. End users will see this label instead of Public Workspace. Admin settings and internal references continue to use Public Workspace.
+                        </div>
+                    </div>
+
                     <div id="create_public_workspace_permission_setting" {% if not settings.enable_public_workspaces %}style="display: none;"{% endif %}>
                         <hr>
                         <div class="form-group form-check form-switch mb-2">

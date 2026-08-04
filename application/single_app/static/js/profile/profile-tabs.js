@@ -2,6 +2,8 @@
 
 (function () {
     const pageConfig = window.profilePageConfig || {};
+    const publicWorkspaceLowerSingular = window.getPublicWorkspaceLabel ? window.getPublicWorkspaceLabel('lower_singular') : 'public workspace';
+    const publicWorkspaceLowerPlural = window.getPublicWorkspaceLabel ? window.getPublicWorkspaceLabel('lower_plural') : 'public workspaces';
     const feedbackState = {
         currentPage: 1,
         pageSize: 10,
@@ -371,8 +373,8 @@
         },
         publicWorkspaces: {
             type: 'publicWorkspaces',
-            label: 'public workspaces',
-            itemLabel: 'public workspace',
+            label: publicWorkspaceLowerPlural,
+            itemLabel: publicWorkspaceLowerSingular,
             state: publicWorkspaceState,
             apiEndpoint: '/api/public_workspaces',
             responseKey: 'workspaces',
@@ -409,9 +411,9 @@
             discoverStatusId: 'profile-find-public-workspaces-status',
             discoverTbodyId: 'profile-find-public-workspaces-tbody',
             storageKey: 'simplechat.profile.publicWorkspaces.viewMode',
-            emptyMessage: 'No public workspaces found for the current search.',
-            loadingMessage: 'Loading public workspaces...',
-            discoverEmptyMessage: 'No public workspaces found for the current search.',
+            emptyMessage: `No ${publicWorkspaceLowerPlural} found for the current search.`,
+            loadingMessage: `Loading ${publicWorkspaceLowerPlural}...`,
+            discoverEmptyMessage: `No ${publicWorkspaceLowerPlural} found for the current search.`,
             requestLabel: 'Request Access',
         },
     };

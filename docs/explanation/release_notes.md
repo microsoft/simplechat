@@ -38,6 +38,45 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Foundry citation thoughts now include safe citation-specific labels when available while avoiding raw payloads, URL query strings, userinfo, and long unbounded text.
     *   (Ref: microsoft/simplechat#1145, `route_backend_chats.py`, `test_foundry_citation_thoughts.py`)
 
+### **(v0.250.114)**
+
+#### New Features
+
+*   **Generated JSON and XML Export Artifacts**
+    *   JSON and XML generation requests can now save valid generated output as downloadable chat artifacts instead of leaving large file-shaped content in the assistant response.
+    *   Document Analyze and generated export flows now recognize natural JSON/XML conversion and XML template-population phrasing, with XML serialization support added to durable generated exports.
+    *   XML document processing now uses a consolidated token-aware pipeline for more reliable analysis and export workflows.
+    *   (Ref: #1071, `functions_generated_file_exports.py`, generated analysis artifacts, XML document processing)
+
+### **(v0.250.112)**
+
+#### New Features
+
+*   **Model Capability Catalog**
+    *   Added an initial JSON source of truth for model feature capabilities across OpenAI GPT-5+, recent Claude models, Meta Llama and Code Llama, xAI Grok, and Microsoft Phi/MAI models.
+    *   Catalog entries track support for text, image, audio, video, binary/file input, coding optimization, tool calling, and structured output so future multimodal routing can move away from regex-only model-name checks.
+    *   This release is data-only and does not change backend or frontend runtime behavior.
+    *   (Ref: Closes #1147, `model_capabilities.json`, model capability detection)
+
+### **(v0.250.111)**
+
+#### Bug Fixes
+
+*   **Data Management Restore Route Registration**
+    *   Fixed application startup failure caused by duplicate Data Management restore review route and endpoint registrations.
+    *   Preserved the authorization-aware restore review workflow and added regression coverage requiring unique Blueprint endpoint names.
+    *   (Ref: `route_backend_data_management.py`, `test_data_management_security_patterns.py`, `DATA_MANAGEMENT_RESTORE_ROUTE_ENDPOINT_COLLISION_FIX.md`)
+
+### **(v0.250.110)**
+
+#### New Features
+
+*   **Configurable Public Workspace Display Name**
+    *   Admins can now set an optional end-user display name for Public Workspace, capped at 32 characters, so organizations can present tenant-specific terms such as "Domain Knowledge".
+    *   End users see the configured label across navigation, Profile, Public Directory, Public Workspace pages, chat scope selection, and related browser messages while admin settings and internal identifiers continue to use Public Workspace/public_workspace.
+    *   Empty or unset values preserve the existing Public Workspace/Public Workspaces defaults.
+    *   (Ref: #1146, `functions_settings.py`, `admin_settings.html`, public workspace templates and JavaScript, `PUBLIC_WORKSPACE_DISPLAY_NAME.md`)
+
 ### **(v0.250.109)**
 
 #### New Features

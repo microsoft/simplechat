@@ -74,6 +74,10 @@ from functions_collaboration import (
     get_collaboration_conversation,
     mirror_source_message_to_collaboration,
 )
+from functions_generated_file_exports import (
+    normalize_xml_artifact_payload,
+    serialize_generated_json,
+)
 from functions_document_actions import (
     DOCUMENT_ACTION_ANALYSIS_MODE_PER_DOCUMENT,
     DOCUMENT_ACTION_CONTEXT_WORKFLOW,
@@ -424,6 +428,7 @@ def _prompt_explicitly_requests_artifact(analysis_prompt):
         'save it as',
         'save to file',
         'json file',
+        'xml file',
         'csv file',
         'markdown file',
     )
@@ -443,6 +448,8 @@ def _prompt_explicitly_requests_json_artifact(analysis_prompt):
         'json object',
         'json format',
         'valid json',
+        'convert into json',
+        'convert to json',
         'return json',
         'return only json',
         'return only valid json',
@@ -472,7 +479,61 @@ def _prompt_explicitly_requests_json_artifact(analysis_prompt):
         return True
 
     return bool(re.search(
-        r'\b(create|make|build|generate|produce|return|respond|format|output|save|export|download)\b[\w\s.,:;\-/]{0,60}\bjson\b',
+        r'\b(convert|create|make|build|generate|produce|return|respond|format|output|save|export|download)\b[\w\s.,:;\-/]{0,60}\bjson\b',
+        prompt_text,
+    ))
+
+
+def _prompt_explicitly_requests_xml_artifact(analysis_prompt):
+    prompt_text = str(analysis_prompt or '').strip().lower()
+    if not prompt_text:
+        return False
+
+    xml_markers = (
+        'xml artifact',
+        'xml export',
+        'xml output',
+        'xml document',
+        'xml file',
+        'xml template',
+        'valid xml',
+        'well-formed xml',
+        'convert into xml',
+        'convert to xml',
+        'populate xml',
+        'populate the xml',
+        'return xml',
+        'return only xml',
+        'return only valid xml',
+        'respond with xml',
+        'format as xml',
+        'output as xml',
+        'save as xml',
+        'save it as xml',
+        'export as xml',
+        'download as xml',
+        'create xml',
+        'create an xml',
+        'create a xml',
+        'make xml',
+        'make an xml',
+        'make a xml',
+        'generate xml',
+        'generate an xml',
+        'produce xml',
+        'produce an xml',
+        'save to .xml',
+        'export to .xml',
+        'download .xml',
+        'create .xml',
+        'make .xml',
+        'generate .xml',
+    )
+    if any(marker in prompt_text for marker in xml_markers):
+        return True
+
+    return bool(re.search(
+        r'\b(convert|populate|create|make|build|generate|produce|return|respond|format|output|save|export|download)\b[\w\s.,:;\-/]{0,80}\bxml\b',
         prompt_text,
     ))
 
@@ -890,6 +951,8 @@ def _prompt_requests_table_analysis_output(analysis_prompt):
 def _get_document_analysis_artifact_intent(analysis_result, analysis_prompt):
     analysis_result = analysis_result if isinstance(analysis_result, dict) else {}
     analysis_intent = analysis_result.get('analysis_intent') if isinstance(analysis_result.get('analysis_intent'), dict) else {}
+    json_artifact_requested = _prompt_explicitly_requests_json_artifact(analysis_prompt)
+    xml_artifact_requested = _prompt_explicitly_requests_xml_artifact(analysis_prompt)
     table_output_requested = bool(
         analysis_intent.get('table_output_requested')
         or _prompt_requests_table_analysis_output(analysis_prompt)
@@ -903,14 +966,16 @@ def _get_document_analysis_artifact_intent(analysis_result, analysis_prompt):
     return {
         'exhaustive': exhaustive_output_requested,
         'table_output_requested': table_output_requested,
+        'json_artifact_requested': json_artifact_requested,
+        'xml_artifact_requested': xml_artifact_requested,
         'csv_artifact_recommended': bool(
             analysis_intent.get('csv_artifact_recommended')
             or table_output_requested
-            or exhaustive_output_requested
+            or (exhaustive_output_requested and not json_artifact_requested and not xml_artifact_requested)
         ),
         'markdown_analysis_artifact_recommended': bool(
             analysis_intent.get('markdown_analysis_artifact_recommended')
-            or exhaustive_output_requested
+            or (exhaustive_output_requested and not json_artifact_requested and not xml_artifact_requested)
         ),
     }
 
@@ -1351,9 +1416,12 @@ def _maybe_create_document_analysis_generated_artifacts(
     raw_analysis_items = analysis_result.get('raw_analysis_items') if isinstance(analysis_result.get('raw_analysis_items'), list) else []
     json_payload = _parse_json_artifact_payload(analysis_reply)
     json_artifact_requested = _prompt_explicitly_requests_json_artifact(analysis_prompt)
+    xml_payload = normalize_xml_artifact_payload(analysis_reply)
+    xml_artifact_requested = bool(artifact_intent.get('xml_artifact_requested'))
     create_lossless_artifacts = bool(
         artifact_intent.get('exhaustive')
         or artifact_intent.get('table_output_requested')
+        or xml_artifact_requested
         or primary_tabular_outputs
     )
 
@@ -1412,6 +1480,22 @@ def _maybe_create_document_analysis_generated_artifacts(
                 if markdown_artifact:
                     artifacts.append(markdown_artifact)
 
+            if xml_payload and xml_artifact_requested and not primary_tabular_outputs:
+                xml_file_name = _build_document_analysis_artifact_file_name(analysis_result, 'xml')
+                xml_summary = _build_document_analysis_artifact_summary(document_count, 'xml')
+                xml_artifact = _upload_document_analysis_generated_artifact(
+                    normalized_conversation_id,
+                    xml_file_name,
+                    xml_payload,
+                    'xml',
+                    xml_summary,
+                    preview_lines=_build_document_analysis_preview_lines(xml_payload),
+                    cancel_requested=cancel_requested,
+                    request_correlation_id=request_correlation_id,
+                )
+                if xml_artifact:
+                    artifacts.append(xml_artifact)
+
             if json_payload is not None and json_artifact_requested and not primary_tabular_outputs:
                 json_file_name = _build_document_analysis_artifact_file_name(analysis_result, 'json')
                 json_summary = _build_document_analysis_artifact_summary(document_count, 'json')
@@ -1423,7 +1507,7 @@ def _maybe_create_document_analysis_generated_artifacts(
                 json_artifact = _upload_document_analysis_generated_artifact(
                     normalized_conversation_id,
                     json_file_name,
-                    json.dumps(json_payload, indent=2, ensure_ascii=False),
+                    serialize_generated_json(json_payload),
                     'json',
                     json_summary,
                     preview_items=json_preview_items,
@@ -1478,17 +1562,21 @@ def _maybe_create_document_analysis_generated_artifacts(
     should_generate_artifact = (
         explicit_artifact_request
         or json_payload is not None
+        or bool(xml_payload)
         or len(analysis_reply) >= DOCUMENT_ANALYSIS_ARTIFACT_REPLY_CHAR_THRESHOLD
     )
     if not should_generate_artifact:
         return {'artifacts': [], 'assistant_reply': None}
 
-    output_format = 'json' if json_payload is not None and json_artifact_requested else 'md'
+    output_format = 'xml' if xml_payload and xml_artifact_requested else 'json' if json_payload is not None and json_artifact_requested else 'md'
     preview_items = []
     preview_lines = []
 
-    if output_format == 'json':
-        serialized_output = json.dumps(json_payload, indent=2, ensure_ascii=False)
+    if output_format == 'xml':
+        serialized_output = xml_payload
+        preview_lines = _build_document_analysis_preview_lines(xml_payload)
+    elif output_format == 'json':
+        serialized_output = serialize_generated_json(json_payload)
         if isinstance(json_payload, list):
             preview_items = json_payload[:DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_ITEM_COUNT]
         elif isinstance(json_payload, dict):

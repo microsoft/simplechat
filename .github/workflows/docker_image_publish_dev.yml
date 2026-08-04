@@ -15,7 +15,7 @@ jobs:
 
     steps:
     - name: Azure Container Registry Login
-      uses: Azure/docker-login@v2
+      uses: Azure/docker-login@15c4aadf093404726ab2ff205b2cdd33fa6d054c # v2
       with:
         # Container registry username
         username: ${{ secrets.ACR_USERNAME }}
@@ -34,7 +34,7 @@ jobs:
           | cut -c1-128)
         echo "BRANCH_TAG=$SAFE" >> "$GITHUB_ENV"
 
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@a37ce9120846195fa4ece8f58b268e6043cb2f26 # v3.7.0
     - name: Build the Docker image
       env:
         DOCKER_BUILDKIT: "0"
@@ -49,7 +49,7 @@ jobs:
 
     steps:
     - name: Azure Container Registry Login
-      uses: Azure/docker-login@v2
+      uses: Azure/docker-login@15c4aadf093404726ab2ff205b2cdd33fa6d054c # v2
       with:
         # Container registry username
         username: ${{ secrets.ACR_USERNAME_NADOYLE }}
@@ -68,7 +68,7 @@ jobs:
           | cut -c1-128)
         echo "BRANCH_TAG=$SAFE" >> "$GITHUB_ENV"
         
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@a37ce9120846195fa4ece8f58b268e6043cb2f26 # v3.7.0
     - name: Build the Docker image
       env:
         DOCKER_BUILDKIT: "0"
