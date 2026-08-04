@@ -256,6 +256,73 @@ def _get_foundry_agent_label(agent_type):
     )
 
 
+FOUNDRY_CITATION_DISPLAY_FIELDS = (
+    'title',
+    'name',
+    'file_name',
+    'filename',
+    'document_name',
+    'source_name',
+)
+FOUNDRY_CITATION_URL_FIELDS = ('url', 'uri')
+FOUNDRY_CITATION_NESTED_FIELDS = ('metadata', 'source', 'file')
+
+
+def _normalize_foundry_citation_display_text(value):
+    if not isinstance(value, str):
+        return ''
+    cleaned_value = ' '.join(value.replace('<', '').replace('>', '').split())
+    if len(cleaned_value) > 120:
+        return f"{cleaned_value[:117].rstrip()}..."
+    return cleaned_value
+
+
+def _get_foundry_citation_url_label(value):
+    if not isinstance(value, str):
+        return ''
+    parsed_url = urlparse(value.strip())
+    if parsed_url.scheme not in ('http', 'https') or not parsed_url.hostname:
+        return ''
+    return _normalize_foundry_citation_display_text(parsed_url.hostname)
+
+
+def _iter_foundry_citation_sources(citation):
+    if not isinstance(citation, dict):
+        return []
+    sources = [citation]
+    for field_name in FOUNDRY_CITATION_NESTED_FIELDS:
+        nested_source = citation.get(field_name)
+        if isinstance(nested_source, dict):
+            sources.append(nested_source)
+    return sources
+
+
+def _get_foundry_citation_display_label(citation):
+    for source in _iter_foundry_citation_sources(citation):
+        for field_name in FOUNDRY_CITATION_DISPLAY_FIELDS:
+            display_label = _normalize_foundry_citation_display_text(source.get(field_name))
+            if display_label:
+                return display_label
+    for source in _iter_foundry_citation_sources(citation):
+        for field_name in FOUNDRY_CITATION_URL_FIELDS:
+            url_label = _get_foundry_citation_url_label(source.get(field_name))
+            if url_label:
+                return url_label
+    if isinstance(citation, dict):
+        citation_type = _normalize_foundry_citation_display_text(citation.get('citation_type'))
+        if citation_type:
+            return citation_type.replace('_', ' ')
+    return ''
+
+
+def _build_foundry_citation_thought_content(agent_type, citation):
+    foundry_label = _get_foundry_agent_label(agent_type)
+    citation_label = _get_foundry_citation_display_label(citation)
+    if citation_label:
+        return f"Agent retrieved citation from {foundry_label}: {citation_label}"
+    return f"Agent retrieved citation from {foundry_label}"
+
+
 def _build_foundry_runtime_metadata(agent):
     metadata = getattr(agent, 'last_run_metadata', None)
     return metadata if isinstance(metadata, dict) else {}
@@ -17872,7 +17939,7 @@ def register_route_backend_chats(bp):
                                 for citation in foundry_citations:
                                     thought_tracker.add_thought(
                                         'agent_tool_call',
-                                        f"Agent retrieved citation from {_get_foundry_agent_label(selected_agent_type)}"
+                                        _build_foundry_citation_thought_content(selected_agent_type, citation)
                                     )
                                 for citation in foundry_citations:
                                     serializable = make_json_serializable(citation)
@@ -21808,7 +21875,10 @@ def register_route_backend_chats(bp):
                             foundry_plugin_name = _get_foundry_agent_plugin_name(stream_selected_agent_type)
                             foundry_label = agent_name_used or _get_foundry_agent_label(stream_selected_agent_type)
                             for citation in foundry_citations:
-                                yield emit_thought('agent_tool_call', f"Agent retrieved citation from {_get_foundry_agent_label(stream_selected_agent_type)}")
+                                yield emit_thought(
+                                    'agent_tool_call',
+                                    _build_foundry_citation_thought_content(stream_selected_agent_type, citation)
+                                )
                                 serializable = make_json_serializable(citation)
                                 if not isinstance(serializable, dict):
                                     serializable = {'value': str(citation)}

@@ -4,7 +4,7 @@ Planning baseline version: **0.250.110**
 
 Related PR: **microsoft/simplechat#1145**
 
-Implementation status: **In progress. Phase 1 items 1 and 2 implemented in versions 0.250.111 and 0.250.112; remaining items are still pending.**
+Implementation status: **In progress. Phase 1 items 1-3 implemented in versions 0.250.111, 0.250.112, and 0.250.113; Phase 2 item 4 implemented in version 0.250.114; remaining items are still pending.**
 
 ## Purpose
 
@@ -127,6 +127,7 @@ This plan converts the 62 CodeQL annotations from PR #1145 into an execution que
 - Alert: 3
 - CodeQL rule: Suspicious unused loop iteration variable
 - Severity: failure
+- Status: **Implemented in version 0.250.114**
 - Location: [application/single_app/route_backend_chats.py](../../../application/single_app/route_backend_chats.py#L17737)
 - Decision: Implement.
 - Why: The loop currently iterates citations without using the citation value. That can indicate repeated duplicate thoughts or missing citation-specific detail.
@@ -137,6 +138,10 @@ This plan converts the 62 CodeQL annotations from PR #1145 into an execution que
   - If no, replace the loop with a single aggregate thought or use `_` only for intentional repeated emission.
 - Validation starting point:
   - Add or update a focused Foundry citation test to assert the expected number and content of citation thoughts.
+- Validation completed:
+  - `python functional_tests/test_foundry_citation_thoughts.py`
+  - `python -m py_compile application/single_app/route_backend_chats.py application/single_app/config.py functional_tests/test_foundry_citation_thoughts.py`
+  - `git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --check -- application/single_app/route_backend_chats.py application/single_app/config.py functional_tests/test_foundry_citation_thoughts.py docs/explanation/fixes/PR_1145_CODEQL_ALERT_REMEDIATION_PLAN.md`
 
 #### 5. Remove duplicate keys in token usage aggregation test fixture
 

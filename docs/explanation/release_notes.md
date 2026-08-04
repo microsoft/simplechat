@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.114)**
+
+#### Bug Fixes
+
+*   **Foundry Citation Thought Detail Cleanup**
+    *   Fixed a CodeQL finding where Foundry citation thoughts iterated citations without using the citation value, causing duplicate generic thought messages.
+    *   Foundry citation thoughts now include safe citation-specific labels when available while avoiding raw payloads, URL query strings, userinfo, and long unbounded text.
+    *   (Ref: microsoft/simplechat#1145, `route_backend_chats.py`, `test_foundry_citation_thoughts.py`)
+
 ### **(v0.250.109)**
 
 #### New Features
