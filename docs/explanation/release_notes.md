@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.111)**
+
+#### Bug Fixes
+
+*   **Data Management Restore Route Registration**
+    *   Fixed application startup failure caused by duplicate Data Management restore review route and endpoint registrations.
+    *   Preserved the authorization-aware restore review workflow and added regression coverage requiring unique Blueprint endpoint names.
+    *   (Ref: `route_backend_data_management.py`, `test_data_management_security_patterns.py`, `DATA_MANAGEMENT_RESTORE_ROUTE_ENDPOINT_COLLISION_FIX.md`)
+
 ### **(v0.250.110)**
 
 #### New Features
