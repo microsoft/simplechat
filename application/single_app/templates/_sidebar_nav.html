@@ -6,6 +6,7 @@
 {% set sidebar_menu_state = sidebar_menu_state_raw if sidebar_menu_state_raw is mapping else {} %}
 {% set sidebar_settings = settings if settings is defined else app_settings %}
 {% set latest_features_nav_is_hidden = latest_features_nav_hidden | default(false) %}
+{% set public_workspace_labels = app_settings.public_workspace_labels %}
 <div id="sidebar-nav" class="d-flex flex-column vh-100 bg-light border-end sidebar-expanded" style="width: var(--sidebar-width, 260px); min-width: var(--sidebar-min-width, 220px); position: fixed; left: 0; top: 0; z-index: 1040; transition: transform 0.3s ease;">
 
   <div id="sidebar-resize-handle" class="sidebar-resize-handle" aria-label="Resize sidebar" role="separator" tabindex="0">
@@ -246,8 +247,8 @@
           {% endif %}
           {% if app_settings.enable_public_workspaces %}
           <li class="nav-item">
-            <a class="nav-link d-flex align-items-center" href="{{ url_for('frontend_public_workspaces.public_directory') }}" title="Open public workspaces for shared document collections and prompts available to authorized users.">
-              <i class="bi bi-folder me-2"></i><span class="nav-text"> Public</span>
+            <a class="nav-link d-flex align-items-center" href="{{ url_for('frontend_public_workspaces.public_directory') }}" title="Open {{ public_workspace_labels.lower_plural }} for shared document collections and prompts available to authorized users.">
+              <i class="bi bi-folder me-2"></i><span class="nav-text"> {{ public_workspace_labels.short }}</span>
             </a>
           </li>
           {% endif %}
@@ -1101,7 +1102,7 @@
           {% endif %}
           {% if app_settings.enable_public_workspaces %}
           <li>
-            <a class="dropdown-item" href="{{ url_for('frontend_public_workspaces.my_public_workspaces') }}">My Public Workspaces</a>
+            <a class="dropdown-item" href="{{ url_for('frontend_public_workspaces.my_public_workspaces') }}">My {{ public_workspace_labels.plural }}</a>
           </li>
           {% endif %}
           {% if app_settings.enable_user_feedback %}

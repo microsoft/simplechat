@@ -11,6 +11,8 @@ $(document).ready(function () {
   const allVisibleBtn = $("#allVisibleBtn");
   const allHiddenBtn = $("#allHiddenBtn");
   const viewModal = new bootstrap.Modal(document.getElementById('viewWorkspaceModal'));
+  const publicWorkspaceSingular = window.getPublicWorkspaceLabel ? window.getPublicWorkspaceLabel('singular') : 'Public Workspace';
+  const publicWorkspaceLowerPlural = window.getPublicWorkspaceLabel ? window.getPublicWorkspaceLabel('lower_plural') : 'public workspaces';
 
   // State
   let currentPage = 1;
@@ -175,7 +177,7 @@ function updateCuratedListStatus() {
       <tr class="table-loading-row">
         <td colspan="4" class="text-center p-4 text-muted">
           <div class="spinner-border spinner-border-sm me-2" role="status"></div>
-          Loading public workspaces...
+          Loading ${escapeHtml(publicWorkspaceLowerPlural)}...
         </td>
       </tr>
     `);
@@ -217,7 +219,7 @@ function updateCuratedListStatus() {
       } else {
         tableBody.html(`
           <tr><td colspan="4" class="text-center p-4 text-muted">
-            No public workspaces available.
+            No ${escapeHtml(publicWorkspaceLowerPlural)} available.
           </td></tr>
         `);
       }
@@ -312,7 +314,7 @@ function updateCuratedListStatus() {
             </div>
             <div class="mt-2">
               <button class="btn btn-primary btn-sm view-workspace-btn" data-id="${ws.id}">
-                Goto Public Workspace
+                Go to ${escapeHtml(publicWorkspaceSingular)}
               </button>
             </div>
           </div>

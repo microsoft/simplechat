@@ -6,6 +6,8 @@ import { getModelSupportedLevels } from "./chat/chat-reasoning.js";
 
 const ACTION_CAPABILITIES_KEY = 'action_capabilities';
 const ASSIGNED_KNOWLEDGE_KEY = 'assigned_knowledge';
+const publicWorkspaceLowerSingular = window.getPublicWorkspaceLabel ? window.getPublicWorkspaceLabel('lower_singular') : 'public workspace';
+const publicWorkspaceLowerPlural = window.getPublicWorkspaceLabel ? window.getPublicWorkspaceLabel('lower_plural') : 'public workspaces';
 const ASSIGNED_KNOWLEDGE_USER_ACTIONS = Object.freeze(['search', 'analyze', 'compare']);
 const ASSIGNED_KNOWLEDGE_WEB_SOURCE_MODES = Object.freeze(['url_review', 'deep_research']);
 const EMPTY_ASSIGNED_KNOWLEDGE = Object.freeze({
@@ -3094,7 +3096,9 @@ export class AgentModalStepper {
       summaryItems.push(`${scopes.group_ids.length} group source${scopes.group_ids.length === 1 ? '' : 's'}`);
     }
     if (scopes.public_workspace_ids?.length) {
-      summaryItems.push(`${scopes.public_workspace_ids.length} public workspace${scopes.public_workspace_ids.length === 1 ? '' : 's'}`);
+      const publicWorkspaceCount = scopes.public_workspace_ids.length;
+      const publicWorkspaceLabel = publicWorkspaceCount === 1 ? publicWorkspaceLowerSingular : publicWorkspaceLowerPlural;
+      summaryItems.push(`${publicWorkspaceCount} ${publicWorkspaceLabel}`);
     }
     if (assignedKnowledge.document_ids?.length) {
       summaryItems.push(`${assignedKnowledge.document_ids.length} specific document${assignedKnowledge.document_ids.length === 1 ? '' : 's'}`);

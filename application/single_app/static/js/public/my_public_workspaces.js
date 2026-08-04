@@ -13,6 +13,8 @@ $(document).ready(function () {
   const clearSearchBtn       = $("#clearSearchBtn");
   const createModal          = window.canCreatePublicWorkspaces ? new bootstrap.Modal(document.getElementById('createPublicWorkspaceModal')) : null;
   const findModal            = new bootstrap.Modal(document.getElementById('findPublicWorkspaceModal'));
+  const publicWorkspaceSingular = window.getPublicWorkspaceLabel ? window.getPublicWorkspaceLabel('singular') : 'Public Workspace';
+  const publicWorkspaceLowerPlural = window.getPublicWorkspaceLabel ? window.getPublicWorkspaceLabel('lower_plural') : 'public workspaces';
 
   // State
   let currentPage        = 1;
@@ -57,8 +59,8 @@ $(document).ready(function () {
         } else {
           tableBody.html(`
             <tr><td colspan="5" class="text-center p-4 text-muted">
-              You don't have any public workspaces yet.<br>
-              Use "Create New Public Workspace" or "Find Public Workspace" above.
+              You don't have any ${escapeHtml(publicWorkspaceLowerPlural)} yet.<br>
+              Use "Create New ${escapeHtml(publicWorkspaceSingular)}" or "Find ${escapeHtml(publicWorkspaceSingular)}" above.
             </td></tr>
           `);
         }

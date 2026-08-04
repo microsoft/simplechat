@@ -1120,6 +1120,9 @@ def register_route_frontend_admin_settings(bp):
 
             require_member_of_create_group = form_data.get('require_member_of_create_group') == 'on'
             require_owner_for_group_agent_management = form_data.get('require_owner_for_group_agent_management') == 'on'
+            public_workspace_display_name = normalize_public_workspace_display_name(
+                form_data.get('public_workspace_display_name')
+            )
             require_member_of_create_public_workspace = form_data.get('require_member_of_create_public_workspace') == 'on'
             require_member_of_chat_file_upload_user = form_data.get('require_member_of_chat_file_upload_user') == 'on'
             require_member_of_workflow_user = form_data.get('require_member_of_workflow_user') == 'on'
@@ -2434,6 +2437,7 @@ def register_route_frontend_admin_settings(bp):
                 # disable_group_creation is inverted: when checked (on), enable_group_creation = False
                 'enable_group_creation': form_data.get('disable_group_creation') != 'on',
                 'enable_public_workspaces': form_data.get('enable_public_workspaces') == 'on',
+                'public_workspace_display_name': public_workspace_display_name,
                 'enable_file_sharing': form_data.get('enable_file_sharing') == 'on',
                 'enable_chat_file_uploads': form_data.get('enable_chat_file_uploads') == 'on',
                 'enable_conversation_contents_drawer': form_data.get('enable_conversation_contents_drawer') == 'on',

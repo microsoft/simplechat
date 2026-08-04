@@ -3,6 +3,7 @@
 const STORAGE_KEY = "chatTutorialDismissed";
 const EDGE_PADDING = 12;
 const HIGHLIGHT_PADDING = 10;
+const publicWorkspaceLowerPlural = window.getPublicWorkspaceLabel ? window.getPublicWorkspaceLabel("lower_plural") : "public workspaces";
 let tutorialSteps = [];
 let layerEl = null;
 let highlightEl = null;
@@ -197,7 +198,7 @@ function buildSteps() {
             id: "workspace-search",
             selector: "#search-documents-btn",
             title: "Workspace search",
-            body: "Search personal, group, or public workspaces to ground answers with approved documents.",
+            body: `Search personal, group, or ${publicWorkspaceLowerPlural} to ground answers with approved documents.`,
             phase: "chat"
         },
         {
