@@ -4,7 +4,7 @@ Planning baseline version: **0.250.110**
 
 Related PR: **microsoft/simplechat#1145**
 
-Implementation status: **In progress. Phase 1 items 1-3 implemented in versions 0.250.111, 0.250.112, and 0.250.113; Phase 2 items 4-8 implemented in versions 0.250.114, 0.250.115, 0.250.116, 0.250.117, and 0.250.118; Phase 3 item 9 skipped, item 10 implemented in version 0.250.119, and items 11-13 are still pending.**
+Implementation status: **In progress. Phase 1 items 1-3 implemented in versions 0.250.111, 0.250.112, and 0.250.113; Phase 2 items 4-8 implemented in versions 0.250.114, 0.250.115, 0.250.116, 0.250.117, and 0.250.118; Phase 3 item 9 skipped, item 10 implemented in version 0.250.119; deferred import-cycle items B2-B3 implemented in version 0.250.120; and items 11-13 are still pending.**
 
 ## Purpose
 
@@ -389,22 +389,38 @@ These items are intentionally deferred from the main execution plan. Each deferr
 - Alert: 39
 - CodeQL rule: Cyclic import
 - Location: [application/single_app/functions_mixed_source_orchestration.py](../../../application/single_app/functions_mixed_source_orchestration.py#L11)
-- Deferred because: This is a module-boundary issue involving shared telemetry. It should be fixed with an import architecture plan, not while touching chat-route security findings.
+- Status: **Implemented in version 0.250.120**
+- Decision: Implement with a targeted lazy import.
+- Why: The top-level App Insights import pulls settings cache dependencies into the mixed-source orchestration import graph. Deferring telemetry resolution removes the CodeQL import-cycle edge without changing logging call sites.
+- Resolution:
+  - Replaced the module-level `functions_appinsights.log_event` import with a local lazy wrapper in [application/single_app/functions_mixed_source_orchestration.py](../../../application/single_app/functions_mixed_source_orchestration.py).
+  - Kept existing telemetry messages, levels, and structured properties unchanged.
+- Validation completed:
+  - `python functional_tests/test_codeql_import_cycle_lazy_imports.py`
+  - `python -m py_compile application/single_app/functions_mixed_source_orchestration.py application/single_app/functions_document_analysis.py application/single_app/config.py functional_tests/test_codeql_import_cycle_lazy_imports.py`
+  - `git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --check -- application/single_app/functions_mixed_source_orchestration.py application/single_app/functions_document_analysis.py application/single_app/config.py functional_tests/test_codeql_import_cycle_lazy_imports.py docs/explanation/fixes/PR_1145_CODEQL_ALERT_REMEDIATION_PLAN.md`
 - Starting point for future plan:
-  - Check whether `log_event` can be imported lazily or moved behind a lightweight telemetry adapter.
-  - Confirm no import-time side effects depend on `functions_appinsights`.
-  - Compile affected modules and run mixed-source orchestration tests.
+  - Extract a shared telemetry adapter only if additional modules need the same import-cycle pattern removed.
 
 #### B3. Resolve document analysis to mixed-source orchestration import cycle
 
 - Alert: 40
 - CodeQL rule: Cyclic import
 - Location: [application/single_app/functions_document_analysis.py](../../../application/single_app/functions_document_analysis.py#L11-L14)
-- Deferred because: Document analysis and mixed-source cancellation share contracts. Refactoring the boundary needs targeted regression coverage.
+- Status: **Implemented in version 0.250.120**
+- Decision: Implement with a targeted lazy import.
+- Why: Document analysis only needs mixed-source cancellation contracts inside runtime analysis paths. Deferring that import removes the module-load cycle while preserving cancellation behavior.
+- Resolution:
+  - Added a lazy `_get_mixed_source_orchestration_helpers()` resolver in [application/single_app/functions_document_analysis.py](../../../application/single_app/functions_document_analysis.py).
+  - Bound `MixedSourceCancellationError` and `raise_if_mixed_source_cancelled` inside the document-analysis functions that use them.
+  - Added AST-based functional coverage to prevent reintroducing the top-level cycle-causing imports.
+- Validation completed:
+  - `python functional_tests/test_codeql_import_cycle_lazy_imports.py`
+  - `python -m py_compile application/single_app/functions_mixed_source_orchestration.py application/single_app/functions_document_analysis.py application/single_app/config.py functional_tests/test_codeql_import_cycle_lazy_imports.py`
+  - `git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --check -- application/single_app/functions_mixed_source_orchestration.py application/single_app/functions_document_analysis.py application/single_app/config.py functional_tests/test_codeql_import_cycle_lazy_imports.py docs/explanation/fixes/PR_1145_CODEQL_ALERT_REMEDIATION_PLAN.md`
 - Starting point for future plan:
   - Extract cancellation exceptions and cancellation guard helpers into a small neutral module.
-  - Update both document analysis and mixed-source orchestration to import from that module.
-  - Run document analysis, mixed-source chat, and workflow document-action tests.
+  - Consider that broader boundary cleanup only if additional import-cycle alerts remain in the same cancellation contract area.
 
 #### B4. Resolve chat route to workflow runner import cycle
 

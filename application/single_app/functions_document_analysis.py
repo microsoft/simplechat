@@ -8,10 +8,6 @@ from typing import Any, Callable, Dict, List, Optional
 
 from functions_appinsights import log_event
 from functions_debug import debug_print
-from functions_mixed_source_orchestration import (
-    MixedSourceCancellationError,
-    raise_if_mixed_source_cancelled,
-)
 from functions_search import normalize_search_id_list, normalize_search_scope
 
 
@@ -27,6 +23,16 @@ def _get_search_service_helpers():
     from functions_search_service import build_document_chunk_windows, get_document_chunks_payload
 
     return build_document_chunk_windows, get_document_chunks_payload
+
+
+def _get_mixed_source_orchestration_helpers():
+    """Lazily resolve mixed-source cancellation helpers to avoid import cycles."""
+    from functions_mixed_source_orchestration import (
+        MixedSourceCancellationError,
+        raise_if_mixed_source_cancelled,
+    )
+
+    return MixedSourceCancellationError, raise_if_mixed_source_cancelled
 
 
 def _coerce_int(value, default_value, min_value=None, max_value=None):
@@ -808,6 +814,7 @@ def _reduce_document_analysis_items(
     cancel_requested=None,
     request_correlation_id=None,
 ):
+    _, raise_if_mixed_source_cancelled = _get_mixed_source_orchestration_helpers()
     current_items = list(items or [])
     reduction_round = 1
 
@@ -925,6 +932,7 @@ def run_document_analysis(
     cancel_requested=None,
     request_correlation_id=None,
 ):
+    MixedSourceCancellationError, raise_if_mixed_source_cancelled = _get_mixed_source_orchestration_helpers()
     normalized_analysis_prompt = str(analysis_prompt or '').strip()
     if not normalized_analysis_prompt:
         raise ValueError('An analysis prompt is required for document analysis.')

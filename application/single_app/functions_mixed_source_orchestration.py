@@ -8,7 +8,14 @@ import os
 import time
 import uuid
 
-from functions_appinsights import log_event
+
+def log_event(*args, **kwargs):
+    """Lazily resolve telemetry logging to avoid module-level import cycles."""
+    try:
+        from functions_appinsights import log_event as _log_event_impl
+    except ImportError:
+        from single_app.functions_appinsights import log_event as _log_event_impl
+    return _log_event_impl(*args, **kwargs)
 
 
 SOURCE_KIND_TABULAR = "tabular"
