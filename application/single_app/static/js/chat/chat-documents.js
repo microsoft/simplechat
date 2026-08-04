@@ -8,6 +8,7 @@ const searchDocumentsBtn = document.getElementById("search-documents-btn");
 const docSelectEl = document.getElementById("document-select"); // Hidden select element
 const searchDocumentsContainer = document.getElementById("search-documents-container"); // Container for scope/doc/class
 const searchDocumentsMobileClose = document.getElementById("search-documents-mobile-close");
+const publicWorkspacePlural = window.getPublicWorkspaceLabel ? window.getPublicWorkspaceLabel("plural") : "Public Workspaces";
 
 // Custom dropdown elements
 const docDropdown = document.getElementById("document-dropdown");
@@ -1114,7 +1115,7 @@ function buildScopeDropdown() {
   if (publicWorkspaces.length > 0) {
     const pubHeader = document.createElement("div");
     pubHeader.classList.add("dropdown-header", "small", "text-muted", "px-2", "pt-2", "pb-1");
-    pubHeader.textContent = "Public Workspaces";
+    pubHeader.textContent = publicWorkspacePlural;
     scopeDropdownItems.appendChild(pubHeader);
 
     publicWorkspaces.forEach(ws => {

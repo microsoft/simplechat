@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
-### **(v0.250.110)**
+### **(v0.250.112)**
 
 #### New Features
 
@@ -11,6 +11,25 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Catalog entries track support for text, image, audio, video, binary/file input, coding optimization, tool calling, and structured output so future multimodal routing can move away from regex-only model-name checks.
     *   This release is data-only and does not change backend or frontend runtime behavior.
     *   (Ref: Closes #1147, `model_capabilities.json`, model capability detection)
+
+### **(v0.250.111)**
+
+#### Bug Fixes
+
+*   **Data Management Restore Route Registration**
+    *   Fixed application startup failure caused by duplicate Data Management restore review route and endpoint registrations.
+    *   Preserved the authorization-aware restore review workflow and added regression coverage requiring unique Blueprint endpoint names.
+    *   (Ref: `route_backend_data_management.py`, `test_data_management_security_patterns.py`, `DATA_MANAGEMENT_RESTORE_ROUTE_ENDPOINT_COLLISION_FIX.md`)
+
+### **(v0.250.110)**
+
+#### New Features
+
+*   **Configurable Public Workspace Display Name**
+    *   Admins can now set an optional end-user display name for Public Workspace, capped at 32 characters, so organizations can present tenant-specific terms such as "Domain Knowledge".
+    *   End users see the configured label across navigation, Profile, Public Directory, Public Workspace pages, chat scope selection, and related browser messages while admin settings and internal identifiers continue to use Public Workspace/public_workspace.
+    *   Empty or unset values preserve the existing Public Workspace/Public Workspaces defaults.
+    *   (Ref: #1146, `functions_settings.py`, `admin_settings.html`, public workspace templates and JavaScript, `PUBLIC_WORKSPACE_DISPLAY_NAME.md`)
 
 ### **(v0.250.109)**
 
