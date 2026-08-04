@@ -18600,10 +18600,6 @@ def register_route_backend_chats(bp):
             # ---------------------------------------------------------------------
             # 8) Return final success (even if AI generated an error message)
             # ---------------------------------------------------------------------
-            # Persist per-user kernel state if needed
-            enable_redis_for_kernel = False
-            if enable_semantic_kernel and per_user_semantic_kernel and redis_client and enable_redis_for_kernel:
-                save_user_kernel(user_id, g.kernel, g.kernel_agents, redis_client)
             return jsonify(make_json_serializable({
                 'reply': ai_message, # Send the AI's response (or the error message) back
                 'conversation_id': conversation_id,

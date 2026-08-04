@@ -4,7 +4,7 @@ Planning baseline version: **0.250.110**
 
 Related PR: **microsoft/simplechat#1145**
 
-Implementation status: **In progress. Phase 1 items 1-3 implemented in versions 0.250.111, 0.250.112, and 0.250.113; Phase 2 items 4-5 implemented in versions 0.250.114 and 0.250.115; remaining items are still pending.**
+Implementation status: **In progress. Phase 1 items 1-3 implemented in versions 0.250.111, 0.250.112, and 0.250.113; Phase 2 items 4-6 implemented in versions 0.250.114, 0.250.115, and 0.250.116; remaining items are still pending.**
 
 ## Purpose
 
@@ -169,6 +169,7 @@ This plan converts the 62 CodeQL annotations from PR #1145 into an execution que
 - Alert: 19
 - CodeQL rule: Unreachable code
 - Severity: warning
+- Status: **Implemented in version 0.250.116**
 - Location: [application/single_app/route_backend_chats.py](../../../application/single_app/route_backend_chats.py#L18404)
 - Decision: Implement.
 - Why: Unreachable code in a large route can hide a missing branch or stale error handling.
@@ -179,6 +180,10 @@ This plan converts the 62 CodeQL annotations from PR #1145 into an execution que
   - Move it before the terminal return if it was intended to run.
 - Validation starting point:
   - Compile the route module and run the focused chat route tests that cover the edited path.
+- Validation completed:
+  - `python functional_tests/test_chat_route_unreachable_code_cleanup.py`
+  - `python functional_tests/test_chat_error_response_sanitization.py`
+  - `python -m py_compile application/single_app/route_backend_chats.py application/single_app/config.py functional_tests/test_chat_route_unreachable_code_cleanup.py`
 
 #### 7. Resolve no-effect statement in tabular lifecycle thought helper
 
