@@ -18660,7 +18660,6 @@ def register_route_backend_chats(bp):
         Streams tokens as they are generated from Azure OpenAI.
         """
         from flask import Response, stream_with_context
-        import json
         from queue import Queue, Empty
 
         # IMPORTANT: Parse JSON and get user_id BEFORE entering the generator

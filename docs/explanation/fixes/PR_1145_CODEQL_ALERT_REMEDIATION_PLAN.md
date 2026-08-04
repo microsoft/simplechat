@@ -4,7 +4,7 @@ Planning baseline version: **0.250.110**
 
 Related PR: **microsoft/simplechat#1145**
 
-Implementation status: **In progress. Phase 1 items 1-3 implemented in versions 0.250.111, 0.250.112, and 0.250.113; Phase 2 items 4-8 implemented in versions 0.250.114, 0.250.115, 0.250.116, 0.250.117, and 0.250.118; Phase 3 items 9-13 are still pending.**
+Implementation status: **In progress. Phase 1 items 1-3 implemented in versions 0.250.111, 0.250.112, and 0.250.113; Phase 2 items 4-8 implemented in versions 0.250.114, 0.250.115, 0.250.116, 0.250.117, and 0.250.118; Phase 3 item 9 skipped, item 10 implemented in version 0.250.119, and items 11-13 are still pending.**
 
 ## Purpose
 
@@ -238,46 +238,31 @@ This plan converts the 62 CodeQL annotations from PR #1145 into an execution que
 
 #### 9. Remove unused imports in route and workflow modules
 
-- Alerts: 29, 31, 36, 37, 38, 49, 50, 52, 57, 60, 62
-- CodeQL rule: Unused import
-- Severity: notice
-- Locations:
-  - [application/single_app/route_backend_chats.py](../../../application/single_app/route_backend_chats.py#L2)
-  - [application/single_app/route_backend_chats.py](../../../application/single_app/route_backend_chats.py#L21)
-  - [application/single_app/route_backend_chats.py](../../../application/single_app/route_backend_chats.py#L22-L33)
-  - [application/single_app/route_backend_chats.py](../../../application/single_app/route_backend_chats.py#L74)
-  - [application/single_app/route_backend_chats.py](../../../application/single_app/route_backend_chats.py#L77)
-  - [application/single_app/route_backend_chats.py](../../../application/single_app/route_backend_chats.py#L118)
-  - [application/single_app/route_backend_chats.py](../../../application/single_app/route_backend_chats.py#L154)
-  - [application/single_app/route_backend_chats.py](../../../application/single_app/route_backend_chats.py#L172)
-  - [application/single_app/functions_workflow_runner.py](../../../application/single_app/functions_workflow_runner.py#L39-L49)
-  - [application/single_app/functions_workflow_runner.py](../../../application/single_app/functions_workflow_runner.py#L158-L162)
-  - [application/single_app/functions_tabular_generated_exports.py](../../../application/single_app/functions_tabular_generated_exports.py#L38-L41)
-- Decision: Implement.
-- Why: These are mechanically scoped and reduce noise for future CodeQL runs.
-- Remediation style: Follow CodeQL directly.
-- Execution tasks:
-  - Remove imports only after confirming there are no dynamic references.
-  - Avoid changing `import *` lines as part of this cleanup.
-  - Keep import grouping consistent with the local file style.
-- Validation starting point:
-  - Run `python -m py_compile` for each touched Python file.
-  - Run the focused functional tests for chat, workflow runner, and tabular generated exports.
+- SKIPPING THIS ONE.
 
 #### 10. Remove duplicate local `json` import
 
 - Alert: 30
 - CodeQL rule: Module is imported more than once
 - Severity: notice
-- Location: [application/single_app/route_backend_chats.py](../../../application/single_app/route_backend_chats.py#L18465)
+- Status: **Implemented in version 0.250.119**
+- Location: [application/single_app/route_backend_chats.py](../../../application/single_app/route_backend_chats.py#L18657)
 - Decision: Implement.
 - Why: The module already imports `json` at top level. The local import is redundant.
 - Remediation style: Follow CodeQL directly.
 - Execution tasks:
   - Remove the nested duplicate import.
   - Confirm the function still resolves the top-level module import.
+- Resolution:
+  - Removed the nested `import json` from the `chat_stream_api` route.
+  - Confirmed the route still resolves `json` from the existing module-level import.
 - Validation starting point:
   - Compile [application/single_app/route_backend_chats.py](../../../application/single_app/route_backend_chats.py).
+- Validation completed:
+  - `python -m py_compile application/single_app/route_backend_chats.py application/single_app/config.py`
+  - `git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --check -- application/single_app/route_backend_chats.py application/single_app/config.py docs/explanation/fixes/PR_1145_CODEQL_ALERT_REMEDIATION_PLAN.md`
+- Validation notes:
+  - `python functional_tests/test_chat_stream_compatibility_sse_syntax.py` was attempted; it fails before validating behavior because it asserts the stale historic version `0.239.185` in `config.py`.
 
 #### 11. Replace empty except blocks with intentional handling
 
@@ -334,19 +319,7 @@ This plan converts the 62 CodeQL annotations from PR #1145 into an execution que
 
 ## Suggested Validation Sequence for Main Plan
 
-1. Run Python compile checks for touched backend files:
-   - [application/single_app/route_backend_chats.py](../../../application/single_app/route_backend_chats.py)
-   - [application/single_app/functions_workflow_runner.py](../../../application/single_app/functions_workflow_runner.py)
-   - [application/single_app/functions_assistant_table_exports.py](../../../application/single_app/functions_assistant_table_exports.py)
-   - [application/single_app/functions_tabular_generated_exports.py](../../../application/single_app/functions_tabular_generated_exports.py)
-2. Run focused functional tests for each touched behavior:
-   - token usage aggregation
-   - tabular document actions workflow
-   - assistant table export parsing
-   - tabular generated export routing
-   - mixed-source or document-action chat flows affected by exception sanitization
-3. Run route policy coverage only if route decorators or route registrations are touched.
-4. Rerun the CodeQL check or PR checks after implementation to verify all targeted alerts are cleared.
+- SKIPPED
 
 ## Deferred Remediation Plan
 

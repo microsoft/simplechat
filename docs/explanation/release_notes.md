@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.119)**
+
+#### Bug Fixes
+
+*   **Duplicate Chat Stream JSON Import Cleanup**
+    *   Removed the redundant local `json` import from the chat streaming route while keeping the existing module-level import, clearing the PR #1145 CodeQL duplicate-module-import notice without changing streaming behavior.
+    *   Updated the PR 1145 remediation plan with the implementation version and validation results.
+    *   (Ref: microsoft/simplechat#1145, `route_backend_chats.py`, CodeQL alert 30)
+
 ### **(v0.250.118)**
 
 #### Bug Fixes
