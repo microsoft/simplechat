@@ -1,8 +1,8 @@
 # test_document_action_token_usage_aggregation.py
 """
 Functional test for document action token usage aggregation.
-Version: 0.250.105
-Implemented in: 0.241.116; updated for generated file exports in 0.250.072; updated in 0.250.073
+Version: 0.250.115
+Implemented in: 0.241.116; updated for generated file exports in 0.250.072; updated in 0.250.073; updated for PR 1145 duplicate fixture key remediation in 0.250.115
 
 This test ensures analysis and comparison aggregate tokens across
 all internal model calls and persist the aggregate usage on assistant metadata.
@@ -229,8 +229,6 @@ def test_document_comparison_token_aggregation():
             '_maybe_execute_tabular_document_action': lambda *args, **kwargs: None,
             '_maybe_create_comparison_generated_artifacts': lambda *args, **kwargs: {'artifacts': [], 'assistant_reply': None},
             '_reauthorize_mixed_source_workflow_result': lambda *args, **kwargs: None,
-            'is_cross_format_compare_enabled': lambda *args, **kwargs: False,
-            '_raise_legacy_cross_format_compare_limitation': lambda *args, **kwargs: None,
             '_resolve_model_workflow_client': lambda *args, **kwargs: (fake_client, 'gpt-5.4', 'aoai'),
             '_build_workflow_chat_messages': lambda prompt_text, **kwargs: [
                 {'role': 'user', 'content': prompt_text},
@@ -373,7 +371,7 @@ def test_version_update():
     with open(CONFIG_PATH, 'r', encoding='utf-8') as handle:
         content = handle.read()
 
-    assert_in('VERSION = "0.250.105"', content, 'config version update')
+    assert_in('VERSION = "0.250.115"', content, 'config version update')
     print('Version update passed.')
     return True
 

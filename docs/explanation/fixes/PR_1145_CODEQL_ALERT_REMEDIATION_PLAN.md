@@ -4,7 +4,7 @@ Planning baseline version: **0.250.110**
 
 Related PR: **microsoft/simplechat#1145**
 
-Implementation status: **In progress. Phase 1 items 1-3 implemented in versions 0.250.111, 0.250.112, and 0.250.113; Phase 2 item 4 implemented in version 0.250.114; remaining items are still pending.**
+Implementation status: **In progress. Phase 1 items 1-3 implemented in versions 0.250.111, 0.250.112, and 0.250.113; Phase 2 items 4-5 implemented in versions 0.250.114 and 0.250.115; remaining items are still pending.**
 
 ## Purpose
 
@@ -148,6 +148,7 @@ This plan converts the 62 CodeQL annotations from PR #1145 into an execution que
 - Alerts: 18, 24
 - CodeQL rule: Duplicate key in dict literal
 - Severity: warning
+- Status: **Implemented in version 0.250.115**
 - Location: [functional_tests/test_document_action_token_usage_aggregation.py](../../../functional_tests/test_document_action_token_usage_aggregation.py#L225-L226)
 - Decision: Implement.
 - Why: Duplicate keys hide fixture intent and can make a test pass with the wrong mocked behavior.
@@ -158,6 +159,10 @@ This plan converts the 62 CodeQL annotations from PR #1145 into an execution que
   - Confirm the test still exercises cross-format compare behavior intentionally.
 - Validation starting point:
   - Run `python functional_tests/test_document_action_token_usage_aggregation.py`.
+- Validation completed:
+  - `python functional_tests/test_document_action_token_usage_aggregation.py`
+  - `python -m py_compile functional_tests/test_document_action_token_usage_aggregation.py application/single_app/config.py`
+  - `git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --check -- functional_tests/test_document_action_token_usage_aggregation.py application/single_app/config.py docs/explanation/fixes/PR_1145_CODEQL_ALERT_REMEDIATION_PLAN.md docs/explanation/release_notes.md`
 
 #### 6. Resolve unreachable code in chat route
 

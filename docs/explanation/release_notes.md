@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.115)**
+
+#### Bug Fixes
+
+*   **Token Usage Aggregation Fixture Cleanup**
+    *   Removed duplicate mocked helper keys from the document action token usage aggregation functional test so the fixture intent is explicit and CodeQL no longer reports overwritten dictionary entries.
+    *   Kept comparison coverage focused on cross-format compare behavior while preserving aggregate token usage assertions for analysis, comparison, workflow assistant persistence, and chat persistence markers.
+    *   (Ref: microsoft/simplechat#1145, `test_document_action_token_usage_aggregation.py`, token usage aggregation fixtures)
+
 ### **(v0.250.114)**
 
 #### Bug Fixes
