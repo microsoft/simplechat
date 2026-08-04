@@ -16,13 +16,13 @@ jobs:
     
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       with:
         fetch-depth: 0
         
     - name: Get changed files
       id: changed-files
-      uses: tj-actions/changed-files@v46.0.1
+      uses: tj-actions/changed-files@2f7c5bfce28377bc069a65ba478de0a74aa0ca32 # v46.0.1
       with:
         files_yaml: |
           application:
@@ -141,7 +141,7 @@ jobs:
 
     - name: Post PR comment (when notes needed but missing)
       if: steps.require-notes.outputs.needs_notes == 'true' && steps.changed-files.outputs.release_notes_any_changed != 'true'
-      uses: actions/github-script@v7
+      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
       with:
         script: |
           const reason = '${{ steps.require-notes.outputs.reason }}';
