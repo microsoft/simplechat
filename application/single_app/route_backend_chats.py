@@ -8510,6 +8510,47 @@ def normalize_tabular_row_text(value):
     return re.sub(r'\s+', ' ', str(value).casefold()).strip()
 
 
+def tabular_text_contains_url_like_value(value):
+    """Return True when text contains a URL, SharePoint host, or site path."""
+    rendered_value = normalize_tabular_row_text(value)
+    if not rendered_value:
+        return False
+
+    def is_sharepoint_hostname(hostname):
+        normalized_hostname = str(hostname or '').strip().rstrip('.')
+        return normalized_hostname == 'sharepoint.com' or normalized_hostname.endswith('.sharepoint.com')
+
+    def is_sharepoint_lookalike_hostname(hostname):
+        normalized_hostname = str(hostname or '').strip().rstrip('.')
+        if not normalized_hostname or is_sharepoint_hostname(normalized_hostname):
+            return False
+        return any(
+            label == 'sharepoint' or label.endswith('sharepoint')
+            for label in normalized_hostname.split('.')
+        )
+
+    saw_full_url = False
+    for candidate in re.findall(r'https?://[^\s\)\]\}\>"\']+', rendered_value):
+        parsed_candidate = urlparse(candidate.rstrip('.,;:'))
+        if parsed_candidate.scheme in ('http', 'https') and parsed_candidate.netloc:
+            saw_full_url = True
+            candidate_host = str(parsed_candidate.hostname or '').rstrip('.')
+            if is_sharepoint_lookalike_hostname(candidate_host):
+                continue
+            return True
+
+    for candidate in re.findall(r'\b[a-z0-9][a-z0-9.-]*\.[a-z0-9.-]+\b', rendered_value):
+        parsed_candidate = urlparse(f'https://{candidate}')
+        candidate_host = str(parsed_candidate.hostname or '').rstrip('.')
+        if is_sharepoint_hostname(candidate_host):
+            return True
+
+    if saw_full_url:
+        return False
+
+    return '/sites/' in rendered_value
+
+
 def parse_tabular_column_candidates(raw_columns):
     """Normalize column arguments from string or list form into a stable list."""
     if isinstance(raw_columns, list):
@@ -8538,16 +8579,7 @@ def parse_tabular_column_candidates(raw_columns):
 
 def tabular_value_looks_url_like(value):
     """Return True when a scalar cell value looks like a URL or site path."""
-    rendered_value = normalize_tabular_row_text(value)
-    if not rendered_value:
-        return False
-
-    return (
-        'http://' in rendered_value
-        or 'https://' in rendered_value
-        or 'sharepoint.com' in rendered_value
-        or '/sites/' in rendered_value
-    )
+    return tabular_text_contains_url_like_value(value)
 
 
 def tabular_result_payload_contains_url_like_content(result_payload):
@@ -8568,15 +8600,7 @@ def tabular_result_payload_contains_url_like_content(result_payload):
             candidate_values.extend(raw_row.values())
 
     for candidate_value in candidate_values:
-        rendered_candidate = str(candidate_value or '').strip().lower()
-        if not rendered_candidate:
-            continue
-        if (
-            'http://' in rendered_candidate
-            or 'https://' in rendered_candidate
-            or 'sharepoint.com' in rendered_candidate
-            or '/sites/' in rendered_candidate
-        ):
+        if tabular_text_contains_url_like_value(candidate_value):
             return True
 
     return False
