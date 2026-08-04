@@ -21,6 +21,30 @@ $(document).ready(function () {
   let pageSize           = parseInt(pageSizeSelect.val(), 10);
   let currentSearchQuery = "";
 
+  function setTableTextMessage(message, columnSpan = 5, className = "text-center p-4 text-muted") {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = columnSpan;
+    cell.className = className;
+    cell.textContent = message;
+    row.appendChild(cell);
+    tableBody.empty().append(row);
+  }
+
+  function setEmptyPublicWorkspaceMessage() {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 5;
+    cell.className = "text-center p-4 text-muted";
+    cell.append(
+      document.createTextNode(`You don't have any ${publicWorkspaceLowerPlural} yet.`),
+      document.createElement("br"),
+      document.createTextNode(`Use "Create New ${publicWorkspaceSingular}" or "Find ${publicWorkspaceSingular}" above.`)
+    );
+    row.appendChild(cell);
+    tableBody.empty().append(row);
+  }
+
   // Fetch and render the list of public workspaces
   function fetchWorkspaces() {
     // Show loading placeholder
@@ -51,28 +75,15 @@ $(document).ready(function () {
         if (workspaces.length) {
           workspaces.forEach(renderWorkspaceRow);
         } else if (currentSearchQuery) {
-          tableBody.html(`
-            <tr><td colspan="5" class="text-center p-4 text-muted">
-              No workspaces found matching "${escapeHtml(currentSearchQuery)}".
-            </td></tr>
-          `);
+          setTableTextMessage(`No workspaces found matching "${currentSearchQuery}".`);
         } else {
-          tableBody.html(`
-            <tr><td colspan="5" class="text-center p-4 text-muted">
-              You don't have any ${escapeHtml(publicWorkspaceLowerPlural)} yet.<br>
-              Use "Create New ${escapeHtml(publicWorkspaceSingular)}" or "Find ${escapeHtml(publicWorkspaceSingular)}" above.
-            </td></tr>
-          `);
+          setEmptyPublicWorkspaceMessage();
         }
         renderPaginationControls(data.page, data.page_size, data.total_count);
       })
       .fail(function (jqXHR) {
         const err = jqXHR.responseJSON?.error || jqXHR.statusText;
-        tableBody.html(`
-          <tr><td colspan="5" class="text-center text-danger p-4">
-            Error loading workspaces: ${escapeHtml(err)}
-          </td></tr>
-        `);
+        setTableTextMessage(`Error loading workspaces: ${err}`, 5, "text-center text-danger p-4");
         renderPaginationControls(1, pageSize, 0);
       });
   }

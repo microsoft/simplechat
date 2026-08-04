@@ -214,11 +214,6 @@
         };
         return (window.publicWorkspaceLabels && window.publicWorkspaceLabels[key]) || defaults[key] || '';
       };
-      window.getPublicWorkspaceLabelHtml = function(key) {
-        var element = document.createElement('div');
-        element.textContent = window.getPublicWorkspaceLabel(key);
-        return element.innerHTML;
-      };
 
       // Check localStorage first for fast theme loading to prevent flash
       var savedTheme = localStorage.getItem('simplechat-theme');
