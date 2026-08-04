@@ -6,6 +6,9 @@ import re
 from typing import Any, Iterable
 from xml.etree import ElementTree
 
+from defusedxml import ElementTree as DefusedElementTree
+from defusedxml.common import DefusedXmlException
+
 
 SUPPORTED_GENERATED_EXPORT_FORMATS = {'csv', 'json', 'xml'}
 XML_DECLARATION = '<?xml version="1.0" encoding="UTF-8"?>'
@@ -30,15 +33,23 @@ def strip_markdown_code_fence(text):
     if not normalized_text.startswith('```'):
         return normalized_text
 
-    code_fence_match = re.fullmatch(
-        r'```(?:[a-zA-Z0-9_-]+)?\s*(.*?)\s*```',
-        normalized_text,
-        re.DOTALL,
-    )
-    if not code_fence_match:
+    header_end_index = normalized_text.find('\n')
+    if header_end_index <= 0:
         return normalized_text
 
-    return str(code_fence_match.group(1) or '').strip()
+    header_suffix = normalized_text[3:header_end_index].strip()
+    if header_suffix and not all(character.isalnum() or character in {'_', '-'} for character in header_suffix):
+        return normalized_text
+
+    closing_index = normalized_text.rfind('```')
+    if closing_index <= header_end_index:
+        return normalized_text
+
+    trailing_text = normalized_text[closing_index + 3:].strip()
+    if trailing_text:
+        return normalized_text
+
+    return normalized_text[header_end_index + 1:closing_index].strip()
 
 
 def _iter_xml_candidates(text) -> Iterable[str]:
@@ -80,8 +91,8 @@ def normalize_xml_artifact_payload(text):
             continue
         seen_candidates.add(candidate)
         try:
-            ElementTree.fromstring(candidate.encode('utf-8'))
-        except ElementTree.ParseError:
+            DefusedElementTree.fromstring(candidate.encode('utf-8'))
+        except (DefusedXmlException, ElementTree.ParseError):
             continue
         return candidate
     return ''

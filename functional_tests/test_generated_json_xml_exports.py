@@ -2,8 +2,8 @@
 # test_generated_json_xml_exports.py
 """
 Functional test for generated JSON/XML export artifacts.
-Version: 0.250.113
-Implemented in: 0.250.113
+Version: 0.250.114
+Implemented in: 0.250.114
 
 This test ensures JSON/XML generation requests are recognized as downloadable
 artifact workflows, reuse shared serialization helpers, avoid duplicate XML
@@ -23,7 +23,7 @@ CHAT_ROUTE_FILE = APP_ROOT / "route_backend_chats.py"
 WORKFLOW_RUNNER_FILE = APP_ROOT / "functions_workflow_runner.py"
 DOCUMENT_ANALYSIS_FILE = APP_ROOT / "functions_document_analysis.py"
 DOCUMENTS_FILE = APP_ROOT / "functions_documents.py"
-EXPECTED_VERSION = "0.250.113"
+EXPECTED_VERSION = "0.250.114"
 
 
 def read_text(path):
@@ -66,6 +66,10 @@ def test_shared_json_xml_export_helpers():
         "Generated XML:\n```xml\n<Report><Name>Example</Name></Report>\n```"
     )
     assert xml_payload == "<Report><Name>Example</Name></Report>"
+    assert module.normalize_xml_artifact_payload(
+        "<!DOCTYPE foo [<!ENTITY xxe \"blocked\">]><Report>&xxe;</Report>"
+    ) == ""
+    assert module.strip_markdown_code_fence("```json\n{\"safe\": true}\n```") == '{"safe": true}'
 
     serialized_xml = module.serialize_generated_xml(
         [{"name": "A"}, {"name": "B"}],
@@ -133,6 +137,18 @@ def test_xml_processing_consolidated():
     print("XML processing checks passed")
 
 
+def test_security_review_fixes():
+    print("Testing security review fix markers...")
+    helper_source = read_text(GENERATED_EXPORTS_FILE)
+    requirements_source = read_text(APP_ROOT / "requirements.txt")
+
+    assert_contains(helper_source, "from defusedxml import ElementTree as DefusedElementTree", "defused XML parser import")
+    assert_contains(helper_source, "DefusedElementTree.fromstring", "hardened XML parser usage")
+    assert "re.fullmatch(" not in helper_source, "Generated export helper should not use regex fullmatch for code fences."
+    assert_contains(requirements_source, "defusedxml==0.7.1", "defusedxml dependency pin")
+    print("Security review fix checks passed")
+
+
 def run_tests():
     current_version = read_current_version()
     if current_version != EXPECTED_VERSION:
@@ -143,6 +159,7 @@ def run_tests():
         test_chat_route_json_xml_artifact_hooks,
         test_document_analysis_xml_json_intent_and_artifacts,
         test_xml_processing_consolidated,
+        test_security_review_fixes,
     ]
     results = []
     for test in tests:

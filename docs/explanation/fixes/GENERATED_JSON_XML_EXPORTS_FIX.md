@@ -1,6 +1,6 @@
 # Generated JSON and XML Export Artifacts Fix
 
-Fixed/implemented in version: **0.250.113**
+Fixed/implemented in version: **0.250.114**
 
 ## Issue Description
 
