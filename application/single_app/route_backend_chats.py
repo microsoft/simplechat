@@ -129,6 +129,13 @@ from functions_image_generation import (
 )
 from functions_appinsights import log_event
 from functions_debug import debug_print
+from functions_generated_file_exports import (
+    normalize_json_artifact_payload,
+    normalize_generated_output_format,
+    normalize_xml_artifact_payload,
+    serialize_generated_json,
+    serialize_generated_xml,
+)
 from functions_governance import ensure_governance_access
 from functions_notifications import create_chat_response_notification
 from functions_activity_logging import log_agent_run, log_chat_activity, log_conversation_creation, log_token_usage
@@ -1528,6 +1535,173 @@ def maybe_create_assistant_table_generated_output(
         'preview_rows': export_payload.get('preview_rows') or [],
         'summary': export_payload.get('summary'),
     }
+
+
+def _has_generated_file_output(existing_outputs, output_format):
+    normalized_output_format = normalize_generated_output_format(output_format)
+    for generated_output in existing_outputs or []:
+        if not isinstance(generated_output, dict):
+            continue
+
+        raw_existing_output_format = str(
+            generated_output.get('output_format') or os.path.splitext(str(generated_output.get('file_name') or ''))[1],
+        ).strip().lower().lstrip('.')
+        if raw_existing_output_format not in {'csv', 'json', 'xml'}:
+            continue
+        existing_output_format = normalize_generated_output_format(raw_existing_output_format)
+        if existing_output_format != normalized_output_format:
+            continue
+        if (
+            generated_output.get('artifact_message_id')
+            or generated_output.get('document_id')
+            or generated_output.get('export_run_id')
+            or generated_output.get('run_id')
+        ):
+            return True
+
+    return False
+
+
+def _assistant_content_disclaims_complete_file(assistant_content):
+    normalized_content = str(assistant_content or '').strip().lower()
+    if not normalized_content:
+        return False
+
+    disclaimer_markers = (
+        'partial conversion',
+        'partial json',
+        'partial xml',
+        'evidence envelope is truncated',
+        'evidence_envelope_truncated',
+        'not fully available',
+        'only partially visible',
+        'omitted rather than invented',
+    )
+    return any(marker in normalized_content[:2000] for marker in disclaimer_markers)
+
+
+def _build_assistant_file_export_name(output_format):
+    normalized_output_format = normalize_generated_output_format(output_format)
+    timestamp_suffix = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+    return f'assistant_generated_{timestamp_suffix}.{normalized_output_format}'
+
+
+def _build_assistant_file_preview_lines(file_content, max_lines=5, max_line_length=220):
+    preview_lines = []
+    for line in str(file_content or '').splitlines():
+        normalized_line = str(line or '').strip()
+        if not normalized_line:
+            continue
+        if len(normalized_line) > max_line_length:
+            normalized_line = f'{normalized_line[:max_line_length - 1]}…'
+        preview_lines.append(normalized_line)
+        if len(preview_lines) >= max_lines:
+            break
+    return preview_lines
+
+
+def _build_assistant_file_output_handoff(output_metadata):
+    output_format = str(output_metadata.get('output_format') or 'file').strip().upper()
+    file_name = str(output_metadata.get('file_name') or '').strip()
+    if file_name:
+        return (
+            f'I created a downloadable {output_format} file and attached it to this chat as "{file_name}". '
+            'Use the download control on the artifact card for the full output.'
+        )
+    return (
+        f'I created a downloadable {output_format} file and attached it to this chat. '
+        'Use the download control on the artifact card for the full output.'
+    )
+
+
+def maybe_create_assistant_file_generated_output(
+    user_question,
+    assistant_content,
+    conversation_id,
+    existing_outputs=None,
+):
+    """Save assistant-generated JSON/XML content as a downloadable chat artifact."""
+    output_format = get_tabular_generated_output_format(user_question)
+    if output_format not in {'json', 'xml'}:
+        return None
+    if _has_generated_file_output(existing_outputs, output_format):
+        return None
+    if _assistant_content_disclaims_complete_file(assistant_content):
+        return None
+
+    preview_items = []
+    preview_lines = []
+    if output_format == 'json':
+        json_payload = normalize_json_artifact_payload(assistant_content)
+        if json_payload is None:
+            return None
+        file_content = serialize_generated_json(json_payload)
+        if isinstance(json_payload, list):
+            preview_items = json_payload[:3]
+        elif isinstance(json_payload, dict):
+            preview_items = [json_payload]
+    else:
+        xml_payload = normalize_xml_artifact_payload(assistant_content)
+        if not xml_payload:
+            return None
+        file_content = xml_payload
+        preview_lines = _build_assistant_file_preview_lines(file_content)
+
+    generated_file_name = _build_assistant_file_export_name(output_format)
+    summary = (
+        f'Saved the generated {output_format.upper()} output in this chat as a downloadable file artifact.'
+    )
+    try:
+        upload_result = upload_generated_analysis_artifact_for_current_user(
+            conversation_id=conversation_id,
+            file_name=generated_file_name,
+            file_content=file_content,
+            capability='analysis',
+            output_format=output_format,
+            summary=summary,
+        )
+    except Exception as exc:
+        log_event(
+            '[Assistant File Export] Failed to save assistant generated file artifact',
+            {
+                'conversation_id': conversation_id,
+                'generated_file_name': generated_file_name,
+                'output_format': output_format,
+                'error': str(exc),
+            },
+            debug_only=True,
+        )
+        return None
+
+    artifact_message_id = upload_result.get('message', {}).get('id')
+    if not artifact_message_id:
+        return None
+
+    uploaded_file_name = upload_result.get('message', {}).get('file_name') or generated_file_name
+    log_event(
+        '[Assistant File Export] Saved assistant generated file artifact',
+        {
+            'conversation_id': conversation_id,
+            'artifact_message_id': artifact_message_id,
+            'generated_file_name': uploaded_file_name,
+            'output_format': output_format,
+        },
+        debug_only=True,
+    )
+    output_metadata = {
+        'capability': 'analysis',
+        'artifact_message_id': artifact_message_id,
+        'conversation_id': conversation_id,
+        'storage_scope': 'chat',
+        'file_name': uploaded_file_name,
+        'output_format': output_format,
+        'summary': summary,
+    }
+    if preview_items:
+        output_metadata['preview_items'] = preview_items
+    if preview_lines:
+        output_metadata['preview_lines'] = preview_lines
+    return output_metadata
 
 
 def _safe_int(value, default=0):
@@ -3903,19 +4077,51 @@ def get_tabular_generated_output_format(user_question):
         return None
 
     json_markers = (
+        'convert into json',
+        'convert to json',
         'json array',
         'json file',
         'download json',
         'save json',
         'make a json',
         'create a json',
+        'generate json',
+        'generate a json',
         'return json',
         'valid json',
     )
+    xml_markers = (
+        'convert into xml',
+        'convert to xml',
+        'xml file',
+        'download xml',
+        'save xml',
+        'make an xml',
+        'make a xml',
+        'create an xml',
+        'create a xml',
+        'generate xml',
+        'generate an xml',
+        'populate xml',
+        'populate the xml',
+        'return xml',
+        'valid xml',
+        'well-formed xml',
+        'output as xml',
+        'format as xml',
+    )
     csv_markers = TABLE_EXPORT_REQUEST_MARKERS
 
-    if any(marker in normalized_question for marker in json_markers):
+    if any(marker in normalized_question for marker in json_markers) or re.search(
+        r'\b(convert|create|make|build|generate|produce|return|respond|format|output|save|export|download)\b[\w\s.,:;\-/]{0,80}\ba?\s*json\b',
+        normalized_question,
+    ):
         return 'json'
+    if any(marker in normalized_question for marker in xml_markers) or re.search(
+        r'\b(convert|populate|create|make|build|generate|produce|return|respond|format|output|save|export|download)\b[\w\s.,:;\-/]{0,80}\ba?\s*xml\b',
+        normalized_question,
+    ):
+        return 'xml'
     if any(marker in normalized_question for marker in csv_markers):
         return 'csv'
     return None
@@ -3933,9 +4139,16 @@ def question_requests_tabular_generated_output(user_question):
         'every row',
         'full json',
         'full csv',
+        'full xml',
+        'entire',
+        'complete',
+        'convert',
         'download',
         'save',
         'export',
+        'create',
+        'generate',
+        'populate',
         'one object per',
         'one row per',
         'each object',
@@ -4345,7 +4558,7 @@ def _build_tabular_generated_output_input_row(row, source_file_name=None):
 def _build_tabular_generated_output_file_name(source_file_name, output_format):
     timestamp_suffix = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
     normalized_base_name = _sanitize_tabular_generated_output_base_name(source_file_name)
-    normalized_extension = 'csv' if output_format == 'csv' else 'json'
+    normalized_extension = normalize_generated_output_format(output_format)
     return f"{normalized_base_name}_generated_{timestamp_suffix}.{normalized_extension}"
 
 
@@ -4569,7 +4782,7 @@ async def _generate_tabular_structured_output_entries(
         model_context=model_context,
     )
 
-    normalized_output_format = str(output_format or 'json').strip().lower() or 'json'
+    normalized_output_format = normalize_generated_output_format(output_format)
     output_format_label = normalized_output_format.upper()
     batch_budget = _get_tabular_generated_output_batch_budget(settings)
     row_batches = _build_tabular_generated_output_row_batches(rows, settings=settings)
@@ -4860,8 +5073,14 @@ async def maybe_create_tabular_generated_output(
 
     if output_format == 'csv':
         serialized_output = _build_tabular_generated_output_csv(output_entries)
+    elif output_format == 'xml':
+        serialized_output = serialize_generated_xml(
+            output_entries,
+            root_name='GeneratedRows',
+            item_name='Row',
+        )
     else:
-        serialized_output = json.dumps(output_entries, indent=2, default=str, ensure_ascii=False)
+        serialized_output = serialize_generated_json(output_entries)
 
     generated_file_name = _build_tabular_generated_output_file_name(
         source_candidate.get('filename'),
@@ -12205,15 +12424,25 @@ def register_route_backend_chats(bp):
         )
         document_generated_analysis_artifacts = list(execution_result.get('generated_analysis_artifacts') or [])
         document_generated_tabular_outputs = list(execution_result.get('generated_tabular_outputs') or [])
+        document_action_reply_content = execution_result.get('reply', '')
         assistant_table_generated_output = maybe_create_assistant_table_generated_output(
             user_question=user_message,
-            assistant_content=execution_result.get('reply', ''),
+            assistant_content=document_action_reply_content,
             conversation_id=conversation_id,
             existing_outputs=document_generated_analysis_artifacts + document_generated_tabular_outputs,
         )
         if assistant_table_generated_output:
             document_generated_analysis_artifacts.append(assistant_table_generated_output)
             document_generated_tabular_outputs.append(assistant_table_generated_output)
+        assistant_file_generated_output = maybe_create_assistant_file_generated_output(
+            user_question=user_message,
+            assistant_content=document_action_reply_content,
+            conversation_id=conversation_id,
+            existing_outputs=document_generated_analysis_artifacts + document_generated_tabular_outputs,
+        )
+        if assistant_file_generated_output:
+            document_generated_analysis_artifacts.append(assistant_file_generated_output)
+            document_action_reply_content = _build_assistant_file_output_handoff(assistant_file_generated_output)
         generated_analysis_metadata = _build_generated_analysis_metadata(
             generated_analysis_artifacts=document_generated_analysis_artifacts,
             generated_tabular_outputs=document_generated_tabular_outputs,
@@ -12232,7 +12461,7 @@ def register_route_backend_chats(bp):
             'id': assistant_message_id,
             'conversation_id': conversation_id,
             'role': 'assistant',
-            'content': execution_result.get('reply', ''),
+            'content': document_action_reply_content,
             'timestamp': assistant_timestamp,
             'augmented': False,
             'hybrid_citations': hybrid_citations_list,
@@ -15863,6 +16092,15 @@ def register_route_backend_chats(bp):
             if assistant_table_generated_output:
                 generated_analysis_artifacts_list.append(assistant_table_generated_output)
                 generated_tabular_outputs_list.append(assistant_table_generated_output)
+            assistant_file_generated_output = maybe_create_assistant_file_generated_output(
+                user_question=user_message,
+                assistant_content=ai_message,
+                conversation_id=conversation_id,
+                existing_outputs=generated_analysis_artifacts_list + generated_tabular_outputs_list,
+            )
+            if assistant_file_generated_output:
+                generated_analysis_artifacts_list.append(assistant_file_generated_output)
+                ai_message = _build_assistant_file_output_handoff(assistant_file_generated_output)
             generated_analysis_metadata = _build_generated_analysis_metadata(
                 generated_analysis_artifacts=generated_analysis_artifacts_list,
                 generated_tabular_outputs=generated_tabular_outputs_list,
@@ -19044,6 +19282,15 @@ def register_route_backend_chats(bp):
                     if assistant_table_generated_output:
                         generated_analysis_artifacts_list.append(assistant_table_generated_output)
                         generated_tabular_outputs_list.append(assistant_table_generated_output)
+                    assistant_file_generated_output = maybe_create_assistant_file_generated_output(
+                        user_question=user_message,
+                        assistant_content=accumulated_content,
+                        conversation_id=conversation_id,
+                        existing_outputs=generated_analysis_artifacts_list + generated_tabular_outputs_list,
+                    )
+                    if assistant_file_generated_output:
+                        generated_analysis_artifacts_list.append(assistant_file_generated_output)
+                        accumulated_content = _build_assistant_file_output_handoff(assistant_file_generated_output)
                     generated_analysis_metadata = _build_generated_analysis_metadata(
                         generated_analysis_artifacts=generated_analysis_artifacts_list,
                         generated_tabular_outputs=generated_tabular_outputs_list,

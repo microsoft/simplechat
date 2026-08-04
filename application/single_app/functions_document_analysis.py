@@ -363,6 +363,119 @@ def _build_window_label(document_name, window_range):
     return f"{document_name} - window {window_range.get('window_number')} ({range_label})"
 
 
+def _prompt_requests_json_output(analysis_prompt):
+    prompt_text = str(analysis_prompt or '').strip().lower()
+    if not prompt_text:
+        return False
+
+    json_markers = (
+        'json artifact',
+        'json export',
+        'json output',
+        'json array',
+        'json object',
+        'json file',
+        'json format',
+        'valid json',
+        'convert into json',
+        'convert to json',
+        'return json',
+        'return only json',
+        'respond with json',
+        'format as json',
+        'output as json',
+        'save as json',
+        'export as json',
+        'download as json',
+        'create json',
+        'create a json',
+        'make json',
+        'make a json',
+        'generate json',
+        'generate a json',
+    )
+    if any(marker in prompt_text for marker in json_markers):
+        return True
+
+    return bool(re.search(
+        r'\b(convert|create|make|build|generate|produce|return|respond|format|output|save|export|download)\b[\w\s.,:;\-/]{0,80}\bjson\b',
+        prompt_text,
+    ))
+
+
+def _prompt_requests_xml_output(analysis_prompt):
+    prompt_text = str(analysis_prompt or '').strip().lower()
+    if not prompt_text:
+        return False
+
+    xml_markers = (
+        'xml artifact',
+        'xml export',
+        'xml output',
+        'xml document',
+        'xml file',
+        'xml template',
+        'valid xml',
+        'well-formed xml',
+        'convert into xml',
+        'convert to xml',
+        'populate xml',
+        'populate the xml',
+        'return xml',
+        'return only xml',
+        'respond with xml',
+        'format as xml',
+        'output as xml',
+        'save as xml',
+        'export as xml',
+        'download as xml',
+        'create xml',
+        'create an xml',
+        'make xml',
+        'make an xml',
+        'generate xml',
+        'generate an xml',
+    )
+    if any(marker in prompt_text for marker in xml_markers):
+        return True
+
+    return bool(re.search(
+        r'\b(convert|populate|create|make|build|generate|produce|return|respond|format|output|save|export|download)\b[\w\s.,:;\-/]{0,80}\bxml\b',
+        prompt_text,
+    ))
+
+
+def _build_requested_output_guidance(analysis_prompt, stage):
+    if _prompt_requests_xml_output(analysis_prompt):
+        if stage == 'slice':
+            return (
+                'The overall task requests XML output. For this slice, preserve exact XML element names, '
+                'attribute names, nesting, template placeholders, and source values needed to produce the final XML. '
+                'Do not condense repeated XML structures when they are visible in this slice. If this slice contains '
+                'everything needed to satisfy the task, return only the complete well-formed XML document.\n\n'
+            )
+        return (
+            'The original task requests an XML file. Return only one complete well-formed XML document for the final '
+            'answer, without Markdown fences, prose, citations, or explanatory text outside the XML. Preserve the '
+            'requested template structure whenever a template is supplied.\n\n'
+        )
+
+    if _prompt_requests_json_output(analysis_prompt):
+        if stage == 'slice':
+            return (
+                'The overall task requests JSON output. For this slice, preserve exact field names, hierarchy, arrays, '
+                'template placeholders, and source values needed to produce the final JSON. Do not condense repeated '
+                'structures when they are visible in this slice. If this slice contains everything needed to satisfy '
+                'the task, return only valid JSON.\n\n'
+            )
+        return (
+            'The original task requests a JSON file. Return only valid JSON for the final answer, without Markdown '
+            'fences, prose, citations, or explanatory text outside the JSON.\n\n'
+        )
+
+    return ''
+
+
 def _build_window_analysis_prompt(analysis_prompt, document_payload, window_payload, window_range):
     document_file_name = _resolve_document_file_name(document_payload)
     document_title = _resolve_document_title(document_payload)
@@ -387,6 +500,7 @@ def _build_window_analysis_prompt(analysis_prompt, document_payload, window_payl
         f'Page count in slice: {window_range.get("page_count", 0)}\n\n'
         'Task instructions:\n'
         f'{analysis_prompt}\n\n'
+        f'{_build_requested_output_guidance(analysis_prompt, "slice")}'
         'Write a focused analysis of this slice. Preserve concrete facts, decisions, comments, action items, '
         'and open questions. Call out anything that still needs follow-up.\n\n'
         f'<DocumentSlice>\n{_render_window_source_text(window_payload)}\n</DocumentSlice>'
@@ -508,11 +622,15 @@ def _prompt_requests_exhaustive_output(analysis_prompt):
 
 def _build_analysis_intent(analysis_prompt):
     per_source_output_requested = _prompt_requests_per_source_output(analysis_prompt)
+    json_output_requested = _prompt_requests_json_output(analysis_prompt)
+    xml_output_requested = _prompt_requests_xml_output(analysis_prompt)
     json_array_output_requested = _prompt_requests_json_array_output(analysis_prompt)
     json_code_block_requested = _prompt_requests_json_code_block(analysis_prompt)
     table_output_requested = _prompt_requests_table_output(analysis_prompt)
     exhaustive_output_requested = (
         per_source_output_requested
+        or json_output_requested
+        or xml_output_requested
         or json_array_output_requested
         or table_output_requested
         or _prompt_requests_exhaustive_output(analysis_prompt)
@@ -522,11 +640,13 @@ def _build_analysis_intent(analysis_prompt):
         'exhaustive': exhaustive_output_requested,
         'preserve_raw_outputs': True,
         'per_source_output_requested': per_source_output_requested,
+        'json_output_requested': json_output_requested,
+        'xml_output_requested': xml_output_requested,
         'json_array_output_requested': json_array_output_requested,
         'json_code_block_requested': json_code_block_requested,
         'table_output_requested': table_output_requested,
-        'csv_artifact_recommended': table_output_requested or exhaustive_output_requested,
-        'markdown_analysis_artifact_recommended': exhaustive_output_requested,
+        'csv_artifact_recommended': table_output_requested or (exhaustive_output_requested and not json_output_requested and not xml_output_requested),
+        'markdown_analysis_artifact_recommended': exhaustive_output_requested and not json_output_requested and not xml_output_requested,
     }
 
 
@@ -627,6 +747,7 @@ def _build_reduction_prompt(analysis_prompt, items, stage_label, failed_range_la
         f'Task instructions:\n{analysis_prompt}\n\n'
         f'{failed_note}'
         f'{preservation_note}'
+        f'{_build_requested_output_guidance(analysis_prompt, "reduction")}'
         f'{combine_instruction}\n\n'
         f'<WindowAnalyses>\n{combined_text}\n</WindowAnalyses>'
     )
@@ -659,6 +780,7 @@ def _build_document_reduction_prompt(analysis_prompt, document_name, items, stag
         f'Source document: {document_name}\n'
         f'Task instructions:\n{analysis_prompt}\n\n'
         f'{failed_note}'
+        f'{_build_requested_output_guidance(analysis_prompt, "reduction")}'
         'Combine the slice analyses below into one document-level answer.\n\n'
         f'<DocumentWindowAnalyses>\n{combined_text}\n</DocumentWindowAnalyses>'
     )

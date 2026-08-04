@@ -25,6 +25,11 @@ from config import (
     storage_account_personal_chat_container_name,
 )
 from functions_appinsights import log_event
+from functions_generated_file_exports import (
+    normalize_generated_output_format,
+    serialize_generated_json,
+    serialize_generated_xml,
+)
 from functions_model_endpoint_runtime import build_semantic_kernel_chat_service_for_model
 from functions_settings import get_settings
 from functions_simplechat_operations import upload_generated_analysis_artifact_for_user
@@ -188,7 +193,7 @@ def _sanitize_file_base_name(file_name):
 
 def _build_generated_file_name(source_file_name, output_format):
     timestamp_suffix = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
-    normalized_extension = 'csv' if str(output_format or '').strip().lower() == 'csv' else 'json'
+    normalized_extension = normalize_generated_output_format(output_format)
     return f"{_sanitize_file_base_name(source_file_name)}_generated_{timestamp_suffix}.{normalized_extension}"
 
 
@@ -1279,11 +1284,17 @@ def _assemble_output_entries(run):
 
 def _complete_run(run):
     output_entries = _assemble_output_entries(run)
-    output_format = str(run.get('output_format') or 'json').strip().lower() or 'json'
+    output_format = normalize_generated_output_format(run.get('output_format'))
     if output_format == 'csv':
         serialized_output = _build_generated_output_csv(output_entries)
+    elif output_format == 'xml':
+        serialized_output = serialize_generated_xml(
+            output_entries,
+            root_name='GeneratedRows',
+            item_name='Row',
+        )
     else:
-        serialized_output = json.dumps(output_entries, indent=2, default=str, ensure_ascii=False)
+        serialized_output = serialize_generated_json(output_entries)
 
     generated_file_name = run.get('generated_file_name') or _build_generated_file_name(
         run.get('source_file_name'),
