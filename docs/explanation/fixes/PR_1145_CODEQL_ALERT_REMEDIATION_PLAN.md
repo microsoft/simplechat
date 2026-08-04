@@ -79,6 +79,7 @@ This plan converts the 62 CodeQL annotations from PR #1145 into an execution que
 - Alerts: 7-17, 20-23, 25-27
 - CodeQL rule: Information exposure through an exception
 - Severity: warning
+- Status: **Implemented in version 0.250.113**
 - Locations:
   - [application/single_app/route_backend_chats.py](../../../application/single_app/route_backend_chats.py#L14244)
   - [application/single_app/route_backend_chats.py](../../../application/single_app/route_backend_chats.py#L14316)
@@ -111,6 +112,13 @@ This plan converts the 62 CodeQL annotations from PR #1145 into an execution que
 - Validation starting point:
   - Add focused route or helper tests that simulate unexpected exceptions and assert that responses do not include raw exception text, traceback text, local paths, provider class names, or internal query/source descriptors.
   - Include both JSON responses and SSE error events.
+- Validation completed:
+  - `python functional_tests/test_chat_error_response_sanitization.py`
+  - `python -m py_compile application/single_app/route_backend_chats.py application/single_app/config.py functional_tests/test_chat_error_response_sanitization.py`
+  - `git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --check -- application/single_app/route_backend_chats.py application/single_app/config.py functional_tests/test_chat_error_response_sanitization.py docs/explanation/fixes/PR_1145_CODEQL_ALERT_REMEDIATION_PLAN.md`
+- Validation notes:
+  - `python functional_tests/test_foundry_delegated_user_auth.py` was attempted; 7/8 checks passed, and the remaining failure is the test's hardcoded historic `VERSION = "0.241.196"` assertion.
+  - `python functional_tests/test_content_safety_error_handling.py` was attempted; it fails before checking behavior because it points at stale root-level `route_backend_chats.py` and `static/js/chat/chat-messages.js` paths.
 
 ### Phase 2: Correctness and Behavior Cleanup
 

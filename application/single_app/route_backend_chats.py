@@ -12756,6 +12756,37 @@ def restore_agent_stream_retry_state(agent, retry_state):
 
 
 def register_route_backend_chats(bp):
+    CLIENT_SAFE_INTERNAL_ERROR_MESSAGE = 'Something went wrong while processing the request. Please try again.'
+    CLIENT_SAFE_STREAM_ERROR_MESSAGE = 'Something went wrong while streaming the response. Please try again.'
+
+    def build_stream_error_event(message=CLIENT_SAFE_STREAM_ERROR_MESSAGE, **extra):
+        payload = {'error': message}
+        for key, value in extra.items():
+            if value is not None:
+                payload[key] = value
+        return f"data: {json.dumps(make_json_serializable(payload))}\n\n"
+
+    def get_safe_stream_error_message(payload, status_code, fallback_message):
+        if status_code >= 500 and not (
+            payload.get('service_health_warning') or payload.get('warning_type')
+        ):
+            return fallback_message
+        return payload.get('error') or fallback_message
+
+    def build_json_error_response(message=CLIENT_SAFE_INTERNAL_ERROR_MESSAGE, status_code=500, **extra):
+        payload = {'error': message}
+        for key, value in extra.items():
+            if value is not None:
+                payload[key] = value
+        return jsonify(make_json_serializable(payload)), status_code
+
+    def is_content_safety_error(error_message):
+        normalized_message = str(error_message or '').lower()
+        return 'safety system' in normalized_message or 'moderation_blocked' in normalized_message
+
+    def is_provider_bad_request_error(error_message, exc):
+        return '400' in str(error_message or '') and 'BadRequestError' in str(type(exc))
+
     def build_background_stream_response(event_generator_factory, stream_session=None):
         """Run SSE generation in background execution so it survives disconnects."""
         stream_bridge = BackgroundStreamBridge(stream_session=stream_session)
@@ -12797,7 +12828,7 @@ def register_route_backend_chats(bp):
                     level=logging.ERROR,
                     exceptionTraceback=True,
                 )
-                error_event = f"data: {json.dumps({'error': f'Internal server error: {str(e)}'})}\n\n"
+                error_event = build_stream_error_event()
                 publish_background_event(error_event)
             finally:
                 if stream_session:
@@ -13558,7 +13589,8 @@ def register_route_backend_chats(bp):
             try:
                 conversation_item = _load_or_create_analyze_conversation(user_id, conversation_id=conversation_id)
             except PermissionError as exc:
-                return {'error': str(exc)}, 403
+                debug_print(f'[ChatDocumentAction] Analyze conversation access denied: {exc}')
+                return {'error': 'You do not have access to this conversation.'}, 403
 
             conversation_id = conversation_item.get('id')
             g.conversation_id = conversation_id
@@ -13625,7 +13657,7 @@ def register_route_backend_chats(bp):
                 f'conversation_id={conversation_id or "new"} | '
                 f'error={exc}'
             )
-            return {'error': str(exc)}, 400
+            return {'error': 'Document action request is invalid. Please review the selected documents and try again.'}, 400
         if normalized_action.get('type') == DOCUMENT_ACTION_TYPE_NONE:
             return {'error': 'Select a document action before sending this request.'}, 400
 
@@ -13684,7 +13716,8 @@ def register_route_backend_chats(bp):
             try:
                 conversation_item = _load_or_create_analyze_conversation(user_id, conversation_id=conversation_id)
             except PermissionError as exc:
-                return {'error': str(exc)}, 403
+                debug_print(f'[ChatDocumentAction] Conversation access denied: {exc}')
+                return {'error': 'You do not have access to this conversation.'}, 403
 
         conversation_id = conversation_item.get('id')
         g.conversation_id = conversation_id
@@ -13923,7 +13956,11 @@ def register_route_backend_chats(bp):
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
-            return {'error': str(exc), 'conversation_id': conversation_id, 'user_message_id': user_message_id}, 500
+            return {
+                'error': 'Document action failed. Please try again.',
+                'conversation_id': conversation_id,
+                'user_message_id': user_message_id,
+            }, 500
 
         try:
             _reauthorize_document_action_finalization(
@@ -13949,14 +13986,16 @@ def register_route_backend_chats(bp):
                 'request_correlation_id': request_correlation_id,
             }, 409
         except PermissionError as exc:
+            debug_print(f'[ChatDocumentAction] Finalization authorization failed: {exc}')
             return {
-                'error': str(exc),
+                'error': 'One or more selected sources are no longer available.',
                 'conversation_id': conversation_id,
                 'user_message_id': user_message_id,
             }, 403
         except RuntimeError as exc:
+            debug_print(f'[ChatDocumentAction] Finalization state changed: {exc}')
             return {
-                'error': str(exc),
+                'error': 'Document action finalization could not complete. Please try again.',
                 'conversation_id': conversation_id,
                 'user_message_id': user_message_id,
             }, 409
@@ -14321,13 +14360,29 @@ def register_route_backend_chats(bp):
                     )
                     return
                 if status_code >= 400:
-                    error_message = payload.get('error') or f'Document action failed ({status_code})'
-                    yield f"data: {json.dumps({'error': error_message, 'conversation_id': payload.get('conversation_id')})}\n\n"
+                    error_message = get_safe_stream_error_message(
+                        payload,
+                        status_code,
+                        f'Document action failed ({status_code})',
+                    )
+                    yield build_stream_error_event(
+                        error_message,
+                        conversation_id=payload.get('conversation_id'),
+                    )
                     return
 
                 yield f"data: {json.dumps(normalize_terminal_chat_payload(payload))}\n\n"
             except Exception as document_action_error:
-                yield f"data: {json.dumps({'error': str(document_action_error), 'conversation_id': conversation_id})}\n\n"
+                log_event(
+                    f'[DocumentActionStream] Streaming response failed: {document_action_error}',
+                    extra={'conversation_id': conversation_id},
+                    level=logging.ERROR,
+                    exceptionTraceback=True,
+                )
+                yield build_stream_error_event(
+                    'Document action failed. Please try again.',
+                    conversation_id=conversation_id,
+                )
 
         return build_background_stream_response(generate_document_action_response, stream_session=stream_session)
 
@@ -14393,13 +14448,29 @@ def register_route_backend_chats(bp):
                     )
                     return
                 if status_code >= 400:
-                    error_message = payload.get('error') or f'Document analysis failed ({status_code})'
-                    yield f"data: {json.dumps({'error': error_message, 'conversation_id': payload.get('conversation_id')})}\n\n"
+                    error_message = get_safe_stream_error_message(
+                        payload,
+                        status_code,
+                        f'Document analysis failed ({status_code})',
+                    )
+                    yield build_stream_error_event(
+                        error_message,
+                        conversation_id=payload.get('conversation_id'),
+                    )
                     return
 
                 yield f"data: {json.dumps(normalize_terminal_chat_payload(payload))}\n\n"
             except Exception as analysis_error:
-                yield f"data: {json.dumps({'error': str(analysis_error), 'conversation_id': conversation_id})}\n\n"
+                log_event(
+                    f'[DocumentAnalysisStream] Streaming response failed: {analysis_error}',
+                    extra={'conversation_id': conversation_id},
+                    level=logging.ERROR,
+                    exceptionTraceback=True,
+                )
+                yield build_stream_error_event(
+                    'Document analysis failed. Please try again.',
+                    conversation_id=conversation_id,
+                )
 
         return build_background_stream_response(generate_analyze_response, stream_session=stream_session)
 
@@ -14488,17 +14559,32 @@ def register_route_backend_chats(bp):
         except CosmosResourceNotFoundError:
             return jsonify({'error': 'Conversation or source message not found'}), 404
         except PermissionError as exc:
-            return jsonify({'error': str(exc)}), 403
+            log_event(
+                f'[ImageGeneration] Proposal approval authorization failed: {exc}',
+                extra={'conversation_id': data.get('conversation_id') if isinstance(data, dict) else None},
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'You do not have access to this conversation'}), 403
         except ValueError as exc:
-            return jsonify({'error': str(exc)}), 400
+            log_event(
+                f'[ImageGeneration] Proposal approval validation failed: {exc}',
+                extra={'conversation_id': data.get('conversation_id') if isinstance(data, dict) else None},
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Image generation request is invalid. Please review the prompt and try again.'}), 400
         except Exception as exc:
             error_message = str(exc)
             status_code = 500
-            if 'safety system' in error_message.lower() or 'moderation_blocked' in error_message:
+            if is_content_safety_error(error_message):
                 error_message = 'Image generation was blocked by content safety policies. Please edit the prompt and try again.'
                 status_code = 400
-            elif '400' in error_message and 'BadRequestError' in str(type(exc)):
+            elif is_provider_bad_request_error(error_message, exc):
+                error_message = 'Image generation request was invalid. Please edit the prompt and try again.'
                 status_code = 400
+            else:
+                error_message = 'Image generation failed due to a technical error. Please try again.'
 
             log_event(
                 f'[ImageGeneration] Proposal approval failed: {exc}',
@@ -14696,7 +14782,8 @@ def register_route_backend_chats(bp):
                     hybrid_search_enabled,
                 )
             except ValueError as contract_error:
-                return jsonify({'error': str(contract_error)}), 400
+                debug_print(f'[ChatAPI] Invalid document context request: {contract_error}')
+                return jsonify({'error': 'Document context request is invalid. Please review the selected sources and try again.'}), 400
             selected_document_ids = list(
                 document_context_contract.get('selected_document_ids') or []
             )
@@ -15009,8 +15096,13 @@ def register_route_backend_chats(bp):
 
             except Exception as e:
                 debug_print(f"Error initializing GPT client/model: {e}")
-                # Handle error appropriately - maybe return 500 or default behavior
-                return jsonify({'error': f'Failed to initialize AI model: {str(e)}'}), 500
+                log_event(
+                    f'[ChatAPI] Failed to initialize AI model: {e}',
+                    extra={'user_id': user_id, 'conversation_id': conversation_id},
+                    level=logging.ERROR,
+                    exceptionTraceback=True,
+                )
+                return build_json_error_response('Failed to initialize AI model')
         # region 1 - Load or Create Conversation
             # ---------------------------------------------------------------------
             # 1) Load or create conversation
@@ -15026,7 +15118,13 @@ def register_route_backend_chats(bp):
                 return jsonify({'error': 'Forbidden'}), 403
             except Exception as e:
                 debug_print(f"Error reading conversation {conversation_id}: {e}")
-                return jsonify({'error': f'Error reading conversation: {str(e)}'}), 500
+                log_event(
+                    f'[ChatAPI] Failed to read conversation: {e}',
+                    extra={'user_id': user_id, 'conversation_id': conversation_id},
+                    level=logging.ERROR,
+                    exceptionTraceback=True,
+                )
+                return build_json_error_response('Failed to read conversation')
 
             _set_authorized_chat_request_context(user_id, conversation_id, scope_context)
 
@@ -15117,7 +15215,8 @@ def register_route_backend_chats(bp):
                         request_correlation_id=mixed_source_request_correlation_id,
                     )
                 except ValueError as manifest_error:
-                    return jsonify({'error': str(manifest_error)}), 400
+                    debug_print(f'[ChatAPI] Mixed-source manifest validation failed: {manifest_error}')
+                    return jsonify({'error': 'Selected document context is unavailable. Please refresh and try again.'}), 400
                 mixed_source_partitions = partition_source_manifest(
                     mixed_source_manifest
                 )
@@ -16572,7 +16671,6 @@ def register_route_backend_chats(bp):
                 except Exception as e:
                     debug_print(f"Image generation error: {str(e)}")
                     debug_print(f"Error type: {type(e)}")
-                    import traceback
                     debug_print(f"Traceback: {traceback.format_exc()}")
 
                     # Handle different types of errors appropriately
@@ -16580,14 +16678,21 @@ def register_route_backend_chats(bp):
                     status_code = 500
 
                     # Check if this is a content moderation error
-                    if "safety system" in error_message.lower() or "moderation_blocked" in error_message:
+                    if is_content_safety_error(error_message):
                         user_friendly_message = "Image generation was blocked by content safety policies. Please try a different prompt that doesn't involve potentially harmful content."
                         status_code = 400  # Bad request rather than server error
-                    elif "400" in error_message and "BadRequestError" in str(type(e)):
-                        user_friendly_message = f"Image generation request was invalid: {error_message}"
+                    elif is_provider_bad_request_error(error_message, e):
+                        user_friendly_message = "Image generation request was invalid. Please edit the prompt and try again."
                         status_code = 400
                     else:
-                        user_friendly_message = f"Image generation failed due to a technical error: {error_message}"
+                        user_friendly_message = "Image generation failed due to a technical error. Please try again."
+
+                    log_event(
+                        f'[ImageGeneration] Chat image generation failed: {e}',
+                        extra={'conversation_id': conversation_id, 'user_id': user_id},
+                        level=logging.ERROR,
+                        exceptionTraceback=True,
+                    )
 
                     return jsonify({
                         'error': user_friendly_message
@@ -17233,7 +17338,13 @@ def register_route_backend_chats(bp):
 
             except Exception as e:
                 debug_print(f"Error preparing conversation history: {e}")
-                return jsonify({'error': f'Error preparing conversation history: {str(e)}'}), 500
+                log_event(
+                    f'[ChatAPI] Failed to prepare conversation history: {e}',
+                    extra={'conversation_id': conversation_id, 'user_id': user_id},
+                    level=logging.ERROR,
+                    exceptionTraceback=True,
+                )
+                return build_json_error_response('Failed to prepare conversation history')
 
         # region 6 - Final GPT Call
             # ---------------------------------------------------------------------
@@ -18060,7 +18171,7 @@ def register_route_backend_chats(bp):
                 if "context length" in str(e).lower():
                     return ("Sorry, the conversation history is too long even after summarization. Please start a new conversation or try a shorter message.", gpt_model, None, None, None)
                 else:
-                    return (f"Sorry, I encountered an error generating the response. Details: {str(e)}", gpt_model, None, None, None)
+                    return ("Sorry, I encountered an error generating the response. Please try again.", gpt_model, None, None, None)
             fallback_steps.append({
                 'name': 'gpt',
                 'func': invoke_gpt_fallback,
@@ -18457,7 +18568,6 @@ def register_route_backend_chats(bp):
             })), 200
 
         except Exception as e:
-            import traceback
             error_traceback = traceback.format_exc()
             debug_print(f"[CHAT API ERROR] Unhandled exception in chat_api: {str(e)}")
             debug_print(f"[CHAT API ERROR] Full traceback:\n{error_traceback}")
@@ -18469,12 +18579,10 @@ def register_route_backend_chats(bp):
                     "user_id": user_id if 'user_id' in locals() else None,
                     "conversation_id": conversation_id if 'conversation_id' in locals() else None
                 },
-                level=logging.ERROR
+                level=logging.ERROR,
+                exceptionTraceback=True,
             )
-            return jsonify({
-                'error': f'Internal server error: {str(e)}',
-                'details': error_traceback if current_app.debug else None
-            }), 500
+            return build_json_error_response()
 
     @bp.route('/api/chat/stream', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -18500,7 +18608,12 @@ def register_route_backend_chats(bp):
             settings = get_settings()
             request_start_time = time.time()
         except Exception as e:
-            return jsonify({'error': f'Failed to parse request: {str(e)}'}), 400
+            log_event(
+                f'[Streaming] Failed to parse stream request: {e}',
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Invalid request payload'}), 400
 
         retry_user_message_id = data.get('retry_user_message_id') or data.get('edited_user_message_id')
         retry_thread_id = data.get('retry_thread_id')
@@ -18630,8 +18743,12 @@ def register_route_backend_chats(bp):
                     payload = {}
 
                 if status_code >= 400:
-                    error_message = payload.get('error') or f'Compatibility chat request failed ({status_code})'
-                    yield f"data: {json.dumps({'error': error_message})}\n\n"
+                    error_message = get_safe_stream_error_message(
+                        payload,
+                        status_code,
+                        f'Compatibility chat request failed ({status_code})',
+                    )
+                    yield build_stream_error_event(error_message)
                     return
 
                 if payload.get('image_url'):
@@ -18644,7 +18761,13 @@ def register_route_backend_chats(bp):
 
                 yield f"data: {json.dumps(normalize_legacy_chat_payload(payload))}\n\n"
             except Exception as compatibility_error:
-                yield f"data: {json.dumps({'error': str(compatibility_error)})}\n\n"
+                log_event(
+                    f'[Streaming] Compatibility response failed: {compatibility_error}',
+                    extra={'conversation_id': finalized_conversation_id, 'user_id': user_id},
+                    level=logging.ERROR,
+                    exceptionTraceback=True,
+                )
+                yield build_stream_error_event()
 
         if compatibility_mode:
             debug_print("[Streaming] Routing request through compatibility bridge")
@@ -18853,7 +18976,10 @@ def register_route_backend_chats(bp):
                         hybrid_search_enabled,
                     )
                 except ValueError as contract_error:
-                    yield f"data: {json.dumps({'error': str(contract_error)})}\n\n"
+                    debug_print(f'[Streaming] Invalid document context request: {contract_error}')
+                    yield build_stream_error_event(
+                        'Document context request is invalid. Please review the selected sources and try again.'
+                    )
                     return
                 selected_document_ids = list(
                     document_context_contract.get('selected_document_ids') or []
@@ -19190,7 +19316,13 @@ def register_route_backend_chats(bp):
                     )
 
                 except Exception as e:
-                    yield f"data: {json.dumps({'error': f'Model initialization failed: {str(e)}'})}\n\n"
+                    log_event(
+                        f'[Streaming] Model initialization failed: {e}',
+                        extra={'conversation_id': conversation_id, 'user_id': user_id},
+                        level=logging.ERROR,
+                        exceptionTraceback=True,
+                    )
+                    yield build_stream_error_event('Failed to initialize AI model')
                     return
 
                 # Load or create conversation (simplified)
@@ -19298,7 +19430,10 @@ def register_route_backend_chats(bp):
                             request_correlation_id=mixed_source_request_correlation_id,
                         )
                     except ValueError as manifest_error:
-                        yield f"data: {json.dumps({'error': str(manifest_error)})}\n\n"
+                        debug_print(f'[Streaming] Mixed-source manifest validation failed: {manifest_error}')
+                        yield build_stream_error_event(
+                            'Selected document context is unavailable. Please refresh and try again.'
+                        )
                         return
                     mixed_source_manifest = explicit_context.get('manifest') or []
                     mixed_source_partitions = explicit_context.get('partitions') or {}
@@ -21039,7 +21174,13 @@ def register_route_backend_chats(bp):
                             debug_print("[Chat Tabular SK] Streaming: Analysis returned None, relying on existing file context")
 
                 except Exception as e:
-                    yield f"data: {json.dumps({'error': f'History error: {str(e)}'})}\n\n"
+                    log_event(
+                        f'[Streaming] Failed to prepare conversation history: {e}',
+                        extra={'conversation_id': conversation_id, 'user_id': user_id},
+                        level=logging.ERROR,
+                        exceptionTraceback=True,
+                    )
+                    yield build_stream_error_event('Failed to prepare conversation history')
                     return
 
                 # Add system prompt
@@ -21537,7 +21678,7 @@ def register_route_backend_chats(bp):
                             )
                             debug_print(f"❌ Agent streaming error: {stream_error}")
                             traceback.print_exc()
-                            error_payload = {'error': f'Agent streaming failed: {str(stream_error)}'}
+                            error_payload = {'error': 'Agent streaming failed. Please try again.'}
                             if isinstance(stream_error, FoundryAgentUserAuthenticationRequired):
                                 auth_response = getattr(stream_error, 'auth_response', {}) or {}
                                 error_payload = {
@@ -22238,7 +22379,8 @@ def register_route_backend_chats(bp):
                             'agent_name': agent_name_used if use_agent_streaming else None,
                             'metadata': {
                                 'incomplete': True,
-                                'error': error_msg,
+                                'error': 'stream_interrupted',
+                                'error_message': CLIENT_SAFE_STREAM_ERROR_MESSAGE,
                                 'reasoning_effort': reasoning_effort,
                                 'history_context': history_debug_info,
                                 'capability_usage': build_streaming_capability_usage(),
@@ -22258,14 +22400,26 @@ def register_route_backend_chats(bp):
                         except Exception as ex:
                             pass
 
-                    yield f"data: {json.dumps({'error': error_msg, 'partial_content': accumulated_content})}\n\n"
+                    yield build_stream_error_event(
+                        CLIENT_SAFE_STREAM_ERROR_MESSAGE,
+                        partial_content=accumulated_content,
+                    )
 
             except Exception as e:
-                import traceback
                 error_traceback = traceback.format_exc()
                 debug_print(f"[STREAM API ERROR] Unhandled exception: {str(e)}")
                 debug_print(f"[STREAM API ERROR] Full traceback:\n{error_traceback}")
-                yield f"data: {json.dumps({'error': f'Internal server error: {str(e)}'})}\n\n"
+                log_event(
+                    f'[Streaming] Unhandled stream error: {e}',
+                    extra={
+                        'conversation_id': finalized_conversation_id,
+                        'user_id': user_id,
+                        'traceback': error_traceback,
+                    },
+                    level=logging.ERROR,
+                    exceptionTraceback=True,
+                )
+                yield build_stream_error_event()
 
         return build_background_stream_response(generate, stream_session=stream_session)
 
@@ -22544,7 +22698,13 @@ def register_route_backend_chats(bp):
 
             except Exception as e:
                 debug_print(f"Error fetching message {message_id}: {str(e)}")
-                return jsonify({'error': f'Error fetching message: {str(e)}'}), 500
+                log_event(
+                    f'[MaskMessage] Failed to fetch message: {e}',
+                    extra={'message_id': message_id, 'user_id': user_id},
+                    level=logging.ERROR,
+                    exceptionTraceback=True,
+                )
+                return build_json_error_response('Failed to fetch message')
 
             # Initialize metadata if it doesn't exist
             if 'metadata' not in message_doc:
@@ -22560,14 +22720,21 @@ def register_route_backend_chats(bp):
                     user_display_name,
                 )
             except ValueError as ex:
-                return jsonify({'error': str(ex)}), 400
+                debug_print(f'[MaskMessage] Invalid mask request: {ex}')
+                return jsonify({'error': 'Invalid mask request'}), 400
 
             # Update the message in Cosmos DB
             try:
                 cosmos_messages_container.upsert_item(message_doc)
             except Exception as e:
                 debug_print(f"Error updating message {message_id}: {str(e)}")
-                return jsonify({'error': f'Error updating message: {str(e)}'}), 500
+                log_event(
+                    f'[MaskMessage] Failed to update message: {e}',
+                    extra={'message_id': message_id, 'user_id': user_id},
+                    level=logging.ERROR,
+                    exceptionTraceback=True,
+                )
+                return build_json_error_response('Failed to update message')
 
             return jsonify({
                 'success': True,
@@ -22577,14 +22744,20 @@ def register_route_backend_chats(bp):
             }), 200
 
         except Exception as e:
-            import traceback
             error_traceback = traceback.format_exc()
             debug_print(f"[MASK API ERROR] Unhandled exception: {str(e)}")
             debug_print(f"[MASK API ERROR] Full traceback:\n{error_traceback}")
-            return jsonify({
-                'error': f'Internal server error: {str(e)}',
-                'details': error_traceback if current_app.debug else None
-            }), 500
+            log_event(
+                f'[MaskMessage] Unhandled exception: {e}',
+                extra={
+                    'message_id': message_id,
+                    'user_id': user_id if 'user_id' in locals() else None,
+                    'traceback': error_traceback,
+                },
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return build_json_error_response()
 
 
 def _format_history_message_ref(message):
