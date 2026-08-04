@@ -769,25 +769,6 @@ def register_route_backend_data_management(bp):
             return jsonify({"success": False, "error": str(exc)}), 400
         return jsonify({"success": True, **catalog}), 200
 
-    @bp.route("/api/admin/data-management/restore/review", methods=["POST"])
-    @swagger_route(security=get_auth_security())
-    @login_required
-    @admin_required
-    def review_admin_data_management_restore():
-        payload = request.get_json(silent=True) or {}
-        restore_plan = payload.get("restore_plan") if isinstance(payload.get("restore_plan"), dict) else {}
-        try:
-            review = review_data_management_restore(restore_plan)
-        except Exception as exc:
-            log_event(
-                "[DataManagement] Restore review failed.",
-                {"error": str(exc)},
-                level=logging.ERROR,
-                exceptionTraceback=True,
-            )
-            return jsonify({"success": False, "error": "Restore review could not be completed."}), 400
-        return jsonify({"success": True, "review": review}), 200
-
     @bp.route("/api/admin/data-management/migration/summary", methods=["POST"])
     @swagger_route(security=get_auth_security())
     @login_required

@@ -2,7 +2,7 @@
 # test_data_management_security_patterns.py
 """
 Functional test for Data Management security patterns.
-Version: 0.250.108
+Version: 0.250.111
 Implemented in: 0.241.211
 Updated in: 0.250.102
 Updated in: 0.250.103
@@ -10,6 +10,7 @@ Updated in: 0.250.104
 Updated in: 0.250.105
 Updated in: 0.250.106
 Updated in: 0.250.108
+Updated in: 0.250.111
 
 This test ensures Data Management admin routes require authenticated admin
 access, secrets stay redacted in frontend responses, and the admin browser
@@ -26,6 +27,7 @@ Version 0.250.076 adds bounded parallel backup checkpoints, source capacity reco
 admin cancellation/retry controls, and latest-only sidecar state sanitization.
 Version 0.250.103 verifies paginated migration catalogs and sanitized
 server-owned review results.
+Version 0.250.111 verifies Data Management Blueprint endpoint names are unique.
 """
 
 import ast
@@ -76,7 +78,7 @@ def test_version_and_container_registration():
     """Validate the Data Management version and Cosmos job container registrations."""
     config_source = read_text(CONFIG_FILE)
 
-    assert 'VERSION = "0.250.108"' in config_source
+    assert 'VERSION = "0.250.111"' in config_source
     assert 'cosmos_data_management_jobs_container_name = "data_management_jobs"' in config_source
     assert 'partition_key=PartitionKey(path="/id")' in config_source
     assert 'cosmos_data_management_job_items_container_name = "data_management_job_items"' in config_source
@@ -96,7 +98,12 @@ def test_version_and_container_registration():
 def test_admin_routes_require_login_admin_and_swagger_security():
     """Validate every Data Management route has the required admin security stack."""
     routes = route_functions_with_decorators()
-    assert len(routes) == 29
+    assert len(routes) == 28
+
+    route_function_names = [function_name for function_name, _decorators in routes]
+    assert len(route_function_names) == len(set(route_function_names)), (
+        "Data Management route endpoint names must be unique"
+    )
 
     for function_name, decorators in routes:
         assert "swagger_route" in decorators, f"{function_name} missing swagger_route"
