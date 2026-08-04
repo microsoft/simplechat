@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.112)**
+
+#### New Features
+
+*   **Model Capability Catalog**
+    *   Added an initial JSON source of truth for model feature capabilities across OpenAI GPT-5+, recent Claude models, Meta Llama and Code Llama, xAI Grok, and Microsoft Phi/MAI models.
+    *   Catalog entries track support for text, image, audio, video, binary/file input, coding optimization, tool calling, and structured output so future multimodal routing can move away from regex-only model-name checks.
+    *   This release is data-only and does not change backend or frontend runtime behavior.
+    *   (Ref: Closes #1147, `model_capabilities.json`, model capability detection)
+
 ### **(v0.250.111)**
 
 #### Bug Fixes
