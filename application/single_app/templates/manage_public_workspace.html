@@ -1,5 +1,6 @@
 {% extends "base.html" %}
-{% block title %}Manage Public Workspace – {{ app_settings.app_title }}{% endblock %}
+{% set public_workspace_labels = app_settings.public_workspace_labels %}
+{% block title %}Manage {{ public_workspace_labels.singular }} – {{ app_settings.app_title }}{% endblock %}
 
 {% block head %}
 <style>
@@ -265,14 +266,14 @@
     {% if file_sync_enabled %}
     <li class="nav-item" role="presentation">
       <button class="nav-link" id="identities-tab" data-bs-toggle="tab" data-bs-target="#identities"
-        title="Manage reusable File Sync authentication profiles scoped to this public workspace."
+        title="Manage reusable File Sync authentication profiles scoped to this {{ public_workspace_labels.lower_singular }}."
         type="button" role="tab" aria-controls="identities" aria-selected="false">
         <i class="bi bi-person-badge me-2"></i>Identities
       </button>
     </li>
     <li class="nav-item" role="presentation">
       <button class="nav-link" id="sync-tab" data-bs-toggle="tab" data-bs-target="#sync"
-        title="Configure public workspace file sources that bring approved files into this workspace and run them through the document processing pipeline."
+        title="Configure {{ public_workspace_labels.lower_singular }} file sources that bring approved files into this workspace and run them through the document processing pipeline."
         type="button" role="tab" aria-controls="sync" aria-selected="false">
         <i class="bi bi-arrow-repeat me-2"></i>Sync
       </button>
@@ -280,7 +281,7 @@
     {% endif %}
     <li class="nav-item d-none" role="presentation" id="settings-tab-item">
       <button class="nav-link" id="settings-tab" data-bs-toggle="tab" data-bs-target="#settings"
-        title="Configure public workspace retention and file-download overrides when these controls are enabled."
+        title="Configure {{ public_workspace_labels.lower_singular }} retention and file-download overrides when these controls are enabled."
         type="button" role="tab" aria-controls="settings" aria-selected="false">
         <i class="bi bi-sliders me-2"></i>Settings
       </button>
@@ -298,7 +299,7 @@
             <form method="POST" action="/set_active_public_workspace" class="mb-3">
               <input type="hidden" name="workspace_id" value="{{ workspace_id }}">
               <button type="submit" class="btn btn-outline-primary btn-sm">
-                <i class="bi bi-box-arrow-in-right me-1"></i>Go to Public Workspace
+                <i class="bi bi-box-arrow-in-right me-1"></i>Go to {{ public_workspace_labels.singular }}
               </button>
             </form>
 
@@ -446,7 +447,7 @@
     <div class="tab-pane fade" id="stats" role="tabpanel">
       <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3 mb-3">
         <div>
-          <h5 class="mb-1"><i class="bi bi-graph-up me-2"></i>Public Workspace Stats</h5>
+          <h5 class="mb-1"><i class="bi bi-graph-up me-2"></i>{{ public_workspace_labels.singular }} Stats</h5>
           <div class="small text-muted">Showing <span class="stats-window-label">Last 30 Days</span></div>
         </div>
         <div class="d-flex align-items-center gap-2 flex-wrap">
@@ -580,11 +581,11 @@
     <div class="tab-pane fade d-none" id="settings" role="tabpanel">
       <div class="section-card d-none" id="public-file-download-settings-section">
         <h5 class="mb-3"><i class="bi bi-download me-2"></i>File Download Settings</h5>
-        <p class="text-muted">Disable original file downloads for this public workspace even when admins enable downloads globally or assign this workspace.</p>
+        <p class="text-muted">Disable original file downloads for this {{ public_workspace_labels.lower_singular }} even when admins enable downloads globally or assign this workspace.</p>
 
         <div class="form-check form-switch mb-3">
           <input class="form-check-input" type="checkbox" role="switch" id="public-disable-file-downloads">
-          <label class="form-check-label" for="public-disable-file-downloads">Disable file downloads for this public workspace</label>
+          <label class="form-check-label" for="public-disable-file-downloads">Disable file downloads for this {{ public_workspace_labels.lower_singular }}</label>
         </div>
 
         <div>
@@ -598,7 +599,7 @@
       {% if app_settings.enable_retention_policy_public %}
       <div class="section-card">
         <h5 class="mb-3"><i class="bi bi-hourglass-split me-2"></i>Retention Policy Settings</h5>
-        <p class="text-muted">Configure how long to keep conversations and documents in this public workspace. Items older than the specified period will be automatically deleted.</p>
+        <p class="text-muted">Configure how long to keep conversations and documents in this {{ public_workspace_labels.lower_singular }}. Items older than the specified period will be automatically deleted.</p>
 
         <div class="alert alert-info">
           <i class="bi bi-info-circle me-2"></i>
@@ -1101,7 +1102,7 @@
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title" id="publicStatsExportModalLabel">
-          <i class="bi bi-download me-2"></i>Export Public Workspace Stats
+          <i class="bi bi-download me-2"></i>Export {{ public_workspace_labels.singular }} Stats
         </h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>

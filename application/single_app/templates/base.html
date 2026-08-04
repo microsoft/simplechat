@@ -203,6 +203,18 @@
   <!-- Dark mode early initialization to prevent flash -->
   <script>
     (function() {
+      window.publicWorkspaceLabels = {{ app_settings.public_workspace_labels | default({}) | tojson }};
+      window.getPublicWorkspaceLabel = function(key) {
+        var defaults = {
+          singular: 'Public Workspace',
+          plural: 'Public Workspaces',
+          lower_singular: 'public workspace',
+          lower_plural: 'public workspaces',
+          short: 'Public'
+        };
+        return (window.publicWorkspaceLabels && window.publicWorkspaceLabels[key]) || defaults[key] || '';
+      };
+
       // Check localStorage first for fast theme loading to prevent flash
       var savedTheme = localStorage.getItem('simplechat-theme');
       if (savedTheme) {

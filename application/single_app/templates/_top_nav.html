@@ -227,7 +227,7 @@
                                 <a class="dropdown-item" href="{{ url_for('frontend_profile.profile', tab='groups') }}">My Groups</a>
                             {% endif %}
                             {% if app_settings.enable_public_workspaces %}
-                                <a class="dropdown-item" href="{{ url_for('frontend_profile.profile', tab='public-workspaces') }}">My Public Workspaces</a>
+                                <a class="dropdown-item" href="{{ url_for('frontend_profile.profile', tab='public-workspaces') }}">My {{ public_workspace_labels.plural }}</a>
                             {% endif %}
                             {% if app_settings.enable_user_feedback %}
                                 <a class="dropdown-item" href="{{ url_for('frontend_profile.profile', tab='feedback') }}">My Feedback</a>
@@ -396,3 +396,4 @@
     </div>
 </div>
 {% endif %}
+{% set public_workspace_labels = app_settings.public_workspace_labels %}

@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.110)**
+
+#### New Features
+
+*   **Configurable Public Workspace Display Name**
+    *   Admins can now set an optional end-user display name for Public Workspace, capped at 32 characters, so organizations can present tenant-specific terms such as "Domain Knowledge".
+    *   End users see the configured label across navigation, Profile, Public Directory, Public Workspace pages, chat scope selection, and related browser messages while admin settings and internal identifiers continue to use Public Workspace/public_workspace.
+    *   Empty or unset values preserve the existing Public Workspace/Public Workspaces defaults.
+    *   (Ref: #1146, `functions_settings.py`, `admin_settings.html`, public workspace templates and JavaScript, `PUBLIC_WORKSPACE_DISPLAY_NAME.md`)
+
 ### **(v0.250.109)**
 
 #### New Features

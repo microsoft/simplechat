@@ -1,5 +1,6 @@
 {% extends "base.html" %}
-{% block title %}My Public Workspaces – {{ app_settings.app_title }}{% endblock %}
+{% set public_workspace_labels = app_settings.public_workspace_labels %}
+{% block title %}My {{ public_workspace_labels.plural }} – {{ app_settings.app_title }}{% endblock %}
 {% block head %}
 <style>
     /* Consistent table styling */
@@ -33,9 +34,9 @@
 {% endblock %}
 {% block content %}
 <div class="container">
-  <h2>My Public Workspaces</h2>
+  <h2>My {{ public_workspace_labels.plural }}</h2>
   <p class="text-muted">
-    View and manage the public workspaces you’re authorized to create.
+    View and manage the {{ public_workspace_labels.lower_plural }} you’re authorized to create.
   </p>
   <hr/>
 
@@ -46,7 +47,7 @@
               data-bs-toggle="modal"
               data-bs-target="#createPublicWorkspaceModal">
         <i class="bi bi-plus-circle-fill me-1"></i>
-        Create New Public Workspace
+        Create New {{ public_workspace_labels.singular }}
       </button>
     </div>
     {% endif %}
@@ -119,7 +120,7 @@
     <form id="createPublicWorkspaceForm">
       <div class="modal-content">
         <div class="modal-header">
-          <h5 class="modal-title" id="createPublicWorkspaceModalLabel">Create a New Public Workspace</h5>
+          <h5 class="modal-title" id="createPublicWorkspaceModalLabel">Create a New {{ public_workspace_labels.singular }}</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
         </div>
         <div class="modal-body">
@@ -147,12 +148,12 @@
   <div class="modal-dialog modal-lg">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title" id="findPublicWorkspaceModalLabel">Find a Public Workspace</h5>
+        <h5 class="modal-title" id="findPublicWorkspaceModalLabel">Find a {{ public_workspace_labels.singular }}</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
         <div class="input-group mb-2">
-          <input type="text" class="form-control" id="globalWorkspaceSearchInput" placeholder="Search all public workspaces..."/>
+          <input type="text" class="form-control" id="globalWorkspaceSearchInput" placeholder="Search all {{ public_workspace_labels.lower_plural }}..."/>
           <button class="btn btn-outline-secondary" type="button" id="globalWorkspaceSearchBtn">Search</button>
         </div>
         <div class="table-responsive">

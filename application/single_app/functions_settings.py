@@ -86,6 +86,9 @@ ADMIN_SETTINGS_FORM_SECRET_FIELDS = (
 ADMIN_SETTINGS_NESTED_SECRET_FIELDS = (
     "web_search_agent.other_settings.azure_ai_foundry.client_secret",
 )
+PUBLIC_WORKSPACE_DISPLAY_NAME_DEFAULT = "Public Workspace"
+PUBLIC_WORKSPACE_DISPLAY_NAME_PLURAL_DEFAULT = "Public Workspaces"
+PUBLIC_WORKSPACE_DISPLAY_NAME_MAX_LENGTH = 32
 
 
 def is_admin_settings_redacted_secret(value):
@@ -116,6 +119,59 @@ def resolve_admin_settings_secret_value(field_name, submitted_value, existing_se
     if not is_admin_settings_redacted_secret(submitted_text):
         return submitted_text
     return str(_get_nested_setting_value(existing_settings, field_name) or '').strip()
+
+
+def normalize_public_workspace_display_name(value):
+    """Return the end-user Public Workspace display name setting."""
+    display_name = " ".join(str(value or "").replace("\r", " ").replace("\n", " ").split())
+    return display_name[:PUBLIC_WORKSPACE_DISPLAY_NAME_MAX_LENGTH]
+
+
+def get_public_workspace_label_context(settings=None):
+    """Return safe labels for end-user Public Workspace UI copy."""
+    source_settings = settings if isinstance(settings, dict) else {}
+    custom_display_name = normalize_public_workspace_display_name(
+        source_settings.get("public_workspace_display_name")
+    )
+    is_custom = bool(custom_display_name)
+    singular = custom_display_name or PUBLIC_WORKSPACE_DISPLAY_NAME_DEFAULT
+    plural = custom_display_name or PUBLIC_WORKSPACE_DISPLAY_NAME_PLURAL_DEFAULT
+    lower_singular = singular if is_custom else "public workspace"
+    lower_plural = plural if is_custom else "public workspaces"
+    return {
+        "singular": singular,
+        "plural": plural,
+        "lower_singular": lower_singular,
+        "lower_plural": lower_plural,
+        "short": singular if is_custom else "Public",
+        "is_custom": is_custom,
+        "max_length": PUBLIC_WORKSPACE_DISPLAY_NAME_MAX_LENGTH,
+    }
+
+
+def normalize_public_workspace_display_settings(settings):
+    """Normalize stored Public Workspace display-name settings in-place."""
+    if not isinstance(settings, dict):
+        return False
+
+    changed = False
+    if "public_workspace_labels" in settings:
+        settings.pop("public_workspace_labels", None)
+        changed = True
+
+    normalized_display_name = normalize_public_workspace_display_name(
+        settings.get("public_workspace_display_name")
+    )
+    changed = changed or settings.get("public_workspace_display_name", "") != normalized_display_name
+    settings["public_workspace_display_name"] = normalized_display_name
+    return changed
+
+
+def attach_public_workspace_label_context(settings):
+    """Attach derived end-user Public Workspace label values to a settings dict."""
+    if isinstance(settings, dict):
+        settings["public_workspace_labels"] = get_public_workspace_label_context(settings)
+    return settings
 
 
 def normalize_document_access_index_required_settings(settings):
@@ -1024,6 +1080,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'require_member_of_create_group': False,
         'require_owner_for_group_agent_management': False,
         'enable_public_workspaces': False,
+        'public_workspace_display_name': '',
         'require_member_of_create_public_workspace': False,
         'enable_file_sharing': False,
         'allow_personal_workspace_file_downloads': False,
@@ -1457,6 +1514,7 @@ def get_settings(use_cosmos=False, include_source=False):
         promoted_popular_settings_updated = normalize_agents_page_promoted_popular_settings(merged)
         document_access_index_settings_updated = normalize_document_access_index_required_settings(merged)
         inbound_mcp_settings_updated = normalize_inbound_mcp_settings(merged)
+        public_workspace_display_settings_updated = normalize_public_workspace_display_settings(merged)
 
         merged['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(merged)
 
@@ -1469,6 +1527,7 @@ def get_settings(use_cosmos=False, include_source=False):
             or promoted_popular_settings_updated
             or document_access_index_settings_updated
             or inbound_mcp_settings_updated
+            or public_workspace_display_settings_updated
         ):
             cosmos_settings_container.upsert_item(merged)
             _refresh_app_settings_cache_after_write(merged, context="merge_upsert")
@@ -1480,10 +1539,10 @@ def get_settings(use_cosmos=False, include_source=False):
                 },
                 level=logging.INFO
             )
-            return _format_result(merged, settings_source)
+            return _format_result(attach_public_workspace_label_context(merged), settings_source)
         else:
             # If merged is unchanged, no new keys needed
-            return _format_result(merged, settings_source)
+            return _format_result(attach_public_workspace_label_context(merged), settings_source)
 
     except CosmosResourceNotFoundError:
         cosmos_settings_container.create_item(body=default_settings)
@@ -1496,7 +1555,7 @@ def get_settings(use_cosmos=False, include_source=False):
             },
             level=logging.WARNING
         )
-        return _format_result(default_settings, "cosmos_default_created")
+        return _format_result(attach_public_workspace_label_context(default_settings), "cosmos_default_created")
 
     except Exception as e:
         log_event(
@@ -1520,6 +1579,7 @@ def update_settings(new_settings):
         normalize_agents_page_promoted_popular_settings(settings_item)
         normalize_document_access_index_required_settings(settings_item)
         normalize_inbound_mcp_settings(settings_item)
+        normalize_public_workspace_display_settings(settings_item)
         settings_item['enable_multi_model_endpoints'] = coerce_multi_model_endpoint_enablement(
             existing_multi_endpoint_enabled,
             settings_item.get('enable_multi_model_endpoints', False),
@@ -2605,6 +2665,8 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
             **sanitized['multi_endpoint_migration_notice'],
             'enabled': False,
         }
+
+    sanitized['public_workspace_labels'] = get_public_workspace_label_context(full_settings)
 
     return sanitized
 

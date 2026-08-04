@@ -23,6 +23,7 @@ const SNOWFLAKE_AUTH_METHOD_OAUTH = 'oauth';
 const TABLEAU_PLUGIN_TYPE = 'tableau';
 const TABLEAU_AUTH_METHOD_PAT = 'personal_access_token';
 const TABLEAU_AUTH_METHOD_USERNAME_PASSWORD = 'username_password';
+const publicWorkspacePlural = window.getPublicWorkspaceLabel ? window.getPublicWorkspaceLabel('plural') : 'Public Workspaces';
 const MCP_PLUGIN_TYPE = 'mcp';
 const MCP_HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 const MCP_MAX_CUSTOM_HEADER_COUNT = 20;
@@ -2284,7 +2285,7 @@ export class PluginModalStepper {
       all: 'All Accessible Content',
       personal: 'Personal Workspace',
       group: 'Group Workspaces',
-      public: 'Public Workspaces'
+      public: publicWorkspacePlural
     };
 
     return scopeMap[scope] || scope || '-';
