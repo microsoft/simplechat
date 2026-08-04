@@ -2,8 +2,8 @@
 # test_workspace_tabular_trigger_and_thoughts.py
 """
 Functional test for workspace-selected tabular trigger and live tabular progress thoughts.
-Version: 0.241.136
-Implemented in: 0.241.136
+Version: 0.250.117
+Implemented in: 0.241.136; 0.250.117
 
 This test ensures that explicitly selected workspace tabular files still trigger
 SK mini-agent analysis even when retrieval context is sparse, and that
@@ -13,6 +13,7 @@ analysis retries keep a visible lifecycle heartbeat instead of falsely
 appearing complete.
 """
 
+import asyncio
 import ast
 import os
 import sys
@@ -46,6 +47,17 @@ def load_tabular_thought_helpers():
         }:
             selected_nodes.append(node)
 
+    stub_excluded_parameters = ast.parse(
+        "def get_tabular_thought_excluded_parameter_names():\n"
+        "    return {'user_id', 'conversation_id'}\n"
+    ).body[0]
+    selected_nodes = [
+        stub_excluded_parameters
+        if node.name == 'get_tabular_thought_excluded_parameter_names'
+        else node
+        for node in selected_nodes
+    ]
+
     module = ast.Module(body=selected_nodes, type_ignores=[])
     namespace = {'json': __import__('json')}
     exec(compile(module, ROUTE_FILE, 'exec'), namespace)
@@ -58,21 +70,38 @@ def load_tabular_live_callback_helpers():
     selected_nodes = []
 
     for node in parsed.body:
-        if isinstance(node, ast.FunctionDef) and node.name in {
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in {
             'get_tabular_thought_excluded_parameter_names',
             'get_tabular_invocation_result_payload',
             'get_tabular_invocation_error_message',
             'format_tabular_thought_parameter_value',
             'get_tabular_tool_thought_payloads',
             'build_tabular_activity_payload',
+            'build_tabular_analysis_lifecycle_activity_payload',
+            'emit_tabular_post_processing_thought',
+            'emit_tabular_analysis_lifecycle_thought',
             'format_live_tabular_invocation_start_thought',
             'format_live_tabular_invocation_thought',
             'register_tabular_invocation_thought_callback',
         }:
             selected_nodes.append(node)
 
+    stub_excluded_parameters = ast.parse(
+        "def get_tabular_thought_excluded_parameter_names():\n"
+        "    return {'user_id', 'conversation_id'}\n"
+    ).body[0]
+    selected_nodes = [
+        stub_excluded_parameters
+        if node.name == 'get_tabular_thought_excluded_parameter_names'
+        else node
+        for node in selected_nodes
+    ]
+
     module = ast.Module(body=selected_nodes, type_ignores=[])
-    namespace = {'json': __import__('json')}
+    namespace = {
+        'inspect': __import__('inspect'),
+        'json': __import__('json'),
+    }
     exec(compile(module, ROUTE_FILE, 'exec'), namespace)
     return namespace
 
@@ -90,7 +119,11 @@ def test_workspace_selected_tabular_trigger():
             'workspace trigger uses selected ids': 'selected_document_ids=selected_document_ids' in content,
             'workspace trigger uses selected id': 'selected_document_id=selected_document_id' in content,
             'workspace-specific fallback prompt': 'IMPORTANT: The selected workspace tabular file(s) are' in content,
-            'workspace trigger gated by document search': 'if (hybrid_search_enabled or history_grounded_search_used) and workspace_tabular_files and is_tabular_processing_enabled(settings):' in content,
+            'workspace trigger gated by document search': (
+                'hybrid_search_enabled or history_grounded_search_used' in content
+                and 'and workspace_tabular_files' in content
+                and 'and is_tabular_processing_enabled(settings)' in content
+            ),
         }
 
         failed_checks = [name for name, passed in checks.items() if not passed]
@@ -285,6 +318,54 @@ def test_tabular_live_callbacks_follow_logger_dispatch_key():
         return False
 
 
+def test_tabular_lifecycle_async_callback_is_awaited():
+    """Verify lifecycle thought emission awaits async callbacks and preserves activity metadata."""
+    print("🔍 Testing tabular lifecycle async callback dispatch...")
+
+    try:
+        helpers = load_tabular_live_callback_helpers()
+        emit_lifecycle_thought = helpers['emit_tabular_analysis_lifecycle_thought']
+        received_payloads = []
+
+        async def record_lifecycle_thought(thought_payload):
+            received_payloads.append(thought_payload)
+            return 'callback-completed'
+
+        callback_result = asyncio.run(emit_lifecycle_thought(
+            record_lifecycle_thought,
+            'Retrying workbook analysis (attempt 2 of 3)',
+            detail='Continuing tabular analysis after a previous pass did not finish.',
+            title='Analyzing workbook evidence (attempt 2 of 3)',
+            state='running',
+            phase='retry',
+            attempt_number=2,
+            attempt_count=3,
+        ))
+
+        assert callback_result == 'callback-completed', callback_result
+        assert len(received_payloads) == 1, received_payloads
+        thought_payload = received_payloads[0]
+        assert thought_payload['step_type'] == 'tabular_analysis', thought_payload
+        assert thought_payload['content'] == 'Retrying workbook analysis (attempt 2 of 3)', thought_payload
+        assert thought_payload['detail'] == 'Continuing tabular analysis after a previous pass did not finish.', thought_payload
+        assert thought_payload['activity']['activity_key'] == 'tabular.analysis.lifecycle', thought_payload
+        assert thought_payload['activity']['kind'] == 'tabular_analysis_lifecycle', thought_payload
+        assert thought_payload['activity']['status'] == 'running', thought_payload
+        assert thought_payload['activity']['state'] == 'running', thought_payload
+        assert thought_payload['activity']['phase'] == 'retry', thought_payload
+        assert thought_payload['activity']['attempt_number'] == 2, thought_payload
+        assert thought_payload['activity']['attempt_count'] == 3, thought_payload
+
+        print("✅ Tabular lifecycle async callback dispatch passed")
+        return True
+
+    except Exception as exc:
+        print(f"❌ Test failed: {exc}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 def test_tabular_generated_output_progress_hooks_exist():
     """Verify the generated-output path now exposes progress hooks for post-processing."""
     print("🔍 Testing tabular generated-output progress instrumentation...")
@@ -383,6 +464,7 @@ if __name__ == '__main__':
         test_tabular_analysis_thoughts_are_recorded,
         test_tabular_tool_thought_payload_formatting,
         test_tabular_live_callbacks_follow_logger_dispatch_key,
+        test_tabular_lifecycle_async_callback_is_awaited,
         test_tabular_generated_output_progress_hooks_exist,
         test_tabular_analysis_lifecycle_progress_hooks_exist,
         test_tabular_sk_prompt_requires_tool_use,

@@ -4,7 +4,7 @@ Planning baseline version: **0.250.110**
 
 Related PR: **microsoft/simplechat#1145**
 
-Implementation status: **In progress. Phase 1 items 1-3 implemented in versions 0.250.111, 0.250.112, and 0.250.113; Phase 2 items 4-6 implemented in versions 0.250.114, 0.250.115, and 0.250.116; remaining items are still pending.**
+Implementation status: **In progress. Phase 1 items 1-3 implemented in versions 0.250.111, 0.250.112, and 0.250.113; Phase 2 items 4-7 implemented in versions 0.250.114, 0.250.115, 0.250.116, and 0.250.117; remaining items are still pending.**
 
 ## Purpose
 
@@ -190,6 +190,7 @@ This plan converts the 62 CodeQL annotations from PR #1145 into an execution que
 - Alert: 47
 - CodeQL rule: Statement has no effect
 - Severity: notice
+- Status: **Implemented in version 0.250.117**
 - Location: [application/single_app/route_backend_chats.py](../../../application/single_app/route_backend_chats.py#L9773)
 - Decision: Implement after inspection.
 - Why: A no-effect statement is usually leftover code or a missed assignment/call.
@@ -198,8 +199,16 @@ This plan converts the 62 CodeQL annotations from PR #1145 into an execution que
   - Inspect the helper around the flagged line.
   - Remove the statement if it is leftover.
   - Convert it into the intended assignment or function call only if nearby logic proves that was the intent.
+- Resolution:
+  - The active PR merge annotation mapped to the async callback wait in the tabular post-processing thought emitter.
+  - Converted the awaited callback result into an explicit return so the async callback execution is still awaited while the statement is no longer effect-free to static analysis.
+  - Propagated the callback result through the lifecycle thought wrapper without changing existing callers, which already ignore the return value.
 - Validation starting point:
   - Compile the route module and run tabular chat/thought tests that cover lifecycle thought emission.
+- Validation completed:
+  - `python functional_tests/test_workspace_tabular_trigger_and_thoughts.py`
+  - `python -m py_compile application/single_app/route_backend_chats.py application/single_app/config.py functional_tests/test_workspace_tabular_trigger_and_thoughts.py`
+  - `git -c core.whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol diff --check -- application/single_app/route_backend_chats.py application/single_app/config.py functional_tests/test_workspace_tabular_trigger_and_thoughts.py docs/explanation/fixes/PR_1145_CODEQL_ALERT_REMEDIATION_PLAN.md`
 
 #### 8. Make mixed explicit and implicit returns explicit
 

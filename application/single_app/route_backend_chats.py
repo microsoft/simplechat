@@ -9861,7 +9861,9 @@ async def emit_tabular_post_processing_thought(thought_callback, content, detail
 
     callback_result = thought_callback(thought_payload)
     if inspect.isawaitable(callback_result):
-        await callback_result
+        return await callback_result
+
+    return callback_result
 
 
 async def emit_tabular_analysis_lifecycle_thought(
@@ -9876,7 +9878,7 @@ async def emit_tabular_analysis_lifecycle_thought(
     attempt_count=None,
 ):
     """Emit a long-running lifecycle thought for tabular analysis progress."""
-    await emit_tabular_post_processing_thought(
+    return await emit_tabular_post_processing_thought(
         thought_callback,
         content,
         detail=detail,
