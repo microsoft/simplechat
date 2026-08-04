@@ -2,7 +2,7 @@
 # test_generated_json_xml_exports.py
 """
 Functional test for generated JSON/XML export artifacts.
-Version: 0.250.114
+Version: 0.250.119
 Implemented in: 0.250.114
 
 This test ensures JSON/XML generation requests are recognized as downloadable
@@ -17,13 +17,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT / "application" / "single_app"
+if str(APP_ROOT) not in sys.path:
+    sys.path.insert(0, str(APP_ROOT))
 CONFIG_FILE = APP_ROOT / "config.py"
 GENERATED_EXPORTS_FILE = APP_ROOT / "functions_generated_file_exports.py"
 CHAT_ROUTE_FILE = APP_ROOT / "route_backend_chats.py"
 WORKFLOW_RUNNER_FILE = APP_ROOT / "functions_workflow_runner.py"
 DOCUMENT_ANALYSIS_FILE = APP_ROOT / "functions_document_analysis.py"
 DOCUMENTS_FILE = APP_ROOT / "functions_documents.py"
-EXPECTED_VERSION = "0.250.114"
+EXPECTED_VERSION = "0.250.119"
 
 
 def read_text(path):

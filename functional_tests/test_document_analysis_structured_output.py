@@ -1,8 +1,9 @@
 # test_document_analysis_structured_output.py
 """
 Functional test for analysis structured output preservation.
-Version: 0.241.023
+Version: 0.250.112
 Implemented in: 0.241.117
+Updated in: 0.250.112
 
 This test ensures document analysis preserves one structured JSON
 result per analyzed document instead of making a lossy global reduction call
@@ -263,6 +264,7 @@ def test_structured_analyze_skips_lossy_global_reduction():
             'debug_print': lambda *args, **kwargs: None,
             'normalize_search_id_list': lambda value: list(value or []),
             'normalize_search_scope': lambda value: str(value or 'all').strip() or 'all',
+            'raise_if_mixed_source_cancelled': lambda *args, **kwargs: None,
         },
     )
     namespace['_get_search_service_helpers'] = lambda: (
@@ -314,7 +316,7 @@ def test_structured_analyze_skips_lossy_global_reduction():
 
 def test_version_alignment():
     print('Testing version alignment...')
-    assert_equal(read_config_version(), '0.241.023', 'config version')
+    assert_equal(read_config_version(), '0.250.112', 'config version')
     print('Version alignment passed.')
     return True
 

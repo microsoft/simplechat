@@ -307,6 +307,8 @@ def _build_collaboration_stream_request_payload(data, source_conversation_id, me
         'message': message_content,
         'conversation_id': source_conversation_id,
         'hybrid_search': bool(data.get('hybrid_search')),
+        'selection_mode': data.get('selection_mode'),
+        'document_context_requested': data.get('document_context_requested'),
         'web_search_enabled': bool(data.get('web_search_enabled')),
         'selected_document_id': data.get('selected_document_id'),
         'selected_document_ids': data.get('selected_document_ids') or [],

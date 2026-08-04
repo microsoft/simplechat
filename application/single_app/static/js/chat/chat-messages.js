@@ -3333,7 +3333,12 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     const normalizedDocumentId = String(output.document_id || '').trim();
     const normalizedExportRunId = String(output.export_run_id || output.run_id || '').trim();
     const isBackgroundExport = Boolean(output.background_export) && Boolean(normalizedExportRunId);
-    if (!normalizedArtifactMessageId && !normalizedDocumentId && !isBackgroundExport) {
+    const terminalStatus = String(output.status || '').trim().toLowerCase();
+    const isTerminalExportStatus = Boolean(
+      output.suppress_assistant_table_export
+      && ['failed', 'canceled'].includes(terminalStatus)
+    );
+    if (!normalizedArtifactMessageId && !normalizedDocumentId && !isBackgroundExport && !isTerminalExportStatus) {
       return null;
     }
 
@@ -3344,7 +3349,8 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       document_id: normalizedDocumentId,
       export_run_id: normalizedExportRunId,
       run_id: normalizedExportRunId,
-      background_export: isBackgroundExport,
+      background_export: isBackgroundExport || isTerminalExportStatus,
+      suppress_assistant_table_export: Boolean(output.suppress_assistant_table_export),
     };
   }
 
@@ -3527,6 +3533,36 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     continueButton.disabled = !canContinue;
     if (continueButton.dataset.busy !== 'true') {
       continueButton.textContent = getBackgroundGeneratedOutputContinueLabel(outputMetadata);
+    }
+  }
+
+  function canCancelBackgroundGeneratedOutput(outputMetadata) {
+    return Boolean(outputMetadata?.background_export && outputMetadata?.can_cancel);
+  }
+
+  function setBackgroundGeneratedOutputCancelButtonLabel(cancelButton, label) {
+    if (!(cancelButton instanceof HTMLElement)) {
+      return;
+    }
+
+    const icon = document.createElement('i');
+    icon.className = 'bi bi-x-circle me-1';
+    icon.setAttribute('aria-hidden', 'true');
+    const labelText = document.createElement('span');
+    labelText.textContent = label;
+    cancelButton.replaceChildren(icon, labelText);
+  }
+
+  function updateBackgroundGeneratedOutputCancelButton(cancelButton, outputMetadata) {
+    if (!(cancelButton instanceof HTMLElement)) {
+      return;
+    }
+
+    const canCancel = canCancelBackgroundGeneratedOutput(outputMetadata);
+    cancelButton.classList.toggle('d-none', !canCancel);
+    cancelButton.disabled = !canCancel;
+    if (cancelButton.dataset.busy !== 'true') {
+      setBackgroundGeneratedOutputCancelButtonLabel(cancelButton, 'Cancel');
     }
   }
 
@@ -4364,6 +4400,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
 
       updateBackgroundGeneratedOutputStatusCard(statusElements, outputMetadata);
       updateBackgroundGeneratedOutputContinueButton(statusElements.continueButton, outputMetadata);
+      updateBackgroundGeneratedOutputCancelButton(statusElements.cancelButton, outputMetadata);
     } catch (error) {
       if (statusElements.detailText) {
         statusElements.detailText.textContent = error.message || 'Could not refresh export progress.';
@@ -4431,6 +4468,53 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       if (continueButton) {
         continueButton.textContent = originalButtonText;
         updateBackgroundGeneratedOutputContinueButton(continueButton, outputMetadata);
+      }
+    }
+  }
+
+  async function cancelBackgroundGeneratedOutputRun(outputMetadata, card, statusElements = {}, cancelButton = null) {
+    const runId = String(outputMetadata?.export_run_id || outputMetadata?.run_id || '').trim();
+    if (!runId || !(card instanceof HTMLElement) || !document.body.contains(card)) {
+      return;
+    }
+
+    if (cancelButton) {
+      cancelButton.dataset.busy = 'true';
+      cancelButton.disabled = true;
+      setBackgroundGeneratedOutputCancelButtonLabel(cancelButton, 'Canceling...');
+    }
+
+    try {
+      const response = await fetch(`/api/tabular/generated-output/runs/${encodeURIComponent(runId)}/cancel`, {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+        },
+      });
+      const responseData = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(responseData?.message || responseData?.error || `Server responded with status ${response.status}`);
+      }
+
+      const runStatus = responseData?.run || {};
+      Object.assign(outputMetadata, runStatus, {
+        export_run_id: runStatus.run_id || runId,
+        run_id: runStatus.run_id || runId,
+        background_export: true,
+      });
+      updateBackgroundGeneratedOutputStatusCard(statusElements, outputMetadata);
+      updateBackgroundGeneratedOutputContinueButton(statusElements.continueButton, outputMetadata);
+      updateBackgroundGeneratedOutputCancelButton(cancelButton, outputMetadata);
+      showToast(responseData?.message || 'Background export canceled.', 'success');
+    } catch (error) {
+      if (statusElements.detailText) {
+        statusElements.detailText.textContent = error.message || 'Could not cancel background export.';
+      }
+      showToast(error.message || 'Could not cancel background export.', 'danger');
+    } finally {
+      if (cancelButton) {
+        delete cancelButton.dataset.busy;
+        updateBackgroundGeneratedOutputCancelButton(cancelButton, outputMetadata);
       }
     }
   }
@@ -4588,6 +4672,11 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     actions.className = 'd-flex flex-wrap gap-2 mt-3';
 
     if (outputMetadata?.background_export) {
+      const backgroundRunId = String(outputMetadata?.export_run_id || outputMetadata?.run_id || '').trim();
+      if (!backgroundRunId) {
+        return card;
+      }
+
       const continueButton = document.createElement('button');
       continueButton.type = 'button';
       continueButton.className = 'btn btn-sm btn-outline-primary generated-tabular-continue-btn d-none';
@@ -4601,18 +4690,20 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       updateBackgroundGeneratedOutputContinueButton(continueButton, outputMetadata);
       actions.appendChild(continueButton);
 
-      const refreshStatusButton = document.createElement('button');
-      refreshStatusButton.type = 'button';
-      refreshStatusButton.className = 'btn btn-sm btn-outline-secondary generated-tabular-refresh-status-btn';
-      refreshStatusButton.textContent = 'Refresh Status';
-      refreshStatusButton.addEventListener('click', async () => {
-        refreshStatusButton.disabled = true;
-        refreshStatusButton.textContent = 'Refreshing...';
-        await refreshBackgroundGeneratedOutputStatus(outputMetadata, card, backgroundStatusElements || {});
-        refreshStatusButton.disabled = false;
-        refreshStatusButton.textContent = 'Refresh Status';
+      const cancelButton = document.createElement('button');
+      cancelButton.type = 'button';
+      cancelButton.className = 'btn btn-sm btn-outline-danger generated-tabular-cancel-btn d-none';
+      cancelButton.setAttribute('aria-label', 'Cancel background export');
+      setBackgroundGeneratedOutputCancelButtonLabel(cancelButton, 'Cancel');
+      cancelButton.addEventListener('click', async () => {
+        await cancelBackgroundGeneratedOutputRun(outputMetadata, card, backgroundStatusElements || {}, cancelButton);
       });
-      actions.appendChild(refreshStatusButton);
+      if (backgroundStatusElements) {
+        backgroundStatusElements.cancelButton = cancelButton;
+      }
+      updateBackgroundGeneratedOutputCancelButton(cancelButton, outputMetadata);
+      actions.appendChild(cancelButton);
+
       card.appendChild(actions);
       scheduleBackgroundGeneratedOutputStatusPolling(outputMetadata, card, backgroundStatusElements || {});
       return card;
@@ -6176,6 +6267,8 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
       .filter(value => value);
     selectedDocumentId = selectedDocumentIds.length > 0 ? selectedDocumentIds[0] : null;
   }
+  const selectionMode = selectedDocumentIds.length > 0 ? 'selected' : 'relevance';
+  const documentContextRequested = hybridSearchEnabled || selectedDocumentIds.length > 0;
 
   let imageGenEnabled = false;
   const igbtn = document.getElementById('image-generate-btn');
@@ -6290,6 +6383,8 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
     message: finalMessageToSend,
     conversation_id: conversationId,
     hybrid_search: hybridSearchEnabled,
+    selection_mode: selectionMode,
+    document_context_requested: documentContextRequested,
     user_workspace_context_enabled: userWorkspaceContextEnabled,
     web_search_enabled: webSearchEnabled,
     url_access_enabled: urlAccessEnabled,
@@ -6351,6 +6446,13 @@ export function buildCollaborativeInvocationTarget(messageData = {}, explicitInv
     messageData.agent_info
     && (messageData.agent_info.id || messageData.agent_info.name || messageData.agent_info.display_name)
   );
+  const workspaceContextInvocationRequested = Boolean(
+    messageData.hybrid_search
+    || (
+      messageData.document_context_requested
+      && window.appSettings?.enable_mixed_source_chat_search
+    )
+  );
   const sourceMode = messageData.image_generation
     ? 'image_generation'
     : hasAgentTarget
@@ -6361,7 +6463,7 @@ export function buildCollaborativeInvocationTarget(messageData = {}, explicitInv
     ? 'url_access'
     : messageData.web_search_enabled
     ? 'web_search'
-    : messageData.hybrid_search
+    : workspaceContextInvocationRequested
     ? 'workspace'
     : messageData.prompt_info
     ? 'prompt'

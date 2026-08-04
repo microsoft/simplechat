@@ -2,7 +2,7 @@
 # test_document_action_stream_reconnect.py
 """
 Functional test for document action stream reconnect support.
-Version: 0.241.023
+Version: 0.250.070
 Implemented in: 0.241.090
 
 This test ensures analysis and document comparison streaming
@@ -41,22 +41,22 @@ def test_document_action_stream_reconnect_wiring() -> None:
 
     document_action_stream_block = slice_between(
         route_content,
-        "@app.route('/api/chat/document-action/stream', methods=['POST'])",
-        "@app.route('/api/chat/analyze', methods=['POST'])",
+        "@bp.route('/api/chat/document-action/stream', methods=['POST'])",
+        "@bp.route('/api/chat/analyze', methods=['POST'])",
     )
     analyze_stream_block = slice_between(
         route_content,
-        "@app.route('/api/chat/analyze/stream', methods=['POST'])",
-        "@app.route('/api/chat', methods=['POST'])",
+        "@bp.route('/api/chat/analyze/stream', methods=['POST'])",
+        "@bp.route('/api/chat/image-proposals/generate', methods=['POST'])",
     )
 
-    assert 'VERSION = "0.241.023"' in config_content, (
-        "Expected config.py version 0.241.023 for the document action reconnect fix."
+    assert 'VERSION = "0.250.070"' in config_content, (
+        "Expected the current application version for document action reconnect coverage."
     )
-    assert "@app.route('/api/chat/stream/status/<conversation_id>', methods=['GET'])" in route_content, (
+    assert "@bp.route('/api/chat/stream/status/<conversation_id>', methods=['GET'])" in route_content, (
         "Expected the shared chat stream status endpoint to exist for reconnect support."
     )
-    assert "@app.route('/api/chat/stream/reattach/<conversation_id>', methods=['GET'])" in route_content, (
+    assert "@bp.route('/api/chat/stream/reattach/<conversation_id>', methods=['GET'])" in route_content, (
         "Expected the shared chat stream reattach endpoint to exist for reconnect support."
     )
 

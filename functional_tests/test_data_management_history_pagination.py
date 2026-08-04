@@ -207,8 +207,10 @@ def load_route_module(monkeypatch, jobs_page=None, backup_page=None, history_err
     data_management_module.DATA_MANAGEMENT_OPERATION_RESTORE = "restore"
 
     imported_function_names = [
+        "cleanup_expired_data_management_backups",
         "create_data_management_migration_review_authorization",
         "create_data_management_restore_review_authorization",
+        "delete_data_management_backup",
         "export_data_management_migration_manifest",
         "generate_data_management_encryption_key",
         "get_data_management_cosmos_editor_containers",

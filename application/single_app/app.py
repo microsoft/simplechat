@@ -1,5 +1,6 @@
 # app.py
 import builtins
+import bleach
 import logging
 import pickle
 import json
@@ -1047,8 +1048,36 @@ def markdown_filter(text):
 
     # Add target="_blank" to all <a> links
     html = re.sub(r'(<a\s+href=["\'](https?://.*?)["\'])', r'\1 target="_blank" rel="noopener noreferrer"', html)
+    allowed_tags = set(bleach.sanitizer.ALLOWED_TAGS).union({
+        'p',
+        'pre',
+        'span',
+        'h1',
+        'h2',
+        'h3',
+        'h4',
+        'h5',
+        'h6',
+        'br',
+        'table',
+        'thead',
+        'tbody',
+        'tr',
+        'th',
+        'td',
+    })
+    allowed_attributes = dict(bleach.sanitizer.ALLOWED_ATTRIBUTES)
+    allowed_attributes['a'] = ['href', 'title', 'target', 'rel']
+    allowed_attributes['*'] = ['class']
+    html = bleach.clean(
+        html,
+        tags=allowed_tags,
+        attributes=allowed_attributes,
+        protocols={'http', 'https', 'mailto'},
+        strip=True,
+    )
 
-    return Markup(html)
+    return Markup(html)  # xss-check: ignore - sanitized with bleach.clean before Markup.
 
 # Add the filter to the Jinja environment
 app.jinja_env.filters['markdown'] = markdown_filter
@@ -1058,8 +1087,8 @@ def nl2br_filter(value):
     """Escape HTML then convert newline characters to <br> tags."""
     from markupsafe import escape, Markup
     if not value:
-        return Markup('')
-    return Markup(str(escape(value)).replace('\n', '<br>\n'))
+        return Markup('')  # xss-check: ignore - static empty safe markup.
+    return Markup(str(escape(value)).replace('\n', '<br>\n'))  # xss-check: ignore - value is escaped before adding static br tags.
 
 app.jinja_env.filters['nl2br'] = nl2br_filter
 

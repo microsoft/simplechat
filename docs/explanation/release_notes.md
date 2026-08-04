@@ -2,6 +2,42 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.119)**
+
+#### Bug Fixes
+
+*   **Duplicate Chat Stream JSON Import Cleanup**
+    *   Removed the redundant local `json` import from the chat streaming route while keeping the existing module-level import, clearing the PR #1145 CodeQL duplicate-module-import notice without changing streaming behavior.
+    *   Updated the PR 1145 remediation plan with the implementation version and validation results.
+    *   (Ref: microsoft/simplechat#1145, `route_backend_chats.py`, CodeQL alert 30)
+
+### **(v0.250.118)**
+
+#### Bug Fixes
+
+*   **Semantic Kernel Return Contract Cleanup**
+    *   Made the nested chat Semantic Kernel invocation helper return `None` explicitly when an async generator completes without yielding, clearing the PR #1145 CodeQL mixed explicit/implicit return alert without changing runtime behavior.
+    *   Added focused functional coverage for direct values, coroutine results, yielded async-generator values, and empty async generators.
+    *   (Ref: microsoft/simplechat#1145, `route_backend_chats.py`, `test_chat_semantic_kernel_return_contract.py`)
+
+### **(v0.250.115)**
+
+#### Bug Fixes
+
+*   **Token Usage Aggregation Fixture Cleanup**
+    *   Removed duplicate mocked helper keys from the document action token usage aggregation functional test so the fixture intent is explicit and CodeQL no longer reports overwritten dictionary entries.
+    *   Kept comparison coverage focused on cross-format compare behavior while preserving aggregate token usage assertions for analysis, comparison, workflow assistant persistence, and chat persistence markers.
+    *   (Ref: microsoft/simplechat#1145, `test_document_action_token_usage_aggregation.py`, token usage aggregation fixtures)
+
+### **(v0.250.114)**
+
+#### Bug Fixes
+
+*   **Foundry Citation Thought Detail Cleanup**
+    *   Fixed a CodeQL finding where Foundry citation thoughts iterated citations without using the citation value, causing duplicate generic thought messages.
+    *   Foundry citation thoughts now include safe citation-specific labels when available while avoiding raw payloads, URL query strings, userinfo, and long unbounded text.
+    *   (Ref: microsoft/simplechat#1145, `route_backend_chats.py`, `test_foundry_citation_thoughts.py`)
+
 ### **(v0.250.114)**
 
 #### New Features
@@ -60,6 +96,15 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Separated destination Cosmos **RU Boost** configuration and testing from Cosmos data-copy access validation so admins can verify the correct Azure management-plane permissions before migration.
     *   Aligned the refresh with the restore workflow from Backup Inventory so admins can review backup readiness, choose restore policy/surfaces, run preflight, and queue supported restore jobs.
     *   (Ref: #1140, `admin_settings.html`, `admin_data_management.js`, `functions_data_management.py`, Data Management docs and tests)
+
+### **(v0.250.107)**
+
+#### Bug Fixes
+
+*   **Mixed Source Manifest Storage Locator Preservation**
+    *   Preserved explicit blob storage locators for authorized non-chat mixed-source manifest entries when archived-revision document metadata already contains a resolved container and blob path.
+    *   Updated focused mixed-source Analyze and conversation-continuity tests for the current rollout/version contract.
+    *   (Ref: #1055, #1056, mixed-source manifests, `functions_mixed_source_orchestration.py`, `test_mixed_source_manifest_contracts.py`)
 
 ### **(v0.250.106)**
 

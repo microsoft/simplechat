@@ -1,7 +1,7 @@
 # test_workflow_cancellation.py
 """
 Functional test for active workflow cancellation.
-Version: 0.250.062
+Version: 0.250.105
 Implemented in: 0.250.062
 
 This test ensures personal and group workflow cancellation requests persist by
@@ -361,7 +361,7 @@ def test_cancellation_contracts_cover_routes_scheduler_activity_and_shared_ui():
     group_template_source = _read(GROUP_TEMPLATE_FILE)
     release_notes_source = _read(RELEASE_NOTES_FILE)
 
-    assert 'VERSION = "0.250.062"' in _read(CONFIG_FILE)
+    assert 'VERSION = "0.250.105"' in _read(CONFIG_FILE)
     assert "### **(v0.250.062)**" in release_notes_source
     assert "Workflow Run Cancellation" in release_notes_source
     for route in (

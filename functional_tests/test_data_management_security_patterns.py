@@ -327,7 +327,7 @@ def test_admin_javascript_uses_safe_dom_patterns():
         r"\.outerHTML\b",
         r"insertAdjacentHTML\s*\(",
         r"setAttribute\s*\(\s*['\"]on",
-        r"javascript:",
+        r"javascript:",  # xss-check: ignore - denylist literal, not rendered content.
         r"\bonclick\b",
         r"\bonerror\b",
         r"\bonload\b",

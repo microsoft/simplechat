@@ -76,3 +76,15 @@ exceptions
 
 If startup logs show an error while Flask instrumentation is initializing, disable it with the `DISABLE_FLASK_INSTRUMENTATION` environment variable. Set the value to `1` or `true`, then restart the app service so the process starts cleanly without the instrumentation hook.
 
+## Mixed-Source Partial Coverage
+
+A mixed-source answer may complete with partial coverage when one narrative retrieval, table tool call, authorization check, or comparison Target cannot complete. This is expected fail-closed behavior: a failed table is not silently treated as narrative text, and prior conversation evidence does not fill a gap in the current selection.
+
+1. Review the response coverage summary for completed, partial, failed, and skipped source counts.
+2. Confirm the relevant mixed-source mode flag is enabled and subordinate rollout flags are not being assumed.
+3. Recheck personal ownership or approved sharing, group membership, public visibility, and chat-upload conversation ownership.
+4. For Analyze All, confirm the document access index is ready and the authorized catalog does not exceed the configured workflow Analyze limit.
+5. If aggregate development telemetry is enabled, correlate `MixedSourceTelemetry` events by `request_correlation_id` and inspect only counts, mode, status, cancellation phase, and latency. Source content or identity should never appear.
+
+If cancellation occurs, no final assistant response or new generated artifact should be published. A background tabular export that was already queued is canceled through its existing export run status.
+

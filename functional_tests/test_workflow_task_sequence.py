@@ -1,7 +1,7 @@
 # test_workflow_task_sequence.py
 """
 Functional test for ordered workflow task sequences.
-Version: 0.250.065
+Version: 0.250.105
 Implemented in: 0.250.064
 Enhanced in: 0.250.065
 
@@ -19,7 +19,7 @@ APP_ROOT = ROOT / "application" / "single_app"
 STORE_FILE = APP_ROOT / "functions_personal_workflows.py"
 GROUP_STORE_FILE = APP_ROOT / "functions_group_workflows.py"
 RUNNER_FILE = APP_ROOT / "functions_workflow_runner.py"
-EXPECTED_VERSION = "0.250.065"
+EXPECTED_VERSION = "0.250.105"
 
 
 def read_text(path: Path) -> str:

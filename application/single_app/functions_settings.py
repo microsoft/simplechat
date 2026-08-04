@@ -329,6 +329,50 @@ def is_tabular_processing_enabled(settings):
     return bool((settings or {}).get('enable_enhanced_citations', False))
 
 
+def is_mixed_source_manifest_enabled(settings):
+    """Return whether Phase 1 mixed-source manifest diagnostics are enabled."""
+    return bool((settings or {}).get('enable_mixed_source_manifest', False))
+
+
+def is_mixed_source_development_telemetry_enabled(settings):
+    """Return whether aggregate-only mixed-source development telemetry is enabled."""
+    return bool((settings or {}).get('enable_mixed_source_development_telemetry', False))
+
+
+def is_mixed_source_chat_search_enabled(settings):
+    """Return whether Phase 2 mixed-source Chat and Search behavior is enabled."""
+    return bool((settings or {}).get('enable_mixed_source_chat_search', False))
+
+
+def is_mixed_source_conversation_continuity_enabled(settings):
+    """Return whether Phase 5 reauthorized source-continuity metadata is enabled."""
+    return bool(
+        (settings or {}).get('enable_mixed_source_chat_search', False)
+        and (settings or {}).get('enable_mixed_source_conversation_continuity', False)
+    )
+
+
+def is_cross_format_compare_enabled(settings):
+    """Return whether Phase 4 native mixed-source Compare behavior is enabled."""
+    return bool((settings or {}).get('enable_cross_format_compare', False))
+
+
+def is_cross_format_compare_one_to_many_enabled(settings):
+    """Return whether the separately staged one-to-many mixed-target rollout is enabled."""
+    return bool(
+        (settings or {}).get('enable_cross_format_compare', False)
+        and (settings or {}).get('enable_cross_format_compare_one_to_many', False)
+    )
+
+
+def is_mixed_source_relevance_candidates_enabled(settings):
+    """Return whether Phase 2 relevance-mode table candidates are enabled."""
+    return bool(
+        (settings or {}).get('enable_mixed_source_chat_search', False)
+        and (settings or {}).get('enable_mixed_source_relevance_candidates', False)
+    )
+
+
 CHAT_FILE_UPLOAD_APP_ROLE = "ChatFileUploadUser"
 WORKFLOW_USER_APP_ROLE = "WorkflowUser"
 DOCUMENT_INTELLIGENCE_PDF_IMAGE_EXTRACTION_MODES = {"read", "layout", "auto"}
@@ -878,6 +922,13 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_fact_memory_plugin': True,
         'enable_tabular_processing_plugin': False,
         'enable_multi_agent_orchestration': False,
+        'enable_mixed_source_development_telemetry': False,
+        'enable_mixed_source_manifest': False,
+        'enable_mixed_source_chat_search': False,
+        'enable_mixed_source_relevance_candidates': False,
+        'enable_mixed_source_conversation_continuity': False,
+        'enable_cross_format_compare': False,
+        'enable_cross_format_compare_one_to_many': False,
         'max_rounds_per_agent': 1,
         'workflow_max_auto_invoke_attempts': 60,
         'enable_semantic_kernel': False,

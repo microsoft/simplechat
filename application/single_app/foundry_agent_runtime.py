@@ -42,7 +42,13 @@ FOUNDRY_METADATA_VALUE_MAX_LENGTH = 512
 FOUNDRY_INTERNAL_METADATA_KEYS = {
     "active_group_ids",
     "active_public_workspace_ids",
+    "document_context_requested",
+    "document_scope",
+    "group_id",
+    "selection_mode",
+    "selected_document_id",
     "selected_document_ids",
+    "user_id",
 }
 FOUNDRY_FILE_SEARCHABLE_CONTEXT_MAX_CHARS = 6000
 FOUNDRY_FILE_SEARCHABLE_CONTEXT_HEADER = "Attached file searchable summary"
@@ -391,6 +397,14 @@ async def execute_foundry_agent(
 ) -> FoundryAgentInvocationResult:
     """Invoke a Foundry agent using Semantic Kernel's AzureAIAgent abstraction."""
 
+    message_history = _filter_foundry_document_context_messages(
+        message_history,
+        include_document_context=_coerce_bool(
+            foundry_settings.get("include_document_context"),
+            True,
+        ),
+    )
+
     agent_id = (foundry_settings.get("agent_id") or "").strip()
     if not agent_id:
         raise FoundryAgentInvocationError(
@@ -491,6 +505,14 @@ async def execute_new_foundry_agent(
 ) -> FoundryAgentInvocationResult:
     """Invoke the new Foundry application runtime through its Responses protocol endpoint."""
 
+    message_history = _filter_foundry_document_context_messages(
+        message_history,
+        include_document_context=_coerce_bool(
+            foundry_settings.get("include_document_context"),
+            True,
+        ),
+    )
+
     application_name = _resolve_new_foundry_application_name(foundry_settings)
     endpoint = _resolve_endpoint(foundry_settings, global_settings)
     responses_api_version = (
@@ -572,6 +594,14 @@ async def execute_new_foundry_agent_stream(
     max_completion_tokens: Optional[int] = None,
 ) -> AsyncIterator[FoundryAgentStreamMessage]:
     """Stream a new Foundry application response through the Responses API."""
+
+    message_history = _filter_foundry_document_context_messages(
+        message_history,
+        include_document_context=_coerce_bool(
+            foundry_settings.get("include_document_context"),
+            True,
+        ),
+    )
 
     application_name = _resolve_new_foundry_application_name(foundry_settings)
     endpoint = _resolve_endpoint(foundry_settings, global_settings)
@@ -1222,8 +1252,43 @@ def _looks_like_document_context_message(text: str) -> bool:
         "chat-uploaded file",
         "selected document",
         "tabular analysis",
+        "mixed-source evidence handoff",
+        "evidence_envelopes",
+        "[workflow document search context]",
     )
     return any(marker in normalized for marker in markers)
+
+
+def _filter_foundry_document_context_messages(
+    message_history: List[ChatMessageContent],
+    include_document_context: bool = True,
+) -> List[ChatMessageContent]:
+    """Remove document/evidence messages before Foundry transport when opted out."""
+    if include_document_context:
+        return list(message_history or [])
+
+    filtered_messages: List[ChatMessageContent] = []
+    workflow_task_marker = "[workflow task]"
+    for message in list(message_history or []):
+        text = _extract_message_text(message).strip()
+        if not text:
+            continue
+        if not _looks_like_document_context_message(text):
+            filtered_messages.append(message)
+            continue
+
+        marker_index = text.lower().rfind(workflow_task_marker)
+        if marker_index < 0:
+            continue
+        workflow_task = text[marker_index + len(workflow_task_marker):].strip()
+        if not workflow_task:
+            continue
+        filtered_messages.append(ChatMessageContent(
+            role=getattr(message, "role", "user"),
+            content=workflow_task,
+            metadata=getattr(message, "metadata", {}) or {},
+        ))
+    return filtered_messages
 
 
 def _build_foundry_workflow_input_text(
@@ -1237,7 +1302,13 @@ def _build_foundry_workflow_input_text(
         if not text:
             continue
         if not include_document_context and _looks_like_document_context_message(text):
-            continue
+            workflow_task_marker = "[Workflow task]"
+            workflow_task_index = text.rfind(workflow_task_marker)
+            if workflow_task_index < 0:
+                continue
+            text = text[workflow_task_index + len(workflow_task_marker):].strip()
+            if not text:
+                continue
         role_value = getattr(message, "role", "user")
         role = str(role_value).strip().lower() or "user"
         if role.startswith("authorrole."):
@@ -1800,6 +1871,8 @@ def _collect_foundry_response_file_inputs(
     foundry_settings: Dict[str, Any],
     metadata: Dict[str, Any],
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    if not _coerce_bool(foundry_settings.get("include_document_context"), True):
+        return [], []
     if not _coerce_bool(foundry_settings.get("include_file_inputs"), True):
         return [], []
 

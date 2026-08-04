@@ -66,7 +66,7 @@ def test_functions_search_contract():
         return False
 
     required_snippets = [
-        'SEARCH_DEFAULT_TOP_N = 12',
+        'SEARCH_DEFAULT_TOP_N = 50',
         'SEARCH_MAX_TOP_N = 500',
         '"document_id": r.get("document_id")',
         'select=get_search_select_fields("personal")',

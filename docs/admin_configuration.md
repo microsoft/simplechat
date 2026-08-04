@@ -260,6 +260,8 @@ Use this section when you need to configure an area, validate it, and know what 
 2. Enable agents, choose workspace-specific or global mode, set orchestration behavior, and manage global agents or approvals if admins curate shared agents centrally.
 3. Enable action scopes and core plugins users are allowed to invoke. Save global agent/action changes, restart the web app when the tab notes it is required, and then verify the runtime action menus.
 
+Mixed-source rollout is independently reversible. Keep `enable_mixed_source_manifest`, `enable_mixed_source_chat_search`, `enable_mixed_source_analyze`, `enable_cross_format_compare`, and `enable_mixed_source_conversation_continuity` off until the preceding stage is validated. The subordinate relevance, Analyze All, one-to-many Compare, and development telemetry stages also default off. `enable_mixed_source_development_telemetry` records aggregate counts and latency only; it must never be used to capture prompts, evidence, source identifiers, filenames, or storage paths.
+
 ### Logging
 
 ![Annotated Logging controls](./images/admin-settings/logging.png)

@@ -319,7 +319,7 @@ def generate_search_cache_key(
     active_group_id: Optional[str] = None,
     active_group_ids: Optional[List[str]] = None,
     active_public_workspace_id: Optional[str] = None,
-    top_n: int = 12,
+    top_n: int = 50,
     enable_file_sharing: bool = True,
     tags_filter: Optional[List[str]] = None,
     document_filter_mode: str = "intersection"
