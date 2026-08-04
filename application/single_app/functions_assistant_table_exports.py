@@ -377,21 +377,53 @@ def _extract_tab_separated_table_entries(content: str) -> List[Dict[str, str]]:
     return best_entries
 
 
+def _iter_markdown_fenced_blocks(content: str):
+    normalized_content = str(content or '')
+    search_start = 0
+
+    while search_start < len(normalized_content):
+        fence_start = normalized_content.find('```', search_start)
+        if fence_start < 0:
+            break
+
+        language_start = fence_start + 3
+        while language_start < len(normalized_content) and normalized_content[language_start] in (' ', '\t'):
+            language_start += 1
+
+        language_end = normalized_content.find('\n', language_start)
+        if language_end < 0:
+            break
+
+        language_text = normalized_content[language_start:language_end]
+        if '`' in language_text:
+            search_start = fence_start + 3
+            continue
+
+        body_start = language_end + 1
+        fence_end = normalized_content.find('```', body_start)
+        if fence_end < 0:
+            break
+
+        yield {
+            'start': fence_start,
+            'end': fence_end + 3,
+            'language': language_text.strip().casefold(),
+            'body': normalized_content[body_start:fence_end],
+        }
+        search_start = fence_end + 3
+
+
 def _extract_comma_separated_table_entries(content: str) -> List[Dict[str, str]]:
     fenced_candidates = []
     unfenced_sections = []
     previous_end = 0
-    fence_pattern = re.compile(
-        r'```[ \t]*(?P<language>[^\n`]*)\n(?P<body>.*?)```',
-        flags=re.IGNORECASE | re.DOTALL,
-    )
 
-    for fence_match in fence_pattern.finditer(content):
-        unfenced_sections.append(content[previous_end:fence_match.start()])
-        language = str(fence_match.group('language') or '').strip().casefold()
+    for fenced_block in _iter_markdown_fenced_blocks(content):
+        unfenced_sections.append(content[previous_end:fenced_block['start']])
+        language = fenced_block['language']
         if language in CSV_FENCE_LANGUAGES:
-            fenced_candidates.extend(_parse_csv_table_candidates(fence_match.group('body'), trusted=True))
-        previous_end = fence_match.end()
+            fenced_candidates.extend(_parse_csv_table_candidates(fenced_block['body'], trusted=True))
+        previous_end = fenced_block['end']
     unfenced_sections.append(content[previous_end:])
 
     if fenced_candidates:
@@ -407,14 +439,10 @@ def _extract_comma_separated_table_entries(content: str) -> List[Dict[str, str]]
 def _extract_fenced_comma_separated_table_entries(content: str) -> List[Dict[str, str]]:
     explicit_csv_candidates = []
     generic_fenced_candidates = []
-    fence_pattern = re.compile(
-        r'```[ \t]*(?P<language>[^\n`]*)\n(?P<body>.*?)```',
-        flags=re.IGNORECASE | re.DOTALL,
-    )
-    for fence_match in fence_pattern.finditer(content):
-        language = str(fence_match.group('language') or '').strip().casefold()
+    for fenced_block in _iter_markdown_fenced_blocks(content):
+        language = fenced_block['language']
         if language in CSV_FENCE_LANGUAGES:
-            parsed_candidates = _parse_csv_table_candidates(fence_match.group('body'), trusted=True)
+            parsed_candidates = _parse_csv_table_candidates(fenced_block['body'], trusted=True)
             if language in {'csv', 'text/csv'}:
                 explicit_csv_candidates.extend(parsed_candidates)
             else:

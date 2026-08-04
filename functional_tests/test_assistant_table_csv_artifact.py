@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for assistant-rendered table CSV artifacts.
-Version: 0.250.073
-Implemented in: 0.241.050; non-tabular document CSV parsing in 0.250.065; generated file export framework in 0.250.072; updated in 0.250.073
+Version: 0.250.112
+Implemented in: 0.241.050; non-tabular document CSV parsing in 0.250.065; generated file export framework in 0.250.072; updated in 0.250.073; linear fence parsing coverage in 0.250.112
 
 This test ensures that explicit table-format requests with assistant-rendered
 tables, including CSV rows extracted from non-tabular documents, are converted
@@ -25,7 +25,7 @@ CONFIG_FILE = APP_DIR / 'config.py'
 CHAT_ROUTE_FILE = APP_DIR / 'route_backend_chats.py'
 BACKGROUND_EXPORT_FILE = APP_DIR / 'functions_tabular_generated_exports.py'
 WORKFLOW_RUNNER_FILE = APP_DIR / 'functions_workflow_runner.py'
-EXPECTED_VERSION = '0.250.073'
+EXPECTED_VERSION = '0.250.112'
 
 sys.path.append(str(APP_DIR))
 
@@ -436,6 +436,57 @@ Right,1
     csv_rows = parse_csv_rows(export_payload.get('file_content'))
     assert_true(len(csv_rows) == 1, 'Expected generic text fences not to override explicit CSV fences.')
     assert_true(csv_rows[0]['Name'] == 'Right', 'Expected the explicitly labeled CSV row to be authoritative.')
+
+
+def test_generic_fenced_csv_like_content_builds_export():
+    print('Testing generic fenced CSV-like content parsing...')
+
+    assistant_content = '''```
+Name,Value
+Generic,7
+```
+'''
+
+    export_payload = build_assistant_table_csv_export('return CSV', assistant_content)
+
+    assert_true(export_payload is not None, 'Expected unlabeled fenced CSV-like content to produce an export.')
+    csv_rows = parse_csv_rows(export_payload.get('file_content'))
+    assert_true(len(csv_rows) == 1, 'Expected one row from generic fenced CSV-like content.')
+    assert_true(csv_rows[0]['Name'] == 'Generic', 'Expected generic fenced row to be preserved.')
+
+
+def test_unterminated_csv_fence_allows_unfenced_fallback():
+    print('Testing unterminated CSV fence fallback behavior...')
+
+    assistant_content = '''```csv
+Incomplete,Header,Only
+Broken
+
+Name,Value
+Fallback,9
+'''
+
+    export_payload = build_assistant_table_csv_export('download CSV', assistant_content)
+
+    assert_true(export_payload is not None, 'Expected valid unfenced CSV after an unterminated fence to produce an export.')
+    csv_rows = parse_csv_rows(export_payload.get('file_content'))
+    assert_true(csv_rows[0]['Name'] == 'Fallback', 'Expected unfenced fallback rows to remain available.')
+
+
+def test_adversarial_fence_opening_uses_linear_csv_parsing():
+    print('Testing adversarial fence opening CSV parsing...')
+
+    assistant_content = f'''```{' \t' * 200}csv
+Name,Value
+Linear,1
+```
+'''
+
+    export_payload = build_assistant_table_csv_export('create a CSV', assistant_content)
+
+    assert_true(export_payload is not None, 'Expected long whitespace before the CSV fence label to parse.')
+    csv_rows = parse_csv_rows(export_payload.get('file_content'))
+    assert_true(csv_rows[0]['Name'] == 'Linear', 'Expected adversarial fence opening not to change CSV rows.')
 
 
 def test_plain_document_csv_preserves_quoted_blank_lines_and_ignores_comma_prose():
@@ -1069,6 +1120,9 @@ def run_tests() -> bool:
         test_fenced_document_csv_preserves_sentence_shaped_rows,
         test_fenced_document_csv_wins_over_larger_markdown_table,
         test_explicit_csv_fence_wins_over_larger_generic_fence,
+        test_generic_fenced_csv_like_content_builds_export,
+        test_unterminated_csv_fence_allows_unfenced_fallback,
+        test_adversarial_fence_opening_uses_linear_csv_parsing,
         test_plain_document_csv_preserves_quoted_blank_lines_and_ignores_comma_prose,
         test_plain_document_csv_preserves_long_headers_and_sentence_values,
         test_plain_document_csv_excludes_prose_and_short_page_citations,

@@ -4,7 +4,7 @@ Planning baseline version: **0.250.110**
 
 Related PR: **microsoft/simplechat#1145**
 
-Implementation status: **In progress. Phase 1 item 1 implemented in version 0.250.111; remaining items are still pending.**
+Implementation status: **In progress. Phase 1 items 1 and 2 implemented in versions 0.250.111 and 0.250.112; remaining items are still pending.**
 
 ## Purpose
 
@@ -53,6 +53,7 @@ This plan converts the 62 CodeQL annotations from PR #1145 into an execution que
 - Alerts: 4, 5, 6
 - CodeQL rule: Polynomial regular expression used on uncontrolled data
 - Severity: failure
+- Status: **Implemented in version 0.250.112**
 - Locations:
   - [application/single_app/functions_workflow_runner.py](../../../application/single_app/functions_workflow_runner.py#L383)
   - [application/single_app/functions_assistant_table_exports.py](../../../application/single_app/functions_assistant_table_exports.py#L389)
@@ -67,6 +68,11 @@ This plan converts the 62 CodeQL annotations from PR #1145 into an execution que
   - Keep unfenced CSV parsing behavior unchanged.
 - Validation starting point:
   - Add focused tests for fenced JSON, fenced CSV, generic fenced CSV-like content, unfenced CSV content, unterminated fences, and adversarial strings with many spaces or tabs after opening fences.
+- Validation completed:
+  - `python functional_tests/test_assistant_table_csv_artifact.py`
+  - `python functional_tests/test_document_analysis_lossless_artifacts.py`
+  - `python functional_tests/test_document_analysis_structured_output.py`
+  - `python -m py_compile application/single_app/functions_workflow_runner.py application/single_app/functions_assistant_table_exports.py application/single_app/config.py`
 
 #### 3. Stop exposing raw exception messages or tracebacks to browser responses
 

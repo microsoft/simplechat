@@ -380,11 +380,24 @@ def _strip_markdown_code_fence(text):
     if not normalized_text.startswith('```'):
         return normalized_text
 
-    code_fence_match = re.fullmatch(r'```(?:[a-zA-Z0-9_-]+)?\s*(.*?)\s*```', normalized_text, re.DOTALL)
-    if not code_fence_match:
+    if not normalized_text.endswith('```'):
         return normalized_text
 
-    return str(code_fence_match.group(1) or '').strip()
+    fenced_body = normalized_text[3:-3]
+    label_end = 0
+    while label_end < len(fenced_body) and (
+        ('a' <= fenced_body[label_end] <= 'z')
+        or ('A' <= fenced_body[label_end] <= 'Z')
+        or ('0' <= fenced_body[label_end] <= '9')
+        or fenced_body[label_end] in ('_', '-')
+    ):
+        label_end += 1
+
+    body_start = label_end
+    while body_start < len(fenced_body) and fenced_body[body_start].isspace():
+        body_start += 1
+
+    return fenced_body[body_start:].strip()
 
 
 def _parse_json_artifact_payload(text):
