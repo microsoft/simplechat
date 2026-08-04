@@ -5159,7 +5159,7 @@ def process_txt(document_id, user_id, temp_file_path, original_filename, enable_
 
     return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
-def process_xml(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
+def _process_xml_with_token_usage(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
     """Processes XML files using RecursiveCharacterTextSplitter for structured content."""
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
@@ -5215,7 +5215,16 @@ def process_xml(document_id, user_id, temp_file_path, original_filename, enable_
         for idx, chunk_content in enumerate(final_chunks, start=1):
             # Skip empty chunks
             if not chunk_content or not chunk_content.strip():
-                print(f"Skipping empty XML chunk {idx}/{initial_chunk_count}")
+                log_event(
+                    '[Documents] Skipping empty XML chunk',
+                    {
+                        'document_id': document_id,
+                        'file_name': original_filename,
+                        'chunk_index': idx,
+                        'chunk_count': initial_chunk_count,
+                    },
+                    debug_only=True,
+                )
                 continue
 
             update_callback(
@@ -5247,10 +5256,29 @@ def process_xml(document_id, user_id, temp_file_path, original_filename, enable_
         # Final update with actual chunks saved
         if total_chunks_saved != initial_chunk_count:
             update_callback(number_of_pages=total_chunks_saved)
-            print(f"Adjusted final chunk count from {initial_chunk_count} to {total_chunks_saved} after skipping empty chunks.")
+            log_event(
+                '[Documents] Adjusted XML chunk count after skipping empty chunks',
+                {
+                    'document_id': document_id,
+                    'file_name': original_filename,
+                    'initial_chunk_count': initial_chunk_count,
+                    'total_chunks_saved': total_chunks_saved,
+                },
+                debug_only=True,
+            )
 
     except Exception as e:
-        print(f"Error during XML processing for {original_filename}: {type(e).__name__}: {e}")
+        log_event(
+            '[Documents] XML processing failed',
+            {
+                'document_id': document_id,
+                'file_name': original_filename,
+                'error_type': type(e).__name__,
+                'error': str(e),
+            },
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
         raise Exception(f"Failed processing XML file {original_filename}: {e}")
 
     return total_chunks_saved, total_embedding_tokens, embedding_model_name
@@ -5539,92 +5567,17 @@ def process_doc(document_id, user_id, temp_file_path, original_filename, enable_
     return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
 def process_xml(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
-    """Processes XML files using RecursiveCharacterTextSplitter for structured content."""
-    is_group = group_id is not None
-    is_public_workspace = public_workspace_id is not None
-
-    update_callback(status="Processing XML file...")
-    total_chunks_saved = 0
-    # Character-based chunking for XML structure preservation, capped by embedding context
-    chunk_config = get_chunk_size_config(get_settings())
-    max_chunk_size_chars = chunk_config.get('xml', {}).get('value', 4000)
-
-    if enable_enhanced_citations:
-        args = {
-            "temp_file_path": temp_file_path,
-            "user_id": user_id,
-            "document_id": document_id,
-            "blob_filename": original_filename,
-            "update_callback": update_callback
-        }
-
-        if is_group:
-            args["group_id"] = group_id
-        elif is_public_workspace:
-            args["public_workspace_id"] = public_workspace_id
-
-        upload_to_blob(**args)
-
-    try:
-        # Read XML content
-        try:
-            with open(temp_file_path, 'r', encoding='utf-8') as f:
-                xml_content = f.read()
-        except Exception as e:
-            raise Exception(f"Error reading XML file {original_filename}: {e}")
-
-        # Use RecursiveCharacterTextSplitter with XML-aware separators
-        # This preserves XML structure better than simple word splitting
-        xml_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=max_chunk_size_chars,
-            chunk_overlap=0,
-            length_function=len,
-            separators=["\n\n", "\n", ">", " ", ""],  # XML-friendly separators
-            is_separator_regex=False
-        )
-
-        # Split the XML content
-        final_chunks = xml_splitter.split_text(xml_content)
-
-        initial_chunk_count = len(final_chunks)
-        update_callback(number_of_pages=initial_chunk_count)
-
-        for idx, chunk_content in enumerate(final_chunks, start=1):
-            # Skip empty chunks
-            if not chunk_content or not chunk_content.strip():
-                print(f"Skipping empty XML chunk {idx}/{initial_chunk_count}")
-                continue
-
-            update_callback(
-                current_file_chunk=idx,
-                status=f"Saving chunk {idx}/{initial_chunk_count}..."
-            )
-            args = {
-                "page_text_content": chunk_content,
-                "page_number": total_chunks_saved + 1,
-                "file_name": original_filename,
-                "user_id": user_id,
-                "document_id": document_id
-            }
-
-            if is_public_workspace:
-                args["public_workspace_id"] = public_workspace_id
-            elif is_group:
-                args["group_id"] = group_id
-
-            save_chunks(**args)
-            total_chunks_saved += 1
-
-        # Final update with actual chunks saved
-        if total_chunks_saved != initial_chunk_count:
-            update_callback(number_of_pages=total_chunks_saved)
-            print(f"Adjusted final chunk count from {initial_chunk_count} to {total_chunks_saved} after skipping empty chunks.")
-
-    except Exception as e:
-        print(f"Error during XML processing for {original_filename}: {type(e).__name__}: {e}")
-        raise Exception(f"Failed processing XML file {original_filename}: {e}")
-
-    return total_chunks_saved
+    """Processes XML files using the consolidated token-aware XML pipeline."""
+    return _process_xml_with_token_usage(
+        document_id,
+        user_id,
+        temp_file_path,
+        original_filename,
+        enable_enhanced_citations,
+        update_callback,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
 
 def process_yaml(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
     """Processes YAML files using RecursiveCharacterTextSplitter for structured content."""

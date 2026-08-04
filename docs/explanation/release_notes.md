@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.114)**
+
+#### New Features
+
+*   **Generated JSON and XML Export Artifacts**
+    *   JSON and XML generation requests can now save valid generated output as downloadable chat artifacts instead of leaving large file-shaped content in the assistant response.
+    *   Document Analyze and generated export flows now recognize natural JSON/XML conversion and XML template-population phrasing, with XML serialization support added to durable generated exports.
+    *   XML document processing now uses a consolidated token-aware pipeline for more reliable analysis and export workflows.
+    *   (Ref: #1071, `functions_generated_file_exports.py`, generated analysis artifacts, XML document processing)
+
 ### **(v0.250.112)**
 
 #### New Features

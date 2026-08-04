@@ -12,6 +12,7 @@ docx2txt==0.8
 olefile==0.47
 Markdown==3.8.1
 bleach==6.4.0
+defusedxml==0.7.1
 azure-cosmos==4.9.0
 msal==1.31.0
 Flask-Session==0.8.0
