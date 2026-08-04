@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.118)**
+
+#### Bug Fixes
+
+*   **Semantic Kernel Return Contract Cleanup**
+    *   Made the nested chat Semantic Kernel invocation helper return `None` explicitly when an async generator completes without yielding, clearing the PR #1145 CodeQL mixed explicit/implicit return alert without changing runtime behavior.
+    *   Added focused functional coverage for direct values, coroutine results, yielded async-generator values, and empty async generators.
+    *   (Ref: microsoft/simplechat#1145, `route_backend_chats.py`, `test_chat_semantic_kernel_return_contract.py`)
+
 ### **(v0.250.115)**
 
 #### Bug Fixes

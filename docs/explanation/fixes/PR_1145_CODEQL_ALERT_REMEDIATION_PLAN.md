@@ -4,7 +4,7 @@ Planning baseline version: **0.250.110**
 
 Related PR: **microsoft/simplechat#1145**
 
-Implementation status: **In progress. Phase 1 items 1-3 implemented in versions 0.250.111, 0.250.112, and 0.250.113; Phase 2 items 4-7 implemented in versions 0.250.114, 0.250.115, 0.250.116, and 0.250.117; remaining items are still pending.**
+Implementation status: **In progress. Phase 1 items 1-3 implemented in versions 0.250.111, 0.250.112, and 0.250.113; Phase 2 items 4-8 implemented in versions 0.250.114, 0.250.115, 0.250.116, 0.250.117, and 0.250.118; Phase 3 items 9-13 are still pending.**
 
 ## Purpose
 
@@ -215,6 +215,7 @@ This plan converts the 62 CodeQL annotations from PR #1145 into an execution que
 - Alert: 58
 - CodeQL rule: Explicit returns mixed with implicit fall-through returns
 - Severity: notice
+- Status: **Implemented in version 0.250.118**
 - Location: [application/single_app/route_backend_chats.py](../../../application/single_app/route_backend_chats.py#L17310)
 - Decision: Implement after inspection.
 - Why: A silent `None` fall-through can turn into confusing model-call behavior or skipped error handling.
@@ -223,8 +224,15 @@ This plan converts the 62 CodeQL annotations from PR #1145 into an execution que
   - Identify the nested function and expected return shape.
   - Add an explicit terminal return if `None` is valid.
   - Otherwise add the missing return path that matches the function contract.
+- Resolution:
+  - Identified the nested Semantic Kernel `run_sk_call(...)` helper as the alert source.
+  - Preserved the existing empty async-generator behavior by returning `None` explicitly after the async iteration completes without yielding.
+  - Added focused functional coverage for the helper's explicit async-generator return contract and core result shapes.
 - Validation starting point:
   - Run focused tests around the Semantic Kernel call path or add a small unit-style functional test for the function contract.
+- Validation completed:
+  - `python functional_tests/test_chat_semantic_kernel_return_contract.py`
+  - `python -m py_compile application/single_app/route_backend_chats.py application/single_app/config.py functional_tests/test_chat_semantic_kernel_return_contract.py`
 
 ### Phase 3: Low-Risk Hygiene Cleanup
 

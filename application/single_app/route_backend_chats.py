@@ -17559,6 +17559,7 @@ def register_route_backend_chats(bp):
                         )
                         async for r in result:
                             return r
+                        return None
                     else:
                         return result
                 except asyncio.CancelledError:
