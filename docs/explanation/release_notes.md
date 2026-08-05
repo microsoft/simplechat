@@ -2,6 +2,42 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.123)**
+
+#### New Features
+
+*   **Key Vault Reminder Contact Email Telemetry Opt-In**
+    *   Added a default-off admin setting that allows Key Vault reminder contact email addresses to be included in the external Application Insights telemetry event for direct Azure Monitor, Logic App, Function, or webhook routing.
+    *   Kept raw secret names redacted from external telemetry and added Reminder ID visibility/search in the admin inventory for fixed admin-channel alert workflows.
+    *   (Ref: #1156, `functions_appinsights.py`, `functions_keyvault_reminders.py`, Admin Key Vault reminder external alert guidance)
+
+### **(v0.250.122)**
+
+#### New Features
+
+*   **Key Vault Reminder External Telemetry**
+    *   Added a privacy-safe, queryable Application Insights event when Key Vault expiration reminder notifications are created, enabling Azure Monitor scheduled query alerts, action groups, Logic Apps, Functions, or webhooks for external notification workflows.
+    *   Added admin and feature documentation guidance with a sample KQL query while avoiding raw secret names and email values in telemetry dimensions.
+    *   (Ref: #1156, `functions_appinsights.py`, `functions_keyvault_reminders.py`, Azure Monitor external notification guidance)
+
+### **(v0.250.121)**
+
+#### New Features
+
+*   **Key Vault Expiration Reminder Inventory**
+    *   Added SimpleChat-managed Key Vault secret expiration reminder tracking with per-action reminder metadata, expiration dates, lead days, reminder contact email, friendly labels, and rotation notes.
+    *   Added an admin Key Vault reminder dashboard that maps generated Key Vault secret names back to SimpleChat scope, source action, field, owner/contact context, sync status, and remediation details.
+    *   Added a background reminder sweep and `key_vault_secret_expiring` in-app notifications while preserving Azure Monitor/Event Grid as the recommended email alert path.
+    *   (Ref: #1156, `functions_keyvault_reminders.py`, `admin_settings.html`, `plugin_modal_stepper.js`, Key Vault reminder inventory)
+
+#### Bug Fixes
+
+*   **Reliable Key Vault Secret Rotation**
+    *   Fixed action secret save behavior so replacing a Key Vault-backed secret with a new literal value writes a new Key Vault version for global, group, and personal actions.
+    *   `Stored_In_KeyVault` placeholders now only preserve validated existing references; placeholder-only saves without an existing secret are rejected instead of creating dead references.
+    *   Key Vault write failures now surface as errors instead of falling back to raw secret persistence.
+    *   (Ref: #1156, `functions_keyvault.py`, action save helpers, Key Vault secret reference validation)
+
 ### **(v0.250.119)**
 
 #### Bug Fixes

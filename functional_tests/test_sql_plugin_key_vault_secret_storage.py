@@ -2,8 +2,8 @@
 # test_sql_plugin_key_vault_secret_storage.py
 """
 Functional test for SQL plugin Key Vault secret storage.
-Version: 0.239.114
-Implemented in: 0.239.114
+Version: 0.250.121
+Implemented in: 0.239.114; 0.250.121
 
 This test ensures that SQL plugin secret-bearing fields are stored in Key Vault,
 preserved across edits, and cleaned up correctly when Key Vault storage is enabled.
@@ -29,6 +29,9 @@ class FakeRetrievedSecret:
 class FakeSecretClient:
     stored_secrets = {}
     deleted_secrets = []
+    set_calls = []
+    property_updates = []
+    fail_on_set = False
 
     def __init__(self, vault_url, credential):
         self.vault_url = vault_url
@@ -38,12 +41,21 @@ class FakeSecretClient:
     def reset(cls):
         cls.stored_secrets = {}
         cls.deleted_secrets = []
+        cls.set_calls = []
+        cls.property_updates = []
+        cls.fail_on_set = False
 
     def set_secret(self, name, value):
+        if FakeSecretClient.fail_on_set:
+            raise RuntimeError('simulated Key Vault write failure')
         FakeSecretClient.stored_secrets[name] = value
+        FakeSecretClient.set_calls.append({'name': name, 'value': value})
 
     def get_secret(self, name):
         return FakeRetrievedSecret(FakeSecretClient.stored_secrets[name])
+
+    def update_secret_properties(self, name, expires_on=None):
+        FakeSecretClient.property_updates.append({'name': name, 'expires_on': expires_on})
 
     def begin_delete_secret(self, name):
         FakeSecretClient.deleted_secrets.append(name)
@@ -150,6 +162,34 @@ def _load_functions_keyvault():
         'key_vault_identity': None,
     }
 
+    reminder_stub = types.ModuleType('functions_keyvault_reminders')
+    reminder_stub.upsert_calls = []
+    reminder_stub.disabled_calls = []
+
+    def resolve_key_vault_secret_reminder_config(owner_document, field_path):
+        metadata = owner_document.get('metadata') or {}
+        reminders = metadata.get('key_vault_secret_reminders') or {}
+        config = reminders.get('.'.join(field_path)) or reminders.get('__all__')
+        return config if isinstance(config, dict) else None
+
+    def upsert_key_vault_secret_reminder(secret_name, reminder_config, context, key_vault_sync_status='synced', key_vault_sync_error=''):
+        reminder_stub.upsert_calls.append({
+            'secret_name': secret_name,
+            'reminder_config': dict(reminder_config),
+            'context': dict(context),
+            'key_vault_sync_status': key_vault_sync_status,
+            'key_vault_sync_error': key_vault_sync_error,
+        })
+        return reminder_stub.upsert_calls[-1]
+
+    def mark_key_vault_secret_reminder_disabled(secret_name, context=None):
+        reminder_stub.disabled_calls.append({'secret_name': secret_name, 'context': dict(context or {})})
+        return reminder_stub.disabled_calls[-1]
+
+    reminder_stub.resolve_key_vault_secret_reminder_config = resolve_key_vault_secret_reminder_config
+    reminder_stub.upsert_key_vault_secret_reminder = upsert_key_vault_secret_reminder
+    reminder_stub.mark_key_vault_secret_reminder_disabled = mark_key_vault_secret_reminder_disabled
+
     azure_stub = types.ModuleType('azure')
     identity_stub = types.ModuleType('azure.identity')
     keyvault_stub = types.ModuleType('azure.keyvault')
@@ -173,6 +213,7 @@ def _load_functions_keyvault():
         'functions_authentication': auth_stub,
         'functions_settings': settings_stub,
         'app_settings_cache': settings_cache_stub,
+        'functions_keyvault_reminders': reminder_stub,
         'azure': azure_stub,
         'azure.identity': identity_stub,
         'azure.keyvault': keyvault_stub,
@@ -211,6 +252,13 @@ def _load_action_module(module_name, container, recorder):
     keyvault_stub.keyvault_plugin_get_helper = recorder.get
     keyvault_stub.keyvault_plugin_delete_helper = recorder.delete
 
+    workspace_identities_stub = types.ModuleType('functions_workspace_identities')
+    workspace_identities_stub.WORKSPACE_IDENTITY_SCOPE_GLOBAL = 'global'
+    workspace_identities_stub.WORKSPACE_IDENTITY_SCOPE_GROUP = 'group'
+    workspace_identities_stub.WORKSPACE_IDENTITY_SCOPE_PERSONAL = 'personal'
+    workspace_identities_stub.hydrate_action_identity_reference = lambda action, *args, **kwargs: action
+    workspace_identities_stub.validate_action_identity_reference = lambda action, *args, **kwargs: None
+
     auth_stub = types.ModuleType('functions_authentication')
     auth_stub.get_current_user_id = lambda: 'admin-123'
 
@@ -220,6 +268,14 @@ def _load_action_module(module_name, container, recorder):
 
     debug_stub = types.ModuleType('functions_debug')
     debug_stub.debug_print = lambda *args, **kwargs: None
+
+    governance_stub = types.ModuleType('functions_governance')
+    governance_stub.ensure_action_type_access = lambda *args, **kwargs: True
+    governance_stub.filter_actions_by_action_type_access = lambda user_id, actions, *args, **kwargs: actions
+
+    chat_bootstrap_cache_stub = types.ModuleType('functions_chat_bootstrap_cache')
+    chat_bootstrap_cache_stub.bump_chat_bootstrap_user_cache_version = lambda *args, **kwargs: None
+    chat_bootstrap_cache_stub.bump_chat_bootstrap_global_cache_version = lambda *args, **kwargs: None
 
     flask_stub = types.ModuleType('flask')
     flask_stub.current_app = None
@@ -235,9 +291,12 @@ def _load_action_module(module_name, container, recorder):
     module_stubs = {
         'config': config_stub,
         'functions_keyvault': keyvault_stub,
+        'functions_workspace_identities': workspace_identities_stub,
         'functions_authentication': auth_stub,
         'functions_settings': settings_stub,
         'functions_debug': debug_stub,
+        'functions_governance': governance_stub,
+        'functions_chat_bootstrap_cache': chat_bootstrap_cache_stub,
         'flask': flask_stub,
         'azure': azure_stub,
         'azure.cosmos': cosmos_stub,
@@ -307,6 +366,185 @@ def test_sql_keyvault_helper_stores_resolves_and_deletes_secrets():
         assert password_reference in FakeSecretClient.deleted_secrets
 
         print('✅ SQL helper stores, resolves, preserves, and deletes Key Vault-backed SQL secrets')
+        return True
+    finally:
+        _restore_modules(original_modules)
+
+
+def test_action_secret_rotation_writes_new_key_vault_versions_for_all_scopes():
+    """Validate literal replacement secrets update Key Vault for global, group, and personal actions."""
+    print('🔍 Testing action Key Vault secret rotation across scopes...')
+    module, original_modules = _load_functions_keyvault()
+
+    try:
+        for scope, scope_value in (
+            ('global', 'global-action-1'),
+            ('group', 'group-123'),
+            ('user', 'user-123'),
+        ):
+            FakeSecretClient.reset()
+            initial_action = {
+                'id': f'{scope}-action',
+                'name': 'service_principal_action',
+                'type': 'openapi',
+                'auth': {
+                    'type': 'servicePrincipal',
+                    'identity': 'client-id',
+                    'key': 'old-secret',
+                    'tenantId': 'tenant-id',
+                },
+                'metadata': {},
+                'additionalFields': {},
+            }
+            saved_action = module.keyvault_plugin_save_helper(initial_action, scope_value=scope_value, scope=scope)
+            secret_reference = saved_action['auth']['key']
+
+            updated_action = {
+                **saved_action,
+                'auth': {
+                    'type': 'servicePrincipal',
+                    'identity': 'client-id',
+                    'key': 'new-secret',
+                    'tenantId': 'tenant-id',
+                },
+            }
+            rotated_action = module.keyvault_plugin_save_helper(
+                updated_action,
+                scope_value=scope_value,
+                scope=scope,
+                existing_plugin=saved_action,
+            )
+
+            assert rotated_action['auth']['key'] == secret_reference
+            assert FakeSecretClient.stored_secrets[secret_reference] == 'new-secret'
+            assert [call['value'] for call in FakeSecretClient.set_calls] == ['old-secret', 'new-secret']
+
+        print('✅ Literal action secret updates create new Key Vault versions in every action scope')
+        return True
+    finally:
+        _restore_modules(original_modules)
+
+
+def test_keyvault_placeholder_without_existing_reference_is_rejected():
+    """Validate Stored_In_KeyVault cannot create a dead reference without a saved secret."""
+    print('🔍 Testing Stored_In_KeyVault placeholder rejection without existing reference...')
+    FakeSecretClient.reset()
+    module, original_modules = _load_functions_keyvault()
+
+    try:
+        try:
+            module.keyvault_plugin_save_helper(
+                {
+                    'name': 'service_principal_action',
+                    'type': 'openapi',
+                    'auth': {
+                        'type': 'servicePrincipal',
+                        'identity': 'client-id',
+                        'key': module.ui_trigger_word,
+                        'tenantId': 'tenant-id',
+                    },
+                    'metadata': {},
+                    'additionalFields': {},
+                },
+                scope_value='global-action-1',
+                scope='global',
+            )
+        except ValueError as exc:
+            assert 'has no existing secret reference' in str(exc)
+        else:
+            raise AssertionError('Expected Stored_In_KeyVault without an existing reference to be rejected')
+
+        print('✅ Placeholder without an existing Key Vault reference is rejected')
+        return True
+    finally:
+        _restore_modules(original_modules)
+
+
+def test_keyvault_write_failure_is_not_persisted_as_raw_secret():
+    """Validate Key Vault write failures surface instead of saving the raw secret."""
+    print('🔍 Testing Key Vault write failure handling...')
+    FakeSecretClient.reset()
+    FakeSecretClient.fail_on_set = True
+    module, original_modules = _load_functions_keyvault()
+
+    try:
+        try:
+            module.keyvault_plugin_save_helper(
+                {
+                    'name': 'service_principal_action',
+                    'type': 'openapi',
+                    'auth': {
+                        'type': 'servicePrincipal',
+                        'identity': 'client-id',
+                        'key': 'new-secret',
+                        'tenantId': 'tenant-id',
+                    },
+                    'metadata': {},
+                    'additionalFields': {},
+                },
+                scope_value='global-action-1',
+                scope='global',
+            )
+        except RuntimeError as exc:
+            assert 'Failed to store plugin key in Key Vault' in str(exc)
+            assert FakeSecretClient.stored_secrets == {}
+        else:
+            raise AssertionError('Expected Key Vault write failure to abort the save')
+
+        print('✅ Key Vault write failures abort saves instead of persisting raw secrets')
+        return True
+    finally:
+        _restore_modules(original_modules)
+
+
+def test_action_secret_reminder_metadata_syncs_key_vault_expiration_inventory():
+    """Validate action reminder metadata updates Key Vault expiration and inventory context."""
+    print('🔍 Testing action Key Vault reminder metadata sync...')
+    FakeSecretClient.reset()
+    module, original_modules = _load_functions_keyvault()
+
+    try:
+        action = {
+            'id': 'global-action-1',
+            'name': 'service_principal_action',
+            'displayName': 'Service Principal Action',
+            'type': 'openapi',
+            'auth': {
+                'type': 'servicePrincipal',
+                'identity': 'client-id',
+                'key': 'new-secret',
+                'tenantId': 'tenant-id',
+            },
+            'metadata': {
+                'key_vault_secret_reminders': {
+                    '__all__': {
+                        'enabled': True,
+                        'expires_on': '2030-01-15',
+                        'contact_email': 'owner@example.com',
+                        'lead_days': 21,
+                        'label': 'Production service principal',
+                        'notes': 'Rotate in Entra app registration.',
+                    }
+                }
+            },
+            'additionalFields': {},
+        }
+
+        saved_action = module.keyvault_plugin_save_helper(action, scope_value='global-action-1', scope='global')
+        secret_reference = saved_action['auth']['key']
+        reminder_module = sys.modules['functions_keyvault_reminders']
+
+        assert FakeSecretClient.property_updates, 'Key Vault secret expiration should be updated'
+        assert FakeSecretClient.property_updates[-1]['name'] == secret_reference
+        assert FakeSecretClient.property_updates[-1]['expires_on'].date().isoformat() == '2030-01-15'
+        assert reminder_module.upsert_calls, 'Reminder inventory should be upserted'
+        assert reminder_module.upsert_calls[-1]['secret_name'] == secret_reference
+        assert reminder_module.upsert_calls[-1]['context']['scope'] == 'global'
+        assert reminder_module.upsert_calls[-1]['context']['source_display_name'] == 'Service Principal Action'
+        assert reminder_module.upsert_calls[-1]['context']['field_path'] == 'auth.key'
+        assert saved_action['metadata']['key_vault_secret_reminder_sync']['auth.key']['status'] == 'synced'
+
+        print('✅ Action reminder metadata syncs Key Vault expiration and inventory context')
         return True
     finally:
         _restore_modules(original_modules)
@@ -482,6 +720,10 @@ def test_global_and_group_action_wrappers_preserve_existing_sql_secret_reference
 if __name__ == '__main__':
     tests = [
         test_sql_keyvault_helper_stores_resolves_and_deletes_secrets,
+        test_action_secret_rotation_writes_new_key_vault_versions_for_all_scopes,
+        test_keyvault_placeholder_without_existing_reference_is_rejected,
+        test_keyvault_write_failure_is_not_persisted_as_raw_secret,
+        test_action_secret_reminder_metadata_syncs_key_vault_expiration_inventory,
         test_personal_action_wrapper_preserves_existing_sql_secret_references,
         test_global_and_group_action_wrappers_preserve_existing_sql_secret_references,
     ]

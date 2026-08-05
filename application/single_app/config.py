@@ -95,7 +95,7 @@ DOTENV_LOAD_RESULT = load_simplechat_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.250.120"
+VERSION = "0.250.123"
 IS_DEVELOPMENT = is_development_env_enabled()
 
 SESSION_COOKIE_SAMESITE = os.getenv('SESSION_COOKIE_SAMESITE', 'Lax')
@@ -647,6 +647,12 @@ cosmos_public_documents_container = cosmos_database.create_container_if_not_exis
 cosmos_document_access_index_container_name = "document_access_index"
 cosmos_document_access_index_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_document_access_index_container_name,
+    partition_key=PartitionKey(path="/scope_key")
+)
+
+cosmos_key_vault_secret_reminders_container_name = "key_vault_secret_reminders"
+cosmos_key_vault_secret_reminders_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_key_vault_secret_reminders_container_name,
     partition_key=PartitionKey(path="/scope_key")
 )
 

@@ -27,6 +27,7 @@ from functions_public_workspaces import find_public_workspace_by_id, get_user_pu
 TTL_60_DAYS = 60 * 24 * 60 * 60  # 60 days in seconds (5184000)
 ASSIGNMENT_NOTIFICATIONS_PARTITION_KEY = 'assignment-notifications'
 WORKFLOW_ALERT_NOTIFICATION_TYPE = 'workflow_priority_alert'
+KEY_VAULT_SECRET_REMINDER_NOTIFICATION_TYPE = 'key_vault_secret_expiring'
 WORKFLOW_ALERT_PRIORITY_CONFIG = {
     'low': {
         'icon': 'bi-bell',
@@ -163,6 +164,10 @@ NOTIFICATION_TYPES = {
     WORKFLOW_ALERT_NOTIFICATION_TYPE: {
         'icon': 'bi-bell',
         'color': 'secondary'
+    },
+    KEY_VAULT_SECRET_REMINDER_NOTIFICATION_TYPE: {
+        'icon': 'bi-safe',
+        'color': 'warning'
     }
 }
 

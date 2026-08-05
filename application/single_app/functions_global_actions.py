@@ -162,7 +162,7 @@ def save_global_action(action_data, user_id=None):
     except Exception as e:
         print(f"❌ Error saving global action: {str(e)}")
         traceback.print_exc()
-        return None
+        raise
 
 
 def delete_global_action(action_id):
@@ -229,4 +229,3 @@ def update_global_action_enabled(action_id, is_enabled, user_id=None):
         print(f"❌ Error updating enabled state for global action {action_id}: {str(e)}")
         traceback.print_exc()
         return None
-

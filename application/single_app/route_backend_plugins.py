@@ -961,6 +961,9 @@ def set_user_plugins():
     except PermissionError as e:
         debug_print(f"Governance denied saving personal actions for user {user_id}: {e}")
         return jsonify({'error': str(e)}), 403
+    except RuntimeError as e:
+        debug_print(f"Key Vault error saving personal actions for user {user_id}: {e}")
+        return jsonify({'error': str(e)}), 500
     except Exception as e:
         debug_print(f"Error saving personal actions for user {user_id}: {e}")
         return jsonify({'error': 'Failed to save plugins'}), 500
@@ -1145,8 +1148,13 @@ def create_group_action_route():
 
     try:
         saved = save_group_action(active_group, payload, user_id=user_id)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
     except PermissionError as exc:
         return jsonify({'error': str(exc)}), 403
+    except RuntimeError as exc:
+        debug_print('Key Vault error saving group action: %s', exc)
+        return jsonify({'error': str(exc)}), 500
     except Exception as exc:
         debug_print('Failed to save group action: %s', exc)
         return jsonify({'error': 'Unable to save action'}), 500
@@ -1240,8 +1248,13 @@ def update_group_action_route(action_id):
 
     try:
         saved = save_group_action(active_group, merged, user_id=user_id)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
     except PermissionError as exc:
         return jsonify({'error': str(exc)}), 403
+    except RuntimeError as exc:
+        debug_print('Key Vault error updating group action %s: %s', action_id, exc)
+        return jsonify({'error': str(exc)}), 500
     except Exception as exc:
         debug_print('Failed to update group action %s: %s', action_id, exc)
         return jsonify({'error': 'Unable to update action'}), 500
@@ -1548,6 +1561,12 @@ def add_plugin():
         # --- HOT RELOAD TRIGGER ---
         setattr(builtins, "kernel_reload_needed", True)
         return jsonify({'success': True})
+    except ValueError as e:
+        log_event(f"Validation error adding plugin: {e}", level=logging.WARNING)
+        return jsonify({'error': str(e)}), 400
+    except RuntimeError as e:
+        log_event(f"Key Vault error adding plugin: {e}", level=logging.ERROR)
+        return jsonify({'error': str(e)}), 500
     except Exception as e:
         log_event(f"Error adding plugin: {e}", level=logging.ERROR)
         return jsonify({'error': 'Failed to add plugin.'}), 500
@@ -1651,6 +1670,12 @@ def edit_plugin(plugin_name):
         
         log_event("Edit plugin failed: not found", level=logging.WARNING, extra={"action": "edit", "plugin_name": plugin_name})
         return jsonify({'error': 'Plugin not found.'}), 404
+    except ValueError as e:
+        log_event(f"Validation error editing plugin: {e}", level=logging.WARNING)
+        return jsonify({'error': str(e)}), 400
+    except RuntimeError as e:
+        log_event(f"Key Vault error editing plugin: {e}", level=logging.ERROR)
+        return jsonify({'error': str(e)}), 500
     except Exception as e:
         log_event(f"Error editing plugin: {e}", level=logging.ERROR)
         return jsonify({'error': 'Failed to edit plugin.'}), 500

@@ -25,6 +25,8 @@ const TABLEAU_AUTH_METHOD_PAT = 'personal_access_token';
 const TABLEAU_AUTH_METHOD_USERNAME_PASSWORD = 'username_password';
 const publicWorkspacePlural = window.getPublicWorkspaceLabel ? window.getPublicWorkspaceLabel('plural') : 'Public Workspaces';
 const MCP_PLUGIN_TYPE = 'mcp';
+const KEY_VAULT_SECRET_REMINDERS_METADATA_FIELD = 'key_vault_secret_reminders';
+const KEY_VAULT_SECRET_REMINDER_ALL_FIELDS = '__all__';
 const MCP_HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 const MCP_MAX_CUSTOM_HEADER_COUNT = 20;
 const MCP_MAX_HEADER_VALUE_LENGTH = 4096;
@@ -706,6 +708,11 @@ export class PluginModalStepper {
       testCosmosBtn.addEventListener('click', () => this.testCosmosConnection());
     }
 
+    const keyVaultReminderToggle = document.getElementById('plugin-key-vault-reminder-enabled');
+    if (keyVaultReminderToggle) {
+      keyVaultReminderToggle.addEventListener('change', () => this.toggleKeyVaultReminderFields());
+    }
+
     // Set up display name to generated name conversion
     this.setupNameGeneration();
 
@@ -717,6 +724,145 @@ export class PluginModalStepper {
         document.getElementById('plugin-name').value = actionName;
       }
     });
+  }
+
+  toggleKeyVaultReminderFields() {
+    const reminderToggle = document.getElementById('plugin-key-vault-reminder-enabled');
+    const reminderFields = document.getElementById('plugin-key-vault-reminder-fields');
+    if (!reminderToggle || !reminderFields) {
+      return;
+    }
+    reminderFields.classList.toggle('d-none', !reminderToggle.checked);
+  }
+
+  clearKeyVaultReminderForm() {
+    const reminderToggle = document.getElementById('plugin-key-vault-reminder-enabled');
+    if (reminderToggle) {
+      reminderToggle.checked = false;
+    }
+    [
+      'plugin-key-vault-reminder-expires-on',
+      'plugin-key-vault-reminder-email',
+      'plugin-key-vault-reminder-label',
+      'plugin-key-vault-reminder-notes'
+    ].forEach(id => {
+      const element = document.getElementById(id);
+      if (element) {
+        element.value = element.dataset.defaultValue || '';
+      }
+    });
+    const leadDays = document.getElementById('plugin-key-vault-reminder-lead-days');
+    if (leadDays) {
+      leadDays.value = leadDays.dataset.defaultValue || leadDays.defaultValue || '30';
+    }
+    this.toggleKeyVaultReminderFields();
+  }
+
+  getKeyVaultReminderAllConfig(metadata) {
+    const reminders = metadata && typeof metadata === 'object'
+      ? metadata[KEY_VAULT_SECRET_REMINDERS_METADATA_FIELD]
+      : null;
+    if (!reminders || typeof reminders !== 'object') {
+      return null;
+    }
+    const allConfig = reminders[KEY_VAULT_SECRET_REMINDER_ALL_FIELDS];
+    return allConfig && typeof allConfig === 'object' ? allConfig : null;
+  }
+
+  populateKeyVaultReminderForm(metadata) {
+    this.clearKeyVaultReminderForm();
+    const allConfig = this.getKeyVaultReminderAllConfig(metadata);
+    if (!allConfig || !allConfig.enabled) {
+      return;
+    }
+
+    const reminderToggle = document.getElementById('plugin-key-vault-reminder-enabled');
+    if (reminderToggle) {
+      reminderToggle.checked = true;
+    }
+    const expiresOn = document.getElementById('plugin-key-vault-reminder-expires-on');
+    const email = document.getElementById('plugin-key-vault-reminder-email');
+    const leadDays = document.getElementById('plugin-key-vault-reminder-lead-days');
+    const label = document.getElementById('plugin-key-vault-reminder-label');
+    const notes = document.getElementById('plugin-key-vault-reminder-notes');
+    if (expiresOn) {
+      expiresOn.value = String(allConfig.expires_on || allConfig.expiration_date || '').slice(0, 10);
+    }
+    if (email) {
+      email.value = allConfig.contact_email || allConfig.reminder_email || '';
+    }
+    if (leadDays) {
+      leadDays.value = allConfig.lead_days || '30';
+    }
+    if (label) {
+      label.value = allConfig.label || allConfig.friendly_label || '';
+    }
+    if (notes) {
+      notes.value = allConfig.notes || allConfig.rotation_notes || '';
+    }
+    this.toggleKeyVaultReminderFields();
+  }
+
+  validateKeyVaultReminderFields() {
+    const reminderToggle = document.getElementById('plugin-key-vault-reminder-enabled');
+    if (!reminderToggle?.checked) {
+      return true;
+    }
+
+    const expiresOn = document.getElementById('plugin-key-vault-reminder-expires-on')?.value.trim();
+    const email = document.getElementById('plugin-key-vault-reminder-email')?.value.trim();
+    const leadDays = parseInt(document.getElementById('plugin-key-vault-reminder-lead-days')?.value || '30', 10);
+    if (!expiresOn) {
+      this.showError('Expiration date is required when Key Vault expiration tracking is enabled.');
+      return false;
+    }
+    if (!email || !email.includes('@')) {
+      this.showError('A valid reminder email is required when Key Vault expiration tracking is enabled.');
+      return false;
+    }
+    if (!Number.isInteger(leadDays) || leadDays < 1 || leadDays > 3650) {
+      this.showError('Lead days must be between 1 and 3650.');
+      return false;
+    }
+    return true;
+  }
+
+  applyKeyVaultReminderMetadata(metadata) {
+    const normalizedMetadata = metadata && typeof metadata === 'object' ? metadata : {};
+    const reminderToggle = document.getElementById('plugin-key-vault-reminder-enabled');
+    if (!reminderToggle) {
+      return normalizedMetadata;
+    }
+
+    const existingReminders = normalizedMetadata[KEY_VAULT_SECRET_REMINDERS_METADATA_FIELD];
+    const hasExistingAllConfig = Boolean(
+      existingReminders
+      && typeof existingReminders === 'object'
+      && existingReminders[KEY_VAULT_SECRET_REMINDER_ALL_FIELDS]
+    );
+    if (!reminderToggle.checked) {
+      if (hasExistingAllConfig) {
+        normalizedMetadata[KEY_VAULT_SECRET_REMINDERS_METADATA_FIELD] = {
+          ...existingReminders,
+          [KEY_VAULT_SECRET_REMINDER_ALL_FIELDS]: { enabled: false }
+        };
+      }
+      return normalizedMetadata;
+    }
+
+    const leadDays = parseInt(document.getElementById('plugin-key-vault-reminder-lead-days')?.value || '30', 10);
+    normalizedMetadata[KEY_VAULT_SECRET_REMINDERS_METADATA_FIELD] = {
+      ...(existingReminders && typeof existingReminders === 'object' ? existingReminders : {}),
+      [KEY_VAULT_SECRET_REMINDER_ALL_FIELDS]: {
+        enabled: true,
+        expires_on: document.getElementById('plugin-key-vault-reminder-expires-on')?.value.trim() || '',
+        contact_email: document.getElementById('plugin-key-vault-reminder-email')?.value.trim() || '',
+        lead_days: Number.isInteger(leadDays) ? leadDays : 30,
+        label: document.getElementById('plugin-key-vault-reminder-label')?.value.trim() || '',
+        notes: document.getElementById('plugin-key-vault-reminder-notes')?.value.trim() || ''
+      }
+    };
+    return normalizedMetadata;
   }
 
   async showModal(plugin = null) {
@@ -3902,6 +4048,7 @@ export class PluginModalStepper {
       case 4:
         // Validate JSON fields
         if (!this.validateJSONField('plugin-metadata', 'Metadata')) return false;
+        if (!this.validateKeyVaultReminderFields()) return false;
         //if (!this.validateJSONField('plugin-additional-fields', 'Additional Fields')) return false;
         break;
     }
@@ -4918,6 +5065,7 @@ export class PluginModalStepper {
       JSON.stringify(plugin.additionalFields, null, 2) : '{}';
 
     document.getElementById('plugin-metadata').value = metadata;
+    this.populateKeyVaultReminderForm(plugin.metadata || {});
     try {
       document.getElementById('plugin-additional-fields').value = additionalFields;
     } catch (e) {
@@ -5276,6 +5424,7 @@ export class PluginModalStepper {
     try {
       const metadataValue = document.getElementById('plugin-metadata').value.trim();
       metadata = metadataValue ? JSON.parse(metadataValue) : {};
+      metadata = this.applyKeyVaultReminderMetadata(metadata);
     } catch (e) {
       throw new Error('Invalid metadata JSON');
     }
@@ -6593,6 +6742,7 @@ export class PluginModalStepper {
     this.blobStorageReadFileTypeState = this.getDefaultBlobStorageReadFileTypes();
     this.blobStorageUploadFileTypeState = this.getDefaultBlobStorageUploadFileTypes();
     this.renderBlobStorageConfiguration();
+    this.clearKeyVaultReminderForm();
 
     // Clear any type selection
     this.selectedType = null;

@@ -880,6 +880,7 @@ def register_route_frontend_admin_settings(bp):
             settings['key_vault_name'] = ''
         if 'key_vault_identity' not in settings:
             settings['key_vault_identity'] = ''
+        normalize_key_vault_reminder_settings(settings)
 
             # --- Add defaults for left nav ---
         if 'enable_left_nav_default' not in settings:
@@ -2675,6 +2676,13 @@ def register_route_frontend_admin_settings(bp):
                 'enable_key_vault_secret_storage': form_data.get('enable_key_vault_secret_storage') == 'on',
                 'key_vault_name': form_data.get('key_vault_name', '').strip(),
                 'key_vault_identity': form_data.get('key_vault_identity', ''),
+                'enable_key_vault_secret_expiration_reminders': form_data.get('enable_key_vault_secret_expiration_reminders') == 'on',
+                'key_vault_secret_expiration_default_lead_days': form_data.get('key_vault_secret_expiration_default_lead_days', '30'),
+                'key_vault_secret_expiration_default_contact_email': form_data.get('key_vault_secret_expiration_default_contact_email', '').strip(),
+                'key_vault_secret_expiration_require_expiration': form_data.get('key_vault_secret_expiration_require_expiration') == 'on',
+                'key_vault_secret_expiration_emit_contact_email_in_telemetry': form_data.get('key_vault_secret_expiration_emit_contact_email_in_telemetry') == 'on',
+                'key_vault_secret_expiration_admin_roles': form_data.get('key_vault_secret_expiration_admin_roles', 'Admin'),
+                'key_vault_secret_expiration_scan_interval_seconds': form_data.get('key_vault_secret_expiration_scan_interval_seconds', '21600'),
 
                 # Authentication & Redirect Settings
                 'enable_front_door': enable_front_door,

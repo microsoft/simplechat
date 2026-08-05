@@ -193,6 +193,81 @@ def normalize_document_access_index_required_settings(settings):
     return changed
 
 
+def _normalize_key_vault_admin_roles(value):
+    if isinstance(value, list):
+        raw_roles = value
+    elif isinstance(value, str):
+        raw_roles = value.replace(";", ",").split(",")
+    else:
+        raw_roles = []
+
+    roles = []
+    for role in raw_roles:
+        normalized_role = str(role or "").strip()[:80]
+        if normalized_role and normalized_role not in roles:
+            roles.append(normalized_role)
+    return roles or ["Admin"]
+
+
+def _normalize_key_vault_reminder_int(value, default_value, minimum, maximum):
+    try:
+        parsed_value = int(value)
+    except (TypeError, ValueError):
+        parsed_value = default_value
+    return min(max(parsed_value, minimum), maximum)
+
+
+def _normalize_key_vault_reminder_bool(value):
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def normalize_key_vault_reminder_settings(settings):
+    """Normalize stored Key Vault expiration reminder settings in-place."""
+    if not isinstance(settings, dict):
+        return False
+
+    normalized_values = {
+        "enable_key_vault_secret_expiration_reminders": _normalize_key_vault_reminder_bool(
+            settings.get("enable_key_vault_secret_expiration_reminders", False)
+        ),
+        "key_vault_secret_expiration_default_lead_days": _normalize_key_vault_reminder_int(
+            settings.get("key_vault_secret_expiration_default_lead_days"),
+            30,
+            1,
+            3650,
+        ),
+        "key_vault_secret_expiration_default_contact_email": str(
+            settings.get("key_vault_secret_expiration_default_contact_email") or ""
+        ).strip()[:254],
+        "key_vault_secret_expiration_require_expiration": _normalize_key_vault_reminder_bool(
+            settings.get("key_vault_secret_expiration_require_expiration", False)
+        ),
+        "key_vault_secret_expiration_emit_contact_email_in_telemetry": _normalize_key_vault_reminder_bool(
+            settings.get("key_vault_secret_expiration_emit_contact_email_in_telemetry", False)
+        ),
+        "key_vault_secret_expiration_admin_roles": _normalize_key_vault_admin_roles(
+            settings.get("key_vault_secret_expiration_admin_roles")
+        ),
+        "key_vault_secret_expiration_scan_interval_seconds": _normalize_key_vault_reminder_int(
+            settings.get("key_vault_secret_expiration_scan_interval_seconds"),
+            21600,
+            900,
+            86400,
+        ),
+    }
+
+    changed = False
+    for key, normalized_value in normalized_values.items():
+        if settings.get(key) != normalized_value:
+            settings[key] = normalized_value
+            changed = True
+    return changed
+
+
 def redact_admin_settings_secrets_for_form(settings):
     redacted_settings = copy.deepcopy(settings or {})
     for field_name in ADMIN_SETTINGS_FORM_SECRET_FIELDS:
@@ -1435,6 +1510,13 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_key_vault_secret_storage': False,
         'key_vault_name': '',
         'key_vault_identity': '',
+        'enable_key_vault_secret_expiration_reminders': False,
+        'key_vault_secret_expiration_default_lead_days': 30,
+        'key_vault_secret_expiration_default_contact_email': '',
+        'key_vault_secret_expiration_require_expiration': False,
+        'key_vault_secret_expiration_emit_contact_email_in_telemetry': False,
+        'key_vault_secret_expiration_admin_roles': ['Admin'],
+        'key_vault_secret_expiration_scan_interval_seconds': 21600,
         
         # Retention Policy Settings
         'enable_retention_policy_personal': False,
@@ -1566,6 +1648,7 @@ def get_settings(use_cosmos=False, include_source=False):
         document_access_index_settings_updated = normalize_document_access_index_required_settings(merged)
         inbound_mcp_settings_updated = normalize_inbound_mcp_settings(merged)
         public_workspace_display_settings_updated = normalize_public_workspace_display_settings(merged)
+        key_vault_reminder_settings_updated = normalize_key_vault_reminder_settings(merged)
 
         merged['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(merged)
 
@@ -1579,6 +1662,7 @@ def get_settings(use_cosmos=False, include_source=False):
             or document_access_index_settings_updated
             or inbound_mcp_settings_updated
             or public_workspace_display_settings_updated
+            or key_vault_reminder_settings_updated
         ):
             cosmos_settings_container.upsert_item(merged)
             _refresh_app_settings_cache_after_write(merged, context="merge_upsert")
@@ -1631,6 +1715,7 @@ def update_settings(new_settings):
         normalize_document_access_index_required_settings(settings_item)
         normalize_inbound_mcp_settings(settings_item)
         normalize_public_workspace_display_settings(settings_item)
+        normalize_key_vault_reminder_settings(settings_item)
         settings_item['enable_multi_model_endpoints'] = coerce_multi_model_endpoint_enablement(
             existing_multi_endpoint_enabled,
             settings_item.get('enable_multi_model_endpoints', False),

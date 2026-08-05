@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import threading
+from datetime import date, datetime
 from typing import Any, Dict, Optional, Tuple
 
 from azure.monitor.opentelemetry import configure_azure_monitor
@@ -31,6 +32,14 @@ SENSITIVE_LOG_KEY_FRAGMENTS = (
     "sharedaccesssignature",
     "subscriptionkey",
     "token",
+)
+EXTERNAL_EVENT_SENSITIVE_KEY_FRAGMENTS = (
+    "email",
+    "userid",
+    "groupid",
+    "publicworkspaceid",
+    "scopevalue",
+    "sourceid",
 )
 SECRET_ASSIGNMENT_RE = re.compile(
     r"(?i)\b(api[-_]?key|access[-_]?token|client[-_]?secret|connection[-_]?string|password|secret|subscription[-_]?key|token|sig|signature)=([^&\s,;]+)"
@@ -64,6 +73,8 @@ LOG_RECORD_RESERVED_ATTRS = {
 LOGGER_EVENT_MESSAGE = "[SimpleChatLogEvent]"
 LOGGER_DEBUG_MESSAGE = "[SimpleChatDebugTrace]"
 LOGGER_FALLBACK_MESSAGE = "[SimpleChatLogFallback]"
+LOGGER_EXTERNAL_EVENT_MESSAGE = "[SimpleChatExternalEvent]"
+MAX_EXTERNAL_EVENT_STRING_LENGTH = 256
 
 
 def _format_message(message: Any, message_args: Optional[Tuple[Any, ...]] = None) -> str:
@@ -88,6 +99,18 @@ def _is_sensitive_log_key(key: Any) -> bool:
     if not normalized_key:
         return False
     return any(fragment in normalized_key for fragment in SENSITIVE_LOG_KEY_FRAGMENTS)
+
+
+def _is_sensitive_external_event_key(key: Any) -> bool:
+    normalized_key = _normalize_log_key(key)
+    if not normalized_key:
+        return False
+    if normalized_key.endswith("hash"):
+        return False
+    return (
+        _is_sensitive_log_key(key)
+        or any(fragment in normalized_key for fragment in EXTERNAL_EVENT_SENSITIVE_KEY_FRAGMENTS)
+    )
 
 
 def sanitize_log_message(message: Any) -> str:
@@ -174,6 +197,61 @@ def _build_logger_extra(
                 logger_extra[normalized_key] = _logger_safe_scalar(value)
 
     return logger_extra
+
+
+def _normalize_event_name(event_name: Any) -> str:
+    normalized_name = re.sub(r"[^A-Za-z0-9_.-]", "_", str(event_name or "").strip())[:100]
+    return normalized_name.strip("._-") or "simplechat_event"
+
+
+def _normalize_external_event_key(key: Any) -> str:
+    normalized_key = re.sub(r"[^A-Za-z0-9_]", "_", str(key or "").strip())[:80]
+    normalized_key = normalized_key.strip("_") or "value"
+    return f"sc_event_{normalized_key}"
+
+
+def _normalize_external_event_value(value: Any) -> Any:
+    if value is None:
+        return ""
+    if isinstance(value, bool) or isinstance(value, (int, float)):
+        return value
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if isinstance(value, str):
+        return sanitize_log_message(value)[:MAX_EXTERNAL_EVENT_STRING_LENGTH]
+    if isinstance(value, dict):
+        return len(value)
+    if isinstance(value, (list, tuple, set)):
+        return len(value)
+    return type(value).__name__
+
+
+def _build_external_event_extra(
+    event_name: str,
+    extra: Optional[Dict[str, Any]] = None,
+    allowed_sensitive_dimensions: Optional[Tuple[str, ...]] = None,
+) -> Dict[str, Any]:
+    event_extra: Dict[str, Any] = {
+        "sc_event_name": event_name,
+    }
+    allowed_sensitive_keys = {
+        _normalize_log_key(key)
+        for key in (allowed_sensitive_dimensions or ())
+        if _normalize_log_key(key)
+    }
+
+    if isinstance(extra, dict):
+        for key, value in extra.items():
+            normalized_key = _normalize_external_event_key(key)
+            if (
+                _is_sensitive_external_event_key(key)
+                and _normalize_log_key(key) not in allowed_sensitive_keys
+            ):
+                event_extra[f"{normalized_key}_present"] = value is not None
+                continue
+            event_extra[normalized_key] = _normalize_external_event_value(value)
+
+    return event_extra
 
 
 def _load_logging_settings() -> Dict[str, Any]:
@@ -397,6 +475,52 @@ def log_event(
             print(LOGGER_FALLBACK_MESSAGE)
             if safe_extra:
                 print("[LOG] Extra dimensions were redacted for logging safety.")
+
+
+def log_external_event(
+    event_name: str,
+    extra: Optional[Dict[str, Any]] = None,
+    level: int = logging.INFO,
+    allowed_sensitive_dimensions: Optional[Tuple[str, ...]] = None,
+) -> None:
+    """
+    Emit a privacy-safe, queryable telemetry event for Azure Monitor automation.
+
+    Unlike general-purpose log_event records, this helper preserves explicitly
+    safe string dimensions so scheduled query alerts and downstream automation
+    can filter by event name and categorical fields.
+    """
+    normalized_event_name = _normalize_event_name(event_name)
+    event_extra = _build_external_event_extra(
+        normalized_event_name,
+        extra,
+        allowed_sensitive_dimensions=allowed_sensitive_dimensions,
+    )
+    event_message = f"{LOGGER_EXTERNAL_EVENT_MESSAGE} {normalized_event_name}"
+
+    try:
+        logger = get_appinsights_logger()
+        if not logger:
+            logger = logging.getLogger('standard')
+            if not logger.handlers:
+                logger.addHandler(logging.StreamHandler())
+                logger.setLevel(logging.INFO)
+
+        logger.log(
+            level,
+            event_message,
+            extra=event_extra,
+            stacklevel=2,
+        )
+    except Exception as exc:
+        log_event(
+            "[AppInsights] Failed to emit external telemetry event.",
+            extra={
+                "event_name": normalized_event_name,
+                "error_type": type(exc).__name__,
+            },
+            level=logging.ERROR,
+        )
 
 # --- Modern Azure Monitor Application Insights setup ---
 def setup_appinsights_logging(settings):

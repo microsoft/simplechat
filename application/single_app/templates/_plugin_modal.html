@@ -1250,6 +1250,56 @@
             </button>
           </div>
           <div class="collapse" id="plugin-advanced-collapse">
+            <div class="card border-info mb-3">
+              <div class="card-body">
+                <div class="form-check form-switch mb-2">
+                  <input class="form-check-input" type="checkbox" id="plugin-key-vault-reminder-enabled">
+                  <label class="form-check-label fw-semibold" for="plugin-key-vault-reminder-enabled">
+                    Track expiration for Key Vault-backed secrets in this action
+                  </label>
+                </div>
+                <p class="text-muted small mb-3">
+                  Applies the same expiration reminder metadata to every action secret stored in Key Vault, such as API keys, service principal secrets, passwords, connection strings, and custom secret fields.
+                </p>
+                <div id="plugin-key-vault-reminder-fields" class="row g-3 d-none">
+                  <div class="col-md-4">
+                    <label for="plugin-key-vault-reminder-expires-on" class="form-label">Expiration date</label>
+                    <input type="date" class="form-control" id="plugin-key-vault-reminder-expires-on">
+                  </div>
+                  <div class="col-md-4">
+                    <label for="plugin-key-vault-reminder-email" class="form-label">Reminder email</label>
+                    <input
+                      type="email"
+                      class="form-control"
+                      id="plugin-key-vault-reminder-email"
+                      value="{{ (settings.key_vault_secret_expiration_default_contact_email if settings is defined else '') or '' }}"
+                      data-default-value="{{ (settings.key_vault_secret_expiration_default_contact_email if settings is defined else '') or '' }}"
+                      placeholder="owner@example.com"
+                    >
+                  </div>
+                  <div class="col-md-4">
+                    <label for="plugin-key-vault-reminder-lead-days" class="form-label">Lead days</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="3650"
+                      class="form-control"
+                      id="plugin-key-vault-reminder-lead-days"
+                      value="{{ (settings.key_vault_secret_expiration_default_lead_days if settings is defined else 30) or 30 }}"
+                      data-default-value="{{ (settings.key_vault_secret_expiration_default_lead_days if settings is defined else 30) or 30 }}"
+                    >
+                  </div>
+                  <div class="col-md-6">
+                    <label for="plugin-key-vault-reminder-label" class="form-label">Friendly label</label>
+                    <input type="text" class="form-control" id="plugin-key-vault-reminder-label" maxlength="160" placeholder="Production service principal secret">
+                  </div>
+                  <div class="col-md-6">
+                    <label for="plugin-key-vault-reminder-notes" class="form-label">Rotation notes</label>
+                    <input type="text" class="form-control" id="plugin-key-vault-reminder-notes" maxlength="1000" placeholder="Where to rotate this secret and who owns it">
+                  </div>
+                </div>
+              </div>
+            </div>
             <div class="mb-3">
               <label for="plugin-metadata" class="form-label">Metadata (JSON)</label>
               <textarea class="form-control" id="plugin-metadata" rows="4" placeholder="{}"></textarea>

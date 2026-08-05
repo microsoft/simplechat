@@ -29,6 +29,10 @@ from functions_cosmos_throughput import (
     set_database_throughput,
 )
 from functions_app_maintenance import get_app_maintenance_status, run_app_maintenance_once
+from functions_keyvault_reminders import (
+    check_due_key_vault_secret_reminders_once,
+    list_key_vault_secret_reminders,
+)
 from functions_redis_monitoring import (
     get_redis_explorer_keys,
     get_redis_explorer_value,
@@ -201,6 +205,48 @@ def auto_fix_index_fields(idx_type: str, user_id: str = 'system', admin_email: s
 
 
 def register_route_backend_settings(bp):
+    @bp.route('/api/admin/settings/key-vault/secret-reminders', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def list_key_vault_secret_reminders_admin():
+        """Return Key Vault secret expiration reminder inventory for admins."""
+        try:
+            reminders = list_key_vault_secret_reminders(
+                status=request.args.get('status', ''),
+                scope=request.args.get('scope', ''),
+                source_type=request.args.get('source_type', ''),
+                search=request.args.get('search', ''),
+                limit=request.args.get('limit', 250),
+            )
+            return jsonify({'success': True, 'reminders': reminders}), 200
+        except Exception as exc:
+            log_event(
+                '[KeyVaultReminders] Failed to load admin inventory.',
+                extra={'error': str(exc)},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to load Key Vault reminder inventory.'}), 500
+
+    @bp.route('/api/admin/settings/key-vault/secret-reminders/run', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def run_key_vault_secret_reminders_admin():
+        """Run the Key Vault expiration reminder sweep on demand."""
+        try:
+            result = check_due_key_vault_secret_reminders_once(settings=get_settings())
+            return jsonify({'success': True, 'result': result}), 200
+        except Exception as exc:
+            log_event(
+                '[KeyVaultReminders] Failed to run admin-triggered reminder sweep.',
+                extra={'error': str(exc)},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to run Key Vault reminder sweep.'}), 500
+
     @bp.route('/api/admin/settings/app-maintenance/status', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
