@@ -988,6 +988,7 @@ def register_route_frontend_admin_settings(bp):
                 source_review_runtime_capabilities,
             )
             settings_for_template = redact_admin_settings_secrets_for_form(settings_for_template)
+            settings_for_template['enhanced_citations_storage_status'] = get_enhanced_citations_storage_status()
             inbound_mcp_easy_auth_script_context = get_inbound_mcp_easy_auth_script_context(settings_for_template)
 
             return render_template(
