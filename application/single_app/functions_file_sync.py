@@ -2011,7 +2011,7 @@ def _test_azure_blob_connection(source: Dict[str, Any]) -> Dict[str, Any]:
     except Exception as error:
         diagnostics = _azure_blob_error_diagnostics(error, source)
         log_event(
-            "[FileSync] Azure Blob connection test failed.",
+            "[FILE_SYNC] Azure Blob connection test failed.",
             level=logging.WARNING,
             extra=diagnostics,
             exceptionTraceback=True,
@@ -2117,7 +2117,7 @@ def _delete_associated_synced_documents(source: Dict[str, Any]) -> Dict[str, Any
             failed_document_ids.append(document_id)
             delete_result["documents_failed"] += 1
             log_event(
-                f"[FileSync] Failed to delete synced document during source deletion: {error}",
+                f"[FILE_SYNC] Failed to delete synced document during source deletion: {error}",
                 level=logging.WARNING,
             )
 
@@ -2379,7 +2379,7 @@ def _process_file_sync_source(
                 counts["failed"] = counts.get("failed", 0) + 1
                 _upsert_failed_item(source, existing_item, remote_file, item_error, run_id=run["id"])
                 log_event(
-                    f"[FileSync] Error syncing {remote_file.get('remote_path')}: {item_error}",
+                    f"[FILE_SYNC] Error syncing {remote_file.get('remote_path')}: {item_error}",
                     level=logging.ERROR,
                     exceptionTraceback=True,
                 )
@@ -2420,7 +2420,7 @@ def _process_file_sync_source(
             {"run_id": run["id"], "error": FILE_SYNC_PUBLIC_RUN_ERROR_MESSAGE},
         )
         log_event(
-            "[FileSync] Run failed.",
+            "[FILE_SYNC] Run failed.",
             level=logging.ERROR,
             extra={
                 "source_id": source.get("id"),
@@ -2463,7 +2463,7 @@ def _count_active_runs() -> int:
             )
             total_runs += int(result[0] if result else 0)
         except Exception as error:
-            log_event(f"[FileSync] Unable to count active runs: {error}", level=logging.WARNING)
+            log_event(f"[FILE_SYNC] Unable to count active runs: {error}", level=logging.WARNING)
     return total_runs
 
 
@@ -2479,7 +2479,7 @@ def _source_has_active_run(source: Dict[str, Any]) -> bool:
         )
         return int(result[0] if result else 0) > 0
     except Exception as error:
-        log_event(f"[FileSync] Unable to count source active runs: {error}", level=logging.WARNING)
+        log_event(f"[FILE_SYNC] Unable to count source active runs: {error}", level=logging.WARNING)
         return False
 
 
@@ -2549,7 +2549,7 @@ def _get_global_file_sync_identity_auth(source_type: str) -> Dict[str, Any]:
     try:
         identities = list_workspace_identities(WORKSPACE_IDENTITY_SCOPE_GLOBAL, WORKSPACE_IDENTITY_SCOPE_GLOBAL)
     except Exception as error:
-        log_event(f"[FileSync] Unable to list global connector identities: {error}", level=logging.WARNING)
+        log_event(f"[FILE_SYNC] Unable to list global connector identities: {error}", level=logging.WARNING)
         return {}
 
     for identity in identities:
@@ -3487,7 +3487,7 @@ def _apply_sync_tags_to_existing_document(
         return True
     except Exception as error:
         log_event(
-            f"[FileSync] Unable to apply sync tags to existing document {document_id}: {error}",
+            f"[FILE_SYNC] Unable to apply sync tags to existing document {document_id}: {error}",
             level=logging.WARNING,
             exceptionTraceback=True,
         )
@@ -3676,7 +3676,7 @@ def _handle_remote_deletes(source: Dict[str, Any], existing_items: Dict[str, Dic
                 item["error_message"] = FILE_SYNC_PUBLIC_ITEM_ERROR_MESSAGE
                 counts["failed"] = counts.get("failed", 0) + 1
                 log_event(
-                    "[FileSync] Remote document deletion failed.",
+                    "[FILE_SYNC] Remote document deletion failed.",
                     level=logging.ERROR,
                     extra={
                         "source_id": source.get("id"),
@@ -3756,7 +3756,7 @@ def check_due_file_sync_sources_once() -> List[Dict[str, Any]]:
         try:
             runs.append(queue_file_sync_source_run(source, triggered_by=None, trigger="scheduled"))
         except Exception as error:
-            log_event(f"[FileSync] Error queueing scheduled sync for {source.get('id')}: {error}", level=logging.ERROR, exceptionTraceback=True)
+            log_event(f"[FILE_SYNC] Error queueing scheduled sync for {source.get('id')}: {error}", level=logging.ERROR, exceptionTraceback=True)
     return runs
 
 
@@ -3891,7 +3891,7 @@ def apply_synced_document_delete_action(
 def debug_file_sync(message: str) -> None:
     settings = get_settings()
     if _as_bool(settings.get("file_sync_debug_logging", True)):
-        debug_print(f"[FileSync] {message}")
+        debug_print(f"[FILE_SYNC] {message}")
 
 
 def _log_file_sync_activity(source: Dict[str, Any], user_id: Optional[str], action: str, additional_context: Optional[Dict[str, Any]] = None) -> None:
@@ -3909,4 +3909,4 @@ def _log_file_sync_activity(source: Dict[str, Any], user_id: Optional[str], acti
             additional_context=additional_context or {},
         )
     except Exception as error:
-        log_event(f"[FileSync] Failed to log activity: {error}", level=logging.WARNING)
+        log_event(f"[FILE_SYNC] Failed to log activity: {error}", level=logging.WARNING)

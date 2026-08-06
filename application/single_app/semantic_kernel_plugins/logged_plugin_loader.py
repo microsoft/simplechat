@@ -54,24 +54,24 @@ class LoggedPluginLoader:
         plugin_type = manifest.get('type')
         
         # Debug logging
-        log_event(f"[Logged Plugin Loader] Starting to load plugin: {plugin_name} (type: {plugin_type})")
+        log_event(f"[LOGGED_PLUGIN_LOADER] Starting to load plugin: {plugin_name} (type: {plugin_type})")
         
         if not plugin_name:
-            log_event(f"[Logged Plugin Loader] Plugin manifest missing required 'name' field", level=logging.ERROR)
+            log_event(f"[LOGGED_PLUGIN_LOADER] Plugin manifest missing required 'name' field", level=logging.ERROR)
             return False
         
         try:
             # Load the plugin instance
-            debug_print(f"[Logged Plugin Loader] Creating plugin instance for {plugin_name} of type {plugin_type}")
+            debug_print(f"[LOGGED_PLUGIN_LOADER] Creating plugin instance for {plugin_name} of type {plugin_type}")
             plugin_instance = self._create_plugin_instance(manifest)
-            debug_print(f"[Logged Plugin Loader] Created plugin instance: {plugin_instance}")
+            debug_print(f"[LOGGED_PLUGIN_LOADER] Created plugin instance: {plugin_instance}")
             if not plugin_instance:
-                debug_print(f"[Logged Plugin Loader] Failed to create plugin instance for {plugin_name} of type {plugin_type}")
+                debug_print(f"[LOGGED_PLUGIN_LOADER] Failed to create plugin instance for {plugin_name} of type {plugin_type}")
                 return False
             
             # Enable logging if the plugin supports it
             if hasattr(plugin_instance, 'enable_invocation_logging'):
-                debug_print(f"[Logged Plugin Loader] Enabling invocation logging for {plugin_name}")
+                debug_print(f"[LOGGED_PLUGIN_LOADER] Enabling invocation logging for {plugin_name}")
                 plugin_instance.enable_invocation_logging(True)
             
             # Auto-wrap plugin functions with logging for any plugin instance exposing kernel functions.
@@ -85,7 +85,7 @@ class LoggedPluginLoader:
                 self._auto_create_companion_schema_plugin(manifest, plugin_name)
             
             log_event(
-                f"[Logged Plugin Loader] Successfully loaded plugin: {plugin_name}",
+                f"[LOGGED_PLUGIN_LOADER] Successfully loaded plugin: {plugin_name}",
                 extra={
                     "plugin_name": plugin_name,
                     "plugin_type": plugin_type,
@@ -99,7 +99,7 @@ class LoggedPluginLoader:
             
         except Exception as e:
             log_event(
-                f"[Logged Plugin Loader] Failed to load plugin: {plugin_name}",
+                f"[LOGGED_PLUGIN_LOADER] Failed to load plugin: {plugin_name}",
                 extra={
                     "plugin_name": plugin_name,
                     "plugin_type": plugin_type,
@@ -133,7 +133,7 @@ class LoggedPluginLoader:
             return self._create_sql_plugin(manifest)
         else:
             try:
-                debug_print(f"[Logged Plugin Loader] Attempting to discover plugin type: {plugin_type}")
+                debug_print(f"[LOGGED_PLUGIN_LOADER] Attempting to discover plugin type: {plugin_type}")
                 discovered_plugins = discover_plugins()
                 plugin_type = manifest.get('type')
                 name = manifest.get('name')
@@ -141,60 +141,60 @@ class LoggedPluginLoader:
                 # Normalize for matching
                 def normalize(s):
                     return s.replace('_', '').replace('-', '').replace('plugin', '').lower() if s else ''
-                debug_print(f"[Logged Plugin Loader] Normalizing plugin type for matching: {plugin_type}")
+                debug_print(f"[LOGGED_PLUGIN_LOADER] Normalizing plugin type for matching: {plugin_type}")
                 normalized_type = normalize(plugin_type)
-                debug_print(f"[Logged Plugin Loader] Normalized plugin type: {normalized_type}")
+                debug_print(f"[LOGGED_PLUGIN_LOADER] Normalized plugin type: {normalized_type}")
                 matched_class = None
                 for class_name, cls in discovered_plugins.items():
                     normalized_class = normalize(class_name)
-                    print("[Logged Plugin Loader] Checking plugin class:", class_name, "normalized:", normalized_class)
+                    print("[LOGGED_PLUGIN_LOADER] Checking plugin class:", class_name, "normalized:", normalized_class)
                     if normalized_type == normalized_class or normalized_type in normalized_class:
                         matched_class = cls
-                        debug_print(f"[Logged Plugin Loader] Matched class for plugin '{name}' of type '{plugin_type}': {matched_class}")
+                        debug_print(f"[LOGGED_PLUGIN_LOADER] Matched class for plugin '{name}' of type '{plugin_type}': {matched_class}")
                         break
                 if matched_class:
                     try:
                         plugin = matched_class(manifest) if 'manifest' in matched_class.__init__.__code__.co_varnames else matched_class()
-                        log_event(f"[Logged Plugin Loader] Instanced plugin: {name} (type: {plugin_type})", {"plugin_name": name, "plugin_type": plugin_type}, level=logging.INFO)
+                        log_event(f"[LOGGED_PLUGIN_LOADER] Instanced plugin: {name} (type: {plugin_type})", {"plugin_name": name, "plugin_type": plugin_type}, level=logging.INFO)
                         return plugin
                     except Exception as e:
-                        log_event(f"[Logged Plugin Loader] Failed to instantiate plugin: {name}: {e}", {"plugin_name": name, "plugin_type": plugin_type, "error": str(e)}, level=logging.ERROR, exceptionTraceback=True)
+                        log_event(f"[LOGGED_PLUGIN_LOADER] Failed to instantiate plugin: {name}: {e}", {"plugin_name": name, "plugin_type": plugin_type, "error": str(e)}, level=logging.ERROR, exceptionTraceback=True)
                 else:
-                    log_event(f"[Logged Plugin Loader] Unknown plugin type: {plugin_type} for plugin '{name}'", {"plugin_name": name, "plugin_type": plugin_type}, level=logging.WARNING)
+                    log_event(f"[LOGGED_PLUGIN_LOADER] Unknown plugin type: {plugin_type} for plugin '{name}'", {"plugin_name": name, "plugin_type": plugin_type}, level=logging.WARNING)
             except Exception as e:
-                log_event(f"[Logged Plugin Loader] Error discovering plugin types: {e}", {"error": str(e)}, level=logging.ERROR, exceptionTraceback=True)
+                log_event(f"[LOGGED_PLUGIN_LOADER] Error discovering plugin types: {e}", {"error": str(e)}, level=logging.ERROR, exceptionTraceback=True)
     
     def _create_openapi_plugin(self, manifest: Dict[str, Any]):
         """Create an OpenAPI plugin instance."""
         plugin_name = manifest.get('name')
-        log_event(f"[Logged Plugin Loader] Attempting to create OpenAPI plugin: {plugin_name}", level=logging.DEBUG)
+        log_event(f"[LOGGED_PLUGIN_LOADER] Attempting to create OpenAPI plugin: {plugin_name}", level=logging.DEBUG)
         
         try:
-            log_event(f"[Logged Plugin Loader] Creating OpenAPI plugin using factory", 
+            log_event(f"[LOGGED_PLUGIN_LOADER] Creating OpenAPI plugin using factory",
                      extra={"plugin_name": plugin_name, "manifest": manifest}, 
                      level=logging.DEBUG)
             
             plugin_instance = OpenApiPluginFactory.create_from_config(manifest)
-            log_event(f"[Logged Plugin Loader] Successfully created OpenAPI plugin instance using factory", 
+            log_event(f"[LOGGED_PLUGIN_LOADER] Successfully created OpenAPI plugin instance using factory",
                      extra={"plugin_name": plugin_name}, 
                      level=logging.INFO)
             
             # For OpenAPI plugins, we need to wrap the dynamically created functions
             if plugin_instance:
-                log_event(f"[Logged Plugin Loader] Wrapping dynamically created OpenAPI functions", 
+                log_event(f"[LOGGED_PLUGIN_LOADER] Wrapping dynamically created OpenAPI functions",
                          extra={"plugin_name": plugin_name}, 
                          level=logging.DEBUG)
                 self._wrap_openapi_plugin_functions(plugin_instance)
             
             return plugin_instance
         except ImportError as e:
-            log_event(f"[Logged Plugin Loader] ImportError creating OpenAPI plugin", 
+            log_event(f"[LOGGED_PLUGIN_LOADER] ImportError creating OpenAPI plugin",
                      extra={"plugin_name": plugin_name, "error": str(e)}, 
                      level=logging.ERROR)
             self.logger.error(f"Failed to import OpenApiPluginFactory: {e}")
             return None
         except Exception as e:
-            log_event(f"[Logged Plugin Loader] General error creating OpenAPI plugin", 
+            log_event(f"[LOGGED_PLUGIN_LOADER] General error creating OpenAPI plugin",
                      extra={"plugin_name": plugin_name, "error": str(e)}, 
                      level=logging.ERROR)
             self.logger.error(f"Failed to create OpenAPI plugin: {e}")
@@ -206,14 +206,14 @@ class LoggedPluginLoader:
         try:
             plugin_instance = DatabricksPluginFactory.create_from_config(manifest)
             log_event(
-                "[Logged Plugin Loader] Successfully created Databricks plugin instance using factory",
+                "[LOGGED_PLUGIN_LOADER] Successfully created Databricks plugin instance using factory",
                 extra={"plugin_name": plugin_name},
                 level=logging.INFO,
             )
             return plugin_instance
         except Exception as e:
             log_event(
-                "[Logged Plugin Loader] General error creating Databricks plugin",
+                "[LOGGED_PLUGIN_LOADER] General error creating Databricks plugin",
                 extra={"plugin_name": plugin_name, "error": str(e)},
                 level=logging.ERROR,
                 exceptionTraceback=True,
@@ -227,14 +227,14 @@ class LoggedPluginLoader:
         try:
             plugin_instance = SnowflakePluginFactory.create_from_config(manifest)
             log_event(
-                "[Logged Plugin Loader] Successfully created Snowflake plugin instance using factory",
+                "[LOGGED_PLUGIN_LOADER] Successfully created Snowflake plugin instance using factory",
                 extra={"plugin_name": plugin_name},
                 level=logging.INFO,
             )
             return plugin_instance
         except Exception as e:
             log_event(
-                "[Logged Plugin Loader] General error creating Snowflake plugin",
+                "[LOGGED_PLUGIN_LOADER] General error creating Snowflake plugin",
                 extra={"plugin_name": plugin_name, "error": str(e)},
                 level=logging.ERROR,
                 exceptionTraceback=True,
@@ -248,14 +248,14 @@ class LoggedPluginLoader:
         try:
             plugin_instance = TableauPluginFactory.create_from_config(manifest)
             log_event(
-                "[Logged Plugin Loader] Successfully created Tableau plugin instance using factory",
+                "[LOGGED_PLUGIN_LOADER] Successfully created Tableau plugin instance using factory",
                 extra={"plugin_name": plugin_name},
                 level=logging.INFO,
             )
             return plugin_instance
         except Exception as e:
             log_event(
-                "[Logged Plugin Loader] General error creating Tableau plugin",
+                "[LOGGED_PLUGIN_LOADER] General error creating Tableau plugin",
                 extra={"plugin_name": plugin_name, "error": str(e)},
                 level=logging.ERROR,
                 exceptionTraceback=True,
@@ -269,14 +269,14 @@ class LoggedPluginLoader:
         try:
             plugin_instance = McpPluginFactory.create_from_config(manifest)
             log_event(
-                "[Logged Plugin Loader] Successfully created MCP plugin instance using factory",
+                "[LOGGED_PLUGIN_LOADER] Successfully created MCP plugin instance using factory",
                 extra={"plugin_name": plugin_name},
                 level=logging.INFO,
             )
             return plugin_instance
         except Exception as e:
             log_event(
-                "[Logged Plugin Loader] General error creating MCP plugin",
+                "[LOGGED_PLUGIN_LOADER] General error creating MCP plugin",
                 extra={"plugin_name": plugin_name, "error": str(e)},
                 level=logging.ERROR,
                 exceptionTraceback=True,
@@ -333,7 +333,7 @@ class LoggedPluginLoader:
             # Check if schema plugin already exists in kernel
             if schema_plugin_name in self.kernel.plugins:
                 log_event(
-                    f"[Logged Plugin Loader] Companion schema plugin already exists: {schema_plugin_name}",
+                    f"[LOGGED_PLUGIN_LOADER] Companion schema plugin already exists: {schema_plugin_name}",
                     level=logging.DEBUG
                 )
                 return
@@ -358,14 +358,14 @@ class LoggedPluginLoader:
             self._register_plugin_with_kernel(schema_instance, schema_plugin_name)
             
             log_event(
-                f"[Logged Plugin Loader] Auto-created companion SQL Schema plugin: {schema_plugin_name}",
+                f"[LOGGED_PLUGIN_LOADER] Auto-created companion SQL Schema plugin: {schema_plugin_name}",
                 extra={"query_plugin": query_plugin_name, "schema_plugin": schema_plugin_name},
                 level=logging.INFO
             )
             
         except Exception as e:
             log_event(
-                f"[Logged Plugin Loader] Warning: Failed to auto-create companion schema plugin",
+                f"[LOGGED_PLUGIN_LOADER] Warning: Failed to auto-create companion schema plugin",
                 extra={"query_plugin": query_plugin_name, "error": str(e)},
                 level=logging.WARNING,
                 exceptionTraceback=True
@@ -373,17 +373,17 @@ class LoggedPluginLoader:
     
     def _wrap_plugin_functions(self, plugin_instance, plugin_name: str):
         """Wrap all kernel functions in a plugin with logging."""
-        log_event(f"[Logged Plugin Loader] Checking logging status for plugin", 
+        log_event(f"[LOGGED_PLUGIN_LOADER] Checking logging status for plugin",
                  extra={"plugin_name": plugin_name}, 
                  level=logging.DEBUG)
         
         if hasattr(plugin_instance, 'is_logging_enabled') and not plugin_instance.is_logging_enabled():
-            log_event(f"[Logged Plugin Loader] Plugin does not have logging enabled", 
+            log_event(f"[LOGGED_PLUGIN_LOADER] Plugin does not have logging enabled",
                      extra={"plugin_name": plugin_name}, 
                      level=logging.WARNING)
             return
         
-        log_event(f"[Logged Plugin Loader] Starting to wrap functions for plugin", 
+        log_event(f"[LOGGED_PLUGIN_LOADER] Starting to wrap functions for plugin",
                  extra={"plugin_name": plugin_name}, 
                  level=logging.DEBUG)
         wrapped_before = 0
@@ -400,7 +400,7 @@ class LoggedPluginLoader:
             if callable(attr) and getattr(attr, '__plugin_invocation_logger_wrapped__', False):
                 wrapped_after += 1
         
-        log_event(f"[Logged Plugin Loader] Function wrapping completed", 
+        log_event(f"[LOGGED_PLUGIN_LOADER] Function wrapping completed",
                  extra={
                      "plugin_name": plugin_name,
                      "wrapped_before": wrapped_before,
@@ -466,7 +466,7 @@ class LoggedPluginLoader:
         total_count = len(results)
         
         log_event(
-            f"[Logged Plugin Loader] Loaded {successful_count}/{total_count} plugins",
+            f"[LOGGED_PLUGIN_LOADER] Loaded {successful_count}/{total_count} plugins",
             extra={
                 "successful_plugins": [name for name, success in results.items() if success],
                 "failed_plugins": [name for name, success in results.items() if not success],
@@ -494,7 +494,7 @@ class LoggedPluginLoader:
         after the plugin is fully created.
         """
         plugin_name = getattr(plugin_instance, 'display_name', 'OpenAPI')
-        log_event(f"[Logged Plugin Loader] Starting to wrap OpenAPI functions for plugin", 
+        log_event(f"[LOGGED_PLUGIN_LOADER] Starting to wrap OpenAPI functions for plugin",
                  extra={"plugin_name": plugin_name}, 
                  level=logging.DEBUG)
         
@@ -529,7 +529,7 @@ class LoggedPluginLoader:
                     
             if is_kernel_function:
                 
-                log_event(f"[Logged Plugin Loader] Found OpenAPI function to wrap", 
+                log_event(f"[LOGGED_PLUGIN_LOADER] Found OpenAPI function to wrap",
                          extra={
                              "plugin_name": plugin_name,
                              "function_name": attr_name,
@@ -550,7 +550,7 @@ class LoggedPluginLoader:
                         # Extract user context if available
                         user_context = self._get_user_context()
                         
-                        log_event(f"[Plugin Function Logger] OpenAPI Function Call Start", 
+                        log_event(f"[PLUGIN_FUNCTION_LOGGER] OpenAPI Function Call Start",
                                  extra={
                                      "plugin": plugin_name,
                                      "function": func_name,
@@ -569,7 +569,7 @@ class LoggedPluginLoader:
                             
                             result_preview = str(result)[:500] + ('...' if len(str(result)) > 500 else '')
                             
-                            log_event(f"[Plugin Function Logger] OpenAPI Function Call Success", 
+                            log_event(f"[PLUGIN_FUNCTION_LOGGER] OpenAPI Function Call Success",
                                      extra={
                                          "plugin": plugin_name,
                                          "function": func_name,
@@ -599,7 +599,7 @@ class LoggedPluginLoader:
                         except Exception as e:
                             execution_time = time.time() - start_time
                             
-                            log_event(f"[Plugin Function Logger] OpenAPI Function Call Failed", 
+                            log_event(f"[PLUGIN_FUNCTION_LOGGER] OpenAPI Function Call Failed",
                                      extra={
                                          "plugin": plugin_name,
                                          "function": func_name,
@@ -642,7 +642,7 @@ class LoggedPluginLoader:
                 setattr(plugin_instance, attr_name, wrapped_func)
                 wrapped_count += 1
                 
-        log_event(f"[Logged Plugin Loader] OpenAPI function wrapping completed", 
+        log_event(f"[LOGGED_PLUGIN_LOADER] OpenAPI function wrapping completed",
                  extra={"plugin_name": plugin_name, "wrapped_count": wrapped_count}, 
                  level=logging.INFO)
         return wrapped_count

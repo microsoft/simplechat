@@ -813,7 +813,7 @@ def execute_workflow(auth_context, arguments=None):
         update_personal_workflow_runtime_fields(delegated_user_id, workflow_id, update_fields)
 
         log_event(
-            "[InboundMCP] Personal workflow executed through inbound MCP.",
+            "[INBOUND_MCP] Personal workflow executed through inbound MCP.",
             extra={
                 "workflow_id": workflow_id,
                 "run_id": str(run_record.get("id") or "").strip(),
@@ -843,7 +843,7 @@ def execute_workflow(auth_context, arguments=None):
             )
         except Exception as update_exc:
             log_event(
-                "[InboundMCP] Failed to reset workflow status after inbound MCP execution error.",
+                "[INBOUND_MCP] Failed to reset workflow status after inbound MCP execution error.",
                 extra={
                     "workflow_id": workflow_id,
                     "delegated_user_id": delegated_user_id,

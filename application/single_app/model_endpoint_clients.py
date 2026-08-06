@@ -518,7 +518,7 @@ class AnthropicChatCompletionClient:
                 try:
                     event_payload = json.loads(event_data)
                 except json.JSONDecodeError:
-                    debug_print(f"[ModelEndpoint] Ignoring invalid Anthropic stream payload: {event_data[:200]}")
+                    debug_print(f"[MODEL_ENDPOINT] Ignoring invalid Anthropic stream payload: {event_data[:200]}")
                     continue
 
                 event_type = event_payload.get("type")

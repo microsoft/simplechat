@@ -80,7 +80,7 @@ def register_route_external_public_documents(bp):
         classification = request.form.get('classification')
 
         log_event(
-            '[ExternalPublicDocuments] Authorized external public document upload request.',
+            '[EXTERNAL_PUBLIC_DOCUMENTS] Authorized external public document upload request.',
             extra={
                 'user_id': user_id,
                 'public_workspace_id': active_workspace_id,
@@ -291,7 +291,7 @@ def register_route_external_public_documents(bp):
                         )
                     except Exception as shadow_error:
                         log_event(
-                            '[DocumentAccessIndex] Shadow validation source query failed after DAI read succeeded.',
+                            '[DOCUMENT_ACCESS_INDEX] Shadow validation source query failed after DAI read succeeded.',
                             extra={'source_scope': DOCUMENT_ACCESS_SCOPE_PUBLIC, 'error': str(shadow_error)},
                             level=logging.WARNING,
                             exceptionTraceback=True,
@@ -319,7 +319,7 @@ def register_route_external_public_documents(bp):
             docs = current_docs[offset:offset + page_size]
         except Exception as e:
             log_event(
-                '[ExternalPublicDocuments] Error fetching public documents.',
+                '[EXTERNAL_PUBLIC_DOCUMENTS] Error fetching public documents.',
                 extra={'public_workspace_id': active_workspace_id, 'error': str(e)},
                 level=logging.ERROR,
             )
@@ -351,7 +351,7 @@ def register_route_external_public_documents(bp):
                 legacy_count = legacy_docs[0] if legacy_docs else 0
             except Exception as e:
                 log_event(
-                    '[ExternalPublicDocuments] Error executing public legacy document query.',
+                    '[EXTERNAL_PUBLIC_DOCUMENTS] Error executing public legacy document query.',
                     extra={'public_workspace_id': active_workspace_id, 'error': str(e)},
                     level=logging.ERROR,
                 )

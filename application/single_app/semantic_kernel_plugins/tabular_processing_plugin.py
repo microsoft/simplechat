@@ -271,7 +271,7 @@ class TabularProcessingPlugin:
 
         if requested_user_id and requested_user_id != authorized_context['user_id']:
             log_event(
-                '[TabularProcessingPlugin] Ignoring mismatched user_id in tool call.',
+                '[TABULAR_PROCESSING_PLUGIN] Ignoring mismatched user_id in tool call.',
                 extra={
                     'requested_user_id': requested_user_id,
                     'authorized_user_id': authorized_context['user_id'],
@@ -281,7 +281,7 @@ class TabularProcessingPlugin:
 
         if requested_conversation_id and requested_conversation_id != authorized_context['conversation_id']:
             log_event(
-                '[TabularProcessingPlugin] Ignoring mismatched conversation_id in tool call.',
+                '[TABULAR_PROCESSING_PLUGIN] Ignoring mismatched conversation_id in tool call.',
                 extra={
                     'requested_conversation_id': requested_conversation_id,
                     'authorized_conversation_id': authorized_context['conversation_id'],
@@ -866,7 +866,7 @@ class TabularProcessingPlugin:
             return None
 
         log_event(
-            f"[TabularProcessingPlugin] Cross-sheet filter_rows: "
+            f"[TABULAR_PROCESSING_PLUGIN] Cross-sheet filter_rows: "
             f"searched {len(sheets_searched)} sheets, "
             f"matched on {len(sheets_matched)} ({sheets_matched}), "
             f"total_matches={total_matches}",
@@ -1027,7 +1027,7 @@ class TabularProcessingPlugin:
             return None
 
         log_event(
-            f"[TabularProcessingPlugin] Cross-sheet search_rows: "
+            f"[TABULAR_PROCESSING_PLUGIN] Cross-sheet search_rows: "
             f"searched {len(sheets_searched)} sheets, "
             f"matched on {len(sheets_matched)} ({sheets_matched}), "
             f"total_matches={total_matches}",
@@ -1155,7 +1155,7 @@ class TabularProcessingPlugin:
             return None
 
         log_event(
-            f"[TabularProcessingPlugin] Cross-sheet lookup_value: "
+            f"[TABULAR_PROCESSING_PLUGIN] Cross-sheet lookup_value: "
             f"searched {len(sheets_searched)} sheets, "
             f"matched on {len(sheets_matched)} ({sheets_matched}), "
             f"total_matches={total_matches}",
@@ -1279,7 +1279,7 @@ class TabularProcessingPlugin:
             return None
 
         log_event(
-            f"[TabularProcessingPlugin] Cross-sheet query_tabular_data: "
+            f"[TABULAR_PROCESSING_PLUGIN] Cross-sheet query_tabular_data: "
             f"searched {len(sheets_searched)} sheets, "
             f"matched on {len(sheets_matched)} ({sheets_matched}), "
             f"total_matches={total_matches}",
@@ -3429,7 +3429,7 @@ class TabularProcessingPlugin:
             try:
                 blob_client = client.get_blob_client(container=container, blob=blob_path)
                 if blob_client.exists():
-                    log_event(f"[TabularProcessingPlugin] Found blob at {container}/{blob_path}", level=logging.DEBUG)
+                    log_event(f"[TABULAR_PROCESSING_PLUGIN] Found blob at {container}/{blob_path}", level=logging.DEBUG)
                     return container, blob_path
             except Exception:
                 continue
@@ -3629,7 +3629,7 @@ class TabularProcessingPlugin:
             )
         except PermissionError as exc:
             log_event(
-                f"[TabularProcessingPlugin] Denied tabular file listing: {exc}",
+                f"[TABULAR_PROCESSING_PLUGIN] Denied tabular file listing: {exc}",
                 level=logging.WARNING,
                 extra={
                     'requested_group_id': group_id,
@@ -3665,7 +3665,7 @@ class TabularProcessingPlugin:
                         "sheet_count": workbook_metadata.get('sheet_count', 0),
                     })
             except Exception as e:
-                log_event(f"[TabularProcessingPlugin] Error listing workspace blobs: {e}", level=logging.WARNING)
+                log_event(f"[TABULAR_PROCESSING_PLUGIN] Error listing workspace blobs: {e}", level=logging.WARNING)
 
             try:
                 chat_prefix = f"{user_id}/{conversation_id}/"
@@ -3687,7 +3687,7 @@ class TabularProcessingPlugin:
                         "sheet_count": workbook_metadata.get('sheet_count', 0),
                     })
             except Exception as e:
-                log_event(f"[TabularProcessingPlugin] Error listing chat blobs: {e}", level=logging.WARNING)
+                log_event(f"[TABULAR_PROCESSING_PLUGIN] Error listing chat blobs: {e}", level=logging.WARNING)
 
             if group_id:
                 try:
@@ -3710,7 +3710,7 @@ class TabularProcessingPlugin:
                             "sheet_count": workbook_metadata.get('sheet_count', 0),
                         })
                 except Exception as e:
-                    log_event(f"[TabularProcessingPlugin] Error listing group blobs: {e}", level=logging.WARNING)
+                    log_event(f"[TABULAR_PROCESSING_PLUGIN] Error listing group blobs: {e}", level=logging.WARNING)
 
             if public_workspace_id:
                 try:
@@ -3733,7 +3733,7 @@ class TabularProcessingPlugin:
                             "sheet_count": workbook_metadata.get('sheet_count', 0),
                         })
                 except Exception as e:
-                    log_event(f"[TabularProcessingPlugin] Error listing public blobs: {e}", level=logging.WARNING)
+                    log_event(f"[TABULAR_PROCESSING_PLUGIN] Error listing public blobs: {e}", level=logging.WARNING)
 
             return json.dumps(results, indent=2)
         return await asyncio.to_thread(_sync_work)
@@ -3797,7 +3797,7 @@ class TabularProcessingPlugin:
 
                 return json.dumps(summary, indent=2, default=str)
             except Exception as e:
-                log_event(f"[TabularProcessingPlugin] Error describing file: {e}", level=logging.WARNING)
+                log_event(f"[TABULAR_PROCESSING_PLUGIN] Error describing file: {e}", level=logging.WARNING)
                 return json.dumps({"error": str(e)})
         return await asyncio.to_thread(_sync_work)
 
@@ -3929,7 +3929,7 @@ class TabularProcessingPlugin:
 
                 return json.dumps(response, indent=2, default=str)
             except Exception as e:
-                log_event(f"[TabularProcessingPlugin] Error looking up value: {e}", level=logging.WARNING)
+                log_event(f"[TABULAR_PROCESSING_PLUGIN] Error looking up value: {e}", level=logging.WARNING)
                 return json.dumps({"error": str(e)})
         return await asyncio.to_thread(_sync_work)
 
@@ -4101,7 +4101,7 @@ class TabularProcessingPlugin:
                     })
                 return json.dumps(response_payload, indent=2, default=str)
             except Exception as e:
-                log_event(f"[TabularProcessingPlugin] Error getting distinct values: {e}", level=logging.WARNING)
+                log_event(f"[TABULAR_PROCESSING_PLUGIN] Error getting distinct values: {e}", level=logging.WARNING)
                 return json.dumps({"error": str(e)})
 
         return await asyncio.to_thread(_sync_work)
@@ -4221,7 +4221,7 @@ class TabularProcessingPlugin:
                     'normalize_match': normalize_match_flag,
                 }, indent=2, default=str)
             except Exception as e:
-                log_event(f"[TabularProcessingPlugin] Error counting rows: {e}", level=logging.WARNING)
+                log_event(f"[TABULAR_PROCESSING_PLUGIN] Error counting rows: {e}", level=logging.WARNING)
                 return json.dumps({"error": str(e)})
 
         return await asyncio.to_thread(_sync_work)
@@ -4314,7 +4314,7 @@ class TabularProcessingPlugin:
                     "result": result,
                 }, indent=2, default=str)
             except Exception as e:
-                log_event(f"[TabularProcessingPlugin] Error aggregating column: {e}", level=logging.WARNING)
+                log_event(f"[TABULAR_PROCESSING_PLUGIN] Error aggregating column: {e}", level=logging.WARNING)
                 return json.dumps({"error": str(e)})
         return await asyncio.to_thread(_sync_work)
 
@@ -4453,7 +4453,7 @@ class TabularProcessingPlugin:
                 ))
                 return json.dumps(response_payload, indent=2, default=str)
             except Exception as e:
-                log_event(f"[TabularProcessingPlugin] Error filtering rows: {e}", level=logging.WARNING)
+                log_event(f"[TABULAR_PROCESSING_PLUGIN] Error filtering rows: {e}", level=logging.WARNING)
                 return json.dumps({"error": str(e)})
         return await asyncio.to_thread(_sync_work)
 
@@ -4643,7 +4643,7 @@ class TabularProcessingPlugin:
                     'data': search_result['data'],
                 }, indent=2, default=str)
             except Exception as e:
-                log_event(f"[TabularProcessingPlugin] Error searching rows: {e}", level=logging.WARNING)
+                log_event(f"[TABULAR_PROCESSING_PLUGIN] Error searching rows: {e}", level=logging.WARNING)
                 return json.dumps({"error": str(e)})
 
         return await asyncio.to_thread(_sync_work)
@@ -4764,7 +4764,7 @@ class TabularProcessingPlugin:
                     internal_metadata=internal_metadata,
                 )
             except Exception as e:
-                log_event(f"[TabularProcessingPlugin] Error querying data: {e}", level=logging.WARNING)
+                log_event(f"[TABULAR_PROCESSING_PLUGIN] Error querying data: {e}", level=logging.WARNING)
                 return json.dumps({"error": f"Query error: {str(e)}. Ensure column names and values are correct."})
         return await asyncio.to_thread(_sync_work)
 
@@ -4840,7 +4840,7 @@ class TabularProcessingPlugin:
                 )
                 return json.dumps(result_payload, indent=2, default=str)
             except Exception as e:
-                log_event(f"[TabularProcessingPlugin] Error filtering rows by related values: {e}", level=logging.WARNING)
+                log_event(f"[TABULAR_PROCESSING_PLUGIN] Error filtering rows by related values: {e}", level=logging.WARNING)
                 return json.dumps({"error": str(e)})
 
         return await asyncio.to_thread(_sync_work)
@@ -4917,7 +4917,7 @@ class TabularProcessingPlugin:
                     result_payload.pop('rows_limited', None)
                 return json.dumps(result_payload, indent=2, default=str)
             except Exception as e:
-                log_event(f"[TabularProcessingPlugin] Error counting rows by related values: {e}", level=logging.WARNING)
+                log_event(f"[TABULAR_PROCESSING_PLUGIN] Error counting rows by related values: {e}", level=logging.WARNING)
                 return json.dumps({"error": str(e)})
 
         return await asyncio.to_thread(_sync_work)
@@ -5016,7 +5016,7 @@ class TabularProcessingPlugin:
                     **summary,
                 }, indent=2, default=str)
             except Exception as e:
-                log_event(f"[TabularProcessingPlugin] Error in group-by: {e}", level=logging.WARNING)
+                log_event(f"[TABULAR_PROCESSING_PLUGIN] Error in group-by: {e}", level=logging.WARNING)
                 return json.dumps({"error": str(e)})
         return await asyncio.to_thread(_sync_work)
 
@@ -5172,6 +5172,6 @@ class TabularProcessingPlugin:
                     **summary,
                 }, indent=2, default=str)
             except Exception as e:
-                log_event(f"[TabularProcessingPlugin] Error in datetime component grouping: {e}", level=logging.WARNING)
+                log_event(f"[TABULAR_PROCESSING_PLUGIN] Error in datetime component grouping: {e}", level=logging.WARNING)
                 return json.dumps({"error": str(e)})
         return await asyncio.to_thread(_sync_work)

@@ -337,7 +337,7 @@ def check_control_center_auto_refresh_once():
     lock_document = acquire_distributed_task_lock('control_center_auto_refresh', lease_seconds=7200)
     if not lock_document:
         log_event(
-            '[ControlCenterAutoRefresh] Skipped scheduled refresh because another worker holds the lease.',
+            '[CONTROL_CENTER_AUTO_REFRESH] Skipped scheduled refresh because another worker holds the lease.',
             debug_only=True,
         )
         return None
@@ -357,7 +357,7 @@ def check_control_center_auto_refresh_once():
 
         schedule = get_control_center_auto_refresh_schedule(settings)
         log_event(
-            '[ControlCenterAutoRefresh] Starting scheduled Control Center metrics refresh.',
+            '[CONTROL_CENTER_AUTO_REFRESH] Starting scheduled Control Center metrics refresh.',
             extra={
                 'scheduled_run_utc': next_run.isoformat(),
                 'schedule_time': schedule['time'],
@@ -367,7 +367,7 @@ def check_control_center_auto_refresh_once():
         )
         result = execute_control_center_refresh(manual_execution=False)
         log_event(
-            '[ControlCenterAutoRefresh] Scheduled Control Center metrics refresh completed.',
+            '[CONTROL_CENTER_AUTO_REFRESH] Scheduled Control Center metrics refresh completed.',
             extra={
                 'success': bool(result and result.get('success')),
                 'refreshed_users': result.get('refreshed_users', 0) if result else 0,
@@ -425,7 +425,7 @@ def run_control_center_auto_refresh_loop():
             check_control_center_auto_refresh_once()
         except Exception as exc:
             log_event(
-                '[ControlCenterAutoRefresh] Error checking the scheduled Control Center refresh.',
+                '[CONTROL_CENTER_AUTO_REFRESH] Error checking the scheduled Control Center refresh.',
                 extra={'error': str(exc)},
                 level=logging.ERROR,
                 exceptionTraceback=True,
@@ -452,7 +452,7 @@ def check_cosmos_throughput_autoscale_once():
 
         refresh_id = f"background-{uuid.uuid4()}"
         log_event(
-            '[CosmosThroughput] Background autoscale check starting.',
+            '[COSMOS_THROUGHPUT] Background autoscale check starting.',
             extra={'refresh_id': refresh_id},
         )
         result = evaluate_and_apply_cosmos_throughput_scaling(settings, refresh_id=refresh_id)
@@ -462,7 +462,7 @@ def check_cosmos_throughput_autoscale_once():
         decision = result.get('decision') or {}
         scale_result = result.get('scale_result') or {}
         log_event(
-            '[CosmosThroughput] Background autoscale check completed.',
+            '[COSMOS_THROUGHPUT] Background autoscale check completed.',
             extra={
                 'refresh_id': refresh_id,
                 'decision_reason': decision.get('reason'),
@@ -482,7 +482,7 @@ def get_cosmos_throughput_autoscale_sleep_seconds():
         return calculate_cosmos_throughput_autoscale_interval_seconds(get_settings())
     except Exception as exc:
         log_event(
-            '[CosmosThroughput] Failed to calculate autoscale check interval; using default.',
+            '[COSMOS_THROUGHPUT] Failed to calculate autoscale check interval; using default.',
             extra={
                 'error': str(exc),
                 'sleep_seconds': COSMOS_THROUGHPUT_AUTOSCALE_DEFAULT_INTERVAL_SECONDS,
@@ -499,11 +499,11 @@ def run_cosmos_throughput_autoscale_loop():
             check_cosmos_throughput_autoscale_once()
         except Exception as exc:
             print(f"Error in Cosmos throughput autoscale check: {exc}")
-            log_event(f"[CosmosThroughput] Error in autoscale check: {exc}", level=logging.ERROR)
+            log_event(f"[COSMOS_THROUGHPUT] Error in autoscale check: {exc}", level=logging.ERROR)
 
         sleep_seconds = get_cosmos_throughput_autoscale_sleep_seconds()
         log_event(
-            '[CosmosThroughput] Background autoscale check sleeping.',
+            '[COSMOS_THROUGHPUT] Background autoscale check sleeping.',
             extra={
                 'sleep_seconds': sleep_seconds,
                 'metrics_window_minutes': int(sleep_seconds / 60),
@@ -575,7 +575,7 @@ def check_due_workflows_once():
                 results.append({'scope': 'personal', 'workflow_id': workflow_id, 'success': bool(result.get('success'))})
             except Exception as exc:
                 log_event(
-                    f"[WorkflowScheduler] Error executing workflow {workflow_id}: {exc}",
+                    f"[WORKFLOW_SCHEDULER] Error executing workflow {workflow_id}: {exc}",
                     extra={
                         'workflow_id': workflow_id,
                         'user_id': user_id,
@@ -659,7 +659,7 @@ def check_due_workflows_once():
                 results.append({'scope': 'group', 'group_id': group_id, 'workflow_id': workflow_id, 'success': bool(result.get('success'))})
             except Exception as exc:
                 log_event(
-                    f"[WorkflowScheduler] Error executing group workflow {workflow_id}: {exc}",
+                    f"[WORKFLOW_SCHEDULER] Error executing group workflow {workflow_id}: {exc}",
                     extra={
                         'workflow_id': workflow_id,
                         'group_id': group_id,
@@ -693,7 +693,7 @@ def run_workflow_scheduler_loop():
             check_due_workflows_once()
         except Exception as exc:
             print(f"Error in workflow scheduler check: {exc}")
-            log_event(f"[WorkflowScheduler] Error in workflow scheduler check: {exc}", level=logging.ERROR)
+            log_event(f"[WORKFLOW_SCHEDULER] Error in workflow scheduler check: {exc}", level=logging.ERROR)
 
         time.sleep(5)
 
@@ -708,7 +708,7 @@ def run_file_sync_scheduler_loop():
                 check_due_file_sync_sources_once()
         except Exception as exc:
             print(f"Error in File Sync scheduler check: {exc}")
-            log_event(f"[FileSync] Error in scheduler check: {exc}", level=logging.ERROR)
+            log_event(f"[FILE_SYNC] Error in scheduler check: {exc}", level=logging.ERROR)
         finally:
             if lock_document:
                 release_distributed_task_lock(lock_document)
@@ -726,7 +726,7 @@ def run_tabular_generated_output_scheduler_loop():
                 check_due_tabular_generated_output_runs_once()
         except Exception as exc:
             print(f"Error in tabular generated-output scheduler check: {exc}")
-            log_event(f"[Tabular Generated Output] Error in scheduler check: {exc}", level=logging.ERROR)
+            log_event(f"[TABULAR_GENERATED_OUTPUT] Error in scheduler check: {exc}", level=logging.ERROR)
         finally:
             if lock_document:
                 release_distributed_task_lock(lock_document)
@@ -744,7 +744,7 @@ def run_data_management_scheduler_loop(app=None):
                 check_due_data_management_jobs_once(app=app)
         except Exception as exc:
             print(f"Error in Data Management scheduler check: {exc}")
-            log_event(f"[DataManagement] Error in scheduler check: {exc}", level=logging.ERROR)
+            log_event(f"[DATA_MANAGEMENT] Error in scheduler check: {exc}", level=logging.ERROR)
         finally:
             if lock_document:
                 release_distributed_task_lock(lock_document)
@@ -774,7 +774,7 @@ def run_app_maintenance_loop():
                     )
         except Exception as exc:
             log_event(
-                '[AppMaintenance] Error in maintenance scheduler loop.',
+                '[APP_MAINTENANCE] Error in maintenance scheduler loop.',
                 extra={'error': str(exc)},
                 level=logging.ERROR,
                 exceptionTraceback=True,
@@ -803,7 +803,7 @@ def run_key_vault_secret_reminder_loop():
                     check_due_key_vault_secret_reminders_once(settings=settings)
         except Exception as exc:
             log_event(
-                '[KeyVaultReminders] Error in reminder scheduler loop.',
+                '[KEY_VAULT_REMINDERS] Error in reminder scheduler loop.',
                 extra={'error': str(exc)},
                 level=logging.ERROR,
                 exceptionTraceback=True,

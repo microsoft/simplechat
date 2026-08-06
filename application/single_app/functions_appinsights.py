@@ -70,10 +70,10 @@ LOG_RECORD_RESERVED_ATTRS = {
     "thread",
     "threadName",
 }
-LOGGER_EVENT_MESSAGE = "[SimpleChatLogEvent]"
-LOGGER_DEBUG_MESSAGE = "[SimpleChatDebugTrace]"
-LOGGER_FALLBACK_MESSAGE = "[SimpleChatLogFallback]"
-LOGGER_EXTERNAL_EVENT_MESSAGE = "[SimpleChatExternalEvent]"
+LOGGER_EVENT_MESSAGE = "[SIMPLE_CHAT_LOG_EVENT]"
+LOGGER_DEBUG_MESSAGE = "[SIMPLE_CHAT_DEBUG_TRACE]"
+LOGGER_FALLBACK_MESSAGE = "[SIMPLE_CHAT_LOG_FALLBACK]"
+LOGGER_EXTERNAL_EVENT_MESSAGE = "[SIMPLE_CHAT_EXTERNAL_EVENT]"
 MAX_EXTERNAL_EVENT_STRING_LENGTH = 256
 
 
@@ -405,7 +405,7 @@ def log_event(
         # Get logger - use Azure Monitor logger if configured, otherwise standard logger
         logger = get_appinsights_logger()
         if not logger:
-            print(f"[Log] {formatted_message} -- {safe_extra}")
+            print(f"[LOG] {formatted_message} -- {safe_extra}")
             logger = logging.getLogger('standard')
             if not logger.handlers:
                 logger.addHandler(logging.StreamHandler())
@@ -448,7 +448,7 @@ def log_event(
         # For Azure Monitor, ensure exception-level logs are properly categorized
         if level >= logging.ERROR and _azure_monitor_configured:
             # Add a debug print to verify exception logging is working
-            print(f"[Azure Monitor][ERROR] Exception logged: {formatted_message[:100]}...")
+            print(f"[AZURE_MONITOR][ERROR] Exception logged: {formatted_message[:100]}...")
 
     except Exception as e:
         # Fallback to basic logging if anything fails
@@ -513,7 +513,7 @@ def log_external_event(
         )
     except Exception as exc:
         log_event(
-            "[AppInsights] Failed to emit external telemetry event.",
+            "[APP_INSIGHTS] Failed to emit external telemetry event.",
             extra={
                 "event_name": normalized_event_name,
                 "error_type": type(exc).__name__,
@@ -532,12 +532,12 @@ def setup_appinsights_logging(settings):
     try:
         enable_global = bool(settings and settings.get('enable_appinsights_global_logging', False))
     except Exception as e:
-        print(f"[Azure Monitor] Could not check global logging setting: {e}")
+        print(f"[AZURE_MONITOR] Could not check global logging setting: {e}")
         enable_global = False
 
     connectionString = os.environ.get('APPLICATIONINSIGHTS_CONNECTION_STRING')
     if not connectionString:
-        print("[Azure Monitor] No connection string found - skipping Application Insights setup")
+        print("[AZURE_MONITOR] No connection string found - skipping Application Insights setup")
         return
 
     try:
@@ -556,22 +556,22 @@ def setup_appinsights_logging(settings):
             logger = logging.getLogger()
             logger.setLevel(logging.INFO)
             _appinsights_logger = logger
-            print("[Azure Monitor] Application Insights enabled globally")
+            print("[AZURE_MONITOR] Application Insights enabled globally")
         else:
             logger = logging.getLogger('azure_monitor')
             logger.setLevel(logging.INFO)
             _appinsights_logger = logger
-            print("[Azure Monitor] Application Insights enabled for 'azure_monitor' logger")
+            print("[AZURE_MONITOR] Application Insights enabled for 'azure_monitor' logger")
             
         # Test that exception logging is working
-        print("[Azure Monitor] Testing exception capture...")
+        print("[AZURE_MONITOR] Testing exception capture...")
         try:
             raise Exception("Test exception for Azure Monitor validation")
         except Exception as test_e:
             logger.error("Test exception logged successfully", exc_info=True)
-            print("[Azure Monitor] Exception capture test completed")
+            print("[AZURE_MONITOR] Exception capture test completed")
     
     except Exception as e:
-        print(f"[Azure Monitor] Failed to setup Application Insights: {e}")
+        print(f"[AZURE_MONITOR] Failed to setup Application Insights: {e}")
         _azure_monitor_configured = False
         # Don't re-raise the exception, just continue without Application Insights

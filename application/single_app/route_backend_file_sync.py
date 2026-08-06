@@ -122,7 +122,7 @@ def register_route_backend_file_sync(bp):
     def _map_exception(error):
         expected_error = isinstance(error, (PermissionError, LookupError, ValueError))
         log_event(
-            "[FileSync] Request failed.",
+            "[FILE_SYNC] Request failed.",
             level=logging.WARNING if expected_error else logging.ERROR,
             extra={
                 "endpoint": request.endpoint or "",

@@ -1115,7 +1115,7 @@ def register_route_frontend_chats(bp):
                             invalidate_personal_search_cache(affected_user_id)
             except Exception as workspace_error:
                 log_event(
-                    f"[ChatUpload] Failed to queue workspace document for {filename}: {workspace_error}",
+                    f"[CHAT_UPLOAD] Failed to queue workspace document for {filename}: {workspace_error}",
                     {
                         'conversation_id': response_conversation_id,
                         'source_conversation_id': conversation_id,
@@ -1228,7 +1228,7 @@ def register_route_frontend_chats(bp):
                             )
                     except Exception as mirror_error:
                         log_event(
-                            f"[ChatUpload] Failed to mirror workspace upload into collaboration {response_conversation_id}: {mirror_error}",
+                            f"[CHAT_UPLOAD] Failed to mirror workspace upload into collaboration {response_conversation_id}: {mirror_error}",
                             {
                                 'conversation_id': response_conversation_id,
                                 'source_conversation_id': conversation_id,
@@ -1314,7 +1314,7 @@ def register_route_frontend_chats(bp):
 
                         if settings.get('enable_enhanced_citations', False):
                             log_event(
-                                "[ChatUpload] Prepared image bytes for blob-backed chat storage",
+                                "[CHAT_UPLOAD] Prepared image bytes for blob-backed chat storage",
                                 {
                                     "conversation_id": conversation_id,
                                     "filename": filename,
@@ -1493,7 +1493,7 @@ def register_route_frontend_chats(bp):
                     image_message['metadata']['original_size'] = blob_image_info['image_size']
                     cosmos_messages_container.upsert_item(image_message)
                     log_event(
-                        "[ChatUpload] Created blob-backed image message",
+                        "[CHAT_UPLOAD] Created blob-backed image message",
                         {
                             "conversation_id": conversation_id,
                             "message_id": file_message_id,

@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.125)**
+
+#### Bug Fixes
+
+*   **Logging Tag Standardization**
+    *   Standardized Python logging prefixes to `[UPPERCASE_WITH_UNDERSCORES]` so Application Insights, debug logs, and operational searches use consistent tag names.
+    *   Added a logging tag reference inventory and functional coverage to keep future logging tags normalized and documented.
+    *   (Ref: logging tag inventory, `docs/reference/logging-tags.md`, `test_logging_tag_standardization.py`)
+
 ### **(v0.250.124)**
 
 #### Bug Fixes

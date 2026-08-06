@@ -461,13 +461,13 @@ class PluginHealthChecker:
         
         if health_report['is_healthy']:
             log_event(
-                f"[Plugin Health] Plugin {plugin_name} is healthy",
+                f"[PLUGIN_HEALTH] Plugin {plugin_name} is healthy",
                 extra=health_report,
                 level=logging.INFO
             )
         else:
             log_event(
-                f"[Plugin Health] Plugin {plugin_name} has health issues",
+                f"[PLUGIN_HEALTH] Plugin {plugin_name} has health issues",
                 extra=health_report,
                 level=logging.WARNING
             )
@@ -475,7 +475,7 @@ class PluginHealthChecker:
         # Log individual errors
         for error in health_report.get('errors', []):
             log_event(
-                f"[Plugin Health] Error in {plugin_name}: {error}",
+                f"[PLUGIN_HEALTH] Error in {plugin_name}: {error}",
                 extra={'plugin_name': plugin_name, 'error': error},
                 level=logging.ERROR
             )
@@ -500,21 +500,21 @@ class PluginHealthChecker:
             # Try manifest-based instantiation first
             try:
                 plugin_instance = plugin_class(manifest)
-                log_event(f"[Plugin Creation] Successfully created {plugin_name} with manifest", 
+                log_event(f"[PLUGIN_CREATION] Successfully created {plugin_name} with manifest",
                          level=logging.DEBUG)
             except (TypeError, ValueError, KeyError) as e:
                 errors.append(f"Manifest instantiation failed: {str(e)}")
                 # Try empty dict
                 try:
                     plugin_instance = plugin_class({})
-                    log_event(f"[Plugin Creation] Created {plugin_name} with empty manifest", 
+                    log_event(f"[PLUGIN_CREATION] Created {plugin_name} with empty manifest",
                              level=logging.INFO)
                 except (TypeError, ValueError) as e2:
                     errors.append(f"Empty dict instantiation failed: {str(e2)}")
                     # Try no parameters
                     try:
                         plugin_instance = plugin_class()
-                        log_event(f"[Plugin Creation] Created {plugin_name} with no parameters", 
+                        log_event(f"[PLUGIN_CREATION] Created {plugin_name} with no parameters",
                                  level=logging.INFO)
                     except Exception as e3:
                         errors.append(f"No-parameter instantiation failed: {str(e3)}")
@@ -523,7 +523,7 @@ class PluginHealthChecker:
         
         except Exception as e:
             errors.append(f"Critical error in plugin creation: {str(e)}")
-            log_event(f"[Plugin Creation] Critical error creating {plugin_name}: {str(e)}", 
+            log_event(f"[PLUGIN_CREATION] Critical error creating {plugin_name}: {str(e)}",
                      level=logging.ERROR, exceptionTraceback=True)
         
         # If we got a plugin instance, run health check
@@ -578,7 +578,7 @@ class PluginErrorRecovery:
             return FallbackPlugin()
         
         except Exception as e:
-            log_event(f"[Plugin Recovery] Failed to create fallback plugin for {plugin_name}: {str(e)}", 
+            log_event(f"[PLUGIN_RECOVERY] Failed to create fallback plugin for {plugin_name}: {str(e)}",
                      level=logging.ERROR)
             return None
     
@@ -615,6 +615,6 @@ class PluginErrorRecovery:
                     was_repaired = True
         
         except Exception as e:
-            log_event(f"[Plugin Repair] Failed to repair plugin: {str(e)}", level=logging.WARNING)
+            log_event(f"[PLUGIN_REPAIR] Failed to repair plugin: {str(e)}", level=logging.WARNING)
         
         return plugin_instance, was_repaired

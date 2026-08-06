@@ -222,7 +222,7 @@ def register_route_backend_settings(bp):
             return jsonify({'success': True, 'reminders': reminders}), 200
         except Exception as exc:
             log_event(
-                '[KeyVaultReminders] Failed to load admin inventory.',
+                '[KEY_VAULT_REMINDERS] Failed to load admin inventory.',
                 extra={'error': str(exc)},
                 level=logging.ERROR,
                 exceptionTraceback=True,
@@ -240,7 +240,7 @@ def register_route_backend_settings(bp):
             return jsonify({'success': True, 'result': result}), 200
         except Exception as exc:
             log_event(
-                '[KeyVaultReminders] Failed to run admin-triggered reminder sweep.',
+                '[KEY_VAULT_REMINDERS] Failed to run admin-triggered reminder sweep.',
                 extra={'error': str(exc)},
                 level=logging.ERROR,
                 exceptionTraceback=True,
@@ -257,7 +257,7 @@ def register_route_backend_settings(bp):
             return jsonify(get_app_maintenance_status(settings=get_settings())), 200
         except Exception as exc:
             log_event(
-                '[AppMaintenance] Failed to load admin maintenance status.',
+                '[APP_MAINTENANCE] Failed to load admin maintenance status.',
                 extra={'error': str(exc)},
                 level=logging.ERROR,
                 exceptionTraceback=True,
@@ -293,7 +293,7 @@ def register_route_backend_settings(bp):
             )
         except Exception as exc:
             log_event(
-                '[AppMaintenance] Manual admin maintenance trigger failed.',
+                '[APP_MAINTENANCE] Manual admin maintenance trigger failed.',
                 extra={'admin_email': admin_email, 'error': str(exc)},
                 level=logging.ERROR,
                 exceptionTraceback=True,
@@ -314,7 +314,7 @@ def register_route_backend_settings(bp):
             return jsonify(result), 200
 
         log_event(
-            '[AppMaintenance] Manual admin maintenance run failed.',
+            '[APP_MAINTENANCE] Manual admin maintenance run failed.',
             extra={
                 'run_id': result.get('run_id'),
                 'admin_email': admin_email,
@@ -662,7 +662,7 @@ def register_route_backend_settings(bp):
             user = session.get('user', {})
             admin_email = user.get('preferred_username', user.get('email', 'unknown'))
             log_event(
-                '[RedisMonitoring] Admin status refresh requested.',
+                '[REDIS_MONITORING] Admin status refresh requested.',
                 extra={'refresh_id': refresh_id, 'admin_email': admin_email},
                 level=logging.INFO,
             )
@@ -672,7 +672,7 @@ def register_route_backend_settings(bp):
                 session_type=current_app.config.get('SESSION_TYPE'),
             )
             log_event(
-                '[RedisMonitoring] Admin status refresh completed.',
+                '[REDIS_MONITORING] Admin status refresh completed.',
                 extra={
                     'refresh_id': refresh_id,
                     'status': status.get('health', {}).get('status'),
@@ -684,7 +684,7 @@ def register_route_backend_settings(bp):
             return jsonify(status), 200
         except Exception as e:
             log_event(
-                '[RedisMonitoring] Failed to load admin status.',
+                '[REDIS_MONITORING] Failed to load admin status.',
                 extra={
                     'refresh_id': refresh_id,
                     'error': str(e),
@@ -707,7 +707,7 @@ def register_route_backend_settings(bp):
             user = session.get('user', {})
             admin_email = user.get('preferred_username', user.get('email', 'unknown'))
             log_event(
-                '[RedisExplorer] Admin key page requested.',
+                '[REDIS_EXPLORER] Admin key page requested.',
                 extra={'refresh_id': refresh_id, 'admin_email': admin_email},
                 level=logging.INFO,
             )
@@ -720,7 +720,7 @@ def register_route_backend_settings(bp):
                 session_type=current_app.config.get('SESSION_TYPE'),
             )
             log_event(
-                '[RedisExplorer] Admin key page completed.',
+                '[REDIS_EXPLORER] Admin key page completed.',
                 extra={
                     'refresh_id': refresh_id,
                     'success': result.get('success'),
@@ -734,7 +734,7 @@ def register_route_backend_settings(bp):
             return jsonify(result), 200 if result.get('success') else 503
         except Exception as e:
             log_event(
-                '[RedisExplorer] Failed to load key page.',
+                '[REDIS_EXPLORER] Failed to load key page.',
                 extra={
                     'refresh_id': refresh_id,
                     'error': str(e),
@@ -758,7 +758,7 @@ def register_route_backend_settings(bp):
             user = session.get('user', {})
             admin_email = user.get('preferred_username', user.get('email', 'unknown'))
             log_event(
-                '[RedisExplorer] Admin key preview requested.',
+                '[REDIS_EXPLORER] Admin key preview requested.',
                 extra={'refresh_id': refresh_id, 'admin_email': admin_email},
                 level=logging.INFO,
             )
@@ -772,7 +772,7 @@ def register_route_backend_settings(bp):
             if not result.get('success'):
                 status_code = 404 if result.get('status') == 'not_found' else 503
             log_event(
-                '[RedisExplorer] Admin key preview completed.',
+                '[REDIS_EXPLORER] Admin key preview completed.',
                 extra={
                     'refresh_id': refresh_id,
                     'success': result.get('success'),
@@ -786,14 +786,14 @@ def register_route_backend_settings(bp):
             return jsonify(result), status_code
         except ValueError as e:
             log_event(
-                '[RedisExplorer] Invalid key preview request.',
+                '[REDIS_EXPLORER] Invalid key preview request.',
                 extra={'refresh_id': refresh_id, 'error': str(e)},
                 level=logging.WARNING,
             )
             return jsonify({'error': str(e)}), 400
         except Exception as e:
             log_event(
-                '[RedisExplorer] Failed to load key preview.',
+                '[REDIS_EXPLORER] Failed to load key preview.',
                 extra={
                     'refresh_id': refresh_id,
                     'error': str(e),
@@ -816,13 +816,13 @@ def register_route_backend_settings(bp):
             user = session.get('user', {})
             admin_email = user.get('preferred_username', user.get('email', 'unknown'))
             log_event(
-                '[CosmosThroughput] Admin status refresh requested.',
+                '[COSMOS_THROUGHPUT] Admin status refresh requested.',
                 extra={'refresh_id': refresh_id, 'admin_email': admin_email},
                 level=logging.INFO,
             )
             status = get_cosmos_throughput_status(get_settings(), include_metrics=True, refresh_id=refresh_id)
             log_event(
-                '[CosmosThroughput] Admin status refresh completed.',
+                '[COSMOS_THROUGHPUT] Admin status refresh completed.',
                 extra={
                     'refresh_id': refresh_id,
                     'capacity_scope': status.get('capacity_scope'),
@@ -834,7 +834,7 @@ def register_route_backend_settings(bp):
             return jsonify(status), 200
         except Exception as e:
             log_event(
-                '[CosmosThroughput] Failed to load admin status.',
+                '[COSMOS_THROUGHPUT] Failed to load admin status.',
                 extra={
                     'refresh_id': refresh_id,
                     'error': str(e),
@@ -865,7 +865,7 @@ def register_route_backend_settings(bp):
             candidate_settings = normalize_cosmos_throughput_settings(candidate_settings)
 
             log_event(
-                '[CosmosThroughput] Admin access validation requested.',
+                '[COSMOS_THROUGHPUT] Admin access validation requested.',
                 extra={'validation_id': validation_id, 'admin_email': admin_email},
                 level=logging.INFO,
             )
@@ -876,7 +876,7 @@ def register_route_backend_settings(bp):
             )
             validation = build_cosmos_throughput_access_validation(status)
             log_event(
-                '[CosmosThroughput] Admin access validation completed.',
+                '[COSMOS_THROUGHPUT] Admin access validation completed.',
                 extra={
                     'validation_id': validation_id,
                     'success': validation.get('success'),
@@ -891,7 +891,7 @@ def register_route_backend_settings(bp):
             }), 200
         except Exception as exc:
             log_event(
-                '[CosmosThroughput] Admin access validation failed.',
+                '[COSMOS_THROUGHPUT] Admin access validation failed.',
                 extra={
                     'validation_id': validation_id,
                     'error': str(exc),
@@ -963,7 +963,7 @@ def register_route_backend_settings(bp):
             return jsonify({'error': str(e)}), 400
         except Exception as e:
             log_event(
-                '[CosmosThroughput] Manual admin scale failed.',
+                '[COSMOS_THROUGHPUT] Manual admin scale failed.',
                 extra={'error': str(e), 'admin_email': admin_email},
                 level=logging.ERROR,
                 exceptionTraceback=True,
@@ -1043,7 +1043,7 @@ def register_route_backend_settings(bp):
             return jsonify({'error': str(exc)}), exc.status_code or 400
         except Exception as exc:
             log_event(
-                '[CosmosThroughput] Manual-to-autoscale conversion failed.',
+                '[COSMOS_THROUGHPUT] Manual-to-autoscale conversion failed.',
                 extra={'error': str(exc)},
                 level=logging.ERROR,
                 exceptionTraceback=True,
@@ -1079,7 +1079,7 @@ def register_route_backend_settings(bp):
             admin_email = user.get('preferred_username', user.get('email', reporter_email))
 
             feedback_label = 'Bug Report' if feedback_type == 'bug_report' else 'Feature Request'
-            subject_line = f'[SimpleChat Admin Feedback] {feedback_label} - {organization}'
+            subject_line = f'[SIMPLE_CHAT_ADMIN_FEEDBACK] {feedback_label} - {organization}'
 
             log_admin_feedback_email_submission(
                 user_id=user_id,
@@ -1101,7 +1101,7 @@ def register_route_backend_settings(bp):
 
         except Exception:
             log_event(
-                '[Admin Feedback] Failed to prepare feedback email',
+                '[ADMIN_FEEDBACK] Failed to prepare feedback email',
                 extra={
                     'user_id': user_id,
                     'activity_type': 'admin_feedback_email_submission',
@@ -1177,7 +1177,7 @@ def register_route_backend_settings(bp):
 
         except Exception:
             log_event(
-                '[Support Feedback] Failed to prepare feedback email',
+                '[SUPPORT_FEEDBACK] Failed to prepare feedback email',
                 extra={
                     'user_id': user_id,
                     'activity_type': 'user_support_feedback_email_submission',
@@ -1227,7 +1227,7 @@ def register_route_backend_settings(bp):
 
             user = session.get('user', {})
             admin_email = user.get('preferred_username', user.get('email', registrant_email))
-            subject_line = f'[SimpleChat Registration] Release and Community Call Notifications - {organization}'
+            subject_line = f'[SIMPLE_CHAT_REGISTRATION] Release and Community Call Notifications - {organization}'
 
             log_admin_release_notifications_registration(
                 user_id=user_id,
@@ -1252,7 +1252,7 @@ def register_route_backend_settings(bp):
 
         except Exception:
             log_event(
-                '[Admin Release Notifications] Failed to prepare registration email',
+                '[ADMIN_RELEASE_NOTIFICATIONS] Failed to prepare registration email',
                 extra={
                     'user_id': user_id,
                     'activity_type': 'admin_release_notifications_registration',

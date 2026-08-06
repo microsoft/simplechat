@@ -84,7 +84,7 @@ def _get_user_accessible_group_ids(user_id):
         ])
     except Exception as exc:
         log_event(
-            f"[SearchService] Failed to resolve authorized group ids: {exc}",
+            f"[SEARCH_SERVICE] Failed to resolve authorized group ids: {exc}",
             extra={"user_id": user_id},
             level=logging.WARNING,
             exceptionTraceback=True,
@@ -115,7 +115,7 @@ def _resolve_public_workspace_ids(user_id, active_public_workspace_id=None):
         visible_workspace_ids = normalize_search_id_list(get_user_visible_public_workspace_ids_from_settings(user_id))
     except Exception as exc:
         log_event(
-            f"[SearchService] Failed to resolve visible public workspace ids: {exc}",
+            f"[SEARCH_SERVICE] Failed to resolve visible public workspace ids: {exc}",
             extra={"user_id": user_id},
             level=logging.WARNING,
             exceptionTraceback=True,
@@ -189,7 +189,7 @@ def _load_chat_upload_blob_text(message_item):
         return blob_data.decode("utf-8", errors="replace")
     except Exception as exc:
         debug_print(
-            "[SearchService] Failed to load chat upload blob content | "
+            "[SEARCH_SERVICE] Failed to load chat upload blob content | "
             f"message_id={message_item.get('id')} | error={exc}"
         )
         return ""
@@ -261,7 +261,7 @@ def _authorize_chat_upload_conversation(user_id, conversation_id):
         return False
     except Exception as exc:
         log_event(
-            "[SearchService] Failed to authorize chat upload conversation.",
+            "[SEARCH_SERVICE] Failed to authorize chat upload conversation.",
             extra={"exception_type": type(exc).__name__},
             level=logging.WARNING,
             exceptionTraceback=True,
@@ -323,7 +323,7 @@ def _resolve_chat_upload_context(
         return None
     except Exception as exc:
         log_event(
-            "[SearchService] Failed to resolve authorized chat upload context.",
+            "[SEARCH_SERVICE] Failed to resolve authorized chat upload context.",
             extra={"exception_type": type(exc).__name__},
             level=logging.WARNING,
             exceptionTraceback=True,
@@ -700,7 +700,7 @@ def search_relevant_tabular_candidates(
             break
 
     log_event(
-        "[MixedSourceChatSearch] Completed bounded authorized tabular candidate search.",
+        "[MIXED_SOURCE_CHAT_SEARCH] Completed bounded authorized tabular candidate search.",
         extra={
             "candidate_search_result_count": search_result.get("result_count", 0),
             "tabular_candidate_count": len(candidate_document_ids),
@@ -1104,7 +1104,7 @@ def summarize_document_content(
 
     while current_stage_inputs and stage_number <= max_reduction_rounds:
         debug_print(
-            f"[SearchService] Summarization stage {stage_number} for {file_name} with {len(current_stage_inputs)} input windows"
+            f"[SEARCH_SERVICE] Summarization stage {stage_number} for {file_name} with {len(current_stage_inputs)} input windows"
         )
         output_items = []
 
@@ -1171,7 +1171,7 @@ def summarize_document_content(
         stage_number += 1
 
     log_event(
-        '[SearchService] Document summarization completed',
+        '[SEARCH_SERVICE] Document summarization completed',
         extra={
             'document_id': document_id,
             'file_name': file_name,

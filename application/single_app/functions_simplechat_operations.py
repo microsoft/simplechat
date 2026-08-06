@@ -675,7 +675,7 @@ def _cleanup_failed_fork(
             )
         except Exception as cleanup_error:
             log_event(
-                f"[ConversationFork] Failed to clean up fork message: {cleanup_error}",
+                f"[CONVERSATION_FORK] Failed to clean up fork message: {cleanup_error}",
                 level=logging.ERROR,
                 extra={
                     "fork_conversation_id": fork_conversation_id,
@@ -693,7 +693,7 @@ def _cleanup_failed_fork(
             ).delete_blob()
         except Exception as cleanup_error:
             log_event(
-                f"[ConversationFork] Failed to clean up fork blob: {cleanup_error}",
+                f"[CONVERSATION_FORK] Failed to clean up fork blob: {cleanup_error}",
                 level=logging.ERROR,
                 extra={
                     "fork_conversation_id": fork_conversation_id,
@@ -708,13 +708,13 @@ def _cleanup_failed_fork(
         )
     except CosmosResourceNotFoundError:
         log_event(
-            "[ConversationFork] Fork conversation already absent during cleanup",
+            "[CONVERSATION_FORK] Fork conversation already absent during cleanup",
             level=logging.INFO,
             extra={"fork_conversation_id": fork_conversation_id},
         )
     except Exception as cleanup_error:
         log_event(
-            f"[ConversationFork] Failed to clean up fork conversation: {cleanup_error}",
+            f"[CONVERSATION_FORK] Failed to clean up fork conversation: {cleanup_error}",
             level=logging.ERROR,
             extra={"fork_conversation_id": fork_conversation_id},
         )
@@ -822,7 +822,7 @@ def fork_personal_conversation_for_user(
         )
     except Exception as log_error:
         log_event(
-            f"[ConversationFork] Fork created but activity logging failed: {log_error}",
+            f"[CONVERSATION_FORK] Fork created but activity logging failed: {log_error}",
             level=logging.WARNING,
             extra={"fork_conversation_id": fork_conversation_id},
         )
@@ -1277,7 +1277,7 @@ def delete_generated_chat_artifact_for_user(
         partition_key=normalized_conversation_id,
     )
     log_event(
-        "[SimpleChat] Generated chat artifact rolled back after cancellation",
+        "[SIMPLE_CHAT] Generated chat artifact rolled back after cancellation",
         {
             "artifact_count": 1,
             "rollback_reason": "cancellation",
@@ -1450,7 +1450,7 @@ def delete_blob_backed_chat_message_files(
             if raise_on_error:
                 raise
             log_event(
-                "[SimpleChat] Failed to delete blob-backed chat file",
+                "[SIMPLE_CHAT] Failed to delete blob-backed chat file",
                 {
                     "blob_container": blob_container,
                     "blob_path": blob_path,
@@ -1545,7 +1545,7 @@ def upload_chat_image_bytes_for_user(
     )
 
     log_event(
-        "[SimpleChat] Chat image saved to blob storage",
+        "[SIMPLE_CHAT] Chat image saved to blob storage",
         {
             "conversation_id": normalized_conversation_id,
             "message_id": normalized_message_id,
@@ -1642,7 +1642,7 @@ def make_group_inactive_for_current_user(
         reason=normalized_reason or None,
     )
     log_event(
-        "[SimpleChat] Group marked inactive",
+        "[SIMPLE_CHAT] Group marked inactive",
         {
             "group_id": resolved_group_id,
             "group_name": group_doc.get("name"),
@@ -2597,7 +2597,7 @@ def _upload_generated_chat_artifact_for_current_user(
     cosmos_messages_container.upsert_item(message_doc)
 
     log_event(
-        "[SimpleChat] Generated chat artifact saved",
+        "[SIMPLE_CHAT] Generated chat artifact saved",
         {
             "conversation_id": conversation_id,
             "message_id": artifact_message_id,
@@ -2859,7 +2859,7 @@ def _log_group_member_addition(
         cosmos_activity_logs_container.create_item(body=activity_record)
     except Exception as exc:
         log_event(
-            f"[SimpleChat] Failed to log group member addition: {exc}",
+            f"[SIMPLE_CHAT] Failed to log group member addition: {exc}",
             level=logging.WARNING,
             exceptionTraceback=True,
         )
@@ -2902,7 +2902,7 @@ def _notify_group_member_addition(
         )
     except Exception as exc:
         log_event(
-            f"[SimpleChat] Failed to notify group member addition: {exc}",
+            f"[SIMPLE_CHAT] Failed to notify group member addition: {exc}",
             level=logging.WARNING,
             exceptionTraceback=True,
         )
@@ -2937,7 +2937,7 @@ def _notify_group_member_addition(
         )
     except Exception as exc:
         log_event(
-            f"[SimpleChat] Failed to notify actor about group member addition: {exc}",
+            f"[SIMPLE_CHAT] Failed to notify actor about group member addition: {exc}",
             level=logging.WARNING,
             exceptionTraceback=True,
         )
@@ -2968,7 +2968,7 @@ def _create_personal_notification(
         )
     except Exception as exc:
         log_event(
-            f"[SimpleChat] Failed to create notification '{notification_type}': {exc}",
+            f"[SIMPLE_CHAT] Failed to create notification '{notification_type}': {exc}",
             level=logging.WARNING,
             exceptionTraceback=True,
         )

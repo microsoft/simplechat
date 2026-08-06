@@ -366,7 +366,7 @@ def _sync_collaboration_mask_metadata_to_source(message_doc):
         )
     except CosmosResourceNotFoundError:
         log_event(
-            '[Collaboration Masking] Linked source message was not found while syncing mask metadata',
+            '[COLLABORATION_MASKING] Linked source message was not found while syncing mask metadata',
             extra={
                 'conversation_id': (message_doc or {}).get('conversation_id'),
                 'message_id': (message_doc or {}).get('id'),
@@ -433,7 +433,7 @@ def register_route_backend_collaboration(bp):
             return jsonify({'error': str(exc)}), 403
         except Exception as exc:
             log_event(
-                f'[Collaboration] Failed to list conversations: {exc}',
+                f'[COLLABORATION] Failed to list conversations: {exc}',
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
@@ -541,7 +541,7 @@ def register_route_backend_collaboration(bp):
             return jsonify({'error': str(exc)}), 400
         except Exception as exc:
             log_event(
-                f'[Collaboration] Failed to create conversation: {exc}',
+                f'[COLLABORATION] Failed to create conversation: {exc}',
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
@@ -576,7 +576,7 @@ def register_route_backend_collaboration(bp):
             return jsonify({'error': str(exc)}), 403
         except Exception as exc:
             log_event(
-                f'[Collaboration] Failed to load conversation {conversation_id}: {exc}',
+                f'[COLLABORATION] Failed to load conversation {conversation_id}: {exc}',
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
@@ -627,7 +627,7 @@ def register_route_backend_collaboration(bp):
             return jsonify({'error': str(exc)}), 403 if isinstance(exc, PermissionError) else 400
         except Exception as exc:
             log_event(
-                f'[Collaboration] Failed to respond to invite for {conversation_id}: {exc}',
+                f'[COLLABORATION] Failed to respond to invite for {conversation_id}: {exc}',
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
@@ -689,7 +689,7 @@ def register_route_backend_collaboration(bp):
             return jsonify({'error': str(exc)}), 400
         except Exception as exc:
             log_event(
-                f'[Collaboration] Failed to invite members for {conversation_id}: {exc}',
+                f'[COLLABORATION] Failed to invite members for {conversation_id}: {exc}',
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
@@ -768,7 +768,7 @@ def register_route_backend_collaboration(bp):
             return jsonify({'error': str(exc)}), 403
         except Exception as exc:
             log_event(
-                f'[Collaboration] Failed to convert personal conversation {conversation_id}: {exc}',
+                f'[COLLABORATION] Failed to convert personal conversation {conversation_id}: {exc}',
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
@@ -850,7 +850,7 @@ def register_route_backend_collaboration(bp):
             return jsonify({'error': str(exc)}), 400
         except Exception as exc:
             log_event(
-                f'[Collaboration] Failed to convert group conversation {conversation_id}: {exc}',
+                f'[COLLABORATION] Failed to convert group conversation {conversation_id}: {exc}',
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
@@ -896,7 +896,7 @@ def register_route_backend_collaboration(bp):
             return jsonify({'error': str(exc)}), 400
         except Exception as exc:
             log_event(
-                f'[Collaboration] Failed to remove member for {conversation_id}: {exc}',
+                f'[COLLABORATION] Failed to remove member for {conversation_id}: {exc}',
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
@@ -949,7 +949,7 @@ def register_route_backend_collaboration(bp):
             return jsonify({'error': str(exc)}), 400
         except Exception as exc:
             log_event(
-                f'[Collaboration] Failed to update member role for {conversation_id}: {exc}',
+                f'[COLLABORATION] Failed to update member role for {conversation_id}: {exc}',
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
@@ -998,7 +998,7 @@ def register_route_backend_collaboration(bp):
             return jsonify({'error': str(exc)}), 400
         except Exception as exc:
             log_event(
-                f'[Collaboration] Failed to update title for {conversation_id}: {exc}',
+                f'[COLLABORATION] Failed to update title for {conversation_id}: {exc}',
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
@@ -1023,7 +1023,7 @@ def register_route_backend_collaboration(bp):
             return jsonify({'error': str(exc)}), 403
         except Exception as exc:
             log_event(
-                f'[Collaboration] Failed to toggle pin for {conversation_id}: {exc}',
+                f'[COLLABORATION] Failed to toggle pin for {conversation_id}: {exc}',
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
@@ -1048,7 +1048,7 @@ def register_route_backend_collaboration(bp):
             return jsonify({'error': str(exc)}), 403
         except Exception as exc:
             log_event(
-                f'[Collaboration] Failed to toggle hide for {conversation_id}: {exc}',
+                f'[COLLABORATION] Failed to toggle hide for {conversation_id}: {exc}',
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
@@ -1130,7 +1130,7 @@ def register_route_backend_collaboration(bp):
             return jsonify({'error': str(exc)}), 400
         except Exception as exc:
             log_event(
-                f'[Collaboration] Failed to complete delete action for {conversation_id}: {exc}',
+                f'[COLLABORATION] Failed to complete delete action for {conversation_id}: {exc}',
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
@@ -1161,7 +1161,7 @@ def register_route_backend_collaboration(bp):
             return jsonify({'error': str(exc)}), 403
         except Exception as exc:
             log_event(
-                f'[Collaboration] Failed to load messages for {conversation_id}: {exc}',
+                f'[COLLABORATION] Failed to load messages for {conversation_id}: {exc}',
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
@@ -1240,7 +1240,7 @@ def register_route_backend_collaboration(bp):
             return jsonify({'error': str(exc)}), 403
         except Exception as exc:
             log_event(
-                f'[Collaboration Masking] Failed to update mask state for {message_id}: {exc}',
+                f'[COLLABORATION_MASKING] Failed to update mask state for {message_id}: {exc}',
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
@@ -1303,7 +1303,7 @@ def register_route_backend_collaboration(bp):
             return jsonify({'error': str(exc)}), 400
         except Exception as exc:
             log_event(
-                f'[Collaboration] Failed to load image {message_id} for {conversation_id}: {exc}',
+                f'[COLLABORATION] Failed to load image {message_id} for {conversation_id}: {exc}',
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
@@ -1363,7 +1363,7 @@ def register_route_backend_collaboration(bp):
             return jsonify({'error': str(exc)}), 403
         except Exception as exc:
             log_event(
-                f'[Collaboration] Failed to post message for {conversation_id}: {exc}',
+                f'[COLLABORATION] Failed to post message for {conversation_id}: {exc}',
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
@@ -1655,7 +1655,7 @@ def register_route_backend_collaboration(bp):
                                 yield transformed_block
                 except Exception as exc:
                     log_event(
-                        f'[Collaboration] Failed to stream AI message for {conversation_id}: {exc}',
+                        f'[COLLABORATION] Failed to stream AI message for {conversation_id}: {exc}',
                         level=logging.ERROR,
                         exceptionTraceback=True,
                     )
@@ -1673,7 +1673,7 @@ def register_route_backend_collaboration(bp):
             return jsonify({'error': str(exc)}), 403
         except Exception as exc:
             log_event(
-                f'[Collaboration] Failed to start AI stream for {conversation_id}: {exc}',
+                f'[COLLABORATION] Failed to start AI stream for {conversation_id}: {exc}',
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
@@ -1723,7 +1723,7 @@ def register_route_backend_collaboration(bp):
             return jsonify({'error': str(exc)}), 403
         except Exception as exc:
             log_event(
-                f'[Collaboration] Failed to cancel AI stream for {conversation_id}: {exc}',
+                f'[COLLABORATION] Failed to cancel AI stream for {conversation_id}: {exc}',
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
@@ -1782,7 +1782,7 @@ def register_route_backend_collaboration(bp):
             return jsonify({'error': str(exc)}), 403
         except Exception as exc:
             log_event(
-                f'[Collaboration] Failed to delete message {message_id} for {conversation_id}: {exc}',
+                f'[COLLABORATION] Failed to delete message {message_id} for {conversation_id}: {exc}',
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
@@ -1822,7 +1822,7 @@ def register_route_backend_collaboration(bp):
             return jsonify({'error': str(exc)}), 403
         except Exception as exc:
             log_event(
-                f'[Collaboration] Failed to mark conversation {conversation_id} read: {exc}',
+                f'[COLLABORATION] Failed to mark conversation {conversation_id} read: {exc}',
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
@@ -1864,7 +1864,7 @@ def register_route_backend_collaboration(bp):
             return jsonify({'error': str(exc)}), 403
         except Exception as exc:
             log_event(
-                f'[Collaboration] Failed to publish typing event for {conversation_id}: {exc}',
+                f'[COLLABORATION] Failed to publish typing event for {conversation_id}: {exc}',
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
@@ -1905,7 +1905,7 @@ def register_route_backend_collaboration(bp):
             return jsonify({'error': str(exc)}), 403
         except Exception as exc:
             log_event(
-                f'[Collaboration] Failed to attach event stream for {conversation_id}: {exc}',
+                f'[COLLABORATION] Failed to attach event stream for {conversation_id}: {exc}',
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )

@@ -101,7 +101,7 @@ def _read_maintenance_state():
         if _is_not_found_error(ex):
             return None
         log_event(
-            '[AppMaintenance] Failed to read maintenance state.',
+            '[APP_MAINTENANCE] Failed to read maintenance state.',
             extra={'error': str(ex)},
             level=logging.ERROR,
             exceptionTraceback=True,
@@ -378,7 +378,7 @@ def run_app_maintenance_once(
             apply_stale_cache_cleanup = maintenance_settings.get('apply_stale_cache_cleanup', False)
         _record_started(run_id, triggered_by, requested_by)
         log_event(
-            '[AppMaintenance] Maintenance run started.',
+            '[APP_MAINTENANCE] Maintenance run started.',
             extra={'run_id': run_id, 'triggered_by': triggered_by, 'requested_by': requested_by},
             level=logging.INFO,
         )
@@ -438,7 +438,7 @@ def run_app_maintenance_once(
         overall_success = all(step.get('status') == 'succeeded' for step in steps)
         state = _record_completed(run_id, started_at, triggered_by, requested_by, steps)
         log_event(
-            '[AppMaintenance] Maintenance run completed.',
+            '[APP_MAINTENANCE] Maintenance run completed.',
             extra={
                 'run_id': run_id,
                 'triggered_by': triggered_by,
@@ -463,7 +463,7 @@ def run_app_maintenance_once(
                 'last_error': 'Failed to record maintenance state.',
             }
             log_event(
-                '[AppMaintenance] Failed to record maintenance failure state.',
+                '[APP_MAINTENANCE] Failed to record maintenance failure state.',
                 extra={
                     'run_id': run_id,
                     'triggered_by': triggered_by,
@@ -473,7 +473,7 @@ def run_app_maintenance_once(
                 exceptionTraceback=True,
             )
         log_event(
-            '[AppMaintenance] Maintenance run failed.',
+            '[APP_MAINTENANCE] Maintenance run failed.',
             extra={'run_id': run_id, 'triggered_by': triggered_by, 'error': str(ex)},
             level=logging.ERROR,
             exceptionTraceback=True,

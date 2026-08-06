@@ -372,7 +372,7 @@ def get_group_workflows(group_id):
         return []
     except Exception as exc:
         log_event(
-            f'[GroupWorkflowStore] Error fetching workflows for group {group_id}: {exc}',
+            f'[GROUP_WORKFLOW_STORE] Error fetching workflows for group {group_id}: {exc}',
             extra={'group_id': group_id},
             level=logging.ERROR,
             exceptionTraceback=True,
@@ -389,7 +389,7 @@ def get_group_workflow(group_id, workflow_id):
         return None
     except Exception as exc:
         log_event(
-            f'[GroupWorkflowStore] Error fetching workflow {workflow_id}: {exc}',
+            f'[GROUP_WORKFLOW_STORE] Error fetching workflow {workflow_id}: {exc}',
             extra={'group_id': group_id, 'workflow_id': workflow_id},
             level=logging.ERROR,
             exceptionTraceback=True,
@@ -421,7 +421,7 @@ def get_due_group_workflows(limit=20):
         return cleaned[:limit]
     except Exception as exc:
         log_event(
-            f'[GroupWorkflowStore] Error fetching due workflows: {exc}',
+            f'[GROUP_WORKFLOW_STORE] Error fetching due workflows: {exc}',
             level=logging.ERROR,
             exceptionTraceback=True,
         )
@@ -611,7 +611,7 @@ def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
 
     result = cosmos_group_workflows_container.upsert_item(body=workflow)
     cleaned_result = _strip_cosmos_metadata(result)
-    debug_print(f"[GroupWorkflowStore] Saved workflow {cleaned_result.get('id')} for group {group_id}")
+    debug_print(f"[GROUP_WORKFLOW_STORE] Saved workflow {cleaned_result.get('id')} for group {group_id}")
     return cleaned_result
 
 
@@ -646,7 +646,7 @@ def list_group_workflow_runs(group_id, workflow_id, limit=25):
         return [_strip_cosmos_metadata(item) for item in items[:limit]]
     except Exception as exc:
         log_event(
-            f'[GroupWorkflowStore] Error fetching workflow runs for {workflow_id}: {exc}',
+            f'[GROUP_WORKFLOW_STORE] Error fetching workflow runs for {workflow_id}: {exc}',
             extra={'group_id': group_id, 'workflow_id': workflow_id},
             level=logging.ERROR,
             exceptionTraceback=True,
@@ -663,7 +663,7 @@ def get_group_workflow_run(group_id, run_id):
         return None
     except Exception as exc:
         log_event(
-            f'[GroupWorkflowStore] Error fetching workflow run {run_id}: {exc}',
+            f'[GROUP_WORKFLOW_STORE] Error fetching workflow run {run_id}: {exc}',
             extra={'group_id': group_id, 'run_id': run_id},
             level=logging.ERROR,
             exceptionTraceback=True,
@@ -699,7 +699,7 @@ def get_latest_group_workflow_run_for_conversation(group_id, conversation_id, wo
         return _strip_cosmos_metadata(items[0])
     except Exception as exc:
         log_event(
-            f'[GroupWorkflowStore] Error fetching latest run for conversation {conversation_id}: {exc}',
+            f'[GROUP_WORKFLOW_STORE] Error fetching latest run for conversation {conversation_id}: {exc}',
             extra={'group_id': group_id, 'conversation_id': conversation_id, 'workflow_id': workflow_id},
             level=logging.ERROR,
             exceptionTraceback=True,
@@ -734,7 +734,7 @@ def get_group_workflow_run_item(run_id, item_id):
         return None
     except Exception as exc:
         log_event(
-            f'[GroupWorkflowStore] Error fetching workflow run item {item_id}: {exc}',
+            f'[GROUP_WORKFLOW_STORE] Error fetching workflow run item {item_id}: {exc}',
             extra={'run_id': run_id, 'item_id': item_id},
             level=logging.ERROR,
             exceptionTraceback=True,
@@ -757,7 +757,7 @@ def list_group_workflow_run_items(run_id, limit=1000):
         return [_strip_cosmos_metadata(item) for item in items[:limit]]
     except Exception as exc:
         log_event(
-            f'[GroupWorkflowStore] Error fetching workflow run items for {run_id}: {exc}',
+            f'[GROUP_WORKFLOW_STORE] Error fetching workflow run items for {run_id}: {exc}',
             extra={'run_id': run_id},
             level=logging.ERROR,
             exceptionTraceback=True,
@@ -783,7 +783,7 @@ def delete_group_workflow(group_id, workflow_id):
                 continue
             except Exception as exc:
                 log_event(
-                    f"[GroupWorkflowStore] Error deleting workflow run item {item.get('id')}: {exc}",
+                    f"[GROUP_WORKFLOW_STORE] Error deleting workflow run item {item.get('id')}: {exc}",
                     extra={'group_id': group_id, 'workflow_id': workflow_id, 'run_id': run_id},
                     level=logging.WARNING,
                 )
@@ -793,7 +793,7 @@ def delete_group_workflow(group_id, workflow_id):
             continue
         except Exception as exc:
             log_event(
-                f"[GroupWorkflowStore] Error deleting workflow run {run.get('id')}: {exc}",
+                f"[GROUP_WORKFLOW_STORE] Error deleting workflow run {run.get('id')}: {exc}",
                 extra={'group_id': group_id, 'workflow_id': workflow_id},
                 level=logging.WARNING,
             )

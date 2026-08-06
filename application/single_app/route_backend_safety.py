@@ -316,7 +316,7 @@ def _safety_lifecycle_response(message, audit_logged):
 
 def _log_safety_audit_failure(log_id, lifecycle_action):
     log_event(
-        '[SafetyLifecycle] Failed to persist lifecycle audit event',
+        '[SAFETY_LIFECYCLE] Failed to persist lifecycle audit event',
         {
             'safety_log_id': log_id,
             'lifecycle_action': lifecycle_action,
@@ -555,7 +555,7 @@ def register_route_backend_safety(bp):
         except ValueError as e:
             return jsonify({'error': str(e)}), 400
         except Exception as e:
-            log_event('[SafetyViolations] Failed to update safety log', {
+            log_event('[SAFETY_VIOLATIONS] Failed to update safety log', {
                 'safety_log_id': log_id,
                 'error': str(e),
             }, level=logging.ERROR)
@@ -587,7 +587,7 @@ def register_route_backend_safety(bp):
             return jsonify({'error': 'Safety violation not found'}), 404
         except Exception as e:
             log_event(
-                '[SafetyLifecycle] Failed to update safety violation archive state',
+                '[SAFETY_LIFECYCLE] Failed to update safety violation archive state',
                 {'safety_log_id': log_id, 'error': str(e)},
                 level=logging.ERROR,
             )
@@ -636,7 +636,7 @@ def register_route_backend_safety(bp):
             return jsonify({'error': 'Safety violation not found'}), 404
         except Exception as e:
             log_event(
-                '[SafetyLifecycle] Failed to delete safety violation',
+                '[SAFETY_LIFECYCLE] Failed to delete safety violation',
                 {'safety_log_id': log_id, 'error': str(e)},
                 level=logging.ERROR,
             )

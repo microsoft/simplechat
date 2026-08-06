@@ -591,7 +591,7 @@ def get_document_access_index_settings(settings=None):
             settings = get_settings()
         except Exception as exc:
             log_event(
-                '[DocumentAccessIndex] Settings could not be loaded; DAI reads will use source fallback until settings are available.',
+                '[DOCUMENT_ACCESS_INDEX] Settings could not be loaded; DAI reads will use source fallback until settings are available.',
                 extra={'error': str(exc)},
                 level=logging.WARNING,
                 exceptionTraceback=True,
@@ -599,7 +599,7 @@ def get_document_access_index_settings(settings=None):
             settings = {}
     if not isinstance(settings, dict):
         log_event(
-            '[DocumentAccessIndex] Settings payload was invalid; DAI reads will use source fallback until settings are available.',
+            '[DOCUMENT_ACCESS_INDEX] Settings payload was invalid; DAI reads will use source fallback until settings are available.',
             extra={'settings_type': type(settings).__name__},
             level=logging.WARNING,
         )
@@ -942,7 +942,7 @@ def _read_document_access_cache_scope_versions(redis_client, scope_keys, operati
             error=exc,
         )
         log_event(
-            '[DocumentAccessIndexCache] Failed to read Redis DAI cache scope versions; DAI query will run uncached.',
+            '[DOCUMENT_ACCESS_INDEX_CACHE] Failed to read Redis DAI cache scope versions; DAI query will run uncached.',
             extra={
                 'operation': operation,
                 'source_scope': source_scope,
@@ -1007,7 +1007,7 @@ def _try_get_document_access_cache_entry(cache_context):
             error=exc,
         )
         log_event(
-            '[DocumentAccessIndexCache] Redis DAI cache read failed; DAI query will run uncached.',
+            '[DOCUMENT_ACCESS_INDEX_CACHE] Redis DAI cache read failed; DAI query will run uncached.',
             extra={
                 'operation': operation,
                 'source_scope': source_scope,
@@ -1082,7 +1082,7 @@ def _try_set_document_access_cache_entry(cache_context, payload):
             error=exc,
         )
         log_event(
-            '[DocumentAccessIndexCache] Redis DAI cache write failed; DAI read result was still returned.',
+            '[DOCUMENT_ACCESS_INDEX_CACHE] Redis DAI cache write failed; DAI read result was still returned.',
             extra={
                 'operation': operation,
                 'source_scope': source_scope,
@@ -1186,7 +1186,7 @@ def invalidate_document_access_index_cache_scope_keys(scope_keys, reason=None, s
             error=exc,
         )
         log_event(
-            '[DocumentAccessIndexCache] Failed to invalidate Redis DAI cache scope versions.',
+            '[DOCUMENT_ACCESS_INDEX_CACHE] Failed to invalidate Redis DAI cache scope versions.',
             extra={
                 'scope_key_count': len(normalized_scope_keys),
                 'invalidated_count': invalidated_count,
@@ -1439,7 +1439,7 @@ def resolve_document_access_cache_version_hashes(scope_hashes):
         _resolve_document_access_hashes_from_projection(set(normalized_hashes), resolutions)
     except Exception as exc:
         log_event(
-            '[DocumentAccessIndexCache] Failed to resolve DAI Redis hashes from projection rows.',
+            '[DOCUMENT_ACCESS_INDEX_CACHE] Failed to resolve DAI Redis hashes from projection rows.',
             extra={'hash_count': len(normalized_hashes), 'error_type': type(exc).__name__},
             level=logging.WARNING,
             exceptionTraceback=True,
@@ -1454,7 +1454,7 @@ def resolve_document_access_cache_version_hashes(scope_hashes):
         )
     except Exception as exc:
         log_event(
-            '[DocumentAccessIndexCache] Failed to resolve DAI Redis hashes from group workspaces.',
+            '[DOCUMENT_ACCESS_INDEX_CACHE] Failed to resolve DAI Redis hashes from group workspaces.',
             extra={'hash_count': len(normalized_hashes), 'error_type': type(exc).__name__},
             level=logging.WARNING,
             exceptionTraceback=True,
@@ -1469,7 +1469,7 @@ def resolve_document_access_cache_version_hashes(scope_hashes):
         )
     except Exception as exc:
         log_event(
-            '[DocumentAccessIndexCache] Failed to resolve DAI Redis hashes from public workspaces.',
+            '[DOCUMENT_ACCESS_INDEX_CACHE] Failed to resolve DAI Redis hashes from public workspaces.',
             extra={'hash_count': len(normalized_hashes), 'error_type': type(exc).__name__},
             level=logging.WARNING,
             exceptionTraceback=True,
@@ -1479,7 +1479,7 @@ def resolve_document_access_cache_version_hashes(scope_hashes):
         _resolve_document_access_hashes_from_user_settings(set(normalized_hashes), resolutions)
     except Exception as exc:
         log_event(
-            '[DocumentAccessIndexCache] Failed to resolve DAI Redis hashes from user settings.',
+            '[DOCUMENT_ACCESS_INDEX_CACHE] Failed to resolve DAI Redis hashes from user settings.',
             extra={'hash_count': len(normalized_hashes), 'error_type': type(exc).__name__},
             level=logging.WARNING,
             exceptionTraceback=True,
@@ -1558,7 +1558,7 @@ def refresh_document_access_cache_version_marker_ttls(settings=None, redis_clien
         return result
     except Exception as exc:
         log_event(
-            '[DocumentAccessIndexCache] Failed to refresh DAI Redis version marker TTLs.',
+            '[DOCUMENT_ACCESS_INDEX_CACHE] Failed to refresh DAI Redis version marker TTLs.',
             extra={
                 'scanned_count': result.get('scanned_count'),
                 'refreshed_count': result.get('refreshed_count'),
@@ -1880,7 +1880,7 @@ def _read_shadow_validation_state(use_cache=True):
             _set_cached_document_access_state(DOCUMENT_ACCESS_SHADOW_STATE_DOC_ID, None)
             return None
         log_event(
-            '[DocumentAccessIndex] Failed to read document access shadow validation state.',
+            '[DOCUMENT_ACCESS_INDEX] Failed to read document access shadow validation state.',
             extra={'error': str(exc)},
             level=logging.WARNING,
             exceptionTraceback=True,
@@ -2098,7 +2098,7 @@ def _write_shadow_validation_state(state):
             if _is_write_conflict_error(exc):
                 last_conflict = exc
                 log_event(
-                    '[DocumentAccessIndex] Retrying shadow validation state write after ETag conflict.',
+                    '[DOCUMENT_ACCESS_INDEX] Retrying shadow validation state write after ETag conflict.',
                     extra={'attempt': attempt + 1, 'error': str(exc)},
                     level=logging.WARNING,
                     debug_only=True,
@@ -2107,7 +2107,7 @@ def _write_shadow_validation_state(state):
             raise
 
     log_event(
-        '[DocumentAccessIndex] Failed to persist shadow validation state after ETag conflicts.',
+        '[DOCUMENT_ACCESS_INDEX] Failed to persist shadow validation state after ETag conflicts.',
         extra={
             'attempt_count': DOCUMENT_ACCESS_SHADOW_STATE_WRITE_MAX_RETRIES,
             'error': str(last_conflict) if last_conflict else None,
@@ -2369,7 +2369,7 @@ def _collect_candidate_read_metrics(
         except Exception as exc:
             errors.append(str(exc))
             log_event(
-                '[DocumentAccessIndex] Candidate read metrics query failed.',
+                '[DOCUMENT_ACCESS_INDEX] Candidate read metrics query failed.',
                 extra={
                     'scope_key': scope_key,
                     'source_scope': source_scope,
@@ -2481,7 +2481,7 @@ def _get_document_access_index_readiness(source_scope, settings=None):
         state = _read_backfill_state()
     except Exception as exc:
         log_event(
-            '[DocumentAccessIndex] DAI read path readiness check failed; source document read should be used.',
+            '[DOCUMENT_ACCESS_INDEX] DAI read path readiness check failed; source document read should be used.',
             extra={'source_scope': source_scope, 'error': str(exc)},
             level=logging.WARNING,
             exceptionTraceback=True,
@@ -2635,7 +2635,7 @@ def query_document_access_index_documents(
             diagnostics.append(scope_diagnostics)
     except Exception as exc:
         log_event(
-            '[DocumentAccessIndex] DAI read path failed; source document read should be used.',
+            '[DOCUMENT_ACCESS_INDEX] DAI read path failed; source document read should be used.',
             extra={
                 'source_scope': source_scope,
                 'scope_key_count': len(scope_keys),
@@ -2858,7 +2858,7 @@ def query_document_access_index_tag_counts(
             diagnostics.append(scope_diagnostics)
     except Exception as exc:
         log_event(
-            '[DocumentAccessIndex] DAI tag read path failed; source document tag read should be used.',
+            '[DOCUMENT_ACCESS_INDEX] DAI tag read path failed; source document tag read should be used.',
             extra={
                 'source_scope': source_scope,
                 'scope_key_count': len(scope_keys),
@@ -2993,7 +2993,7 @@ def query_document_access_index_legacy_count(
                     legacy_identities.add(identity)
     except Exception as exc:
         log_event(
-            '[DocumentAccessIndex] DAI legacy count query failed; legacy update prompt should use safe default.',
+            '[DOCUMENT_ACCESS_INDEX] DAI legacy count query failed; legacy update prompt should use safe default.',
             extra={
                 'source_scope': source_scope,
                 'scope_key_count': len(scope_keys),
@@ -3217,7 +3217,7 @@ def validate_document_access_index_shadow(
         _write_shadow_validation_state(result)
         log_level = logging.INFO if status == 'matched' else logging.WARNING
         log_event(
-            '[DocumentAccessIndex] Shadow validation completed.',
+            '[DOCUMENT_ACCESS_INDEX] Shadow validation completed.',
             extra=result,
             level=log_level,
         )
@@ -3241,13 +3241,13 @@ def validate_document_access_index_shadow(
             _write_shadow_validation_state(result)
         except Exception as state_error:
             log_event(
-                '[DocumentAccessIndex] Failed to persist shadow validation error state.',
+                '[DOCUMENT_ACCESS_INDEX] Failed to persist shadow validation error state.',
                 extra={'error': str(state_error), 'shadow_error': str(exc)},
                 level=logging.WARNING,
                 exceptionTraceback=True,
             )
         log_event(
-            '[DocumentAccessIndex] Shadow validation failed; source document results remain authoritative.',
+            '[DOCUMENT_ACCESS_INDEX] Shadow validation failed; source document results remain authoritative.',
             extra=result,
             level=logging.WARNING,
             exceptionTraceback=True,
@@ -3308,7 +3308,7 @@ def _clear_projection_repair_required(source_scope, document_id):
             pass
         else:
             log_event(
-                '[DocumentAccessIndex] Failed to clear projection repair state.',
+                '[DOCUMENT_ACCESS_INDEX] Failed to clear projection repair state.',
                 extra={
                     'source_scope': source_scope,
                     'document_id': document_id,
@@ -3323,7 +3323,7 @@ def _clear_projection_repair_required(source_scope, document_id):
         has_backlog = _query_repair_backlog_exists()
     except Exception as exc:
         log_event(
-            '[DocumentAccessIndex] Failed to refresh projection repair backlog state after repair clear.',
+            '[DOCUMENT_ACCESS_INDEX] Failed to refresh projection repair backlog state after repair clear.',
             extra={
                 'source_scope': source_scope,
                 'document_id': document_id,
@@ -3339,7 +3339,7 @@ def _clear_projection_repair_required(source_scope, document_id):
             state = _read_repair_backlog_state()
         except Exception as exc:
             log_event(
-                '[DocumentAccessIndex] Failed to verify repair backlog state after repair clear.',
+                '[DOCUMENT_ACCESS_INDEX] Failed to verify repair backlog state after repair clear.',
                 extra={
                     'source_scope': source_scope,
                     'document_id': document_id,
@@ -3497,7 +3497,7 @@ def sync_document_access_index_for_document_fail_open(document_item, operation=D
             settings=settings,
         )
         log_event(
-            '[DocumentAccessIndex] Document access index synchronization failed; source document remains authoritative.',
+            '[DOCUMENT_ACCESS_INDEX] Document access index synchronization failed; source document remains authoritative.',
             extra={
                 'document_id': (document_item or {}).get('id'),
                 'operation': operation,
@@ -3510,7 +3510,7 @@ def sync_document_access_index_for_document_fail_open(document_item, operation=D
             _record_projection_repair_required(document_item, operation, exc)
         except Exception as repair_exc:
             log_event(
-                '[DocumentAccessIndex] Failed to record projection repair state.',
+                '[DOCUMENT_ACCESS_INDEX] Failed to record projection repair state.',
                 extra={
                     'document_id': (document_item or {}).get('id'),
                     'operation': operation,
@@ -3542,7 +3542,7 @@ def delete_document_access_index_for_document_fail_open(document_item, operation
             settings=settings,
         )
         log_event(
-            '[DocumentAccessIndex] Document access index delete failed; source document remains authoritative.',
+            '[DOCUMENT_ACCESS_INDEX] Document access index delete failed; source document remains authoritative.',
             extra={
                 'document_id': (document_item or {}).get('id'),
                 'operation': operation,
@@ -3555,7 +3555,7 @@ def delete_document_access_index_for_document_fail_open(document_item, operation
             _record_projection_repair_required(document_item, operation, exc)
         except Exception as repair_exc:
             log_event(
-                '[DocumentAccessIndex] Failed to record projection delete repair state.',
+                '[DOCUMENT_ACCESS_INDEX] Failed to record projection delete repair state.',
                 extra={
                     'document_id': (document_item or {}).get('id'),
                     'operation': operation,
@@ -3611,7 +3611,7 @@ def _try_write_repair_backlog_state(
         )
     except Exception as exc:
         log_event(
-            '[DocumentAccessIndex] Failed to update projection repair backlog state.',
+            '[DOCUMENT_ACCESS_INDEX] Failed to update projection repair backlog state.',
             extra={
                 'has_repair_backlog': bool(has_repair_backlog),
                 'repair_required_count': repair_required_count,
@@ -3638,7 +3638,7 @@ def _try_delete_repair_backlog_state(reason=None):
             _set_cached_document_access_state(DOCUMENT_ACCESS_REPAIR_BACKLOG_STATE_DOC_ID, None)
             return True
         log_event(
-            '[DocumentAccessIndex] Failed to delete projection repair backlog state.',
+            '[DOCUMENT_ACCESS_INDEX] Failed to delete projection repair backlog state.',
             extra={
                 'reason': reason,
                 'error': str(exc),
@@ -3804,7 +3804,7 @@ def _read_backfill_state(use_cache=True):
             _set_cached_document_access_state(DOCUMENT_ACCESS_BACKFILL_STATE_DOC_ID, None)
             return None
         log_event(
-            '[DocumentAccessIndex] Failed to read document access index backfill state.',
+            '[DOCUMENT_ACCESS_INDEX] Failed to read document access index backfill state.',
             extra={'error': str(exc)},
             level=logging.ERROR,
             exceptionTraceback=True,
@@ -3915,7 +3915,7 @@ def count_document_access_index_repair_documents():
         return repair_count
     except Exception as exc:
         log_event(
-            '[DocumentAccessIndex] Failed to count projection repair documents.',
+            '[DOCUMENT_ACCESS_INDEX] Failed to count projection repair documents.',
             extra={'error': str(exc)},
             level=logging.WARNING,
             exceptionTraceback=True,
@@ -3937,7 +3937,7 @@ def has_document_access_index_repair_backlog():
         return _refresh_repair_backlog_state_from_query(reason='repair_backlog_state_initialize')
     except Exception as exc:
         log_event(
-            '[DocumentAccessIndex] Failed to check projection repair backlog.',
+            '[DOCUMENT_ACCESS_INDEX] Failed to check projection repair backlog.',
             extra={'error': str(exc)},
             level=logging.WARNING,
             exceptionTraceback=True,
@@ -4136,7 +4136,7 @@ def reconcile_document_access_index_repair_documents(settings=None, max_repairs=
             repairs_failed += 1
             _mark_repair_document_failed(repair_doc, exc)
             log_event(
-                '[DocumentAccessIndex] Projection repair reconciliation failed.',
+                '[DOCUMENT_ACCESS_INDEX] Projection repair reconciliation failed.',
                 extra={
                     'document_id': document_id,
                     'source_scope': source_scope,
@@ -4151,7 +4151,7 @@ def reconcile_document_access_index_repair_documents(settings=None, max_repairs=
         _refresh_repair_backlog_state_from_query(reason='repair_reconciliation')
     except Exception as exc:
         log_event(
-            '[DocumentAccessIndex] Projection repair backlog state refresh failed after reconciliation.',
+            '[DOCUMENT_ACCESS_INDEX] Projection repair backlog state refresh failed after reconciliation.',
             extra={'error': str(exc)},
             level=logging.WARNING,
             exceptionTraceback=True,
@@ -4274,7 +4274,7 @@ def run_document_access_index_backfill_once(
                         _record_projection_repair_required(document_item, 'document_access_backfill', exc)
                     except Exception as repair_error:
                         log_event(
-                            '[DocumentAccessIndex] Failed to record backfill repair state.',
+                            '[DOCUMENT_ACCESS_INDEX] Failed to record backfill repair state.',
                             extra={
                                 'document_id': (document_item or {}).get('id'),
                                 'source_scope': source_scope,
@@ -4284,7 +4284,7 @@ def run_document_access_index_backfill_once(
                             exceptionTraceback=True,
                         )
                     log_event(
-                        '[DocumentAccessIndex] Backfill projection failed for one source document.',
+                        '[DOCUMENT_ACCESS_INDEX] Backfill projection failed for one source document.',
                         extra={
                             'document_id': (document_item or {}).get('id'),
                             'source_scope': source_scope,
@@ -4349,7 +4349,7 @@ def run_document_access_index_backfill_once(
         state['last_completed_at'] = _utc_now_iso()
         state = _write_backfill_state(state)
         log_event(
-            '[DocumentAccessIndex] Document access index backfill batch failed.',
+            '[DOCUMENT_ACCESS_INDEX] Document access index backfill batch failed.',
             extra={'error': str(exc), 'current_source_scope': state.get('current_source_scope')},
             level=logging.ERROR,
             exceptionTraceback=True,

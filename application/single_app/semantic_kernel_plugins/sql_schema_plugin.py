@@ -53,7 +53,7 @@ class SQLSchemaPlugin(BasePlugin):
         self._metadata = manifest.get('metadata', {})
         
         # Add comprehensive logging
-        log_event(f"[SQLSchemaPlugin] Initializing plugin", extra={
+        log_event(f"[SQL_SCHEMA_PLUGIN] Initializing plugin", extra={
             "database_type": self.database_type,
             "auth_type": self.auth_type,
             "server": self.server,
@@ -62,13 +62,13 @@ class SQLSchemaPlugin(BasePlugin):
             "has_username": bool(self.username),
             "manifest_keys": list(manifest.keys())
         })
-        debug_print(f"[SQLSchemaPlugin] Initializing - DB Type: {self.database_type}, Auth: {self.auth_type}, Server: {self.server}, Database: {self.database}")
+        debug_print(f"[SQL_SCHEMA_PLUGIN] Initializing - DB Type: {self.database_type}, Auth: {self.auth_type}, Server: {self.server}, Database: {self.database}")
         
         # Validate required configuration
         if not self.connection_string and not (self.server and self.database):
             error_msg = "SQLSchemaPlugin requires either 'connection_string' or 'server' and 'database' in the manifest."
-            log_event(f"[SQLSchemaPlugin] Configuration error: {error_msg}", extra={"manifest": manifest})
-            debug_print(f"[SQLSchemaPlugin] ERROR: {error_msg}")
+            log_event(f"[SQL_SCHEMA_PLUGIN] Configuration error: {error_msg}", extra={"manifest": manifest})
+            debug_print(f"[SQL_SCHEMA_PLUGIN] ERROR: {error_msg}")
             raise ValueError(error_msg)
         
         # Set up database-specific configurations
@@ -76,7 +76,7 @@ class SQLSchemaPlugin(BasePlugin):
         
         # Initialize connection (lazy loading)
         self._connection = None
-        debug_print(f"[SQLSchemaPlugin] Initialization complete")
+        debug_print(f"[SQL_SCHEMA_PLUGIN] Initialization complete")
 
     def _setup_database_config(self):
         """Setup database-specific configurations and import requirements"""
@@ -116,7 +116,7 @@ class SQLSchemaPlugin(BasePlugin):
         """Create database connection based on database type"""
         try:
             debug_print(
-                f"[SQLSchemaPlugin] Creating database connection database_type={self.database_type} "
+                f"[SQL_SCHEMA_PLUGIN] Creating database connection database_type={self.database_type} "
                 f"auth_type={self.auth_type} server={self.server} database={self.database} "
                 f"driver={self.driver or self.supported_databases.get(self.database_type, {}).get('default_driver')} "
                 f"has_connection_string={bool(self.connection_string)}"
@@ -176,14 +176,14 @@ class SQLSchemaPlugin(BasePlugin):
                 return sqlite3.connect(database_path)
                 
         except ImportError as e:
-            debug_print(f"[SQLSchemaPlugin] Database driver import failed database_type={self.database_type} error={e}")
+            debug_print(f"[SQL_SCHEMA_PLUGIN] Database driver import failed database_type={self.database_type} error={e}")
             raise ImportError(f"Required database driver not installed for {self.database_type}: {e}")
         except Exception as e:
             debug_print(
-                f"[SQLSchemaPlugin] Connection failed database_type={self.database_type} server={self.server} "
+                f"[SQL_SCHEMA_PLUGIN] Connection failed database_type={self.database_type} server={self.server} "
                 f"database={self.database} exception_type={type(e).__name__} message={e}"
             )
-            log_event(f"[SQLSchemaPlugin] Connection failed: {e}", extra={"database_type": self.database_type})
+            log_event(f"[SQL_SCHEMA_PLUGIN] Connection failed: {e}", extra={"database_type": self.database_type})
             raise
 
     @property
@@ -256,13 +256,13 @@ class SQLSchemaPlugin(BasePlugin):
         table_filter: Optional[str] = None
     ) -> ResultWithMetadata:
         """Get complete database schema"""
-        log_event(f"[SQLSchemaPlugin] get_database_schema called", extra={
+        log_event(f"[SQL_SCHEMA_PLUGIN] get_database_schema called", extra={
             "database_type": self.database_type,
             "database": self.database,
             "include_system_tables": include_system_tables,
             "table_filter": table_filter
         })
-        debug_print(f"[SQLSchemaPlugin] Getting database schema - DB: {self.database}, Include System: {include_system_tables}")
+        debug_print(f"[SQL_SCHEMA_PLUGIN] Getting database schema - DB: {self.database}, Include System: {include_system_tables}")
         
         try:
             conn = self._get_connection()
@@ -277,11 +277,11 @@ class SQLSchemaPlugin(BasePlugin):
             
             # Get tables list
             tables_query = self._get_tables_query(include_system_tables, table_filter)
-            debug_print(f"[SQLSchemaPlugin] Executing tables query: {tables_query}")
+            debug_print(f"[SQL_SCHEMA_PLUGIN] Executing tables query: {tables_query}")
             cursor.execute(tables_query)
             tables = cursor.fetchall()
             
-            debug_print(f"[SQLSchemaPlugin] Found {len(tables)} tables")
+            debug_print(f"[SQL_SCHEMA_PLUGIN] Found {len(tables)} tables")
             
             # Get schema for each table
             for table in tables:
@@ -298,10 +298,10 @@ class SQLSchemaPlugin(BasePlugin):
                 try:
                     table_schema = self._get_table_schema_data(cursor, str(table_name), str(schema_name) if schema_name else None)
                     schema_data["tables"][str(table_name)] = table_schema
-                    debug_print(f"[SQLSchemaPlugin] Got schema for table: {qualified_table_name} ({len(table_schema.get('columns', []))} columns)")
+                    debug_print(f"[SQL_SCHEMA_PLUGIN] Got schema for table: {qualified_table_name} ({len(table_schema.get('columns', []))} columns)")
                 except Exception as e:
-                    debug_print(f"[SQLSchemaPlugin] Error getting schema for table {qualified_table_name}: {e}")
-                    log_event(f"[SQLSchemaPlugin] Error getting table schema", extra={
+                    debug_print(f"[SQL_SCHEMA_PLUGIN] Error getting schema for table {qualified_table_name}: {e}")
+                    log_event(f"[SQL_SCHEMA_PLUGIN] Error getting table schema", extra={
                         "table_name": qualified_table_name,
                         "error": str(e),
                         "raw_row": repr(table)
@@ -311,11 +311,11 @@ class SQLSchemaPlugin(BasePlugin):
             try:
                 relationships = self._get_relationships_data(cursor)
                 schema_data["relationships"] = relationships
-                debug_print(f"[SQLSchemaPlugin] Found {len(relationships)} relationships")
+                debug_print(f"[SQL_SCHEMA_PLUGIN] Found {len(relationships)} relationships")
             except Exception as e:
-                debug_print(f"[SQLSchemaPlugin] Error getting relationships: {e}")
+                debug_print(f"[SQL_SCHEMA_PLUGIN] Error getting relationships: {e}")
                 
-            log_event(f"[SQLSchemaPlugin] get_database_schema completed", extra={
+            log_event(f"[SQL_SCHEMA_PLUGIN] get_database_schema completed", extra={
                 "tables_count": len(schema_data["tables"]),
                 "relationships_count": len(schema_data["relationships"])
             })
@@ -332,8 +332,8 @@ class SQLSchemaPlugin(BasePlugin):
             
         except Exception as e:
             error_msg = f"Failed to get database schema: {str(e)}"
-            debug_print(f"[SQLSchemaPlugin] ERROR: {error_msg}")
-            log_event(f"[SQLSchemaPlugin] get_database_schema failed", extra={
+            debug_print(f"[SQL_SCHEMA_PLUGIN] ERROR: {error_msg}")
+            log_event(f"[SQL_SCHEMA_PLUGIN] get_database_schema failed", extra={
                 "error": str(e),
                 "database_type": self.database_type,
                 "database": self.database
@@ -353,11 +353,11 @@ class SQLSchemaPlugin(BasePlugin):
             
             table_schema = self._get_table_schema_data(cursor, table_name)
             
-            log_event(f"[SQLSchemaPlugin] Retrieved schema for table: {table_name}")
+            log_event(f"[SQL_SCHEMA_PLUGIN] Retrieved schema for table: {table_name}")
             return ResultWithMetadata(table_schema, self.metadata)
             
         except Exception as e:
-            log_event(f"[SQLSchemaPlugin] Error getting table schema for {table_name}: {e}")
+            log_event(f"[SQL_SCHEMA_PLUGIN] Error getting table schema for {table_name}: {e}")
             raise
 
     @kernel_function(description="Return the names of all tables in the database. If the database schema is already provided in your instructions, use that directly instead of calling this function. Only call this if you need to discover available tables and they are not already listed in your instructions.")
@@ -388,11 +388,11 @@ class SQLSchemaPlugin(BasePlugin):
                     table_info = {"table_name": str(table_row), "schema": None, "table_type": "TABLE"}
                 table_list.append(table_info)
             
-            log_event(f"[SQLSchemaPlugin] Retrieved {len(table_list)} tables")
+            log_event(f"[SQL_SCHEMA_PLUGIN] Retrieved {len(table_list)} tables")
             return ResultWithMetadata(table_list, self.metadata)
             
         except Exception as e:
-            log_event(f"[SQLSchemaPlugin] Error getting table list: {e}")
+            log_event(f"[SQL_SCHEMA_PLUGIN] Error getting table list: {e}")
             raise
 
     @kernel_function(description="Get foreign key relationships between tables. If the database schema and relationships are already provided in your instructions, use those directly instead of calling this function. Only call this if you need relationship details not already in your instructions.")
@@ -404,11 +404,11 @@ class SQLSchemaPlugin(BasePlugin):
             
             relationships = self._get_relationships_data(cursor, table_name)
             
-            log_event(f"[SQLSchemaPlugin] Retrieved {len(relationships)} relationships")
+            log_event(f"[SQL_SCHEMA_PLUGIN] Retrieved {len(relationships)} relationships")
             return ResultWithMetadata(relationships, self.metadata)
             
         except Exception as e:
-            log_event(f"[SQLSchemaPlugin] Error getting relationships: {e}")
+            log_event(f"[SQL_SCHEMA_PLUGIN] Error getting relationships: {e}")
             raise
 
     def _get_tables_query(self, include_system_tables: bool, table_filter: Optional[str]) -> str:
@@ -633,7 +633,7 @@ class SQLSchemaPlugin(BasePlugin):
                     "referenced_column": fk[4]
                 })
         except Exception as e:
-            log_event(f"[SQLSchemaPlugin] Error getting relationships: {e}")
+            log_event(f"[SQL_SCHEMA_PLUGIN] Error getting relationships: {e}")
         
         return relationships
 

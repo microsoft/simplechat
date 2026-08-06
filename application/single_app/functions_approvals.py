@@ -152,7 +152,7 @@ def create_approval_request(
                 # Set group to workspace for notification purposes
                 group = workspace
             except Exception as ex:
-                log_event("[Approvals] Workspace not found for approval request", {
+                log_event("[APPROVALS] Workspace not found for approval request", {
                     'group_id': group_id,
                     'request_type': request_type
                 }, level=logging.ERROR)
@@ -200,7 +200,7 @@ def create_approval_request(
         cosmos_approvals_container.create_item(body=approval_request)
         
         # Log event
-        log_event("[Approvals] Created approval request", {
+        log_event("[APPROVALS] Created approval request", {
             'approval_id': approval_id,
             'request_type': request_type,
             'group_id': group_id,
@@ -220,7 +220,7 @@ def create_approval_request(
         return approval_request
         
     except Exception as e:
-        log_event("[Approvals] Error creating approval request", {
+        log_event("[APPROVALS] Error creating approval request", {
             'error': str(e),
             'request_type': request_type,
             'group_id': group_id,
@@ -299,7 +299,7 @@ def get_pending_approvals(
                 if _can_user_view(approval, user_id, safe_user_roles):
                     eligible_approvals.append(approval)
             except Exception as ex:
-                log_event("[Approvals] Skipping malformed approval during eligibility check", {
+                log_event("[APPROVALS] Skipping malformed approval during eligibility check", {
                     'approval_id': approval.get('id') if isinstance(approval, dict) else None,
                     'error': str(ex)
                 }, level=logging.WARNING)
@@ -324,7 +324,7 @@ def get_pending_approvals(
         }
         
     except Exception as e:
-        log_event("[Approvals] Error fetching pending approvals", {
+        log_event("[APPROVALS] Error fetching pending approvals", {
             'error': str(e),
             'user_id': user_id,
             'user_roles': _normalize_user_roles(user_roles)
@@ -385,7 +385,7 @@ def approve_request(
         cosmos_approvals_container.upsert_item(approval)
         
         # Log event
-        log_event("[Approvals] Request approved", {
+        log_event("[APPROVALS] Request approved", {
             'approval_id': approval_id,
             'request_type': approval['request_type'],
             'group_id': group_id,
@@ -418,7 +418,7 @@ def approve_request(
         return approval
         
     except Exception as e:
-        log_event("[Approvals] Error approving request", {
+        log_event("[APPROVALS] Error approving request", {
             'error': str(e),
             'approval_id': approval_id,
             'group_id': group_id,
@@ -479,7 +479,7 @@ def deny_request(
         cosmos_approvals_container.upsert_item(approval)
         
         # Log event
-        log_event("[Approvals] Request denied", {
+        log_event("[APPROVALS] Request denied", {
             'approval_id': approval_id,
             'request_type': approval['request_type'],
             'group_id': group_id,
@@ -518,7 +518,7 @@ def deny_request(
         return approval
         
     except Exception as e:
-        log_event("[Approvals] Error denying request", {
+        log_event("[APPROVALS] Error denying request", {
             'error': str(e),
             'approval_id': approval_id,
             'group_id': group_id,
@@ -564,7 +564,7 @@ def mark_approval_executed(
         cosmos_approvals_container.upsert_item(approval)
         
         # Log event
-        log_event("[Approvals] Request executed", {
+        log_event("[APPROVALS] Request executed", {
             'approval_id': approval_id,
             'request_type': approval['request_type'],
             'group_id': group_id,
@@ -576,7 +576,7 @@ def mark_approval_executed(
         return approval
         
     except Exception as e:
-        log_event("[Approvals] Error marking request as executed", {
+        log_event("[APPROVALS] Error marking request as executed", {
             'error': str(e),
             'approval_id': approval_id,
             'group_id': group_id,
@@ -604,7 +604,7 @@ def get_approval_by_id(approval_id: str, group_id: str) -> Optional[Dict[str, An
             partition_key=group_id
         )
     except Exception:
-        log_event("[Approvals] Approval not found", {
+        log_event("[APPROVALS] Approval not found", {
             'approval_id': approval_id,
             'group_id': group_id
         })
@@ -680,14 +680,14 @@ def auto_deny_expired_approvals() -> int:
                     )
                     denied_count += 1
                 except Exception as e:
-                    log_event("[Approvals] Error auto-denying expired approval", {  
+                    log_event("[APPROVALS] Error auto-denying expired approval", {
                         'approval_id': approval['id'],
                         'error': str(e)
                     })
                     debug_print(f"Error auto-denying approval {approval['id']}: {e}")
         
         if denied_count > 0:
-            log_event("[Approvals] Auto-denied expired approvals", {
+            log_event("[APPROVALS] Auto-denied expired approvals", {
                 'denied_count': denied_count
             })
             debug_print(f"Auto-denied {denied_count} expired approvals")
@@ -695,7 +695,7 @@ def auto_deny_expired_approvals() -> int:
         return denied_count
         
     except Exception as e:
-        log_event("[Approvals] Error in auto_deny_expired_approvals", {
+        log_event("[APPROVALS] Error in auto_deny_expired_approvals", {
             'error': str(e)
         })
         debug_print(f"Error in auto_deny_expired_approvals: {e}")
@@ -861,7 +861,7 @@ def _create_approval_notifications(
         group: Group document (None for user-related approvals)
     """
     try:
-        log_event("[Approvals] Creating assignment-based approval notifications", {
+        log_event("[APPROVALS] Creating assignment-based approval notifications", {
             'approval_id': approval['id'],
             'group_id': approval['group_id'],
             'request_type': approval['request_type']
@@ -879,7 +879,7 @@ def _create_approval_notifications(
             user_id = approval.get('metadata', {}).get('user_id')
             if user_id:
                 assignment['personal_workspace_owner_id'] = user_id
-                log_event("[Approvals] Targeting user for document deletion", {
+                log_event("[APPROVALS] Targeting user for document deletion", {
                     'user_id': user_id,
                     'approval_id': approval['id']
                 })
@@ -890,18 +890,18 @@ def _create_approval_notifications(
                 group_owner_id = group.get('owner', {}).get('id')
                 if group_owner_id:
                     assignment['group_owner_id'] = group_owner_id
-                    log_event("[Approvals] Targeting group owner", {
+                    log_event("[APPROVALS] Targeting group owner", {
                         'group_owner_id': group_owner_id,
                         'approval_id': approval['id']
                     })
                     debug_print(f"Added group owner {group_owner_id} to notification assignment")
             else:
-                log_event("[Approvals] No group provided for group-based approval", {
+                log_event("[APPROVALS] No group provided for group-based approval", {
                     'approval_id': approval['id'],
                     'request_type': approval['request_type']
                 }, level=logging.WARNING)
         
-        log_event("[Approvals] Notification assignment", {
+        log_event("[APPROVALS] Notification assignment", {
             'approval_id': approval['id'],
             'assignment': assignment
         })
@@ -913,7 +913,7 @@ def _create_approval_notifications(
             if new_owner_id and new_owner_id != approval['requester_id']:
                 # Create informational notification for new owner
                 try:
-                    log_event("[Approvals] Notifying new owner", {
+                    log_event("[APPROVALS] Notifying new owner", {
                         'user_id': new_owner_id,
                         'approval_id': approval['id']
                     })
@@ -939,7 +939,7 @@ def _create_approval_notifications(
                     )
                     debug_print(f"Successfully notified new owner {new_owner_id}")
                 except Exception as notify_error:
-                    log_event("[Approvals] Error notifying new owner", {
+                    log_event("[APPROVALS] Error notifying new owner", {
                         'error': str(notify_error),
                         'user_id': new_owner_id,
                         'approval_id': approval['id']
@@ -948,7 +948,7 @@ def _create_approval_notifications(
         
         # Create single notification with assignment - visible to all eligible approvers
         try:
-            log_event("[Approvals] Creating approval notification with assignment", {
+            log_event("[APPROVALS] Creating approval notification with assignment", {
                 'approval_id': approval['id'],
                 'assignment': assignment
             })
@@ -973,14 +973,14 @@ def _create_approval_notifications(
             )
             debug_print(f"Successfully created approval notification with assignment for approval {approval['id']}")
         except Exception as notify_error:
-            log_event("[Approvals] Error creating approval notification", {
+            log_event("[APPROVALS] Error creating approval notification", {
                 'error': str(notify_error),
                 'approval_id': approval['id']
             })
             debug_print(f"Error creating approval notification for approval {approval['id']}: {str(notify_error)}")
     
     except Exception as e:
-        log_event("[Approvals] Error notifying users about approval request", {
+        log_event("[APPROVALS] Error notifying users about approval request", {
             'error': str(e),
             'approval_id': approval['id']
         })
@@ -1010,7 +1010,7 @@ def _create_requester_pending_notification(approval: Dict[str, Any]) -> None:
             }
         )
     except Exception as e:
-        log_event("[Approvals] Error notifying requester of pending approval", {
+        log_event("[APPROVALS] Error notifying requester of pending approval", {
             'error': str(e),
             'approval_id': approval['id']
         }, level=logging.WARNING)
@@ -1025,7 +1025,7 @@ def _clear_pending_admin_notifications(approval_id: str) -> None:
             notification_types=PENDING_APPROVAL_ADMIN_NOTIFICATION_TYPES
         )
     except Exception as e:
-        log_event("[Approvals] Error clearing pending admin notifications", {
+        log_event("[APPROVALS] Error clearing pending admin notifications", {
             'error': str(e),
             'approval_id': approval_id
         }, level=logging.WARNING)

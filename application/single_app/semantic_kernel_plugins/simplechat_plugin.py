@@ -110,7 +110,7 @@ class SimpleChatPlugin(BasePlugin):
             return {"success": False, "error": str(exc), "error_type": "validation"}
         except Exception as exc:
             log_event(
-                f"[SimpleChatPlugin] {operation_name} failed: {exc}",
+                f"[SIMPLE_CHAT_PLUGIN] {operation_name} failed: {exc}",
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )

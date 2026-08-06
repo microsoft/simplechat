@@ -86,7 +86,7 @@ def _log_data_management_admin_action(action, description, additional_context=No
         )
     except Exception as exc:
         log_event(
-            "[DataManagement] Failed to write admin activity record.",
+            "[DATA_MANAGEMENT] Failed to write admin activity record.",
             {"action": action, "error": str(exc)},
             level=logging.WARNING,
         )
@@ -178,7 +178,7 @@ def register_route_backend_data_management(bp):
             return jsonify({"success": False, "error": str(exc)}), 400
         except Exception as exc:
             log_event(
-                "[DataManagement] Settings update failed.",
+                "[DATA_MANAGEMENT] Settings update failed.",
                 {"error": str(exc)},
                 level=logging.ERROR,
                 exceptionTraceback=True,
@@ -204,7 +204,7 @@ def register_route_backend_data_management(bp):
             settings = generate_data_management_encryption_key()
         except Exception as exc:
             log_event(
-                "[DataManagement] Encryption key generation failed.",
+                "[DATA_MANAGEMENT] Encryption key generation failed.",
                 {"error": str(exc)},
                 level=logging.ERROR,
                 exceptionTraceback=True,
@@ -232,7 +232,7 @@ def register_route_backend_data_management(bp):
             return jsonify({"success": False, "error": str(exc)}), 400
         except Exception as exc:
             log_event(
-                "[DataManagement] Backup storage connection test failed.",
+                "[DATA_MANAGEMENT] Backup storage connection test failed.",
                 {"error": str(exc)},
                 level=logging.WARNING,
             )
@@ -254,7 +254,7 @@ def register_route_backend_data_management(bp):
             )
         except Exception as exc:
             log_event(
-                "[DataManagement] Target Cosmos connection test failed.",
+                "[DATA_MANAGEMENT] Target Cosmos connection test failed.",
                 {"error": str(exc)},
                 level=logging.WARNING,
             )
@@ -276,7 +276,7 @@ def register_route_backend_data_management(bp):
             )
         except DataManagementSettingsValidationError as exc:
             log_event(
-                "[DataManagement] Target Cosmos RU Boost permission test validation failed.",
+                "[DATA_MANAGEMENT] Target Cosmos RU Boost permission test validation failed.",
                 {"error": str(exc)},
                 level=logging.WARNING,
             )
@@ -286,7 +286,7 @@ def register_route_backend_data_management(bp):
             }), 400
         except Exception as exc:
             log_event(
-                "[DataManagement] Target Cosmos RU Boost permission test failed.",
+                "[DATA_MANAGEMENT] Target Cosmos RU Boost permission test failed.",
                 {"error": str(exc)},
                 level=logging.WARNING,
             )
@@ -304,7 +304,7 @@ def register_route_backend_data_management(bp):
             result = test_target_search_connection(settings=settings_payload)
         except Exception as exc:
             log_event(
-                "[DataManagement] Target Search connection test failed.",
+                "[DATA_MANAGEMENT] Target Search connection test failed.",
                 {"error": str(exc)},
                 level=logging.WARNING,
             )
@@ -326,7 +326,7 @@ def register_route_backend_data_management(bp):
             )
         except Exception as exc:
             log_event(
-                "[DataManagement] Target Enhanced Citation Storage connection test failed.",
+                "[DATA_MANAGEMENT] Target Enhanced Citation Storage connection test failed.",
                 {"error": str(exc)},
                 level=logging.WARNING,
             )
@@ -384,7 +384,7 @@ def register_route_backend_data_management(bp):
             return jsonify({"success": False, "error": "Cosmos DB editor query was rejected."}), 400
         except Exception as exc:
             log_event(
-                "[DataManagement] Cosmos editor query failed.",
+                "[DATA_MANAGEMENT] Cosmos editor query failed.",
                 {"container": payload.get("container"), "error": str(exc)},
                 level=logging.WARNING,
             )
@@ -413,7 +413,7 @@ def register_route_backend_data_management(bp):
             )
         except DataManagementCosmosEditorError as exc:
             log_event(
-                "[DataManagement] Cosmos editor document open rejected.",
+                "[DATA_MANAGEMENT] Cosmos editor document open rejected.",
                 {"container": payload.get("container"), "document_id": payload.get("id"), "error": str(exc)},
                 level=logging.WARNING,
             )
@@ -426,7 +426,7 @@ def register_route_backend_data_management(bp):
         except Exception as exc:
             status_code = _cosmos_editor_error_status(exc, default_status=400)
             log_event(
-                "[DataManagement] Cosmos editor document open failed.",
+                "[DATA_MANAGEMENT] Cosmos editor document open failed.",
                 {"container": payload.get("container"), "document_id": payload.get("id"), "error": str(exc)},
                 level=logging.WARNING,
             )
@@ -468,7 +468,7 @@ def register_route_backend_data_management(bp):
         except Exception as exc:
             status_code = _cosmos_editor_error_status(exc, default_status=400)
             log_event(
-                "[DataManagement] Cosmos editor save failed.",
+                "[DATA_MANAGEMENT] Cosmos editor save failed.",
                 {"container": payload.get("container"), "document_id": payload.get("id"), "error": str(exc)},
                 level=logging.WARNING,
                 exceptionTraceback=True,
@@ -594,7 +594,7 @@ def register_route_backend_data_management(bp):
             return jsonify({"success": False, "error": str(exc)}), 400
         except Exception as exc:
             log_event(
-                "[DataManagement] Failed to retry durable job.",
+                "[DATA_MANAGEMENT] Failed to retry durable job.",
                 {"job_id": job_id, "error": str(exc)},
                 level=logging.ERROR,
                 exceptionTraceback=True,
@@ -628,7 +628,7 @@ def register_route_backend_data_management(bp):
             return jsonify({"success": False, "error": str(exc)}), 400
         except Exception as exc:
             log_event(
-                "[DataManagement] Failed to request Data Management job cancellation.",
+                "[DATA_MANAGEMENT] Failed to request Data Management job cancellation.",
                 {"job_id": job_id, "error": str(exc)},
                 level=logging.ERROR,
                 exceptionTraceback=True,
@@ -675,14 +675,14 @@ def register_route_backend_data_management(bp):
             )
         except DataManagementSettingsValidationError as exc:
             log_event(
-                "[DataManagement] Manual backup retention cleanup validation failed.",
+                "[DATA_MANAGEMENT] Manual backup retention cleanup validation failed.",
                 {"error": str(exc)},
                 level=logging.WARNING,
             )
             return jsonify({"success": False, "error": "Backup retention cleanup request is invalid."}), 400
         except Exception as exc:
             log_event(
-                "[DataManagement] Manual backup retention cleanup failed.",
+                "[DATA_MANAGEMENT] Manual backup retention cleanup failed.",
                 {"error": str(exc)},
                 level=logging.ERROR,
                 exceptionTraceback=True,
@@ -723,14 +723,14 @@ def register_route_backend_data_management(bp):
             )
         except DataManagementSettingsValidationError as exc:
             log_event(
-                "[DataManagement] Backup deletion validation failed.",
+                "[DATA_MANAGEMENT] Backup deletion validation failed.",
                 {"backup_id": backup_id, "error": str(exc)},
                 level=logging.WARNING,
             )
             return jsonify({"success": False, "error": "Backup deletion request is invalid."}), 400
         except Exception as exc:
             log_event(
-                "[DataManagement] Backup deletion failed.",
+                "[DATA_MANAGEMENT] Backup deletion failed.",
                 {"backup_id": backup_id, "error": str(exc)},
                 level=logging.ERROR,
                 exceptionTraceback=True,
@@ -787,7 +787,7 @@ def register_route_backend_data_management(bp):
             return jsonify({"success": False, "error": str(exc)}), 400
         except Exception as exc:
             log_event(
-                "[DataManagement] Migration inventory preview failed.",
+                "[DATA_MANAGEMENT] Migration inventory preview failed.",
                 {"error": str(exc)},
                 level=logging.ERROR,
                 exceptionTraceback=True,
@@ -827,7 +827,7 @@ def register_route_backend_data_management(bp):
                 )
         except DataManagementSettingsValidationError as exc:
             log_event(
-                "[DataManagement] Migration review validation failed.",
+                "[DATA_MANAGEMENT] Migration review validation failed.",
                 {"error_type": type(exc).__name__},
                 level=logging.WARNING,
                 exceptionTraceback=True,
@@ -839,7 +839,7 @@ def register_route_backend_data_management(bp):
             }), 400
         except Exception as exc:
             log_event(
-                "[DataManagement] Migration review failed.",
+                "[DATA_MANAGEMENT] Migration review failed.",
                 {"error_type": type(exc).__name__},
                 level=logging.ERROR,
                 exceptionTraceback=True,
@@ -880,7 +880,7 @@ def register_route_backend_data_management(bp):
                 )
         except DataManagementSettingsValidationError as exc:
             log_event(
-                "[DataManagement] Restore review validation failed.",
+                "[DATA_MANAGEMENT] Restore review validation failed.",
                 {"error_type": type(exc).__name__},
                 level=logging.WARNING,
                 exceptionTraceback=True,
@@ -892,7 +892,7 @@ def register_route_backend_data_management(bp):
             }), 400
         except Exception as exc:
             log_event(
-                "[DataManagement] Restore review failed.",
+                "[DATA_MANAGEMENT] Restore review failed.",
                 {"error_type": type(exc).__name__},
                 level=logging.ERROR,
                 exceptionTraceback=True,
@@ -978,7 +978,7 @@ def register_route_backend_data_management(bp):
                     review_reservation_release = release_data_management_migration_review_reservation
                 except DataManagementSettingsValidationError as exc:
                     log_event(
-                        "[DataManagement] Migration review reservation validation failed.",
+                        "[DATA_MANAGEMENT] Migration review reservation validation failed.",
                         {"operation": operation, "error": str(exc)},
                         level=logging.WARNING,
                     )
@@ -1033,7 +1033,7 @@ def register_route_backend_data_management(bp):
                     review_reservation_release = release_data_management_restore_review_reservation
                 except DataManagementSettingsValidationError as exc:
                     log_event(
-                        "[DataManagement] Restore review reservation validation failed.",
+                        "[DATA_MANAGEMENT] Restore review reservation validation failed.",
                         {"operation": operation, "error": str(exc)},
                         level=logging.WARNING,
                     )
@@ -1065,7 +1065,7 @@ def register_route_backend_data_management(bp):
             submitted = submit_data_management_job(current_app._get_current_object(), job.get("id"))
         except DataManagementSettingsValidationError as exc:
             log_event(
-                "[DataManagement] Validation error while queuing data management job.",
+                "[DATA_MANAGEMENT] Validation error while queuing data management job.",
                 {"operation": operation, "error": str(exc)},
                 level=logging.WARNING,
             )
@@ -1078,7 +1078,7 @@ def register_route_backend_data_management(bp):
             return jsonify(response), 400
         except Exception as exc:
             log_event(
-                "[DataManagement] Failed to queue data management job.",
+                "[DATA_MANAGEMENT] Failed to queue data management job.",
                 {"operation": operation, "error": str(exc)},
                 level=logging.ERROR,
                 exceptionTraceback=True,

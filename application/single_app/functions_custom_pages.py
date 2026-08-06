@@ -59,7 +59,7 @@ def _get_shared_cache_redis_client():
         return app_settings_cache.get_app_cache_redis_client()
     except Exception as ex:
         log_event(
-            "[CustomPages] Redis client lookup failed; using Cosmos cache fallback.",
+            "[CUSTOM_PAGES] Redis client lookup failed; using Cosmos cache fallback.",
             extra={"error": str(ex)},
             level=logging.WARNING,
         )
@@ -85,7 +85,7 @@ def invalidate_custom_pages_cache(reason: str = "custom_pages_changed") -> Optio
     except Exception as ex:
         version = None
         log_event(
-            "[CustomPages] Failed to bump custom pages cache version.",
+            "[CUSTOM_PAGES] Failed to bump custom pages cache version.",
             extra={"reason": reason, "error": str(ex)},
             level=logging.WARNING,
             exceptionTraceback=True,
@@ -97,7 +97,7 @@ def invalidate_custom_pages_cache(reason: str = "custom_pages_changed") -> Optio
         redis_client=_get_shared_cache_redis_client(),
     )
     log_event(
-        "[CustomPages] Custom pages cache invalidated.",
+        "[CUSTOM_PAGES] Custom pages cache invalidated.",
         extra={"reason": reason, "version": version},
         level=logging.INFO,
         debug_only=True,
@@ -227,7 +227,7 @@ def _list_cosmos_custom_pages_source() -> List[Dict[str, Any]]:
         return []
     except Exception as ex:
         log_event(
-            "[CustomPages] Failed to list custom pages.",
+            "[CUSTOM_PAGES] Failed to list custom pages.",
             extra={"error": str(ex)},
             level=logging.ERROR,
             exceptionTraceback=True,
@@ -246,7 +246,7 @@ def list_cosmos_custom_pages() -> List[Dict[str, Any]]:
     )
     if isinstance(cached, dict) and cached.get("version") == version and isinstance(cached.get("pages"), list):
         log_event(
-            "[CustomPages] Custom page catalog cache hit.",
+            "[CUSTOM_PAGES] Custom page catalog cache hit.",
             extra={"version": version, "count": len(cached.get("pages") or [])},
             level=logging.INFO,
             debug_only=True,
@@ -265,7 +265,7 @@ def list_cosmos_custom_pages() -> List[Dict[str, Any]]:
         redis_client=redis_client,
     )
     log_event(
-        "[CustomPages] Custom page catalog cache miss.",
+        "[CUSTOM_PAGES] Custom page catalog cache miss.",
         extra={"version": version, "count": len(pages)},
         level=logging.INFO,
         debug_only=True,
@@ -297,7 +297,7 @@ def get_custom_page(slug: str, include_python: bool = True, use_cache: bool = Tr
         return None
     except Exception as ex:
         log_event(
-            "[CustomPages] Failed to read custom page.",
+            "[CUSTOM_PAGES] Failed to read custom page.",
             extra={"slug": normalized_slug, "error": str(ex)},
             level=logging.ERROR,
             exceptionTraceback=True,
@@ -336,7 +336,7 @@ def delete_custom_page(slug: str) -> bool:
         return False
     except Exception as ex:
         log_event(
-            "[CustomPages] Failed to delete custom page.",
+            "[CUSTOM_PAGES] Failed to delete custom page.",
             extra={"slug": slug, "error": str(ex)},
             level=logging.ERROR,
             exceptionTraceback=True,
@@ -376,7 +376,7 @@ def discover_python_custom_pages(force_refresh: bool = False) -> Dict[str, Dict[
                 errors = validate_custom_page_metadata(page)
                 if errors:
                     log_event(
-                        "[CustomPages] Ignored invalid Python custom page.",
+                        "[CUSTOM_PAGES] Ignored invalid Python custom page.",
                         extra={"module": file_name, "errors": errors},
                         level=logging.WARNING,
                     )
@@ -384,7 +384,7 @@ def discover_python_custom_pages(force_refresh: bool = False) -> Dict[str, Dict[
                 discovered[page["slug"]] = page
         except Exception as ex:
             log_event(
-                "[CustomPages] Failed to import Python custom page module.",
+                "[CUSTOM_PAGES] Failed to import Python custom page module.",
                 extra={"module": file_name, "error": str(ex)},
                 level=logging.ERROR,
                 exceptionTraceback=True,
@@ -442,7 +442,7 @@ def get_custom_pages_nav(settings: Dict[str, Any]) -> List[Dict[str, Any]]:
     )
     if isinstance(cached, dict) and cached.get("version") == version and isinstance(cached.get("nav"), list):
         log_event(
-            "[CustomPages] Custom page navigation cache hit.",
+            "[CUSTOM_PAGES] Custom page navigation cache hit.",
             extra={"version": version, "nav_count": len(cached.get("nav") or [])},
             level=logging.INFO,
             debug_only=True,
@@ -462,7 +462,7 @@ def get_custom_pages_nav(settings: Dict[str, Any]) -> List[Dict[str, Any]]:
         redis_client=redis_client,
     )
     log_event(
-        "[CustomPages] Custom page navigation cache miss.",
+        "[CUSTOM_PAGES] Custom page navigation cache miss.",
         extra={"version": version, "nav_count": len(nav_items)},
         level=logging.INFO,
         debug_only=True,

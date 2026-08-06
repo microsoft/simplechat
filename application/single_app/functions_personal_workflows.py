@@ -590,7 +590,7 @@ def get_personal_workflows(user_id):
         return []
     except Exception as exc:
         log_event(
-            f'[WorkflowStore] Error fetching workflows for user {user_id}: {exc}',
+            f'[WORKFLOW_STORE] Error fetching workflows for user {user_id}: {exc}',
             extra={'user_id': user_id},
             level=logging.ERROR,
             exceptionTraceback=True,
@@ -607,7 +607,7 @@ def get_personal_workflow(user_id, workflow_id):
         return None
     except Exception as exc:
         log_event(
-            f'[WorkflowStore] Error fetching workflow {workflow_id}: {exc}',
+            f'[WORKFLOW_STORE] Error fetching workflow {workflow_id}: {exc}',
             extra={'user_id': user_id, 'workflow_id': workflow_id},
             level=logging.ERROR,
             exceptionTraceback=True,
@@ -639,7 +639,7 @@ def get_due_personal_workflows(limit=20):
         return cleaned[:limit]
     except Exception as exc:
         log_event(
-            f'[WorkflowStore] Error fetching due workflows: {exc}',
+            f'[WORKFLOW_STORE] Error fetching due workflows: {exc}',
             level=logging.ERROR,
             exceptionTraceback=True,
         )
@@ -820,7 +820,7 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
 
     result = cosmos_personal_workflows_container.upsert_item(body=workflow)
     cleaned_result = _strip_cosmos_metadata(result)
-    debug_print(f"[WorkflowStore] Saved workflow {cleaned_result.get('id')} for user {user_id}")
+    debug_print(f"[WORKFLOW_STORE] Saved workflow {cleaned_result.get('id')} for user {user_id}")
     return cleaned_result
 
 
@@ -855,7 +855,7 @@ def list_personal_workflow_runs(user_id, workflow_id, limit=25):
         return [_strip_cosmos_metadata(item) for item in items[:limit]]
     except Exception as exc:
         log_event(
-            f'[WorkflowStore] Error fetching workflow runs for {workflow_id}: {exc}',
+            f'[WORKFLOW_STORE] Error fetching workflow runs for {workflow_id}: {exc}',
             extra={'user_id': user_id, 'workflow_id': workflow_id},
             level=logging.ERROR,
             exceptionTraceback=True,
@@ -872,7 +872,7 @@ def get_personal_workflow_run(user_id, run_id):
         return None
     except Exception as exc:
         log_event(
-            f'[WorkflowStore] Error fetching workflow run {run_id}: {exc}',
+            f'[WORKFLOW_STORE] Error fetching workflow run {run_id}: {exc}',
             extra={'user_id': user_id, 'run_id': run_id},
             level=logging.ERROR,
             exceptionTraceback=True,
@@ -908,7 +908,7 @@ def get_latest_personal_workflow_run_for_conversation(user_id, conversation_id, 
         return _strip_cosmos_metadata(items[0])
     except Exception as exc:
         log_event(
-            f'[WorkflowStore] Error fetching latest run for conversation {conversation_id}: {exc}',
+            f'[WORKFLOW_STORE] Error fetching latest run for conversation {conversation_id}: {exc}',
             extra={'user_id': user_id, 'conversation_id': conversation_id, 'workflow_id': workflow_id},
             level=logging.ERROR,
             exceptionTraceback=True,
@@ -943,7 +943,7 @@ def get_personal_workflow_run_item(run_id, item_id):
         return None
     except Exception as exc:
         log_event(
-            f'[WorkflowStore] Error fetching workflow run item {item_id}: {exc}',
+            f'[WORKFLOW_STORE] Error fetching workflow run item {item_id}: {exc}',
             extra={'run_id': run_id, 'item_id': item_id},
             level=logging.ERROR,
             exceptionTraceback=True,
@@ -966,7 +966,7 @@ def list_personal_workflow_run_items(run_id, limit=1000):
         return [_strip_cosmos_metadata(item) for item in items[:limit]]
     except Exception as exc:
         log_event(
-            f'[WorkflowStore] Error fetching workflow run items for {run_id}: {exc}',
+            f'[WORKFLOW_STORE] Error fetching workflow run items for {run_id}: {exc}',
             extra={'run_id': run_id},
             level=logging.ERROR,
             exceptionTraceback=True,
@@ -992,7 +992,7 @@ def delete_personal_workflow(user_id, workflow_id):
                 continue
             except Exception as exc:
                 log_event(
-                    f"[WorkflowStore] Error deleting workflow run item {item.get('id')}: {exc}",
+                    f"[WORKFLOW_STORE] Error deleting workflow run item {item.get('id')}: {exc}",
                     extra={'user_id': user_id, 'workflow_id': workflow_id, 'run_id': run_id},
                     level=logging.WARNING,
                 )
@@ -1002,7 +1002,7 @@ def delete_personal_workflow(user_id, workflow_id):
             continue
         except Exception as exc:
             log_event(
-                f"[WorkflowStore] Error deleting workflow run {run.get('id')}: {exc}",
+                f"[WORKFLOW_STORE] Error deleting workflow run {run.get('id')}: {exc}",
                 extra={'user_id': user_id, 'workflow_id': workflow_id},
                 level=logging.WARNING,
             )

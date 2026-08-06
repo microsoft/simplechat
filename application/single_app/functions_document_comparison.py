@@ -410,7 +410,7 @@ def run_document_comparison(
     )
 
     debug_print(
-        '[DocumentComparison] Starting comparison | '
+        '[DOCUMENT_COMPARISON] Starting comparison | '
         f'user_id={user_id} | '
         f'left_document_id={left_document_id} | '
         f'right_count={len(right_document_ids)} | '
@@ -459,7 +459,7 @@ def run_document_comparison(
         document_state = document_states[document_id]
         role_label = document_state.get('role_label', 'right')
         debug_print(
-            '[DocumentComparison] Starting summary pass | '
+            '[DOCUMENT_COMPARISON] Starting summary pass | '
             f'document_index={document_index} | '
             f'document_id={document_id} | '
             f'role={role_label}'
@@ -529,7 +529,7 @@ def run_document_comparison(
         document_state['active_attempt_number'] = None
         _refresh_comparison_coverage(coverage, document_order, document_states)
         debug_print(
-            '[DocumentComparison] Completed summary pass | '
+            '[DOCUMENT_COMPARISON] Completed summary pass | '
             f'document_index={document_index} | '
             f'document_id={document_id} | '
             f"document_name={document_state.get('document_name')} | "
@@ -558,7 +558,7 @@ def run_document_comparison(
             phase_total_steps=len(right_document_ids),
         )
         debug_print(
-            '[DocumentComparison] Starting pairwise comparison | '
+            '[DOCUMENT_COMPARISON] Starting pairwise comparison | '
             f'comparison_index={comparison_index}/{len(right_document_ids)} | '
             f'left_document_id={left_document_id} | '
             f'right_document_id={right_document_id} | '
@@ -599,7 +599,7 @@ def run_document_comparison(
         )
         if not pairwise_text:
             debug_print(
-                '[DocumentComparison] Pairwise comparison failed | '
+                '[DOCUMENT_COMPARISON] Pairwise comparison failed | '
                 f'comparison_index={comparison_index}/{len(right_document_ids)} | '
                 f'left_document_id={left_document_id} | '
                 f'right_document_id={right_document_id} | '
@@ -626,7 +626,7 @@ def run_document_comparison(
             phase_total_steps=len(right_document_ids),
         )
         debug_print(
-            '[DocumentComparison] Completed pairwise comparison | '
+            '[DOCUMENT_COMPARISON] Completed pairwise comparison | '
             f'comparison_index={comparison_index}/{len(right_document_ids)} | '
             f'left_document_id={left_document_id} | '
             f'right_document_id={right_document_id}'
@@ -662,7 +662,7 @@ def run_document_comparison(
             phase_total_steps=1,
         )
         debug_print(
-            '[DocumentComparison] Starting comparison reduction | '
+            '[DOCUMENT_COMPARISON] Starting comparison reduction | '
             f'left_document_id={left_document_id} | '
             f'comparison_count={len(comparison_items)}'
         )
@@ -693,12 +693,12 @@ def run_document_comparison(
         )
         if not final_reply:
             debug_print(
-                '[DocumentComparison] Comparison reduction failed | '
+                '[DOCUMENT_COMPARISON] Comparison reduction failed | '
                 f'left_document_id={left_document_id} | error=empty reduction response'
             )
             raise RuntimeError('Document comparison reduction returned an empty response.')
         debug_print(
-            '[DocumentComparison] Completed comparison reduction | '
+            '[DOCUMENT_COMPARISON] Completed comparison reduction | '
             f'left_document_id={left_document_id} | '
             f'comparison_count={len(comparison_items)}'
         )
@@ -736,7 +736,7 @@ def run_document_comparison(
         })
 
     log_event(
-        '[DocumentComparison] Completed deterministic document comparison',
+        '[DOCUMENT_COMPARISON] Completed deterministic document comparison',
         extra={
             'user_id': user_id,
             'left_document_id': left_document_id,
@@ -750,7 +750,7 @@ def run_document_comparison(
         level=logging.INFO,
     )
     debug_print(
-        '[DocumentComparison] Completed comparison | '
+        '[DOCUMENT_COMPARISON] Completed comparison | '
         f'left={left_document_id} | '
         f'right_count={len(right_document_ids)} | '
         f"documents={coverage.get('document_count', 0)} | "

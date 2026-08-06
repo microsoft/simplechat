@@ -575,7 +575,7 @@ def inject_settings():
     try:
         custom_pages_nav = get_custom_pages_nav(settings)
     except Exception as e:
-        log_event(f"[CustomPages] Error injecting custom page navigation: {e}", level=logging.ERROR, exceptionTraceback=True)
+        log_event(f"[CUSTOM_PAGES] Error injecting custom page navigation: {e}", level=logging.ERROR, exceptionTraceback=True)
     # Inject per-user settings if logged in
     user_settings = {}
     latest_features_nav_hidden = IS_DEVELOPMENT
@@ -619,10 +619,10 @@ def format_datetime_filter(value):
 @app.before_request
 def reload_kernel_if_needed():
     if getattr(builtins, "kernel_reload_needed", False):
-        debug_print(f"[SK Loader] Hot reload: re-initializing Semantic Kernel and agents due to settings change.")
+        debug_print(f"[SK_LOADER] Hot reload: re-initializing Semantic Kernel and agents due to settings change.")
         """Commneted out because hot reload is not fully supported yet.
         log_event(
-            "[SK Loader] Hot reload: re-initializing Semantic Kernel and agents due to settings change.",
+            "[SK_LOADER] Hot reload: re-initializing Semantic Kernel and agents due to settings change.",
             level=logging.INFO
         )
         initialize_semantic_kernel()

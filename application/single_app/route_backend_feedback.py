@@ -264,7 +264,7 @@ def _feedback_lifecycle_response(message, audit_logged):
 
 def _log_feedback_audit_failure(feedback_id, lifecycle_action):
     log_event(
-        '[FeedbackLifecycle] Failed to persist lifecycle audit event',
+        '[FEEDBACK_LIFECYCLE] Failed to persist lifecycle audit event',
         {
             'feedback_id': feedback_id,
             'lifecycle_action': lifecycle_action,
@@ -370,10 +370,10 @@ def register_route_backend_feedback(bp):
 
         # Set default text if messages weren't found
         if ai_message_text is None:
-            ai_message_text = "[AI response text not found in cosmos_messages_container]"
+            ai_message_text = "[AI_RESPONSE_TEXT_NOT_FOUND_IN_COSMOS_MESSAGES_CONTAINER]"
 
         if not user_prompt_text:
-            user_prompt_text = "[User prompt not found in cosmos_messages_container]"
+            user_prompt_text = "[USER_PROMPT_NOT_FOUND_IN_COSMOS_MESSAGES_CONTAINER]"
 
         # --- Rest of the feedback saving logic remains the same ---
         feedback_id = str(uuid.uuid4())
@@ -601,7 +601,7 @@ def register_route_backend_feedback(bp):
             return jsonify({'error': 'Feedback not found'}), 404
         except Exception as e:
             log_event(
-                '[FeedbackLifecycle] Failed to update feedback archive state',
+                '[FEEDBACK_LIFECYCLE] Failed to update feedback archive state',
                 {'feedback_id': feedbackId, 'error': str(e)},
                 level=logging.ERROR,
             )
@@ -645,7 +645,7 @@ def register_route_backend_feedback(bp):
             return jsonify({'error': 'Feedback not found'}), 404
         except Exception as e:
             log_event(
-                '[FeedbackLifecycle] Failed to delete feedback',
+                '[FEEDBACK_LIFECYCLE] Failed to delete feedback',
                 {'feedback_id': feedbackId, 'error': str(e)},
                 level=logging.ERROR,
             )

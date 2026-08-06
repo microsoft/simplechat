@@ -127,7 +127,7 @@ def register_route_backend_notifications(bp):
             })
         except Exception as e:
             log_event(
-                "[Notifications] Chat completion event request failed.",
+                "[NOTIFICATIONS] Chat completion event request failed.",
                 extra={
                     "user_id": user_id,
                     "error": str(e),
@@ -161,7 +161,7 @@ def register_route_backend_notifications(bp):
             })
         except Exception as e:
             log_event(
-                "[Notifications] Completion audio status request failed.",
+                "[NOTIFICATIONS] Completion audio status request failed.",
                 extra={"error": str(e)},
                 level=logging.ERROR,
                 exceptionTraceback=True,

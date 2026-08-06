@@ -124,7 +124,7 @@ def _build_conversation_cache_access_parameters(user_id):
         group_docs = get_user_groups(user_id)
     except Exception as exc:
         log_event(
-            f"[ConversationCache] Failed to build group access cache fingerprint for {user_id}: {exc}",
+            f"[CONVERSATION_CACHE] Failed to build group access cache fingerprint for {user_id}: {exc}",
             level=logging.WARNING,
             exceptionTraceback=True,
             debug_only=True,
@@ -636,7 +636,7 @@ def _load_collaboration_conversations_for_feed(user_id):
         unread_by_conversation = _load_unread_collaboration_notification_map(user_id)
     except Exception as exc:
         log_event(
-            f'[ConversationFeed] Failed to load collaboration unread state: {exc}',
+            f'[CONVERSATION_FEED] Failed to load collaboration unread state: {exc}',
             level=logging.WARNING,
             exceptionTraceback=True,
         )
@@ -687,7 +687,7 @@ def _build_conversation_feed(user_id, page_size, source_offsets, include_priorit
         collaboration_conversations = _load_collaboration_conversations_for_feed(user_id)
     except Exception as exc:
         log_event(
-            f'[ConversationFeed] Failed to load collaborative conversations: {exc}',
+            f'[CONVERSATION_FEED] Failed to load collaborative conversations: {exc}',
             level=logging.WARNING,
             exceptionTraceback=True,
         )
@@ -828,7 +828,7 @@ def _invalidate_conversation_cache_after_message_mutation(conversation_id, user_
         conversation_item = _authorize_personal_conversation_read(user_id, conversation_id)
     except Exception as exc:
         log_event(
-            f"[ConversationCache] Failed to load conversation {conversation_id} for message mutation invalidation: {exc}",
+            f"[CONVERSATION_CACHE] Failed to load conversation {conversation_id} for message mutation invalidation: {exc}",
             level=logging.WARNING,
             exceptionTraceback=True,
             debug_only=True,
@@ -1174,7 +1174,7 @@ def register_route_backend_conversations(bp):
             return jsonify(feed_payload), 200
         except Exception as exc:
             log_event(
-                f'[ConversationFeed] Failed to load feed: {exc}',
+                f'[CONVERSATION_FEED] Failed to load feed: {exc}',
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
@@ -1235,7 +1235,7 @@ def register_route_backend_conversations(bp):
                 bump_conversation_cache_version(user_id, reason="conversation_forked")
             except Exception as cache_error:
                 log_event(
-                    f'[ConversationFork] Fork created but cache invalidation failed: {cache_error}',
+                    f'[CONVERSATION_FORK] Fork created but cache invalidation failed: {cache_error}',
                     level=logging.WARNING,
                     extra={
                         'fork_conversation_id': fork_conversation['id'],
@@ -1251,7 +1251,7 @@ def register_route_backend_conversations(bp):
             return jsonify({'error': 'The selected assistant message was not found'}), 404
         except ValueError as validation_error:
             log_event(
-                f'[ConversationFork] Validation failed while creating conversation fork: {validation_error}',
+                f'[CONVERSATION_FORK] Validation failed while creating conversation fork: {validation_error}',
                 level=logging.WARNING,
                 exceptionTraceback=True,
                 extra={
@@ -1263,7 +1263,7 @@ def register_route_backend_conversations(bp):
             return jsonify({'error': 'Invalid request'}), 400
         except ConversationForkConflictError as conflict_error:
             log_event(
-                f'[ConversationFork] Conflict while creating conversation fork: {conflict_error}',
+                f'[CONVERSATION_FORK] Conflict while creating conversation fork: {conflict_error}',
                 level=logging.WARNING,
                 extra={
                     'source_conversation_id': conversation_id,
@@ -1274,7 +1274,7 @@ def register_route_backend_conversations(bp):
             return jsonify({'error': 'Conversation fork conflict'}), 409
         except Exception as error:
             log_event(
-                f'[ConversationFork] Failed to create conversation fork: {error}',
+                f'[CONVERSATION_FORK] Failed to create conversation fork: {error}',
                 level=logging.ERROR,
                 exceptionTraceback=True,
                 extra={
@@ -1403,13 +1403,13 @@ def register_route_backend_conversations(bp):
                     invalidate_personal_search_cache(conversation_item.get('user_id'))
                 if workspace_delete_result.get('failed_documents'):
                     log_event(
-                        f"[ConversationDelete] Failed to delete some selected linked workspace documents for {conversation_id}",
+                        f"[CONVERSATION_DELETE] Failed to delete some selected linked workspace documents for {conversation_id}",
                         workspace_delete_result,
                         level=logging.WARNING,
                     )
             except Exception as workspace_delete_error:
                 log_event(
-                    f"[ConversationDelete] Failed to delete selected linked workspace documents for {conversation_id}: {workspace_delete_error}",
+                    f"[CONVERSATION_DELETE] Failed to delete selected linked workspace documents for {conversation_id}: {workspace_delete_error}",
                     level=logging.WARNING,
                     exceptionTraceback=True,
                 )
@@ -1814,7 +1814,7 @@ def register_route_backend_conversations(bp):
                 )
             except Exception as linked_documents_error:
                 log_event(
-                    f"[ConversationMetadata] Failed to list linked workspace documents for {conversation_id}: {linked_documents_error}",
+                    f"[CONVERSATION_METADATA] Failed to list linked workspace documents for {conversation_id}: {linked_documents_error}",
                     level=logging.WARNING,
                     exceptionTraceback=True,
                 )
@@ -2338,7 +2338,7 @@ def register_route_backend_conversations(bp):
             
         except Exception as e:
             log_event(
-                f'[ConversationSearch] Failed to search conversations: {e}',
+                f'[CONVERSATION_SEARCH] Failed to search conversations: {e}',
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )

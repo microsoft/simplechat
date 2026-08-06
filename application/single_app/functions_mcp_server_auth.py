@@ -166,7 +166,7 @@ def validate_inbound_mcp_request(flask_request, token_validator=None):
     is_valid, token_claims = token_validator(token)
     if not is_valid or not isinstance(token_claims, dict):
         log_event(
-            "[InboundMCP] Inbound MCP bearer token validation failed.",
+            "[INBOUND_MCP] Inbound MCP bearer token validation failed.",
             extra={"reason": str(token_claims)},
             level=logging.WARNING,
             debug_only=True,
@@ -302,7 +302,7 @@ def inbound_mcp_required_blueprint():
         runtime_config = get_inbound_mcp_runtime_config()
         if not runtime_config.get("enable_inbound_mcp_server"):
             log_event(
-                "[InboundMCP] Inbound MCP request rejected because the server is disabled.",
+                "[INBOUND_MCP] Inbound MCP request rejected because the server is disabled.",
                 extra={
                     "path": request.path,
                     "method": request.method,
@@ -325,7 +325,7 @@ def inbound_mcp_required_blueprint():
             g.inbound_mcp_auth_context = validate_inbound_mcp_request(request)
         except InboundMcpAuthError as auth_error:
             log_event(
-                "[InboundMCP] Inbound MCP request rejected by auth guard.",
+                "[INBOUND_MCP] Inbound MCP request rejected by auth guard.",
                 extra={
                     "path": request.path,
                     "method": request.method,

@@ -705,7 +705,7 @@ def register_route_backend_workflows(bp):
                 return jsonify({'error': 'The model did not return workflow instructions.'}), 502
 
             log_event(
-                '[WorkflowInstructions] Workflow instructions drafted.',
+                '[WORKFLOW_INSTRUCTIONS] Workflow instructions drafted.',
                 extra={
                     'user_id': str(user_id),
                     'workflow_scope': workflow_scope,
@@ -716,7 +716,7 @@ def register_route_backend_workflows(bp):
             return jsonify({'success': True, 'instructions': instructions})
         except Exception as exc:
             log_event(
-                f'[WorkflowInstructions] Error drafting workflow instructions: {exc}',
+                f'[WORKFLOW_INSTRUCTIONS] Error drafting workflow instructions: {exc}',
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
@@ -745,7 +745,7 @@ def register_route_backend_workflows(bp):
             return jsonify({'sources': _collect_workflow_file_sync_sources(user_id)})
         except Exception as exc:
             log_event(
-                f'[WorkflowRoutes] Failed to load workflow File Sync sources: {exc}',
+                f'[WORKFLOW_ROUTES] Failed to load workflow File Sync sources: {exc}',
                 extra={'user_id': user_id},
                 level=logging.ERROR,
                 exceptionTraceback=True,
@@ -773,7 +773,7 @@ def register_route_backend_workflows(bp):
             return jsonify({'error': str(exc)}), 400
         except Exception as exc:
             log_event(
-                f'[WorkflowRoutes] Failed to save workflow: {exc}',
+                f'[WORKFLOW_ROUTES] Failed to save workflow: {exc}',
                 extra={'user_id': user_id},
                 level=logging.ERROR,
                 exceptionTraceback=True,
@@ -1053,7 +1053,7 @@ def register_route_backend_workflows(bp):
             return jsonify({'error': str(exc)}), 403
         except Exception as exc:
             log_event(
-                f'[WorkflowRoutes] Failed to load group workflow File Sync sources: {exc}',
+                f'[WORKFLOW_ROUTES] Failed to load group workflow File Sync sources: {exc}',
                 extra={'user_id': user_id},
                 level=logging.ERROR,
                 exceptionTraceback=True,
@@ -1080,7 +1080,7 @@ def register_route_backend_workflows(bp):
             return jsonify({'error': str(exc)}), 403
         except Exception as exc:
             log_event(
-                f'[WorkflowRoutes] Failed to load group workflow agents: {exc}',
+                f'[WORKFLOW_ROUTES] Failed to load group workflow agents: {exc}',
                 extra={'user_id': user_id},
                 level=logging.ERROR,
                 exceptionTraceback=True,
@@ -1116,7 +1116,7 @@ def register_route_backend_workflows(bp):
             return jsonify({'error': str(exc)}), 403
         except Exception as exc:
             log_event(
-                f'[WorkflowRoutes] Failed to save group workflow: {exc}',
+                f'[WORKFLOW_ROUTES] Failed to save group workflow: {exc}',
                 extra={'user_id': user_id},
                 level=logging.ERROR,
                 exceptionTraceback=True,
@@ -1462,7 +1462,7 @@ def register_route_backend_workflows(bp):
             return jsonify({'error': str(exc)}), 400
         except Exception as exc:
             log_event(
-                f'[WorkflowRoutes] Failed to load group workflow activity snapshot: {exc}',
+                f'[WORKFLOW_ROUTES] Failed to load group workflow activity snapshot: {exc}',
                 extra={
                     'user_id': user_id,
                     'conversation_id': conversation_id,
@@ -1504,7 +1504,7 @@ def register_route_backend_workflows(bp):
             return jsonify({'error': str(exc)}), 400
         except Exception as exc:
             log_event(
-                f'[WorkflowRoutes] Failed to initialize group workflow activity stream: {exc}',
+                f'[WORKFLOW_ROUTES] Failed to initialize group workflow activity stream: {exc}',
                 extra={
                     'user_id': user_id,
                     'conversation_id': conversation_id,
@@ -1630,7 +1630,7 @@ def register_route_backend_workflows(bp):
             return jsonify({'error': str(exc)}), 400
         except Exception as exc:
             log_event(
-                f'[WorkflowRoutes] Failed to load workflow activity snapshot: {exc}',
+                f'[WORKFLOW_ROUTES] Failed to load workflow activity snapshot: {exc}',
                 extra={
                     'user_id': user_id,
                     'conversation_id': conversation_id,
@@ -1668,7 +1668,7 @@ def register_route_backend_workflows(bp):
             return jsonify({'error': str(exc)}), 400
         except Exception as exc:
             log_event(
-                f'[WorkflowRoutes] Failed to initialize workflow activity stream: {exc}',
+                f'[WORKFLOW_ROUTES] Failed to initialize workflow activity stream: {exc}',
                 extra={
                     'user_id': user_id,
                     'conversation_id': conversation_id,

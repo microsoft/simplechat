@@ -426,7 +426,7 @@ def _delete_standard_conversation_for_retention(
             )
         except CosmosResourceNotFoundError:
             debug_print(
-                f"[RetentionPolicy] Message {message_item.get('id')} was already deleted"
+                f"[RETENTION_POLICY] Message {message_item.get('id')} was already deleted"
             )
 
     thought_user_id = conversation_item.get('user_id')
@@ -467,7 +467,7 @@ def _delete_standard_conversation_for_retention(
         )
     except CosmosResourceNotFoundError:
         debug_print(
-            f"[RetentionPolicy] Conversation {conversation_id} was already deleted"
+            f"[RETENTION_POLICY] Conversation {conversation_id} was already deleted"
         )
 
     invalidate_conversation_cache_for_item(
@@ -877,7 +877,7 @@ def delete_aged_conversations(retention_days, workspace_type='personal', user_id
             ))
         except Exception as query_error:
             log_event(
-                "[RetentionPolicy] Conversation query failed",
+                "[RETENTION_POLICY] Conversation query failed",
                 {
                     'error': str(query_error),
                     'workspace_type': workspace_type,
@@ -885,7 +885,7 @@ def delete_aged_conversations(retention_days, workspace_type='personal', user_id
                 },
             )
             debug_print(
-                f"[RetentionPolicy] Failed querying {source['name']}: {query_error}"
+                f"[RETENTION_POLICY] Failed querying {source['name']}: {query_error}"
             )
             continue
 
@@ -900,7 +900,7 @@ def delete_aged_conversations(retention_days, workspace_type='personal', user_id
             )
         ]
         debug_print(
-            f"[RetentionPolicy] Found {len(aged_conversations)} aged "
+            f"[RETENTION_POLICY] Found {len(aged_conversations)} aged "
             f"{source['name']} conversations for {workspace_type}"
         )
 
@@ -924,19 +924,19 @@ def delete_aged_conversations(retention_days, workspace_type='personal', user_id
 
                 if deletion_detail is None:
                     debug_print(
-                        f"[RetentionPolicy] Skipped {conversation_id} because it "
+                        f"[RETENTION_POLICY] Skipped {conversation_id} because it "
                         "changed after selection"
                     )
                     continue
 
                 deleted_details.append(deletion_detail)
                 debug_print(
-                    f"[RetentionPolicy] Deleted {source['name']} conversation "
+                    f"[RETENTION_POLICY] Deleted {source['name']} conversation "
                     f"{conversation_id}"
                 )
             except CosmosResourceNotFoundError:
                 debug_print(
-                    f"[RetentionPolicy] Conversation {conversation_id} was already deleted"
+                    f"[RETENTION_POLICY] Conversation {conversation_id} was already deleted"
                 )
                 deleted_details.append({
                     'id': conversation_id,
@@ -946,7 +946,7 @@ def delete_aged_conversations(retention_days, workspace_type='personal', user_id
                 })
             except Exception as deletion_error:
                 log_event(
-                    "[RetentionPolicy] Conversation deletion failed",
+                    "[RETENTION_POLICY] Conversation deletion failed",
                     {
                         'error': str(deletion_error),
                         'conversation_id': conversation_id,
@@ -955,7 +955,7 @@ def delete_aged_conversations(retention_days, workspace_type='personal', user_id
                     },
                 )
                 debug_print(
-                    f"[RetentionPolicy] Failed deleting {conversation_id}: "
+                    f"[RETENTION_POLICY] Failed deleting {conversation_id}: "
                     f"{deletion_error}"
                 )
 

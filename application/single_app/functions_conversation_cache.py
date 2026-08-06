@@ -57,7 +57,7 @@ def get_conversation_cache_ttl_seconds(settings: Optional[Dict[str, Any]] = None
         return max(int(raw_ttl_seconds), 0)
     except (TypeError, ValueError):
         log_event(
-            "[ConversationCache] Invalid conversation cache TTL; using default.",
+            "[CONVERSATION_CACHE] Invalid conversation cache TTL; using default.",
             extra={"ttl_seconds": raw_ttl_seconds},
             level=logging.WARNING,
         )
@@ -283,7 +283,7 @@ def _get_redis_client():
         return app_settings_cache.get_app_cache_redis_client()
     except Exception as ex:
         log_event(
-            "[ConversationCache] Redis client lookup failed; bypassing conversation cache.",
+            "[CONVERSATION_CACHE] Redis client lookup failed; bypassing conversation cache.",
             extra={"error": str(ex)},
             level=logging.WARNING,
         )
@@ -313,7 +313,7 @@ def get_conversation_cache_version(user_id: str) -> Optional[int]:
     except Exception as ex:
         _record_conversation_cache_metric("read_failed", operation="version", reason="version_read_failed", error=ex)
         log_event(
-            "[ConversationCache] Failed to read conversation cache version.",
+            "[CONVERSATION_CACHE] Failed to read conversation cache version.",
             extra={"user_id": user_id, "error": str(ex)},
             level=logging.WARNING,
             exceptionTraceback=True,
@@ -332,7 +332,7 @@ def bump_conversation_cache_version(user_id: str, reason: str = "conversation_ch
     try:
         version = int(redis_client.incr(_get_version_doc_id(user_id)) or 0)
         log_event(
-            "[ConversationCache] Conversation cache invalidated.",
+            "[CONVERSATION_CACHE] Conversation cache invalidated.",
             extra={"reason": reason, "user_id": user_id, "version": version},
             level=logging.INFO,
             debug_only=True,
@@ -342,7 +342,7 @@ def bump_conversation_cache_version(user_id: str, reason: str = "conversation_ch
     except Exception as ex:
         _record_conversation_cache_metric("invalidate_failed", operation="version", reason=reason, error=ex)
         log_event(
-            "[ConversationCache] Failed to invalidate conversation cache.",
+            "[CONVERSATION_CACHE] Failed to invalidate conversation cache.",
             extra={"reason": reason, "user_id": user_id, "error": str(ex)},
             level=logging.WARNING,
             exceptionTraceback=True,
@@ -391,7 +391,7 @@ def _add_group_member_user_ids(user_ids: set[str], group_id: Any) -> None:
         group_doc = find_group_by_id(normalized_group_id)
     except Exception as ex:
         log_event(
-            "[ConversationCache] Failed to load group members for cache invalidation.",
+            "[CONVERSATION_CACHE] Failed to load group members for cache invalidation.",
             extra={"group_id": normalized_group_id, "error": str(ex)},
             level=logging.WARNING,
             exceptionTraceback=True,
@@ -455,7 +455,7 @@ def get_cached_conversation_payload(cache_key: str, settings: Optional[Dict[str,
     if not cache_settings.get("enabled"):
         _record_conversation_cache_metric("bypass", operation=operation, reason="disabled")
         log_event(
-            "[ConversationCache] Conversation cache read bypassed because cache is disabled.",
+            "[CONVERSATION_CACHE] Conversation cache read bypassed because cache is disabled.",
             extra={"cache_key_hash": _stable_hash(cache_key)[:16] if cache_key else ""},
             level=logging.INFO,
             debug_only=True,
@@ -477,7 +477,7 @@ def get_cached_conversation_payload(cache_key: str, settings: Optional[Dict[str,
     except Exception as ex:
         _record_conversation_cache_metric("read_failed", operation=operation, error=ex)
         log_event(
-            "[ConversationCache] Failed to read conversation cache payload.",
+            "[CONVERSATION_CACHE] Failed to read conversation cache payload.",
             extra={"cache_key_hash": _stable_hash(cache_key)[:16], "error": str(ex)},
             level=logging.WARNING,
             exceptionTraceback=True,
@@ -487,7 +487,7 @@ def get_cached_conversation_payload(cache_key: str, settings: Optional[Dict[str,
     if not isinstance(cached, dict):
         _record_conversation_cache_metric("miss", operation=operation)
         log_event(
-            "[ConversationCache] Conversation cache miss.",
+            "[CONVERSATION_CACHE] Conversation cache miss.",
             extra={"cache_key_hash": _stable_hash(cache_key)[:16]},
             level=logging.INFO,
             debug_only=True,
@@ -496,7 +496,7 @@ def get_cached_conversation_payload(cache_key: str, settings: Optional[Dict[str,
 
     _record_conversation_cache_metric("hit", operation=operation)
     log_event(
-        "[ConversationCache] Conversation cache hit.",
+        "[CONVERSATION_CACHE] Conversation cache hit.",
         extra={"cache_key_hash": _stable_hash(cache_key)[:16]},
         level=logging.INFO,
         debug_only=True,
@@ -516,7 +516,7 @@ def set_cached_conversation_payload(
     if not cache_settings.get("enabled"):
         _record_conversation_cache_metric("bypass", operation=operation, reason="disabled")
         log_event(
-            "[ConversationCache] Conversation cache write bypassed because cache is disabled.",
+            "[CONVERSATION_CACHE] Conversation cache write bypassed because cache is disabled.",
             extra={"cache_key_hash": _stable_hash(cache_key)[:16] if cache_key else ""},
             level=logging.INFO,
             debug_only=True,
@@ -536,7 +536,7 @@ def set_cached_conversation_payload(
             ttl_seconds=safe_ttl_seconds,
         )
         log_event(
-            "[ConversationCache] Conversation cache write bypassed because TTL is disabled.",
+            "[CONVERSATION_CACHE] Conversation cache write bypassed because TTL is disabled.",
             extra={"cache_key_hash": _stable_hash(cache_key)[:16] if cache_key else ""},
             level=logging.INFO,
             debug_only=True,
@@ -571,7 +571,7 @@ def set_cached_conversation_payload(
             error=ex,
         )
         log_event(
-            "[ConversationCache] Failed to write conversation cache payload.",
+            "[CONVERSATION_CACHE] Failed to write conversation cache payload.",
             extra={"cache_key_hash": _stable_hash(cache_key)[:16], "error": str(ex)},
             level=logging.WARNING,
             exceptionTraceback=True,

@@ -1122,7 +1122,7 @@ async def _generate_batch_entries(
 
         mismatch_count += 1
         log_event(
-            '[Tabular Generated Output] Background export batch attempt mismatch',
+            '[TABULAR_GENERATED_OUTPUT] Background export batch attempt mismatch',
             {
                 'run_id': run_id,
                 'batch_number': batch_number,
@@ -1414,7 +1414,7 @@ def _query_scheduler_candidates_by_status(status, scan_limit, settings):
         return eligible_candidates
     except Exception as exc:
         log_event(
-            '[Tabular Generated Output] Scheduler candidate query failed',
+            '[TABULAR_GENERATED_OUTPUT] Scheduler candidate query failed',
             {
                 'status': status,
                 'scan_limit': per_status_limit,
@@ -1796,7 +1796,7 @@ def resume_tabular_generated_output_run(user_id, run_id):
     submitted = submit_tabular_generated_output_run(normalized_run_id, normalized_user_id)
     run['submitted_to_executor'] = submitted
     log_event(
-        '[Tabular Generated Output] Background export manually resumed',
+        '[TABULAR_GENERATED_OUTPUT] Background export manually resumed',
         {
             'run_id': normalized_run_id,
             'conversation_id': run.get('conversation_id'),
@@ -1881,7 +1881,7 @@ def cancel_tabular_generated_output_run(user_id, run_id):
             'run': _build_run_public_status(current_run, settings=settings),
         }
     log_event(
-        '[Tabular Generated Output] Background export canceled',
+        '[TABULAR_GENERATED_OUTPUT] Background export canceled',
         {
             'run_id': normalized_run_id,
             'conversation_id': run.get('conversation_id'),
@@ -2019,7 +2019,7 @@ def _try_claim_run(user_id, run_id, settings):
         status_code = getattr(exc, 'status_code', None)
         if status_code not in (409, 412):
             log_event(
-                '[Tabular Generated Output] Background export run claim failed',
+                '[TABULAR_GENERATED_OUTPUT] Background export run claim failed',
                 {'run_id': run_id, 'user_id': user_id, 'status_code': status_code, 'error': str(exc)},
                 level=logging.WARNING,
             )
@@ -2041,7 +2041,7 @@ def _mark_run_failed(run, error_message):
     except TabularExportLeaseLostError:
         return _read_run(run.get('user_id'), run.get('id'))
     log_event(
-        '[Tabular Generated Output] Background export run failed',
+        '[TABULAR_GENERATED_OUTPUT] Background export run failed',
         {
             'run_id': run.get('id'),
             'conversation_id': run.get('conversation_id'),
@@ -2093,7 +2093,7 @@ def _mark_run_retryable(run, error_message, settings):
     except TabularExportLeaseLostError:
         return _read_run(run.get('user_id'), run.get('id'))
     log_event(
-        '[Tabular Generated Output] Background export run requeued after transient failure',
+        '[TABULAR_GENERATED_OUTPUT] Background export run requeued after transient failure',
         {
             'run_id': run.get('id'),
             'conversation_id': run.get('conversation_id'),
@@ -2178,7 +2178,7 @@ def _log_progress_if_due(run, last_logged_at):
     completed_batches = _safe_int(run.get('completed_batches'))
     progress_percent = round((completed_batches / batch_count) * 100, 2) if batch_count else 0.0
     log_event(
-        '[Tabular Generated Output] Background export progress',
+        '[TABULAR_GENERATED_OUTPUT] Background export progress',
         {
             'run_id': run.get('id'),
             'conversation_id': run.get('conversation_id'),
@@ -2340,7 +2340,7 @@ def _complete_run(run):
     })
     run = _replace_claimed_run(run)
     log_event(
-        '[Tabular Generated Output] Background export completed',
+        '[TABULAR_GENERATED_OUTPUT] Background export completed',
         {
             'run_id': run.get('id'),
             'conversation_id': run.get('conversation_id'),
@@ -2430,7 +2430,7 @@ def _build_batch_window(run, input_batches, user_id, run_id, window_start, windo
 
         batch_rows = _load_input_batch_rows(run, input_batches, user_id, run_id, batch_number, batch_count)
         log_event(
-            '[Tabular Generated Output] Building background structured export batch',
+            '[TABULAR_GENERATED_OUTPUT] Building background structured export batch',
             {
                 'run_id': run_id,
                 'source_file_name': run.get('source_file_name'),
@@ -2647,7 +2647,7 @@ def process_tabular_generated_output_run(run_id, user_id):
                 raise ValueError('Input batches blob was not a JSON array')
 
         log_event(
-            '[Tabular Generated Output] Background export run started',
+            '[TABULAR_GENERATED_OUTPUT] Background export run started',
             {
                 'run_id': normalized_run_id,
                 'conversation_id': run.get('conversation_id'),
@@ -2682,7 +2682,7 @@ def process_tabular_generated_output_run(run_id, user_id):
             generation_error = None
             if batch_requests:
                 log_event(
-                    '[Tabular Generated Output] Building background structured export batch window',
+                    '[TABULAR_GENERATED_OUTPUT] Building background structured export batch window',
                     {
                         'run_id': normalized_run_id,
                         'source_file_name': run.get('source_file_name'),
@@ -2909,7 +2909,7 @@ def queue_tabular_generated_output_run(
     run['submitted_to_executor'] = submitted
 
     log_event(
-        '[Tabular Generated Output] Queued background export run',
+        '[TABULAR_GENERATED_OUTPUT] Queued background export run',
         {
             'run_id': run_id,
             'conversation_id': normalized_conversation_id,
@@ -2992,7 +2992,7 @@ def check_due_tabular_generated_output_runs_once(limit=None):
 
     if scanned_candidates or candidates:
         log_event(
-            '[Tabular Generated Output] Background scheduler scan result',
+            '[TABULAR_GENERATED_OUTPUT] Background scheduler scan result',
             {
                 'scanned_count': len(scanned_candidates),
                 'candidate_count': len(candidates),

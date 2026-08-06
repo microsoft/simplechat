@@ -1110,7 +1110,7 @@ def get_container_throughputs(settings=None, resource_ids=None, refresh_id=''):
             )
         except Exception as exc:
             log_event(
-                '[CosmosThroughput] Failed to read container throughput settings.',
+                '[COSMOS_THROUGHPUT] Failed to read container throughput settings.',
                 extra={'container_name': container_name, 'error': str(exc), 'refresh_id': refresh_id},
                 level=logging.WARNING,
             )
@@ -1203,7 +1203,7 @@ def _migrate_throughput_to_autoscale(current):
             return migrated
     except Exception as exc:
         log_event(
-            '[CosmosThroughput] Autoscale migration submitted but follow-up throughput read failed.',
+            '[COSMOS_THROUGHPUT] Autoscale migration submitted but follow-up throughput read failed.',
             extra={
                 'scope': current.get('scope'),
                 'container_name': current.get('container_name', ''),
@@ -1239,7 +1239,7 @@ def _apply_throughput_update(current, target_ru, initiated_by, reason, target_mo
         )
 
     log_event(
-        '[CosmosThroughput] Throughput update submitted.',
+        '[COSMOS_THROUGHPUT] Throughput update submitted.',
         extra={
             'scope': current.get('scope'),
             'container_name': current.get('container_name', ''),
@@ -1696,7 +1696,7 @@ def get_cosmos_throughput_status(settings=None, include_metrics=True, refresh_id
     except Exception as exc:
         throughput_error = str(exc)
         log_event(
-            '[CosmosThroughput] Failed to query Cosmos database throughput settings.',
+            '[COSMOS_THROUGHPUT] Failed to query Cosmos database throughput settings.',
             extra={'error': throughput_error, 'database_id': resource_ids.get('database_id'), 'refresh_id': refresh_id},
             level=logging.WARNING,
         )
@@ -1717,7 +1717,7 @@ def get_cosmos_throughput_status(settings=None, include_metrics=True, refresh_id
     except Exception as exc:
         container_error = str(exc)
         log_event(
-            '[CosmosThroughput] Failed to query Cosmos container throughput settings.',
+            '[COSMOS_THROUGHPUT] Failed to query Cosmos container throughput settings.',
             extra={'error': container_error, 'database_id': resource_ids.get('database_id'), 'refresh_id': refresh_id},
             level=logging.WARNING,
         )
@@ -1730,7 +1730,7 @@ def get_cosmos_throughput_status(settings=None, include_metrics=True, refresh_id
         except Exception as exc:
             metric_error = str(exc)
             log_event(
-                '[CosmosThroughput] Failed to query Cosmos metrics.',
+                '[COSMOS_THROUGHPUT] Failed to query Cosmos metrics.',
                 extra={'error': metric_error, 'account_id': resource_ids.get('account_id'), 'refresh_id': refresh_id},
                 level=logging.WARNING,
             )
@@ -2292,7 +2292,7 @@ def evaluate_and_apply_cosmos_throughput_scaling(settings, current_time=None, re
         }
     except Exception as exc:
         log_event(
-            '[CosmosThroughput] Autoscale evaluation failed.',
+            '[COSMOS_THROUGHPUT] Autoscale evaluation failed.',
             extra={'error': str(exc)},
             level=logging.ERROR,
             exceptionTraceback=True,

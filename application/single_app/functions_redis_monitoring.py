@@ -36,7 +36,7 @@ REDIS_EXPLORER_SENSITIVE_FIELD_TOKENS = REDIS_EXPLORER_RESTRICTED_KEY_TOKENS + (
     "connection",
     "key",
 )
-REDIS_EXPLORER_REDACTED_VALUE = "[redacted]"
+REDIS_EXPLORER_REDACTED_VALUE = "[REDACTED]"
 REDIS_EXPLORER_RESTRICTED_PREVIEW = (
     "Preview restricted because the Redis key name indicates session, token, cookie, or credential data."
 )

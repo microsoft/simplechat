@@ -44,7 +44,7 @@ def _get_redis_client():
         return app_settings_cache.get_app_cache_redis_client()
     except Exception as ex:
         log_event(
-            "[ChatBootstrapCache] Redis client lookup failed; using Cosmos cache fallback.",
+            "[CHAT_BOOTSTRAP_CACHE] Redis client lookup failed; using Cosmos cache fallback.",
             extra={"error": str(ex)},
             level=logging.WARNING,
         )
@@ -59,7 +59,7 @@ def _get_app_settings_version() -> int:
         return int(getter() or 0)
     except Exception as ex:
         log_event(
-            "[ChatBootstrapCache] App settings version lookup failed.",
+            "[CHAT_BOOTSTRAP_CACHE] App settings version lookup failed.",
             extra={"error": str(ex)},
             level=logging.WARNING,
         )
@@ -74,7 +74,7 @@ def _get_governance_version() -> int:
         return int(getter() or 0)
     except Exception as ex:
         log_event(
-            "[ChatBootstrapCache] Governance cache version lookup failed.",
+            "[CHAT_BOOTSTRAP_CACHE] Governance cache version lookup failed.",
             extra={"error": str(ex)},
             level=logging.WARNING,
         )
@@ -145,7 +145,7 @@ def get_cached_chat_bootstrap_payload(cache_key: str) -> Optional[Dict[str, Any]
     )
     if not isinstance(cached, dict):
         log_event(
-            "[ChatBootstrapCache] Chat bootstrap cache miss.",
+            "[CHAT_BOOTSTRAP_CACHE] Chat bootstrap cache miss.",
             extra={"cache_key_hash": _stable_hash(cache_key)[:16]},
             level=logging.INFO,
             debug_only=True,
@@ -153,7 +153,7 @@ def get_cached_chat_bootstrap_payload(cache_key: str) -> Optional[Dict[str, Any]
         return None
 
     log_event(
-        "[ChatBootstrapCache] Chat bootstrap cache hit.",
+        "[CHAT_BOOTSTRAP_CACHE] Chat bootstrap cache hit.",
         extra={"cache_key_hash": _stable_hash(cache_key)[:16]},
         level=logging.INFO,
         debug_only=True,
@@ -181,7 +181,7 @@ def bump_chat_bootstrap_global_cache_version(reason: str = "global_bootstrap_cha
             description="Global chat bootstrap catalog cache version.",
         )
         log_event(
-            "[ChatBootstrapCache] Global chat bootstrap cache invalidated.",
+            "[CHAT_BOOTSTRAP_CACHE] Global chat bootstrap cache invalidated.",
             extra={"reason": reason, "version": version},
             level=logging.INFO,
             debug_only=True,
@@ -189,7 +189,7 @@ def bump_chat_bootstrap_global_cache_version(reason: str = "global_bootstrap_cha
         return version
     except Exception as ex:
         log_event(
-            "[ChatBootstrapCache] Failed to invalidate global chat bootstrap cache.",
+            "[CHAT_BOOTSTRAP_CACHE] Failed to invalidate global chat bootstrap cache.",
             extra={"reason": reason, "error": str(ex)},
             level=logging.WARNING,
             exceptionTraceback=True,
@@ -205,7 +205,7 @@ def bump_chat_bootstrap_user_cache_version(user_id: str, reason: str = "user_boo
             description="User chat bootstrap catalog cache version.",
         )
         log_event(
-            "[ChatBootstrapCache] User chat bootstrap cache invalidated.",
+            "[CHAT_BOOTSTRAP_CACHE] User chat bootstrap cache invalidated.",
             extra={"reason": reason, "user_id": user_id, "version": version},
             level=logging.INFO,
             debug_only=True,
@@ -213,7 +213,7 @@ def bump_chat_bootstrap_user_cache_version(user_id: str, reason: str = "user_boo
         return version
     except Exception as ex:
         log_event(
-            "[ChatBootstrapCache] Failed to invalidate user chat bootstrap cache.",
+            "[CHAT_BOOTSTRAP_CACHE] Failed to invalidate user chat bootstrap cache.",
             extra={"reason": reason, "user_id": user_id, "error": str(ex)},
             level=logging.WARNING,
             exceptionTraceback=True,

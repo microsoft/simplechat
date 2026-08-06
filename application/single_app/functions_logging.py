@@ -96,7 +96,7 @@ def delete_file_processing_logs(
             deleted_count += 1
     except Exception as exc:
         log_event(
-            '[FileProcessingLogs] Cleanup failed.',
+            '[FILE_PROCESSING_LOGS] Cleanup failed.',
             extra={
                 'delete_all': delete_all,
                 'deleted_count': deleted_count,
@@ -108,7 +108,7 @@ def delete_file_processing_logs(
         raise FileProcessingLogDeletionError(deleted_count) from exc
 
     log_event(
-        '[FileProcessingLogs] Cleanup completed.',
+        '[FILE_PROCESSING_LOGS] Cleanup completed.',
         extra={
             'delete_all': delete_all,
             'deleted_count': deleted_count,

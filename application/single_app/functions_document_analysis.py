@@ -972,7 +972,7 @@ def run_document_analysis(
     )
 
     debug_print(
-        '[DocumentAnalysis] Starting analysis | '
+        '[DOCUMENT_ANALYSIS] Starting analysis | '
         f'user_id={user_id} | '
         f"documents={len(targets.get('document_ids', []))} | "
         f"doc_scope={targets.get('doc_scope')} | "
@@ -1097,7 +1097,7 @@ def run_document_analysis(
         windows = document_run.get('windows') or []
         document_index = document_run.get('document_index') or 1
         debug_print(
-            '[DocumentAnalysis] Starting document | '
+            '[DOCUMENT_ANALYSIS] Starting document | '
             f'document_index={document_index} | '
             f"document_count={coverage.get('document_count', 0)} | "
             f'document_id={document_id} | '
@@ -1140,7 +1140,7 @@ def run_document_analysis(
             document_summary['ranges'].append(window_range)
             window_label = _build_window_label(document_name, window_range)
             debug_print(
-                '[DocumentAnalysis] Starting window | '
+                '[DOCUMENT_ANALYSIS] Starting window | '
                 f'document_id={document_id} | '
                 f'document_name={document_name} | '
                 f"window={window_range.get('window_number')} | "
@@ -1215,7 +1215,7 @@ def run_document_analysis(
                 except Exception as exc:
                     last_error = str(exc)
                     debug_print(
-                        '[DocumentAnalysis] Window attempt failed | '
+                        '[DOCUMENT_ANALYSIS] Window attempt failed | '
                         f'document_id={document_id} | '
                         f'document_name={document_name} | '
                         f"window={window_range.get('window_number')} | "
@@ -1257,7 +1257,7 @@ def run_document_analysis(
 
             if analysis_text:
                 debug_print(
-                    '[DocumentAnalysis] Completed window | '
+                    '[DOCUMENT_ANALYSIS] Completed window | '
                     f'document_id={document_id} | '
                     f'document_name={document_name} | '
                     f"window={window_range.get('window_number')} | "
@@ -1311,7 +1311,7 @@ def run_document_analysis(
                     })
             else:
                 debug_print(
-                    '[DocumentAnalysis] Window failed | '
+                    '[DOCUMENT_ANALYSIS] Window failed | '
                     f'document_id={document_id} | '
                     f'document_name={document_name} | '
                     f"window={window_range.get('window_number')} | "
@@ -1398,7 +1398,7 @@ def run_document_analysis(
                 'progress': _build_progress_snapshot(coverage),
             })
         debug_print(
-            '[DocumentAnalysis] Completed document | '
+            '[DOCUMENT_ANALYSIS] Completed document | '
             f'document_index={document_index} | '
             f'document_id={document_id} | '
             f'document_name={document_name} | '
@@ -1410,7 +1410,7 @@ def run_document_analysis(
 
     if not reduction_items:
         debug_print(
-            '[DocumentAnalysis] Analysis failed | '
+            '[DOCUMENT_ANALYSIS] Analysis failed | '
             f'user_id={user_id} | error=No document windows were analyzed successfully'
         )
         raise RuntimeError('No document windows were analyzed successfully.')
@@ -1435,7 +1435,7 @@ def run_document_analysis(
         )
         if final_analysis_reply:
             debug_print(
-                '[DocumentAnalysis] Completed structured merge | '
+                '[DOCUMENT_ANALYSIS] Completed structured merge | '
                 f'items={len(current_items)}'
             )
 
@@ -1475,7 +1475,7 @@ def run_document_analysis(
                     phase_total_steps=reduction_step_total,
                 )
                 debug_print(
-                    '[DocumentAnalysis] Starting reduction batch | '
+                    '[DOCUMENT_ANALYSIS] Starting reduction batch | '
                     f'round={reduction_round} | '
                     f'batch={batch_index}/{len(batches)} | '
                     f'items={len(batch_items)}'
@@ -1515,7 +1515,7 @@ def run_document_analysis(
                 )
                 if not reduced_text:
                     debug_print(
-                        '[DocumentAnalysis] Reduction failed | '
+                        '[DOCUMENT_ANALYSIS] Reduction failed | '
                         f'round={reduction_round} | '
                         f'batch={batch_index} | error=empty reduction response'
                     )
@@ -1525,7 +1525,7 @@ def run_document_analysis(
 
                 source_labels = [item.get('label') for item in batch_items]
                 debug_print(
-                    '[DocumentAnalysis] Completed reduction batch | '
+                    '[DOCUMENT_ANALYSIS] Completed reduction batch | '
                     f'round={reduction_round} | '
                     f'batch={batch_index}/{len(batches)} | '
                     f'sources={len(source_labels)}'
@@ -1574,7 +1574,7 @@ def run_document_analysis(
         })
 
     log_event(
-        '[DocumentAnalysis] Completed document analysis',
+        '[DOCUMENT_ANALYSIS] Completed document analysis',
         extra={
             'user_id': user_id,
             'document_count': coverage.get('document_count', 0),
@@ -1586,7 +1586,7 @@ def run_document_analysis(
         level=logging.INFO,
     )
     debug_print(
-        '[DocumentAnalysis] Completed analysis | '
+        '[DOCUMENT_ANALYSIS] Completed analysis | '
         f"documents={coverage.get('document_count', 0)} | "
         f"windows={coverage.get('total_windows', 0)} | "
         f"processed={coverage.get('processed_windows', 0)} | "

@@ -41,7 +41,7 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
         }
         self.tool_invocations.append(tool_citation)
         log_event(
-            f"[Agent Citations] Tool execution logged: {tool_name}",
+            f"[AGENT_CITATIONS] Tool execution logged: {tool_name}",
             extra={
                 "agent": self.name,
                 "tool_name": tool_name,
@@ -55,7 +55,7 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
         Plugin logging is now handled by the @plugin_function_logger decorator system.
         Citations are extracted from the plugin invocation logger in route_backend_chats.py.
         """
-        log_event(f"[Agent Logging] Skipping plugin method patching - using plugin invocation logger instead", 
+        log_event(f"[AGENT_LOGGING] Skipping plugin method patching - using plugin invocation logger instead",
                  extra={"agent_name": getattr(self, 'name', 'unknown')}, 
                  level=logging.DEBUG)
         pass
@@ -137,7 +137,7 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
         
         # Log the prompt/messages before sending to LLM
         log_event(
-            "[Logging Agent Request] Agent LLM prompt",
+            "[LOGGING_AGENT_REQUEST] Agent LLM prompt",
             extra={
                 "agent": self.name,
                 "prompt": [m.content[:30] for m in args[0]] if args else None
@@ -157,7 +157,7 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
             result = super().invoke(*args, **kwargs)
 
             log_event(
-                "[Logging Agent Request] Result received", 
+                "[LOGGING_AGENT_REQUEST] Result received",
                 extra={
                     "agent": self.name,
                     "result_type": type(result).__name__
@@ -176,7 +176,7 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
                 response = await result
 
             log_event(
-                "[Logging Agent Request] Response received",
+                "[LOGGING_AGENT_REQUEST] Response received",
                 extra={
                     "agent": self.name,
                     "response_type": type(response).__name__,
@@ -194,7 +194,7 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
         finally:
             usage = getattr(response, "usage", None)
             log_event(
-                "[Logging Agent Response][Usage] Agent LLM response",
+                "[LOGGING_AGENT_RESPONSE][Usage] Agent LLM response",
                 extra={
                     "agent": self.name,
                     "response": str(response)[:100] if response else None,
@@ -225,7 +225,7 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
                 self.tool_invocations.append(tool_citation)
             
             log_event(
-                "[Agent Citations] Simplified fallback citation created",
+                "[AGENT_CITATIONS] Simplified fallback citation created",
                 extra={
                     "agent": self.name,
                     "fallback_citations": len(self.tool_invocations),
@@ -235,7 +235,7 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
             
         except Exception as e:
             log_event(
-                "[Agent Citations] Error in simplified citation capture",
+                "[AGENT_CITATIONS] Error in simplified citation capture",
                 extra={"agent": self.name, "error": str(e)},
                 level="WARNING"
             )

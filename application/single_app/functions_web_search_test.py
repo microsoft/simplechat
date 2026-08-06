@@ -340,7 +340,7 @@ def run_web_search_connection_test(
             details.append(f"Agent model: {model}.")
 
         log_event(
-            "[WebSearchTest] Foundry web search test completed",
+            "[WEB_SEARCH_TEST] Foundry web search test completed",
             extra={
                 "status": status,
                 "agent_id": foundry_settings.get("agent_id"),
@@ -361,7 +361,7 @@ def run_web_search_connection_test(
         category, message, guidance = _categorize_web_search_error(error)
         safe_error = _redact_sensitive_text(str(error), payload)
         log_event(
-            "[WebSearchTest] Foundry web search test failed",
+            "[WEB_SEARCH_TEST] Foundry web search test failed",
             extra={
                 "category": category,
                 "agent_id": foundry_settings.get("agent_id"),
