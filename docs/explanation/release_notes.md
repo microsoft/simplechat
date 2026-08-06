@@ -9,7 +9,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **Enhanced Citations Startup Storage Degradation**
     *   Prevented Enhanced Citations storage connectivity problems from blocking application startup when Cosmos DB is otherwise available.
     *   Deferred live storage container checks to upload/admin-test paths and added Admin Settings diagnostics for explicit storage validation.
-    *   (Ref: #1155, Enhanced Citations storage startup, `config.py`, `functions_documents.py`, Admin Settings)
+    *   (Ref: #1155, PR #1161, Enhanced Citations storage startup, `config.py`, `functions_documents.py`, Admin Settings)
 
 ### **(v0.250.125)**
 
