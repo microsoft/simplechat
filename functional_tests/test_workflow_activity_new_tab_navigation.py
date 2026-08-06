@@ -11,6 +11,7 @@ browser tab and do not fall back to navigating the current workspace tab.
 
 import sys
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -25,7 +26,7 @@ def test_activity_button_does_not_redirect_current_tab():
     config = _read('application/single_app/config.py')
     workflow_js = _read('application/single_app/static/js/workspace/workspace_workflows.js')
 
-    assert 'VERSION = "0.241.189"' in config
+    assert_app_version_at_least("0.241.189")
     assert 'function openWorkflowActivity(workflow)' in workflow_js
     assert 'const activityWindow = window.open("about:blank", "_blank");' in workflow_js
     assert 'activityWindow.opener = null;' in workflow_js

@@ -11,6 +11,7 @@ authentication boundaries and prevents regression of missing route decorators.
 import ast
 import sys
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -92,7 +93,7 @@ def collect_plugin_validation_routes() -> dict[str, dict[str, object]]:
 
 def test_plugin_validation_route_authentication_contract() -> None:
     """Plugin validation routes should require the expected runtime auth guards."""
-    assert read_config_version() == '0.241.206'
+    assert_app_version_at_least("0.241.206")
 
     routes = collect_plugin_validation_routes()
     expected_routes = {

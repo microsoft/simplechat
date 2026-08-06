@@ -11,6 +11,7 @@ with the WorkflowUser app role, and are enforced across UI and API surfaces.
 
 import json
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,9 +44,7 @@ def test_workflow_access_control_wiring():
     deployer_version = read_text("deployers/version.txt").strip()
     app_roles = json.loads(read_text("deployers/azurecli/appRegistrationRoles.json"))
 
-    assert 'VERSION = "0.250.062"' in config_content, (
-        "Expected config.py to be bumped for workflow access controls."
-    )
+    assert_app_version_at_least("0.250.062")
     assert 'WORKFLOW_USER_APP_ROLE = "WorkflowUser"' in settings_content, (
         "Expected a shared WorkflowUser app role constant."
     )

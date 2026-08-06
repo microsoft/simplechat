@@ -18,6 +18,7 @@ Azure Storage or Cosmos DB access.
 import ast
 import sys
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -44,7 +45,7 @@ def test_version_and_dependency_pin():
     config_text = read_text("application/single_app/config.py")
     requirements_text = read_text("application/single_app/requirements.txt")
 
-    assert 'VERSION = "0.250.072"' in config_text
+    assert_app_version_at_least("0.250.072")
     assert "azure-storage-file-share==12.25.0" in requirements_text
 
 

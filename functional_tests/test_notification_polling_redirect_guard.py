@@ -11,6 +11,7 @@ redirect-loop errors in the console or 401s in the backend log stream.
 """
 
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,7 +26,7 @@ def test_notification_polling_redirect_guard_contract() -> None:
     base_template_content = read_text('application/single_app/templates/base.html')
     notifications_js_content = read_text('application/single_app/static/js/notifications.js')
 
-    assert 'VERSION = "0.250.015"' in config_content
+    assert_app_version_at_least("0.250.015")
     assert "{% if session.get('user') %}\n  <!-- Notifications JavaScript (for badge polling on authenticated pages) -->" in base_template_content
     assert "<script src=\"{{ url_for('static', filename='js/notifications.js') }}\"></script>" in base_template_content
     assert 'const MAX_NOTIFICATION_POLL_FAILURES = 3;' in notifications_js_content

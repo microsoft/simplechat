@@ -10,6 +10,7 @@ tags plus a modal editor for workspace revisions and chat-uploaded files.
 """
 
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,9 +39,7 @@ def test_document_actions_and_comparison_wiring():
     search_service_content = read_text("application/single_app/functions_search_service.py")
     latest_feature_doc_content = read_text("docs/explanation/features/v0.241.104/CHAT_COMPARISON_MODAL_SUMMARY.md")
 
-    assert 'VERSION = "0.241.023"' in config_content, (
-        "Expected config.py version 0.241.023 for document actions and comparison."
-    )
+    assert_app_version_at_least("0.241.023")
     assert "DOCUMENT_ACTION_TYPE_COMPARISON = 'comparison'" in document_actions_content, (
         "Expected shared document action helpers to define the comparison action type."
     )

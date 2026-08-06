@@ -12,6 +12,7 @@ active conversation resumes progress updates after navigation.
 
 from pathlib import Path
 import traceback
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -50,9 +51,7 @@ def test_document_action_stream_reconnect_wiring() -> None:
         "@bp.route('/api/chat/image-proposals/generate', methods=['POST'])",
     )
 
-    assert 'VERSION = "0.250.070"' in config_content, (
-        "Expected the current application version for document action reconnect coverage."
-    )
+    assert_app_version_at_least("0.250.070")
     assert "@bp.route('/api/chat/stream/status/<conversation_id>', methods=['GET'])" in route_content, (
         "Expected the shared chat stream status endpoint to exist for reconnect support."
     )

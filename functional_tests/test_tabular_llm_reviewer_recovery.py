@@ -13,6 +13,7 @@ context before directly executing analytical plugin calls.
 import ast
 import os
 import sys
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -458,7 +459,7 @@ def test_route_contains_llm_reviewer_recovery_and_version_bump():
     ]
     missing = [snippet for snippet in required_snippets if snippet not in source]
     assert not missing, f'Missing reviewer recovery snippets: {missing}'
-    assert read_config_version() == '0.250.111'
+    assert_app_version_at_least("0.250.111")
 
     print('✅ Reviewer recovery route wiring passed')
     return True

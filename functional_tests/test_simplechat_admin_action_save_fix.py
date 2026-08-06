@@ -10,6 +10,7 @@ endpoints before manifest health validation runs.
 """
 
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,7 +25,7 @@ def test_simplechat_admin_action_save_fix_contracts():
     backend_plugins_source = read_text("application/single_app/route_backend_plugins.py")
     config_source = read_text("application/single_app/config.py")
 
-    assert 'VERSION = "0.241.066"' in config_source
+    assert_app_version_at_least("0.241.066")
     assert "const isSimpleChatType = this.isSimpleChatType();" in plugin_modal_source
     assert "new_plugin = apply_plugin_validation_defaults(new_plugin)" in backend_plugins_source
     assert "updated_plugin = apply_plugin_validation_defaults(updated_plugin)" in backend_plugins_source

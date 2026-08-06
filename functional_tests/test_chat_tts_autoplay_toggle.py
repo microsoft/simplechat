@@ -11,6 +11,7 @@ automatically even when older user settings have ttsEnabled saved as false.
 """
 
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -30,7 +31,7 @@ def test_chat_tts_autoplay_toggle_enables_tts_state():
     config_content = read_text(CONFIG_FILE)
     chat_tts_content = read_text(CHAT_TTS_JS)
 
-    assert 'VERSION = "0.250.102"' in config_content
+    assert_app_version_at_least("0.250.102")
     assert "ttsEnabled = Boolean(settings.ttsEnabled || settings.ttsAutoplay);" in chat_tts_content
     assert "const previousTTSEnabled = ttsEnabled;" in chat_tts_content
     assert "if (ttsAutoplay) {\n        ttsEnabled = true;\n    }" in chat_tts_content

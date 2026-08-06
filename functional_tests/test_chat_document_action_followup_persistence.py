@@ -10,6 +10,7 @@ document citations for the assistant response.
 """
 
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -23,9 +24,7 @@ def test_chat_document_action_followups_are_persisted() -> None:
     route_content = _read_workspace_file('application', 'single_app', 'route_backend_chats.py')
     config_content = _read_workspace_file('application', 'single_app', 'config.py')
 
-    assert 'VERSION = "0.241.023"' in config_content, (
-        'Expected config.py version 0.241.023 for the chat document action follow-up persistence fix.'
-    )
+    assert_app_version_at_least("0.241.023")
     assert 'def _build_document_action_hybrid_citations(execution_result):' in route_content, (
         'Expected a helper that synthesizes document citations for chat document actions.'
     )

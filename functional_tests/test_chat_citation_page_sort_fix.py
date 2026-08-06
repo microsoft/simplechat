@@ -12,6 +12,7 @@ chat paths without raising mixed-type comparison errors.
 import ast
 import os
 import sys
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -130,7 +131,7 @@ def test_version_and_fix_documentation_alignment():
 
     fix_doc_content = read_file_text(FIX_DOC)
 
-    assert read_config_version() == '0.240.055'
+    assert_app_version_at_least("0.240.055")
     assert 'Fixed/Implemented in version: **0.240.055**' in fix_doc_content
     assert 'mixed numeric and text page labels' in fix_doc_content.lower()
     assert 'application/single_app/route_backend_chats.py' in fix_doc_content

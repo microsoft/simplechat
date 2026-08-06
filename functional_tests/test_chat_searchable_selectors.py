@@ -18,6 +18,7 @@ the mobile grounded-search drawer.
 
 import os
 import sys
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -604,7 +605,7 @@ def test_version_bumped_for_grouped_chat_selector_change():
 
     try:
         config_content = read_file(CONFIG_FILE)
-        assert 'VERSION = "0.242.017"' in config_content, 'Expected config.py version 0.242.017'
+        assert_app_version_at_least("0.242.017")
 
         print('✅ Config version bump passed')
         return True

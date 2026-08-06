@@ -38,6 +38,7 @@ server-side endpoint check.
 
 import sys
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -54,7 +55,7 @@ def test_inbound_mcp_runtime_settings_are_app_settings():
     helper_source = read_repo_file("application/single_app/functions_mcp_server_config.py")
     settings_source = read_repo_file("application/single_app/functions_settings.py")
 
-    assert 'VERSION = "0.250.098"' in config_source
+    assert_app_version_at_least("0.250.098")
     assert "ENABLE_INBOUND_MCP_SERVER = os.getenv" not in config_source
     assert "INBOUND_MCP_REQUIRED_ROLE = os.getenv" not in config_source
     assert "INBOUND_MCP_ALLOWED_CLIENT_APP_IDS = _split_env_list" not in config_source

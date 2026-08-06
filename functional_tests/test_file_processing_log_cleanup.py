@@ -15,6 +15,7 @@ import sys
 import types
 
 import pytest
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -207,4 +208,4 @@ def test_cleanup_route_is_admin_only_and_versioned():
     assert "'error': 'Explicit confirmation is required.'" in route_source
     assert "log_general_admin_action(" in route_source
     assert "action='file_processing_logs_deleted'" in route_source
-    assert 'VERSION = "0.250.075"' in config_source
+    assert_app_version_at_least("0.250.075")

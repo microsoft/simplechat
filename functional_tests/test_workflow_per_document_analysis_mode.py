@@ -15,6 +15,7 @@ import os
 import sys
 import types
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -183,7 +184,7 @@ def test_workflow_per_document_ui_and_new_tab_contracts():
     workspace_template = _read('application/single_app/templates/workspace.html')
     group_template = _read('application/single_app/templates/group_workspaces.html')
 
-    assert 'VERSION = "0.241.182"' in config
+    assert_app_version_at_least("0.241.182")
     assert 'id="workflow-analysis-per-document"' in workspace_template
     assert 'Run each document separately' in workspace_template
     assert 'id="workflow-analysis-per-document"' in group_template

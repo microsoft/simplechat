@@ -11,6 +11,7 @@ is present, without replacing agent avatars on agent responses.
 """
 
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -41,7 +42,7 @@ def test_backend_resolves_and_persists_model_icon_metadata() -> None:
     assert source.count("'model_icon': gpt_model_icon") >= 6
     assert "'model_endpoint_id': gpt_endpoint_id or data.get('model_endpoint_id')" in source
     assert "'model_id': gpt_model_id or data.get('model_id')" in source
-    assert read_config_version() == "0.242.072"
+    assert_app_version_at_least("0.242.072")
 
 
 def test_frontend_uses_model_icon_for_assistant_avatar() -> None:

@@ -10,6 +10,7 @@ render tabular tool results with preview, 25-row, and full-row controls.
 """
 
 import os
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -83,7 +84,7 @@ def test_chat_ui_uses_lazy_hydration_and_row_controls():
 def test_version_bump_alignment():
     print('🔍 Testing version bump alignment...')
 
-    assert read_config_version() == '0.240.048'
+    assert_app_version_at_least("0.240.048")
 
     print('✅ Version bump alignment passed')
     return True

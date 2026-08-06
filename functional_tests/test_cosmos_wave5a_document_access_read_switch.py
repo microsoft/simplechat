@@ -23,6 +23,7 @@ import os
 import sys
 import types
 from contextlib import contextmanager
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -810,7 +811,7 @@ def test_wave5b_route_and_admin_contract_are_wired():
     ).read()
     settings_source = open(os.path.join(SINGLE_APP_DIR, "functions_settings.py"), "r", encoding="utf-8").read()
 
-    assert 'VERSION = "0.250.047"' in config_source
+    assert_app_version_at_least("0.250.047")
     assert "DOCUMENT_ACCESS_INDEX_SCHEMA_VERSION = 2" in index_source
     assert "def query_document_access_index_documents(" in index_source
     assert "def query_document_access_index_tag_counts(" in index_source

@@ -14,6 +14,7 @@ from pathlib import Path
 import json
 import re
 import sys
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -52,9 +53,7 @@ def test_deployer_capacity_defaults() -> bool:
         "docs/explanation/features/v0.241.085/DEPLOYER_CAPACITY_DEFAULTS.md"
     )
 
-    assert 'VERSION = "0.241.206"' in config_content, (
-        "Expected config.py version 0.241.206 after the Cosmos container throughput deployer fix."
-    )
+    assert_app_version_at_least("0.241.206")
     assert deployer_version == "1.0.14", "Expected deployers/version.txt to be bumped to 1.0.14."
     assert re.fullmatch(r"\d+\.\d+\.\d+", deployer_version), (
         "Expected deployers/version.txt to use a plain semantic version string."

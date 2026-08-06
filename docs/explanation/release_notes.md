@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.126)**
+
+#### Bug Fixes
+
+*   **Functional Test Version Assertion Resilience**
+    *   Added shared functional-test version helpers so tests can assert the app version is at least the feature implementation version instead of exactly equal to an older release.
+    *   Migrated brittle exact `config.py` version checks and added a guardrail test to prevent reintroducing exact app-version assertions.
+    *   (Ref: functional test version helpers, `test_support/versioning.py`, `test_app_version_assertion_guardrails.py`)
+
 ### **(v0.250.125)**
 
 #### Bug Fixes

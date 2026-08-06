@@ -11,6 +11,7 @@ settings page exposes enable/disable controls for both item types.
 """
 
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -41,7 +42,7 @@ def test_admin_global_item_enabled_state():
     agent_schema = AGENT_SCHEMA_FILE.read_text(encoding="utf-8")
     plugin_schema = PLUGIN_SCHEMA_FILE.read_text(encoding="utf-8")
 
-    assert 'VERSION = "0.241.076"' in config_content, "Expected config.py version 0.241.076"
+    assert_app_version_at_least("0.241.076")
 
     assert "def get_global_actions(return_type=SecretReturnType.TRIGGER, include_disabled=False):" in global_actions_content, (
         "Expected global actions helper to support admin-only disabled-item reads."

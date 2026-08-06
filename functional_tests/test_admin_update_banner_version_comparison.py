@@ -11,6 +11,7 @@ as a newer available version after the running app version advances.
 
 import ast
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -61,7 +62,7 @@ def test_update_banner_suppresses_stale_cached_older_release() -> None:
     """Cached latest release must not show when it is older than the running app version."""
     is_update_version_newer = load_update_helper()
 
-    assert read_config_version() == '0.250.004'
+    assert_app_version_at_least("0.250.004")
     assert is_update_version_newer('0.250.001', '0.250.004') is False
     assert is_update_version_newer('v0.250.001', '0.250.004') is False
     assert is_update_version_newer('0.250.004', '0.250.004') is False
