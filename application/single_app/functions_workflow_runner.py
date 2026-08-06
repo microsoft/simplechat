@@ -1316,7 +1316,7 @@ def _upload_document_analysis_generated_artifact(
         raise
     except Exception as exc:
         debug_print(
-            '[WorkflowDocumentAnalysis] Generated artifact upload skipped | '
+            '[WORKFLOW_DOCUMENT_ANALYSIS] Generated artifact upload skipped | '
             f'conversation_id={normalized_conversation_id} | file={file_name} | error={exc}'
         )
         return None
@@ -1734,7 +1734,7 @@ def _maybe_create_comparison_generated_artifacts(
         raise
     except Exception as exc:
         debug_print(
-            '[WorkflowDocumentComparison] Generated artifact upload skipped | '
+            '[WORKFLOW_DOCUMENT_COMPARISON] Generated artifact upload skipped | '
             f'conversation_id={normalized_conversation_id} | error={exc}'
         )
         return {'artifacts': [], 'assistant_reply': None}
@@ -1926,7 +1926,7 @@ def _rollback_mixed_source_generated_outputs(
             rollback_failure_count += 1
 
     log_event(
-        '[MixedSourceLifecycle] Generated output rollback completed.',
+        '[MIXED_SOURCE_LIFECYCLE] Generated output rollback completed.',
         extra={
             'canceled_export_count': canceled_export_count,
             'deleted_artifact_count': deleted_artifact_count,
@@ -2060,7 +2060,7 @@ def _persist_agent_citation_artifacts(
         return compact_citations
     except Exception as exc:
         log_event(
-            f'[WorkflowRunner] Failed to persist workflow assistant artifacts: {exc}',
+            f'[WORKFLOW_RUNNER] Failed to persist workflow assistant artifacts: {exc}',
             extra={
                 'conversation_id': conversation_id,
                 'assistant_message_id': assistant_message_id,
@@ -3206,7 +3206,7 @@ def _maybe_execute_tabular_document_action(
                 raise
             except Exception:
                 log_event(
-                    '[MixedSourceManifest] Workflow shadow resolution failed.',
+                    '[MIXED_SOURCE_MANIFEST] Workflow shadow resolution failed.',
                     extra={
                         'requested_source_count': len(requested_source_ids),
                         'selection_mode': 'selected',
@@ -3349,7 +3349,7 @@ def _maybe_execute_tabular_document_action(
         raise
     except Exception as exc:
         log_event(
-            f'[WorkflowDocumentAction] Tabular document-action helper skipped: {exc}',
+            f'[WORKFLOW_DOCUMENT_ACTION] Tabular document-action helper skipped: {exc}',
             extra={
                 'conversation_id': conversation_id,
                 'workflow_id': str(workflow.get('id') or '').strip(),
@@ -3775,7 +3775,7 @@ def _mirror_workflow_visualizations_to_created_conversations(workflow, source_as
                     mirrored_message_ids.append(mirrored_message_doc.get('id'))
         except Exception as exc:
             log_event(
-                f'[WorkflowRunner] Failed to mirror workflow visualizations into conversation {conversation_id}: {exc}',
+                f'[WORKFLOW_RUNNER] Failed to mirror workflow visualizations into conversation {conversation_id}: {exc}',
                 extra={
                     'workflow_id': str(workflow.get('id') or '').strip(),
                     'source_message_id': str(source_assistant_doc.get('id') or '').strip(),
@@ -4397,7 +4397,7 @@ def _create_workflow_priority_alert(workflow, run_record, conversation, executio
         )
     except Exception as exc:
         log_event(
-            f'[WorkflowRunner] Failed to create workflow alert: {exc}',
+            f'[WORKFLOW_RUNNER] Failed to create workflow alert: {exc}',
             extra={
                 'workflow_id': str(workflow.get('id') or '').strip(),
                 'user_id': str(workflow.get('user_id') or '').strip(),
@@ -4750,7 +4750,7 @@ def _maybe_create_workflow_generated_file_output(
             return build_background_tabular_generated_output_metadata(background_run)
         except Exception as exc:
             log_event(
-                '[Workflow Generated File Export] Failed to queue large CSV export',
+                '[WORKFLOW_GENERATED_FILE_EXPORT] Failed to queue large CSV export',
                 {
                     'workflow_id': normalized_workflow.get('id'),
                     'conversation_id': normalized_conversation_id,
@@ -4775,7 +4775,7 @@ def _maybe_create_workflow_generated_file_output(
         )
     except Exception as exc:
         log_event(
-            '[Workflow Generated File Export] Failed to save generated file artifact',
+            '[WORKFLOW_GENERATED_FILE_EXPORT] Failed to save generated file artifact',
             {
                 'workflow_id': normalized_workflow.get('id'),
                 'conversation_id': normalized_conversation_id,
@@ -4796,7 +4796,7 @@ def _maybe_create_workflow_generated_file_output(
         return None
 
     log_event(
-        '[Workflow Generated File Export] Saved generated file artifact',
+        '[WORKFLOW_GENERATED_FILE_EXPORT] Saved generated file artifact',
         {
             'workflow_id': normalized_workflow.get('id'),
             'conversation_id': normalized_conversation_id,
@@ -4918,7 +4918,7 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
                 },
             )
         except Exception as exc:
-            debug_print(f'[WorkflowRunner] Failed to log workflow token usage: {exc}')
+            debug_print(f'[WORKFLOW_RUNNER] Failed to log workflow token usage: {exc}')
 
     conversation['last_updated'] = timestamp
     conversation['workflow_id'] = workflow.get('id')
@@ -5087,7 +5087,7 @@ def _chain_activity_callbacks(*callbacks):
                 activity_callback(event)
             except Exception as exc:
                 log_event(
-                    f'[WorkflowRunner] Document analysis activity callback failed: {exc}',
+                    f'[WORKFLOW_RUNNER] Document analysis activity callback failed: {exc}',
                     level=logging.WARNING,
                     exceptionTraceback=True,
                 )
@@ -5193,7 +5193,7 @@ def _resolve_recent_authorized_group_ids(user_id, group_ids):
         user_group_ids = normalize_search_id_list([group.get('id') for group in get_user_groups(user_id) if group.get('id')])
     except Exception as exc:
         log_event(
-            f'[WorkflowRunner] Failed to resolve authorized group ids for recent workflow documents: {exc}',
+            f'[WORKFLOW_RUNNER] Failed to resolve authorized group ids for recent workflow documents: {exc}',
             extra={'user_id': user_id},
             level=logging.WARNING,
             exceptionTraceback=True,
@@ -5213,7 +5213,7 @@ def _resolve_recent_authorized_public_workspace_ids(user_id, workspace_ids):
         visible_workspace_ids = normalize_search_id_list(get_user_visible_public_workspace_ids_from_settings(user_id))
     except Exception as exc:
         log_event(
-            f'[WorkflowRunner] Failed to resolve visible public workspace ids for recent workflow documents: {exc}',
+            f'[WORKFLOW_RUNNER] Failed to resolve visible public workspace ids for recent workflow documents: {exc}',
             extra={'user_id': user_id},
             level=logging.WARNING,
             exceptionTraceback=True,
@@ -6746,7 +6746,7 @@ def _execute_document_analysis_workflow(
     user_id = str(workflow.get('user_id') or '').strip()
     selected_agent = workflow.get('selected_agent') if isinstance(workflow.get('selected_agent'), dict) else {}
     debug_print(
-        '[WorkflowDocumentAnalysis] Starting workflow action | '
+        '[WORKFLOW_DOCUMENT_ANALYSIS] Starting workflow action | '
         f"workflow_id={workflow.get('id')} | "
         f'run_id={run_id} | '
         f"runner_type={workflow.get('runner_type')} | "
@@ -7096,7 +7096,7 @@ def _execute_document_analysis_workflow(
             request_correlation_id=request_correlation_id,
         )
     debug_print(
-        '[WorkflowDocumentAnalysis] Completed workflow action | '
+        '[WORKFLOW_DOCUMENT_ANALYSIS] Completed workflow action | '
         f"workflow_id={workflow.get('id')} | "
         f'run_id={run_id} | '
         f'provider={provider} | '
@@ -7155,7 +7155,7 @@ def _execute_document_comparison_workflow(
     user_id = str(workflow.get('user_id') or '').strip()
     selected_agent = workflow.get('selected_agent') if isinstance(workflow.get('selected_agent'), dict) else {}
     debug_print(
-        '[WorkflowDocumentComparison] Starting workflow action | '
+        '[WORKFLOW_DOCUMENT_COMPARISON] Starting workflow action | '
         f"workflow_id={workflow.get('id')} | "
         f'run_id={run_id} | '
         f"runner_type={workflow.get('runner_type')} | "
@@ -7502,7 +7502,7 @@ def _execute_document_comparison_workflow(
             request_correlation_id=request_correlation_id,
         )
     debug_print(
-        '[WorkflowDocumentComparison] Completed workflow action | '
+        '[WORKFLOW_DOCUMENT_COMPARISON] Completed workflow action | '
         f"workflow_id={workflow.get('id')} | "
         f'run_id={run_id} | '
         f'provider={provider} | '
@@ -7551,7 +7551,7 @@ def _execute_document_action_workflow(
     workflow = _apply_runtime_document_action_config(workflow, action_config)
     action_type = action_config.get('type')
     debug_print(
-        '[WorkflowDocumentAction] Dispatching action | '
+        '[WORKFLOW_DOCUMENT_ACTION] Dispatching action | '
         f"workflow_id={workflow.get('id')} | "
         f'run_id={run_id} | '
         f'action_type={action_type} | '
@@ -7590,7 +7590,7 @@ def _execute_document_action_workflow(
             raise ValueError('No document action is enabled for this workflow.')
     except Exception as exc:
         debug_print(
-            '[WorkflowDocumentAction] Action failed | '
+            '[WORKFLOW_DOCUMENT_ACTION] Action failed | '
             f"workflow_id={workflow.get('id')} | "
             f'run_id={run_id} | '
             f'action_type={action_type} | '
@@ -7605,7 +7605,7 @@ def _execute_document_action_workflow(
         request_correlation_id=request_correlation_id,
     )
     debug_print(
-        '[WorkflowDocumentAction] Action completed | '
+        '[WORKFLOW_DOCUMENT_ACTION] Action completed | '
         f"workflow_id={workflow.get('id')} | "
         f'run_id={run_id} | '
         f'action_type={action_type} | '
@@ -8779,7 +8779,7 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
             group_id=group_id or None,
         )
         log_event(
-            f'[WorkflowRunner] Workflow execution failed: {exc}',
+            f'[WORKFLOW_RUNNER] Workflow execution failed: {exc}',
             extra={
                 'workflow_id': workflow_id,
                 'workflow_name': workflow.get('name'),

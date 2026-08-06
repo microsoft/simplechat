@@ -313,7 +313,7 @@ def register_route_backend_public_documents(bp):
                         )
                     except Exception as shadow_error:
                         log_event(
-                            '[DocumentAccessIndex] Shadow validation source query failed after DAI read succeeded.',
+                            '[DOCUMENT_ACCESS_INDEX] Shadow validation source query failed after DAI read succeeded.',
                             extra={'source_scope': DOCUMENT_ACCESS_SCOPE_PUBLIC, 'error': str(shadow_error)},
                             level=logging.WARNING,
                             exceptionTraceback=True,
@@ -345,7 +345,7 @@ def register_route_backend_public_documents(bp):
             docs = current_docs[offset:offset + page_size]
         except Exception as e:
             log_event(
-                '[PublicDocuments] Error fetching public documents.',
+                '[PUBLIC_DOCUMENTS] Error fetching public documents.',
                 extra={'public_workspace_id': active_ws, 'error': str(e)},
                 level=logging.ERROR,
             )
@@ -443,7 +443,7 @@ def register_route_backend_public_documents(bp):
                         )
                     except Exception as shadow_error:
                         log_event(
-                            '[DocumentAccessIndex] Shadow validation source query failed after DAI read succeeded.',
+                            '[DOCUMENT_ACCESS_INDEX] Shadow validation source query failed after DAI read succeeded.',
                             extra={'source_scope': DOCUMENT_ACCESS_SCOPE_PUBLIC, 'error': str(shadow_error)},
                             level=logging.WARNING,
                             exceptionTraceback=True,
@@ -468,7 +468,7 @@ def register_route_backend_public_documents(bp):
                 )
         except Exception as e:
             log_event(
-                '[PublicDocuments] Error fetching public workspace chat documents.',
+                '[PUBLIC_DOCUMENTS] Error fetching public workspace chat documents.',
                 extra={'workspace_count': len(workspace_ids), 'error': str(e)},
                 level=logging.ERROR,
             )
@@ -578,7 +578,7 @@ def register_route_backend_public_documents(bp):
             return jsonify({'error': str(exc)}), 404
         except Exception as exc:
             log_event(
-                '[DocumentDownload] Failed public document download',
+                '[DOCUMENT_DOWNLOAD] Failed public document download',
                 {'document_id': doc_id, 'public_workspace_id': active_ws, 'error': str(exc)},
                 debug_only=True,
             )
@@ -636,7 +636,7 @@ def register_route_backend_public_documents(bp):
             return jsonify({'error': str(exc)}), 404
         except Exception as exc:
             log_event(
-                '[DocumentDownload] Failed public document ZIP download',
+                '[DOCUMENT_DOWNLOAD] Failed public document ZIP download',
                 {'public_workspace_id': active_ws, 'document_count': len(documents), 'error': str(exc)},
                 debug_only=True,
             )

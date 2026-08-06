@@ -101,7 +101,7 @@ def register_route_frontend_terms_of_use(bp):
                 )
             except Exception as decline_log_error:
                 log_event(
-                    "[TermsOfUse] Decline audit logging failed.",
+                    "[TERMS_OF_USE] Decline audit logging failed.",
                     extra={
                         "user_id": user_id,
                         "error": str(decline_log_error),

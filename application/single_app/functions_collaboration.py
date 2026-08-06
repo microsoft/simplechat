@@ -76,7 +76,7 @@ def publish_collaboration_event(conversation_id, event_payload):
             event_publisher(conversation_id, event_payload)
         except Exception as publish_error:
             log_event(
-                f"[CollaborationEvents] Failed to publish event for {conversation_id}: {publish_error}",
+                f"[COLLABORATION_EVENTS] Failed to publish event for {conversation_id}: {publish_error}",
                 extra={'conversation_id': conversation_id},
                 level=logging.WARNING,
                 exceptionTraceback=True,
@@ -613,7 +613,7 @@ def create_collaboration_message_notifications(conversation_doc, message_doc):
                 created_notifications.append(notification_doc)
         except Exception as exc:
             log_event(
-                f'[Collaboration Notifications] Failed to create notification for conversation {message_doc.get("conversation_id")}: {exc}',
+                f'[COLLABORATION_NOTIFICATIONS] Failed to create notification for conversation {message_doc.get("conversation_id")}: {exc}',
                 level=logging.WARNING,
                 exceptionTraceback=True,
                 debug_only=True,
@@ -996,7 +996,7 @@ def ensure_personal_collaboration_for_legacy_conversation(source_conversation_id
     cosmos_conversations_container.upsert_item(source_conversation_doc)
 
     log_event(
-        '[Collaboration] Converted personal conversation into collaborative conversation',
+        '[COLLABORATION] Converted personal conversation into collaborative conversation',
         extra={
             'source_conversation_id': source_conversation_id,
             'conversation_id': collaboration_conversation_doc.get('id'),
@@ -1184,7 +1184,7 @@ def ensure_group_collaboration_for_legacy_conversation(source_conversation_id, o
     cosmos_group_conversations_container.upsert_item(source_conversation_doc)
 
     log_event(
-        '[Collaboration] Converted group conversation into collaborative conversation',
+        '[COLLABORATION] Converted group conversation into collaborative conversation',
         extra={
             'source_conversation_id': source_conversation_id,
             'conversation_id': collaboration_conversation_doc.get('id'),
@@ -1225,7 +1225,7 @@ def create_personal_collaboration_conversation_record(title, creator_user, invit
 
     invalidate_conversation_cache_for_item(conversation_doc, reason="collaboration_created")
     log_event(
-        '[Collaboration] Created personal collaborative conversation',
+        '[COLLABORATION] Created personal collaborative conversation',
         extra={
             'conversation_id': conversation_doc.get('id'),
             'created_by_user_id': conversation_doc.get('created_by_user_id'),
@@ -1267,7 +1267,7 @@ def create_group_collaboration_conversation_record(title, creator_user, group_do
 
     invalidate_conversation_cache_for_item(conversation_doc, reason="collaboration_created")
     log_event(
-        '[Collaboration] Created group collaborative conversation',
+        '[COLLABORATION] Created group collaborative conversation',
         extra={
             'conversation_id': conversation_doc.get('id'),
             'group_id': group_doc.get('id'),
@@ -1793,7 +1793,7 @@ def _save_collaboration_message_doc(conversation_doc, message_doc):
             )
         except Exception as exc:
             log_event(
-                f'[Collaboration] Failed to log chat activity for {conversation_doc.get("id")}: {exc}',
+                f'[COLLABORATION] Failed to log chat activity for {conversation_doc.get("id")}: {exc}',
                 level=logging.WARNING,
                 exceptionTraceback=True,
             )
@@ -2268,7 +2268,7 @@ def _delete_item_if_present(container, item_id, partition_key):
         )
     except CosmosResourceNotFoundError:
         log_event(
-            '[CollaborationRetention] Record was already deleted',
+            '[COLLABORATION_RETENTION] Record was already deleted',
             extra={
                 'item_id': item_id,
                 'partition_key': partition_key,

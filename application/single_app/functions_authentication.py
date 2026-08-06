@@ -167,14 +167,14 @@ def _build_plugin_auth_response(
     set_requested_oauth_scopes(required_scopes)
 
     redirect_url = _build_redirect_url(request.host_url)
-    debug_print(f"[Auth] Redirect URL for {user_info.get('oid')}: {redirect_url}")
+    debug_print(f"[AUTH] Redirect URL for {user_info.get('oid')}: {redirect_url}")
     consent_url = get_consent_url(
         msal_app=msal_app,
         scopes=required_scopes,
         redirect_uri=redirect_url,
         prompt=prompt,
     )
-    debug_print(f"[Auth] Interactive auth URL generated for scopes {required_scopes}")
+    debug_print(f"[AUTH] Interactive auth URL generated for scopes {required_scopes}")
 
     return {
         "error": error,
@@ -324,9 +324,9 @@ def get_valid_access_token_for_plugins(scopes=None):
         return {"access_token": result['access_token']}
 
     # If we reach here, it means silent acquisition failed
-    debug_print("[Auth] acquire_token_silent_with_error failed. Evaluating interactive auth requirements.")
+    debug_print("[AUTH] acquire_token_silent_with_error failed. Evaluating interactive auth requirements.")
     if result is None:
-        debug_print("[Auth] Silent token lookup returned no result. Interactive sign-in is required.")
+        debug_print("[AUTH] Silent token lookup returned no result. Interactive sign-in is required.")
         return _build_plugin_auth_response(
             msal_app,
             user_info,
@@ -341,10 +341,10 @@ def get_valid_access_token_for_plugins(scopes=None):
 
     error_code = result.get('error') if result else None
     error_desc = result.get('error_description') if result else None
-    debug_print(f"[Auth] MSAL Error: {error_code}, Description: {error_desc}")
+    debug_print(f"[AUTH] MSAL Error: {error_code}, Description: {error_desc}")
 
     if error_code == "invalid_grant" and error_desc and ("AADSTS65001" in error_desc or "consent_required" in error_desc):
-        debug_print("[Auth] Entra explicitly reported missing consent for the requested scopes.")
+        debug_print("[AUTH] Entra explicitly reported missing consent for the requested scopes.")
         return _build_plugin_auth_response(
             msal_app,
             user_info,
@@ -356,7 +356,7 @@ def get_valid_access_token_for_plugins(scopes=None):
             prompt="consent",
         )
     if error_code in {"interaction_required", "login_required"}:
-        debug_print("[Auth] Entra requested an interactive sign-in without requiring new consent.")
+        debug_print("[AUTH] Entra requested an interactive sign-in without requiring new consent.")
         return _build_plugin_auth_response(
             msal_app,
             user_info,
@@ -392,8 +392,8 @@ def get_video_indexer_account_token(settings, video_id=None):
     """
     from functions_debug import debug_print
     
-    debug_print(f"[VIDEO INDEXER AUTH] Starting token acquisition using managed identity for video_id: {video_id}")
-    debug_print(f"[VIDEO INDEXER AUTH] Azure environment: {AZURE_ENVIRONMENT}")
+    debug_print(f"[VIDEO_INDEXER_AUTH] Starting token acquisition using managed identity for video_id: {video_id}")
+    debug_print(f"[VIDEO_INDEXER_AUTH] Azure environment: {AZURE_ENVIRONMENT}")
     
     return get_video_indexer_managed_identity_token(settings, video_id)
 
@@ -406,9 +406,9 @@ def get_video_indexer_managed_identity_token(settings, video_id=None):
     """
     from functions_debug import debug_print
     
-    debug_print(f"[VIDEO INDEXER AUTH] Starting token acquisition for video_id: {video_id}")
-    debug_print(f"[VIDEO INDEXER AUTH] Azure environment: {AZURE_ENVIRONMENT}")
-    debug_print(f"[VIDEO INDEXER AUTH] Using managed identity authentication")
+    debug_print(f"[VIDEO_INDEXER_AUTH] Starting token acquisition for video_id: {video_id}")
+    debug_print(f"[VIDEO_INDEXER_AUTH] Azure environment: {AZURE_ENVIRONMENT}")
+    debug_print(f"[VIDEO_INDEXER_AUTH] Using managed identity authentication")
     
     # 1) ARM token
     if AZURE_ENVIRONMENT == "usgovernment":
@@ -418,16 +418,16 @@ def get_video_indexer_managed_identity_token(settings, video_id=None):
     else:
         arm_scope = "https://management.azure.com/.default"
     
-    debug_print(f"[VIDEO INDEXER AUTH] Using ARM scope: {arm_scope}")
+    debug_print(f"[VIDEO_INDEXER_AUTH] Using ARM scope: {arm_scope}")
     
     try:
         credential = DefaultAzureCredential()
-        debug_print(f"[VIDEO INDEXER AUTH] DefaultAzureCredential initialized successfully")
+        debug_print(f"[VIDEO_INDEXER_AUTH] DefaultAzureCredential initialized successfully")
         arm_token = credential.get_token(arm_scope).token
-        debug_print(f"[VIDEO INDEXER AUTH] ARM token acquired successfully (length: {len(arm_token) if arm_token else 0})")
+        debug_print(f"[VIDEO_INDEXER_AUTH] ARM token acquired successfully (length: {len(arm_token) if arm_token else 0})")
         debug_print("[VIDEO] ARM token acquired", flush=True)
     except Exception as e:
-        debug_print(f"[VIDEO INDEXER AUTH] ERROR acquiring ARM token: {str(e)}")
+        debug_print(f"[VIDEO_INDEXER_AUTH] ERROR acquiring ARM token: {str(e)}")
         raise
 
     # 2) Call the generateAccessToken API
@@ -436,7 +436,7 @@ def get_video_indexer_managed_identity_token(settings, video_id=None):
     acct     = settings["video_indexer_account_name"]
     api_ver  = settings.get("video_indexer_arm_api_version", DEFAULT_VIDEO_INDEXER_ARM_API_VERSION)
     
-    debug_print(f"[VIDEO INDEXER AUTH] Settings extracted - Subscription: {sub}, Resource Group: {rg}, Account: {acct}, API Version: {api_ver}")
+    debug_print(f"[VIDEO_INDEXER_AUTH] Settings extracted - Subscription: {sub}, Resource Group: {rg}, Account: {acct}, API Version: {api_ver}")
     
     if AZURE_ENVIRONMENT == "usgovernment":
         url = (
@@ -460,7 +460,7 @@ def get_video_indexer_managed_identity_token(settings, video_id=None):
         f"/generateAccessToken?api-version={api_ver}"
         )
 
-    debug_print(f"[VIDEO INDEXER AUTH] ARM API URL: {url}")
+    debug_print(f"[VIDEO_INDEXER_AUTH] ARM API URL: {url}")
 
     body = {
         "permissionType": "Contributor",
@@ -469,7 +469,7 @@ def get_video_indexer_managed_identity_token(settings, video_id=None):
     if video_id:
         body["videoId"] = video_id
 
-    debug_print(f"[VIDEO INDEXER AUTH] Request body: {body}")
+    debug_print(f"[VIDEO_INDEXER_AUTH] Request body: {body}")
 
     try:
         resp = requests.post(
@@ -477,31 +477,31 @@ def get_video_indexer_managed_identity_token(settings, video_id=None):
             json=body,
             headers={"Authorization": f"Bearer {arm_token}"}
         )
-        debug_print(f"[VIDEO INDEXER AUTH] ARM API response status: {resp.status_code}")
+        debug_print(f"[VIDEO_INDEXER_AUTH] ARM API response status: {resp.status_code}")
         
         if resp.status_code != 200:
-            debug_print(f"[VIDEO INDEXER AUTH] ARM API response text: {resp.text}")
+            debug_print(f"[VIDEO_INDEXER_AUTH] ARM API response text: {resp.text}")
             
         resp.raise_for_status()
         response_data = resp.json()
-        debug_print(f"[VIDEO INDEXER AUTH] ARM API response keys: {list(response_data.keys())}")
+        debug_print(f"[VIDEO_INDEXER_AUTH] ARM API response keys: {list(response_data.keys())}")
         
         ai = response_data.get("accessToken")
         if not ai:
-            debug_print(f"[VIDEO INDEXER AUTH] ERROR: No accessToken in response: {response_data}")
+            debug_print(f"[VIDEO_INDEXER_AUTH] ERROR: No accessToken in response: {response_data}")
             raise ValueError("No accessToken found in ARM API response")
             
-        debug_print(f"[VIDEO INDEXER AUTH] Account token acquired successfully (length: {len(ai)})")
+        debug_print(f"[VIDEO_INDEXER_AUTH] Account token acquired successfully (length: {len(ai)})")
         debug_print(f"[VIDEO] Account token acquired (len={len(ai)})", flush=True)
         return ai
     except requests.exceptions.RequestException as e:
-        debug_print(f"[VIDEO INDEXER AUTH] ERROR in ARM API request: {str(e)}")
+        debug_print(f"[VIDEO_INDEXER_AUTH] ERROR in ARM API request: {str(e)}")
         if hasattr(e, 'response') and e.response is not None:
-            debug_print(f"[VIDEO INDEXER AUTH] Error response status: {e.response.status_code}")
-            debug_print(f"[VIDEO INDEXER AUTH] Error response text: {e.response.text}")
+            debug_print(f"[VIDEO_INDEXER_AUTH] Error response status: {e.response.status_code}")
+            debug_print(f"[VIDEO_INDEXER_AUTH] Error response text: {e.response.text}")
         raise
     except Exception as e:
-        debug_print(f"[VIDEO INDEXER AUTH] Unexpected error: {str(e)}")
+        debug_print(f"[VIDEO_INDEXER_AUTH] Unexpected error: {str(e)}")
         raise
 
 
@@ -584,7 +584,7 @@ def _extract_easy_auth_claims():
         principal = json.loads(base64.b64decode(encoded_principal).decode('utf-8'))
     except (ValueError, TypeError, json.JSONDecodeError) as ex:
         log_event(
-            "[CIAuth] Failed to parse App Service Authentication principal header.",
+            "[CI_AUTH] Failed to parse App Service Authentication principal header.",
             extra={"error": str(ex)},
             debug_only=True,
             category="CIAuth",
@@ -619,7 +619,7 @@ def create_ci_bearer_session():
     """Create a Flask session from a validated CI app-only bearer token."""
     if not ENABLE_CI_BEARER_SESSION_AUTH:
         log_event(
-            "[CIAuth] CI bearer session auth requested while disabled.",
+            "[CI_AUTH] CI bearer session auth requested while disabled.",
             debug_only=True,
             category="CIAuth",
         )
@@ -631,7 +631,7 @@ def create_ci_bearer_session():
         is_valid, data = validate_bearer_token(token)
         if not is_valid:
             log_event(
-                "[CIAuth] CI bearer session token validation failed.",
+                "[CI_AUTH] CI bearer session token validation failed.",
                 extra={"reason": data},
                 debug_only=True,
                 category="CIAuth",
@@ -650,7 +650,7 @@ def create_ci_bearer_session():
     caller_app_id = (data.get("appid") or data.get("azp") or "").lower()
     if CI_BEARER_SESSION_ALLOWED_APP_IDS and caller_app_id not in CI_BEARER_SESSION_ALLOWED_APP_IDS:
         log_event(
-            "[CIAuth] CI bearer session caller app id was not allowed.",
+            "[CI_AUTH] CI bearer session caller app id was not allowed.",
             extra={"caller_app_id": caller_app_id},
             debug_only=True,
             category="CIAuth",
@@ -668,7 +668,7 @@ def create_ci_bearer_session():
     session["last_activity_epoch"] = int(time.time())
 
     log_event(
-        "[CIAuth] CI bearer session established.",
+        "[CI_AUTH] CI bearer session established.",
         extra={"caller_app_id": caller_app_id, "required_role": required_role},
         debug_only=True,
         category="CIAuth",

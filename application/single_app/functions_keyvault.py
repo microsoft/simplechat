@@ -302,7 +302,7 @@ def _log_secret_reference_context_mismatch(secret_name, context_label, scope_val
         expected_scope_value = clean_name_for_keyvault(str(scope_value))
 
     log_event(
-        f"[KeyVault] Rejected mismatched secret reference for {context_label}.",
+        f"[KEY_VAULT] Rejected mismatched secret reference for {context_label}.",
         extra={
             "context_label": context_label,
             "expected_scope_value": expected_scope_value,

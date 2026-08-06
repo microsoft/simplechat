@@ -95,7 +95,7 @@ def register_route_frontend_workspace(bp):
             ]
         except Exception as exc:
             log_event(
-                f'[WorkspaceRoute] Failed to load workflow group picker options: {exc}',
+                f'[WORKSPACE_ROUTE] Failed to load workflow group picker options: {exc}',
                 extra={'user_id': user_id},
                 level=logging.WARNING,
                 exceptionTraceback=True,
@@ -113,7 +113,7 @@ def register_route_frontend_workspace(bp):
             ]
         except Exception as exc:
             log_event(
-                f'[WorkspaceRoute] Failed to load workflow public picker options: {exc}',
+                f'[WORKSPACE_ROUTE] Failed to load workflow public picker options: {exc}',
                 extra={'user_id': user_id},
                 level=logging.WARNING,
                 exceptionTraceback=True,

@@ -96,7 +96,7 @@ def _is_current_actor_admin():
 
 def _log_profile_relationship_check_error(check_name, actor_user_id, target_user_id, error):
     log_event(
-        f'[UserProfile] {check_name} relationship check failed closed',
+        f'[USER_PROFILE] {check_name} relationship check failed closed',
         extra={
             'actor_user_id': actor_user_id,
             'target_user_id': target_user_id,
@@ -232,7 +232,7 @@ def _authorize_user_profile_access(target_user_id):
         return actor_user_id, normalized_target_user_id
 
     log_event(
-        '[UserProfile] Denied cross-user profile lookup',
+        '[USER_PROFILE] Denied cross-user profile lookup',
         extra={
             'actor_user_id': actor_user_id,
             'target_user_id': normalized_target_user_id,
@@ -350,7 +350,7 @@ def register_route_backend_users(bp):
             pass
         except Exception as ex:
             log_event(
-                '[UserProfile] Failed to load user info',
+                '[USER_PROFILE] Failed to load user info',
                 extra={
                     'target_user_id': _normalize_user_lookup_id(user_id),
                     'error_type': type(ex).__name__,
@@ -365,7 +365,7 @@ def register_route_backend_users(bp):
                 return jsonify(graph_user_info), 200
         except requests.exceptions.RequestException as ex:
             log_event(
-                "[Users] Graph user info lookup failed",
+                "[USERS] Graph user info lookup failed",
                 level=logging.WARNING,
                 extra={
                     "target_user_id": normalized_user_id,
@@ -724,7 +724,7 @@ def register_route_backend_users(bp):
             }), 404
         except Exception as ex:
             log_event(
-                '[UserProfile] Failed to load profile image',
+                '[USER_PROFILE] Failed to load profile image',
                 extra={
                     'target_user_id': _normalize_user_lookup_id(user_id),
                     'error_type': type(ex).__name__,

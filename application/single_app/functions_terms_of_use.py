@@ -301,7 +301,7 @@ def record_terms_of_use_decline(user_id, settings, source="post_auth"):
 def log_pre_auth_terms_of_use_issue(message, extra=None):
     """Log non-fatal pre-auth Terms of Use issues without exposing terms content."""
     log_event(
-        f"[TermsOfUse] {message}",
+        f"[TERMS_OF_USE] {message}",
         extra=extra or {},
         level=logging.WARNING,
     )

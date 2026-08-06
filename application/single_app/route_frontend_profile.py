@@ -458,9 +458,9 @@ def register_route_frontend_profile(bp):
 
             return jsonify(get_profile_fact_memory_payload(user_id)), 200
         except Exception as exc:
-            debug_print(f"[ProfileFactMemory] Failed to fetch fact memory for user {user_id}: {exc}")
+            debug_print(f"[PROFILE_FACT_MEMORY] Failed to fetch fact memory for user {user_id}: {exc}")
             log_event(
-                f"[ProfileFactMemory] Failed to fetch fact memory: {exc}",
+                f"[PROFILE_FACT_MEMORY] Failed to fetch fact memory: {exc}",
                 extra={'user_id': user_id},
                 level=logging.ERROR,
                 exceptionTraceback=True,
@@ -495,7 +495,7 @@ def register_route_frontend_profile(bp):
                 memory_type=memory_type,
             )
             log_event(
-                '[ProfileFactMemory] Created fact memory entry',
+                '[PROFILE_FACT_MEMORY] Created fact memory entry',
                 extra={'user_id': user_id, 'fact_id': fact_item.get('id'), 'memory_type': memory_type},
                 level=logging.INFO,
             )
@@ -504,9 +504,9 @@ def register_route_frontend_profile(bp):
                 'fact': serialize_fact_memory_item(fact_item),
             }), 201
         except Exception as exc:
-            debug_print(f"[ProfileFactMemory] Failed to create fact memory for user {user_id}: {exc}")
+            debug_print(f"[PROFILE_FACT_MEMORY] Failed to create fact memory for user {user_id}: {exc}")
             log_event(
-                f"[ProfileFactMemory] Failed to create fact memory: {exc}",
+                f"[PROFILE_FACT_MEMORY] Failed to create fact memory: {exc}",
                 extra={'user_id': user_id},
                 level=logging.ERROR,
                 exceptionTraceback=True,
@@ -537,7 +537,7 @@ def register_route_frontend_profile(bp):
                 return jsonify({'error': 'Fact memory entry not found'}), 404
 
             log_event(
-                '[ProfileFactMemory] Updated fact memory entry',
+                '[PROFILE_FACT_MEMORY] Updated fact memory entry',
                 extra={'user_id': user_id, 'fact_id': fact_id, 'memory_type': memory_type},
                 level=logging.INFO,
             )
@@ -546,9 +546,9 @@ def register_route_frontend_profile(bp):
                 'fact': serialize_fact_memory_item(updated_fact),
             }), 200
         except Exception as exc:
-            debug_print(f"[ProfileFactMemory] Failed to update fact memory {fact_id} for user {user_id}: {exc}")
+            debug_print(f"[PROFILE_FACT_MEMORY] Failed to update fact memory {fact_id} for user {user_id}: {exc}")
             log_event(
-                f"[ProfileFactMemory] Failed to update fact memory: {exc}",
+                f"[PROFILE_FACT_MEMORY] Failed to update fact memory: {exc}",
                 extra={'user_id': user_id, 'fact_id': fact_id},
                 level=logging.ERROR,
                 exceptionTraceback=True,
@@ -573,15 +573,15 @@ def register_route_frontend_profile(bp):
                 return jsonify({'error': 'Fact memory entry not found'}), 404
 
             log_event(
-                '[ProfileFactMemory] Deleted fact memory entry',
+                '[PROFILE_FACT_MEMORY] Deleted fact memory entry',
                 extra={'user_id': user_id, 'fact_id': fact_id},
                 level=logging.INFO,
             )
             return jsonify({'success': True}), 200
         except Exception as exc:
-            debug_print(f"[ProfileFactMemory] Failed to delete fact memory {fact_id} for user {user_id}: {exc}")
+            debug_print(f"[PROFILE_FACT_MEMORY] Failed to delete fact memory {fact_id} for user {user_id}: {exc}")
             log_event(
-                f"[ProfileFactMemory] Failed to delete fact memory: {exc}",
+                f"[PROFILE_FACT_MEMORY] Failed to delete fact memory: {exc}",
                 extra={'user_id': user_id, 'fact_id': fact_id},
                 level=logging.ERROR,
                 exceptionTraceback=True,

@@ -286,7 +286,7 @@ def _evaluate_single_indexing_policy(definition, apply_changes=False):
         except Exception as exc:
             if _is_precondition_failed_error(exc) and attempt < COSMOS_INDEXING_POLICY_MAX_REPLACE_RETRIES - 1:
                 log_event(
-                    '[CosmosIndexing] Retrying indexing policy update after ETag conflict.',
+                    '[COSMOS_INDEXING] Retrying indexing policy update after ETag conflict.',
                     extra={
                         'container_name': definition['container_name'],
                         'attempt': attempt + 1,
@@ -325,7 +325,7 @@ def run_cosmos_indexing_policy_maintenance(apply_changes=False):
             results.append(_evaluate_single_indexing_policy(definition, apply_changes=apply_changes))
         except Exception as exc:
             log_event(
-                '[CosmosIndexing] Failed to evaluate Cosmos indexing policy.',
+                '[COSMOS_INDEXING] Failed to evaluate Cosmos indexing policy.',
                 extra={
                     'container_name': definition.get('container_name'),
                     'apply_changes': bool(apply_changes),

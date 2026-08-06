@@ -39,13 +39,13 @@ def register_route_backend_models(bp):
     """
 
     def log_models_debug(message, extra=None):
-        log_event(f"[Models] {message}", extra=extra, debug_only=True, category="Models")
+        log_event(f"[MODELS] {message}", extra=extra, debug_only=True, category="Models")
 
     def log_models_exception(message, exception, extra=None, level=logging.ERROR):
         properties = dict(extra or {})
         properties["exception_type"] = type(exception).__name__
         log_event(
-            f"[Models] {message}",
+            f"[MODELS] {message}",
             extra=properties,
             level=level,
             exceptionTraceback=level >= logging.ERROR,
@@ -61,7 +61,7 @@ def register_route_backend_models(bp):
         }
         if isinstance(exception, ValueError):
             log_event(
-                "[Models] Group access blocked because no active group was selected",
+                "[MODELS] Group access blocked because no active group was selected",
                 extra=extra,
                 level=logging.WARNING,
             )
@@ -71,14 +71,14 @@ def register_route_backend_models(bp):
             )
         if isinstance(exception, LookupError):
             log_event(
-                "[Models] Group access blocked because the group could not be found",
+                "[MODELS] Group access blocked because the group could not be found",
                 extra=extra,
                 level=logging.WARNING,
             )
             return build_safe_error_response("The selected group could not be found.", 404)
 
         log_event(
-            "[Models] Group access denied",
+            "[MODELS] Group access denied",
             extra=extra,
             level=logging.WARNING,
         )
@@ -160,7 +160,7 @@ def register_route_backend_models(bp):
             if not persisted_endpoint:
                 log_models_debug(f"Rejecting {scope} request for unknown endpoint_id={endpoint_id}.")
                 log_event(
-                    "[Models] Model endpoint lookup failed",
+                    "[MODELS] Model endpoint lookup failed",
                     extra={"user_id": user_id, "scope": scope, "endpoint_id": endpoint_id},
                     level=logging.WARNING,
                 )
@@ -430,7 +430,7 @@ def register_route_backend_models(bp):
             return jsonify({"error": "Model provider not found."}), 400
         except LookupError as exc:
             log_event(
-                "[Models] Fetch model list blocked because the model endpoint was not found",
+                "[MODELS] Fetch model list blocked because the model endpoint was not found",
                 extra={"scope": scope},
                 level=logging.WARNING,
             )
@@ -502,7 +502,7 @@ def register_route_backend_models(bp):
 
         except LookupError as exc:
             log_event(
-                "[Models] Test model request blocked because the model endpoint was not found",
+                "[MODELS] Test model request blocked because the model endpoint was not found",
                 extra={"scope": scope},
                 level=logging.WARNING,
             )
@@ -750,7 +750,7 @@ def register_route_backend_models(bp):
             return jsonify({"error": "Model provider not found."}), 400
         except LookupError as e:
             log_event(
-                "[Models] Test connection blocked because the model endpoint was not found",
+                "[MODELS] Test connection blocked because the model endpoint was not found",
                 level=logging.WARNING,
             )
             return build_safe_error_response("The selected model endpoint could not be found.", 404)

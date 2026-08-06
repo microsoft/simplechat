@@ -163,7 +163,7 @@ def _list_governance_item_policies(entity_type):
         from functions_governance import list_item_policies
     except Exception as exc:
         log_event(
-            "[MCPDestinationPolicy] Unable to import governance item policies",
+            "[MCP_DESTINATION_POLICY] Unable to import governance item policies",
             extra={"entity_type": entity_type, "error": str(exc)},
             level=logging.WARNING,
             debug_only=True,
@@ -174,7 +174,7 @@ def _list_governance_item_policies(entity_type):
         return list_item_policies(entity_type=entity_type)
     except Exception as exc:
         log_event(
-            "[MCPDestinationPolicy] Unable to load governance item policies",
+            "[MCP_DESTINATION_POLICY] Unable to load governance item policies",
             extra={"entity_type": entity_type, "error": str(exc)},
             level=logging.WARNING,
             debug_only=True,
@@ -191,7 +191,7 @@ def _get_governance_group_ids_for_user(user_id):
         from functions_governance import get_user_governance_group_ids
     except Exception as exc:
         log_event(
-            "[MCPDestinationPolicy] Unable to import governance group lookup",
+            "[MCP_DESTINATION_POLICY] Unable to import governance group lookup",
             extra={"error": str(exc)},
             level=logging.WARNING,
             debug_only=True,
@@ -202,7 +202,7 @@ def _get_governance_group_ids_for_user(user_id):
         return set(get_user_governance_group_ids(normalized_user_id))
     except Exception as exc:
         log_event(
-            "[MCPDestinationPolicy] Unable to load governance group ids",
+            "[MCP_DESTINATION_POLICY] Unable to load governance group ids",
             extra={"user_id_present": bool(normalized_user_id), "error": str(exc)},
             level=logging.WARNING,
             debug_only=True,
@@ -680,7 +680,7 @@ def assert_mcp_destination_allowed(
         if destination_context.get("mcp_operation_id"):
             log_extra["mcp_operation_id"] = destination_context.get("mcp_operation_id")
         log_event(
-            "[MCPDestinationPolicy] MCP destination allowed",
+            "[MCP_DESTINATION_POLICY] MCP destination allowed",
             extra=log_extra,
             level=logging.INFO,
             debug_only=True,
@@ -701,7 +701,7 @@ def assert_mcp_destination_allowed(
     if destination_context.get("mcp_operation_id"):
         log_extra["mcp_operation_id"] = destination_context.get("mcp_operation_id")
     log_event(
-        "[MCPDestinationPolicy] MCP destination denied",
+        "[MCP_DESTINATION_POLICY] MCP destination denied",
         extra=log_extra,
         level=logging.WARNING,
     )

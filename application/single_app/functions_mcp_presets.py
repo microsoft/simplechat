@@ -132,7 +132,7 @@ def _iter_preset_definition_paths():
     for directory, source in _get_preset_source_directories():
         if not os.path.isdir(directory):
             log_event(
-                f"[MCPPresets] Preset directory does not exist: {directory}",
+                f"[MCP_PRESETS] Preset directory does not exist: {directory}",
                 level=logging.WARNING,
                 debug_only=True,
             )
@@ -200,7 +200,7 @@ def load_mcp_server_presets():
             McpPresetValidationError,
         ) as exc:
             log_event(
-                f"[MCPPresets] Failed to load MCP preset definition: {exc}",
+                f"[MCP_PRESETS] Failed to load MCP preset definition: {exc}",
                 level=logging.WARNING,
                 debug_only=True,
             )
@@ -217,7 +217,7 @@ def load_mcp_server_presets():
         fallback["source"] = "fallback"
         preset_by_id[MCP_DEFAULT_SERVER_PRESET_ID] = fallback
         log_event(
-            "[MCPPresets] Generic MCP preset was not loaded; using fallback definition.",
+            "[MCP_PRESETS] Generic MCP preset was not loaded; using fallback definition.",
             level=logging.WARNING,
             debug_only=True,
         )

@@ -368,7 +368,7 @@ def _delete_user_ui_settings_cache(user_id):
             cache_deleter(user_id)
         except Exception as cache_error:
             log_event(
-                "[UserSettingsCache] Failed to delete user UI settings cache.",
+                "[USER_SETTINGS_CACHE] Failed to delete user UI settings cache.",
                 extra={
                     "user_id": user_id,
                     "error": str(cache_error)
@@ -384,7 +384,7 @@ def _set_user_ui_settings_cache(user_id, doc):
             cache_setter(user_id, _extract_user_ui_settings(doc))
         except Exception as cache_error:
             log_event(
-                "[UserSettingsCache] Failed to set user UI settings cache.",
+                "[USER_SETTINGS_CACHE] Failed to set user UI settings cache.",
                 extra={
                     "user_id": user_id,
                     "error": str(cache_error)
@@ -913,7 +913,7 @@ def _authorize_user_settings_access(user_id, operation, allow_cross_user=False):
     actor_user_id = str(get_current_user_id() or '').strip()
     if actor_user_id and normalized_user_id and actor_user_id != normalized_user_id:
         log_event(
-            f"[UserSettings] Denied cross-user {operation}",
+            f"[USER_SETTINGS] Denied cross-user {operation}",
             {
                 "actor_user_id": actor_user_id,
                 "target_user_id": normalized_user_id,
@@ -2389,7 +2389,7 @@ def get_user_settings(user_id, allow_cross_user=False):
             previous_type = type(doc.get('settings')).__name__ if 'settings' in doc else 'missing'
             doc['settings'] = {}
             updated = True
-            log_event("[UserSettings] Malformed settings repaired", {
+            log_event("[USER_SETTINGS] Malformed settings repaired", {
                 "user_id": user_id,
                 "previous_type": previous_type,
             })
@@ -2510,7 +2510,7 @@ def get_user_ui_settings(user_id, allow_cross_user=False):
                 }
         except Exception as cache_error:
             log_event(
-                "[UserSettingsCache] Failed to read user UI settings cache.",
+                "[USER_SETTINGS_CACHE] Failed to read user UI settings cache.",
                 extra={
                     "user_id": user_id,
                     "error": str(cache_error)
@@ -2545,7 +2545,7 @@ def update_user_settings(user_id, settings_to_update, allow_cross_user=False):
     )
     sanitized_settings_to_update = sanitize_settings_for_logging(settings_to_update)
     log_event(
-        "[UserSettings] Update Attempt",
+        "[USER_SETTINGS] Update Attempt",
         {
             "user_id": user_id,
             "actor_user_id": actor_user_id,

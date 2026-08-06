@@ -184,7 +184,7 @@ class TableauPlugin(BasePlugin):
     def _create_server(self):
         tsc = self._require_tsc()
         debug_print(
-            f"[TableauPlugin] Creating Tableau server client endpoint={self.endpoint} "
+            f"[TABLEAU_PLUGIN] Creating Tableau server client endpoint={self.endpoint} "
             f"site_content_url={self.site_content_url or '<default>'} "
             f"auth_method={self.auth_method} timeout={self.timeout} "
             f"use_server_version={self.use_server_version}"
@@ -195,7 +195,7 @@ class TableauPlugin(BasePlugin):
                 server.add_http_options({"timeout": self.timeout})
             except Exception:
                 log_event(
-                    "[TableauPlugin] Unable to apply Tableau HTTP timeout option.",
+                    "[TABLEAU_PLUGIN] Unable to apply Tableau HTTP timeout option.",
                     extra={"endpoint": self.endpoint, "plugin_name": self.manifest.get("name")},
                     level=logging.DEBUG,
                     debug_only=True,
@@ -288,18 +288,18 @@ class TableauPlugin(BasePlugin):
         items: List[Dict[str, Any]] = []
         try:
             debug_print(
-                f"[TableauPlugin] Listing Tableau content content_type={collection_name} "
+                f"[TABLEAU_PLUGIN] Listing Tableau content content_type={collection_name} "
                 f"query_present={bool(str(query or '').strip())} limit={limit} "
                 f"plugin_name={self.manifest.get('name')}"
             )
             server = self._create_server()
             tableau_auth = self._get_tableau_auth()
             debug_print(
-                f"[TableauPlugin] Signing in to Tableau endpoint={self.endpoint} "
+                f"[TABLEAU_PLUGIN] Signing in to Tableau endpoint={self.endpoint} "
                 f"site_content_url={self.site_content_url or '<default>'} auth_method={self.auth_method}"
             )
             with server.auth.sign_in(tableau_auth):
-                debug_print(f"[TableauPlugin] Tableau sign-in succeeded; reading {collection_name}.")
+                debug_print(f"[TABLEAU_PLUGIN] Tableau sign-in succeeded; reading {collection_name}.")
                 collection = getattr(server, collection_name)
                 for item in self._iter_collection(collection):
                     if not self._matches_query(item, query):
@@ -308,7 +308,7 @@ class TableauPlugin(BasePlugin):
                     if len(items) >= limit:
                         break
             debug_print(
-                f"[TableauPlugin] Tableau content listing succeeded content_type={collection_name} "
+                f"[TABLEAU_PLUGIN] Tableau content listing succeeded content_type={collection_name} "
                 f"count={len(items)} has_query={bool(str(query or '').strip())}"
             )
             return {
@@ -321,12 +321,12 @@ class TableauPlugin(BasePlugin):
             }
         except Exception as exc:
             debug_print(
-                f"[TableauPlugin] Tableau content listing failed content_type={collection_name} "
+                f"[TABLEAU_PLUGIN] Tableau content listing failed content_type={collection_name} "
                 f"endpoint={self.endpoint} site_content_url={self.site_content_url or '<default>'} "
                 f"exception_type={type(exc).__name__} message={exc}"
             )
             log_event(
-                f"[TableauPlugin] Tableau content listing failed: {exc}",
+                f"[TABLEAU_PLUGIN] Tableau content listing failed: {exc}",
                 extra={
                     "endpoint": self.endpoint,
                     "content_type": collection_name,
@@ -380,20 +380,20 @@ class TableauPlugin(BasePlugin):
 
         try:
             debug_print(
-                f"[TableauPlugin] Getting workbook details workbook_id_present={bool(normalized_workbook_id)} "
+                f"[TABLEAU_PLUGIN] Getting workbook details workbook_id_present={bool(normalized_workbook_id)} "
                 f"endpoint={self.endpoint} site_content_url={self.site_content_url or '<default>'}"
             )
             server = self._create_server()
             tableau_auth = self._get_tableau_auth()
-            debug_print(f"[TableauPlugin] Signing in to Tableau for workbook details endpoint={self.endpoint}.")
+            debug_print(f"[TABLEAU_PLUGIN] Signing in to Tableau for workbook details endpoint={self.endpoint}.")
             with server.auth.sign_in(tableau_auth):
-                debug_print("[TableauPlugin] Tableau sign-in succeeded; loading workbook details.")
+                debug_print("[TABLEAU_PLUGIN] Tableau sign-in succeeded; loading workbook details.")
                 workbook = server.workbooks.get_by_id(normalized_workbook_id)
                 if hasattr(server.workbooks, "populate_views"):
                     server.workbooks.populate_views(workbook)
                 views = [self._item_to_dict(view, "view") for view in getattr(workbook, "views", []) or []]
             debug_print(
-                f"[TableauPlugin] Workbook details lookup succeeded workbook_id={normalized_workbook_id} "
+                f"[TABLEAU_PLUGIN] Workbook details lookup succeeded workbook_id={normalized_workbook_id} "
                 f"view_count={len(views)}"
             )
             return {
@@ -404,11 +404,11 @@ class TableauPlugin(BasePlugin):
             }
         except Exception as exc:
             debug_print(
-                f"[TableauPlugin] Workbook details lookup failed workbook_id={normalized_workbook_id} "
+                f"[TABLEAU_PLUGIN] Workbook details lookup failed workbook_id={normalized_workbook_id} "
                 f"endpoint={self.endpoint} exception_type={type(exc).__name__} message={exc}"
             )
             log_event(
-                f"[TableauPlugin] Tableau workbook details lookup failed: {exc}",
+                f"[TABLEAU_PLUGIN] Tableau workbook details lookup failed: {exc}",
                 extra={
                     "endpoint": self.endpoint,
                     "workbook_id": normalized_workbook_id,

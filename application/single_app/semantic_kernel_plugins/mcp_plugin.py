@@ -177,7 +177,7 @@ class McpPlugin(BasePlugin):
         """Invoke an MCP tool through the factory's native MCP connector."""
         try:
             debug_print(
-                f"[McpPlugin] Invoking MCP tool tool_name={tool_name} "
+                f"[MCP_PLUGIN] Invoking MCP tool tool_name={tool_name} "
                 f"transport={self._additional_fields.get('transport')} "
                 f"endpoint_present={bool(str(self.manifest.get('endpoint') or '').strip())} "
                 f"argument_keys={sorted((arguments or {}).keys())}"
@@ -190,12 +190,12 @@ class McpPlugin(BasePlugin):
                 arguments or {},
             )
             debug_print(
-                f"[McpPlugin] MCP tool completed tool_name={tool_name} "
+                f"[MCP_PLUGIN] MCP tool completed tool_name={tool_name} "
                 f"success={result.get('success') if isinstance(result, dict) else '<unknown>'}"
             )
             return result
         except ValueError as exc:
-            debug_print(f"[McpPlugin] MCP tool validation failed tool_name={tool_name} message={exc}")
+            debug_print(f"[MCP_PLUGIN] MCP tool validation failed tool_name={tool_name} message={exc}")
             return {
                 "success": False,
                 "error": str(exc),
@@ -203,7 +203,7 @@ class McpPlugin(BasePlugin):
             }
         except McpRuntimeError as exc:
             debug_print(
-                f"[McpPlugin] MCP tool call failed tool_name={tool_name} "
+                f"[MCP_PLUGIN] MCP tool call failed tool_name={tool_name} "
                 f"category={exc.category} operation={exc.operation}"
             )
             return {
@@ -216,7 +216,7 @@ class McpPlugin(BasePlugin):
         except Exception as exc:
             error_info = classify_mcp_exception(exc, "tool_call")
             debug_print(
-                f"[McpPlugin] MCP tool call failed tool_name={tool_name} "
+                f"[MCP_PLUGIN] MCP tool call failed tool_name={tool_name} "
                 f"exception_type={type(exc).__name__} category={error_info['category']}"
             )
             return {

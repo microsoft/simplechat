@@ -73,7 +73,7 @@ def _decode_teams_assertion_claims(teams_token):
         return claims if isinstance(claims, dict) else {}
     except Exception as e:
         log_event(
-            f"[TeamsSSO] Unable to decode Teams assertion claims: {e}",
+            f"[TEAMS_SSO] Unable to decode Teams assertion claims: {e}",
             level=logging.WARNING,
             debug_only=True,
         )
@@ -93,7 +93,7 @@ def _fetch_graph_me(access_token):
         )
         if response.status_code != 200:
             log_event(
-                "[TeamsSSO] Microsoft Graph /me lookup failed during Teams token exchange.",
+                "[TEAMS_SSO] Microsoft Graph /me lookup failed during Teams token exchange.",
                 extra={'status_code': response.status_code},
                 level=logging.WARNING,
             )
@@ -102,7 +102,7 @@ def _fetch_graph_me(access_token):
         return payload if isinstance(payload, dict) else {}
     except Exception as e:
         log_event(
-            f"[TeamsSSO] Microsoft Graph /me lookup raised during Teams token exchange: {e}",
+            f"[TEAMS_SSO] Microsoft Graph /me lookup raised during Teams token exchange: {e}",
             level=logging.WARNING,
             debug_only=True,
         )
@@ -254,8 +254,8 @@ def register_route_frontend_authentication(bp):
 
         # --- Store results ---
         # Store user identity info (claims from ID token)
-        debug_print(f" [claims] User {result.get('id_token_claims', {}).get('name', 'Unknown')} logged in.")
-        debug_print(f" [claims] User claims: {result.get('id_token_claims', {})}")
+        debug_print(f" [CLAIMS] User {result.get('id_token_claims', {}).get('name', 'Unknown')} logged in.")
+        debug_print(f" [CLAIMS] User claims: {result.get('id_token_claims', {})}")
 
         session["user"] = result.get("id_token_claims")
         session["last_activity_epoch"] = int(time.time())
@@ -284,7 +284,7 @@ def register_route_frontend_authentication(bp):
                 )
         except Exception as e:
             log_event(
-                "[TermsOfUse] Failed to apply pending Azure AD pre-auth acceptance.",
+                "[TERMS_OF_USE] Failed to apply pending Azure AD pre-auth acceptance.",
                 extra={'error': str(e)},
                 level=logging.ERROR,
                 exceptionTraceback=True,
@@ -389,7 +389,7 @@ def register_route_frontend_authentication(bp):
             )
         except Exception as e:
             log_event(
-                f"[TeamsSSO] Teams token exchange raised during OBO flow: {e}",
+                f"[TEAMS_SSO] Teams token exchange raised during OBO flow: {e}",
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
@@ -400,7 +400,7 @@ def register_route_frontend_authentication(bp):
 
         if "error" in result:
             log_event(
-                "[TeamsSSO] Teams token exchange failed during OBO flow.",
+                "[TEAMS_SSO] Teams token exchange failed during OBO flow.",
                 extra={
                     'msal_error': result.get('error'),
                     'correlation_id': result.get('correlation_id'),
@@ -415,7 +415,7 @@ def register_route_frontend_authentication(bp):
         session_user = _build_teams_session_user(result, teams_token)
         if not session_user.get('oid') or not session_user.get('tid'):
             log_event(
-                "[TeamsSSO] Teams token exchange succeeded but user identity was incomplete.",
+                "[TEAMS_SSO] Teams token exchange succeeded but user identity was incomplete.",
                 extra={
                     'has_oid': bool(session_user.get('oid')),
                     'has_tid': bool(session_user.get('tid')),
@@ -434,7 +434,7 @@ def register_route_frontend_authentication(bp):
 
         user_name = session_user.get('name', 'Unknown User')
         log_event(
-            "[TeamsSSO] Teams SSO user authenticated successfully.",
+            "[TEAMS_SSO] Teams SSO user authenticated successfully.",
             extra={'user_id': session_user.get('oid')},
             level=logging.INFO,
         )
@@ -443,7 +443,7 @@ def register_route_frontend_authentication(bp):
             log_user_login(session_user.get('oid'), 'teams_sso')
             record_user_login_session_activity(session)
         except Exception as e:
-            debug_print(f"[TeamsSSO] Could not log Teams login activity: {e}")
+            debug_print(f"[TEAMS_SSO] Could not log Teams login activity: {e}")
 
         try:
             apply_pending_pre_auth_terms_of_use(
@@ -453,7 +453,7 @@ def register_route_frontend_authentication(bp):
             )
         except Exception as e:
             log_event(
-                "[TermsOfUse] Failed to apply pending Teams pre-auth acceptance.",
+                "[TERMS_OF_USE] Failed to apply pending Teams pre-auth acceptance.",
                 extra={'error': str(e)},
                 level=logging.ERROR,
                 exceptionTraceback=True,

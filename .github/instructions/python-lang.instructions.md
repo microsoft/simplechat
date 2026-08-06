@@ -19,7 +19,7 @@ applyTo: '**/*.py'
 
 - Code and definitions should occur after the imports block.
 
-- All logging should used tag based prefixes. Ex: [GPTClient] or [SKLoader] to identify the source of the log message and make it easier to trace. Tags should be enclosed in square brackets. Tags should be generalized to the operation that is occurring. Any existins logging that is missing tags should have tags added.
+- All logging should use tag-based prefixes. Ex: `[GPT_CLIENT]` or `[SK_LOADER]` to identify the source of the log message and make it easier to trace. Tags should be enclosed in square brackets and MUST use `UPPERCASE_WITH_UNDERSCORES`. Tags should be generalized to the operation that is occurring. Prefer static tags; move dynamic values into the message body or `extra` metadata instead of embedding them inside the bracketed tag. Any existing logging that is missing tags should have tags added. When adding or renaming a logging tag, update `docs/reference/logging-tags.md` in the same change so the reference inventory stays current.
 
 - Always import `log_event` from `functions_appinsights.py` for any logging activities.
 

@@ -400,7 +400,7 @@ def _resolve_reasoning_effort_for_model(reasoning_effort, model_name, provider=N
     resolved_reasoning_effort = ModelEndpointBehavior(provider, model_name).resolve_reasoning_effort(reasoning_effort)
     if str(reasoning_effort or '').strip() and not resolved_reasoning_effort:
         debug_print(
-            f"[ModelEndpoint] Skipping reasoning_effort for {model_name}; live Foundry probes show this parameter is model-family specific."
+            f"[MODEL_ENDPOINT] Skipping reasoning_effort for {model_name}; live Foundry probes show this parameter is model-family specific."
         )
     return resolved_reasoning_effort
 
@@ -413,7 +413,7 @@ def _apply_response_length_for_model(api_params, response_length, model_name, pr
     response_length_parameter = response_length_parameter or ModelEndpointBehavior(provider, model_name).response_length_parameter
     api_params[response_length_parameter] = normalized_response_length
     debug_print(
-        f"[ModelEndpoint] Applying response length: {response_length_parameter}={normalized_response_length} for {model_name}"
+        f"[MODEL_ENDPOINT] Applying response length: {response_length_parameter}={normalized_response_length} for {model_name}"
     )
     return response_length_parameter
 
@@ -553,7 +553,7 @@ def _maybe_resolve_chat_source_manifest(
         )
     except Exception:
         log_event(
-            '[MixedSourceManifest] Chat shadow resolution failed.',
+            '[MIXED_SOURCE_MANIFEST] Chat shadow resolution failed.',
             extra={
                 'requested_source_count': len(requested_source_ids),
                 'selection_mode': 'selected',
@@ -812,7 +812,7 @@ def _validate_reauthorized_manifest_finalization(
         raise MixedSourceFinalizationError('authorization_lost')
     if source_version_changed_count:
         log_event(
-            '[MixedSourceLifecycle] Finalization source version changed.',
+            '[MIXED_SOURCE_LIFECYCLE] Finalization source version changed.',
             extra={
                 'request_correlation_id': request_correlation_id,
                 'source_version_changed_count': source_version_changed_count,
@@ -1228,7 +1228,7 @@ def _resolve_conversation_task_documents(
 
         linked_documents = get_chat_upload_workspace_documents_for_conversation(user_id, normalized_conversation_id)
     except Exception as exc:
-        debug_print(f"[ConversationTaskDocuments] Failed to resolve linked workspace documents: {exc}")
+        debug_print(f"[CONVERSATION_TASK_DOCUMENTS] Failed to resolve linked workspace documents: {exc}")
         return result
 
     action_allowed = not assigned_knowledge_filters or _assigned_knowledge_allows_document_action(
@@ -1265,7 +1265,7 @@ def _resolve_conversation_task_documents(
         result['blocked'] = True
         result['block_reason'] = 'assigned_knowledge_action_not_allowed'
         debug_print(
-            '[ConversationTaskDocuments] Assigned Knowledge blocked linked chat upload documents | '
+            '[CONVERSATION_TASK_DOCUMENTS] Assigned Knowledge blocked linked chat upload documents | '
             f'conversation_id={normalized_conversation_id} | '
             f'action_type={document_action_type or DOCUMENT_ACTION_TYPE_NONE} | '
             f'linked_count={result["linked_count"]}'
@@ -1614,7 +1614,7 @@ def _merge_assigned_knowledge_user_context_search_results(assigned_results, user
         user_context_appended_count += 1
 
     debug_print(
-        "[AssignedKnowledge] Merged assigned and user workspace search results | "
+        "[ASSIGNED_KNOWLEDGE] Merged assigned and user workspace search results | "
         f"assigned_count={min(len(assigned_results or []), assigned_limit)} | "
         f"user_context_appended={user_context_appended_count} | total={len(merged_results)}"
     )
@@ -1886,7 +1886,7 @@ def _rollback_agent_citation_artifacts(conversation_id, compact_citations):
 
     if artifact_ids:
         log_event(
-            '[MixedSourceLifecycle] Citation artifact rollback completed.',
+            '[MIXED_SOURCE_LIFECYCLE] Citation artifact rollback completed.',
             extra={
                 'citation_artifact_count': len(artifact_ids),
                 'deleted_artifact_count': deleted_artifact_count,
@@ -1950,7 +1950,7 @@ def _rollback_mixed_source_chat_publication(
     )
     rollback_failure_count += citation_rollback.get('rollback_failure_count', 0)
     log_event(
-        '[MixedSourceLifecycle] Chat publication rollback completed.',
+        '[MIXED_SOURCE_LIFECYCLE] Chat publication rollback completed.',
         extra={
             'canceled_export_count': canceled_export_count,
             'deleted_generated_artifact_count': deleted_generated_artifact_count,
@@ -2047,7 +2047,7 @@ def _get_user_message_image_context(conversation_id, user_message_id):
             thread_info.get('previous_thread_id'),
         )
     except Exception as exc:
-        debug_print(f"[ImageGeneration] Warning: Could not retrieve user message metadata: {exc}")
+        debug_print(f"[IMAGE_GENERATION] Warning: Could not retrieve user message metadata: {exc}")
         return None, None, None
 
 
@@ -2184,7 +2184,7 @@ def _maybe_create_deep_research_ledger_artifact(settings, conversation_id, ledge
         )
     except Exception as exc:
         log_event(
-            '[DeepResearch] Failed to save Deep Research ledger artifact',
+            '[DEEP_RESEARCH] Failed to save Deep Research ledger artifact',
             {
                 'conversation_id': conversation_id,
                 'file_name': file_name,
@@ -2210,7 +2210,7 @@ def _maybe_create_deep_research_ledger_artifact(settings, conversation_id, ledge
         'summary': 'Deep Research ledger with search queries, reviewed sources, skipped URLs, and coverage details.',
     }
     log_event(
-        '[DeepResearch] Saved Deep Research ledger artifact',
+        '[DEEP_RESEARCH] Saved Deep Research ledger artifact',
         {
             'conversation_id': conversation_id,
             'artifact_message_id': artifact_message_id,
@@ -2309,7 +2309,7 @@ def maybe_create_generated_file_output(
             raise
         except Exception as exc:
             log_event(
-                '[Generated File Export] Failed to queue large CSV export',
+                '[GENERATED_FILE_EXPORT] Failed to queue large CSV export',
                 {
                     'conversation_id': conversation_id,
                     'generated_file_name': generated_file_name,
@@ -2352,7 +2352,7 @@ def maybe_create_generated_file_output(
         raise
     except Exception as exc:
         log_event(
-            '[Generated File Export] Failed to save generated file artifact',
+            '[GENERATED_FILE_EXPORT] Failed to save generated file artifact',
             {
                 'conversation_id': conversation_id,
                 'generated_file_name': generated_file_name,
@@ -2373,7 +2373,7 @@ def maybe_create_generated_file_output(
         return None
 
     log_event(
-        '[Generated File Export] Saved generated file artifact',
+        '[GENERATED_FILE_EXPORT] Saved generated file artifact',
         {
             'conversation_id': conversation_id,
             'artifact_message_id': artifact_metadata.get('artifact_message_id'),
@@ -2516,7 +2516,7 @@ def maybe_create_assistant_file_generated_output(
         )
     except Exception as exc:
         log_event(
-            '[Assistant File Export] Failed to save assistant generated file artifact',
+            '[ASSISTANT_FILE_EXPORT] Failed to save assistant generated file artifact',
             {
                 'conversation_id': conversation_id,
                 'generated_file_name': generated_file_name,
@@ -2533,7 +2533,7 @@ def maybe_create_assistant_file_generated_output(
 
     uploaded_file_name = upload_result.get('message', {}).get('file_name') or generated_file_name
     log_event(
-        '[Assistant File Export] Saved assistant generated file artifact',
+        '[ASSISTANT_FILE_EXPORT] Saved assistant generated file artifact',
         {
             'conversation_id': conversation_id,
             'artifact_message_id': artifact_message_id,
@@ -2874,7 +2874,7 @@ def _backfill_missing_fact_memory_embeddings(fact_store, facts):
     try:
         embedding_results = generate_embeddings_batch([value for _, value in missing_items])
     except Exception as exc:
-        debug_print(f"[Fact Memory] Failed to backfill memory embeddings: {exc}")
+        debug_print(f"[FACT_MEMORY] Failed to backfill memory embeddings: {exc}")
         return 0
 
     updated_count = 0
@@ -3532,7 +3532,7 @@ def retrieve_relevant_fact_memory_entries(
     try:
         query_embedding_result = generate_embedding(query_text)
     except Exception as exc:
-        debug_print(f"[Fact Memory] Failed to generate query embedding: {exc}")
+        debug_print(f"[FACT_MEMORY] Failed to generate query embedding: {exc}")
         result['search_mode'] = 'embedding_unavailable'
         return result
 
@@ -3761,14 +3761,14 @@ def persist_agent_citation_artifacts(
                 )
             except Exception:
                 log_event(
-                    '[Agent Citations] Citation rollback after cancellation failed.',
+                    '[AGENT_CITATIONS] Citation rollback after cancellation failed.',
                     extra={'citation_artifact_rollback_failure_count': 1},
                     level=logging.WARNING,
                 )
         raise
     except Exception as exc:
         log_event(
-            f"[Agent Citations] Failed to persist assistant artifacts: {exc}",
+            f"[AGENT_CITATIONS] Failed to persist assistant artifacts: {exc}",
             extra={
                 'conversation_id': conversation_id,
                 'assistant_message_id': assistant_message_id,
@@ -3809,7 +3809,7 @@ def _load_user_message_response_context(
             response_context['previous_thread_id'] = thread_info.get('previous_thread_id')
     except Exception as exc:
         debug_print(
-            f"[Threading] Could not load response context for user message {user_message_id}: {exc}"
+            f"[THREADING] Could not load response context for user message {user_message_id}: {exc}"
         )
 
     return response_context
@@ -4482,7 +4482,7 @@ def _build_tabular_related_document_catalog(user_id, source_hint, group_id=None,
         ))
     except Exception as exc:
         log_event(
-            '[Tabular Related Documents] Failed to build related-document catalog',
+            '[TABULAR_RELATED_DOCUMENTS] Failed to build related-document catalog',
             extra={
                 'source_hint': source_hint,
                 'group_id': group_id,
@@ -4670,7 +4670,7 @@ def _resolve_tabular_related_document_evidence(document_match, user_question, us
             break
     except Exception as exc:
         log_event(
-            '[Tabular Related Documents] Search lookup failed for resolved document reference',
+            '[TABULAR_RELATED_DOCUMENTS] Search lookup failed for resolved document reference',
             extra={
                 'document_id': document_id,
                 'file_name': (document_match or {}).get('file_name'),
@@ -4699,7 +4699,7 @@ def _resolve_tabular_related_document_evidence(document_match, user_question, us
             chunk_sequence = chunk_sequence if chunk_sequence is not None else first_chunk.get('chunk_sequence')
         except Exception as exc:
             log_event(
-                '[Tabular Related Documents] Chunk fallback failed for resolved document reference',
+                '[TABULAR_RELATED_DOCUMENTS] Chunk fallback failed for resolved document reference',
                 extra={
                     'document_id': document_id,
                     'file_name': (document_match or {}).get('file_name'),
@@ -4823,7 +4823,7 @@ def augment_tabular_invocations_with_related_document_evidence(invocations, user
             continue
 
         log_event(
-            '[Tabular Related Documents] Resolved row-linked document evidence',
+            '[TABULAR_RELATED_DOCUMENTS] Resolved row-linked document evidence',
             {
                 'conversation_id': conversation_id,
                 'source_hint': source_hint,
@@ -4931,7 +4931,7 @@ def build_tabular_computed_results_system_message(source_label, tabular_analysis
     if len(rendered_analysis) > max_handoff_chars:
         original_length = len(rendered_analysis)
         log_event(
-            f"[Tabular SK Analysis] Computed results handoff truncated from {original_length} to {max_handoff_chars} chars",
+            f"[TABULAR_SK_ANALYSIS] Computed results handoff truncated from {original_length} to {max_handoff_chars} chars",
             level=logging.WARNING,
         )
         rendered_analysis = (
@@ -5907,7 +5907,7 @@ def _truncate_tabular_generated_output_response_preview(response_content, max_ch
 
 def _log_tabular_generated_output_handoff(conversation_id, user_question, output_metadata, injection_target):
     log_event(
-        '[Tabular Generated Output] Added summary-only handoff system message',
+        '[TABULAR_GENERATED_OUTPUT] Added summary-only handoff system message',
         {
             'conversation_id': conversation_id,
             'injection_target': injection_target,
@@ -5961,7 +5961,7 @@ async def _generate_tabular_structured_output_entries(
     row_batches = _build_tabular_generated_output_row_batches(rows, settings=settings)
     total_batches = len(row_batches)
     log_event(
-        '[Tabular Generated Output] Preparing structured export batches',
+        '[TABULAR_GENERATED_OUTPUT] Preparing structured export batches',
         {
             'source_file_name': source_candidate.get('filename'),
             'output_format': normalized_output_format,
@@ -6023,7 +6023,7 @@ async def _generate_tabular_structured_output_entries(
             return background_metadata
 
         log_event(
-            '[Tabular Generated Output] Background export was eligible but lacked user or conversation context',
+            '[TABULAR_GENERATED_OUTPUT] Background export was eligible but lacked user or conversation context',
             {
                 'source_file_name': source_candidate.get('filename'),
                 'output_format': normalized_output_format,
@@ -6040,7 +6040,7 @@ async def _generate_tabular_structured_output_entries(
     for batch_index, batch_rows in enumerate(row_batches):
         batch_number = batch_index + 1
         log_event(
-            '[Tabular Generated Output] Building structured export batch',
+            '[TABULAR_GENERATED_OUTPUT] Building structured export batch',
             {
                 'source_file_name': source_candidate.get('filename'),
                 'output_format': normalized_output_format,
@@ -6129,7 +6129,7 @@ async def _generate_tabular_structured_output_entries(
                     parsed_entries = None
             if parsed_entries is None or parsed_entry_count != len(batch_rows):
                 log_event(
-                    '[Tabular Generated Output] Structured export batch attempt mismatch',
+                    '[TABULAR_GENERATED_OUTPUT] Structured export batch attempt mismatch',
                     {
                         'source_file_name': source_candidate.get('filename'),
                         'output_format': normalized_output_format,
@@ -6164,7 +6164,7 @@ async def _generate_tabular_structured_output_entries(
                 ),
             )
             log_event(
-                '[Tabular Generated Output] Structured export batch failed',
+                '[TABULAR_GENERATED_OUTPUT] Structured export batch failed',
                 {
                     'source_file_name': source_candidate.get('filename'),
                     'output_format': normalized_output_format,
@@ -6208,7 +6208,7 @@ async def maybe_create_tabular_generated_output(
     source_candidate = _build_tabular_generated_output_source_candidate(invocations)
     if candidate_diagnostics:
         log_event(
-            '[Tabular Generated Output] Evaluated source candidates',
+            '[TABULAR_GENERATED_OUTPUT] Evaluated source candidates',
             {
                 'conversation_id': conversation_id,
                 'output_format': output_format,
@@ -6219,7 +6219,7 @@ async def maybe_create_tabular_generated_output(
         )
     if not source_candidate:
         log_event(
-            '[Tabular Generated Output] No eligible source candidate selected',
+            '[TABULAR_GENERATED_OUTPUT] No eligible source candidate selected',
             {
                 'conversation_id': conversation_id,
                 'output_format': output_format,
@@ -6250,7 +6250,7 @@ async def maybe_create_tabular_generated_output(
         except Exception as exc:
             source_descriptor_error = str(exc)
             log_event(
-                '[Tabular Generated Output] Could not build durable source query descriptor',
+                '[TABULAR_GENERATED_OUTPUT] Could not build durable source query descriptor',
                 {
                     'conversation_id': conversation_id,
                     'source_file_name': source_candidate.get('filename'),
@@ -6383,7 +6383,7 @@ async def maybe_create_tabular_generated_output(
             raise
         except Exception as exc:
             log_event(
-                '[Tabular Generated Output] Durable source-backed export queueing failed',
+                '[TABULAR_GENERATED_OUTPUT] Durable source-backed export queueing failed',
                 {
                     'conversation_id': conversation_id,
                     'source_file_name': source_candidate.get('filename'),
@@ -6433,7 +6433,7 @@ async def maybe_create_tabular_generated_output(
 
     if not source_candidate.get('full_result_available'):
         log_event(
-            '[Tabular Generated Output] Selected source candidate is incomplete; skipping export',
+            '[TABULAR_GENERATED_OUTPUT] Selected source candidate is incomplete; skipping export',
             {
                 'conversation_id': conversation_id,
                 'output_format': output_format,
@@ -6455,7 +6455,7 @@ async def maybe_create_tabular_generated_output(
             ),
         )
     log_event(
-        '[Tabular Generated Output] Selected source candidate',
+        '[TABULAR_GENERATED_OUTPUT] Selected source candidate',
         {
             'conversation_id': conversation_id,
             'output_format': output_format,
@@ -6530,7 +6530,7 @@ async def maybe_create_tabular_generated_output(
         ),
     )
     log_event(
-        '[Tabular Generated Output] Uploading generated export artifact',
+        '[TABULAR_GENERATED_OUTPUT] Uploading generated export artifact',
         {
             'conversation_id': conversation_id,
             'source_file_name': source_candidate.get('filename'),
@@ -6580,7 +6580,7 @@ async def maybe_create_tabular_generated_output(
         ),
     )
     log_event(
-        '[Tabular Generated Output] Generated export ready',
+        '[TABULAR_GENERATED_OUTPUT] Generated export ready',
         {
             'conversation_id': conversation_id,
             'source_file_name': source_candidate.get('filename'),
@@ -6920,7 +6920,7 @@ def get_kernel():
 def get_kernel_agents():
     g_agents = getattr(g, 'kernel_agents', None)
     builtins_agents = getattr(builtins, 'kernel_agents', None)
-    log_event(f"[SKChat] get_kernel_agents - g.kernel_agents: {type(g_agents)} ({len(g_agents) if g_agents else 0} agents), builtins.kernel_agents: {type(builtins_agents)} ({len(builtins_agents) if builtins_agents else 0} agents)", level=logging.INFO)
+    log_event(f"[SK_CHAT] get_kernel_agents - g.kernel_agents: {type(g_agents)} ({len(g_agents) if g_agents else 0} agents), builtins.kernel_agents: {type(builtins_agents)} ({len(builtins_agents) if builtins_agents else 0} agents)", level=logging.INFO)
     return g_agents or builtins_agents
 
 def is_personal_chat_conversation(conversation_item):
@@ -6951,7 +6951,7 @@ class BackgroundStreamBridge:
 
         self._last_backpressure_logged_at = now
         log_event(
-            '[Streaming] SSE bridge queue backpressure detected',
+            '[STREAMING] SSE bridge queue backpressure detected',
             extra={
                 'conversation_id': stream_status.get('conversation_id'),
                 'user_id': stream_status.get('user_id'),
@@ -7028,7 +7028,7 @@ class BackgroundStreamBridge:
         if update_session and self._stream_session:
             stream_status = self._stream_session.mark_consumer_detached(reason=reason) or {}
             log_event(
-                '[Streaming] Stream consumer detached',
+                '[STREAMING] Stream consumer detached',
                 extra={
                     'conversation_id': stream_status.get('conversation_id'),
                     'user_id': stream_status.get('user_id'),
@@ -7133,7 +7133,7 @@ class ActiveConversationStreamSession:
             ttl_seconds=self.session_ttl_seconds,
         )
         log_event(
-            '[Streaming] Stream session started',
+            '[STREAMING] Stream session started',
             extra={
                 'conversation_id': self.conversation_id,
                 'user_id': self.user_id,
@@ -7201,7 +7201,7 @@ class ActiveConversationStreamSession:
             self._condition.notify_all()
 
         log_event(
-            '[Streaming] Stream cancellation requested',
+            '[STREAMING] Stream cancellation requested',
             extra={
                 'conversation_id': self.conversation_id,
                 'user_id': self.user_id,
@@ -7282,7 +7282,7 @@ class ActiveConversationStreamSession:
 
         if first_content_emitted:
             log_event(
-                '[Streaming] First stream content emitted',
+                '[STREAMING] First stream content emitted',
                 extra={
                     'conversation_id': self.conversation_id,
                     'user_id': self.user_id,
@@ -7330,7 +7330,7 @@ class ActiveConversationStreamSession:
                 metadata['canceled_at'] = metadata.get('canceled_at') or metadata['completed_at']
             self._persist_metadata(metadata)
             log_event(
-                '[Streaming] Stream session closed without explicit terminal event',
+                '[STREAMING] Stream session closed without explicit terminal event',
                 extra={
                     'conversation_id': self.conversation_id,
                     'user_id': self.user_id,
@@ -9446,7 +9446,7 @@ async def maybe_recover_tabular_analysis_with_llm_reviewer(chat_service, kernel,
         )
     except Exception as reviewer_error:
         log_event(
-            f"[Tabular SK Analysis] Reviewer recovery call failed: {reviewer_error}",
+            f"[TABULAR_SK_ANALYSIS] Reviewer recovery call failed: {reviewer_error}",
             level=logging.WARNING,
             exceptionTraceback=True,
         )
@@ -9463,7 +9463,7 @@ async def maybe_recover_tabular_analysis_with_llm_reviewer(chat_service, kernel,
     reviewer_calls = parse_tabular_reviewer_plan(reviewer_text)
     if not reviewer_calls:
         log_event(
-            '[Tabular SK Analysis] Reviewer recovery did not return an executable analytical plan',
+            '[TABULAR_SK_ANALYSIS] Reviewer recovery did not return an executable analytical plan',
             extra={'reviewer_output_preview': reviewer_text[:500]},
             level=logging.WARNING,
         )
@@ -9588,7 +9588,7 @@ async def maybe_recover_tabular_analysis_with_llm_reviewer(chat_service, kernel,
             break
 
         log_event(
-            '[Tabular SK Analysis] Reviewer recovery executed automatic analytical follow-up calls',
+            '[TABULAR_SK_ANALYSIS] Reviewer recovery executed automatic analytical follow-up calls',
             extra={
                 'follow_up_functions': auto_follow_up_names,
                 'initial_reviewer_functions': executed_function_names,
@@ -9612,7 +9612,7 @@ async def maybe_recover_tabular_analysis_with_llm_reviewer(chat_service, kernel,
 
     if fallback:
         log_event(
-            '[Tabular SK Analysis] Reviewer recovery produced computed analytical tool results',
+            '[TABULAR_SK_ANALYSIS] Reviewer recovery produced computed analytical tool results',
             extra={
                 'reviewer_functions': executed_function_names,
                 'successful_tool_count': len(successful_analytical_invocations),
@@ -9628,7 +9628,7 @@ async def maybe_recover_tabular_analysis_with_llm_reviewer(chat_service, kernel,
 
     if reviewer_plan_errors or failed_tool_error_messages:
         log_event(
-            '[Tabular SK Analysis] Reviewer recovery executed but did not produce usable analytical results',
+            '[TABULAR_SK_ANALYSIS] Reviewer recovery executed but did not produce usable analytical results',
             extra={
                 'reviewer_functions': executed_function_names,
                 'reviewer_plan_errors': reviewer_plan_errors[:5],
@@ -9861,7 +9861,7 @@ def build_tabular_inline_chart_citations(user_message, invocations, max_charts=T
         )
         if not isinstance(chart_result, dict) or not chart_result.get('success'):
             log_event(
-                '[Tabular Charts] Failed to create inline chart from grouped tabular result.',
+                '[TABULAR_CHARTS] Failed to create inline chart from grouped tabular result.',
                 extra={
                     'function_name': function_name,
                     'chart_kind': chart_kind,
@@ -9891,7 +9891,7 @@ def build_tabular_inline_chart_citations(user_message, invocations, max_charts=T
 
     if chart_citations:
         log_event(
-            f'[Tabular Charts] Prepared {len(chart_citations)} inline chart(s) from tabular results.',
+            f'[TABULAR_CHARTS] Prepared {len(chart_citations)} inline chart(s) from tabular results.',
             level=logging.INFO,
         )
 
@@ -10712,7 +10712,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
         )
         analysis_filenames = [file_context['file_name'] for file_context in analysis_file_contexts]
         log_event(
-            f"[Tabular SK Analysis] Starting {execution_mode} analysis for files: {analysis_filenames}",
+            f"[TABULAR_SK_ANALYSIS] Starting {execution_mode} analysis for files: {analysis_filenames}",
             level=logging.INFO,
         )
 
@@ -10880,10 +10880,10 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                         if single_sheet:
                             tabular_plugin.set_default_sheet(container, blob_path, single_sheet)
                     df = tabular_plugin._read_tabular_blob_to_dataframe(container, blob_path)
-                    log_event(f"[Tabular SK Analysis] Pre-loaded schema for {fname} ({len(df)} rows)", level=logging.DEBUG)
+                    log_event(f"[TABULAR_SK_ANALYSIS] Pre-loaded schema for {fname} ({len(df)} rows)", level=logging.DEBUG)
             except Exception as e:
                 log_event(
-                    f"[Tabular SK Analysis] Failed to pre-load schema for {fname} "
+                    f"[TABULAR_SK_ANALYSIS] Failed to pre-load schema for {fname} "
                     f"(source={file_source_hint}, group_id={file_group_id}, public_workspace_id={file_public_workspace_id}): {e}",
                     level=logging.WARNING,
                 )
@@ -11304,7 +11304,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 return reviewer_recovery['fallback']
 
             log_event(
-                '[Tabular SK Analysis] Anthropic tabular planner did not produce computed tool results',
+                '[TABULAR_SK_ANALYSIS] Anthropic tabular planner did not produce computed tool results',
                 level=logging.WARNING,
             )
             return None
@@ -11378,7 +11378,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
             except Exception as exc:
                 synthesis_exception = exc
                 log_event(
-                    f"[Tabular SK Analysis] Attempt {attempt_number} synthesis failed after tool execution setup: {exc}",
+                    f"[TABULAR_SK_ANALYSIS] Attempt {attempt_number} synthesis failed after tool execution setup: {exc}",
                     level=logging.WARNING,
                     exceptionTraceback=True,
                 )
@@ -11412,7 +11412,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
 
                 if raw_tool_fallback:
                     log_event(
-                        f"[Tabular SK Analysis] Falling back to raw successful tool summaries after attempt {attempt_number} synthesis error",
+                        f"[TABULAR_SK_ANALYSIS] Falling back to raw successful tool summaries after attempt {attempt_number} synthesis error",
                         extra={
                             'successful_tool_count': len(successful_analytical_invocations),
                             'attempt_number': attempt_number,
@@ -11422,7 +11422,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                     return raw_tool_fallback
 
                 log_event(
-                    f"[Tabular SK Analysis] Attempt {attempt_number} could not recover from synthesis error",
+                    f"[TABULAR_SK_ANALYSIS] Attempt {attempt_number} could not recover from synthesis error",
                     extra={
                         'successful_tool_count': len(successful_analytical_invocations),
                         'failed_tool_count': len(failed_analytical_invocations),
@@ -11437,7 +11437,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 if len(analysis) > TABULAR_SK_ANALYSIS_MAX_CHARS:
                     original_analysis_length = len(analysis)
                     log_event(
-                        f"[Tabular SK Analysis] Attempt {attempt_number} analysis text truncated from {original_analysis_length} to {TABULAR_SK_ANALYSIS_MAX_CHARS} chars",
+                        f"[TABULAR_SK_ANALYSIS] Attempt {attempt_number} analysis text truncated from {original_analysis_length} to {TABULAR_SK_ANALYSIS_MAX_CHARS} chars",
                         level=logging.WARNING,
                     )
                     analysis = analysis[:TABULAR_SK_ANALYSIS_MAX_CHARS] + "\n[Analysis truncated]"
@@ -11446,7 +11446,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 if schema_summary_mode:
                     if successful_schema_summary_invocations:
                         log_event(
-                            f"[Tabular SK Analysis] Schema summary complete via {len(successful_schema_summary_invocations)} workbook tool call(s) on attempt {attempt_number}",
+                            f"[TABULAR_SK_ANALYSIS] Schema summary complete via {len(successful_schema_summary_invocations)} workbook tool call(s) on attempt {attempt_number}",
                             extra={
                                 'attempt_number': attempt_number,
                                 'elapsed_ms': attempt_elapsed_ms,
@@ -11459,7 +11459,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                     if failed_schema_summary_invocations:
                         previous_tool_error_messages = summarize_tabular_invocation_errors(failed_schema_summary_invocations)
                         log_event(
-                            f"[Tabular SK Analysis] Attempt {attempt_number} used workbook schema tool(s) but all returned errors; retrying",
+                            f"[TABULAR_SK_ANALYSIS] Attempt {attempt_number} used workbook schema tool(s) but all returned errors; retrying",
                             extra={
                                 'tool_errors': previous_tool_error_messages,
                                 'failed_tool_count': len(failed_schema_summary_invocations),
@@ -11468,7 +11468,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                         )
                     elif analytical_invocations:
                         log_event(
-                            f"[Tabular SK Analysis] Attempt {attempt_number} used analytical tool(s) during schema-summary mode without usable workbook results; retrying",
+                            f"[TABULAR_SK_ANALYSIS] Attempt {attempt_number} used analytical tool(s) during schema-summary mode without usable workbook results; retrying",
                             level=logging.WARNING,
                         )
                     elif discovery_invocations:
@@ -11476,17 +11476,17 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                             invocation.function_name for invocation in discovery_invocations
                         })
                         log_event(
-                            f"[Tabular SK Analysis] Attempt {attempt_number} used only discovery tool(s) {discovery_function_names} without usable workbook summary; retrying",
+                            f"[TABULAR_SK_ANALYSIS] Attempt {attempt_number} used only discovery tool(s) {discovery_function_names} without usable workbook summary; retrying",
                             level=logging.WARNING,
                         )
                     elif new_invocation_count > 0:
                         log_event(
-                            f"[Tabular SK Analysis] Attempt {attempt_number} used unsupported tool(s) without usable workbook results; retrying",
+                            f"[TABULAR_SK_ANALYSIS] Attempt {attempt_number} used unsupported tool(s) without usable workbook results; retrying",
                             level=logging.WARNING,
                         )
                     else:
                         log_event(
-                            f"[Tabular SK Analysis] Attempt {attempt_number} returned narrative without workbook schema tool use; retrying",
+                            f"[TABULAR_SK_ANALYSIS] Attempt {attempt_number} returned narrative without workbook schema tool use; retrying",
                             level=logging.WARNING,
                         )
                 else:
@@ -11535,7 +11535,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                         if execution_gap_messages and attempt_number < 3:
                             previous_execution_gap_messages = execution_gap_messages
                             log_event(
-                                f"[Tabular SK Analysis] Attempt {attempt_number} analysis was incomplete despite successful tool calls; retrying",
+                                f"[TABULAR_SK_ANALYSIS] Attempt {attempt_number} analysis was incomplete despite successful tool calls; retrying",
                                 extra={
                                     'selected_sheets': selected_sheets,
                                     'execution_gaps': previous_execution_gap_messages,
@@ -11551,7 +11551,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
 
                         previous_execution_gap_messages = []
                         log_event(
-                            f"[Tabular SK Analysis] Analysis complete via {len(successful_analytical_invocations)} analytical tool call(s) on attempt {attempt_number}",
+                            f"[TABULAR_SK_ANALYSIS] Analysis complete via {len(successful_analytical_invocations)} analytical tool call(s) on attempt {attempt_number}",
                             extra={
                                 'attempt_number': attempt_number,
                                 'elapsed_ms': attempt_elapsed_ms,
@@ -11579,7 +11579,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
 
                         if retry_sheet_overrides:
                             log_event(
-                                f"[Tabular SK Analysis] Attempt {attempt_number} selected retry worksheet override(s): {retry_sheet_overrides}",
+                                f"[TABULAR_SK_ANALYSIS] Attempt {attempt_number} selected retry worksheet override(s): {retry_sheet_overrides}",
                                 level=logging.INFO,
                             )
                         # For entity_lookup mode, extract and cache concrete call parameters
@@ -11618,7 +11618,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                                 })
                             previous_failed_call_parameters = entity_call_params
                         log_event(
-                            f"[Tabular SK Analysis] Attempt {attempt_number} used analytical tool(s) but all returned errors; retrying",
+                            f"[TABULAR_SK_ANALYSIS] Attempt {attempt_number} used analytical tool(s) but all returned errors; retrying",
                             extra={
                                 'tool_errors': previous_tool_error_messages,
                                 'failed_tool_count': len(failed_analytical_invocations),
@@ -11628,7 +11628,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                     elif analytical_invocations:
                         previous_execution_gap_messages = []
                         log_event(
-                            f"[Tabular SK Analysis] Attempt {attempt_number} used analytical tool(s) without usable computed results; retrying",
+                            f"[TABULAR_SK_ANALYSIS] Attempt {attempt_number} used analytical tool(s) without usable computed results; retrying",
                             level=logging.WARNING
                         )
                     elif discovery_invocations:
@@ -11642,14 +11642,14 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                             invocation.function_name for invocation in discovery_invocations
                         })
                         log_event(
-                            f"[Tabular SK Analysis] Attempt {attempt_number} used only discovery tool(s) {discovery_function_names} without computed analysis; retrying",
+                            f"[TABULAR_SK_ANALYSIS] Attempt {attempt_number} used only discovery tool(s) {discovery_function_names} without computed analysis; retrying",
                             level=logging.WARNING
                         )
                     elif new_invocation_count > 0:
                         previous_discovery_feedback_messages = []
                         previous_execution_gap_messages = []
                         log_event(
-                            f"[Tabular SK Analysis] Attempt {attempt_number} used unsupported tool(s) without computed analysis; retrying",
+                            f"[TABULAR_SK_ANALYSIS] Attempt {attempt_number} used unsupported tool(s) without computed analysis; retrying",
                             level=logging.WARNING
                         )
                     else:
@@ -11660,7 +11660,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                             []
                         )
                         log_event(
-                            f"[Tabular SK Analysis] Attempt {attempt_number} returned narrative without tool use; retrying",
+                            f"[TABULAR_SK_ANALYSIS] Attempt {attempt_number} returned narrative without tool use; retrying",
                             level=logging.WARNING
                         )
 
@@ -11668,7 +11668,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                 if schema_summary_mode and failed_schema_summary_invocations:
                     previous_tool_error_messages = summarize_tabular_invocation_errors(failed_schema_summary_invocations)
                     log_event(
-                        f"[Tabular SK Analysis] Attempt {attempt_number} returned no content after workbook tool errors; retrying",
+                        f"[TABULAR_SK_ANALYSIS] Attempt {attempt_number} returned no content after workbook tool errors; retrying",
                         extra={
                             'tool_errors': previous_tool_error_messages,
                             'failed_tool_count': len(failed_schema_summary_invocations),
@@ -11680,7 +11680,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                     previous_discovery_feedback_messages = []
                     previous_execution_gap_messages = []
                     log_event(
-                        f"[Tabular SK Analysis] Attempt {attempt_number} returned no content after tool errors; retrying",
+                        f"[TABULAR_SK_ANALYSIS] Attempt {attempt_number} returned no content after tool errors; retrying",
                         extra={
                             'tool_errors': previous_tool_error_messages,
                             'failed_tool_count': len(failed_analytical_invocations),
@@ -11689,7 +11689,7 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
                     )
                 else:
                     log_event(
-                        f"[Tabular SK Analysis] Attempt {attempt_number} returned no content",
+                        f"[TABULAR_SK_ANALYSIS] Attempt {attempt_number} returned no content",
                         level=logging.WARNING
                     )
 
@@ -11724,11 +11724,11 @@ async def run_tabular_sk_analysis(user_question, tabular_filenames, user_id,
             if reviewer_recovery and reviewer_recovery.get('fallback'):
                 return reviewer_recovery['fallback']
 
-        log_event("[Tabular SK Analysis] Unable to obtain computed tool-backed results", level=logging.WARNING)
+        log_event("[TABULAR_SK_ANALYSIS] Unable to obtain computed tool-backed results", level=logging.WARNING)
         return None
 
     except Exception as e:
-        log_event(f"[Tabular SK Analysis] Error: {e}", level=logging.WARNING, exceptionTraceback=True)
+        log_event(f"[TABULAR_SK_ANALYSIS] Error: {e}", level=logging.WARNING, exceptionTraceback=True)
         return None
 
 def _build_tabular_sk_citations_from_invocations(plugin_invocations):
@@ -11786,7 +11786,7 @@ def collect_tabular_sk_citations(user_id, conversation_id):
     plugin_invocations = plugin_logger.get_invocations_for_conversation(user_id, conversation_id)
     citations = _build_tabular_sk_citations_from_invocations(plugin_invocations)
     log_event(
-        f"[Tabular SK Citations] Collected {len(citations)} tool execution citations",
+        f"[TABULAR_SK_CITATIONS] Collected {len(citations)} tool execution citations",
         level=logging.INFO,
     )
     return citations
@@ -12234,7 +12234,7 @@ def get_selected_workspace_tabular_file_contexts(selected_document_ids=None, sel
                 tabular_file_contexts.append(file_context)
         except Exception as e:
             log_event(
-                f"[Tabular SK Analysis] Failed to resolve selected document '{doc_id}': {e}",
+                f"[TABULAR_SK_ANALYSIS] Failed to resolve selected document '{doc_id}': {e}",
                 level=logging.WARNING
             )
 
@@ -12506,7 +12506,7 @@ async def run_multi_file_tabular_distinct_url_analysis(user_question, analysis_f
 
     if fatal_failures:
         log_event(
-            '[Tabular Multi-File] Deterministic distinct URL analysis could not cover every file; falling back to SK orchestration.',
+            '[TABULAR_MULTI_FILE] Deterministic distinct URL analysis could not cover every file; falling back to SK orchestration.',
             extra={
                 'conversation_id': conversation_id,
                 'file_count': len(normalized_contexts),
@@ -12519,7 +12519,7 @@ async def run_multi_file_tabular_distinct_url_analysis(user_question, analysis_f
     combined_analysis = build_multi_file_tabular_distinct_value_analysis(successful_results)
     if combined_analysis:
         log_event(
-            '[Tabular Multi-File] Deterministic distinct URL analysis completed.',
+            '[TABULAR_MULTI_FILE] Deterministic distinct URL analysis completed.',
             extra={
                 'conversation_id': conversation_id,
                 'file_count': len(normalized_contexts),
@@ -12556,7 +12556,7 @@ async def run_tabular_analysis_with_multi_file_support(user_question, tabular_fi
 
     if multi_file_mode == 'distinct_url_union':
         log_event(
-            '[Tabular Multi-File] Starting deterministic distinct URL union analysis.',
+            '[TABULAR_MULTI_FILE] Starting deterministic distinct URL union analysis.',
             extra={
                 'conversation_id': conversation_id,
                 'file_names': [file_context['file_name'] for file_context in analysis_file_contexts],
@@ -12746,7 +12746,7 @@ def get_streaming_model_endpoint_candidates(settings, user_id, active_group_ids=
                 if isinstance(endpoint, dict)
             ])
         except PermissionError:
-            debug_print('[Streaming][Model Resolution] User endpoint governance policy denied access to personal endpoints.')
+            debug_print('[STREAMING][Model Resolution] User endpoint governance policy denied access to personal endpoints.')
 
     if settings.get('allow_group_custom_endpoints', False):
         try:
@@ -12762,7 +12762,7 @@ def get_streaming_model_endpoint_candidates(settings, user_id, active_group_ids=
                     group_endpoints, _ = normalize_model_endpoints(get_group_model_endpoints(group_key) or [])
                 except Exception as group_error:
                     debug_print(
-                        f"[Streaming][Model Resolution] Failed to load group endpoints for group_id={group_key}: {group_error}"
+                        f"[STREAMING][Model Resolution] Failed to load group endpoints for group_id={group_key}: {group_error}"
                     )
                     continue
 
@@ -12772,7 +12772,7 @@ def get_streaming_model_endpoint_candidates(settings, user_id, active_group_ids=
                     if isinstance(endpoint, dict)
                 ])
         except PermissionError:
-            debug_print('[Streaming][Model Resolution] Group endpoint governance policy denied access to group endpoints.')
+            debug_print('[STREAMING][Model Resolution] Group endpoint governance policy denied access to group endpoints.')
 
     try:
         ensure_governance_access('governance_global_endpoints', user_id)
@@ -12793,7 +12793,7 @@ def get_streaming_model_endpoint_candidates(settings, user_id, active_group_ids=
                     continue
             endpoints.append({**endpoint, '_endpoint_scope': 'global'})
     except PermissionError:
-        debug_print('[Streaming][Model Resolution] Global endpoint governance policy denied access to global endpoints.')
+        debug_print('[STREAMING][Model Resolution] Global endpoint governance policy denied access to global endpoints.')
 
     return endpoints
 
@@ -12842,7 +12842,7 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         if selection_source == 'request':
             raise LookupError('Selected model endpoint could not be found.')
         debug_print(
-            f"[Streaming][Model Resolution] Default model endpoint_id={requested_endpoint_id} was not found. Falling back to legacy streaming config."
+            f"[STREAMING][Model Resolution] Default model endpoint_id={requested_endpoint_id} was not found. Falling back to legacy streaming config."
         )
         return None
 
@@ -12850,7 +12850,7 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         if selection_source == 'request':
             raise ValueError('Selected model endpoint is disabled.')
         debug_print(
-            f"[Streaming][Model Resolution] Default model endpoint_id={requested_endpoint_id} is disabled. Falling back to legacy streaming config."
+            f"[STREAMING][Model Resolution] Default model endpoint_id={requested_endpoint_id} is disabled. Falling back to legacy streaming config."
         )
         return None
 
@@ -12881,7 +12881,7 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         if selection_source == 'request':
             raise LookupError('Selected model could not be found on the configured endpoint.')
         debug_print(
-            f"[Streaming][Model Resolution] Default model_id={requested_model_id} was not found on endpoint_id={requested_endpoint_id}. Falling back to legacy streaming config."
+            f"[STREAMING][Model Resolution] Default model_id={requested_model_id} was not found on endpoint_id={requested_endpoint_id}. Falling back to legacy streaming config."
         )
         return None
 
@@ -12889,7 +12889,7 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         if selection_source == 'request':
             raise ValueError('Selected model is disabled.')
         debug_print(
-            f"[Streaming][Model Resolution] Default model_id={requested_model_id} is disabled. Falling back to legacy streaming config."
+            f"[STREAMING][Model Resolution] Default model_id={requested_model_id} is disabled. Falling back to legacy streaming config."
         )
         return None
 
@@ -12898,7 +12898,7 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         if selection_source == 'request':
             raise ValueError('Selected model provider is not supported for streaming.')
         debug_print(
-            f"[Streaming][Model Resolution] Default provider '{provider}' is not supported for streaming. Falling back to legacy streaming config."
+            f"[STREAMING][Model Resolution] Default provider '{provider}' is not supported for streaming. Falling back to legacy streaming config."
         )
         return None
 
@@ -12919,7 +12919,7 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
 
     if requested_provider and requested_provider != provider:
         debug_print(
-            f"[Streaming][Model Resolution] Request provider '{requested_provider}' did not match saved provider '{provider}' for endpoint_id={requested_endpoint_id}."
+            f"[STREAMING][Model Resolution] Request provider '{requested_provider}' did not match saved provider '{provider}' for endpoint_id={requested_endpoint_id}."
         )
 
     missing_required_config = not endpoint or not deployment or (
@@ -12931,7 +12931,7 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
                 raise ValueError('Selected model endpoint is missing endpoint, API version, or deployment configuration.')
             raise ValueError('Selected model endpoint is missing endpoint or deployment configuration.')
         debug_print(
-            f"[Streaming][Model Resolution] Default selection for endpoint_id={requested_endpoint_id} is incomplete. Falling back to legacy streaming config."
+            f"[STREAMING][Model Resolution] Default selection for endpoint_id={requested_endpoint_id} is incomplete. Falling back to legacy streaming config."
         )
         return None
 
@@ -12943,7 +12943,7 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         deployment_name=deployment,
     )
     debug_print(
-        f"[Streaming][Model Resolution] Resolved {selection_source} multi-endpoint model | "
+        f"[STREAMING][Model Resolution] Resolved {selection_source} multi-endpoint model | "
         f"provider={provider} | endpoint_id={requested_endpoint_id} | model_id={model_cfg.get('id')} | "
         f"deployment={deployment} | api_version={api_version} | protocol={runtime_protocol} | "
         f"response_length={model_response_length or ''} | "
@@ -13103,10 +13103,10 @@ def register_route_backend_chats(bp):
                 for event in event_iterator:
                     publish_background_event(event)
             except Exception as e:
-                debug_print(f"[STREAM BACKGROUND] Worker error: {e}")
+                debug_print(f"[STREAM_BACKGROUND] Worker error: {e}")
                 stream_status = stream_session.get_status_snapshot() if stream_session else {}
                 log_event(
-                    f"[Streaming] Background worker error: {e}",
+                    f"[STREAMING] Background worker error: {e}",
                     extra={
                         'conversation_id': stream_status.get('conversation_id'),
                         'user_id': stream_status.get('user_id'),
@@ -13129,7 +13129,7 @@ def register_route_backend_chats(bp):
             try:
                 executor.submit(stream_worker)
             except Exception as e:
-                debug_print(f"[STREAM BACKGROUND] Executor submit failed, falling back to thread: {e}")
+                debug_print(f"[STREAM_BACKGROUND] Executor submit failed, falling back to thread: {e}")
                 worker_thread = threading.Thread(target=stream_worker, daemon=True)
                 worker_thread.start()
         else:
@@ -13194,18 +13194,18 @@ def register_route_backend_chats(bp):
         if inject_context == 'fold_latest_user':
             if _fold_fact_memory_notes_into_latest_user_message(conversation_history, prompt_payload):
                 debug_print(
-                    "[Fact Memory] Folded memory context into latest user message for selected model/provider."
+                    "[FACT_MEMORY] Folded memory context into latest user message for selected model/provider."
                 )
             elif prompt_payload.get('context_messages'):
                 debug_print(
-                    "[Fact Memory] Retrieved memory context but could not fold it into the latest user message."
+                    "[FACT_MEMORY] Retrieved memory context but could not fold it into the latest user message."
                 )
         elif inject_context:
             for message in reversed(prompt_payload.get('context_messages', [])):
                 conversation_history.insert(0, message)
         elif prompt_payload.get('context_messages'):
             debug_print(
-                "[Fact Memory] Retrieved memory context but skipped model injection for selected model/provider."
+                "[FACT_MEMORY] Retrieved memory context but skipped model injection for selected model/provider."
             )
         return prompt_payload
 
@@ -13513,7 +13513,7 @@ def register_route_backend_chats(bp):
                         }
             except Exception as exc:
                 debug_print(
-                    '[ChatDocumentAction] Failed to resolve selected document metadata | '
+                    '[CHAT_DOCUMENT_ACTION] Failed to resolve selected document metadata | '
                     f'document_id={normalized_document_id} | '
                     f'error={exc}'
                 )
@@ -13838,7 +13838,7 @@ def register_route_backend_chats(bp):
 
         requested_action = data.get('document_action') if isinstance(data.get('document_action'), dict) else {}
         debug_print(
-            '[ChatDocumentAction] Received request | '
+            '[CHAT_DOCUMENT_ACTION] Received request | '
             f'user_id={user_id} | '
             f'conversation_id={conversation_id or "new"} | '
             f'forced_action_type={forced_action_type or "none"} | '
@@ -13878,7 +13878,7 @@ def register_route_backend_chats(bp):
             try:
                 conversation_item = _load_or_create_analyze_conversation(user_id, conversation_id=conversation_id)
             except PermissionError as exc:
-                debug_print(f'[ChatDocumentAction] Analyze conversation access denied: {exc}')
+                debug_print(f'[CHAT_DOCUMENT_ACTION] Analyze conversation access denied: {exc}')
                 return {'error': 'You do not have access to this conversation.'}, 403
 
             conversation_id = conversation_item.get('id')
@@ -13922,7 +13922,7 @@ def register_route_backend_chats(bp):
                 requested_action['active_group_ids'] = resolved_group_ids
                 requested_action['active_public_workspace_id'] = resolved_public_workspace_ids
                 debug_print(
-                    '[ChatDocumentAction] Auto-filled Analyze targets from linked chat uploads | '
+                    '[CHAT_DOCUMENT_ACTION] Auto-filled Analyze targets from linked chat uploads | '
                     f'user_id={user_id} | conversation_id={conversation_id} | '
                     f'documents={len(auto_linked_chat_upload_document_ids)}'
                 )
@@ -13941,7 +13941,7 @@ def register_route_backend_chats(bp):
             )
         except ValueError as exc:
             debug_print(
-                '[ChatDocumentAction] Validation failed | '
+                '[CHAT_DOCUMENT_ACTION] Validation failed | '
                 f'user_id={user_id} | '
                 f'conversation_id={conversation_id or "new"} | '
                 f'error={exc}'
@@ -13990,7 +13990,7 @@ def register_route_backend_chats(bp):
             }, 403
         runner_type = 'agent' if request_agent_info else 'model'
         debug_print(
-            '[ChatDocumentAction] Normalized action | '
+            '[CHAT_DOCUMENT_ACTION] Normalized action | '
             f'user_id={user_id} | '
             f'conversation_id={conversation_id or "new"} | '
             f'action_type={normalized_action.get("type")} | '
@@ -14005,7 +14005,7 @@ def register_route_backend_chats(bp):
             try:
                 conversation_item = _load_or_create_analyze_conversation(user_id, conversation_id=conversation_id)
             except PermissionError as exc:
-                debug_print(f'[ChatDocumentAction] Conversation access denied: {exc}')
+                debug_print(f'[CHAT_DOCUMENT_ACTION] Conversation access denied: {exc}')
                 return {'error': 'You do not have access to this conversation.'}, 403
 
         conversation_id = conversation_item.get('id')
@@ -14118,7 +14118,7 @@ def register_route_backend_chats(bp):
                     'service_health_warning': True,
                 }, 503
             except Exception as exc:
-                debug_print(f'[ChatDocumentAction] Assigned Knowledge context search failed: {exc}')
+                debug_print(f'[CHAT_DOCUMENT_ACTION] Assigned Knowledge context search failed: {exc}')
                 return {
                     'error': 'There was an issue searching the assigned knowledge for this agent.'
                 }, 500
@@ -14196,7 +14196,7 @@ def register_route_backend_chats(bp):
 
         try:
             debug_print(
-                '[ChatDocumentAction] Executing action | '
+                '[CHAT_DOCUMENT_ACTION] Executing action | '
                 f'user_id={user_id} | '
                 f'conversation_id={conversation_id} | '
                 f'action_type={normalized_action.get("type")} | '
@@ -14228,7 +14228,7 @@ def register_route_backend_chats(bp):
             }, 409
         except Exception as exc:
             debug_print(
-                '[ChatDocumentAction] Execution failed | '
+                '[CHAT_DOCUMENT_ACTION] Execution failed | '
                 f'user_id={user_id} | '
                 f'conversation_id={conversation_id} | '
                 f'action_type={normalized_action.get("type")} | '
@@ -14236,7 +14236,7 @@ def register_route_backend_chats(bp):
                 f'error={exc}'
             )
             log_event(
-                f'[ChatDocumentAnalysis] Chat document analysis failed: {exc}',
+                f'[CHAT_DOCUMENT_ANALYSIS] Chat document analysis failed: {exc}',
                 extra={
                     'conversation_id': conversation_id,
                     'user_id': user_id,
@@ -14275,14 +14275,14 @@ def register_route_backend_chats(bp):
                 'request_correlation_id': request_correlation_id,
             }, 409
         except PermissionError as exc:
-            debug_print(f'[ChatDocumentAction] Finalization authorization failed: {exc}')
+            debug_print(f'[CHAT_DOCUMENT_ACTION] Finalization authorization failed: {exc}')
             return {
                 'error': 'One or more selected sources are no longer available.',
                 'conversation_id': conversation_id,
                 'user_message_id': user_message_id,
             }, 403
         except RuntimeError as exc:
-            debug_print(f'[ChatDocumentAction] Finalization state changed: {exc}')
+            debug_print(f'[CHAT_DOCUMENT_ACTION] Finalization state changed: {exc}')
             return {
                 'error': 'Document action finalization could not complete. Please try again.',
                 'conversation_id': conversation_id,
@@ -14455,7 +14455,7 @@ def register_route_backend_chats(bp):
                 )
             except Exception:
                 log_event(
-                    '[MixedSourceLifecycle] Assistant rollback after cancellation failed.',
+                    '[MIXED_SOURCE_LIFECYCLE] Assistant rollback after cancellation failed.',
                     extra={'assistant_message_rollback_failure_count': 1},
                     level=logging.WARNING,
                 )
@@ -14508,7 +14508,7 @@ def register_route_backend_chats(bp):
                     },
                 )
             except Exception as log_error:
-                debug_print(f'[ChatDocumentAction] Failed to log token usage: {log_error}')
+                debug_print(f'[CHAT_DOCUMENT_ACTION] Failed to log token usage: {log_error}')
 
         _set_initial_conversation_title(conversation_item, user_message)
 
@@ -14539,12 +14539,12 @@ def register_route_backend_chats(bp):
                 active_public_workspace_ids=active_public_workspace_ids,
             )
         except Exception as exc:
-            debug_print(f'[ChatDocumentAnalysis] Conversation metadata update failed: {exc}')
+            debug_print(f'[CHAT_DOCUMENT_ANALYSIS] Conversation metadata update failed: {exc}')
 
         cosmos_conversations_container.upsert_item(conversation_item)
         invalidate_conversation_cache_for_item(conversation_item, reason="document_action_chat_completed")
         debug_print(
-            '[ChatDocumentAction] Execution completed | '
+            '[CHAT_DOCUMENT_ACTION] Execution completed | '
             f'user_id={user_id} | '
             f'conversation_id={conversation_id} | '
             f'action_type={normalized_action.get("type")} | '
@@ -14673,7 +14673,7 @@ def register_route_backend_chats(bp):
                 yield f"data: {json.dumps(normalize_terminal_chat_payload(payload))}\n\n"
             except Exception as document_action_error:
                 log_event(
-                    f'[DocumentActionStream] Streaming response failed: {document_action_error}',
+                    f'[DOCUMENT_ACTION_STREAM] Streaming response failed: {document_action_error}',
                     extra={'conversation_id': conversation_id},
                     level=logging.ERROR,
                     exceptionTraceback=True,
@@ -14761,7 +14761,7 @@ def register_route_backend_chats(bp):
                 yield f"data: {json.dumps(normalize_terminal_chat_payload(payload))}\n\n"
             except Exception as analysis_error:
                 log_event(
-                    f'[DocumentAnalysisStream] Streaming response failed: {analysis_error}',
+                    f'[DOCUMENT_ANALYSIS_STREAM] Streaming response failed: {analysis_error}',
                     extra={'conversation_id': conversation_id},
                     level=logging.ERROR,
                     exceptionTraceback=True,
@@ -14859,7 +14859,7 @@ def register_route_backend_chats(bp):
             return jsonify({'error': 'Conversation or source message not found'}), 404
         except PermissionError as exc:
             log_event(
-                f'[ImageGeneration] Proposal approval authorization failed: {exc}',
+                f'[IMAGE_GENERATION] Proposal approval authorization failed: {exc}',
                 extra={'conversation_id': data.get('conversation_id') if isinstance(data, dict) else None},
                 level=logging.WARNING,
                 exceptionTraceback=True,
@@ -14867,7 +14867,7 @@ def register_route_backend_chats(bp):
             return jsonify({'error': 'You do not have access to this conversation'}), 403
         except ValueError as exc:
             log_event(
-                f'[ImageGeneration] Proposal approval validation failed: {exc}',
+                f'[IMAGE_GENERATION] Proposal approval validation failed: {exc}',
                 extra={'conversation_id': data.get('conversation_id') if isinstance(data, dict) else None},
                 level=logging.WARNING,
                 exceptionTraceback=True,
@@ -14886,7 +14886,7 @@ def register_route_backend_chats(bp):
                 error_message = 'Image generation failed due to a technical error. Please try again.'
 
             log_event(
-                f'[ImageGeneration] Proposal approval failed: {exc}',
+                f'[IMAGE_GENERATION] Proposal approval failed: {exc}',
                 extra={'conversation_id': data.get('conversation_id') if isinstance(data, dict) else None},
                 level=logging.ERROR,
                 exceptionTraceback=True,
@@ -14940,7 +14940,7 @@ def register_route_backend_chats(bp):
                     return json.loads(trimmed)
                 except Exception as exc:
                     log_event(
-                        f"[result_requires_message_reload] Failed to parse JSON: {str(exc)} | candidate: {trimmed[:200]}",
+                        f"[RESULT_REQUIRES_MESSAGE_RELOAD] Failed to parse JSON: {str(exc)} | candidate: {trimmed[:200]}",
                         level=logging.WARNING
                     )
                     return None
@@ -15081,7 +15081,7 @@ def register_route_backend_chats(bp):
                     hybrid_search_enabled,
                 )
             except ValueError as contract_error:
-                debug_print(f'[ChatAPI] Invalid document context request: {contract_error}')
+                debug_print(f'[CHAT_API] Invalid document context request: {contract_error}')
                 return jsonify({'error': 'Document context request is invalid. Please review the selected sources and try again.'}), 400
             selected_document_ids = list(
                 document_context_contract.get('selected_document_ids') or []
@@ -15284,7 +15284,7 @@ def register_route_backend_chats(bp):
                         allow_default_selection=should_use_default_model,
                     )
                     if multi_endpoint_config and should_use_default_model and not data.get('model_endpoint_id'):
-                        debug_print("[GPTClient] Using default multi-endpoint model for agent request.")
+                        debug_print("[GPT_CLIENT] Using default multi-endpoint model for agent request.")
                 if multi_endpoint_config:
                     (
                         gpt_client,
@@ -15327,7 +15327,7 @@ def register_route_backend_chats(bp):
                         if request_agent_info:
                             gpt_model = apim_models[0]
                             debug_print(
-                                "[GPTClient] Agent request without model_deployment; defaulting to first APIM deployment."
+                                "[GPT_CLIENT] Agent request without model_deployment; defaulting to first APIM deployment."
                             )
                         else:
                             raise ValueError(
@@ -15396,7 +15396,7 @@ def register_route_backend_chats(bp):
             except Exception as e:
                 debug_print(f"Error initializing GPT client/model: {e}")
                 log_event(
-                    f'[ChatAPI] Failed to initialize AI model: {e}',
+                    f'[CHAT_API] Failed to initialize AI model: {e}',
                     extra={'user_id': user_id, 'conversation_id': conversation_id},
                     level=logging.ERROR,
                     exceptionTraceback=True,
@@ -15418,7 +15418,7 @@ def register_route_backend_chats(bp):
             except Exception as e:
                 debug_print(f"Error reading conversation {conversation_id}: {e}")
                 log_event(
-                    f'[ChatAPI] Failed to read conversation: {e}',
+                    f'[CHAT_API] Failed to read conversation: {e}',
                     extra={'user_id': user_id, 'conversation_id': conversation_id},
                     level=logging.ERROR,
                     exceptionTraceback=True,
@@ -15480,7 +15480,7 @@ def register_route_backend_chats(bp):
                     g.assigned_knowledge_user_context_active = True
                     tags_filter = []
                     debug_print(
-                        "[ChatUploadWorkspaceContext] Enabled Assigned Knowledge user context "
+                        "[CHAT_UPLOAD_WORKSPACE_CONTEXT] Enabled Assigned Knowledge user context "
                         f"from {len(auto_linked_chat_upload_document_ids)} linked chat upload workspace document(s)."
                     )
                 hybrid_search_enabled = True
@@ -15514,7 +15514,7 @@ def register_route_backend_chats(bp):
                         request_correlation_id=mixed_source_request_correlation_id,
                     )
                 except ValueError as manifest_error:
-                    debug_print(f'[ChatAPI] Mixed-source manifest validation failed: {manifest_error}')
+                    debug_print(f'[CHAT_API] Mixed-source manifest validation failed: {manifest_error}')
                     return jsonify({'error': 'Selected document context is unavailable. Please refresh and try again.'}), 400
                 mixed_source_partitions = partition_source_manifest(
                     mixed_source_manifest
@@ -15541,7 +15541,7 @@ def register_route_backend_chats(bp):
                     else None
                 )
                 log_event(
-                    '[MixedSourceChatSearch] Activated explicit selected-source context.',
+                    '[MIXED_SOURCE_CHAT_SEARCH] Activated explicit selected-source context.',
                     extra={
                         'selection_mode': 'selected',
                         'requested_source_count': len(mixed_source_manifest),
@@ -15583,7 +15583,7 @@ def register_route_backend_chats(bp):
             if conversation_item.get('chat_type'):
                 # Use existing chat_type from conversation metadata
                 actual_chat_type = conversation_item['chat_type']
-                debug_print(f"[ChatType] Using existing chat_type from conversation: {actual_chat_type}")
+                debug_print(f"[CHAT_TYPE] Using existing chat_type from conversation: {actual_chat_type}")
             elif conversation_item.get('context'):
                 # Fallback: determine from existing context
                 primary_context = next((ctx for ctx in conversation_item['context'] if ctx.get('type') == 'primary'), None)
@@ -15594,11 +15594,11 @@ def register_route_backend_chats(bp):
                         actual_chat_type = 'public'
                     elif primary_context.get('scope') == 'personal':
                         actual_chat_type = 'personal_single_user'
-                    debug_print(f"[ChatType] Determined chat_type from existing primary context: {actual_chat_type}")
+                    debug_print(f"[CHAT_TYPE] Determined chat_type from existing primary context: {actual_chat_type}")
                 else:
                     # No primary context exists - default to personal_single_user
                     actual_chat_type = 'personal_single_user'
-                    debug_print(f"[ChatType] No primary context found - defaulted to personal_single_user")
+                    debug_print(f"[CHAT_TYPE] No primary context found - defaulted to personal_single_user")
             else:
                 # New conversation - will be determined by document usage during metadata collection
                 # For now, use the legacy logic as fallback
@@ -15608,7 +15608,7 @@ def register_route_backend_chats(bp):
                     actual_chat_type = 'public'
                 else:
                     actual_chat_type = 'personal_single_user'
-                debug_print(f"[ChatType] New conversation - using legacy logic: {actual_chat_type}")
+                debug_print(f"[CHAT_TYPE] New conversation - using legacy logic: {actual_chat_type}")
 
             # Capture conversation-level group context for downstream agent/model resolution
             conversation_primary_context = next((ctx for ctx in conversation_item.get('context', []) if ctx.get('type') == 'primary'), None)
@@ -16019,9 +16019,9 @@ def register_route_backend_chats(bp):
                         }), 200
 
                 except HttpResponseError as e:
-                    debug_print(f"[Content Safety Error] {e}")
+                    debug_print(f"[CONTENT_SAFETY_ERROR] {e}")
                 except Exception as ex:
-                    debug_print(f"[Content Safety] Unexpected error: {ex}")
+                    debug_print(f"[CONTENT_SAFETY] Unexpected error: {ex}")
 
             if (
                 not original_hybrid_search_enabled
@@ -16072,7 +16072,7 @@ def register_route_backend_chats(bp):
                         )
                     except Exception as assessment_error:
                         debug_print(
-                            f"[History Fallback] History-only sufficiency assessment failed: {assessment_error}"
+                            f"[HISTORY_FALLBACK] History-only sufficiency assessment failed: {assessment_error}"
                         )
 
                     if _can_reuse_prior_grounded_history(
@@ -16987,7 +16987,7 @@ def register_route_backend_chats(bp):
                         user_friendly_message = "Image generation failed due to a technical error. Please try again."
 
                     log_event(
-                        f'[ImageGeneration] Chat image generation failed: {e}',
+                        f'[IMAGE_GENERATION] Chat image generation failed: {e}',
                         extra={'conversation_id': conversation_id, 'user_id': user_id},
                         level=logging.ERROR,
                         exceptionTraceback=True,
@@ -17134,7 +17134,7 @@ def register_route_backend_chats(bp):
                     },
                 )
                 log_event(
-                    '[MixedSourceChatSearch] Prepared bounded mixed-source synthesis evidence.',
+                    '[MIXED_SOURCE_CHAT_SEARCH] Prepared bounded mixed-source synthesis evidence.',
                     extra={
                         'selection_mode': effective_mixed_source_selection_mode,
                         'narrative_result_count': len(search_results or []),
@@ -17512,7 +17512,7 @@ def register_route_backend_chats(bp):
                     chat_tabular_filenames_str = ", ".join(chat_tabular_files)
                     chat_tabular_execution_mode = get_tabular_execution_mode(user_message)
                     log_event(
-                        f"[Chat Tabular SK] Detected {len(chat_tabular_files)} tabular file(s) uploaded to chat: {chat_tabular_filenames_str}",
+                        f"[CHAT_TABULAR_SK] Detected {len(chat_tabular_files)} tabular file(s) uploaded to chat: {chat_tabular_filenames_str}",
                         level=logging.INFO
                     )
                     plugin_logger = get_plugin_logger()
@@ -17614,7 +17614,7 @@ def register_route_backend_chats(bp):
                                 f"Prepared {len(chat_tabular_chart_citations)} inline chart{'s' if len(chat_tabular_chart_citations) != 1 else ''} from chat-uploaded tabular results",
                             )
 
-                        debug_print(f"[Chat Tabular SK] Analysis injected, {len(chat_tabular_analysis)} chars")
+                        debug_print(f"[CHAT_TABULAR_SK] Analysis injected, {len(chat_tabular_analysis)} chars")
                     else:
                         if chat_tabular_generated_output:
                             conversation_history_for_api.append({
@@ -17633,12 +17633,12 @@ def register_route_backend_chats(bp):
                             "Tabular analysis could not compute results; using existing chat file context",
                             detail=f"files={chat_tabular_filenames_str}"
                         )
-                        debug_print("[Chat Tabular SK] Analysis returned None, relying on existing file context messages")
+                        debug_print("[CHAT_TABULAR_SK] Analysis returned None, relying on existing file context messages")
 
             except Exception as e:
                 debug_print(f"Error preparing conversation history: {e}")
                 log_event(
-                    f'[ChatAPI] Failed to prepare conversation history: {e}',
+                    f'[CHAT_API] Failed to prepare conversation history: {e}',
                     extra={'conversation_id': conversation_id, 'user_id': user_id},
                     level=logging.ERROR,
                     exceptionTraceback=True,
@@ -17729,7 +17729,7 @@ def register_route_backend_chats(bp):
                         return step['on_success'](result)
                     except Exception as e:
                         log_event(
-                            f"[Fallback Failure] Fallback step {step['name']} failed: {e}",
+                            f"[FALLBACK_FAILURE] Fallback step {step['name']} failed: {e}",
                             extra={
                                 "step_name": step['name'],
                                 "error": str(e)
@@ -17835,7 +17835,7 @@ def register_route_backend_chats(bp):
                 else:
                     g.request_agent_info = {'name': request_agent_info}
                     g.request_agent_name = request_agent_info
-                log_event(f"[SKChat] agent_info provided in request - forcing agent enablement for this request", level=logging.INFO)
+                log_event(f"[SK_CHAT] agent_info provided in request - forcing agent enablement for this request", level=logging.INFO)
 
             enable_key_vault_secret_storage = settings.get('enable_key_vault_secret_storage', False)
             redis_client = None
@@ -17849,24 +17849,24 @@ def register_route_backend_chats(bp):
                 g.kernel_agents = getattr(builtins, 'kernel_agents', None)
             if per_user_semantic_kernel:
                 settings_agents = user_settings.get('agents', [])
-                logging.debug(f"[SKChat] Per-user Semantic Kernel enabled. Using user-specific settings.")
+                logging.debug(f"[SK_CHAT] Per-user Semantic Kernel enabled. Using user-specific settings.")
             else:
                 enable_multi_agent_orchestration = settings.get('enable_multi_agent_orchestration', False)
                 settings_agents = settings.get('semantic_kernel_agents', [])
             kernel = get_kernel()
             all_agents = get_kernel_agents()
 
-            log_event(f"[SKChat] Retrieved kernel: {type(kernel)}, all_agents: {type(all_agents)} with {len(all_agents) if all_agents else 0} agents", level=logging.INFO)
+            log_event(f"[SK_CHAT] Retrieved kernel: {type(kernel)}, all_agents: {type(all_agents)} with {len(all_agents) if all_agents else 0} agents", level=logging.INFO)
             if all_agents:
                 if isinstance(all_agents, dict):
                     agent_names = list(all_agents.keys())
                 else:
                     agent_names = [getattr(agent, 'name', 'unnamed') for agent in all_agents]
-                log_event(f"[SKChat] Agent names available: {agent_names}", level=logging.INFO)
+                log_event(f"[SK_CHAT] Agent names available: {agent_names}", level=logging.INFO)
             else:
-                log_event(f"[SKChat] No agents loaded - proceeding in model-only mode", level=logging.INFO)
+                log_event(f"[SK_CHAT] No agents loaded - proceeding in model-only mode", level=logging.INFO)
 
-            log_event(f"[SKChat] Semantic Kernel enabled. Per-user mode: {per_user_semantic_kernel}, Multi-agent orchestration: {enable_multi_agent_orchestration}, agents enabled: {user_enable_agents}")
+            log_event(f"[SK_CHAT] Semantic Kernel enabled. Per-user mode: {per_user_semantic_kernel}, Multi-agent orchestration: {enable_multi_agent_orchestration}, agents enabled: {user_enable_agents}")
 
             explicit_chart_request = user_requested_chart_visualization(user_message)
 
@@ -17898,9 +17898,9 @@ def register_route_backend_chats(bp):
             if enable_semantic_kernel and user_enable_agents:
                 agent_name_to_select = _get_chat_agent_selection_name(request_agent_info)
                 if agent_name_to_select:
-                    log_event(f"[SKChat] Using agent from request agent_info: {agent_name_to_select}")
+                    log_event(f"[SK_CHAT] Using agent from request agent_info: {agent_name_to_select}")
                 else:
-                    log_event("[SKChat] No explicit request agent selected; proceeding in model-only mode")
+                    log_event("[SK_CHAT] No explicit request agent selected; proceeding in model-only mode")
 
                 if all_agents and agent_name_to_select:
                     agent_iter = all_agents.values() if isinstance(all_agents, dict) else all_agents
@@ -17914,21 +17914,21 @@ def register_route_backend_chats(bp):
                         })
                         if agent_name_to_select and getattr(agent, 'name', None) == agent_name_to_select:
                             selected_agent = agent
-                            log_event(f"[SKChat] selected_agent found by explicit selection: {agent_name_to_select}")
+                            log_event(f"[SK_CHAT] selected_agent found by explicit selection: {agent_name_to_select}")
                             break
                     if not selected_agent:
                         log_event(
-                            f"[SKChat] Requested chat agent was not found: {agent_name_to_select}",
+                            f"[SK_CHAT] Requested chat agent was not found: {agent_name_to_select}",
                             level=logging.WARNING,
                         )
-                    log_event(f"[SKChat] Agent selection debug info: {agent_debug_info}")
+                    log_event(f"[SK_CHAT] Agent selection debug info: {agent_debug_info}")
                 elif all_agents:
-                    log_event("[SKChat] No chat agent selected for this request; proceeding in model-only mode")
+                    log_event("[SK_CHAT] No chat agent selected for this request; proceeding in model-only mode")
                 else:
-                    log_event(f"[SKChat] all_agents is empty or None!", level=logging.WARNING)
+                    log_event(f"[SK_CHAT] all_agents is empty or None!", level=logging.WARNING)
                 if selected_agent is None:
-                    log_event("[SKChat] No selected chat agent found; model-only path will be used")
-                log_event(f"[SKChat] selected_agent: {str(getattr(selected_agent, 'name', None))}")
+                    log_event("[SK_CHAT] No selected chat agent found; model-only path will be used")
+                log_event(f"[SK_CHAT] selected_agent: {str(getattr(selected_agent, 'name', None))}")
                 agent_id = getattr(selected_agent, 'id', None)
                 extra={
                     "conversation_id": conversation_id,
@@ -18076,7 +18076,7 @@ def register_route_backend_chats(bp):
                             detailed_citations.append(citation)
 
                         log_event(
-                            f"[Enhanced Agent Citations] Extracted {len(detailed_citations)} detailed plugin invocations",
+                            f"[ENHANCED_AGENT_CITATIONS] Extracted {len(detailed_citations)} detailed plugin invocations",
                             extra={
                                 "agent": agent_used,
                                 "plugin_count": len(detailed_citations),
@@ -18105,7 +18105,7 @@ def register_route_backend_chats(bp):
                         if enable_multi_agent_orchestration and not per_user_semantic_kernel:
                             # If the agent response indicates fallback mode
                             notice = (
-                                "[SK Fallback]: The AI assistant is running in single agent fallback mode. "
+                                "[SK_FALLBACK]: The AI assistant is running in single agent fallback mode. "
                                 "Some advanced features may not be available. "
                                 "Please contact your administrator to configure Semantic Kernel for richer responses."
                             )
@@ -18190,13 +18190,13 @@ def register_route_backend_chats(bp):
 
                             if enable_multi_agent_orchestration and not per_user_semantic_kernel:
                                 notice = (
-                                    "[SK Fallback]: The AI assistant is running in single agent fallback mode. "
+                                    "[SK_FALLBACK]: The AI assistant is running in single agent fallback mode. "
                                     "Some advanced features may not be available. "
                                     "Please contact your administrator to configure Semantic Kernel for richer responses."
                                 )
 
                             log_event(
-                                f"[Foundry Agent] Invocation complete for {agent_used}",
+                                f"[FOUNDRY_AGENT] Invocation complete for {agent_used}",
                                 extra={
                                     'conversation_id': conversation_id,
                                     'user_id': user_id,
@@ -18319,7 +18319,7 @@ def register_route_backend_chats(bp):
                         finally:
                             plugin_logger.deregister_callbacks(callback_key)
                     def kernel_success(result):
-                        msg = '[SK fallback] Running in kernel only mode. Ask your administrator to configure Semantic Kernel for richer responses.'
+                        msg = '[SK_FALLBACK] Running in kernel only mode. Ask your administrator to configure Semantic Kernel for richer responses.'
                         return (str(result), "kernel", "kernel", msg)
                     def kernel_error(e):
                         debug_print(f"Error during kernel invocation: {str(e)}")
@@ -18415,7 +18415,7 @@ def register_route_backend_chats(bp):
                             if candidate == gpt_api_version:
                                 continue
                             try:
-                                debug_print(f"[SKChat] Foundry retry api_version={candidate}")
+                                debug_print(f"[SK_CHAT] Foundry retry api_version={candidate}")
                                 retry_client = build_streaming_multi_endpoint_client(
                                     gpt_auth or {},
                                     gpt_provider,
@@ -18427,7 +18427,7 @@ def register_route_backend_chats(bp):
                                 break
                             except Exception as retry_exc:
                                 last_error = retry_exc
-                                debug_print(f"[SKChat] Foundry retry failed for api_version={candidate}: {retry_exc}")
+                                debug_print(f"[SK_CHAT] Foundry retry failed for api_version={candidate}: {retry_exc}")
                         if response is None and last_error is not None:
                             raise last_error
                     else:
@@ -18436,9 +18436,9 @@ def register_route_backend_chats(bp):
                 msg = response.choices[0].message.content
                 notice = None
                 if enable_semantic_kernel and user_enable_agents:
-                    msg = f"[GPT Fallback. Advanced features not available.] {msg}"
+                    msg = f"[GPT_FALLBACK_ADVANCED_FEATURES_NOT_AVAILABLE] {msg}"
                     notice = (
-                        "[SK Fallback]: The AI assistant is running in GPT only mode. "
+                        "[SK_FALLBACK]: The AI assistant is running in GPT only mode. "
                         "No advanced features are available. "
                         "Please contact your administrator to resolve Semantic Kernel integration."
                     )
@@ -18451,7 +18451,7 @@ def register_route_backend_chats(bp):
                 }
 
                 log_event(
-                    f"[Tokens] GPT completion response received - prompt_tokens: {response.usage.prompt_tokens}, completion_tokens: {response.usage.completion_tokens}, total_tokens: {response.usage.total_tokens}",
+                    f"[TOKENS] GPT completion response received - prompt_tokens: {response.usage.prompt_tokens}, completion_tokens: {response.usage.completion_tokens}, total_tokens: {response.usage.total_tokens}",
                     extra={
                         "model": gpt_model,
                         "completion_tokens": response.usage.completion_tokens,
@@ -18504,7 +18504,7 @@ def register_route_backend_chats(bp):
                         total_tokens = getattr(service, "total_tokens", None)
                         debug_print(f"Service {getattr(service, 'service_id', None)} prompt_tokens: {prompt_tokens}, completion_tokens: {completion_tokens}, total_tokens: {total_tokens}")
                         log_event(
-                            f"[Tokens] Service token usage: prompt_tokens: {prompt_tokens}, completion_tokens: {completion_tokens}, total_tokens: {total_tokens}",
+                            f"[TOKENS] Service token usage: prompt_tokens: {prompt_tokens}, completion_tokens: {completion_tokens}, total_tokens: {total_tokens}",
                             extra={
                                 "service_id": getattr(service, "service_id", None),
                                 "prompt_tokens": prompt_tokens,
@@ -18528,7 +18528,7 @@ def register_route_backend_chats(bp):
                             }
                 except Exception as e:
                     log_event(
-                        f"[Tokens] Error logging service token usage for user '{get_current_user_id()}': {e}",
+                        f"[TOKENS] Error logging service token usage for user '{get_current_user_id()}': {e}",
                         level=logging.ERROR,
                         exceptionTraceback=True
                     )
@@ -18874,10 +18874,10 @@ def register_route_backend_chats(bp):
 
         except Exception as e:
             error_traceback = traceback.format_exc()
-            debug_print(f"[CHAT API ERROR] Unhandled exception in chat_api: {str(e)}")
-            debug_print(f"[CHAT API ERROR] Full traceback:\n{error_traceback}")
+            debug_print(f"[CHAT_API_ERROR] Unhandled exception in chat_api: {str(e)}")
+            debug_print(f"[CHAT_API_ERROR] Full traceback:\n{error_traceback}")
             log_event(
-                f"[CHAT API ERROR] Unhandled exception in chat_api: {str(e)}",
+                f"[CHAT_API_ERROR] Unhandled exception in chat_api: {str(e)}",
                 extra={
                     "error_message": str(e),
                     "traceback": error_traceback,
@@ -18913,7 +18913,7 @@ def register_route_backend_chats(bp):
             request_start_time = time.time()
         except Exception as e:
             log_event(
-                f'[Streaming] Failed to parse stream request: {e}',
+                f'[STREAMING] Failed to parse stream request: {e}',
                 level=logging.WARNING,
                 exceptionTraceback=True,
             )
@@ -18936,7 +18936,7 @@ def register_route_backend_chats(bp):
             except PermissionError:
                 return jsonify({'error': 'Forbidden'}), 403
             except Exception as exc:
-                debug_print(f"[Streaming] Error authorizing conversation {requested_conversation_id}: {exc}")
+                debug_print(f"[STREAMING] Error authorizing conversation {requested_conversation_id}: {exc}")
                 return jsonify({'error': 'Failed to authorize conversation'}), 500
 
         initial_scope_context = _get_authorized_chat_scope_context(
@@ -18958,7 +18958,7 @@ def register_route_backend_chats(bp):
         request_message = (data.get('message') or '').strip()
         request_preview = request_message[:120] + '...' if len(request_message) > 120 else request_message
         debug_print(
-            "[Streaming] Incoming /api/chat/stream request | "
+            "[STREAMING] Incoming /api/chat/stream request | "
             f"requested_conversation_id={requested_conversation_id} | "
             f"conversation_id={finalized_conversation_id} | "
             f"compatibility_mode={compatibility_mode} | "
@@ -18979,7 +18979,7 @@ def register_route_backend_chats(bp):
         if is_retry:
             operation_type = 'Edit' if is_edit else 'Retry'
             debug_print(
-                f"[Streaming] {operation_type} detected | "
+                f"[STREAMING] {operation_type} detected | "
                 f"user_message_id={retry_user_message_id} | "
                 f"thread_id={retry_thread_id} | "
                 f"attempt={retry_thread_attempt}"
@@ -19066,7 +19066,7 @@ def register_route_backend_chats(bp):
                 yield f"data: {json.dumps(normalize_legacy_chat_payload(payload))}\n\n"
             except Exception as compatibility_error:
                 log_event(
-                    f'[Streaming] Compatibility response failed: {compatibility_error}',
+                    f'[STREAMING] Compatibility response failed: {compatibility_error}',
                     extra={'conversation_id': finalized_conversation_id, 'user_id': user_id},
                     level=logging.ERROR,
                     exceptionTraceback=True,
@@ -19074,7 +19074,7 @@ def register_route_backend_chats(bp):
                 yield build_stream_error_event()
 
         if compatibility_mode:
-            debug_print("[Streaming] Routing request through compatibility bridge")
+            debug_print("[STREAMING] Routing request through compatibility bridge")
             return build_background_stream_response(generate_compatibility_response, stream_session=stream_session)
 
         def generate(publish_background_event=None):
@@ -19130,7 +19130,7 @@ def register_route_backend_chats(bp):
                 request_agent_info = data.get('agent_info')
 
                 debug_print(
-                    "[Streaming] Parsed request payload | "
+                    "[STREAMING] Parsed request payload | "
                     f"user_id={user_id} | "
                     f"conversation_id={conversation_id} | "
                     f"message_length={len(user_message)} | "
@@ -19219,7 +19219,7 @@ def register_route_backend_chats(bp):
                 plugin_logger = get_plugin_logger()
                 plugin_logger.clear_invocations_for_conversation(user_id, conversation_id)
                 debug_print(
-                    f"[Streaming] Cleared plugin invocations for user_id={user_id}, conversation_id={conversation_id}"
+                    f"[STREAMING] Cleared plugin invocations for user_id={user_id}, conversation_id={conversation_id}"
                 )
 
                 # Validate chat_type
@@ -19280,7 +19280,7 @@ def register_route_backend_chats(bp):
                         hybrid_search_enabled,
                     )
                 except ValueError as contract_error:
-                    debug_print(f'[Streaming] Invalid document context request: {contract_error}')
+                    debug_print(f'[STREAMING] Invalid document context request: {contract_error}')
                     yield build_stream_error_event(
                         'Document context request is invalid. Please review the selected sources and try again.'
                     )
@@ -19431,7 +19431,7 @@ def register_route_backend_chats(bp):
                     g.assigned_knowledge_context = assigned_knowledge_filters
                     g.assigned_knowledge_user_context_active = assigned_knowledge_user_context_active
                     debug_print(
-                        "[Streaming] Assigned Knowledge applied | "
+                        "[STREAMING] Assigned Knowledge applied | "
                         f"scope={effective_document_scope} | "
                         f"documents={len(effective_selected_document_ids)} | "
                         f"groups={len(effective_active_group_ids)} | "
@@ -19455,7 +19455,7 @@ def register_route_backend_chats(bp):
                     deep_research_enabled=deep_research_enabled,
                 )
                 debug_print(
-                    "[Streaming] Normalized toggles | "
+                    "[STREAMING] Normalized toggles | "
                     f"hybrid_search={hybrid_search_enabled} | "
                     f"web_search={web_search_enabled} | "
                     f"source_review={source_review_enabled} | "
@@ -19519,7 +19519,7 @@ def register_route_backend_chats(bp):
                             allow_default_selection=should_use_default_model,
                         )
                         if streaming_multi_endpoint_config and should_use_default_model and not frontend_model_endpoint_id:
-                            debug_print("[GPTClient] Using default multi-endpoint model for agent streaming request.")
+                            debug_print("[GPT_CLIENT] Using default multi-endpoint model for agent streaming request.")
 
                     if streaming_multi_endpoint_config:
                         (
@@ -19613,7 +19613,7 @@ def register_route_backend_chats(bp):
                     )
 
                     debug_print(
-                        "[Streaming] Initialized model client | "
+                        "[STREAMING] Initialized model client | "
                         f"model={gpt_model} | provider={gpt_provider or 'legacy'} | "
                         f"endpoint_id={frontend_model_endpoint_id or ''} | api_version={gpt_api_version or ''} | "
                         f"enable_gpt_apim={enable_gpt_apim}"
@@ -19621,7 +19621,7 @@ def register_route_backend_chats(bp):
 
                 except Exception as e:
                     log_event(
-                        f'[Streaming] Model initialization failed: {e}',
+                        f'[STREAMING] Model initialization failed: {e}',
                         extra={'conversation_id': conversation_id, 'user_id': user_id},
                         level=logging.ERROR,
                         exceptionTraceback=True,
@@ -19632,11 +19632,11 @@ def register_route_backend_chats(bp):
                 # Load or create conversation (simplified)
                 if is_new_stream_conversation:
                     conversation_item = _create_personal_conversation(user_id, conversation_id=conversation_id)
-                    debug_print(f"[Streaming] Created new conversation {conversation_id}")
+                    debug_print(f"[STREAMING] Created new conversation {conversation_id}")
                 else:
                     try:
                         conversation_item = _authorize_personal_conversation_access(user_id, conversation_id)
-                        debug_print(f"[Streaming] Loaded existing conversation {conversation_id}")
+                        debug_print(f"[STREAMING] Loaded existing conversation {conversation_id}")
                     except LookupError:
                         yield f"data: {json.dumps({'error': 'Conversation not found'})}\n\n"
                         return
@@ -19699,7 +19699,7 @@ def register_route_backend_chats(bp):
                         g.assigned_knowledge_user_context_active = True
                         tags_filter = []
                         debug_print(
-                            "[ChatUploadWorkspaceContext] Enabled Assigned Knowledge user context "
+                            "[CHAT_UPLOAD_WORKSPACE_CONTEXT] Enabled Assigned Knowledge user context "
                             f"from {len(auto_linked_chat_upload_document_ids)} linked chat upload workspace document(s)."
                         )
                     hybrid_search_enabled = True
@@ -19734,7 +19734,7 @@ def register_route_backend_chats(bp):
                             request_correlation_id=mixed_source_request_correlation_id,
                         )
                     except ValueError as manifest_error:
-                        debug_print(f'[Streaming] Mixed-source manifest validation failed: {manifest_error}')
+                        debug_print(f'[STREAMING] Mixed-source manifest validation failed: {manifest_error}')
                         yield build_stream_error_event(
                             'Selected document context is unavailable. Please refresh and try again.'
                         )
@@ -19760,7 +19760,7 @@ def register_route_backend_chats(bp):
                         else None
                     )
                     log_event(
-                        '[MixedSourceChatSearch] Activated streaming explicit selected-source context.',
+                        '[MIXED_SOURCE_CHAT_SEARCH] Activated streaming explicit selected-source context.',
                         extra={
                             'selection_mode': 'selected',
                             'requested_source_count': len(mixed_source_manifest),
@@ -19817,7 +19817,7 @@ def register_route_backend_chats(bp):
                         yield f"data: {json.dumps({'error': 'Retry user message not found'})}\n\n"
                         return
                     except Exception as exc:
-                        debug_print(f"[Streaming] Error reading retry/edit user message {user_message_id}: {exc}")
+                        debug_print(f"[STREAMING] Error reading retry/edit user message {user_message_id}: {exc}")
                         yield f"data: {json.dumps({'error': 'Failed to load retry user message'})}\n\n"
                         return
 
@@ -19855,7 +19855,7 @@ def register_route_backend_chats(bp):
                     user_message_doc['metadata'] = user_metadata
 
                     debug_print(
-                        "[Streaming] Reusing retry/edit user message | "
+                        "[STREAMING] Reusing retry/edit user message | "
                         f"user_message_id={user_message_id} | "
                         f"thread_id={current_user_thread_id} | "
                         f"previous_thread_id={previous_thread_id} | "
@@ -20039,7 +20039,7 @@ def register_route_backend_chats(bp):
 
                     cosmos_messages_container.upsert_item(user_message_doc)
                     debug_print(
-                        f"[Streaming] Saved user message {user_message_id} | thread_id={current_user_thread_id} | previous_thread_id={previous_thread_id}"
+                        f"[STREAMING] Saved user message {user_message_id} | thread_id={current_user_thread_id} | previous_thread_id={previous_thread_id}"
                     )
 
                     try:
@@ -20248,9 +20248,9 @@ def register_route_backend_chats(bp):
                             return
 
                     except HttpResponseError as e:
-                        debug_print(f"[Content Safety Error - Streaming] {e}")
+                        debug_print(f"[CONTENT_SAFETY_ERROR_STREAMING] {e}")
                     except Exception as ex:
-                        debug_print(f"[Content Safety - Streaming] Unexpected error: {ex}")
+                        debug_print(f"[CONTENT_SAFETY_STREAMING] Unexpected error: {ex}")
 
                 if (
                     not original_hybrid_search_enabled
@@ -20301,7 +20301,7 @@ def register_route_backend_chats(bp):
                             )
                         except Exception as assessment_error:
                             debug_print(
-                                f"[Streaming][History Fallback] History-only sufficiency assessment failed: {assessment_error}"
+                                f"[STREAMING][History Fallback] History-only sufficiency assessment failed: {assessment_error}"
                             )
 
                         if _can_reuse_prior_grounded_history(
@@ -20444,7 +20444,7 @@ def register_route_backend_chats(bp):
                 )
                 if mixed_source_narrative_search_active:
                     debug_print(
-                        "[Streaming] Starting hybrid search | "
+                        "[STREAMING] Starting hybrid search | "
                         f"conversation_id={conversation_id} | doc_scope={effective_document_scope} | "
                         f"selected_document_ids={len(effective_selected_document_ids)} | tags={len(tags_filter) if isinstance(tags_filter, list) else 0}"
                     )
@@ -20559,7 +20559,7 @@ def register_route_backend_chats(bp):
                                 relevance_context.get('search_results') or []
                             )
                         debug_print(
-                            f"[Streaming] Hybrid search completed | results={len(search_results) if search_results else 0}"
+                            f"[STREAMING] Hybrid search completed | results={len(search_results) if search_results else 0}"
                         )
                     except SemanticSearchQuotaExceededError as e:
                         debug_print(f"Semantic search quota exceeded during streaming hybrid search: {e}")
@@ -20949,7 +20949,7 @@ def register_route_backend_chats(bp):
                         },
                     )
                     log_event(
-                        '[MixedSourceChatSearch] Prepared streaming bounded mixed-source synthesis evidence.',
+                        '[MIXED_SOURCE_CHAT_SEARCH] Prepared streaming bounded mixed-source synthesis evidence.',
                         extra={
                             'selection_mode': effective_mixed_source_selection_mode,
                             'narrative_result_count': len(search_results or []),
@@ -20986,7 +20986,7 @@ def register_route_backend_chats(bp):
                         plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000)
                     )
                     debug_print(
-                        "[Streaming][Tabular SK] Starting workspace tabular analysis | "
+                        "[STREAMING][Tabular SK] Starting workspace tabular analysis | "
                         f"files={sorted(workspace_tabular_files)} | source_hint={tabular_source_hint} | "
                         f"file_contexts={workspace_tabular_file_contexts} | "
                         f"execution_mode={tabular_execution_mode} | baseline_invocations={baseline_tabular_invocation_count}"
@@ -21030,7 +21030,7 @@ def register_route_backend_chats(bp):
                             tabular_invocations,
                         )
                     debug_print(
-                        "[Streaming][Tabular SK] Completed workspace tabular analysis | "
+                        "[STREAMING][Tabular SK] Completed workspace tabular analysis | "
                         f"analysis_returned={bool(tabular_analysis)} | new_invocations={len(tabular_invocations)}"
                     )
                     if not streamed_tabular_tool_thoughts:
@@ -21117,7 +21117,7 @@ def register_route_backend_chats(bp):
 
                 if web_search_enabled:
                     debug_print(
-                        f"[Streaming] Starting web search augmentation for conversation_id={conversation_id}"
+                        f"[STREAMING] Starting web search augmentation for conversation_id={conversation_id}"
                     )
                     if deep_research_enabled:
                         yield emit_thought('deep_research', "Planning Deep Research web searches")
@@ -21145,7 +21145,7 @@ def register_route_backend_chats(bp):
                     deep_research_web_search_runs = research_search_result.get('web_search_runs', [])
                     if web_search_citations_list:
                         debug_print(
-                            f"[Streaming] Web search completed | citations={len(web_search_citations_list)}"
+                            f"[STREAMING] Web search completed | citations={len(web_search_citations_list)}"
                         )
                         if deep_research_enabled:
                             planned_count = len(deep_research_query_plan.get('queries') or []) or 1
@@ -21160,7 +21160,7 @@ def register_route_backend_chats(bp):
 
                 if source_review_enabled:
                     debug_print(
-                        f"[Streaming] Starting Source Review for conversation_id={conversation_id}"
+                        f"[STREAMING] Starting Source Review for conversation_id={conversation_id}"
                     )
                     source_review_thought_label = 'deep_research' if deep_research_enabled else 'url_access'
                     source_review_start_text = (
@@ -21345,7 +21345,7 @@ def register_route_backend_chats(bp):
                         chat_tabular_filenames_str = ", ".join(chat_tabular_files)
                         chat_tabular_execution_mode = get_tabular_execution_mode(user_message)
                         log_event(
-                            f"[Chat Tabular SK] Streaming: Detected {len(chat_tabular_files)} tabular file(s) uploaded to chat: {chat_tabular_filenames_str}",
+                            f"[CHAT_TABULAR_SK] Streaming: Detected {len(chat_tabular_files)} tabular file(s) uploaded to chat: {chat_tabular_filenames_str}",
                             level=logging.INFO
                         )
                         plugin_logger = get_plugin_logger()
@@ -21353,7 +21353,7 @@ def register_route_backend_chats(bp):
                             plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000)
                         )
                         debug_print(
-                            "[Streaming][Chat Tabular SK] Starting chat-uploaded tabular analysis | "
+                            "[STREAMING][Chat Tabular SK] Starting chat-uploaded tabular analysis | "
                             f"files={sorted(chat_tabular_files)} | execution_mode={chat_tabular_execution_mode} | "
                             f"baseline_invocations={baseline_tabular_invocation_count}"
                         )
@@ -21393,7 +21393,7 @@ def register_route_backend_chats(bp):
                                 chat_tabular_invocations,
                             )
                         debug_print(
-                            "[Streaming][Chat Tabular SK] Completed chat-uploaded tabular analysis | "
+                            "[STREAMING][Chat Tabular SK] Completed chat-uploaded tabular analysis | "
                             f"analysis_returned={bool(chat_tabular_analysis)} | new_invocations={len(chat_tabular_invocations)}"
                         )
                         if not streamed_chat_tabular_tool_thoughts:
@@ -21456,7 +21456,7 @@ def register_route_backend_chats(bp):
                                     f"Prepared {len(chat_tabular_chart_citations)} inline chart{'s' if len(chat_tabular_chart_citations) != 1 else ''} from chat-uploaded tabular results",
                                 )
 
-                            debug_print(f"[Chat Tabular SK] Streaming: Analysis injected, {len(chat_tabular_analysis)} chars")
+                            debug_print(f"[CHAT_TABULAR_SK] Streaming: Analysis injected, {len(chat_tabular_analysis)} chars")
                         else:
                             if chat_tabular_generated_output:
                                 conversation_history_for_api.append({
@@ -21475,11 +21475,11 @@ def register_route_backend_chats(bp):
                                 "Tabular analysis could not compute results; using existing chat file context",
                                 detail=f"files={chat_tabular_filenames_str}"
                             )
-                            debug_print("[Chat Tabular SK] Streaming: Analysis returned None, relying on existing file context")
+                            debug_print("[CHAT_TABULAR_SK] Streaming: Analysis returned None, relying on existing file context")
 
                 except Exception as e:
                     log_event(
-                        f'[Streaming] Failed to prepare conversation history: {e}',
+                        f'[STREAMING] Failed to prepare conversation history: {e}',
                         extra={'conversation_id': conversation_id, 'user_id': user_id},
                         level=logging.ERROR,
                         exceptionTraceback=True,
@@ -21604,24 +21604,24 @@ def register_route_backend_chats(bp):
                                 request_agent_info,
                                 assigned_knowledge_filters,
                             )
-                            debug_print(f"[Streaming] Request agent name to select: {agent_name_to_select}")
+                            debug_print(f"[STREAMING] Request agent name to select: {agent_name_to_select}")
                         else:
-                            debug_print("[Streaming] No explicit request agent selected; using model-only response path")
+                            debug_print("[STREAMING] No explicit request agent selected; using model-only response path")
 
                         agent_iter = all_agents.values() if isinstance(all_agents, dict) else all_agents
                         if agent_name_to_select:
                             for agent in agent_iter:
                                 agent_obj_name = getattr(agent, 'name', None)
-                                debug_print(f"[Streaming] Checking agent: {agent_obj_name} against target: {agent_name_to_select}")
+                                debug_print(f"[STREAMING] Checking agent: {agent_obj_name} against target: {agent_name_to_select}")
                                 if agent_obj_name == agent_name_to_select:
                                     selected_agent = agent
-                                    debug_print(f"[Streaming] Found matching agent: {agent_obj_name}")
+                                    debug_print(f"[STREAMING] Found matching agent: {agent_obj_name}")
                                     break
                             if not selected_agent:
-                                debug_print(f"[Streaming] Requested chat agent was not found: {agent_name_to_select}")
+                                debug_print(f"[STREAMING] Requested chat agent was not found: {agent_name_to_select}")
                                 selected_agent_metadata = None
                         else:
-                            debug_print("[Streaming] No chat agent selected for this request; using model-only response path")
+                            debug_print("[STREAMING] No chat agent selected for this request; using model-only response path")
 
                         if selected_agent:
                             use_agent_streaming = True
@@ -21638,7 +21638,7 @@ def register_route_backend_chats(bp):
                                 agent_tags_used = selected_agent_metadata.get('agent_tags') or []
                             debug_print(f"--- Streaming from Agent: {agent_name_used} (model: {actual_model_used}) ---")
                         else:
-                            debug_print(f"[Streaming] ⚠️ No agent selected, falling back to GPT")
+                            debug_print(f"[STREAMING] ⚠️ No agent selected, falling back to GPT")
 
                 if selected_agent_metadata:
                     user_metadata['agent_selection'] = selected_agent_metadata
@@ -21761,7 +21761,7 @@ def register_route_backend_chats(bp):
                         message_persisted = True
 
                     log_event(
-                        '[Streaming] Stream generation stopped by user request',
+                        '[STREAMING] Stream generation stopped by user request',
                         extra={
                             'conversation_id': conversation_id,
                             'user_id': user_id,
@@ -21803,7 +21803,7 @@ def register_route_backend_chats(bp):
                 debug_print(f"[DEBUG] use_agent_streaming={use_agent_streaming}, selected_agent={selected_agent is not None}")
                 debug_print(f"[DEBUG] enable_semantic_kernel={enable_semantic_kernel}, user_enable_agents={user_enable_agents}")
                 debug_print(
-                    "[Streaming] Selected response path | "
+                    "[STREAMING] Selected response path | "
                     f"use_agent_streaming={use_agent_streaming} | "
                     f"selected_agent={getattr(selected_agent, 'name', None) if selected_agent else None} | "
                     f"model={gpt_model}"
@@ -21832,13 +21832,13 @@ def register_route_backend_chats(bp):
                             live_thought_callback=publish_live_plugin_thought,
                         )
                         debug_print(
-                            f"[Streaming][Plugin Callback] Registering callback for key={callback_key}"
+                            f"[STREAMING][Plugin Callback] Registering callback for key={callback_key}"
                         )
 
                         def finalize_cancelled_agent_stream_response():
                             plugin_logger_cb.deregister_callbacks(callback_key)
                             debug_print(
-                                f"[Streaming][Plugin Callback] Deregistered callback after stream cancellation for key={callback_key}"
+                                f"[STREAMING][Plugin Callback] Deregistered callback after stream cancellation for key={callback_key}"
                             )
                             return finalize_cancelled_stream_response()
 
@@ -21873,7 +21873,7 @@ def register_route_backend_chats(bp):
                                 try:
                                     if agent_retry_plan:
                                         debug_print(
-                                            f"[Streaming][Agent Retry] Retrying agent stream | "
+                                            f"[STREAMING][Agent Retry] Retrying agent stream | "
                                             f"agent={getattr(selected_agent, 'name', None)} | "
                                             f"model={getattr(selected_agent, 'deployment_name', actual_model_used)} | "
                                             f"mode={agent_retry_plan['mode']} | "
@@ -21946,7 +21946,7 @@ def register_route_backend_chats(bp):
 
                                     if agent_retry_plan:
                                         debug_print(
-                                            f"[Streaming][Agent Retry] Agent retry succeeded | "
+                                            f"[STREAMING][Agent Retry] Agent retry succeeded | "
                                             f"agent={getattr(selected_agent, 'name', None)} | "
                                             f"model={actual_model_used} | "
                                             f"reason={agent_retry_plan['reason']}"
@@ -21962,7 +21962,7 @@ def register_route_backend_chats(bp):
                                                 agent_retry_plan['mode'],
                                             )
                                             debug_print(
-                                                f"[Streaming][Agent Retry] Retrying agent stream without tool calling | "
+                                                f"[STREAMING][Agent Retry] Retrying agent stream without tool calling | "
                                                 f"agent={getattr(selected_agent, 'name', None)} | "
                                                 f"model={getattr(selected_agent, 'deployment_name', actual_model_used)} | "
                                                 f"reason={agent_retry_plan['reason']} | "
@@ -21974,10 +21974,10 @@ def register_route_backend_chats(bp):
                             import traceback
                             plugin_logger_cb.deregister_callbacks(callback_key)
                             debug_print(
-                                f"[Streaming][Plugin Callback] Deregistered callback after streaming error for key={callback_key}"
+                                f"[STREAMING][Plugin Callback] Deregistered callback after streaming error for key={callback_key}"
                             )
                             debug_print(
-                                f"[Streaming][Agent Retry] Terminal agent streaming error | "
+                                f"[STREAMING][Agent Retry] Terminal agent streaming error | "
                                 f"retried={agent_retry_plan is not None} | error={stream_error}"
                             )
                             debug_print(f"❌ Agent streaming error: {stream_error}")
@@ -22010,7 +22010,7 @@ def register_route_backend_chats(bp):
                         # Deregister callback (agent completed successfully)
                         plugin_logger_cb.deregister_callbacks(callback_key)
                         debug_print(
-                            f"[Streaming][Plugin Callback] Deregistered callback after successful stream for key={callback_key}"
+                            f"[STREAMING][Plugin Callback] Deregistered callback after successful stream for key={callback_key}"
                         )
 
                         agent_plugin_invocations = plugin_logger_cb.get_invocations_for_conversation(user_id, conversation_id)
@@ -22036,7 +22036,7 @@ def register_route_backend_chats(bp):
                                 'total_tokens': total_tokens,
                                 'captured_at': datetime.utcnow().isoformat()
                             }
-                            debug_print(f"[Agent Streaming Tokens] From metadata - prompt: {prompt_tokens}, completion: {completion_tokens}, total: {total_tokens}")
+                            debug_print(f"[AGENT_STREAMING_TOKENS] From metadata - prompt: {prompt_tokens}, completion: {completion_tokens}, total: {total_tokens}")
 
                         # Collect token usage from kernel services if not captured from stream
                         if not token_usage_data:
@@ -22055,7 +22055,7 @@ def register_route_backend_chats(bp):
                                                 'total_tokens': total_tokens or (prompt_tokens or 0) + (completion_tokens or 0),
                                                 'captured_at': datetime.utcnow().isoformat()
                                             }
-                                            debug_print(f"[Agent Streaming Tokens] From kernel service - prompt: {prompt_tokens}, completion: {completion_tokens}, total: {total_tokens}")
+                                            debug_print(f"[AGENT_STREAMING_TOKENS] From kernel service - prompt: {prompt_tokens}, completion: {completion_tokens}, total: {total_tokens}")
                                             break
                                 except Exception as e:
                                     debug_print(f"Warning: Could not collect token usage from kernel services: {e}")
@@ -22066,17 +22066,17 @@ def register_route_backend_chats(bp):
 
                         # Debug: Check all invocations first
                         all_invocations = plugin_logger.get_recent_invocations()
-                        debug_print(f"[Agent Streaming] Total plugin invocations logged: {len(all_invocations)}")
+                        debug_print(f"[AGENT_STREAMING] Total plugin invocations logged: {len(all_invocations)}")
 
                         plugin_invocations = plugin_logger.get_invocations_for_conversation(user_id, conversation_id)
-                        debug_print(f"[Agent Streaming] Found {len(plugin_invocations)} plugin invocations for user {user_id}, conversation {conversation_id}")
+                        debug_print(f"[AGENT_STREAMING] Found {len(plugin_invocations)} plugin invocations for user {user_id}, conversation {conversation_id}")
 
                         # If no invocations found, check if plugins were called at all
                         if len(plugin_invocations) == 0 and len(all_invocations) > 0:
-                            debug_print(f"[Agent Streaming] ⚠️ Plugin invocations exist but not for this conversation - possible filtering issue")
+                            debug_print(f"[AGENT_STREAMING] ⚠️ Plugin invocations exist but not for this conversation - possible filtering issue")
                             # Debug: show last few invocations
                             for inv in all_invocations[-3:]:
-                                debug_print(f"[Agent Streaming] Recent invocation: user={inv.user_id}, conv={inv.conversation_id}, plugin={inv.plugin_name}.{inv.function_name}")
+                                debug_print(f"[AGENT_STREAMING] Recent invocation: user={inv.user_id}, conv={inv.conversation_id}, plugin={inv.plugin_name}.{inv.function_name}")
 
                         # Convert to citation format
                         for inv in plugin_invocations:
@@ -22129,7 +22129,7 @@ def register_route_backend_chats(bp):
                                     'success': True
                                 })
 
-                        debug_print(f"[Agent Streaming] Captured {len(agent_citations_list)} citations")
+                        debug_print(f"[AGENT_STREAMING] Captured {len(agent_citations_list)} citations")
                         final_model_used = actual_model_used
 
                     else:
@@ -22209,14 +22209,14 @@ def register_route_backend_chats(bp):
                                     'total_tokens': chunk.usage.total_tokens,
                                     'captured_at': datetime.utcnow().isoformat()
                                 }
-                                debug_print(f"[Streaming Tokens] Captured usage - prompt: {chunk.usage.prompt_tokens}, completion: {chunk.usage.completion_tokens}, total: {chunk.usage.total_tokens}")
+                                debug_print(f"[STREAMING_TOKENS] Captured usage - prompt: {chunk.usage.prompt_tokens}, completion: {chunk.usage.completion_tokens}, total: {chunk.usage.total_tokens}")
 
                         if not accumulated_content:
                             debug_print(
-                                f"[Streaming] Model stream returned no assistant content for {gpt_model}; retrying without streaming."
+                                f"[STREAMING] Model stream returned no assistant content for {gpt_model}; retrying without streaming."
                             )
                             log_event(
-                                "[Streaming] Model stream returned no assistant content; retrying without streaming",
+                                "[STREAMING] Model stream returned no assistant content; retrying without streaming",
                                 extra={
                                     "conversation_id": conversation_id,
                                     "user_id": user_id,
@@ -22605,7 +22605,7 @@ def register_route_backend_chats(bp):
                         'thoughts_enabled': thought_tracker.enabled
                     })
                     debug_print(
-                        "[Streaming] Finalizing stream response | "
+                        "[STREAMING] Finalizing stream response | "
                         f"conversation_id={conversation_id} | message_id={assistant_message_id} | "
                         f"content_length={len(accumulated_content)} | hybrid_citations={len(hybrid_citations_list)} | "
                         f"web_citations={len(web_search_citations_list)} | agent_citations={len(agent_citations_list)} | "
@@ -22723,10 +22723,10 @@ def register_route_backend_chats(bp):
 
             except Exception as e:
                 error_traceback = traceback.format_exc()
-                debug_print(f"[STREAM API ERROR] Unhandled exception: {str(e)}")
-                debug_print(f"[STREAM API ERROR] Full traceback:\n{error_traceback}")
+                debug_print(f"[STREAM_API_ERROR] Unhandled exception: {str(e)}")
+                debug_print(f"[STREAM_API_ERROR] Full traceback:\n{error_traceback}")
                 log_event(
-                    f'[Streaming] Unhandled stream error: {e}',
+                    f'[STREAMING] Unhandled stream error: {e}',
                     extra={
                         'conversation_id': finalized_conversation_id,
                         'user_id': user_id,
@@ -22844,7 +22844,7 @@ def register_route_backend_chats(bp):
 
         stream_status = stream_session.mark_reattached() or {}
         log_event(
-            '[Streaming] Stream consumer reattached',
+            '[STREAMING] Stream consumer reattached',
             extra={
                 'conversation_id': stream_status.get('conversation_id'),
                 'user_id': stream_status.get('user_id'),
@@ -22867,7 +22867,7 @@ def register_route_backend_chats(bp):
                 detach_status = stream_session.mark_consumer_detached(reason='reattach_disconnect') or {}
                 detach_recorded = True
                 log_event(
-                    '[Streaming] Reattached stream consumer detached',
+                    '[STREAMING] Reattached stream consumer detached',
                     extra={
                         'conversation_id': detach_status.get('conversation_id'),
                         'user_id': detach_status.get('user_id'),
@@ -22919,7 +22919,7 @@ def register_route_backend_chats(bp):
         } else logging.INFO
 
         log_event(
-            f'[Streaming Client] {event_type}',
+            f'[STREAMING_CLIENT] {event_type}',
             extra={
                 'user_id': user_id,
                 'conversation_id': conversation_id,
@@ -23015,7 +23015,7 @@ def register_route_backend_chats(bp):
             except Exception as e:
                 debug_print(f"Error fetching message {message_id}: {str(e)}")
                 log_event(
-                    f'[MaskMessage] Failed to fetch message: {e}',
+                    f'[MASK_MESSAGE] Failed to fetch message: {e}',
                     extra={'message_id': message_id, 'user_id': user_id},
                     level=logging.ERROR,
                     exceptionTraceback=True,
@@ -23036,7 +23036,7 @@ def register_route_backend_chats(bp):
                     user_display_name,
                 )
             except ValueError as ex:
-                debug_print(f'[MaskMessage] Invalid mask request: {ex}')
+                debug_print(f'[MASK_MESSAGE] Invalid mask request: {ex}')
                 return jsonify({'error': 'Invalid mask request'}), 400
 
             # Update the message in Cosmos DB
@@ -23045,7 +23045,7 @@ def register_route_backend_chats(bp):
             except Exception as e:
                 debug_print(f"Error updating message {message_id}: {str(e)}")
                 log_event(
-                    f'[MaskMessage] Failed to update message: {e}',
+                    f'[MASK_MESSAGE] Failed to update message: {e}',
                     extra={'message_id': message_id, 'user_id': user_id},
                     level=logging.ERROR,
                     exceptionTraceback=True,
@@ -23061,10 +23061,10 @@ def register_route_backend_chats(bp):
 
         except Exception as e:
             error_traceback = traceback.format_exc()
-            debug_print(f"[MASK API ERROR] Unhandled exception: {str(e)}")
-            debug_print(f"[MASK API ERROR] Full traceback:\n{error_traceback}")
+            debug_print(f"[MASK_API_ERROR] Unhandled exception: {str(e)}")
+            debug_print(f"[MASK_API_ERROR] Full traceback:\n{error_traceback}")
             log_event(
-                f'[MaskMessage] Unhandled exception: {e}',
+                f'[MASK_MESSAGE] Unhandled exception: {e}',
                 extra={
                     'message_id': message_id,
                     'user_id': user_id if 'user_id' in locals() else None,
@@ -23804,7 +23804,7 @@ def enrich_history_context_debug_info(
 def emit_history_context_debug(history_debug_info, conversation_id):
     debug_payload = history_debug_info or {}
     debug_print(
-        f"[History Context][{debug_payload.get('path', 'unknown')}] conversation_id={conversation_id} | "
+        f"[HISTORY_CONTEXT][{debug_payload.get('path', 'unknown')}] conversation_id={conversation_id} | "
         f"{json.dumps(debug_payload, default=str)}"
     )
 
@@ -24095,7 +24095,7 @@ def build_conversation_history_segments(
 def _extract_web_search_citations_from_content(content: str) -> List[Dict[str, str]]:
     if not content:
         return []
-    debug_print(f"[Citation Extraction] Extracting citations from:\n{content}\n")
+    debug_print(f"[CITATION_EXTRACTION] Extracting citations from:\n{content}\n")
 
     citations: List[Dict[str, str]] = []
 
@@ -24137,7 +24137,7 @@ def _extract_web_search_citations_from_content(content: str) -> List[Dict[str, s
         if not url:
             continue
         citations.append({"url": url, "title": url})
-    debug_print(f"[Citation Extraction] Extracted {len(citations)} citations. - {citations}\n")
+    debug_print(f"[CITATION_EXTRACTION] Extracted {len(citations)} citations. - {citations}\n")
 
     return citations
 
@@ -24184,20 +24184,20 @@ def _append_source_review_web_citation(web_search_citations_list, raw_citation, 
 def _extract_token_usage_from_metadata(metadata: Dict[str, Any]) -> Dict[str, int]:
     if not isinstance(metadata, Mapping):
         debug_print(
-            "[Web Search][Token Usage Extraction] Metadata is not a mapping. "
+            "[WEB_SEARCH][Token Usage Extraction] Metadata is not a mapping. "
             f"type={type(metadata)}"
         )
         return {}
 
     usage = metadata.get("usage")
     if not usage:
-        debug_print("[Web Search][Token Usage Extraction] No usage field found in metadata.")
+        debug_print("[WEB_SEARCH][Token Usage Extraction] No usage field found in metadata.")
         return {}
 
     if isinstance(usage, str):
         raw_usage = usage.strip()
         if not raw_usage:
-            debug_print("[Web Search][Token Usage Extraction] Usage string was empty.")
+            debug_print("[WEB_SEARCH][Token Usage Extraction] Usage string was empty.")
             return {}
         try:
             usage = json.loads(raw_usage)
@@ -24206,13 +24206,13 @@ def _extract_token_usage_from_metadata(metadata: Dict[str, Any]) -> Dict[str, in
                 usage = ast.literal_eval(raw_usage)
             except (ValueError, SyntaxError):
                 debug_print(
-                    "[Web Search][Token Usage Extraction] Failed to parse usage string."
+                    "[WEB_SEARCH][Token Usage Extraction] Failed to parse usage string."
                 )
                 return {}
 
     if not isinstance(usage, Mapping):
         debug_print(
-            "[Web Search][Token Usage Extraction] Usage is not a mapping. "
+            "[WEB_SEARCH][Token Usage Extraction] Usage is not a mapping. "
             f"type={type(usage)}"
         )
         return {}
@@ -24226,7 +24226,7 @@ def _extract_token_usage_from_metadata(metadata: Dict[str, Any]) -> Dict[str, in
     total_tokens = to_int(usage.get("total_tokens"))
     if total_tokens is None:
         debug_print(
-            "[Web Search][Token Usage Extraction] total_tokens missing or invalid. "
+            "[WEB_SEARCH][Token Usage Extraction] total_tokens missing or invalid. "
             f"usage={usage}"
         )
         return {}
@@ -24234,7 +24234,7 @@ def _extract_token_usage_from_metadata(metadata: Dict[str, Any]) -> Dict[str, in
     prompt_tokens = to_int(usage.get("prompt_tokens")) or 0
     completion_tokens = to_int(usage.get("completion_tokens")) or 0
     debug_print(
-        "[Web Search][Token Usage Extraction] Extracted token usage - "
+        "[WEB_SEARCH][Token Usage Extraction] Extracted token usage - "
         f"prompt: {prompt_tokens}, completion: {completion_tokens}, total: {total_tokens}"
     )
 
@@ -24347,18 +24347,18 @@ def perform_web_search(
     web_search_runs_list=None,
     search_context_label=None,
 ):
-    debug_print("[WebSearch] ========== ENTERING perform_web_search ==========")
-    debug_print(f"[WebSearch] Parameters received:")
-    debug_print(f"[WebSearch]   conversation_id: {conversation_id}")
-    debug_print(f"[WebSearch]   user_id: {user_id}")
-    debug_print(f"[WebSearch]   user_message: {user_message[:100] if user_message else None}...")
-    debug_print(f"[WebSearch]   user_message_id: {user_message_id}")
-    debug_print(f"[WebSearch]   chat_type: {chat_type}")
-    debug_print(f"[WebSearch]   document_scope: {document_scope}")
-    debug_print(f"[WebSearch]   active_group_id: {active_group_id}")
-    debug_print(f"[WebSearch]   active_public_workspace_id: {active_public_workspace_id}")
+    debug_print("[WEB_SEARCH] ========== ENTERING perform_web_search ==========")
+    debug_print(f"[WEB_SEARCH] Parameters received:")
+    debug_print(f"[WEB_SEARCH]   conversation_id: {conversation_id}")
+    debug_print(f"[WEB_SEARCH]   user_id: {user_id}")
+    debug_print(f"[WEB_SEARCH]   user_message: {user_message[:100] if user_message else None}...")
+    debug_print(f"[WEB_SEARCH]   user_message_id: {user_message_id}")
+    debug_print(f"[WEB_SEARCH]   chat_type: {chat_type}")
+    debug_print(f"[WEB_SEARCH]   document_scope: {document_scope}")
+    debug_print(f"[WEB_SEARCH]   active_group_id: {active_group_id}")
+    debug_print(f"[WEB_SEARCH]   active_public_workspace_id: {active_public_workspace_id}")
     debug_print(
-        "[WebSearch]   web_search_query_text: "
+        "[WEB_SEARCH]   web_search_query_text: "
         f"{web_search_query_text[:100] if web_search_query_text else None}..."
     )
 
@@ -24385,43 +24385,43 @@ def perform_web_search(
         })
 
     enable_web_search = settings.get("enable_web_search")
-    debug_print(f"[WebSearch] enable_web_search setting: {enable_web_search}")
+    debug_print(f"[WEB_SEARCH] enable_web_search setting: {enable_web_search}")
 
     if not enable_web_search:
-        debug_print("[WebSearch] Web search is DISABLED in settings, returning early")
+        debug_print("[WEB_SEARCH] Web search is DISABLED in settings, returning early")
         record_web_search_run(True, 'disabled')
         return True  # Not an error, just disabled
 
     web_search_agent = settings.get("web_search_agent") or {}
-    debug_print(f"[WebSearch] web_search_agent config present: {bool(web_search_agent)}")
+    debug_print(f"[WEB_SEARCH] web_search_agent config present: {bool(web_search_agent)}")
     if web_search_agent:
         # Avoid logging sensitive data, just log structure
-        debug_print(f"[WebSearch]   web_search_agent keys: {list(web_search_agent.keys())}")
+        debug_print(f"[WEB_SEARCH]   web_search_agent keys: {list(web_search_agent.keys())}")
 
     other_settings = web_search_agent.get("other_settings") or {}
-    debug_print(f"[WebSearch] other_settings keys: {list(other_settings.keys()) if other_settings else '<empty>'}")
+    debug_print(f"[WEB_SEARCH] other_settings keys: {list(other_settings.keys()) if other_settings else '<empty>'}")
 
     foundry_settings = other_settings.get("azure_ai_foundry") or {}
-    debug_print(f"[WebSearch] foundry_settings present: {bool(foundry_settings)}")
+    debug_print(f"[WEB_SEARCH] foundry_settings present: {bool(foundry_settings)}")
     if foundry_settings:
         # Log only non-sensitive keys
         safe_keys = ['agent_id', 'project_id', 'endpoint']
         safe_info = {k: foundry_settings.get(k, '<not set>') for k in safe_keys}
-        debug_print(f"[WebSearch]   foundry_settings (safe keys): {safe_info}")
+        debug_print(f"[WEB_SEARCH]   foundry_settings (safe keys): {safe_info}")
 
     agent_id = (foundry_settings.get("agent_id") or "").strip()
-    debug_print(f"[WebSearch] Extracted agent_id: '{agent_id}'")
+    debug_print(f"[WEB_SEARCH] Extracted agent_id: '{agent_id}'")
 
     if not agent_id:
         log_event(
-            "[WebSearch] Skipping Foundry web search: agent_id is not configured",
+            "[WEB_SEARCH] Skipping Foundry web search: agent_id is not configured",
             extra={
                 "conversation_id": conversation_id,
                 "user_id": user_id,
             },
             level=logging.WARNING,
         )
-        debug_print("[WebSearch] Foundry agent_id not configured, skipping web search.")
+        debug_print("[WEB_SEARCH] Foundry agent_id not configured, skipping web search.")
         # Add failure message so the model knows search was requested but not configured
         system_messages_for_augmentation.append({
             "role": "system",
@@ -24430,15 +24430,15 @@ def perform_web_search(
         record_web_search_run(False, 'agent_not_configured', error='agent_id_not_configured')
         return False  # Configuration error
 
-    debug_print(f"[WebSearch] Agent ID is configured: {agent_id}")
+    debug_print(f"[WEB_SEARCH] Agent ID is configured: {agent_id}")
 
     query_text = (web_search_query_text or user_message or "").strip()
-    debug_print(f"[WebSearch] Final query_text after fallback: '{query_text[:100] if query_text else ''}'")
+    debug_print(f"[WEB_SEARCH] Final query_text after fallback: '{query_text[:100] if query_text else ''}'")
 
     if not query_text:
-        debug_print("[WebSearch] Query text is EMPTY after processing, skipping web search")
+        debug_print("[WEB_SEARCH] Query text is EMPTY after processing, skipping web search")
         log_event(
-            "[WebSearch] Skipping Foundry web search: empty query",
+            "[WEB_SEARCH] Skipping Foundry web search: empty query",
             extra={
                 "conversation_id": conversation_id,
                 "user_id": user_id,
@@ -24449,19 +24449,19 @@ def perform_web_search(
         return True  # Not an error, just empty query
 
     search_request_content = build_research_search_prompt(query_text)
-    debug_print(f"[WebSearch] Building message history with query: {query_text[:100]}...")
+    debug_print(f"[WEB_SEARCH] Building message history with query: {query_text[:100]}...")
     message_history = [
         ChatMessageContent(role="user", content=search_request_content)
     ]
-    debug_print(f"[WebSearch] Message history created with {len(message_history)} message(s)")
+    debug_print(f"[WEB_SEARCH] Message history created with {len(message_history)} message(s)")
 
     try:
         foundry_metadata = {}
-        debug_print("[WebSearch] Foundry metadata prepared: {}")
+        debug_print("[WEB_SEARCH] Foundry metadata prepared: {}")
 
-        debug_print("[WebSearch] Calling execute_foundry_agent...")
-        debug_print(f"[WebSearch]   foundry_settings keys: {list(foundry_settings.keys())}")
-        debug_print(f"[WebSearch]   global_settings type: {type(settings)}")
+        debug_print("[WEB_SEARCH] Calling execute_foundry_agent...")
+        debug_print(f"[WEB_SEARCH]   foundry_settings keys: {list(foundry_settings.keys())}")
+        debug_print(f"[WEB_SEARCH]   global_settings type: {type(settings)}")
 
         result = asyncio.run(
             execute_foundry_agent(
@@ -24473,7 +24473,7 @@ def perform_web_search(
         )
     except FoundryAgentInvocationError as exc:
         log_event(
-            f"[WebSearch] Foundry agent invocation failed: {exc}",
+            f"[WEB_SEARCH] Foundry agent invocation failed: {exc}",
             extra={
                 "conversation_id": conversation_id,
                 "user_id": user_id,
@@ -24491,7 +24491,7 @@ def perform_web_search(
         return False  # Search failed
     except Exception as exc:
         log_event(
-            f"[WebSearch] Unexpected error invoking Foundry agent: {exc}",
+            f"[WEB_SEARCH] Unexpected error invoking Foundry agent: {exc}",
             extra={
                 "conversation_id": conversation_id,
                 "user_id": user_id,
@@ -24508,37 +24508,37 @@ def perform_web_search(
         record_web_search_run(False, 'unexpected_error', error=str(exc))
         return False  # Search failed
 
-    debug_print("[WebSearch] ========== FOUNDRY AGENT RESULT ==========")
-    debug_print(f"[WebSearch] Result type: {type(result)}")
-    debug_print(f"[WebSearch] Result has message: {bool(result.message)}")
-    debug_print(f"[WebSearch] Result has citations: {bool(result.citations)}")
-    debug_print(f"[WebSearch] Result has metadata: {bool(result.metadata)}")
-    debug_print(f"[WebSearch] Result model: {getattr(result, 'model', 'N/A')}")
+    debug_print("[WEB_SEARCH] ========== FOUNDRY AGENT RESULT ==========")
+    debug_print(f"[WEB_SEARCH] Result type: {type(result)}")
+    debug_print(f"[WEB_SEARCH] Result has message: {bool(result.message)}")
+    debug_print(f"[WEB_SEARCH] Result has citations: {bool(result.citations)}")
+    debug_print(f"[WEB_SEARCH] Result has metadata: {bool(result.metadata)}")
+    debug_print(f"[WEB_SEARCH] Result model: {getattr(result, 'model', 'N/A')}")
 
     if result.message:
-        debug_print(f"[WebSearch] Result message length: {len(result.message)} chars")
-        debug_print(f"[WebSearch] Result message preview: {result.message[:500] if len(result.message) > 500 else result.message}")
+        debug_print(f"[WEB_SEARCH] Result message length: {len(result.message)} chars")
+        debug_print(f"[WEB_SEARCH] Result message preview: {result.message[:500] if len(result.message) > 500 else result.message}")
     else:
-        debug_print("[WebSearch] Result message is EMPTY or None")
+        debug_print("[WEB_SEARCH] Result message is EMPTY or None")
 
     if result.citations:
-        debug_print(f"[WebSearch] Result citations count: {len(result.citations)}")
+        debug_print(f"[WEB_SEARCH] Result citations count: {len(result.citations)}")
         for i, cit in enumerate(result.citations[:3]):
-            debug_print(f"[WebSearch]   Citation {i}: {json.dumps(cit, default=str)[:200]}...")
+            debug_print(f"[WEB_SEARCH]   Citation {i}: {json.dumps(cit, default=str)[:200]}...")
     else:
-        debug_print("[WebSearch] Result citations is EMPTY or None")
+        debug_print("[WEB_SEARCH] Result citations is EMPTY or None")
 
     if result.metadata:
         try:
             metadata_payload = json.dumps(result.metadata, default=str)
         except (TypeError, ValueError):
             metadata_payload = str(result.metadata)
-        debug_print(f"[WebSearch] Foundry metadata: {metadata_payload}")
+        debug_print(f"[WEB_SEARCH] Foundry metadata: {metadata_payload}")
     else:
-        debug_print("[WebSearch] Foundry metadata: <empty>")
+        debug_print("[WEB_SEARCH] Foundry metadata: <empty>")
 
     if result.message:
-        debug_print("[WebSearch] Adding result message to system_messages_for_augmentation")
+        debug_print("[WEB_SEARCH] Adding result message to system_messages_for_augmentation")
         result_heading = "Web search results"
         if search_context_label:
             result_heading = f"Web search results ({search_context_label})"
@@ -24546,11 +24546,11 @@ def perform_web_search(
             "role": "system",
             "content": f"{result_heading}:\n{result.message}",
         })
-        debug_print(f"[WebSearch] Added system message to augmentation list. Total augmentation messages: {len(system_messages_for_augmentation)}")
+        debug_print(f"[WEB_SEARCH] Added system message to augmentation list. Total augmentation messages: {len(system_messages_for_augmentation)}")
 
-        debug_print("[WebSearch] Extracting web citations from result message...")
+        debug_print("[WEB_SEARCH] Extracting web citations from result message...")
         web_citations = _extract_web_search_citations_from_content(result.message)
-        debug_print(f"[WebSearch] Extracted {len(web_citations)} web citations from message content")
+        debug_print(f"[WEB_SEARCH] Extracted {len(web_citations)} web citations from message content")
         if web_citations:
             appended_message_citations = 0
             for web_citation in web_citations:
@@ -24560,23 +24560,23 @@ def perform_web_search(
                     source_label='web_search_message',
                 ):
                     appended_message_citations += 1
-            debug_print(f"[WebSearch] Total web_search_citations_list now has {len(web_search_citations_list)} citations")
-            debug_print(f"[WebSearch] Added {appended_message_citations} message citation(s) for Source Review")
+            debug_print(f"[WEB_SEARCH] Total web_search_citations_list now has {len(web_search_citations_list)} citations")
+            debug_print(f"[WEB_SEARCH] Added {appended_message_citations} message citation(s) for Source Review")
         else:
-            debug_print("[WebSearch] No web citations extracted from message content")
+            debug_print("[WEB_SEARCH] No web citations extracted from message content")
     else:
-        debug_print("[WebSearch] No result.message to process for augmentation")
+        debug_print("[WEB_SEARCH] No result.message to process for augmentation")
 
     citations = result.citations or []
-    debug_print(f"[WebSearch] Processing {len(citations)} citations from result.citations")
+    debug_print(f"[WEB_SEARCH] Processing {len(citations)} citations from result.citations")
     if citations:
         for i, citation in enumerate(citations):
-            debug_print(f"[WebSearch] Processing citation {i}: {json.dumps(citation, default=str)[:200]}...")
+            debug_print(f"[WEB_SEARCH] Processing citation {i}: {json.dumps(citation, default=str)[:200]}...")
             serializable = make_json_serializable(citation)
             if not isinstance(serializable, dict):
                 serializable = {"value": str(citation)}
             citation_title = serializable.get("title") or serializable.get("url") or "Web search source"
-            debug_print(f"[WebSearch] Adding agent citation with title: {citation_title}")
+            debug_print(f"[WEB_SEARCH] Adding agent citation with title: {citation_title}")
             agent_citations_list.append({
                 "tool_name": citation_title,
                 "function_name": "azure_ai_foundry_web_search",
@@ -24591,12 +24591,12 @@ def perform_web_search(
                 serializable,
                 source_label='foundry_citation',
             )
-        debug_print(f"[WebSearch] Total agent_citations_list now has {len(agent_citations_list)} citations")
-        debug_print(f"[WebSearch] Total Source Review citation seeds now has {len(web_search_citations_list)} citations")
+        debug_print(f"[WEB_SEARCH] Total agent_citations_list now has {len(agent_citations_list)} citations")
+        debug_print(f"[WEB_SEARCH] Total Source Review citation seeds now has {len(web_search_citations_list)} citations")
     else:
-        debug_print("[WebSearch] No citations in result.citations to process")
+        debug_print("[WEB_SEARCH] No citations in result.citations to process")
 
-    debug_print(f"[WebSearch] Starting token usage extraction from Foundry metadata. Metadata: {result.metadata}")
+    debug_print(f"[WEB_SEARCH] Starting token usage extraction from Foundry metadata. Metadata: {result.metadata}")
     token_usage = _extract_token_usage_from_metadata(result.metadata or {})
     if token_usage.get("total_tokens"):
         try:
@@ -24626,7 +24626,7 @@ def perform_web_search(
             )
         except Exception as log_error:
             log_event(
-                f"[WebSearch] Failed to log web search token usage: {log_error}",
+                f"[WEB_SEARCH] Failed to log web search token usage: {log_error}",
                 extra={
                     "conversation_id": conversation_id,
                     "user_id": user_id,
@@ -24635,15 +24635,15 @@ def perform_web_search(
                 level=logging.WARNING,
             )
 
-    debug_print("[WebSearch] ========== FINAL SUMMARY ==========")
-    debug_print(f"[WebSearch] system_messages_for_augmentation count: {len(system_messages_for_augmentation)}")
-    debug_print(f"[WebSearch] agent_citations_list count: {len(agent_citations_list)}")
-    debug_print(f"[WebSearch] web_search_citations_list count: {len(web_search_citations_list)}")
-    debug_print(f"[WebSearch] Token usage extracted: {token_usage}")
-    debug_print("[WebSearch] ========== EXITING perform_web_search ==========")
+    debug_print("[WEB_SEARCH] ========== FINAL SUMMARY ==========")
+    debug_print(f"[WEB_SEARCH] system_messages_for_augmentation count: {len(system_messages_for_augmentation)}")
+    debug_print(f"[WEB_SEARCH] agent_citations_list count: {len(agent_citations_list)}")
+    debug_print(f"[WEB_SEARCH] web_search_citations_list count: {len(web_search_citations_list)}")
+    debug_print(f"[WEB_SEARCH] Token usage extracted: {token_usage}")
+    debug_print("[WEB_SEARCH] ========== EXITING perform_web_search ==========")
 
     log_event(
-        "[WebSearch] Foundry web search invocation complete",
+        "[WEB_SEARCH] Foundry web search invocation complete",
         extra={
             "conversation_id": conversation_id,
             "user_id": user_id,

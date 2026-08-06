@@ -695,7 +695,7 @@ def identity_supports_usage(
 
 def log_workspace_identity_reference_block(scope_type: str, scope_id: str, identity_id: str, reference_count: int) -> None:
     log_event(
-        "[WorkspaceIdentity] Delete blocked because identity is still referenced.",
+        "[WORKSPACE_IDENTITY] Delete blocked because identity is still referenced.",
         extra={
             "scope_type": scope_type,
             "scope_id": scope_id,

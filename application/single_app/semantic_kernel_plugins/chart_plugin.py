@@ -255,7 +255,7 @@ class ChartPlugin(BasePlugin):
             return {'success': False, 'error': str(exc), 'error_type': 'validation'}
         except Exception as exc:
             log_event(
-                f"[ChartPlugin] create_chart failed: {exc}",
+                f"[CHART_PLUGIN] create_chart failed: {exc}",
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )

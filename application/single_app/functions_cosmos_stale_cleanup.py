@@ -253,7 +253,7 @@ def run_stale_cache_document_cleanup(apply_changes=False, batch_size=None, conta
         )
     except Exception as exc:
         log_event(
-            "[CosmosStaleCleanup] Failed to query stale cache cleanup candidates.",
+            "[COSMOS_STALE_CLEANUP] Failed to query stale cache cleanup candidates.",
             extra={"error": str(exc), "batch_size": safe_batch_size},
             level=logging.ERROR,
             exceptionTraceback=True,
@@ -304,7 +304,7 @@ def run_stale_cache_document_cleanup(apply_changes=False, batch_size=None, conta
             failed_count += 1
             _increment_category_count(category_counts, category_id, "failed_count")
             log_event(
-                "[CosmosStaleCleanup] Failed to delete stale cache document.",
+                "[COSMOS_STALE_CLEANUP] Failed to delete stale cache document.",
                 extra={
                     "category": category_id,
                     "document_id_hash": _hash_document_id(document_id),
@@ -336,7 +336,7 @@ def run_stale_cache_document_cleanup(apply_changes=False, batch_size=None, conta
         "evaluated_at": now_iso,
     }
     log_event(
-        "[CosmosStaleCleanup] Stale cache cleanup completed.",
+        "[COSMOS_STALE_CLEANUP] Stale cache cleanup completed.",
         extra={
             "mode": result["mode"],
             "candidate_count": candidate_count,

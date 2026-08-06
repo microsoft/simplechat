@@ -97,39 +97,39 @@ class OrchestratorAgent(GroupChatOrchestration):
         return self.scratchpad
 
     def log_agent_event(self, event: str, **kwargs):
-        self._logger.info(f"[OrchestratorEvent] {event} | {kwargs}")
+        self._logger.info(f"[ORCHESTRATOR_EVENT] {event} | {kwargs}")
 
     def agent_response_callback(self, message: ChatMessageContent) -> None:
         # Robust error/type checking and logging for debugging orchestration failures
         try:
             if not isinstance(message, ChatMessageContent):
                 log_event(
-                    f"[AgentResponseCallback][ERROR] Received non-ChatMessageContent: {type(message)}",
+                    f"[AGENT_RESPONSE_CALLBACK][ERROR] Received non-ChatMessageContent: {type(message)}",
                     extra={"message_type": type(message).__name__},
                     level=logging.ERROR,
                     exceptionTraceback=True,
                 )
-                self._logger.error(f"[AgentResponseCallback][ERROR] Non-ChatMessageContent received: {type(message)}")
+                self._logger.error(f"[AGENT_RESPONSE_CALLBACK][ERROR] Non-ChatMessageContent received: {type(message)}")
                 return
             # Log every message received from an agent (response)
             log_event(
-                "[AgentResponseCallback] Agent response received",
+                "[AGENT_RESPONSE_CALLBACK] Agent response received",
                 extra=self._build_message_log_metadata(message),
                 level=logging.INFO,
             )
             # Optionally, also log to the orchestrator logger
             self._logger.info(
-                f"[AgentResponseCallback] {getattr(message, 'name', None)} "
+                f"[AGENT_RESPONSE_CALLBACK] {getattr(message, 'name', None)} "
                 f"content_length={len(str(getattr(message, 'content', '') or ''))}"
             )
         except Exception as e:
             log_event(
-                f"[AgentResponseCallback][EXCEPTION] Exception in agent_response_callback: {e}",
+                f"[AGENT_RESPONSE_CALLBACK][EXCEPTION] Exception in agent_response_callback: {e}",
                 extra={"message_type": type(message).__name__},
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
-            self._logger.exception(f"[AgentResponseCallback][EXCEPTION] Exception in agent_response_callback: {e}")
+            self._logger.exception(f"[AGENT_RESPONSE_CALLBACK][EXCEPTION] Exception in agent_response_callback: {e}")
             return
         # Only call the user-provided callback if it exists and is not this method
         callback = getattr(self, "_user_agent_response_callback", None)
@@ -147,7 +147,7 @@ class OrchestratorAgent(GroupChatOrchestration):
         """
         if is_final:
             log_event(
-                "[StreamingAgentResponseCallback] Final agent stream response received",
+                "[STREAMING_AGENT_RESPONSE_CALLBACK] Final agent stream response received",
                 extra=self._build_message_log_metadata(message),
                 level=logging.INFO,
             )

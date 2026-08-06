@@ -2837,7 +2837,7 @@ def register_route_frontend_admin_settings(bp):
                     easy_auth_check = check_inbound_mcp_easy_auth_exclusions(get_inbound_mcp_easy_auth_check_base_url())
                     if not easy_auth_check.get('success'):
                         log_event(
-                            "[InboundMCP] Prevented enabling inbound MCP because Easy Auth exclusions failed.",
+                            "[INBOUND_MCP] Prevented enabling inbound MCP because Easy Auth exclusions failed.",
                             extra={
                                 "endpoints": easy_auth_check.get('endpoints', []),
                             },

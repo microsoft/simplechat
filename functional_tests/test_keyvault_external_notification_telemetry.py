@@ -2,8 +2,8 @@
 # test_keyvault_external_notification_telemetry.py
 """
 Functional test for Key Vault expiration reminder external telemetry.
-Version: 0.250.124
-Implemented in: 0.250.122; 0.250.123
+Version: 0.250.125
+Implemented in: 0.250.122; 0.250.123; 0.250.125
 
 This test ensures Key Vault expiration reminder notifications emit a safe,
 queryable Azure Monitor event and include contact email only when admins opt in.
@@ -201,7 +201,7 @@ def test_log_external_event_preserves_safe_dimensions_and_redacts_raw_sensitive_
 
         assert len(fake_logger.records) == 1
         record = fake_logger.records[0]
-        assert record["message"] == "[SimpleChatExternalEvent]"
+        assert record["message"] == "[SIMPLE_CHAT_EXTERNAL_EVENT]"
 
         extra = record["extra"]
         assert extra["sc_event_name"] == "Key_Vault_Reminder"

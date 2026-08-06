@@ -244,7 +244,7 @@ def _log_initialize_request(auth_context, params, selected_protocol_version, mcp
     client_info = params.get("clientInfo") if isinstance(params.get("clientInfo"), dict) else {}
     requested_protocol_version = _requested_initialize_protocol_version(params)
     log_event(
-        "[InboundMCP] Inbound MCP initialize negotiated.",
+        "[INBOUND_MCP] Inbound MCP initialize negotiated.",
         extra={
             "mcp_request_id": mcp_request_id,
             "requested_protocol_version": requested_protocol_version,

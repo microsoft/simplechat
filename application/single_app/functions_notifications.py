@@ -786,7 +786,7 @@ def get_recent_chat_response_notifications(user_id, limit=50):
         return notifications
     except Exception as e:
         log_event(
-            "[Notifications] Failed to load recent chat completion events.",
+            "[NOTIFICATIONS] Failed to load recent chat completion events.",
             extra={
                 "user_id": user_id,
                 "error": str(e),

@@ -280,7 +280,7 @@ def _resolve_document_intelligence_auto_mode(temp_file_path, is_pdf, is_image, p
             pages=page_range
         )
     except Exception as e:
-        log_event(f"[document_intelligence_auto] Layout sampling failed; falling back to Read: {e}", level=logging.WARNING)
+        log_event(f"[DOCUMENT_INTELLIGENCE_AUTO] Layout sampling failed; falling back to Read: {e}", level=logging.WARNING)
         return 'read', 'Layout sampling failed, so Auto fell back to Read'
 
     layout_reason = _get_document_intelligence_auto_layout_reason(sampled_pages)
@@ -1274,8 +1274,8 @@ def save_video_chunk(
     """
     from functions_debug import debug_print
 
-    debug_print(f"[VIDEO CHUNK] Saving video chunk for document: {document_id}, start_time: {start_time}")
-    debug_print(f"[VIDEO CHUNK] Transcript length: {len(page_text_content)}, OCR length: {len(ocr_chunk_text)}")
+    debug_print(f"[VIDEO_CHUNK] Saving video chunk for document: {document_id}, start_time: {start_time}")
+    debug_print(f"[VIDEO_CHUNK] Transcript length: {len(page_text_content)}, OCR length: {len(ocr_chunk_text)}")
 
     try:
         current_time = datetime.now(timezone.utc).isoformat()
@@ -1286,11 +1286,11 @@ def save_video_chunk(
         h, m, s = start_time.split(':')
         seconds = int(h) * 3600 + int(m) * 60 + int(float(s))
 
-        debug_print(f"[VIDEO CHUNK] Converted start_time {start_time} to {seconds} seconds")
+        debug_print(f"[VIDEO_CHUNK] Converted start_time {start_time} to {seconds} seconds")
 
         # 1) generate embedding on the transcript text
         try:
-            debug_print(f"[VIDEO CHUNK] Generating embedding for transcript text")
+            debug_print(f"[VIDEO_CHUNK] Generating embedding for transcript text")
             result = generate_embedding(page_text_content)
 
             # Handle both tuple (new) and single value (backward compatibility)
@@ -1299,16 +1299,16 @@ def save_video_chunk(
             else:
                 embedding = result
 
-            debug_print(f"[VIDEO CHUNK] Embedding generated successfully")
-            print(f"[VideoChunk] EMBEDDING OK for {document_id}@{start_time}", flush=True)
+            debug_print(f"[VIDEO_CHUNK] Embedding generated successfully")
+            print(f"[VIDEO_CHUNK] EMBEDDING OK for {document_id}@{start_time}", flush=True)
         except Exception as e:
-            debug_print(f"[VIDEO CHUNK] Embedding generation failed: {str(e)}")
-            print(f"[VideoChunk] EMBEDDING ERROR for {document_id}@{start_time}: {e}", flush=True)
+            debug_print(f"[VIDEO_CHUNK] Embedding generation failed: {str(e)}")
+            print(f"[VIDEO_CHUNK] EMBEDDING ERROR for {document_id}@{start_time}: {e}", flush=True)
             return
 
         # 2) build chunk document
         try:
-            debug_print(f"[VIDEO CHUNK] Retrieving document metadata")
+            debug_print(f"[VIDEO_CHUNK] Retrieving document metadata")
             if is_public_workspace:
                 meta = get_document_metadata(
                     document_id=document_id,
@@ -1327,11 +1327,11 @@ def save_video_chunk(
                     user_id=user_id
                 )
             version = meta.get("version", 1) if meta else 1
-            debug_print(f"[VIDEO CHUNK] Document version: {version}")
+            debug_print(f"[VIDEO_CHUNK] Document version: {version}")
 
             # Use integer seconds to build a safe document key
             chunk_id = f"{document_id}_{seconds}"
-            debug_print(f"[VIDEO CHUNK] Generated chunk ID: {chunk_id}")
+            debug_print(f"[VIDEO_CHUNK] Generated chunk ID: {chunk_id}")
 
             chunk = {
                 "id":                   chunk_id,
@@ -1350,44 +1350,44 @@ def save_video_chunk(
             if is_public_workspace:
                 chunk["public_workspace_id"] = public_workspace_id
                 client = CLIENTS["search_client_public"]
-                debug_print(f"[VIDEO CHUNK] Using public search client for public_workspace_id: {public_workspace_id}")
+                debug_print(f"[VIDEO_CHUNK] Using public search client for public_workspace_id: {public_workspace_id}")
             elif is_group:
                 chunk["group_id"] = group_id
                 client = CLIENTS["search_client_group"]
-                debug_print(f"[VIDEO CHUNK] Using group search client for group_id: {group_id}")
+                debug_print(f"[VIDEO_CHUNK] Using group search client for group_id: {group_id}")
             else:
                 # Get shared_user_ids from document metadata for personal documents
                 shared_user_ids = meta.get('shared_user_ids', []) if meta else []
                 chunk["user_id"] = user_id
                 chunk["shared_user_ids"] = shared_user_ids
                 client = CLIENTS["search_client_user"]
-                debug_print(f"[VIDEO CHUNK] Using user search client for user_id: {user_id}, shared_user_ids: {shared_user_ids}")
+                debug_print(f"[VIDEO_CHUNK] Using user search client for user_id: {user_id}, shared_user_ids: {shared_user_ids}")
 
-            debug_print(f"[VIDEO CHUNK] Built chunk document with ID: {chunk_id}")
-            print(f"[VideoChunk] CHUNK BUILT {chunk_id}", flush=True)
+            debug_print(f"[VIDEO_CHUNK] Built chunk document with ID: {chunk_id}")
+            print(f"[VIDEO_CHUNK] CHUNK BUILT {chunk_id}", flush=True)
 
         except Exception as e:
-            debug_print(f"[VIDEO CHUNK] Error building chunk document: {str(e)}")
-            print(f"[VideoChunk] CHUNK BUILD ERROR for {document_id}@{start_time}: {e}", flush=True)
+            debug_print(f"[VIDEO_CHUNK] Error building chunk document: {str(e)}")
+            print(f"[VIDEO_CHUNK] CHUNK BUILD ERROR for {document_id}@{start_time}: {e}", flush=True)
             return
 
         # 3) upload to search index
         try:
-            debug_print(f"[VIDEO CHUNK] Uploading chunk to search index")
+            debug_print(f"[VIDEO_CHUNK] Uploading chunk to search index")
             _execute_document_search_write(
                 client,
                 "upload_documents",
                 documents=[chunk],
             )
-            debug_print(f"[VIDEO CHUNK] Upload successful for chunk: {chunk_id}")
-            print(f"[VideoChunk] UPLOAD OK for {chunk_id}", flush=True)
+            debug_print(f"[VIDEO_CHUNK] Upload successful for chunk: {chunk_id}")
+            print(f"[VIDEO_CHUNK] UPLOAD OK for {chunk_id}", flush=True)
         except Exception as e:
-            debug_print(f"[VIDEO CHUNK] Upload to search index failed: {str(e)}")
-            print(f"[VideoChunk] UPLOAD ERROR for {chunk_id}: {e}", flush=True)
+            debug_print(f"[VIDEO_CHUNK] Upload to search index failed: {str(e)}")
+            print(f"[VIDEO_CHUNK] UPLOAD ERROR for {chunk_id}: {e}", flush=True)
 
     except Exception as e:
-        debug_print(f"[VIDEO CHUNK] Unexpected error processing chunk: {str(e)}")
-        print(f"[VideoChunk] UNEXPECTED ERROR for {document_id}@{start_time}: {e}", flush=True)
+        debug_print(f"[VIDEO_CHUNK] Unexpected error processing chunk: {str(e)}")
+        print(f"[VIDEO_CHUNK] UNEXPECTED ERROR for {document_id}@{start_time}: {e}", flush=True)
 
 def process_video_document(
     document_id,
@@ -1405,9 +1405,9 @@ def process_video_document(
     """
     from functions_debug import debug_print
 
-    debug_print(f"[VIDEO INDEXER] Starting video processing for file: {original_filename}")
-    debug_print(f"[VIDEO INDEXER] Document ID: {document_id}, User ID: {user_id}, Group ID: {group_id}, Public Workspace ID: {public_workspace_id}")
-    debug_print(f"[VIDEO INDEXER] Temp file path: {temp_file_path}")
+    debug_print(f"[VIDEO_INDEXER] Starting video processing for file: {original_filename}")
+    debug_print(f"[VIDEO_INDEXER] Document ID: {document_id}, User ID: {user_id}, Group ID: {group_id}, Public Workspace ID: {public_workspace_id}")
+    debug_print(f"[VIDEO_INDEXER] Temp file path: {temp_file_path}")
 
     def to_seconds(ts: str) -> float:
         parts = ts.split(':')
@@ -1421,15 +1421,15 @@ def process_video_document(
 
     settings = get_settings()
     if not settings.get("enable_video_file_support", False):
-        debug_print("[VIDEO INDEXER] Video file support is disabled in settings")
+        debug_print("[VIDEO_INDEXER] Video file support is disabled in settings")
         print("[VIDEO] indexing disabled in settings", flush=True)
         update_callback(status="VIDEO: indexing disabled")
         return 0
 
-    debug_print("[VIDEO INDEXER] Video file support is enabled, proceeding with indexing")
+    debug_print("[VIDEO_INDEXER] Video file support is enabled, proceeding with indexing")
 
     if settings.get("enable_enhanced_citations", False):
-        debug_print("[VIDEO INDEXER] Enhanced citations enabled, uploading to blob storage")
+        debug_print("[VIDEO_INDEXER] Enhanced citations enabled, uploading to blob storage")
         update_callback(status="Uploading video for enhanced citations...")
         try:
             # this helper is already in your file below
@@ -1442,10 +1442,10 @@ def process_video_document(
                 group_id,
                 public_workspace_id
             )
-            debug_print(f"[VIDEO INDEXER] Blob upload successful: {blob_path}")
+            debug_print(f"[VIDEO_INDEXER] Blob upload successful: {blob_path}")
             update_callback(status=f"Enhanced citations: video at {blob_path}")
         except Exception as e:
-            debug_print(f"[VIDEO INDEXER] Blob upload failed: {str(e)}")
+            debug_print(f"[VIDEO_INDEXER] Blob upload failed: {str(e)}")
             print(f"[VIDEO] BLOB UPLOAD ERROR: {e}", flush=True)
             update_callback(status=f"VIDEO: blob upload failed → {e}")
 
@@ -1455,7 +1455,7 @@ def process_video_document(
         settings["video_indexer_account_id"]
     )
 
-    debug_print(f"[VIDEO INDEXER] Configuration - Endpoint: {vi_ep}, Location: {vi_loc}, Account ID: {vi_acc}")
+    debug_print(f"[VIDEO_INDEXER] Configuration - Endpoint: {vi_ep}, Location: {vi_loc}, Account ID: {vi_acc}")
 
     # Validate required settings for managed identity authentication
     required_settings = {
@@ -1467,23 +1467,23 @@ def process_video_document(
         "video_indexer_account_name": settings.get("video_indexer_account_name")
     }
 
-    debug_print(f"[VIDEO INDEXER] Managed identity authentication requires: endpoint, location, account_id, resource_group, subscription_id, account_name")
+    debug_print(f"[VIDEO_INDEXER] Managed identity authentication requires: endpoint, location, account_id, resource_group, subscription_id, account_name")
 
     missing_settings = [key for key, value in required_settings.items() if not value]
     if missing_settings:
-        debug_print(f"[VIDEO INDEXER] ERROR: Missing required settings: {missing_settings}")
+        debug_print(f"[VIDEO_INDEXER] ERROR: Missing required settings: {missing_settings}")
         update_callback(status=f"VIDEO: missing settings - {', '.join(missing_settings)}")
         return 0
 
-    debug_print("[VIDEO INDEXER] All required settings are present")
+    debug_print("[VIDEO_INDEXER] All required settings are present")
 
     # 1) Auth
     try:
-        debug_print("[VIDEO INDEXER] Attempting to acquire authentication token")
+        debug_print("[VIDEO_INDEXER] Attempting to acquire authentication token")
         token = get_video_indexer_account_token(settings)
-        debug_print(f"[VIDEO INDEXER] Authentication successful, token length: {len(token) if token else 0}")
+        debug_print(f"[VIDEO_INDEXER] Authentication successful, token length: {len(token) if token else 0}")
     except Exception as e:
-        debug_print(f"[VIDEO INDEXER] Authentication failed: {str(e)}")
+        debug_print(f"[VIDEO_INDEXER] Authentication failed: {str(e)}")
         print(f"[VIDEO] AUTH ERROR: {e}", flush=True)
         update_callback(status=f"VIDEO: auth failed → {e}")
         return 0
@@ -1501,36 +1501,36 @@ def process_video_document(
             "indexingPreset": "Default",  # Includes video + audio insights
             "streamingPreset": "NoStreaming"
         }
-        debug_print(f"[VIDEO INDEXER] Using managed identity access token authentication")
+        debug_print(f"[VIDEO_INDEXER] Using managed identity access token authentication")
 
-        debug_print(f"[VIDEO INDEXER] Upload URL: {url}")
-        debug_print(f"[VIDEO INDEXER] Upload params: {params}")
-        debug_print(f"[VIDEO INDEXER] Starting file upload for: {original_filename}")
+        debug_print(f"[VIDEO_INDEXER] Upload URL: {url}")
+        debug_print(f"[VIDEO_INDEXER] Upload params: {params}")
+        debug_print(f"[VIDEO_INDEXER] Starting file upload for: {original_filename}")
 
         with open(temp_file_path, "rb") as f:
             resp = requests.post(url, params=params, headers=headers, files={"file": f})
 
-        debug_print(f"[VIDEO INDEXER] Upload response status: {resp.status_code}")
+        debug_print(f"[VIDEO_INDEXER] Upload response status: {resp.status_code}")
 
         if resp.status_code != 200:
-            debug_print(f"[VIDEO INDEXER] Upload response text: {resp.text}")
+            debug_print(f"[VIDEO_INDEXER] Upload response text: {resp.text}")
 
         resp.raise_for_status()
         response_data = resp.json()
-        debug_print(f"[VIDEO INDEXER] Upload response keys: {list(response_data.keys())}")
+        debug_print(f"[VIDEO_INDEXER] Upload response keys: {list(response_data.keys())}")
 
         vid = response_data.get("id")
         if not vid:
-            debug_print(f"[VIDEO INDEXER] ERROR: No video ID in response: {response_data}")
+            debug_print(f"[VIDEO_INDEXER] ERROR: No video ID in response: {response_data}")
             raise ValueError("no video ID returned")
 
-        debug_print(f"[VIDEO INDEXER] Upload successful, video ID: {vid}")
+        debug_print(f"[VIDEO_INDEXER] Upload successful, video ID: {vid}")
         print(f"[VIDEO] UPLOAD OK, videoId={vid}", flush=True)
         update_callback(status=f"VIDEO: uploaded id={vid}")
 
         try:
             # Update the document's metadata with the video indexer ID
-            debug_print(f"[VIDEO INDEXER] Updating document metadata with video_indexer_id: {vid}")
+            debug_print(f"[VIDEO_INDEXER] Updating document metadata with video_indexer_id: {vid}")
             update_document(
                 document_id=document_id,
                 user_id=user_id,
@@ -1538,21 +1538,21 @@ def process_video_document(
                 public_workspace_id=public_workspace_id,
                 video_indexer_id=vid
             )
-            debug_print(f"[VIDEO INDEXER] Document metadata updated successfully")
+            debug_print(f"[VIDEO_INDEXER] Document metadata updated successfully")
         except Exception as e:
-            debug_print(f"[VIDEO INDEXER] Failed to update document metadata: {str(e)}")
+            debug_print(f"[VIDEO_INDEXER] Failed to update document metadata: {str(e)}")
             print(f"[VIDEO] Failed to update document metadata with video_indexer_id: {e}", flush=True)
 
     except requests.exceptions.RequestException as e:
-        debug_print(f"[VIDEO INDEXER] Upload request failed: {str(e)}")
+        debug_print(f"[VIDEO_INDEXER] Upload request failed: {str(e)}")
         if hasattr(e, 'response') and e.response is not None:
-            debug_print(f"[VIDEO INDEXER] Upload error response status: {e.response.status_code}")
-            debug_print(f"[VIDEO INDEXER] Upload error response text: {e.response.text}")
+            debug_print(f"[VIDEO_INDEXER] Upload error response status: {e.response.status_code}")
+            debug_print(f"[VIDEO_INDEXER] Upload error response text: {e.response.text}")
         print(f"[VIDEO] UPLOAD ERROR: {e}", flush=True)
         update_callback(status=f"VIDEO: upload failed → {e}")
         return 0
     except Exception as e:
-        debug_print(f"[VIDEO INDEXER] Upload unexpected error: {str(e)}")
+        debug_print(f"[VIDEO_INDEXER] Upload unexpected error: {str(e)}")
         print(f"[VIDEO] UPLOAD ERROR: {e}", flush=True)
         update_callback(status=f"VIDEO: upload failed → {e}")
         return 0
@@ -1564,53 +1564,53 @@ def process_video_document(
         f"?accessToken={token}"
     )
     poll_headers = {}
-    debug_print(f"[VIDEO INDEXER] Using managed identity access token for polling")
-    debug_print(f"[VIDEO INDEXER] Requesting full insights (no filtering)")
+    debug_print(f"[VIDEO_INDEXER] Using managed identity access token for polling")
+    debug_print(f"[VIDEO_INDEXER] Requesting full insights (no filtering)")
 
-    debug_print(f"[VIDEO INDEXER] Index polling URL: {index_url}")
-    debug_print(f"[VIDEO INDEXER] Starting processing polling for video ID: {vid}")
+    debug_print(f"[VIDEO_INDEXER] Index polling URL: {index_url}")
+    debug_print(f"[VIDEO_INDEXER] Starting processing polling for video ID: {vid}")
 
     poll_count = 0
     max_polls = 180  # 90 minutes maximum (30 second intervals)
 
     while True:
         poll_count += 1
-        debug_print(f"[VIDEO INDEXER] Polling attempt {poll_count}/{max_polls}")
+        debug_print(f"[VIDEO_INDEXER] Polling attempt {poll_count}/{max_polls}")
 
         try:
             r = requests.get(index_url, headers=poll_headers)
-            debug_print(f"[VIDEO INDEXER] Poll response status: {r.status_code}")
+            debug_print(f"[VIDEO_INDEXER] Poll response status: {r.status_code}")
 
             if r.status_code in (401, 404):
-                debug_print(f"[VIDEO INDEXER] Poll returned {r.status_code}, waiting 30s and retrying")
+                debug_print(f"[VIDEO_INDEXER] Poll returned {r.status_code}, waiting 30s and retrying")
                 time.sleep(30)
                 continue
             if r.status_code == 429:
                 retry_after = int(r.headers.get("Retry-After", 30))
-                debug_print(f"[VIDEO INDEXER] Rate limited, waiting {retry_after}s")
+                debug_print(f"[VIDEO_INDEXER] Rate limited, waiting {retry_after}s")
                 time.sleep(retry_after)
                 continue
             if r.status_code == 504:
-                debug_print(f"[VIDEO INDEXER] Timeout received, waiting 30s and retrying")
+                debug_print(f"[VIDEO_INDEXER] Timeout received, waiting 30s and retrying")
                 time.sleep(30)
                 continue
 
             r.raise_for_status()
             data = r.json()
-            debug_print(f"[VIDEO INDEXER] Poll response keys: {list(data.keys())}")
+            debug_print(f"[VIDEO_INDEXER] Poll response keys: {list(data.keys())}")
 
         except requests.exceptions.RequestException as e:
-            debug_print(f"[VIDEO INDEXER] Poll request failed: {str(e)}")
+            debug_print(f"[VIDEO_INDEXER] Poll request failed: {str(e)}")
             if hasattr(e, 'response') and e.response is not None:
-                debug_print(f"[VIDEO INDEXER] Poll error response status: {e.response.status_code}")
-                debug_print(f"[VIDEO INDEXER] Poll error response text: {e.response.text}")
+                debug_print(f"[VIDEO_INDEXER] Poll error response status: {e.response.status_code}")
+                debug_print(f"[VIDEO_INDEXER] Poll error response text: {e.response.text}")
             if poll_count >= max_polls:
                 update_callback(status="VIDEO: polling timeout")
                 return 0
             time.sleep(30)
             continue
         except Exception as e:
-            debug_print(f"[VIDEO INDEXER] Poll unexpected error: {str(e)}")
+            debug_print(f"[VIDEO_INDEXER] Poll unexpected error: {str(e)}")
             if poll_count >= max_polls:
                 update_callback(status="VIDEO: polling timeout")
                 return 0
@@ -1621,38 +1621,38 @@ def process_video_document(
         prog = info.get("processingProgress", "0%").rstrip("%")
         state = info.get("state", "").lower()
 
-        debug_print(f"[VIDEO INDEXER] Processing progress: {prog}%, State: {state}")
+        debug_print(f"[VIDEO_INDEXER] Processing progress: {prog}%, State: {state}")
         update_callback(status=f"VIDEO: {prog}%")
 
         if state == "failed":
-            debug_print(f"[VIDEO INDEXER] Processing failed for video ID: {vid}")
+            debug_print(f"[VIDEO_INDEXER] Processing failed for video ID: {vid}")
             update_callback(status="VIDEO: indexing failed")
             return 0
         if prog == "100":
-            debug_print(f"[VIDEO INDEXER] Processing completed for video ID: {vid}")
+            debug_print(f"[VIDEO_INDEXER] Processing completed for video ID: {vid}")
             break
 
         if poll_count >= max_polls:
-            debug_print(f"[VIDEO INDEXER] Maximum polling attempts reached for video ID: {vid}")
+            debug_print(f"[VIDEO_INDEXER] Maximum polling attempts reached for video ID: {vid}")
             update_callback(status="VIDEO: processing timeout")
             return 0
 
         time.sleep(30)
 
     # 4) Extract transcript & OCR
-    debug_print(f"[VIDEO INDEXER] Starting insights extraction for video ID: {vid}")
-    debug_print(f"[VIDEO INDEXER] Extracting insights from completed video")
+    debug_print(f"[VIDEO_INDEXER] Starting insights extraction for video ID: {vid}")
+    debug_print(f"[VIDEO_INDEXER] Extracting insights from completed video")
 
     insights = info.get("insights", {})
     if not insights:
-        debug_print(f"[VIDEO INDEXER] ERROR: No insights object in response")
-        debug_print(f"[VIDEO INDEXER] Response info keys: {list(info.keys())}")
+        debug_print(f"[VIDEO_INDEXER] ERROR: No insights object in response")
+        debug_print(f"[VIDEO_INDEXER] Response info keys: {list(info.keys())}")
         return 0
 
     # Get video duration from insights (primary) or info (fallback)
     video_duration = insights.get("duration") or info.get("duration", "00:00:00")
     video_duration_seconds = to_seconds(video_duration) if video_duration else 0
-    debug_print(f"[VIDEO INDEXER] Video duration: {video_duration} ({video_duration_seconds} seconds)")
+    debug_print(f"[VIDEO_INDEXER] Video duration: {video_duration} ({video_duration_seconds} seconds)")
 
     # Log raw insights JSON for complete visibility (debug only)
     import json
@@ -1668,7 +1668,7 @@ def process_video_document(
         print(f"[VIDEO] Could not serialize insights to JSON: {e}", flush=True)
     print(f"[VIDEO] ===== END RAW INSIGHTS =====\n", flush=True)
 
-    debug_print(f"[VIDEO INDEXER] Insights keys available: {list(insights.keys())}")
+    debug_print(f"[VIDEO_INDEXER] Insights keys available: {list(insights.keys())}")
     print(f"[VIDEO] Available insight types: {', '.join(list(insights.keys())[:15])}...", flush=True)
 
     # Debug: Show sample structures for all insight types
@@ -1688,48 +1688,48 @@ def process_video_document(
 
     labels_data_debug = insights.get("labels", [])
     if labels_data_debug:
-        debug_print(f"[VIDEO INDEXER] LABELS sample: {labels_data_debug[0]}")
+        debug_print(f"[VIDEO_INDEXER] LABELS sample: {labels_data_debug[0]}")
 
     topics_data_debug = insights.get("topics", [])
     if topics_data_debug:
-        debug_print(f"[VIDEO INDEXER] TOPICS sample: {topics_data_debug[0]}")
+        debug_print(f"[VIDEO_INDEXER] TOPICS sample: {topics_data_debug[0]}")
 
     audio_effects_data_debug = insights.get("audioEffects", [])
     if audio_effects_data_debug:
-        debug_print(f"[VIDEO INDEXER] AUDIO_EFFECTS sample: {audio_effects_data_debug[0]}")
+        debug_print(f"[VIDEO_INDEXER] AUDIO_EFFECTS sample: {audio_effects_data_debug[0]}")
 
     emotions_data_debug = insights.get("emotions", [])
     if emotions_data_debug:
-        debug_print(f"[VIDEO INDEXER] EMOTIONS sample: {emotions_data_debug[0]}")
+        debug_print(f"[VIDEO_INDEXER] EMOTIONS sample: {emotions_data_debug[0]}")
 
     sentiments_data_debug = insights.get("sentiments", [])
     if sentiments_data_debug:
-        debug_print(f"[VIDEO INDEXER] SENTIMENTS sample: {sentiments_data_debug[0]}")
+        debug_print(f"[VIDEO_INDEXER] SENTIMENTS sample: {sentiments_data_debug[0]}")
 
     scenes_data_debug = insights.get("scenes", [])
     if scenes_data_debug:
-        debug_print(f"[VIDEO INDEXER] SCENES sample: {scenes_data_debug[0]}")
+        debug_print(f"[VIDEO_INDEXER] SCENES sample: {scenes_data_debug[0]}")
 
     shots_data_debug = insights.get("shots", [])
     if shots_data_debug:
-        debug_print(f"[VIDEO INDEXER] SHOTS sample: {shots_data_debug[0]}")
+        debug_print(f"[VIDEO_INDEXER] SHOTS sample: {shots_data_debug[0]}")
 
     faces_data_debug = insights.get("faces", [])
     if faces_data_debug:
-        debug_print(f"[VIDEO INDEXER] FACES sample: {faces_data_debug[0]}")
+        debug_print(f"[VIDEO_INDEXER] FACES sample: {faces_data_debug[0]}")
 
     namedLocations_data_debug = insights.get("namedLocations", [])
     if namedLocations_data_debug:
-        debug_print(f"[VIDEO INDEXER] NAMED_LOCATIONS sample: {namedLocations_data_debug[0]}")
+        debug_print(f"[VIDEO_INDEXER] NAMED_LOCATIONS sample: {namedLocations_data_debug[0]}")
 
     # Check for other potential label sources
     brands_data_debug = insights.get("brands", [])
     if brands_data_debug:
-        debug_print(f"[VIDEO INDEXER] BRANDS sample: {brands_data_debug[0]}")
+        debug_print(f"[VIDEO_INDEXER] BRANDS sample: {brands_data_debug[0]}")
 
     visualContentModeration_debug = insights.get("visualContentModeration", [])
     if visualContentModeration_debug:
-        debug_print(f"[VIDEO INDEXER] VISUAL_MODERATION sample: {visualContentModeration_debug[0]}")
+        debug_print(f"[VIDEO_INDEXER] VISUAL_MODERATION sample: {visualContentModeration_debug[0]}")
 
     # Show total counts for all available insights
     print(f"[VIDEO] COUNTS:", flush=True)
@@ -1753,23 +1753,23 @@ def process_video_document(
     speakers_data = insights.get("speakers", [])
     detected_objects_data = insights.get("detectedObjects", [])
 
-    debug_print(f"[VIDEO INDEXER] Transcript segments found: {len(transcript)}")
-    debug_print(f"[VIDEO INDEXER] OCR blocks found: {len(ocr_blocks)}")
-    debug_print(f"[VIDEO INDEXER] Keywords found: {len(keywords_data)}")
-    debug_print(f"[VIDEO INDEXER] Labels found: {len(labels_data)}")
-    debug_print(f"[VIDEO INDEXER] Topics found: {len(topics_data)}")
-    debug_print(f"[VIDEO INDEXER] Audio effects found: {len(audio_effects_data)}")
-    debug_print(f"[VIDEO INDEXER] Emotions found: {len(emotions_data)}")
-    debug_print(f"[VIDEO INDEXER] Sentiments found: {len(sentiments_data)}")
-    debug_print(f"[VIDEO INDEXER] Named people found: {len(named_people_data)}")
-    debug_print(f"[VIDEO INDEXER] Named locations found: {len(named_locations_data)}")
-    debug_print(f"[VIDEO INDEXER] Speakers found: {len(speakers_data)}")
-    debug_print(f"[VIDEO INDEXER] Detected objects found: {len(detected_objects_data)}")
-    debug_print(f"[VIDEO INDEXER] Insights extracted - Transcript: {len(transcript)}, OCR: {len(ocr_blocks)}, Keywords: {len(keywords_data)}, Labels: {len(labels_data)}, Topics: {len(topics_data)}, Audio: {len(audio_effects_data)}, Emotions: {len(emotions_data)}, Sentiments: {len(sentiments_data)}, People: {len(named_people_data)}, Locations: {len(named_locations_data)}, Objects: {len(detected_objects_data)}")
+    debug_print(f"[VIDEO_INDEXER] Transcript segments found: {len(transcript)}")
+    debug_print(f"[VIDEO_INDEXER] OCR blocks found: {len(ocr_blocks)}")
+    debug_print(f"[VIDEO_INDEXER] Keywords found: {len(keywords_data)}")
+    debug_print(f"[VIDEO_INDEXER] Labels found: {len(labels_data)}")
+    debug_print(f"[VIDEO_INDEXER] Topics found: {len(topics_data)}")
+    debug_print(f"[VIDEO_INDEXER] Audio effects found: {len(audio_effects_data)}")
+    debug_print(f"[VIDEO_INDEXER] Emotions found: {len(emotions_data)}")
+    debug_print(f"[VIDEO_INDEXER] Sentiments found: {len(sentiments_data)}")
+    debug_print(f"[VIDEO_INDEXER] Named people found: {len(named_people_data)}")
+    debug_print(f"[VIDEO_INDEXER] Named locations found: {len(named_locations_data)}")
+    debug_print(f"[VIDEO_INDEXER] Speakers found: {len(speakers_data)}")
+    debug_print(f"[VIDEO_INDEXER] Detected objects found: {len(detected_objects_data)}")
+    debug_print(f"[VIDEO_INDEXER] Insights extracted - Transcript: {len(transcript)}, OCR: {len(ocr_blocks)}, Keywords: {len(keywords_data)}, Labels: {len(labels_data)}, Topics: {len(topics_data)}, Audio: {len(audio_effects_data)}, Emotions: {len(emotions_data)}, Sentiments: {len(sentiments_data)}, People: {len(named_people_data)}, Locations: {len(named_locations_data)}, Objects: {len(detected_objects_data)}")
 
     if len(transcript) == 0:
-        debug_print(f"[VIDEO INDEXER] WARNING: No transcript data available")
-        debug_print(f"[VIDEO INDEXER] Available insights keys: {list(insights.keys())}")
+        debug_print(f"[VIDEO_INDEXER] WARNING: No transcript data available")
+        debug_print(f"[VIDEO_INDEXER] Available insights keys: {list(insights.keys())}")
 
     # Build context lists for transcript and OCR
     speech_context = [
@@ -1830,21 +1830,21 @@ def process_video_document(
         for inst in obj.get("instances", [])
     ]
 
-    debug_print(f"[VIDEO INDEXER] Speech context items: {len(speech_context)}")
-    debug_print(f"[VIDEO INDEXER] OCR context items: {len(ocr_context)}")
-    debug_print(f"[VIDEO INDEXER] Keywords context items: {len(keywords_context)}")
-    debug_print(f"[VIDEO INDEXER] Labels context items: {len(labels_context)}")
-    debug_print(f"[VIDEO INDEXER] Topics context items: {len(topics_context)}")
-    debug_print(f"[VIDEO INDEXER] Audio effects context items: {len(audio_effects_context)}")
-    debug_print(f"[VIDEO INDEXER] Emotions context items: {len(emotions_context)}")
-    debug_print(f"[VIDEO INDEXER] Sentiments context items: {len(sentiments_context)}")
-    debug_print(f"[VIDEO INDEXER] Named people context items: {len(named_people_context)}")
-    debug_print(f"[VIDEO INDEXER] Named locations context items: {len(named_locations_context)}")
-    debug_print(f"[VIDEO INDEXER] Detected objects context items: {len(detected_objects_context)}")
-    debug_print(f"[VIDEO INDEXER] Context built - Speech: {len(speech_context)}, OCR: {len(ocr_context)}, Keywords: {len(keywords_context)}, Labels: {len(labels_context)}, People: {len(named_people_context)}, Locations: {len(named_locations_context)}, Objects: {len(detected_objects_context)}")
+    debug_print(f"[VIDEO_INDEXER] Speech context items: {len(speech_context)}")
+    debug_print(f"[VIDEO_INDEXER] OCR context items: {len(ocr_context)}")
+    debug_print(f"[VIDEO_INDEXER] Keywords context items: {len(keywords_context)}")
+    debug_print(f"[VIDEO_INDEXER] Labels context items: {len(labels_context)}")
+    debug_print(f"[VIDEO_INDEXER] Topics context items: {len(topics_context)}")
+    debug_print(f"[VIDEO_INDEXER] Audio effects context items: {len(audio_effects_context)}")
+    debug_print(f"[VIDEO_INDEXER] Emotions context items: {len(emotions_context)}")
+    debug_print(f"[VIDEO_INDEXER] Sentiments context items: {len(sentiments_context)}")
+    debug_print(f"[VIDEO_INDEXER] Named people context items: {len(named_people_context)}")
+    debug_print(f"[VIDEO_INDEXER] Named locations context items: {len(named_locations_context)}")
+    debug_print(f"[VIDEO_INDEXER] Detected objects context items: {len(detected_objects_context)}")
+    debug_print(f"[VIDEO_INDEXER] Context built - Speech: {len(speech_context)}, OCR: {len(ocr_context)}, Keywords: {len(keywords_context)}, Labels: {len(labels_context)}, People: {len(named_people_context)}, Locations: {len(named_locations_context)}, Objects: {len(detected_objects_context)}")
 
     if len(speech_context) > 0:
-        debug_print(f"[VIDEO INDEXER] First speech item: {speech_context[0]}")
+        debug_print(f"[VIDEO_INDEXER] First speech item: {speech_context[0]}")
 
     # Sort all contexts by timestamp
     speech_context.sort(key=lambda x: to_seconds(x["start"]))
@@ -1859,21 +1859,21 @@ def process_video_document(
     named_locations_context.sort(key=lambda x: to_seconds(x["start"]))
     detected_objects_context.sort(key=lambda x: to_seconds(x["start"]))
 
-    debug_print(f"[VIDEO INDEXER] Starting 30-second chunk processing")
-    debug_print(f"[VIDEO INDEXER] Starting time-based chunk processing - Video duration: {video_duration_seconds}s")
-    debug_print(f"[VIDEO INDEXER] Available insights - Speech: {len(speech_context)}, OCR: {len(ocr_context)}, Keywords: {len(keywords_context)}, Labels: {len(labels_context)}")
+    debug_print(f"[VIDEO_INDEXER] Starting 30-second chunk processing")
+    debug_print(f"[VIDEO_INDEXER] Starting time-based chunk processing - Video duration: {video_duration_seconds}s")
+    debug_print(f"[VIDEO_INDEXER] Available insights - Speech: {len(speech_context)}, OCR: {len(ocr_context)}, Keywords: {len(keywords_context)}, Labels: {len(labels_context)}")
 
     # Check if we have any content at all
     total_insights = len(speech_context) + len(ocr_context) + len(keywords_context) + len(labels_context) + len(topics_context) + len(audio_effects_context) + len(emotions_context) + len(sentiments_context) + len(named_people_context) + len(named_locations_context) + len(detected_objects_context)
 
     if total_insights == 0 and video_duration_seconds == 0:
-        debug_print(f"[VIDEO INDEXER] ERROR: No insights and no duration information available")
+        debug_print(f"[VIDEO_INDEXER] ERROR: No insights and no duration information available")
         update_callback(status="VIDEO: no data available")
         return 0
 
     # Use video duration to create time-based chunks, even without speech
     if video_duration_seconds == 0:
-        debug_print(f"[VIDEO INDEXER] WARNING: No video duration available, estimating from insights")
+        debug_print(f"[VIDEO_INDEXER] WARNING: No video duration available, estimating from insights")
         # Estimate duration from the latest timestamp in any insight
         max_timestamp = 0
         for context_list in [speech_context, ocr_context, keywords_context, labels_context, topics_context, audio_effects_context, emotions_context, sentiments_context, named_people_context, named_locations_context, detected_objects_context]:
@@ -1881,11 +1881,11 @@ def process_video_document(
                 max_ts = max(to_seconds(item["start"]) for item in context_list)
                 max_timestamp = max(max_timestamp, max_ts)
         video_duration_seconds = max_timestamp + 30  # Add buffer
-        debug_print(f"[VIDEO INDEXER] Estimated duration: {video_duration_seconds}s")
+        debug_print(f"[VIDEO_INDEXER] Estimated duration: {video_duration_seconds}s")
 
     # Create chunks based on time intervals (30 seconds each)
     num_chunks = int(video_duration_seconds / 30) + (1 if video_duration_seconds % 30 > 0 else 0)
-    debug_print(f"[VIDEO INDEXER] Will create {num_chunks} time-based chunks")
+    debug_print(f"[VIDEO_INDEXER] Will create {num_chunks} time-based chunks")
 
     total = 0
     idx_s = 0
@@ -1916,7 +1916,7 @@ def process_video_document(
         window_start = chunk_num * 30.0
         window_end = min((chunk_num + 1) * 30.0, video_duration_seconds)
 
-        debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} window: {window_start}s to {window_end}s")
+        debug_print(f"[VIDEO_INDEXER] Chunk {chunk_num + 1} window: {window_start}s to {window_end}s")
 
         # Collect speech for this time window
         speech_lines = []
@@ -1933,7 +1933,7 @@ def process_video_document(
         if idx_s < n_s and to_seconds(speech_context[idx_s]["start"]) < window_end:
             idx_s += 1
 
-        debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} speech lines collected: {len(speech_lines)}")
+        debug_print(f"[VIDEO_INDEXER] Chunk {chunk_num + 1} speech lines collected: {len(speech_lines)}")
 
         # Collect OCR for this time window
         ocr_lines = []
@@ -1949,7 +1949,7 @@ def process_video_document(
         if idx_o < n_o and to_seconds(ocr_context[idx_o]["start"]) < window_end:
             idx_o += 1
 
-        debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} OCR lines collected: {len(ocr_lines)}")
+        debug_print(f"[VIDEO_INDEXER] Chunk {chunk_num + 1} OCR lines collected: {len(ocr_lines)}")
 
         # Collect keywords for this time window
         chunk_keywords = []
@@ -2102,7 +2102,7 @@ def process_video_document(
 
             if insight_parts:
                 chunk_text = f"{chunk_text}\n\n{' | '.join(insight_parts)}"
-                debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} enhanced with {len(insight_parts)} insight types")
+                debug_print(f"[VIDEO_INDEXER] Chunk {chunk_num + 1} enhanced with {len(insight_parts)} insight types")
         else:
             # No speech - build chunk text from other insights
             insight_parts = []
@@ -2128,22 +2128,22 @@ def process_video_document(
                 insight_parts.append(f"Objects: {', '.join(chunk_objects)}")
 
             chunk_text = ". ".join(insight_parts) if insight_parts else "[No content detected]"
-            debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} has no speech, using insights as text: {chunk_text[:100]}...")
+            debug_print(f"[VIDEO_INDEXER] Chunk {chunk_num + 1} has no speech, using insights as text: {chunk_text[:100]}...")
 
-        debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} at timestamp {start_ts}")
-        debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} text length: {len(chunk_text)}, OCR text length: {len(ocr_text)}")
-        debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} insights - Keywords: {len(chunk_keywords)}, Labels: {len(chunk_labels)}, Topics: {len(chunk_topics)}, Audio: {len(chunk_audio_effects)}, Emotions: {len(chunk_emotions)}, Sentiments: {len(chunk_sentiments)}, People: {len(chunk_people)}, Locations: {len(chunk_locations)}, Objects: {len(chunk_objects)}")
-        debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1}: timestamp={start_ts}, text_len={len(chunk_text)}, ocr_len={len(ocr_text)}, insights={len(chunk_keywords)}kw/{len(chunk_labels)}lbl/{len(chunk_topics)}top")
+        debug_print(f"[VIDEO_INDEXER] Chunk {chunk_num + 1} at timestamp {start_ts}")
+        debug_print(f"[VIDEO_INDEXER] Chunk {chunk_num + 1} text length: {len(chunk_text)}, OCR text length: {len(ocr_text)}")
+        debug_print(f"[VIDEO_INDEXER] Chunk {chunk_num + 1} insights - Keywords: {len(chunk_keywords)}, Labels: {len(chunk_labels)}, Topics: {len(chunk_topics)}, Audio: {len(chunk_audio_effects)}, Emotions: {len(chunk_emotions)}, Sentiments: {len(chunk_sentiments)}, People: {len(chunk_people)}, Locations: {len(chunk_locations)}, Objects: {len(chunk_objects)}")
+        debug_print(f"[VIDEO_INDEXER] Chunk {chunk_num + 1}: timestamp={start_ts}, text_len={len(chunk_text)}, ocr_len={len(ocr_text)}, insights={len(chunk_keywords)}kw/{len(chunk_labels)}lbl/{len(chunk_topics)}top")
 
         # Skip truly empty chunks (no content at all)
         if chunk_text == "[No content detected]" and not any([chunk_keywords, chunk_labels, chunk_topics, chunk_audio_effects, chunk_emotions, chunk_sentiments, chunk_people, chunk_locations, chunk_objects]):
-            debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} is completely empty, skipping")
+            debug_print(f"[VIDEO_INDEXER] Chunk {chunk_num + 1} is completely empty, skipping")
             continue
 
         update_callback(current_file_chunk=chunk_num+1, status=f"VIDEO: saving chunk @ {start_ts}")
 
         try:
-            debug_print(f"[VIDEO INDEXER] Calling save_video_chunk for chunk {chunk_num + 1}")
+            debug_print(f"[VIDEO_INDEXER] Calling save_video_chunk for chunk {chunk_num + 1}")
             save_video_chunk(
                 page_text_content=chunk_text,
                 ocr_chunk_text=ocr_text,
@@ -2154,13 +2154,13 @@ def process_video_document(
                 group_id=group_id,
                 public_workspace_id=public_workspace_id
             )
-            debug_print(f"[VIDEO INDEXER] Chunk {chunk_num + 1} saved successfully")
+            debug_print(f"[VIDEO_INDEXER] Chunk {chunk_num + 1} saved successfully")
             total += 1
         except Exception as e:
-            debug_print(f"[VIDEO INDEXER] Failed to save chunk {chunk_num + 1}: {str(e)}")
-            debug_print(f"[VIDEO INDEXER] Chunk save traceback: {traceback.format_exc()}")
+            debug_print(f"[VIDEO_INDEXER] Failed to save chunk {chunk_num + 1}: {str(e)}")
+            debug_print(f"[VIDEO_INDEXER] Chunk save traceback: {traceback.format_exc()}")
 
-    debug_print(f"[VIDEO INDEXER] Chunk processing complete - Total chunks saved: {total}")
+    debug_print(f"[VIDEO_INDEXER] Chunk processing complete - Total chunks saved: {total}")
 
     # Extract metadata if enabled and chunks were processed
     settings = get_settings()
@@ -2779,7 +2779,7 @@ def save_chunks_batch(chunks_data, user_id, document_id, group_id=None, public_w
 
         version = metadata.get("version") if metadata.get("version") else 1
     except Exception as e:
-        log_event(f"[save_chunks_batch] Error retrieving metadata for document {document_id}: {repr(e)}", level=logging.ERROR)
+        log_event(f"[SAVE_CHUNKS_BATCH] Error retrieving metadata for document {document_id}: {repr(e)}", level=logging.ERROR)
         raise
 
     # Generate all embeddings in batches
@@ -2787,7 +2787,7 @@ def save_chunks_batch(chunks_data, user_id, document_id, group_id=None, public_w
     try:
         embedding_results = generate_embeddings_batch(texts)
     except Exception as e:
-        log_event(f"[save_chunks_batch] Error generating batch embeddings for document {document_id}: {e}", level=logging.ERROR)
+        log_event(f"[SAVE_CHUNKS_BATCH] Error generating batch embeddings for document {document_id}: {e}", level=logging.ERROR)
         raise
 
     # Check for vision analysis once
@@ -2917,7 +2917,7 @@ def save_chunks_batch(chunks_data, user_id, document_id, group_id=None, public_w
             )
 
     except Exception as e:
-        log_event(f"[save_chunks_batch] Error uploading batch to AI Search for document {document_id}: {e}", level=logging.ERROR)
+        log_event(f"[SAVE_CHUNKS_BATCH] Error uploading batch to AI Search for document {document_id}: {e}", level=logging.ERROR)
         raise
 
     return total_token_usage
@@ -3453,7 +3453,7 @@ def delete_document(user_id, document_id, group_id=None, public_workspace_id=Non
     """Delete a document from the user's documents in Cosmos DB and blob storage if enhanced citations are enabled."""
     from functions_debug import debug_print
 
-    debug_print(f"[DELETE DOCUMENT] Starting deletion for document: {document_id}, user: {user_id}, group: {group_id}, public_workspace: {public_workspace_id}")
+    debug_print(f"[DELETE_DOCUMENT] Starting deletion for document: {document_id}, user: {user_id}, group: {group_id}, public_workspace: {public_workspace_id}")
 
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
@@ -3684,7 +3684,7 @@ def get_chat_upload_workspace_documents_for_conversation(user_id, conversation_i
                     document_item['workspace_scope'] = 'group'
                     visible_group_documents.append(document_item)
         except Exception as group_visibility_error:
-            debug_print(f"[ChatUploadWorkspaceContext] Failed to resolve group chat uploads: {group_visibility_error}")
+            debug_print(f"[CHAT_UPLOAD_WORKSPACE_CONTEXT] Failed to resolve group chat uploads: {group_visibility_error}")
 
     documents = personal_documents + visible_group_documents
     return sort_documents(select_current_documents(documents))
@@ -3864,7 +3864,7 @@ def sync_chat_upload_workspace_document_sharing_for_collaboration(conversation_d
             )
         except Exception as chunk_sync_error:
             log_event(
-                f"[ChatUploadCollaborationSharing] Failed to sync search chunks for document {document_id}: {chunk_sync_error}",
+                f"[CHAT_UPLOAD_COLLABORATION_SHARING] Failed to sync search chunks for document {document_id}: {chunk_sync_error}",
                 extra={
                     'document_id': document_id,
                     'collaboration_conversation_id': normalized_collaboration_conversation_id,
@@ -5216,7 +5216,7 @@ def _process_xml_with_token_usage(document_id, user_id, temp_file_path, original
             # Skip empty chunks
             if not chunk_content or not chunk_content.strip():
                 log_event(
-                    '[Documents] Skipping empty XML chunk',
+                    '[DOCUMENTS] Skipping empty XML chunk',
                     {
                         'document_id': document_id,
                         'file_name': original_filename,
@@ -5257,7 +5257,7 @@ def _process_xml_with_token_usage(document_id, user_id, temp_file_path, original
         if total_chunks_saved != initial_chunk_count:
             update_callback(number_of_pages=total_chunks_saved)
             log_event(
-                '[Documents] Adjusted XML chunk count after skipping empty chunks',
+                '[DOCUMENTS] Adjusted XML chunk count after skipping empty chunks',
                 {
                     'document_id': document_id,
                     'file_name': original_filename,
@@ -5269,7 +5269,7 @@ def _process_xml_with_token_usage(document_id, user_id, temp_file_path, original
 
     except Exception as e:
         log_event(
-            '[Documents] XML processing failed',
+            '[DOCUMENTS] XML processing failed',
             {
                 'document_id': document_id,
                 'file_name': original_filename,
@@ -6644,7 +6644,7 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
             update_callback(number_of_pages=1, status=f"Indexing schema summary for {original_filename}...")
         except Exception as schema_error:
             log_event(
-                f"[process_tabular] Error building bounded schema summary for {original_filename}; using compact fallback summary: {schema_error}",
+                f"[PROCESS_TABULAR] Error building bounded schema summary for {original_filename}; using compact fallback summary: {schema_error}",
                 level=logging.WARNING,
             )
             schema_summary = _build_minimal_tabular_summary(
@@ -6670,7 +6670,7 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
                 ) from schema_index_error
 
             log_event(
-                f"[process_tabular] Retrying compact schema summary for {original_filename} after schema summary indexing error: {schema_index_error}",
+                f"[PROCESS_TABULAR] Retrying compact schema summary for {original_filename} after schema summary indexing error: {schema_index_error}",
                 level=logging.WARNING,
             )
             update_callback(number_of_pages=1, status=f"Retrying compact schema summary for {original_filename}...")
@@ -6760,7 +6760,7 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
                 total_chunks_saved = accumulated_total_chunks
 
         except pandas.errors.EmptyDataError:
-            log_event(f"[process_tabular] Warning: Tabular file or sheet is empty: {original_filename}", level=logging.WARNING)
+            log_event(f"[PROCESS_TABULAR] Warning: Tabular file or sheet is empty: {original_filename}", level=logging.WARNING)
             update_callback(status=f"Warning: File/sheet is empty - {original_filename}", number_of_pages=0)
         except Exception as e:
             raise Exception(f"Failed processing Tabular file {original_filename}: {e}")
@@ -6882,7 +6882,7 @@ def process_visio(document_id, user_id, temp_file_path, original_filename, enabl
                     update_callback(status="Final metadata extraction yielded no new info")
         except Exception as metadata_error:
             log_event(
-                f"[process_visio] Error extracting final metadata for Visio document {document_id}: {metadata_error}",
+                f"[PROCESS_VISIO] Error extracting final metadata for Visio document {document_id}: {metadata_error}",
                 level=logging.WARNING,
             )
             update_callback(status="Processing complete (metadata extraction warning)")
@@ -7560,12 +7560,12 @@ def _split_audio_file(input_path: str, chunk_seconds: int = 540) -> List[str]:
             .run(quiet=True, overwrite_output=True)
         )
     except Exception as e:
-        print(f"[Error] FFmpeg segmentation to WAV failed for '{input_path}': {e}")
+        print(f"[ERROR] FFmpeg segmentation to WAV failed for '{input_path}': {e}")
         raise RuntimeError(f"Segmentation failed: {e}")
 
     chunks = sorted(glob.glob(f"{base}_chunk_*.wav"))
     if not chunks:
-        print(f"[Error] No WAV chunks produced for '{input_path}'.")
+        print(f"[ERROR] No WAV chunks produced for '{input_path}'.")
         raise RuntimeError(f"No chunks produced by ffmpeg for file '{input_path}'")
     print(f"Produced {len(chunks)} WAV chunks: {chunks}")
     return chunks
@@ -7601,12 +7601,12 @@ def _transcribe_audio_with_fast_api(audio_path, upload_filename, content_type, s
     try:
         resp.raise_for_status()
     except Exception as e:
-        print(f"[Error] HTTP error for {audio_path}: {e}")
+        print(f"[ERROR] HTTP error for {audio_path}: {e}")
         raise
 
     result = resp.json()
     phrases = result.get('combinedPhrases', [])
-    print(f"[Debug] Received {len(phrases)} phrases")
+    print(f"[DEBUG] Received {len(phrases)} phrases")
     return [p.get('text', '').strip() for p in phrases if p.get('text')]
 
 # Azure Speech SDK helper to get speech config with fresh token
@@ -7624,7 +7624,7 @@ def _get_speech_config(settings, endpoint: str, locale: str):
         speech_config = speechsdk.SpeechConfig(endpoint=endpoint, subscription=key)
 
     speech_config.speech_recognition_language = locale
-    print(f"[Debug] Speech config obtained successfully", flush=True)
+    print(f"[DEBUG] Speech config obtained successfully", flush=True)
     return speech_config
 
 
@@ -7652,7 +7652,7 @@ def get_speech_synthesis_config(settings, endpoint: str, location: str):
 
         speech_config = speechsdk.SpeechConfig(endpoint=endpoint, subscription=key)
 
-    print(f"[Debug] Speech synthesis config obtained successfully", flush=True)
+    print(f"[DEBUG] Speech synthesis config obtained successfully", flush=True)
     return speech_config
 
 def process_audio_document(
@@ -7703,7 +7703,7 @@ def process_audio_document(
         if AZURE_ENVIRONMENT not in ("usgovernment", "custom") and _is_missing_ffmpeg_error(split_error):
             use_source_audio_for_fast_api = True
             print(
-                "[Warning] FFmpeg executable unavailable; using source audio with Azure Speech fast transcription API."
+                "[WARNING] FFmpeg executable unavailable; using source audio with Azure Speech fast transcription API."
             )
         else:
             raise
@@ -7714,19 +7714,19 @@ def process_audio_document(
     # Fast Transcription API not yet available in sovereign clouds, so use SDK
     if AZURE_ENVIRONMENT in ("usgovernment", "custom"):
         for idx, chunk_path in enumerate(chunk_paths, start=1):
-            print(f"[Debug] Transcribing chunk {idx}: {chunk_path}")
+            print(f"[DEBUG] Transcribing chunk {idx}: {chunk_path}")
 
             # Get fresh config (tokens expire after ~1 hour)
             try:
                 speech_config = _get_speech_config(settings, endpoint, locale)
             except Exception as e:
-                print(f"[Error] Failed to get speech config for chunk {idx}: {e}")
+                print(f"[ERROR] Failed to get speech config for chunk {idx}: {e}")
                 raise RuntimeError(f"Speech configuration failed for chunk {idx}: {e}")
 
             try:
                 audio_config = speechsdk.AudioConfig(filename=chunk_path)
             except Exception as e:
-                print(f"[Error] Failed to load audio file {chunk_path}: {e}")
+                print(f"[ERROR] Failed to load audio file {chunk_path}: {e}")
                 raise RuntimeError(f"Audio file loading failed: {e}")
 
             try:
@@ -7735,7 +7735,7 @@ def process_audio_document(
                     audio_config=audio_config
                 )
             except Exception as e:
-                print(f"[Error] Failed to create speech recognizer for chunk {idx}: {e}")
+                print(f"[ERROR] Failed to create speech recognizer for chunk {idx}: {e}")
                 raise RuntimeError(f"Speech recognizer creation failed: {e}")
 
             # Use continuous recognition instead of recognize_once
@@ -7746,30 +7746,30 @@ def process_audio_document(
 
             def stop_cb(evt):
                 nonlocal done
-                print(f"[Debug] Session stopped for chunk {idx}")
+                print(f"[DEBUG] Session stopped for chunk {idx}")
                 done = True
 
             def recognized_cb(evt):
                 try:
                     if evt.result.reason == speechsdk.ResultReason.RecognizedSpeech:
                         all_results.append(evt.result.text)
-                        print(f"[Debug] Recognized: {evt.result.text}")
+                        print(f"[DEBUG] Recognized: {evt.result.text}")
                     elif evt.result.reason == speechsdk.ResultReason.NoMatch:
-                        print(f"[Debug] No speech recognized in segment")
+                        print(f"[DEBUG] No speech recognized in segment")
                 except Exception as e:
-                    print(f"[Error] Error in recognized callback: {e}")
+                    print(f"[ERROR] Error in recognized callback: {e}")
                     # Don't fail on individual recognition errors
 
             def canceled_cb(evt):
                 nonlocal done, error_occurred, error_message
-                print(f"[Debug] Recognition canceled for chunk {idx}: {evt.cancellation_details.reason}")
+                print(f"[DEBUG] Recognition canceled for chunk {idx}: {evt.cancellation_details.reason}")
 
                 if evt.cancellation_details.reason == speechsdk.CancellationReason.Error:
                     error_occurred = True
                     error_message = evt.cancellation_details.error_details
-                    print(f"[Error] Recognition error: {error_message}")
+                    print(f"[ERROR] Recognition error: {error_message}")
                 elif evt.cancellation_details.reason == speechsdk.CancellationReason.EndOfStream:
-                    print(f"[Debug] End of audio stream reached")
+                    print(f"[DEBUG] End of audio stream reached")
 
                 done = True
 
@@ -7780,7 +7780,7 @@ def process_audio_document(
                 speech_recognizer.canceled.connect(canceled_cb)
 
                 # Start continuous recognition
-                print(f"[Debug] Starting continuous recognition for chunk {idx}")
+                print(f"[DEBUG] Starting continuous recognition for chunk {idx}")
                 speech_recognizer.start_continuous_recognition()
 
                 # Wait for completion with timeout
@@ -7790,7 +7790,7 @@ def process_audio_document(
 
                 while not done:
                     if time.time() - start_time > timeout_seconds:
-                        print(f"[Error] Recognition timeout for chunk {idx}")
+                        print(f"[ERROR] Recognition timeout for chunk {idx}")
                         error_occurred = True
                         error_message = f"Recognition timed out after {timeout_seconds} seconds"
                         break
@@ -7799,9 +7799,9 @@ def process_audio_document(
                 # Stop recognition
                 try:
                     speech_recognizer.stop_continuous_recognition()
-                    print(f"[Debug] Stopped continuous recognition for chunk {idx}")
+                    print(f"[DEBUG] Stopped continuous recognition for chunk {idx}")
                 except Exception as e:
-                    print(f"[Warning] Error stopping recognition for chunk {idx}: {e}")
+                    print(f"[WARNING] Error stopping recognition for chunk {idx}: {e}")
                     # Continue even if stop fails
 
                 # Check for errors after completion
@@ -7811,16 +7811,16 @@ def process_audio_document(
                 # Add all recognized phrases to the overall list
                 if all_results:
                     all_phrases.extend(all_results)
-                    print(f"[Debug] Total phrases from chunk {idx}: {len(all_results)}")
+                    print(f"[DEBUG] Total phrases from chunk {idx}: {len(all_results)}")
                 else:
-                    print(f"[Warning] No speech recognized in {chunk_path}")
+                    print(f"[WARNING] No speech recognized in {chunk_path}")
                     # Continue to next chunk - empty result is not necessarily an error
 
             except RuntimeError as e:
                 # Re-raise runtime errors (these are our custom errors)
                 raise
             except Exception as e:
-                print(f"[Error] Unexpected error during recognition for chunk {idx}: {e}")
+                print(f"[ERROR] Unexpected error during recognition for chunk {idx}: {e}")
                 raise RuntimeError(f"Recognition failed unexpectedly for chunk {idx}: {e}")
             finally:
                 # Cleanup: disconnect callbacks and dispose recognizer
@@ -7829,7 +7829,7 @@ def process_audio_document(
                     speech_recognizer.session_stopped.disconnect_all()
                     speech_recognizer.canceled.disconnect_all()
                 except Exception as e:
-                    print(f"[Warning] Error disconnecting callbacks for chunk {idx}: {e}")
+                    print(f"[WARNING] Error disconnecting callbacks for chunk {idx}: {e}")
 
             # # Get fresh config (tokens expire after ~1 hour)
             # speech_config = _get_speech_config(settings, endpoint, locale)
@@ -7854,7 +7854,7 @@ def process_audio_document(
         # Use the fast-transcription API if not in sovereign or custom cloud
         if use_source_audio_for_fast_api:
             update_callback(current_file_chunk=1, status="Transcribing audio with Azure Speech…")
-            print(f"[Debug] Transcribing source audio: {temp_file_path}")
+            print(f"[DEBUG] Transcribing source audio: {temp_file_path}")
             all_phrases += _transcribe_audio_with_fast_api(
                 temp_file_path,
                 original_filename,
@@ -7866,7 +7866,7 @@ def process_audio_document(
         else:
             for idx, chunk_path in enumerate(chunk_paths, start=1):
                 update_callback(current_file_chunk=idx, status=f"Transcribing chunk {idx}/{len(chunk_paths)}…")
-                print(f"[Debug] Transcribing WAV chunk: {chunk_path}")
+                print(f"[DEBUG] Transcribing WAV chunk: {chunk_path}")
                 all_phrases += _transcribe_audio_with_fast_api(
                     chunk_path,
                     os.path.basename(chunk_path),
@@ -7882,7 +7882,7 @@ def process_audio_document(
             os.remove(p)
             print(f"Removed chunk: {p}")
         except Exception as e:
-            print(f"[Warning] Could not remove chunk {p}: {e}")
+            print(f"[WARNING] Could not remove chunk {p}: {e}")
 
     # 6) stitch and save transcript chunks
     full_text = ' '.join(all_phrases).strip()
@@ -7936,7 +7936,7 @@ def process_audio_document(
     else:
         update_callback(number_of_pages=total_pages, status="Audio transcription complete", percentage_complete=100, current_file_chunk=None)
 
-    print("[Info] Audio transcription complete")
+    print("[INFO] Audio transcription complete")
     return total_pages
 
 def _build_document_scope_args(document_id, user_id, group_id=None, public_workspace_id=None):
@@ -8105,7 +8105,7 @@ def sync_chat_upload_workspace_attachment_status(document_metadata):
         return True
     except Exception as sync_error:
         log_event(
-            f"[ChatUpload] Unable to sync workspace attachment status for document {document_id}: {sync_error}",
+            f"[CHAT_UPLOAD] Unable to sync workspace attachment status for document {document_id}: {sync_error}",
             level=logging.WARNING,
             exceptionTraceback=True,
         )
@@ -8450,7 +8450,7 @@ def _run_final_metadata_extraction(document_id, user_id, total_chunks_saved, ena
         return "no_new_info"
     except Exception as metadata_error:
         log_event(
-            f"[DocumentMetadataExtraction] Error extracting final metadata for document {document_id}: {metadata_error}",
+            f"[DOCUMENT_METADATA_EXTRACTION] Error extracting final metadata for document {document_id}: {metadata_error}",
             extra={
                 "document_id": document_id,
                 "group_id": group_id,

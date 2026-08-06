@@ -525,7 +525,7 @@ def get_plugin_types(allowed_type_filter=None):
     if callable(allowed_type_filter):
         types = [plugin_type for plugin_type in types if allowed_type_filter(plugin_type.get('type'))]
 
-    print("[PLUGIN DISCOVERY DEBUG]", *debug_log, sep="\n")
+    print("[PLUGIN_DISCOVERY_DEBUG]", *debug_log, sep="\n")
     return jsonify(types)
 
 bpap = Blueprint('admin_plugins', __name__)
@@ -1849,7 +1849,7 @@ def discover_mcp_tools():
     scope_type = ""
     scope_id = ""
     log_event(
-        "[MCP Discovery] Started",
+        "[MCP_DISCOVERY] Started",
         extra=_build_mcp_discovery_log_context(
             mcp_operation_id,
             user_id,
@@ -1878,7 +1878,7 @@ def discover_mcp_tools():
         _apply_plugin_runtime_defaults(discovery_manifest)
         if discovery_manifest.get('additionalFields', {}).get('transport') == 'stdio' and scope_type != WORKSPACE_IDENTITY_SCOPE_GLOBAL:
             log_event(
-                "[MCP Discovery] Failed",
+                "[MCP_DISCOVERY] Failed",
                 extra=_build_mcp_discovery_log_context(
                     mcp_operation_id,
                     user_id,
@@ -1925,7 +1925,7 @@ def discover_mcp_tools():
         is_valid, validation_errors = PluginHealthChecker.validate_plugin_manifest(discovery_manifest, MCP_PLUGIN_TYPE)
         if not is_valid:
             log_event(
-                "[MCP Discovery] Failed",
+                "[MCP_DISCOVERY] Failed",
                 extra=_build_mcp_discovery_log_context(
                     mcp_operation_id,
                     user_id,
@@ -1961,7 +1961,7 @@ def discover_mcp_tools():
         probe_result = asyncio.run(McpPluginFactory.probe_server_from_config(discovery_manifest))
         tools = probe_result.get('tools', []) if isinstance(probe_result, dict) else []
         log_event(
-            "[MCP Discovery] Completed",
+            "[MCP_DISCOVERY] Completed",
             extra=_build_mcp_discovery_log_context(
                 mcp_operation_id,
                 user_id,
@@ -1991,7 +1991,7 @@ def discover_mcp_tools():
     except PermissionError as exc:
         category = "destination_policy" if isinstance(exc, McpDestinationPolicyError) else "authorization"
         log_event(
-            "[MCP Discovery] Failed",
+            "[MCP_DISCOVERY] Failed",
             extra=_build_mcp_discovery_log_context(
                 mcp_operation_id,
                 user_id,
@@ -2013,7 +2013,7 @@ def discover_mcp_tools():
         }), 403
     except (LookupError, ValueError) as exc:
         log_event(
-            "[MCP Discovery] Failed",
+            "[MCP_DISCOVERY] Failed",
             extra=_build_mcp_discovery_log_context(
                 mcp_operation_id,
                 user_id,
@@ -2036,7 +2036,7 @@ def discover_mcp_tools():
     except McpRuntimeError as exc:
         http_status = get_mcp_error_http_status(exc.category)
         log_event(
-            "[MCP Discovery] Failed",
+            "[MCP_DISCOVERY] Failed",
             extra=_build_mcp_discovery_log_context(
                 mcp_operation_id,
                 user_id,
@@ -2063,7 +2063,7 @@ def discover_mcp_tools():
         }), http_status
     except Exception as exc:
         log_event(
-            f"[MCP Discovery] Failed unexpectedly: {exc}",
+            f"[MCP_DISCOVERY] Failed unexpectedly: {exc}",
             extra=_build_mcp_discovery_log_context(
                 mcp_operation_id,
                 user_id,
@@ -2421,7 +2421,7 @@ def test_cosmos_connection():
         )
 
         log_event(
-            '[Plugins] Cosmos connection test succeeded',
+            '[PLUGINS] Cosmos connection test succeeded',
             extra={
                 'user_id': user_id,
                 'endpoint': endpoint,
@@ -2452,7 +2452,7 @@ def test_cosmos_connection():
             status = 400
 
         log_event(
-            f'[Plugins] Cosmos connection test failed: {exc}',
+            f'[PLUGINS] Cosmos connection test failed: {exc}',
             extra={
                 'user_id': user_id,
                 'endpoint': endpoint,
@@ -2467,7 +2467,7 @@ def test_cosmos_connection():
         return jsonify({'success': False, 'error': error_msg}), status
     except Exception as exc:
         log_event(
-            f'[Plugins] Cosmos connection test failed unexpectedly: {exc}',
+            f'[PLUGINS] Cosmos connection test failed unexpectedly: {exc}',
             extra={
                 'user_id': user_id,
                 'endpoint': endpoint,

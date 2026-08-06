@@ -176,7 +176,7 @@ def _iter_preconfiguration_definition_paths():
     for directory, source in _get_preconfiguration_source_directories():
         if not os.path.isdir(directory):
             log_event(
-                f"[MCPPreconfigurations] Preconfiguration directory does not exist: {directory}",
+                f"[MCP_PRECONFIGURATIONS] Preconfiguration directory does not exist: {directory}",
                 level=logging.WARNING,
                 debug_only=True,
             )
@@ -324,7 +324,7 @@ def load_mcp_server_preconfigurations():
             McpPreconfigurationValidationError,
         ) as exc:
             log_event(
-                f"[MCPPreconfigurations] Failed to load MCP preconfiguration definition: {exc}",
+                f"[MCP_PRECONFIGURATIONS] Failed to load MCP preconfiguration definition: {exc}",
                 level=logging.WARNING,
                 debug_only=True,
             )

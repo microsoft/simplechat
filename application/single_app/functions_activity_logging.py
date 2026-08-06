@@ -181,7 +181,7 @@ def get_user_login_activity_summary(user_id: Any) -> Dict[str, Any]:
         summary['total_logins'] = int(total_logins[0] or 0) if total_logins else 0
         summary['total_logins_lookup_succeeded'] = True
     except Exception as ex:
-        debug_print(f"[ActivityLogging] Could not query login count for user {normalized_user_id}: {ex}")
+        debug_print(f"[ACTIVITY_LOGGING] Could not query login count for user {normalized_user_id}: {ex}")
         log_event(
             message=f"[ActivityLogging] Error querying user login count: {ex}",
             extra={'user_id': normalized_user_id, 'error': str(ex)},
@@ -208,7 +208,7 @@ def get_user_login_activity_summary(user_id: Any) -> Dict[str, Any]:
         summary['last_login'] = _select_latest_activity_timestamp(latest_login_records)
         summary['last_login_lookup_succeeded'] = True
     except Exception as ex:
-        debug_print(f"[ActivityLogging] Could not query latest login for user {normalized_user_id}: {ex}")
+        debug_print(f"[ACTIVITY_LOGGING] Could not query latest login for user {normalized_user_id}: {ex}")
         log_event(
             message=f"[ActivityLogging] Error querying latest user login: {ex}",
             extra={'user_id': normalized_user_id, 'error': str(ex)},
@@ -449,7 +449,7 @@ def log_admin_feedback_email_submission(
             },
             level=logging.INFO
         )
-        debug_print(f"[Admin Feedback] Logged feedback email submission for user {user_id}")
+        debug_print(f"[ADMIN_FEEDBACK] Logged feedback email submission for user {user_id}")
 
     except Exception:
         log_event(
@@ -465,7 +465,7 @@ def log_admin_feedback_email_submission(
             level=logging.ERROR,
             exceptionTraceback=True
         )
-        debug_print(f"[Admin Feedback] Failed to log feedback email submission for user {user_id}")
+        debug_print(f"[ADMIN_FEEDBACK] Failed to log feedback email submission for user {user_id}")
 
 
 def log_user_support_feedback_email_submission(
@@ -515,7 +515,7 @@ def log_user_support_feedback_email_submission(
             },
             level=logging.INFO
         )
-        debug_print(f"[Support Feedback] Logged support feedback email submission for user {user_id}")
+        debug_print(f"[SUPPORT_FEEDBACK] Logged support feedback email submission for user {user_id}")
 
     except Exception:
         log_event(
@@ -532,7 +532,7 @@ def log_user_support_feedback_email_submission(
             level=logging.ERROR,
             exceptionTraceback=True
         )
-        debug_print(f"[Support Feedback] Failed to log support feedback email submission for user {user_id}")
+        debug_print(f"[SUPPORT_FEEDBACK] Failed to log support feedback email submission for user {user_id}")
 
 
 def log_admin_release_notifications_registration(
@@ -587,7 +587,7 @@ def log_admin_release_notifications_registration(
             },
             level=logging.INFO
         )
-        debug_print(f"[Admin Release Notifications] Logged registration for user {user_id}")
+        debug_print(f"[ADMIN_RELEASE_NOTIFICATIONS] Logged registration for user {user_id}")
 
     except Exception:
         log_event(
@@ -602,7 +602,7 @@ def log_admin_release_notifications_registration(
             level=logging.ERROR,
             exceptionTraceback=True
         )
-        debug_print(f"[Admin Release Notifications] Failed to log registration for user {user_id}")
+        debug_print(f"[ADMIN_RELEASE_NOTIFICATIONS] Failed to log registration for user {user_id}")
 
 
 def log_web_search_consent_acceptance(

@@ -616,7 +616,7 @@ def register_route_backend_group_documents(bp):
                         )
                     except Exception as shadow_error:
                         log_event(
-                            '[DocumentAccessIndex] Shadow validation source query failed after DAI read succeeded.',
+                            '[DOCUMENT_ACCESS_INDEX] Shadow validation source query failed after DAI read succeeded.',
                             extra={'source_scope': DOCUMENT_ACCESS_SCOPE_GROUP, 'error': str(shadow_error)},
                             level=logging.WARNING,
                             exceptionTraceback=True,
@@ -856,7 +856,7 @@ def register_route_backend_group_documents(bp):
             return jsonify({'error': str(exc)}), 404
         except Exception as exc:
             log_event(
-                '[DocumentDownload] Failed group document download',
+                '[DOCUMENT_DOWNLOAD] Failed group document download',
                 {'document_id': document_id, 'group_id': active_group_id, 'error': str(exc)},
                 debug_only=True,
             )
@@ -914,7 +914,7 @@ def register_route_backend_group_documents(bp):
             return jsonify({'error': str(exc)}), 404
         except Exception as exc:
             log_event(
-                '[DocumentDownload] Failed group document ZIP download',
+                '[DOCUMENT_DOWNLOAD] Failed group document ZIP download',
                 {'group_id': active_group_id, 'document_count': len(documents), 'error': str(exc)},
                 debug_only=True,
             )

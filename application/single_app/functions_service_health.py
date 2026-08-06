@@ -110,7 +110,7 @@ def record_semantic_search_quota_exceeded(error=None, source="hybrid_search"):
         if not update_settings({"service_health": service_health}):
             raise RuntimeError("update_settings returned False while recording semantic quota warning.")
         log_event(
-            "[ServiceHealth] Azure AI Search semantic quota exceeded.",
+            "[SERVICE_HEALTH] Azure AI Search semantic quota exceeded.",
             extra={
                 "service": SEMANTIC_SEARCH_HEALTH_KEY,
                 "source": source,
@@ -121,7 +121,7 @@ def record_semantic_search_quota_exceeded(error=None, source="hybrid_search"):
         return service_health[SEMANTIC_SEARCH_HEALTH_KEY]
     except Exception as ex:
         log_event(
-            "[ServiceHealth] Failed to record semantic search quota warning.",
+            "[SERVICE_HEALTH] Failed to record semantic search quota warning.",
             extra={"error": str(ex), "source": source},
             level=logging.ERROR,
             exceptionTraceback=True,
@@ -147,14 +147,14 @@ def clear_semantic_search_quota_warning(source="hybrid_search"):
         if not update_settings({"service_health": service_health}):
             raise RuntimeError("update_settings returned False while clearing semantic quota warning.")
         log_event(
-            "[ServiceHealth] Azure AI Search semantic quota warning cleared after successful search.",
+            "[SERVICE_HEALTH] Azure AI Search semantic quota warning cleared after successful search.",
             extra={"service": SEMANTIC_SEARCH_HEALTH_KEY, "source": source},
             level=logging.INFO,
         )
         return True
     except Exception as ex:
         log_event(
-            "[ServiceHealth] Failed to clear semantic search quota warning.",
+            "[SERVICE_HEALTH] Failed to clear semantic search quota warning.",
             extra={"error": str(ex), "source": source},
             level=logging.ERROR,
             exceptionTraceback=True,

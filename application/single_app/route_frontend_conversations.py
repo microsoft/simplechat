@@ -331,7 +331,7 @@ def register_route_frontend_conversations(bp):
             )
         except requests.RequestException as exc:
             log_event(
-                f"[AzureMaps] Tile proxy request failed: {exc}",
+                f"[AZURE_MAPS] Tile proxy request failed: {exc}",
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )

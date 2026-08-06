@@ -829,7 +829,7 @@ def register_route_backend_documents(bp):
                         )
                     except Exception as shadow_error:
                         log_event(
-                            '[DocumentAccessIndex] Shadow validation source query failed after DAI read succeeded.',
+                            '[DOCUMENT_ACCESS_INDEX] Shadow validation source query failed after DAI read succeeded.',
                             extra={'source_scope': DOCUMENT_ACCESS_SCOPE_PERSONAL, 'error': str(shadow_error)},
                             level=logging.WARNING,
                             exceptionTraceback=True,
@@ -970,7 +970,7 @@ def register_route_backend_documents(bp):
             return jsonify({'error': str(exc)}), 404
         except Exception as exc:
             log_event(
-                '[DocumentDownload] Failed personal document download',
+                '[DOCUMENT_DOWNLOAD] Failed personal document download',
                 {'document_id': document_id, 'error': str(exc)},
                 debug_only=True,
             )
@@ -1023,7 +1023,7 @@ def register_route_backend_documents(bp):
             return jsonify({'error': str(exc)}), 404
         except Exception as exc:
             log_event(
-                '[DocumentDownload] Failed personal document ZIP download',
+                '[DOCUMENT_DOWNLOAD] Failed personal document ZIP download',
                 {'document_count': len(documents), 'error': str(exc)},
                 debug_only=True,
             )
@@ -1561,11 +1561,11 @@ def register_route_backend_documents(bp):
             tag_defs = settings_dict.get('tag_definitions', {})
             personal_tags = tag_defs.get('personal', {})
             
-            debug_print(f"[CREATE TAG] Retrieved user_settings keys: {list(user_settings.keys())}")
-            debug_print(f"[CREATE TAG] Retrieved settings_dict keys: {list(settings_dict.keys())}")
-            debug_print(f"[CREATE TAG] Retrieved tag_defs keys: {list(tag_defs.keys())}")
-            debug_print(f"[CREATE TAG] Retrieved personal_tags: {personal_tags}")
-            debug_print(f"[CREATE TAG] Existing personal tag count: {len(personal_tags)}")
+            debug_print(f"[CREATE_TAG] Retrieved user_settings keys: {list(user_settings.keys())}")
+            debug_print(f"[CREATE_TAG] Retrieved settings_dict keys: {list(settings_dict.keys())}")
+            debug_print(f"[CREATE_TAG] Retrieved tag_defs keys: {list(tag_defs.keys())}")
+            debug_print(f"[CREATE_TAG] Retrieved personal_tags: {personal_tags}")
+            debug_print(f"[CREATE_TAG] Existing personal tag count: {len(personal_tags)}")
             
             # Check if tag already exists
             if normalized_tag in personal_tags:
@@ -1577,13 +1577,13 @@ def register_route_backend_documents(bp):
                 'created_at': datetime.now(timezone.utc).isoformat()
             }
             
-            debug_print(f"[CREATE TAG] After adding new tag, personal_tags: {personal_tags}")
-            debug_print(f"[CREATE TAG] New personal tag count: {len(personal_tags)}")
+            debug_print(f"[CREATE_TAG] After adding new tag, personal_tags: {personal_tags}")
+            debug_print(f"[CREATE_TAG] New personal tag count: {len(personal_tags)}")
             
             tag_defs['personal'] = personal_tags
             
-            debug_print(f"[CREATE TAG] Final tag_defs to save: {tag_defs}")
-            debug_print(f"[CREATE TAG] Calling update_user_settings with: {{'tag_definitions': tag_defs}}")
+            debug_print(f"[CREATE_TAG] Final tag_defs to save: {tag_defs}")
+            debug_print(f"[CREATE_TAG] Calling update_user_settings with: {{'tag_definitions': tag_defs}}")
             
             # Only update the tag_definitions field, not the entire settings object
             update_user_settings(user_id, {'tag_definitions': tag_defs})
@@ -1624,7 +1624,7 @@ def register_route_backend_documents(bp):
         action = data.get('action')
         tags_input = data.get('tags', [])
         
-        debug_print(f"[Bulk Tag] Received request: user_id={user_id}, action={action}, tags={tags_input}, doc_count={len(document_ids)}")
+        debug_print(f"[BULK_TAG] Received request: user_id={user_id}, action={action}, tags={tags_input}, doc_count={len(document_ids)}")
         
         if not document_ids or not isinstance(document_ids, list):
             return jsonify({'error': 'document_ids must be a non-empty array'}), 400
@@ -1682,7 +1682,7 @@ def register_route_backend_documents(bp):
                     
                     if not document_results:
                         error_msg = 'Document not found or access denied'
-                        debug_print(f"[Bulk Tag] Error for doc {doc_id}: {error_msg}")
+                        debug_print(f"[BULK_TAG] Error for doc {doc_id}: {error_msg}")
                         results['errors'].append({
                             'document_id': doc_id,
                             'error': error_msg
@@ -1690,7 +1690,7 @@ def register_route_backend_documents(bp):
                         continue
                     
                     doc = document_results[0]
-                    debug_print(f"[Bulk Tag] Processing doc {doc_id}, current tags: {doc.get('tags', [])}")
+                    debug_print(f"[BULK_TAG] Processing doc {doc_id}, current tags: {doc.get('tags', [])}")
                     
                     current_tags = doc.get('tags', [])
                     new_tags = []
@@ -1705,7 +1705,7 @@ def register_route_backend_documents(bp):
                         # Replace all tags
                         new_tags = normalized_tags
                     
-                    debug_print(f"[Bulk Tag] New tags for doc {doc_id}: {new_tags}")
+                    debug_print(f"[BULK_TAG] New tags for doc {doc_id}: {new_tags}")
                     
                     # Update document
                     update_document(
@@ -1724,11 +1724,11 @@ def register_route_backend_documents(bp):
                         'document_id': doc_id,
                         'tags': new_tags
                     })
-                    debug_print(f"[Bulk Tag] Successfully updated doc {doc_id}")
+                    debug_print(f"[BULK_TAG] Successfully updated doc {doc_id}")
                     
                 except Exception as doc_error:
                     error_msg = str(doc_error)
-                    debug_print(f"[Bulk Tag] Exception for doc {doc_id}: {error_msg}")
+                    debug_print(f"[BULK_TAG] Exception for doc {doc_id}: {error_msg}")
                     import traceback
                     traceback.print_exc()
                     results['errors'].append({
@@ -1761,19 +1761,19 @@ def register_route_backend_documents(bp):
             "color": "#3b82f6"            // optional
         }
         """
-        debug_print(f"[UPDATE TAG] Starting update for tag: {tag_name}")
+        debug_print(f"[UPDATE_TAG] Starting update for tag: {tag_name}")
         
         user_id = get_current_user_id()
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
         
-        debug_print(f"[UPDATE TAG] User ID: {user_id}")
+        debug_print(f"[UPDATE_TAG] User ID: {user_id}")
         
         data = request.get_json()
         new_name = data.get('new_name')
         new_color = data.get('color')
         
-        debug_print(f"[UPDATE TAG] Request data - new_name: {new_name}, new_color: {new_color}")
+        debug_print(f"[UPDATE_TAG] Request data - new_name: {new_name}, new_color: {new_color}")
         
         from functions_documents import (
             normalize_tag, validate_tag_color, validate_tags, get_documents,
@@ -1783,24 +1783,24 @@ def register_route_backend_documents(bp):
         from utils_cache import invalidate_personal_search_cache
         
         try:
-            debug_print(f"[UPDATE TAG] Normalizing tag name...")
+            debug_print(f"[UPDATE_TAG] Normalizing tag name...")
             normalized_old_tag = normalize_tag(tag_name)
-            debug_print(f"[UPDATE TAG] Normalized old tag: {normalized_old_tag}")
+            debug_print(f"[UPDATE_TAG] Normalized old tag: {normalized_old_tag}")
             
             # Handle rename
             if new_name:
-                debug_print(f"[UPDATE TAG] Handling rename operation...")
+                debug_print(f"[UPDATE_TAG] Handling rename operation...")
                 # Validate new name
                 is_valid, error_msg, normalized_new = validate_tags([new_name])
                 if not is_valid:
-                    debug_print(f"[UPDATE TAG] Validation failed: {error_msg}")
+                    debug_print(f"[UPDATE_TAG] Validation failed: {error_msg}")
                     return jsonify({'error': error_msg}), 400
                 
                 normalized_new_tag = normalized_new[0]
-                debug_print(f"[UPDATE TAG] Normalized new tag: {normalized_new_tag}")
+                debug_print(f"[UPDATE_TAG] Normalized new tag: {normalized_new_tag}")
                 
                 # Query documents directly from Cosmos DB
-                debug_print(f"[UPDATE TAG] Querying documents from database...")
+                debug_print(f"[UPDATE_TAG] Querying documents from database...")
                 
                 query = """
                     SELECT *
@@ -1817,7 +1817,7 @@ def register_route_backend_documents(bp):
                     )
                 )
                 
-                debug_print(f"[UPDATE TAG] Found {len(documents)} total documents")
+                debug_print(f"[UPDATE_TAG] Found {len(documents)} total documents")
                 
                 # Get latest version of each document
                 latest_documents = {}
@@ -1827,7 +1827,7 @@ def register_route_backend_documents(bp):
                         latest_documents[file_name] = doc
                 
                 all_docs = list(latest_documents.values())
-                debug_print(f"[UPDATE TAG] Processing {len(all_docs)} unique documents")
+                debug_print(f"[UPDATE_TAG] Processing {len(all_docs)} unique documents")
                 
                 updated_count = 0
                 
@@ -1851,33 +1851,33 @@ def register_route_backend_documents(bp):
                         
                         updated_count += 1
                 
-                debug_print(f"[UPDATE TAG] Updated {updated_count} documents")
+                debug_print(f"[UPDATE_TAG] Updated {updated_count} documents")
                 
                 # Update tag definition
-                debug_print(f"[UPDATE TAG] Updating tag definition in settings...")
+                debug_print(f"[UPDATE_TAG] Updating tag definition in settings...")
                 user_settings = get_user_settings(user_id)
                 settings_dict = user_settings.get('settings', {})
                 tag_defs = settings_dict.get('tag_definitions', {})
                 personal_tags = tag_defs.get('personal', {})
                 
-                debug_print(f"[UPDATE TAG] Current personal_tags keys: {list(personal_tags.keys())}")
+                debug_print(f"[UPDATE_TAG] Current personal_tags keys: {list(personal_tags.keys())}")
                 
                 if normalized_old_tag in personal_tags:
                     old_def = personal_tags.pop(normalized_old_tag)
                     personal_tags[normalized_new_tag] = old_def
-                    debug_print(f"[UPDATE TAG] Renamed tag in definitions")
+                    debug_print(f"[UPDATE_TAG] Renamed tag in definitions")
                 else:
-                    debug_print(f"[UPDATE TAG] WARNING: Old tag not found in personal_tags!")
+                    debug_print(f"[UPDATE_TAG] WARNING: Old tag not found in personal_tags!")
                     
                 tag_defs['personal'] = personal_tags
-                debug_print(f"[UPDATE TAG] Calling update_user_settings...")
+                debug_print(f"[UPDATE_TAG] Calling update_user_settings...")
                 update_user_settings(user_id, {'tag_definitions': tag_defs})
                 
                 # Invalidate cache
-                debug_print(f"[UPDATE TAG] Invalidating search cache...")
+                debug_print(f"[UPDATE_TAG] Invalidating search cache...")
                 invalidate_personal_search_cache(user_id)
                 
-                debug_print(f"[UPDATE TAG] Rename completed successfully")
+                debug_print(f"[UPDATE_TAG] Rename completed successfully")
                 return jsonify({
                     'message': f'Tag renamed from "{normalized_old_tag}" to "{normalized_new_tag}"',
                     'documents_updated': updated_count
@@ -1885,7 +1885,7 @@ def register_route_backend_documents(bp):
             
             # Handle color change only
             if new_color:
-                debug_print(f"[UPDATE TAG] Handling color change operation...")
+                debug_print(f"[UPDATE_TAG] Handling color change operation...")
                 is_valid_color, color_error, normalized_color = validate_tag_color(new_color, normalized_old_tag)
                 if not is_valid_color:
                     return jsonify({'error': color_error}), 400
@@ -1895,14 +1895,14 @@ def register_route_backend_documents(bp):
                 tag_defs = settings_dict.get('tag_definitions', {})
                 personal_tags = tag_defs.get('personal', {})
                 
-                debug_print(f"[UPDATE TAG] Current personal_tags keys: {list(personal_tags.keys())}")
-                debug_print(f"[UPDATE TAG] Looking for tag: {normalized_old_tag}")
+                debug_print(f"[UPDATE_TAG] Current personal_tags keys: {list(personal_tags.keys())}")
+                debug_print(f"[UPDATE_TAG] Looking for tag: {normalized_old_tag}")
                 
                 if normalized_old_tag in personal_tags:
-                    debug_print(f"[UPDATE TAG] Found tag, updating color to: {normalized_color}")
+                    debug_print(f"[UPDATE_TAG] Found tag, updating color to: {normalized_color}")
                     personal_tags[normalized_old_tag]['color'] = normalized_color
                 else:
-                    debug_print(f"[UPDATE TAG] Tag not found, creating new entry with color: {normalized_color}")
+                    debug_print(f"[UPDATE_TAG] Tag not found, creating new entry with color: {normalized_color}")
                     from datetime import datetime, timezone
                     personal_tags[normalized_old_tag] = {
                         'color': normalized_color,
@@ -1910,11 +1910,11 @@ def register_route_backend_documents(bp):
                     }
                 
                 tag_defs['personal'] = personal_tags
-                debug_print(f"[UPDATE TAG] Final tag_defs to save: {tag_defs}")
-                debug_print(f"[UPDATE TAG] Calling update_user_settings...")
+                debug_print(f"[UPDATE_TAG] Final tag_defs to save: {tag_defs}")
+                debug_print(f"[UPDATE_TAG] Calling update_user_settings...")
                 update_user_settings(user_id, {'tag_definitions': tag_defs})
                 
-                debug_print(f"[UPDATE TAG] Color change completed successfully")
+                debug_print(f"[UPDATE_TAG] Color change completed successfully")
                 return jsonify({
                     'message': f'Tag color updated for "{normalized_old_tag}"',
                     'tag': {
@@ -1923,11 +1923,11 @@ def register_route_backend_documents(bp):
                     }
                 }), 200
             
-            debug_print(f"[UPDATE TAG] No updates specified!")
+            debug_print(f"[UPDATE_TAG] No updates specified!")
             return jsonify({'error': 'No updates specified'}), 400
             
         except Exception as e:
-            debug_print(f"[UPDATE TAG] ERROR: {str(e)}")
+            debug_print(f"[UPDATE_TAG] ERROR: {str(e)}")
             import traceback
             traceback.print_exc()
             return jsonify({'error': str(e)}), 500
@@ -1953,7 +1953,7 @@ def register_route_backend_documents(bp):
             normalized_tag = normalize_tag(tag_name)
             
             # Query documents directly from Cosmos DB
-            debug_print(f"[DELETE TAG] Querying documents from database...")
+            debug_print(f"[DELETE_TAG] Querying documents from database...")
             
             query = """
                 SELECT *
@@ -1970,7 +1970,7 @@ def register_route_backend_documents(bp):
                 )
             )
             
-            debug_print(f"[DELETE TAG] Found {len(documents)} total documents")
+            debug_print(f"[DELETE_TAG] Found {len(documents)} total documents")
             
             # Get latest version of each document
             latest_documents = {}
@@ -1980,7 +1980,7 @@ def register_route_backend_documents(bp):
                     latest_documents[file_name] = doc
             
             all_docs = list(latest_documents.values())
-            debug_print(f"[DELETE TAG] Processing {len(all_docs)} unique documents")
+            debug_print(f"[DELETE_TAG] Processing {len(all_docs)} unique documents")
             
             updated_count = 0
             

@@ -573,7 +573,7 @@ def check_inbound_mcp_easy_auth_exclusions(base_url, timeout_seconds=8):
             endpoint_results.append(_evaluate_probe_response(path, response))
         except requests.RequestException as request_error:
             log_event(
-                "[InboundMCP] Easy Auth exclusion probe request failed.",
+                "[INBOUND_MCP] Easy Auth exclusion probe request failed.",
                 extra={
                     "path": path,
                     "error_type": type(request_error).__name__,

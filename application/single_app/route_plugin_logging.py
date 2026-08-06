@@ -41,7 +41,7 @@ def get_plugin_invocations():
         }
         
         log_event(
-            "[Plugin Logging API] Retrieved plugin invocations",
+            "[PLUGIN_LOGGING_API] Retrieved plugin invocations",
             extra={
                 "user_id": user_id,
                 "invocation_count": len(invocations),
@@ -54,7 +54,7 @@ def get_plugin_invocations():
         
     except Exception as e:
         log_event(
-            "[Plugin Logging API] Error retrieving plugin invocations",
+            "[PLUGIN_LOGGING_API] Error retrieving plugin invocations",
             extra={"error": str(e), "user_id": get_current_user_id()},
             level=logging.ERROR,
             exceptionTraceback=True
@@ -99,7 +99,7 @@ def get_plugin_stats():
         }
         
         log_event(
-            "[Plugin Logging API] Retrieved plugin statistics",
+            "[PLUGIN_LOGGING_API] Retrieved plugin statistics",
             extra={
                 "user_id": user_id,
                 "user_invocations": len(user_invocations),
@@ -112,7 +112,7 @@ def get_plugin_stats():
         
     except Exception as e:
         log_event(
-            "[Plugin Logging API] Error retrieving plugin statistics",
+            "[PLUGIN_LOGGING_API] Error retrieving plugin statistics",
             extra={"error": str(e), "user_id": get_current_user_id()},
             level=logging.ERROR,
             exceptionTraceback=True
@@ -142,7 +142,7 @@ def get_recent_invocations():
         }
         
         log_event(
-            "[Plugin Logging API] Retrieved recent plugin invocations",
+            "[PLUGIN_LOGGING_API] Retrieved recent plugin invocations",
             extra={
                 "requester_user_id": get_current_user_id(),
                 "invocation_count": len(recent_invocations),
@@ -155,7 +155,7 @@ def get_recent_invocations():
         
     except Exception as e:
         log_event(
-            "[Plugin Logging API] Error retrieving recent plugin invocations",
+            "[PLUGIN_LOGGING_API] Error retrieving recent plugin invocations",
             extra={"error": str(e), "requester_user_id": get_current_user_id()},
             level=logging.ERROR,
             exceptionTraceback=True
@@ -193,7 +193,7 @@ def get_plugin_specific_invocations(plugin_name):
         }
         
         log_event(
-            "[Plugin Logging API] Retrieved plugin-specific invocations",
+            "[PLUGIN_LOGGING_API] Retrieved plugin-specific invocations",
             extra={
                 "user_id": user_id,
                 "plugin_name": plugin_name,
@@ -207,7 +207,7 @@ def get_plugin_specific_invocations(plugin_name):
         
     except Exception as e:
         log_event(
-            "[Plugin Logging API] Error retrieving plugin-specific invocations",
+            "[PLUGIN_LOGGING_API] Error retrieving plugin-specific invocations",
             extra={
                 "error": str(e), 
                 "user_id": get_current_user_id(),
@@ -238,7 +238,7 @@ def clear_plugin_logs():
         plugin_logger.clear_history()
         
         log_event(
-            "[Plugin Logging API] Cleared plugin invocation logs",
+            "[PLUGIN_LOGGING_API] Cleared plugin invocation logs",
             extra={
                 "requester_user_id": get_current_user_id(),
                 "previous_log_count": previous_count
@@ -253,7 +253,7 @@ def clear_plugin_logs():
         
     except Exception as e:
         log_event(
-            "[Plugin Logging API] Error clearing plugin logs",
+            "[PLUGIN_LOGGING_API] Error clearing plugin logs",
             extra={"error": str(e), "requester_user_id": get_current_user_id()},
             level=logging.ERROR,
             exceptionTraceback=True
@@ -285,7 +285,7 @@ def export_plugin_logs():
         }
         
         log_event(
-            "[Plugin Logging API] Exported plugin invocation logs",
+            "[PLUGIN_LOGGING_API] Exported plugin invocation logs",
             extra={
                 "user_id": user_id,
                 "exported_count": len(user_invocations)
@@ -297,7 +297,7 @@ def export_plugin_logs():
         
     except Exception as e:
         log_event(
-            "[Plugin Logging API] Error exporting plugin logs",
+            "[PLUGIN_LOGGING_API] Error exporting plugin logs",
             extra={"error": str(e), "user_id": get_current_user_id()},
             level=logging.ERROR,
             exceptionTraceback=True

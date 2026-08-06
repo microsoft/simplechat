@@ -190,7 +190,7 @@ def raise_if_mixed_source_cancelled(
 
     normalized_phase = str(phase or "unknown").strip().lower() or "unknown"
     log_event(
-        "[MixedSourceLifecycle] Execution canceled.",
+        "[MIXED_SOURCE_LIFECYCLE] Execution canceled.",
         extra={
             "request_correlation_id": normalize_mixed_source_correlation_id(
                 request_correlation_id
@@ -250,7 +250,7 @@ def emit_mixed_source_telemetry(
         )
 
     log_event(
-        "[MixedSourceTelemetry] Aggregate lifecycle metrics.",
+        "[MIXED_SOURCE_TELEMETRY] Aggregate lifecycle metrics.",
         extra=extra,
         level=logging.INFO,
     )
@@ -721,7 +721,7 @@ def resolve_authorized_source_manifest(
         requested_source_list = list(requested_sources or [])
     if len(requested_source_list) > SOURCE_MANIFEST_MAX_SOURCES:
         log_event(
-            "[MixedSourceManifest] Rejected over-limit source manifest request.",
+            "[MIXED_SOURCE_MANIFEST] Rejected over-limit source manifest request.",
             extra={
                 "selection_mode": normalized_selection_mode,
                 "requested_source_count": len(requested_source_list),
@@ -847,7 +847,7 @@ def resolve_authorized_source_manifest(
     duration_ms = round((time.perf_counter() - started_at) * 1000, 3)
     resolved_source_count = len(manifest) - source_kind_counts[SOURCE_KIND_UNRESOLVED]
     log_event(
-        "[MixedSourceManifest] Resolved authorized source manifest.",
+        "[MIXED_SOURCE_MANIFEST] Resolved authorized source manifest.",
         extra={
             "selection_mode": normalized_selection_mode,
             "requested_source_count": len(requested_source_list),
@@ -1449,7 +1449,7 @@ def execute_tabular_evidence_sources(
             ))
 
     log_event(
-        "[MixedSourceChatSearch] Tabular source execution reached terminal coverage.",
+        "[MIXED_SOURCE_CHAT_SEARCH] Tabular source execution reached terminal coverage.",
         extra={
             "selection_mode": normalized_selection_mode,
             "tabular_candidate_count": len(list(tabular_sources or [])),

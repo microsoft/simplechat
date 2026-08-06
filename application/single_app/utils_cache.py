@@ -94,7 +94,7 @@ def _debug_print(message: str, context: str = "CACHE", **kwargs):
         extra_info = " | " + ", ".join(extra_parts)
     
     debug_message = _sanitize_debug_log_value(f"[{timestamp}] [{context}] {message}{extra_info}")
-    logger.info("[SearchCacheDebug]")
+    logger.info("[SEARCH_CACHE_DEBUG]")
     print(debug_message, flush=True)  # Also print to stdout for visibility
 
 

@@ -585,7 +585,7 @@ def check_due_key_vault_secret_reminders_once(
         notifications_created += 1
 
     log_event(
-        "[KeyVaultReminders] Reminder sweep completed.",
+        "[KEY_VAULT_REMINDERS] Reminder sweep completed.",
         extra={"checked": checked, "notifications_created": notifications_created},
         level=logging.INFO,
     )

@@ -112,7 +112,7 @@ class OpenApiPluginFactory:
             return {}
         
         auth_type = auth_config.get('type', 'none')
-        debug_print(f"[Factory] auth_type: {auth_type}")
+        debug_print(f"[FACTORY] auth_type: {auth_type}")
         
         if auth_type == 'none':
             return {}
@@ -121,12 +121,12 @@ class OpenApiPluginFactory:
         # Simple Chat stores basic auth as: auth.type='key', auth.key='username:password', additionalFields.auth_method='basic'
         additional_fields = config.get('additionalFields', {})
         auth_method = additional_fields.get('auth_method', '')
-        debug_print(f"[Factory] additionalFields.auth_method: {auth_method}")
+        debug_print(f"[FACTORY] additionalFields.auth_method: {auth_method}")
         
         if auth_type == 'key' and auth_method == 'basic':
             # Extract username and password from the combined key
             key = auth_config.get('key', '')
-            debug_print(f"[Factory] Applying basic auth transformation")
+            debug_print(f"[FACTORY] Applying basic auth transformation")
             if ':' in key:
                 username, password = key.split(':', 1)
                 return {
@@ -141,7 +141,7 @@ class OpenApiPluginFactory:
         # For bearer tokens stored as 'key' type
         if auth_type == 'key' and auth_method == 'bearer':
             token = auth_config.get('key', '')
-            debug_print(f"[Factory] Applying bearer auth transformation")
+            debug_print(f"[FACTORY] Applying bearer auth transformation")
             return {
                 'type': 'bearer',
                 'token': token
@@ -149,7 +149,7 @@ class OpenApiPluginFactory:
         
         # For OAuth2 stored as 'key' type
         if auth_type == 'key' and auth_method == 'oauth2':
-            debug_print(f"[Factory] Applying OAuth2 auth transformation")
+            debug_print(f"[FACTORY] Applying OAuth2 auth transformation")
             return {
                 'type': 'bearer',  # OAuth2 tokens are typically bearer tokens
                 'token': auth_config.get('key', '')

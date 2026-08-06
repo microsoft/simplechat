@@ -48,7 +48,7 @@ def _validate_plugin_manifest_request():
         response['warnings'].append('Endpoint field is recommended for this plugin type')
 
     log_event(
-        f"[Plugin Validation] Validated manifest for {plugin_name}",
+        f"[PLUGIN_VALIDATION] Validated manifest for {plugin_name}",
         extra={'plugin_name': plugin_name, 'valid': is_valid, 'errors': validation_errors},
     )
 
@@ -69,7 +69,7 @@ def validate_plugin_manifest():
     try:
         return _validate_plugin_manifest_request()
     except Exception as e:
-        log_event(f"[Plugin Validation] Error validating manifest: {str(e)}", level=logging.ERROR)
+        log_event(f"[PLUGIN_VALIDATION] Error validating manifest: {str(e)}", level=logging.ERROR)
         return jsonify({'error': f'Validation failed: {str(e)}'}), 500
 
 
@@ -86,7 +86,7 @@ def validate_plugin_manifest_admin():
     try:
         return _validate_plugin_manifest_request()
     except Exception as e:
-        log_event(f"[Plugin Validation] Error validating manifest: {str(e)}", level=logging.ERROR)
+        log_event(f"[PLUGIN_VALIDATION] Error validating manifest: {str(e)}", level=logging.ERROR)
         return jsonify({'error': f'Validation failed: {str(e)}'}), 500
 
 
@@ -153,13 +153,13 @@ def test_plugin_instantiation():
             response['health_report'] = health_report
             response['is_healthy'] = health_report['is_healthy']
         
-        log_event(f"[Plugin Test] Tested instantiation for {plugin_name}", 
+        log_event(f"[PLUGIN_TEST] Tested instantiation for {plugin_name}",
                  extra={'plugin_name': plugin_name, 'success': success, 'errors': instantiation_errors})
         
         return jsonify(response)
     
     except Exception as e:
-        log_event(f"[Plugin Test] Error testing instantiation: {str(e)}", level=logging.ERROR)
+        log_event(f"[PLUGIN_TEST] Error testing instantiation: {str(e)}", level=logging.ERROR)
         return jsonify({'error': f'Test failed: {str(e)}'}), 500
 
 
@@ -227,13 +227,13 @@ def check_plugin_health(plugin_name):
         # Perform health check
         health_report = PluginHealthChecker.check_plugin_health(plugin_instance, plugin_name)
         
-        log_event(f"[Plugin Health] Health check for {plugin_name}", 
+        log_event(f"[PLUGIN_HEALTH] Health check for {plugin_name}",
                  extra={'plugin_name': plugin_name, 'is_healthy': health_report['is_healthy']})
         
         return jsonify(health_report)
     
     except Exception as e:
-        log_event(f"[Plugin Health] Error checking health for {plugin_name}: {str(e)}", level=logging.ERROR)
+        log_event(f"[PLUGIN_HEALTH] Error checking health for {plugin_name}: {str(e)}", level=logging.ERROR)
         return jsonify({
             'plugin_name': plugin_name,
             'is_healthy': False,
@@ -377,7 +377,7 @@ def repair_plugin(plugin_name):
         })
     
     except Exception as e:
-        log_event(f"[Plugin Repair] Error repairing {plugin_name}: {str(e)}", level=logging.ERROR)
+        log_event(f"[PLUGIN_REPAIR] Error repairing {plugin_name}: {str(e)}", level=logging.ERROR)
         return jsonify({
             'success': False,
             'error': f'Repair failed: {str(e)}'

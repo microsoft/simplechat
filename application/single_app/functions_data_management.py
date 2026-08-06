@@ -587,7 +587,7 @@ def _get_application_settings_for_data_management():
         return get_settings() or {}
     except Exception as exc:
         log_event(
-            "[DataManagement] Application settings could not be loaded for Data Management validation.",
+            "[DATA_MANAGEMENT] Application settings could not be loaded for Data Management validation.",
             {"error": str(exc)},
             level=logging.WARNING,
         )
@@ -621,7 +621,7 @@ def _derive_storage_blob_endpoint_from_connection_string(connection_string):
         return _normalize_storage_endpoint(derive_blob_endpoint_from_connection_string(connection_string))
     except Exception as exc:
         log_event(
-            "[DataManagement] Could not derive a Blob endpoint from a storage connection string.",
+            "[DATA_MANAGEMENT] Could not derive a Blob endpoint from a storage connection string.",
             {"error": str(exc)},
             level=logging.WARNING,
         )
@@ -1008,7 +1008,7 @@ def generate_data_management_encryption_key():
             key_reference = stored_reference
     except Exception as exc:
         log_event(
-            "[DataManagement] Backup encryption key could not be stored in Key Vault; storing in settings document.",
+            "[DATA_MANAGEMENT] Backup encryption key could not be stored in Key Vault; storing in settings document.",
             {"error": str(exc)},
             level=logging.WARNING,
         )
@@ -2569,7 +2569,7 @@ def _apply_temporary_backup_source_capacity(job, backup_state, settings, backup_
         inspection = _inspect_backup_source_capacity(backup_plan)
     except Exception as exc:
         log_event(
-            "[DataManagement] Source Cosmos capacity inspection failed.",
+            "[DATA_MANAGEMENT] Source Cosmos capacity inspection failed.",
             {"job_id": job.get("id"), "error": str(exc)},
             level=logging.WARNING,
         )
@@ -2659,7 +2659,7 @@ def _apply_temporary_backup_source_capacity(job, backup_state, settings, backup_
             except Exception as exc:
                 target_snapshot["boost_error"] = "Source Cosmos capacity boost operation failed."
                 log_event(
-                    "[DataManagement] Source Cosmos capacity boost failed.",
+                    "[DATA_MANAGEMENT] Source Cosmos capacity boost failed.",
                     {"job_id": job.get("id"), "scope": target_snapshot["scope"], "error": str(exc)},
                     level=logging.WARNING,
                 )
@@ -2835,7 +2835,7 @@ def _restore_temporary_backup_source_capacity(
         except Exception as exc:
             target["restore_status"] = "restore_failed"
             log_event(
-                "[DataManagement] Source Cosmos capacity restoration failed.",
+                "[DATA_MANAGEMENT] Source Cosmos capacity restoration failed.",
                 {"job_id": job.get("id"), "scope": target.get("scope"), "error": str(exc)},
                 level=logging.WARNING,
             )
@@ -7737,7 +7737,7 @@ def _log_data_management_activity(job, action, status, message, details=None):
         app_config.cosmos_activity_logs_container.create_item(body=activity_record)
     except Exception as exc:
         log_event(
-            "[DataManagement] Failed to write job activity record.",
+            "[DATA_MANAGEMENT] Failed to write job activity record.",
             {"job_id": job_id, "action": action, "error": str(exc)},
             level=logging.WARNING,
         )
@@ -7887,7 +7887,7 @@ def _resolve_backup_encryption_reference(settings):
         return resolved_reference
     except Exception as exc:
         log_event(
-            "[DataManagement] Backup encryption version could not be resolved.",
+            "[DATA_MANAGEMENT] Backup encryption version could not be resolved.",
             {"error": str(exc)},
             level=logging.ERROR,
         )
@@ -8186,7 +8186,7 @@ def release_data_management_restore_review_reservation(authorization_token, rese
         if getattr(exc, "status_code", None) in {409, 412}:
             return False
         log_event(
-            "[DataManagement] Failed to release restore review reservation.",
+            "[DATA_MANAGEMENT] Failed to release restore review reservation.",
             {"authorization_id": normalized_token, "error_type": type(exc).__name__},
             level=logging.WARNING,
             exceptionTraceback=True,
@@ -9255,7 +9255,7 @@ def recover_data_management_jobs(app=None, settings=None, current_time=None, ope
             )
         else:
             log_event(
-                "[DataManagement] Durable job recovery could not submit to the executor.",
+                "[DATA_MANAGEMENT] Durable job recovery could not submit to the executor.",
                 {"job_id": saved_job.get("id"), "reason": reason, "operation": operation},
                 level=logging.WARNING,
             )
@@ -10785,7 +10785,7 @@ def _delete_data_management_backup_job(
         details=cleanup_summary,
     )
     log_event(
-        "[DataManagement] Backup cleanup completed.",
+        "[DATA_MANAGEMENT] Backup cleanup completed.",
         cleanup_summary,
         level=logging.INFO,
     )
@@ -10968,7 +10968,7 @@ def cleanup_expired_data_management_backups(
             }
             result["errors"].append(error)
             log_event(
-                "[DataManagement] Backup retention cleanup failed for one backup.",
+                "[DATA_MANAGEMENT] Backup retention cleanup failed for one backup.",
                 error,
                 level=logging.WARNING,
             )
@@ -10976,7 +10976,7 @@ def cleanup_expired_data_management_backups(
     result["success"] = not result["errors"]
     _record_backup_retention_cleanup_run(cleanup_settings, now)
     log_event(
-        "[DataManagement] Backup retention cleanup completed.",
+        "[DATA_MANAGEMENT] Backup retention cleanup completed.",
         {
             "success": result["success"],
             "manual_execution": result["manual_execution"],
@@ -11645,7 +11645,7 @@ def release_data_management_migration_review_reservation(
         if getattr(exc, "status_code", None) in {409, 412}:
             return False
         log_event(
-            "[DataManagement] Failed to release migration review reservation.",
+            "[DATA_MANAGEMENT] Failed to release migration review reservation.",
             {
                 "authorization_id": normalized_token,
                 "error_type": type(exc).__name__,
@@ -11740,7 +11740,7 @@ def _migration_review_check(
         }
     except Exception as exc:
         log_event(
-            "[DataManagement] Migration review check failed.",
+            "[DATA_MANAGEMENT] Migration review check failed.",
             {
                 "check_id": check_id,
                 "error_type": type(exc).__name__,
@@ -12135,7 +12135,7 @@ def _try_claim_data_management_job(job_id, settings=None):
                 return None
         except DataManagementMigrationLeaseLostError as exc:
             log_event(
-                "[DataManagement] Migration retry claim deferred because its coordinator lock could not be verified.",
+                "[DATA_MANAGEMENT] Migration retry claim deferred because its coordinator lock could not be verified.",
                 {"job_id": job_id, "error": str(exc)},
                 level=logging.WARNING,
             )
@@ -12150,7 +12150,7 @@ def _try_claim_data_management_job(job_id, settings=None):
                 return None
         except DataManagementBackupLeaseLostError as exc:
             log_event(
-                "[DataManagement] Backup claim deferred because its source lock could not be verified.",
+                "[DATA_MANAGEMENT] Backup claim deferred because its source lock could not be verified.",
                 {"job_id": job_id, "error": str(exc)},
                 level=logging.WARNING,
             )
@@ -12207,7 +12207,7 @@ def _try_claim_data_management_job(job_id, settings=None):
         status_code = getattr(exc, "status_code", None)
         if status_code not in (409, 412):
             log_event(
-                "[DataManagement] Job claim failed.",
+                "[DATA_MANAGEMENT] Job claim failed.",
                 {"job_id": job_id, "status_code": status_code, "error": str(exc)},
                 level=logging.WARNING,
             )
@@ -12543,7 +12543,7 @@ def _record_data_management_job_event(job_id, step_name, job, status=DATA_MANAGE
         )
     except Exception as exc:
         log_event(
-            "[DataManagement] Failed to write job timeline event.",
+            "[DATA_MANAGEMENT] Failed to write job timeline event.",
             {"job_id": job_id, "step_name": step_name, "status": status, "error": str(exc)},
             level=logging.WARNING,
         )
@@ -12735,7 +12735,7 @@ def log_data_management_cosmos_editor_activity(admin_user_id, admin_email, actio
         app_config.cosmos_activity_logs_container.create_item(body=activity_record)
     except Exception as exc:
         log_event(
-            "[DataManagement] Failed to write Cosmos editor activity record.",
+            "[DATA_MANAGEMENT] Failed to write Cosmos editor activity record.",
             {"action": safe_action, "status": status, "error": str(exc)},
             level=logging.WARNING,
         )
@@ -13085,7 +13085,7 @@ def _get_backup_fernet(settings, key_reference=None):
             key_value = retrieve_secret_from_key_vault_by_full_name(resolved_reference)
     except Exception as exc:
         log_event(
-            "[DataManagement] Backup encryption key retrieval failed.",
+            "[DATA_MANAGEMENT] Backup encryption key retrieval failed.",
             {"error": str(exc)},
             level=logging.ERROR,
         )
@@ -14835,7 +14835,7 @@ def _iter_backup_cosmos_source_items(
             except Exception as exc:
                 if not _is_retryable_backup_cosmos_error(exc) or attempt >= retry_count:
                     log_event(
-                        "[DataManagement] Cosmos backup source page read failed.",
+                        "[DATA_MANAGEMENT] Cosmos backup source page read failed.",
                         {
                             "container": container_name,
                             "status_code": _get_backup_exception_status_code(exc),
@@ -17023,7 +17023,7 @@ def _execute_backup_cosmos_resources(
                 raise
             except Exception as exc:
                 log_event(
-                    "[DataManagement] Cosmos backup resource failed.",
+                    "[DATA_MANAGEMENT] Cosmos backup resource failed.",
                     {"job_id": job.get("id"), "resource": artifact["name"], "error": str(exc)},
                     level=logging.WARNING,
                 )
@@ -18772,21 +18772,21 @@ def process_data_management_job(job_id):
         return saved_job
     except DataManagementBackupLeaseLostError as exc:
         log_event(
-            "[DataManagement] Backup worker stopped after losing its job or source lease.",
+            "[DATA_MANAGEMENT] Backup worker stopped after losing its job or source lease.",
             {"job_id": job_id, "operation": job.get("operation"), "error": str(exc)},
             level=logging.WARNING,
         )
         return None
     except DataManagementMigrationLeaseLostError as exc:
         log_event(
-            "[DataManagement] Migration worker stopped after losing its job lease.",
+            "[DATA_MANAGEMENT] Migration worker stopped after losing its job lease.",
             {"job_id": job_id, "operation": job.get("operation"), "error": str(exc)},
             level=logging.WARNING,
         )
         return None
     except DataManagementRestoreLeaseLostError as exc:
         log_event(
-            "[DataManagement] Restore worker stopped after losing its job lease.",
+            "[DATA_MANAGEMENT] Restore worker stopped after losing its job lease.",
             {"job_id": job_id, "operation": job.get("operation"), "error": str(exc)},
             level=logging.WARNING,
         )
@@ -18804,7 +18804,7 @@ def process_data_management_job(job_id):
             "lease_expires_at": None,
         })
         log_event(
-            "[DataManagement] Job processing failed.",
+            "[DATA_MANAGEMENT] Job processing failed.",
             {"job_id": job_id, "operation": job.get("operation"), "error": str(exc)},
             level=logging.ERROR,
             exceptionTraceback=True,
@@ -18878,7 +18878,7 @@ def check_due_data_management_jobs_once(app=None):
             settings = get_data_management_settings()
         except Exception as exc:
             log_event(
-                "[DataManagement] Scheduled backup retention cleanup failed.",
+                "[DATA_MANAGEMENT] Scheduled backup retention cleanup failed.",
                 {"error": str(exc)},
                 level=logging.ERROR,
                 exceptionTraceback=True,

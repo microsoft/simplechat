@@ -265,7 +265,7 @@ class McpPluginFactory:
         """Perform one MCP tool call attempt."""
         connector = cls.create_connector(config)
         try:
-            debug_print(f"[McpPluginFactory] Connecting to MCP server for tool call tool_name={tool_name}.")
+            debug_print(f"[MCP_PLUGIN_FACTORY] Connecting to MCP server for tool call tool_name={tool_name}.")
             await connector.connect()
             raw_result = await connector.call_tool(tool_name, **(arguments or {}))
             additional_fields = normalize_mcp_additional_fields((config or {}).get("additionalFields", {}))
@@ -275,12 +275,12 @@ class McpPluginFactory:
                 additional_fields.get("tool_result_policy"),
             )
             debug_print(
-                f"[McpPluginFactory] MCP tool call succeeded tool_name={tool_name} "
+                f"[MCP_PLUGIN_FACTORY] MCP tool call succeeded tool_name={tool_name} "
                 f"success={result.get('success') if isinstance(result, dict) else '<unknown>'}."
             )
             return result
         finally:
-            debug_print(f"[McpPluginFactory] Closing MCP tool connector tool_name={tool_name}.")
+            debug_print(f"[MCP_PLUGIN_FACTORY] Closing MCP tool connector tool_name={tool_name}.")
             await connector.close()
 
     @classmethod
@@ -308,7 +308,7 @@ class McpPluginFactory:
                 if error_info["retryable"] and attempt < retry_count:
                     delay = retry_backoff_seconds * (2 ** attempt)
                     log_event(
-                        "[MCPOutbound] Operation retry scheduled",
+                        "[MCP_OUTBOUND] Operation retry scheduled",
                         extra={
                             **cls._build_operation_log_context(config, operation, attempt=attempt + 1),
                             "delay_seconds": delay,
@@ -322,7 +322,7 @@ class McpPluginFactory:
                     continue
 
                 log_event(
-                    "[MCPOutbound] Operation failed",
+                    "[MCP_OUTBOUND] Operation failed",
                     extra={
                         **cls._build_operation_log_context(config, operation, attempt=attempt + 1),
                         "category": error_info["category"],
@@ -374,7 +374,7 @@ class McpPluginFactory:
             if not command:
                 raise ValueError("MCP stdio transport requires a command.")
             log_event(
-                "[MCPOutbound] Creating MCP stdio connector",
+                "[MCP_OUTBOUND] Creating MCP stdio connector",
                 extra={
                     **cls._build_operation_log_context(manifest, "create_connector"),
                     "command_present": bool(command),
@@ -409,7 +409,7 @@ class McpPluginFactory:
         timeout = float(additional_fields.get("connect_timeout") or 10)
         sse_read_timeout = float(additional_fields.get("sse_read_timeout") or 300)
         log_event(
-            "[MCPOutbound] Creating MCP remote connector",
+            "[MCP_OUTBOUND] Creating MCP remote connector",
             extra={
                 **cls._build_operation_log_context(manifest, "create_connector"),
                 "connect_timeout": timeout,
