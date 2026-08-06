@@ -1083,7 +1083,7 @@
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Store agent and action sensitive information like API keys and secrets securely in Azure Key Vault."></i>
                     </div>
 
-                    <div id="key_vault_settings" {% if not settings.enable_key_vault_secret_storage %}style="display: none;"{% endif %}>
+                    <div id="key_vault_settings" class="{% if not settings.enable_key_vault_secret_storage %}d-none{% endif %}">
                         <div id="key-vault-warning" class="alert alert-warning mt-2 mb-3">
                             <strong>⚠️ Warning:</strong> Once you enable Key Vault, you should <u>NOT</u> disable it. Disabling Key Vault after enabling <u>WILL</u> cause loss of access to secrets and break application functionality.
                         </div>
@@ -1106,6 +1106,178 @@
                             Test Key Vault Connection
                         </button>
                         <div id="test_key_vault_result" class="mt-2">
+                        </div>
+
+                        <div class="border-top mt-4 pt-3">
+                            <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-start gap-3 mb-3">
+                                <div>
+                                    <h6 class="mb-1">
+                                        <i class="bi bi-bell me-2"></i>Secret Expiration Reminders
+                                    </h6>
+                                    <p class="text-muted small mb-0">
+                                        Track SimpleChat-owned Key Vault secrets with expiration dates, in-app reminders, and an admin inventory that maps opaque secret names back to their owner and source.
+                                    </p>
+                                </div>
+                                <button type="button" class="btn btn-outline-secondary btn-sm" id="key-vault-reminders-refresh">
+                                    <i class="bi bi-arrow-clockwise me-1"></i>Refresh Inventory
+                                </button>
+                            </div>
+
+                            <div class="alert alert-info small" role="alert">
+                                Azure email alerts should still be configured in Azure Monitor or Event Grid for the vault. SimpleChat stores per-secret context so an emailed Key Vault alert can be mapped back to the user, group, action, field, and rotation notes.
+                            </div>
+
+                            <div class="alert alert-light border small" id="key-vault-external-alert-guidance" role="note">
+                                <strong>External automation:</strong> SimpleChat emits a queryable Application Insights event named
+                                <code>key_vault_expiration_reminder_triggered</code> whenever a reminder notification is created.
+                                Use an Azure Monitor scheduled query alert with an action group, Logic App, Function, or webhook to send external notifications. Enable the routing email option below if downstream automation needs to send directly to the configured reminder contact.
+                                <pre class="mt-2 mb-1"><code>traces
+| where customDimensions.sc_event_name == 'key_vault_expiration_reminder_triggered'
+| project timestamp,
+          reminder_id = tostring(customDimensions.sc_event_reminder_id),
+          scope = tostring(customDimensions.sc_event_scope),
+          source_type = tostring(customDimensions.sc_event_source_type),
+          days_until_expiry = toint(customDimensions.sc_event_days_until_expiry),
+          expires_on = tostring(customDimensions.sc_event_expires_on),
+          contact_email = tostring(customDimensions.sc_event_contact_email)</code></pre>
+                                <span class="text-muted">The <code>contact_email</code> column is populated only when the opt-in below is enabled. For workspace-based Log Analytics queries, use the equivalent Application Insights traces table and dimensions/properties fields available in that workspace.</span>
+                            </div>
+
+                            <div class="form-check form-switch mb-3">
+                                <input
+                                    class="form-check-input"
+                                    type="checkbox"
+                                    id="enable_key_vault_secret_expiration_reminders"
+                                    name="enable_key_vault_secret_expiration_reminders"
+                                    {% if settings.enable_key_vault_secret_expiration_reminders %}checked{% endif %}
+                                >
+                                <label class="form-check-label" for="enable_key_vault_secret_expiration_reminders">
+                                    Enable SimpleChat expiration reminder tracking
+                                </label>
+                            </div>
+
+                            <div id="key_vault_expiration_reminder_settings" class="{% if not settings.enable_key_vault_secret_expiration_reminders %}d-none{% endif %}">
+                                <div class="row g-3">
+                                    <div class="col-md-3">
+                                        <label for="key_vault_secret_expiration_default_lead_days" class="form-label">Default lead days</label>
+                                        <input
+                                            type="number"
+                                            min="1"
+                                            max="3650"
+                                            class="form-control"
+                                            id="key_vault_secret_expiration_default_lead_days"
+                                            name="key_vault_secret_expiration_default_lead_days"
+                                            value="{{ settings.key_vault_secret_expiration_default_lead_days or 30 }}"
+                                        >
+                                    </div>
+                                    <div class="col-md-5">
+                                        <label for="key_vault_secret_expiration_default_contact_email" class="form-label">Default reminder email</label>
+                                        <input
+                                            type="email"
+                                            class="form-control"
+                                            id="key_vault_secret_expiration_default_contact_email"
+                                            name="key_vault_secret_expiration_default_contact_email"
+                                            value="{{ settings.key_vault_secret_expiration_default_contact_email or '' }}"
+                                            placeholder="owner@example.com"
+                                        >
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label for="key_vault_secret_expiration_admin_roles" class="form-label">Admin notification roles</label>
+                                        <input
+                                            type="text"
+                                            class="form-control"
+                                            id="key_vault_secret_expiration_admin_roles"
+                                            name="key_vault_secret_expiration_admin_roles"
+                                            value="{{ (settings.key_vault_secret_expiration_admin_roles or ['Admin'])|join(', ') }}"
+                                            placeholder="Admin"
+                                        >
+                                        <div class="form-text">Comma-separated roles for global-scope reminder notifications.</div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label for="key_vault_secret_expiration_scan_interval_seconds" class="form-label">Scan interval seconds</label>
+                                        <input
+                                            type="number"
+                                            min="900"
+                                            max="86400"
+                                            class="form-control"
+                                            id="key_vault_secret_expiration_scan_interval_seconds"
+                                            name="key_vault_secret_expiration_scan_interval_seconds"
+                                            value="{{ settings.key_vault_secret_expiration_scan_interval_seconds or 21600 }}"
+                                        >
+                                    </div>
+                                    <div class="col-md-8 d-flex align-items-end">
+                                        <div class="form-check">
+                                            <input
+                                                class="form-check-input"
+                                                type="checkbox"
+                                                id="key_vault_secret_expiration_require_expiration"
+                                                name="key_vault_secret_expiration_require_expiration"
+                                                {% if settings.key_vault_secret_expiration_require_expiration %}checked{% endif %}
+                                            >
+                                            <label class="form-check-label" for="key_vault_secret_expiration_require_expiration">
+                                                Require expiration dates when users enable tracking on new secrets
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-8">
+                                        <div class="form-check">
+                                            <input
+                                                class="form-check-input"
+                                                type="checkbox"
+                                                id="key_vault_secret_expiration_emit_contact_email_in_telemetry"
+                                                name="key_vault_secret_expiration_emit_contact_email_in_telemetry"
+                                                aria-describedby="key_vault_secret_expiration_emit_contact_email_in_telemetry_help"
+                                                {% if settings.key_vault_secret_expiration_emit_contact_email_in_telemetry %}checked{% endif %}
+                                            >
+                                            <label class="form-check-label" for="key_vault_secret_expiration_emit_contact_email_in_telemetry">
+                                                Include reminder contact email in external telemetry
+                                            </label>
+                                            <div class="form-text" id="key_vault_secret_expiration_emit_contact_email_in_telemetry_help">
+                                                Default off. Enable only when Azure Monitor, Logic Apps, Functions, or webhook automation needs the email address to route notifications directly.
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="mt-4">
+                                <div class="d-flex flex-column flex-lg-row gap-2 mb-3">
+                                    <input type="search" class="form-control" id="key-vault-reminders-search" placeholder="Search by owner, action, field, email, reminder ID, or secret name">
+                                    <select class="form-select" id="key-vault-reminders-status" aria-label="Reminder status filter">
+                                        <option value="">All statuses</option>
+                                        <option value="active">Active</option>
+                                        <option value="sync_failed">Sync failed</option>
+                                        <option value="disabled">Disabled</option>
+                                    </select>
+                                    <button type="button" class="btn btn-outline-primary" id="key-vault-reminders-run">
+                                        <i class="bi bi-play-circle me-1"></i>Run Sweep
+                                    </button>
+                                </div>
+
+                                <div id="key-vault-reminders-status-message" class="alert d-none" role="alert"></div>
+
+                                <div class="table-responsive">
+                                    <table class="table table-sm align-middle">
+                                        <thead>
+                                            <tr>
+                                                <th>Expires</th>
+                                                <th>Scope</th>
+                                                <th>Source</th>
+                                                <th>Field</th>
+                                                <th>Contact</th>
+                                                <th>Status</th>
+                                                <th>Reminder ID</th>
+                                                <th>Secret</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="key-vault-reminders-table-body">
+                                            <tr>
+                                                <td colspan="8" class="text-muted">Refresh inventory to load tracked secrets.</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>

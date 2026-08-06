@@ -44,3 +44,5 @@ applyTo: '**/*.py'
 - Always use f-strings for string interpolation. Ex: `f"User ID: {user_id}"` instead of `"User ID: {}".format(user_id)"`
 
 - Never use `except:` without specifying the exception type. Always catch specific exceptions or use `except Exception as ex:` to capture the exception details. This also avoids accidentally catching system-exiting exceptions like `KeyboardInterrupt` or `SystemExit`.
+
+- Never return raw exception text to browser or API clients. Do not use `str(e)`, `str(exc)`, `repr(e)`, traceback text, SDK exception messages, connection strings, or provider errors in `jsonify()`, template rendering, streaming responses, or other client-visible payloads. Log exception type and safe contextual metadata server-side with `log_event` or `debug_print`, then return a stable user-safe message such as `"Invalid request."`, `"Unable to save action."`, or `"Unable to store secrets in Key Vault."`

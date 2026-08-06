@@ -35,6 +35,10 @@ from functions_app_maintenance import (
 from functions_debug import debug_print
 from functions_data_management import check_due_data_management_jobs_once
 from functions_file_sync import check_due_file_sync_sources_once
+from functions_keyvault_reminders import (
+    KEY_VAULT_SECRET_REMINDER_LOCK_NAME,
+    check_due_key_vault_secret_reminders_once,
+)
 from functions_tabular_generated_exports import check_due_tabular_generated_output_runs_once
 from functions_personal_workflows import (
     compute_next_run_at,
@@ -782,6 +786,35 @@ def run_app_maintenance_loop():
         time.sleep(max(int(sleep_seconds or 3600), 15))
 
 
+def run_key_vault_secret_reminder_loop():
+    """Run due Key Vault secret expiration reminder checks under a distributed lock."""
+    while True:
+        lock_document = None
+        sleep_seconds = 21600
+        try:
+            settings = get_settings()
+            sleep_seconds = int(settings.get('key_vault_secret_expiration_scan_interval_seconds') or 21600)
+            if settings.get('enable_key_vault_secret_expiration_reminders'):
+                lock_document = acquire_distributed_task_lock(
+                    KEY_VAULT_SECRET_REMINDER_LOCK_NAME,
+                    lease_seconds=600,
+                )
+                if lock_document:
+                    check_due_key_vault_secret_reminders_once(settings=settings)
+        except Exception as exc:
+            log_event(
+                '[KeyVaultReminders] Error in reminder scheduler loop.',
+                extra={'error': str(exc)},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+        finally:
+            if lock_document:
+                release_distributed_task_lock(lock_document)
+
+        time.sleep(max(int(sleep_seconds or 21600), 900))
+
+
 def start_background_task_threads(app=None):
     """Start all background task loops for the current process."""
     task_specs = [
@@ -795,6 +828,7 @@ def start_background_task_threads(app=None):
         ('Tabular generated-output scheduler background task started.', run_tabular_generated_output_scheduler_loop),
         ('Data Management scheduler background task started.', lambda: run_data_management_scheduler_loop(app=app)),
         ('App maintenance background task started.', run_app_maintenance_loop),
+        ('Key Vault secret reminder background task started.', run_key_vault_secret_reminder_loop),
     ]
 
     started_threads = []

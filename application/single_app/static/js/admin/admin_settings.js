@@ -4917,6 +4917,143 @@ function setupFileDownloadAssignments() {
     }).setup();
 }
 
+function setKeyVaultReminderStatus(message, variant = 'info') {
+    const statusElement = document.getElementById('key-vault-reminders-status-message');
+    if (!statusElement) {
+        return;
+    }
+
+    statusElement.textContent = message || '';
+    statusElement.className = `alert alert-${variant}${message ? '' : ' d-none'}`;
+}
+
+function appendKeyVaultReminderCell(row, text, className = '') {
+    const cell = document.createElement('td');
+    if (className) {
+        cell.className = className;
+    }
+    cell.textContent = text || '';
+    row.appendChild(cell);
+}
+
+function formatKeyVaultReminderExpiry(reminder) {
+    const expiresOn = reminder.expires_on || 'Unknown';
+    if (typeof reminder.days_until_expiry !== 'number') {
+        return expiresOn;
+    }
+    if (reminder.days_until_expiry < 0) {
+        return `${expiresOn} (${Math.abs(reminder.days_until_expiry)} days expired)`;
+    }
+    if (reminder.days_until_expiry === 0) {
+        return `${expiresOn} (today)`;
+    }
+    return `${expiresOn} (${reminder.days_until_expiry} days)`;
+}
+
+function renderKeyVaultReminderInventory(reminders) {
+    const tableBody = document.getElementById('key-vault-reminders-table-body');
+    if (!tableBody) {
+        return;
+    }
+
+    tableBody.replaceChildren();
+    if (!Array.isArray(reminders) || reminders.length === 0) {
+        const row = document.createElement('tr');
+        const cell = document.createElement('td');
+        cell.colSpan = 8;
+        cell.className = 'text-muted';
+        cell.textContent = 'No Key Vault reminder inventory entries match the current filters.';
+        row.appendChild(cell);
+        tableBody.appendChild(row);
+        return;
+    }
+
+    reminders.forEach(reminder => {
+        const row = document.createElement('tr');
+        const sourceLabel = reminder.source_display_name || reminder.source_name || reminder.source_id || '';
+        const fieldLabel = reminder.field_label || reminder.field_path || '';
+        const statusLabel = reminder.key_vault_sync_status === 'sync_failed'
+            ? `${reminder.status || 'sync_failed'}: ${reminder.key_vault_sync_error || 'Key Vault sync failed'}`
+            : (reminder.status || '');
+
+        appendKeyVaultReminderCell(row, formatKeyVaultReminderExpiry(reminder));
+        appendKeyVaultReminderCell(row, `${reminder.scope || ''}: ${reminder.scope_value || ''}`);
+        appendKeyVaultReminderCell(row, sourceLabel);
+        appendKeyVaultReminderCell(row, fieldLabel);
+        appendKeyVaultReminderCell(row, reminder.contact_email || '');
+        appendKeyVaultReminderCell(row, statusLabel);
+        appendKeyVaultReminderCell(row, reminder.id || '', 'font-monospace small');
+        appendKeyVaultReminderCell(row, reminder.secret_name || '', 'font-monospace small');
+        tableBody.appendChild(row);
+    });
+}
+
+async function loadKeyVaultReminderInventory() {
+    const refreshButton = document.getElementById('key-vault-reminders-refresh');
+    const searchInput = document.getElementById('key-vault-reminders-search');
+    const statusSelect = document.getElementById('key-vault-reminders-status');
+    const params = new URLSearchParams();
+    if (searchInput?.value.trim()) {
+        params.set('search', searchInput.value.trim());
+    }
+    if (statusSelect?.value) {
+        params.set('status', statusSelect.value);
+    }
+
+    setKeyVaultReminderStatus('Loading Key Vault reminder inventory...', 'info');
+    if (refreshButton) {
+        refreshButton.disabled = true;
+    }
+
+    try {
+        const response = await fetch(`/api/admin/settings/key-vault/secret-reminders?${params.toString()}`);
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Failed to load Key Vault reminder inventory.');
+        }
+        renderKeyVaultReminderInventory(data.reminders || []);
+        setKeyVaultReminderStatus(`Loaded ${Array.isArray(data.reminders) ? data.reminders.length : 0} reminder entries.`, 'success');
+    } catch (error) {
+        renderKeyVaultReminderInventory([]);
+        setKeyVaultReminderStatus(error.message || 'Failed to load Key Vault reminder inventory.', 'danger');
+    } finally {
+        if (refreshButton) {
+            refreshButton.disabled = false;
+        }
+    }
+}
+
+async function runKeyVaultReminderSweep() {
+    const runButton = document.getElementById('key-vault-reminders-run');
+    setKeyVaultReminderStatus('Running Key Vault reminder sweep...', 'info');
+    if (runButton) {
+        runButton.disabled = true;
+    }
+
+    try {
+        const response = await fetch('/api/admin/settings/key-vault/secret-reminders/run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Failed to run Key Vault reminder sweep.');
+        }
+        const result = data.result || {};
+        setKeyVaultReminderStatus(
+            `Reminder sweep checked ${result.checked || 0} entries and created ${result.notifications_created || 0} notifications.`,
+            'success'
+        );
+        await loadKeyVaultReminderInventory();
+    } catch (error) {
+        setKeyVaultReminderStatus(error.message || 'Failed to run Key Vault reminder sweep.', 'danger');
+    } finally {
+        if (runButton) {
+            runButton.disabled = false;
+        }
+    }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     setupAdminFormAutofillMetadata();
 
@@ -6694,12 +6831,43 @@ function setupToggles() {
 
     const enableKeyVaultCheckbox = document.getElementById('enable_key_vault_secret_storage');
     if (enableKeyVaultCheckbox) {
+        const keyVaultSettings = document.getElementById('key_vault_settings');
+        if (keyVaultSettings) {
+            keyVaultSettings.classList.toggle('d-none', !enableKeyVaultCheckbox.checked);
+        }
         enableKeyVaultCheckbox.addEventListener('change', function() {
-            const keyVaultSettings = document.getElementById('key_vault_settings');
-            keyVaultSettings.style.display = this.checked ? 'block' : 'none';
+            if (keyVaultSettings) {
+                keyVaultSettings.classList.toggle('d-none', !this.checked);
+            }
             markFormAsModified();
         });
     }
+
+    const enableKeyVaultRemindersCheckbox = document.getElementById('enable_key_vault_secret_expiration_reminders');
+    const keyVaultReminderSettings = document.getElementById('key_vault_expiration_reminder_settings');
+    if (enableKeyVaultRemindersCheckbox && keyVaultReminderSettings) {
+        keyVaultReminderSettings.classList.toggle('d-none', !enableKeyVaultRemindersCheckbox.checked);
+        enableKeyVaultRemindersCheckbox.addEventListener('change', function() {
+            keyVaultReminderSettings.classList.toggle('d-none', !this.checked);
+            markFormAsModified();
+        });
+    }
+
+    document.getElementById('key-vault-reminders-refresh')?.addEventListener('click', () => {
+        void loadKeyVaultReminderInventory();
+    });
+    document.getElementById('key-vault-reminders-run')?.addEventListener('click', () => {
+        void runKeyVaultReminderSweep();
+    });
+    document.getElementById('key-vault-reminders-search')?.addEventListener('keydown', event => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            void loadKeyVaultReminderInventory();
+        }
+    });
+    document.getElementById('key-vault-reminders-status')?.addEventListener('change', () => {
+        void loadKeyVaultReminderInventory();
+    });
 
     const enableWebSearch = document.getElementById('enable_web_search');
     const webSearchFoundrySettings = document.getElementById('web_search_foundry_settings');
