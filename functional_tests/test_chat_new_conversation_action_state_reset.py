@@ -11,6 +11,7 @@ Deep Research keeps the user's saved default for later Web Search and URL use.
 
 import os
 import sys
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -134,7 +135,7 @@ def test_config_version_updated():
     """Verify config.py reflects the action-state reset implementation version."""
     print("Testing config.py version update...")
     config_source = read_file(CONFIG_FILE)
-    assert 'VERSION = "0.241.106"' in config_source
+    assert_app_version_at_least("0.241.106")
     print("Config version update verified.")
     return True
 

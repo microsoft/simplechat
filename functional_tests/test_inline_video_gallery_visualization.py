@@ -12,6 +12,7 @@ citation labels stay readable for video results.
 
 import os
 import sys
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -90,7 +91,7 @@ def test_chat_renderer_wires_inline_video_galleries():
     workflow_runner_source = read_text("application/single_app/functions_workflow_runner.py")
     config_py = read_text("application/single_app/config.py")
 
-    assert 'VERSION = "0.241.066"' in config_py
+    assert_app_version_at_least("0.241.066")
     assert "import { renderInlineVideoGalleries } from './chat-inline-videos.js';" in messages_js
     assert "await renderInlineVideoGalleries(" in messages_js
     assert 'const INLINE_VIDEO_GALLERY_RENDER_TYPE = "inline_video_gallery";' in videos_js

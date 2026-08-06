@@ -14,6 +14,7 @@ import importlib.util
 import os
 import sys
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -128,7 +129,7 @@ def test_checker_assets_and_version_are_wired_into_repo() -> None:
     assert INSTRUCTION_FILE.exists(), f'Expected instruction file at {INSTRUCTION_FILE}'
     assert FULL_AUDIT_PROMPT_FILE.exists(), f'Expected full-audit prompt at {FULL_AUDIT_PROMPT_FILE}'
     assert FEATURE_DOC.exists(), f'Expected feature document at {FEATURE_DOC}'
-    assert read_config_version() == '0.250.004'
+    assert_app_version_at_least("0.250.004")
 
     workflow_source = read_text(WORKFLOW_FILE)
     assert 'scripts/check_xss_sinks.py' in workflow_source

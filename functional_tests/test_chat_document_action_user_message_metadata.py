@@ -10,6 +10,7 @@ in the metadata drawer.
 """
 
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -23,9 +24,7 @@ def test_document_action_user_metadata_is_enriched() -> None:
     route_content = _read_workspace_file('application', 'single_app', 'route_backend_chats.py')
     config_content = _read_workspace_file('application', 'single_app', 'config.py')
 
-    assert 'VERSION = "0.250.070"' in config_content, (
-        'Expected the current application version for document-action user metadata coverage.'
-    )
+    assert_app_version_at_least("0.250.070")
     assert 'def _build_document_action_user_metadata(' in route_content, (
         'Expected a dedicated helper for document-action user message metadata.'
     )

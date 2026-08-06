@@ -16,6 +16,7 @@ import os
 import re
 import sys
 import traceback
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -144,7 +145,7 @@ def test_versions_are_updated():
 
     current_version = read_current_version()
 
-    assert current_version == CURRENT_VERSION, f"Expected config VERSION {CURRENT_VERSION}, found {current_version}"
+    assert_app_version_at_least(CURRENT_VERSION)
 
     print("Version updates passed")
 

@@ -10,6 +10,7 @@ properly loads the conversation in the main chat area.
 
 import sys
 import os
+from test_support.versioning import assert_app_version_at_least
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 def test_hidden_conversation_sidebar_click():
@@ -100,8 +101,7 @@ def test_hidden_conversation_sidebar_click():
         with open(config_path, 'r', encoding='utf-8') as f:
             config_content = f.read()
         
-        assert 'VERSION = "0.233.176"' in config_content, \
-            "Version not updated to 0.233.176"
+        assert_app_version_at_least("0.233.176")
         print("  ✅ Version updated to 0.233.176")
         
         print("\n✅ All tests passed! Hidden conversation sidebar click fix validated.")

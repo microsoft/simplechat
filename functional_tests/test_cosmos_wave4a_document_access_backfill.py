@@ -21,6 +21,7 @@ import os
 import sys
 import types
 from contextlib import contextmanager
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -402,7 +403,7 @@ def test_wave4a_settings_and_maintenance_contract_are_wired():
     maintenance_source = open(os.path.join(SINGLE_APP_DIR, "functions_app_maintenance.py"), "r", encoding="utf-8").read()
     route_source = open(os.path.join(SINGLE_APP_DIR, "route_backend_settings.py"), "r", encoding="utf-8").read()
 
-    assert 'VERSION = "0.250.047"' in config_source
+    assert_app_version_at_least("0.250.047")
     assert "'enable_startup_document_access_index_backfill': True" in settings_source
     assert "'document_access_index_backfill_batch_size': 200" in settings_source
     assert "'document_access_index_repair_batch_size': 100" in settings_source

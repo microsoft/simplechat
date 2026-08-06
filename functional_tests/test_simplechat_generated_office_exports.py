@@ -17,6 +17,7 @@ import types
 from pathlib import Path
 
 from flask import Flask
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -286,7 +287,7 @@ def test_simplechat_frontend_capability_contracts():
     plugin_js = (REPO_ROOT / 'application' / 'single_app' / 'static' / 'js' / 'plugin_modal_stepper.js').read_text(encoding='utf-8')
     agent_js = (REPO_ROOT / 'application' / 'single_app' / 'static' / 'js' / 'agent_modal_stepper.js').read_text(encoding='utf-8')
 
-    assert 'VERSION = "0.241.182"' in config
+    assert_app_version_at_least("0.241.182")
     assert "key: 'upload_word_document'" in plugin_js
     assert "key: 'upload_powerpoint_document'" in plugin_js
     assert "key: 'upload_word_document'" in agent_js

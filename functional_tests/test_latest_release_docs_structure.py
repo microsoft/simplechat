@@ -13,6 +13,7 @@ from pathlib import Path
 import sys
 
 import yaml
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -109,7 +110,7 @@ def test_latest_release_docs_structure() -> bool:
     index_content = read_text(LATEST_RELEASE_INDEX)
     release_data = yaml.safe_load(read_text(LATEST_RELEASE_DATA))
 
-    assert 'VERSION = "0.250.047"' in config_content, "Config version marker is not current."
+    assert_app_version_at_least("0.250.047")
 
     required_index_markers = [
         'layout: latest-release-index',

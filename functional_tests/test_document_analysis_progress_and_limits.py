@@ -9,6 +9,7 @@ per-document progress metadata, and enforces the chat/workflow document caps.
 """
 
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,9 +31,7 @@ def test_document_analysis_progress_and_limits_wiring():
     feature_index_content = read_text("docs/explanation/features/index.md")
     feature_doc_content = read_text("docs/explanation/features/v0.241.071/DOCUMENT_ANALYSIS_PROGRESS_AND_LIMITS.md")
 
-    assert 'VERSION = "0.241.023"' in config_content, (
-        "Expected config.py version 0.241.023 for analysis progress improvements."
-    )
+    assert_app_version_at_least("0.241.023")
     assert 'CHAT_DOCUMENT_ANALYSIS_MAX_DOCUMENTS = 3' in analysis_service_content, (
         "Expected the analysis service to define the chat document cap."
     )

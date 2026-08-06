@@ -10,6 +10,7 @@ missing prompt containers so active-group loading can continue.
 
 import os
 import sys
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -66,7 +67,7 @@ def test_config_version_is_bumped_for_prompt_role_ui_guard_fix():
     print("Testing config version bump...")
 
     config_content = read_file(CONFIG_FILE)
-    assert 'VERSION = "0.241.007"' in config_content, "Expected config.py version 0.241.007"
+    assert_app_version_at_least("0.241.007")
 
     print("Config version bump passed")
 

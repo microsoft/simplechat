@@ -13,6 +13,7 @@ and stays wired into the repo instruction and PR workflow.
 import importlib.util
 import sys
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -225,7 +226,7 @@ def test_checker_assets_and_version_are_wired_into_repo() -> None:
     assert FULL_SCAN_FEATURE_DOC.exists(), f'Expected full-scan feature document at {FULL_SCAN_FEATURE_DOC}'
     assert ROUTE_POLICY_FEATURE_DOC.exists(), f'Expected route policy feature document at {ROUTE_POLICY_FEATURE_DOC}'
     assert SWAGGER_ROUTE_WORKFLOW_FILE.exists(), f'Expected route workflow at {SWAGGER_ROUTE_WORKFLOW_FILE}'
-    assert read_config_version() == '0.250.004'
+    assert_app_version_at_least("0.250.004")
 
     workflow_source = read_text(WORKFLOW_FILE)
     assert 'scripts/check_broken_access_control.py' in workflow_source

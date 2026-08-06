@@ -16,6 +16,7 @@ import ast
 import os
 import sys
 from typing import Any, Dict, List
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -543,7 +544,7 @@ def test_security_fix_documentation_and_version_bump_exist():
     """Verify the fix doc exists and config version was bumped for this security pass."""
     print("🔍 Testing security fix documentation and version bump...")
 
-    assert read_config_version() == "0.241.022"
+    assert_app_version_at_least("0.241.022")
     assert os.path.exists(FIX_DOC), f"Expected fix documentation at {FIX_DOC}"
 
     fix_doc_text = read_file_text(FIX_DOC)

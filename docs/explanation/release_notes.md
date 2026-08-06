@@ -11,6 +11,11 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Deferred live storage container checks to upload/admin-test paths and added Admin Settings diagnostics for explicit storage validation.
     *   (Ref: #1155, PR #1161, Enhanced Citations storage startup, `config.py`, `functions_documents.py`, Admin Settings)
 
+*   **Functional Test Version Assertion Resilience**
+    *   Added shared functional-test version helpers so tests can assert the app version is at least the feature implementation version instead of exactly equal to an older release.
+    *   Migrated brittle exact `config.py` version checks and added a guardrail test to prevent reintroducing exact app-version assertions.
+    *   (Ref: functional test version helpers, `test_support/versioning.py`, `test_app_version_assertion_guardrails.py`)
+
 ### **(v0.250.125)**
 
 #### Bug Fixes

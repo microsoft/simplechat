@@ -11,6 +11,7 @@ final response is actually ready.
 """
 
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,9 +29,7 @@ def test_document_action_phase_progress_wiring():
     workflow_runner_content = read_text("application/single_app/functions_workflow_runner.py")
     chat_thoughts_content = read_text("application/single_app/static/js/chat/chat-thoughts.js")
 
-    assert 'VERSION = "0.241.023"' in config_content, (
-        "Expected config.py version 0.241.023 for phase-aware document action progress."
-    )
+    assert_app_version_at_least("0.241.023")
     assert "'phase_label': progress_meta.get('phase_label')" in analysis_service_content, (
         "Expected analysis progress snapshots to expose the current phase label."
     )

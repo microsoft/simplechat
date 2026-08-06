@@ -13,6 +13,8 @@ import ast
 import sys
 from pathlib import Path
 
+from test_support.versioning import assert_app_version_at_least
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = REPO_ROOT / "application" / "single_app" / "config.py"
@@ -43,11 +45,13 @@ def test_startup_storage_initialization_is_non_blocking():
     """Verify startup setup does not probe or create Enhanced Citations containers."""
     print("Testing Enhanced Citations startup storage initialization...")
 
-    config_content = read_text(CONFIG_PATH)
     startup_source = get_function_source(CONFIG_PATH, "_initialize_enhanced_citations_storage_client")
 
-    if 'VERSION = "0.250.126"' not in config_content:
-        raise AssertionError("config.py version was not bumped to 0.250.126")
+    assert_app_version_at_least(
+        "0.250.126",
+        repo_root=REPO_ROOT,
+        reason="Enhanced Citations startup storage degradation fix requires this version or newer.",
+    )
     if ".exists(" in startup_source:
         raise AssertionError("Startup initialization must not call container exists().")
     if "create_container" in startup_source:

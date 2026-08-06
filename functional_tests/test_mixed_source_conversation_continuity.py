@@ -13,6 +13,7 @@ coverage, and privacy bounds without persisting source content or locators.
 
 import ast
 import os
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -118,7 +119,7 @@ def test_flag_and_standard_streaming_wiring_are_present():
     assert route_source.count("'history',") >= 2
     assert 'source_continuity_refs=None' in metadata_source
     assert 'source_continuity_refs=source_continuity_refs' in metadata_source
-    assert 'VERSION = "0.250.107"' in config_source
+    assert_app_version_at_least("0.250.107")
     print('PASS: flag and Chat parity wiring')
 
 

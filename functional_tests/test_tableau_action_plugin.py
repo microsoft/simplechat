@@ -15,6 +15,7 @@ import sys
 import traceback
 import types
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 APP_DIR = Path(__file__).resolve().parents[1] / "application" / "single_app"
@@ -375,7 +376,7 @@ def test_tableau_identity_and_modal_contract():
     assert "toggleTableauAuthFields" in modal_source
     assert "populateTableauSummary" in modal_source
     assert "tableauserverclient==0.40" in requirements_source
-    assert 'VERSION = "0.250.047"' in config_source
+    assert_app_version_at_least("0.250.047")
 
     print("Tableau identity and modal source contract verified.")
     return True

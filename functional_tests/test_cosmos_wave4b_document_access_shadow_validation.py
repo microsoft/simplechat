@@ -27,6 +27,7 @@ import sys
 import types
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -682,7 +683,7 @@ def test_wave4b_admin_routes_and_version_are_wired():
     public_route = open(os.path.join(SINGLE_APP_DIR, "route_external_public_documents.py"), "r", encoding="utf-8").read()
     functions_documents = open(os.path.join(SINGLE_APP_DIR, "functions_documents.py"), "r", encoding="utf-8").read()
 
-    assert 'VERSION = "0.250.047"' in config_source
+    assert_app_version_at_least("0.250.047")
     assert "'enable_dai_debug': dai_debug_enabled" in route_settings_source
     assert "'enable_document_access_index_shadow_validation': document_access_index_shadow_validation_enabled" in route_settings_source
     assert "if enable_dai_debug" in admin_template

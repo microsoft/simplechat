@@ -18,6 +18,7 @@ soon until validation is complete.
 import ast
 import sys
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -44,7 +45,7 @@ def test_version_and_source_defaults():
     settings_text = read_text("application/single_app/functions_settings.py")
     file_sync_text = read_text("application/single_app/functions_file_sync.py")
 
-    assert 'VERSION = "0.250.072"' in config_text
+    assert_app_version_at_least("0.250.072")
     assert "FILE_SYNC_SOURCE_TYPE_ONEDRIVE = \"onedrive\"" in file_sync_text
     assert "FILE_SYNC_SOURCE_TYPE_ONEDRIVE" in file_sync_text
     assert "FILE_SYNC_SOURCE_TYPE_ONEDRIVE: {\"client_secret\"}" in file_sync_text

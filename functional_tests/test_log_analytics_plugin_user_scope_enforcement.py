@@ -15,6 +15,7 @@ import logging
 import os
 import sys
 import types
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -173,7 +174,7 @@ def test_fix_documentation_and_version_exist():
     """Verify the config version bump and fix document landed for the f016 pass."""
     print("🔍 Testing f016 documentation and version...")
 
-    assert read_config_version() == "0.241.022"
+    assert_app_version_at_least("0.241.022")
     assert os.path.exists(FIX_DOC), f"Expected fix documentation at {FIX_DOC}"
 
     print("✅ f016 documentation and version passed")

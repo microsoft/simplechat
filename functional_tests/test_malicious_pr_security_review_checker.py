@@ -13,6 +13,7 @@ markers for human review, and stays wired into the GitHub Actions workflow.
 import importlib.util
 import sys
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -119,7 +120,7 @@ def test_checker_workflow_prompt_and_version_are_wired_into_repo() -> None:
     assert CHECKER_FILE.exists(), f'Expected checker script at {CHECKER_FILE}'
     assert WORKFLOW_FILE.exists(), f'Expected workflow file at {WORKFLOW_FILE}'
     assert PROMPT_FILE.exists(), f'Expected prompt file at {PROMPT_FILE}'
-    assert read_config_version() == '0.250.006'
+    assert_app_version_at_least("0.250.006")
 
     workflow_source = read_text(WORKFLOW_FILE)
     assert 'Malicious PR Security Review' in workflow_source

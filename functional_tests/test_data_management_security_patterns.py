@@ -33,6 +33,7 @@ Version 0.250.111 verifies Data Management Blueprint endpoint names are unique.
 import ast
 import re
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -78,7 +79,7 @@ def test_version_and_container_registration():
     """Validate the Data Management version and Cosmos job container registrations."""
     config_source = read_text(CONFIG_FILE)
 
-    assert 'VERSION = "0.250.111"' in config_source
+    assert_app_version_at_least("0.250.111")
     assert 'cosmos_data_management_jobs_container_name = "data_management_jobs"' in config_source
     assert 'partition_key=PartitionKey(path="/id")' in config_source
     assert 'cosmos_data_management_job_items_container_name = "data_management_job_items"' in config_source

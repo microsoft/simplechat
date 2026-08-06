@@ -9,6 +9,7 @@ scheduler integration, workspace UI, and admin workspace settings.
 """
 
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,9 +37,7 @@ def test_personal_workflows_feature_wiring():
     workflow_js_content = read_text("application/single_app/static/js/workspace/workspace_workflows.js")
     feature_doc_content = read_text("docs/explanation/features/PERSONAL_WORKFLOWS.md")
 
-    assert 'VERSION = "0.241.106"' in config_content, (
-        "Expected config.py version 0.241.106 for the personal workflows feature."
-    )
+    assert_app_version_at_least("0.241.106")
     assert 'cosmos_personal_workflows_container_name = "personal_workflows"' in config_content, (
         "Expected config.py to register the personal workflows Cosmos container with the exported plural name."
     )

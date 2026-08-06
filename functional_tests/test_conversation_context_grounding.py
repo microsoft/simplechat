@@ -14,6 +14,7 @@ import json
 import sys
 from copy import deepcopy
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -264,7 +265,7 @@ def test_chat_and_document_action_paths_are_wired():
     workflow_source = WORKFLOW_RUNNER_FILE.read_text(encoding='utf-8')
     config_source = CONFIG_FILE.read_text(encoding='utf-8')
 
-    assert 'VERSION = "0.250.101"' in config_source
+    assert_app_version_at_least("0.250.101")
     assert route_source.count('_prepare_conversation_context_for_invocation(') >= 5
     assert 'append_conversation_context_citation(' in route_source
     assert "'conversation_context_snapshot': document_action_context_snapshot" in route_source

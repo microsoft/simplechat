@@ -19,6 +19,7 @@ reset confirmation, and the Wave 5B default read path.
 
 import os
 import sys
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -220,7 +221,7 @@ def test_wave4a1_version_is_current():
     """Config version should reflect the current cache admin UI change."""
     config_source = _read(os.path.join("application", "single_app", "config.py"))
 
-    assert 'VERSION = "0.250.047"' in config_source
+    assert_app_version_at_least("0.250.047")
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ to the chat page.
 """
 
 import os
+from test_support.versioning import assert_app_version_at_least
 
 
 def read_file_text(file_path):
@@ -59,9 +60,7 @@ def test_workspace_agent_chat_launch_enables_agent_mode():
     assert "group_id: currentContext.activeGroupId" in group_agents_content, (
         "Expected group workspace launches to preserve the originating group scope when redirecting to chat."
     )
-    assert 'VERSION = "0.240.075"' in config_content, (
-        "Expected config.py version 0.240.075 for the workspace agent chat launch selection fix."
-    )
+    assert_app_version_at_least("0.240.075")
 
     print("✅ Workspace and group agent chat launch selection wiring verified.")
 

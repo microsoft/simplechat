@@ -16,6 +16,7 @@ import os
 import sys
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -191,7 +192,7 @@ def test_fix_documentation_and_version():
     """Verify fix documentation and version tracking are present."""
     print('Testing approvals API fix documentation and version...')
 
-    assert read_config_version() == '0.241.021'
+    assert_app_version_at_least("0.241.021")
     fix_doc_content = read_file_text(FIX_DOC)
     assert 'Fixed/Implemented in version: **0.241.021**' in fix_doc_content
     assert 'functional_tests/test_approvals_api_load_fix.py' in fix_doc_content

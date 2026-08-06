@@ -10,6 +10,7 @@ audio export that downloads MP3 bytes using the active TTS voice and speed.
 """
 
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -69,7 +70,7 @@ def test_audio_export_menu_is_gated_for_user_and_assistant_messages():
 
 def test_audio_export_version_is_current():
     """Verify the feature version is recorded in application configuration."""
-    assert 'VERSION = "0.250.102"' in read_text(CONFIG_FILE)
+    assert_app_version_at_least("0.250.102")
 
 
 if __name__ == "__main__":

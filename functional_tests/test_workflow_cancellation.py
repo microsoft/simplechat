@@ -12,6 +12,7 @@ items as cancelled, and return the workflow to an idle schedulable state.
 import ast
 from datetime import datetime, timezone
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -361,7 +362,7 @@ def test_cancellation_contracts_cover_routes_scheduler_activity_and_shared_ui():
     group_template_source = _read(GROUP_TEMPLATE_FILE)
     release_notes_source = _read(RELEASE_NOTES_FILE)
 
-    assert 'VERSION = "0.250.105"' in _read(CONFIG_FILE)
+    assert_app_version_at_least("0.250.105")
     assert "### **(v0.250.062)**" in release_notes_source
     assert "Workflow Run Cancellation" in release_notes_source
     for route in (

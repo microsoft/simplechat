@@ -15,6 +15,7 @@ import os
 import sys
 
 import pandas as pd
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -137,7 +138,7 @@ def test_route_uses_serialized_preview_output_and_version_bump():
         missing = [snippet for snippet in required_snippets if snippet not in source]
         assert not missing, f'Missing route integration snippets: {missing}'
 
-        assert read_config_version() == '0.240.030'
+        assert_app_version_at_least("0.240.030")
 
         print('✅ Route integration and version bump passed')
         return True
