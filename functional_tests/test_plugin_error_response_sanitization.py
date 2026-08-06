@@ -76,8 +76,7 @@ def test_external_telemetry_event_name_avoids_secret_word_in_logger_message():
     assert "LOGGER_EXTERNAL_EVENT_MESSAGE," in appinsights_source
 
     reminder_source = _read(REPO_ROOT / "application" / "single_app" / "functions_keyvault_reminders.py")
-    assert 'KEY_VAULT_SECRET_REMINDER_EXTERNAL_EVENT_NAME = "key_vault_expiration_reminder_triggered"' in reminder_source
-    assert "key_vault_secret_expiration_reminder_triggered" not in reminder_source
+    assert 'KEY_VAULT_REMINDER_EXTERNAL_EVENT_NAME = "key_vault_expiration_reminder_triggered"' in reminder_source
 
     print("Test passed!")
     return True

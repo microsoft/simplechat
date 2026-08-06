@@ -29,7 +29,7 @@ KEY_VAULT_SECRET_REMINDER_SYNCED_STATUS = "synced"
 KEY_VAULT_SECRET_REMINDER_DEFAULT_LEAD_DAYS = 30
 KEY_VAULT_SECRET_REMINDER_DEFAULT_SCAN_INTERVAL_SECONDS = 21600
 KEY_VAULT_SECRET_REMINDER_LOCK_NAME = "key_vault_secret_expiration_reminders"
-KEY_VAULT_SECRET_REMINDER_EXTERNAL_EVENT_NAME = "key_vault_expiration_reminder_triggered"
+KEY_VAULT_REMINDER_EXTERNAL_EVENT_NAME = "key_vault_expiration_reminder_triggered"
 
 
 def _now_iso() -> str:
@@ -526,7 +526,7 @@ def _emit_external_expiration_notification_event(
         allowed_sensitive_dimensions = ("contact_email",)
 
     log_external_event(
-        KEY_VAULT_SECRET_REMINDER_EXTERNAL_EVENT_NAME,
+        KEY_VAULT_REMINDER_EXTERNAL_EVENT_NAME,
         extra=event_extra,
         allowed_sensitive_dimensions=allowed_sensitive_dimensions,
     )

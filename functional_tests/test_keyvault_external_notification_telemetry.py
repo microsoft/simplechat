@@ -276,7 +276,7 @@ def test_keyvault_reminder_external_telemetry_event_is_safe_and_queryable():
         assert len(external_events) == 1
 
         event = external_events[0]
-        assert event["event_name"] == module.KEY_VAULT_SECRET_REMINDER_EXTERNAL_EVENT_NAME
+        assert event["event_name"] == module.KEY_VAULT_REMINDER_EXTERNAL_EVENT_NAME
         assert event["event_name"] == "key_vault_expiration_reminder_triggered"
         assert "secret" not in event["event_name"]
         event_extra = event["extra"]
