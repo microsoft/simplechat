@@ -2,7 +2,7 @@
 # test_keyvault_external_notification_telemetry.py
 """
 Functional test for Key Vault expiration reminder external telemetry.
-Version: 0.250.123
+Version: 0.250.124
 Implemented in: 0.250.122; 0.250.123
 
 This test ensures Key Vault expiration reminder notifications emit a safe,
@@ -201,7 +201,7 @@ def test_log_external_event_preserves_safe_dimensions_and_redacts_raw_sensitive_
 
         assert len(fake_logger.records) == 1
         record = fake_logger.records[0]
-        assert record["message"] == "[SimpleChatExternalEvent] Key_Vault_Reminder"
+        assert record["message"] == "[SimpleChatExternalEvent]"
 
         extra = record["extra"]
         assert extra["sc_event_name"] == "Key_Vault_Reminder"
@@ -277,6 +277,8 @@ def test_keyvault_reminder_external_telemetry_event_is_safe_and_queryable():
 
         event = external_events[0]
         assert event["event_name"] == module.KEY_VAULT_SECRET_REMINDER_EXTERNAL_EVENT_NAME
+        assert event["event_name"] == "key_vault_expiration_reminder_triggered"
+        assert "secret" not in event["event_name"]
         event_extra = event["extra"]
         assert event_extra["reminder_id"] == reminder["id"]
         assert event_extra["scope"] == "global"

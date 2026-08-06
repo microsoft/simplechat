@@ -1129,10 +1129,10 @@
 
                             <div class="alert alert-light border small" id="key-vault-external-alert-guidance" role="note">
                                 <strong>External automation:</strong> SimpleChat emits a queryable Application Insights event named
-                                <code>key_vault_secret_expiration_reminder_triggered</code> whenever a reminder notification is created.
+                                <code>key_vault_expiration_reminder_triggered</code> whenever a reminder notification is created.
                                 Use an Azure Monitor scheduled query alert with an action group, Logic App, Function, or webhook to send external notifications. Enable the routing email option below if downstream automation needs to send directly to the configured reminder contact.
                                 <pre class="mt-2 mb-1"><code>traces
-| where customDimensions.sc_event_name == 'key_vault_secret_expiration_reminder_triggered'
+| where customDimensions.sc_event_name == 'key_vault_expiration_reminder_triggered'
 | project timestamp,
           reminder_id = tostring(customDimensions.sc_event_reminder_id),
           scope = tostring(customDimensions.sc_event_scope),

@@ -2,8 +2,8 @@
 """
 UI test for Key Vault expiration reminder controls and external alert guidance.
 
-Version: 0.250.123
-Implemented in: 0.250.121; 0.250.122; 0.250.123
+Version: 0.250.124
+Implemented in: 0.250.121; 0.250.122; 0.250.123; 0.250.124
 
 This test ensures the admin Key Vault reminder inventory and action-modal
 reminder controls render with stable IDs, external alert guidance, optional
@@ -58,7 +58,7 @@ def test_admin_key_vault_reminder_dashboard_contract():
     assert "keyVaultReminderSettings.classList.toggle('d-none'" in source
     assert "/api/admin/settings/key-vault/secret-reminders" in source
     assert "/api/admin/settings/key-vault/secret-reminders/run" in source
-    assert "key_vault_secret_expiration_reminder_triggered" in template
+    assert "key_vault_expiration_reminder_triggered" in template
     assert "customDimensions.sc_event_name" in template
     assert "customDimensions.sc_event_contact_email" in template
     assert "Azure Monitor scheduled query alert" in template

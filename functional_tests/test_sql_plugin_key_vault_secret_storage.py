@@ -2,8 +2,8 @@
 # test_sql_plugin_key_vault_secret_storage.py
 """
 Functional test for SQL plugin Key Vault secret storage.
-Version: 0.250.121
-Implemented in: 0.239.114; 0.250.121
+Version: 0.250.124
+Implemented in: 0.239.114; 0.250.121; 0.250.124
 
 This test ensures that SQL plugin secret-bearing fields are stored in Key Vault,
 preserved across edits, and cleaned up correctly when Key Vault storage is enabled.

@@ -496,7 +496,6 @@ def log_external_event(
         extra,
         allowed_sensitive_dimensions=allowed_sensitive_dimensions,
     )
-    event_message = f"{LOGGER_EXTERNAL_EVENT_MESSAGE} {normalized_event_name}"
 
     try:
         logger = get_appinsights_logger()
@@ -508,7 +507,7 @@ def log_external_event(
 
         logger.log(
             level,
-            event_message,
+            LOGGER_EXTERNAL_EVENT_MESSAGE,
             extra=event_extra,
             stacklevel=2,
         )

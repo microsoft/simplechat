@@ -3,6 +3,7 @@
 Implemented in version: **0.250.121**
 External telemetry added in version: **0.250.122**
 Contact email telemetry opt-in added in version: **0.250.123**
+External telemetry event name hardened in version: **0.250.124**
 
 ## Overview
 
@@ -23,7 +24,7 @@ Key Vault expiration reminders let action owners add expiration metadata when st
   - `POST /api/admin/settings/key-vault/secret-reminders/run`
 - **Background sweep**: `run_key_vault_secret_reminder_loop()` checks due reminders under a distributed lock.
 - **Notifications**: `key_vault_secret_expiring` in-app notifications target personal owners, groups, public workspaces, or configured admin roles for global secrets.
-- **External telemetry**: each created reminder notification emits the Application Insights event `key_vault_secret_expiration_reminder_triggered` with queryable dimensions for Azure Monitor scheduled query alerts and downstream automation. Contact email is included only when the admin explicitly enables the external telemetry opt-in.
+- **External telemetry**: each created reminder notification emits the Application Insights event `key_vault_expiration_reminder_triggered` with queryable dimensions for Azure Monitor scheduled query alerts and downstream automation. Contact email is included only when the admin explicitly enables the external telemetry opt-in.
 
 ## Usage Instructions
 
@@ -50,14 +51,14 @@ Configure Azure Monitor or Event Grid on the Key Vault for native secret near-ex
 When the SimpleChat reminder sweep creates an in-app notification, it also emits a queryable Application Insights trace event named:
 
 ```text
-key_vault_secret_expiration_reminder_triggered
+key_vault_expiration_reminder_triggered
 ```
 
 Recommended Application Insights query:
 
 ```kusto
 traces
-| where customDimensions.sc_event_name == 'key_vault_secret_expiration_reminder_triggered'
+| where customDimensions.sc_event_name == 'key_vault_expiration_reminder_triggered'
 | project timestamp,
           reminder_id = tostring(customDimensions.sc_event_reminder_id),
           scope = tostring(customDimensions.sc_event_scope),

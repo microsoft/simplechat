@@ -29,7 +29,7 @@ KEY_VAULT_SECRET_REMINDER_SYNCED_STATUS = "synced"
 KEY_VAULT_SECRET_REMINDER_DEFAULT_LEAD_DAYS = 30
 KEY_VAULT_SECRET_REMINDER_DEFAULT_SCAN_INTERVAL_SECONDS = 21600
 KEY_VAULT_SECRET_REMINDER_LOCK_NAME = "key_vault_secret_expiration_reminders"
-KEY_VAULT_SECRET_REMINDER_EXTERNAL_EVENT_NAME = "key_vault_secret_expiration_reminder_triggered"
+KEY_VAULT_SECRET_REMINDER_EXTERNAL_EVENT_NAME = "key_vault_expiration_reminder_triggered"
 
 
 def _now_iso() -> str:

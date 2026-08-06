@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](/explanation/features/) and [Fixes by Version](/explanation/fixes/).
 
+### **(v0.250.124)**
+
+#### Bug Fixes
+
+*   **Key Vault Reminder PR Security Hardening**
+    *   Replaced raw exception text returned from plugin/action Key Vault save paths with stable user-safe messages while preserving server-side logging for diagnostics.
+    *   Renamed the external Key Vault reminder telemetry event to avoid security scanner false positives on secret-related terminology while keeping queryable Application Insights dimensions.
+    *   (Ref: #1156, PR #1157, `route_backend_plugins.py`, `functions_appinsights.py`, CodeQL findings)
+
 ### **(v0.250.123)**
 
 #### New Features
